@@ -90,6 +90,8 @@ export interface DigestRow {
   category: string;
   content: string;
   salience: number;
+  /** Sourcing tier — null on legacy records without the column. */
+  sourcing: string | null;
 }
 
 export interface DigestOptions {
@@ -106,7 +108,10 @@ const DEFAULT_CHARS_PER_TOKEN = 4;
 function atomLine(r: DigestRow): string {
   const body = r.content.replace(/\s+/g, ' ').trim();
   const clipped = body.length > 200 ? body.slice(0, 197).trimEnd() + '…' : body;
-  return `- **${r.title}** (${r.category}) — ${clipped}`;
+  // Show sourcing tag when present so readers calibrate confidence on inject.
+  // 'inferred' is the critical one: AI-generated reasoning, not ground truth.
+  const tag = r.sourcing ? `, ${r.sourcing}` : '';
+  return `- **${r.title}** (${r.category}${tag}) — ${clipped}`;
 }
 
 /**
@@ -174,6 +179,8 @@ export interface DigestAtom {
   content: string;
   salience: number;
   tier: Tier;
+  /** Sourcing tier — null on legacy records. */
+  sourcing: string | null;
 }
 
 /**
@@ -192,7 +199,7 @@ export function digestData(
     const total = (db.prepare('SELECT COUNT(*) AS n FROM memories WHERE archived = 0').get() as { n: number }).n;
     const rows = db
       .prepare(
-        'SELECT title, category, content, salience FROM memories WHERE archived = 0 AND category != ? ORDER BY salience DESC LIMIT ?',
+        'SELECT title, category, content, salience, sourcing FROM memories WHERE archived = 0 AND category != ? ORDER BY salience DESC LIMIT ?',
       )
       .all(EPISODE_CATEGORY, limit) as Omit<DigestAtom, 'tier'>[];
     const atoms = rows.map((r) => ({ ...r, tier: tierOf(r.salience) }));
@@ -214,7 +221,9 @@ export function digestForContext(contextDir: string, opts: DigestOptions = {}): 
       .prepare(
         // Episodes are the tape, not the digest: a fresh episode is always
         // salience 1.0 and would crowd Top of Mind with what just happened.
-        'SELECT title, category, content, salience FROM memories WHERE archived = 0 AND category != ? ORDER BY salience DESC LIMIT 100',
+        // sourcing: LEFT JOIN-style null-safe select — old stores without the
+        // column return NULL which DigestRow.sourcing accepts.
+        'SELECT title, category, content, salience, sourcing FROM memories WHERE archived = 0 AND category != ? ORDER BY salience DESC LIMIT 100',
       )
       .all(EPISODE_CATEGORY) as DigestRow[];
     return assembleDigest(rows, opts);

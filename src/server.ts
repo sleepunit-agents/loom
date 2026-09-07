@@ -165,9 +165,22 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       ttl: z.string().optional().describe(
         'Time-to-live: "7d", "30d", "24h", "permanent", or omit for no expiration.'
       ),
+      sourcing: z.enum(['observed', 'relayed', 'inferred', 'system']).optional().describe(
+        'Provenance/trust tier — how this memory was produced. ' +
+        '"observed": directly witnessed (measured, tested, read from source). ' +
+        '"relayed": learned from another person/body (conversation, letter, episode). ' +
+        '"inferred": AI-generated reasoning/synthesis — treat with skepticism, not ground truth. ' +
+        '"system": auto-written by the harness (episode fallback, lane output). ' +
+        'Shown in recall results and the boot digest so readers calibrate confidence.'
+      ),
+      provenance: z.string().optional().describe(
+        'Free-form origin: surface, body, session, or person. ' +
+        'E.g. "wake:w-74fccc 2026-09-07", "Jonathan, Discord #loom", "lane:letters". ' +
+        'For episodes, prefer metadata.where (already conventional); provenance carries detail.'
+      ),
     },
-    async ({ category, title, content, project, metadata, ttl }) => {
-      const ref = await remember(contextDir, { category, title, content, project, metadata, ttl });
+    async ({ category, title, content, project, metadata, ttl, sourcing, provenance }) => {
+      const ref = await remember(contextDir, { category, title, content, project, metadata, ttl, sourcing, provenance });
       return { content: [{ type: 'text' as const, text: `Memory stored: "${ref.title}" → ${ref.ref}` }] };
     },
   );

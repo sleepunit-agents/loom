@@ -29,6 +29,25 @@ describe('formatMatchResult', () => {
     const result = formatMatchResult(baseMatch);
     expect(result).not.toContain('[');
   });
+
+  it('includes sourcing tag when present', () => {
+    const match: MemoryMatch = { ...baseMatch, sourcing: 'inferred' };
+    const result = formatMatchResult(match);
+    expect(result).toContain('· inferred');
+  });
+
+  it('includes provenance in parens when present', () => {
+    const match: MemoryMatch = { ...baseMatch, sourcing: 'relayed', provenance: 'Jonathan, Discord #loom' };
+    const result = formatMatchResult(match);
+    expect(result).toContain('· relayed');
+    expect(result).toContain('(Jonathan, Discord #loom)');
+  });
+
+  it('omits sourcing and provenance tags when absent', () => {
+    const result = formatMatchResult(baseMatch);
+    expect(result).not.toContain('·');
+    expect(result).not.toContain('(');
+  });
 });
 
 describe('formatResults', () => {
