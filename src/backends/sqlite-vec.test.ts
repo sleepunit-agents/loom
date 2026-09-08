@@ -344,9 +344,9 @@ describe('SqliteVecBackend', () => {
     expect(projects[0].category).toBe('project');
   });
 
-  it('prunes expired memories', async () => {
+  it('prunes expired memories by archiving them (not hard-deleting)', async () => {
     // Memory with past expires_at
-    await backend.remember({
+    const { ref: staleRef } = await backend.remember({
       category: 'reference',
       title: 'Stale',
       content: 'loom',
@@ -367,9 +367,52 @@ describe('SqliteVecBackend', () => {
 
     const result = await backend.prune();
     expect(result.expired).toHaveLength(1);
+    expect(result.expired[0]).toBe(staleRef);
 
+    // Expired memory is excluded from recall — archive hides it from search.
     const remaining = await backend.recall({ query: 'loom' });
     expect(remaining.map((r) => r.title)).toEqual(['Fresh']);
+
+    // But the row must still exist in the DB (archived, not deleted).
+    const row = db
+      .prepare('SELECT archived, archive_note FROM memories WHERE ref = ?')
+      .get(staleRef) as { archived: number; archive_note: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.archived).toBe(1);
+    const parsed = JSON.parse(row!.archive_note);
+    expect(parsed.note).toBe('TTL elapsed');
+    expect(parsed.archived_at).toBeTruthy();
+
+    // Vector slot must be gone (no KNN pollution).
+    const memRow = db
+      .prepare('SELECT id FROM memories WHERE ref = ?')
+      .get(staleRef) as { id: number };
+    const vec = db
+      .prepare('SELECT rowid FROM vec_memories WHERE rowid = ?')
+      .get(BigInt(memRow.id));
+    expect(vec).toBeUndefined();
+  });
+
+  it('prune dry-run does not archive anything', async () => {
+    const { ref } = await backend.remember({
+      category: 'reference',
+      title: 'DryRunTarget',
+      content: 'loom',
+      ttl: '1h',
+    });
+    const db = backend.getDatabase();
+    db.prepare(
+      "UPDATE memories SET expires_at = '2020-01-01T00:00:00.000Z' WHERE ref = ?",
+    ).run(ref);
+
+    const result = await backend.prune({ dryRun: true });
+    expect(result.expired).toHaveLength(1);
+
+    // Row must remain active — dry run must not archive.
+    const row = db
+      .prepare('SELECT archived FROM memories WHERE ref = ?')
+      .get(ref) as { archived: number };
+    expect(row.archived).toBe(0);
   });
 
   it('stamps last_accessed on recall', async () => {

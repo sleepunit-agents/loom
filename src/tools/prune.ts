@@ -18,7 +18,7 @@ export async function prune(
   const lines: string[] = [];
 
   if (result.expired.length > 0) {
-    const verb = options?.dryRun ? 'Would expire' : 'Expired';
+    const verb = options?.dryRun ? 'Would archive' : 'Archived';
     lines.push(`**${verb} ${result.expired.length} memories (TTL elapsed):**`);
     for (const ref of result.expired) {
       lines.push(`- ${ref}`);

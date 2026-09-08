@@ -200,7 +200,7 @@ export interface MemorySupersededResult {
 }
 
 export interface PruneResult {
-  /** Memories that were deleted because their TTL expired */
+  /** Memories that were archived (moved to archive tier) because their TTL expired */
   expired: string[];
   /** Memories that haven't been accessed within the stale threshold */
   stale: string[];
@@ -266,7 +266,7 @@ export interface AuditReport {
   stale: AuditStaleEntry[];
   /** Pairs of memories whose vector similarity ≥ `similarityThreshold`. */
   duplicates: DuplicatePair[];
-  /** Memories whose TTL has expired (would be removed by `prune`). */
+  /** Memories whose TTL has expired (would be archived by `prune`). */
   expired: string[];
 }
 
