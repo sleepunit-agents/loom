@@ -33,7 +33,7 @@ const USAGE = `Usage: loom memory <subcommand> [options]
 
 Subcommands:
   list      Browse memories (table or --json)
-  prune     Report / remove expired and stale memories
+  prune     Report / archive expired memories; report stale ones
   similar   Surface memories semantically near a ref or text
   audit     One-shot health report (counts, stale, duplicates, expired)
   archive   Soft-retire a memory with a tombstone (recoverable)
@@ -55,7 +55,7 @@ Options (list):
 
 Options (prune):
   --stale-days <n>     Stale threshold in days
-  --dry-run            Report what would be pruned, don't delete
+  --dry-run            Report what would be archived, don't archive
   --json               Emit PruneResult
 
 Options (similar):
