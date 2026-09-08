@@ -379,7 +379,22 @@ export class SqliteVecBackend implements MemoryBackend {
     }
 
     if (!dryRun && expiredIds.length > 0) {
-      this.deleteById(expiredIds);
+      // Archive instead of hard-delete: content is preserved for recovery,
+      // the embedding is dropped (no KNN slots wasted), archived = 1 hides
+      // the row from recall/list/audit — matching the contract in t-332.
+      const now = new Date().toISOString();
+      const tombstone = JSON.stringify({ note: 'TTL elapsed', archived_at: now });
+      const archiveStmt = this.db.prepare(
+        'UPDATE memories SET archived = 1, archive_note = ?, updated = ? WHERE id = ?',
+      );
+      const delVec = this.db.prepare('DELETE FROM vec_memories WHERE rowid = ?');
+      const tx = this.db.transaction(() => {
+        for (const id of expiredIds) {
+          archiveStmt.run(tombstone, now, id);
+          delVec.run(BigInt(id));
+        }
+      });
+      retryWrite(() => tx());
     }
 
     return { expired, stale };

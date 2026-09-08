@@ -33,7 +33,7 @@ describe('prune tool', () => {
     } as never);
 
     const result = await prune('/tmp/test');
-    expect(result).toContain('Expired 2 memories');
+    expect(result).toContain('Archived 2 memories');
     expect(result).toContain('project/2026-01-01-old.md');
     expect(result).toContain('project/2026-01-02-ancient.md');
   });
@@ -51,7 +51,7 @@ describe('prune tool', () => {
     expect(result).toContain('60+ days');
   });
 
-  it('uses "Would expire" in dry run mode', async () => {
+  it('uses "Would archive" in dry run mode', async () => {
     mockCreateBackend.mockReturnValue({
       prune: vi.fn().mockResolvedValue({
         expired: ['project/2026-01-01-old.md'],
@@ -60,7 +60,7 @@ describe('prune tool', () => {
     } as never);
 
     const result = await prune('/tmp/test', { dryRun: true });
-    expect(result).toContain('Would expire');
+    expect(result).toContain('Would archive');
   });
 
   it('passes options through to backend', async () => {
