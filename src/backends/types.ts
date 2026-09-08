@@ -8,6 +8,18 @@
 
 // ─── Input / Output Types ────────────────────────────────────────────────────
 
+/**
+ * How a memory was sourced — mirrors the knowledge wing's sourcing field.
+ * Displayed at injection time so readers can calibrate confidence.
+ *
+ * - `observed`  — directly witnessed by this body: measured, tested, read from source.
+ * - `relayed`   — learned from another person/body: conversation, letter, episode.
+ * - `inferred`  — AI-generated reasoning/synthesis: extrapolation, pattern-matching.
+ *                 Treat with appropriate skepticism — not ground truth.
+ * - `system`    — auto-written by the harness (episode fallback, lane output, etc.).
+ */
+export type MemorySourcing = 'observed' | 'relayed' | 'inferred' | 'system';
+
 export interface MemoryInput {
   category: string;
   title: string;
@@ -16,6 +28,18 @@ export interface MemoryInput {
   metadata?: Record<string, unknown>;
   /** Optional time-to-live. Parsed durations like "7d", "30d", or "permanent". */
   ttl?: string;
+  /**
+   * How this memory was sourced. Displayed at injection so the reader can
+   * calibrate confidence — 'inferred' flags AI-generated reasoning that should
+   * not be treated as ground truth.
+   */
+  sourcing?: MemorySourcing;
+  /**
+   * Free-form origin: surface, body, session, or person. E.g. "wake:w-74fccc
+   * 2026-09-07", "Jonathan, Discord #loom", "lane:letters". For episodes,
+   * prefer metadata.where (already conventional); this carries additional detail.
+   */
+  provenance?: string;
 }
 
 export interface MemoryRef {
@@ -80,6 +104,10 @@ export interface MemoryMatch {
   ttl?: string;
   /** ISO timestamp when this memory expires, if TTL is set */
   expiresAt?: string;
+  /** Sourcing tier — how the memory was produced. Null on legacy records. */
+  sourcing?: MemorySourcing;
+  /** Free-form origin text (surface / person / session). Null on legacy records. */
+  provenance?: string;
 }
 
 export interface ForgetInput {
@@ -218,6 +246,10 @@ export interface MemoryEntry {
   category: string;
   project?: string;
   created: string;
+  /** Sourcing tier — how the memory was produced. Null on legacy records. */
+  sourcing?: MemorySourcing;
+  /** Free-form origin text (surface / person / session). Null on legacy records. */
+  provenance?: string;
 }
 
 export interface FindSimilarInput {

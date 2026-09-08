@@ -17,6 +17,7 @@ import type {
   MemoryBackend,
   MemoryInput,
   MemoryRef,
+  MemorySourcing,
   RecallInput,
   MemoryMatch,
   ForgetInput,
@@ -88,6 +89,10 @@ interface MemoryRow {
   expires_at: string | null;
   archived: number;
   archive_note: string | null;
+  /** Provenance trust tier (t-328). NULL on legacy records. */
+  sourcing: string | null;
+  /** Free-form origin text (t-328). NULL on legacy records. */
+  provenance: string | null;
 }
 
 interface VecMatch {
@@ -130,8 +135,8 @@ export class SqliteVecBackend implements MemoryBackend {
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
-        created, ttl, expires_at, salience
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created, ttl, expires_at, salience, sourcing, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
@@ -150,6 +155,8 @@ export class SqliteVecBackend implements MemoryBackend {
         input.ttl ?? null,
         expiresAt,
         1.0, // a freshly authored memory is hot; the lane decays it from here
+        input.sourcing ?? null,
+        input.provenance ?? null,
       );
       insertVec.run(BigInt(result.lastInsertRowid), toVecBuffer(vector));
     });
@@ -417,7 +424,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const rows = this.db
       .prepare(
-        `SELECT ref, title, category, project, created
+        `SELECT ref, title, category, project, created, sourcing, provenance
          FROM memories ${where}
          ORDER BY created DESC LIMIT ?`,
       )
@@ -427,6 +434,8 @@ export class SqliteVecBackend implements MemoryBackend {
       category: string;
       project: string | null;
       created: string;
+      sourcing: string | null;
+      provenance: string | null;
     }[];
 
     return rows.map((r) => ({
@@ -435,6 +444,8 @@ export class SqliteVecBackend implements MemoryBackend {
       category: r.category,
       project: r.project ?? undefined,
       created: r.created,
+      sourcing: (r.sourcing as MemorySourcing) ?? undefined,
+      provenance: r.provenance ?? undefined,
     }));
   }
 
@@ -991,5 +1002,7 @@ function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
     lastAccessed: row.last_accessed ?? undefined,
     ttl: row.ttl ?? undefined,
     expiresAt: row.expires_at ?? undefined,
+    sourcing: (row.sourcing as MemorySourcing) ?? undefined,
+    provenance: row.provenance ?? undefined,
   };
 }

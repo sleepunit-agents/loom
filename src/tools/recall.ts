@@ -12,7 +12,11 @@ import type { RecallInput, MemoryMatch } from '../backends/types.js';
 
 export function formatMatchResult(m: MemoryMatch): string {
   const projectTag = m.project ? ` [${m.project}]` : '';
-  return `## ${m.title}\n*${m.category}${projectTag} — ${m.created.slice(0, 10)}*\n\n${m.content}`;
+  // Show sourcing when set — 'inferred' is the critical signal (AI-generated,
+  // not ground truth). Provenance follows in parens when present.
+  const sourcingTag = m.sourcing ? ` · ${m.sourcing}` : '';
+  const provenanceTag = m.provenance ? ` (${m.provenance})` : '';
+  return `## ${m.title}\n*${m.category}${projectTag} — ${m.created.slice(0, 10)}${sourcingTag}${provenanceTag}*\n\n${m.content}`;
 }
 
 export function formatResults(matches: MemoryMatch[]): string {

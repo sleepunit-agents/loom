@@ -61,6 +61,34 @@ describe('SqliteVecBackend', () => {
     expect(results[0].relevance).toBeGreaterThan(0);
   });
 
+  it('stores and returns sourcing and provenance on remember/recall', async () => {
+    await backend.remember({
+      category: 'self',
+      title: 'A lesson learned',
+      content: 'I reasoned this from a pattern, not direct observation.',
+      sourcing: 'inferred',
+      provenance: 'lane:consolidation 2026-09-07',
+    });
+
+    const results = await backend.recall({ query: 'lesson learned' });
+    expect(results).toHaveLength(1);
+    expect(results[0].sourcing).toBe('inferred');
+    expect(results[0].provenance).toBe('lane:consolidation 2026-09-07');
+  });
+
+  it('returns undefined sourcing/provenance when not set (legacy behavior)', async () => {
+    await backend.remember({
+      category: 'project',
+      title: 'Legacy memory no sourcing',
+      content: 'Written without provenance fields.',
+    });
+
+    const results = await backend.recall({ query: 'legacy memory no sourcing' });
+    expect(results).toHaveLength(1);
+    expect(results[0].sourcing).toBeUndefined();
+    expect(results[0].provenance).toBeUndefined();
+  });
+
   it('ranks by semantic similarity', async () => {
     await backend.remember({
       category: 'project',

@@ -130,6 +130,26 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    id: 'add_sourcing',
+    description:
+      'Add sourcing column — provenance/trust tier: observed | relayed | inferred | system (t-328)',
+    pending: (db) => !hasColumn(db, 'memories', 'sourcing'),
+    run: (db) => {
+      // NULL on legacy records: "unknown". New writes should supply a value;
+      // the lint-on-write validator will warn (not reject) when omitted.
+      db.prepare('ALTER TABLE memories ADD COLUMN sourcing TEXT').run();
+    },
+  },
+  {
+    id: 'add_provenance',
+    description:
+      'Add provenance column — free-form origin (surface / person / session) for trust layer (t-328)',
+    pending: (db) => !hasColumn(db, 'memories', 'provenance'),
+    run: (db) => {
+      db.prepare('ALTER TABLE memories ADD COLUMN provenance TEXT').run();
+    },
+  },
+  {
     id: 'add_memory_supersessions',
     description:
       'Add memory_supersessions table — records that new_ref replaced old_ref, ' +
