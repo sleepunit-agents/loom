@@ -78,26 +78,17 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       const db = this.ensureOpen();
       const timestamp = new Date().toISOString();
 
-      const existing = db.prepare(
-        'SELECT id, uuid, title, body FROM pages WHERE slug = ?',
-      ).get(input.slug) as { id: number; uuid: string; title: string; body: string } | undefined;
-
-      // Resolve write mode and body before touching the DB — pure logic, no I/O.
       // Title and domain follow the write — the page is addressed by slug,
       // so a differing title/domain on upsert is an intentional revision.
-      const uuid: string = existing?.uuid ?? randomUUID();
       const title: string = input.title;
       const sourcing: string = input.sourcing ?? 'sourced';
-      const appliedMode: 'create' | 'replace' | 'append' = existing
-        ? (input.bodyMode ?? 'replace')
-        : 'create';
-      const newBody: string = (existing && appliedMode === 'append')
-        ? `${existing.body}\n\n${input.body}`
-        : input.body;
-      if (existing) enforcePageBodyCap(newBody);
 
-      // pageId is set inside the transaction for INSERTs; reads after tx() are safe.
-      let pageId: number = existing?.id ?? 0;
+      // Set inside the transaction, read after it commits. Every one of these
+      // is derived from the existing-page read, so all of them are re-derived
+      // on a SQLITE_BUSY retry rather than carried over from the losing attempt.
+      let uuid = '';
+      let appliedMode: 'create' | 'replace' | 'append' = 'create';
+      let pageId = 0;
 
       // Validate all citations before opening the transaction.
       if (input.citations && input.citations.length > 0) {
@@ -124,17 +115,41 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       );
 
-      // ── Single transaction: snapshot + page write + citation replacement ──────
-      // All three sub-operations must commit atomically — a crash between any two
+      // ── Single transaction: read + snapshot + page write + citations ─────────
+      // All sub-operations must commit atomically — a crash between any two
       // leaves a partial state: a page with no citations, or a snapshot with no
       // corresponding page update. Every other mutating method uses db.transaction;
       // writePage — the hottest path — now does too (t-329).
+      //
+      // The existing-page read is INSIDE the span, and the span is IMMEDIATE:
+      // writePage is state-dependent (mode, body, uuid, and the snapshot's
+      // pre-image all follow from what it read), so an atomic write over a read
+      // taken outside the lock protects nothing. A second process committing in
+      // that window used to be silently overwritten — an append dropped the
+      // contribution it never saw, and a replace snapshotted a body that was no
+      // longer the one it displaced, losing it with no revision to recover from.
+      // BEGIN IMMEDIATE takes the write lock before the read, so the read/write
+      // sequence is serialized: the loser is told SQLITE_BUSY and retries the
+      // whole thing — re-reading — instead of writing over what it missed.
+      // (Mark, 2026-09-06, reviewing #92.)
       //
       // Counter variables (citationsAdded, citationsDeduped) are reset at the top
       // of the callback so a SQLITE_BUSY retry never double-counts.
       const tx = db.transaction(() => {
         citationsAdded = 0;
         citationsDeduped = 0;
+
+        const existing = db.prepare(
+          'SELECT id, uuid, title, body FROM pages WHERE slug = ?',
+        ).get(input.slug) as { id: number; uuid: string; title: string; body: string } | undefined;
+
+        uuid = existing?.uuid ?? randomUUID();
+        pageId = existing?.id ?? 0;
+        appliedMode = existing ? (input.bodyMode ?? 'replace') : 'create';
+        const newBody: string = (existing && appliedMode === 'append')
+          ? `${existing.body}\n\n${input.body}`
+          : input.body;
+        if (existing) enforcePageBodyCap(newBody);
 
         if (existing) {
           // Replace-writes destroy the stored body — snapshot it first so the
@@ -200,7 +215,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           }
         }
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({
         uuid,
@@ -443,7 +458,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           "INSERT INTO supersessions (old_slug, new_slug, note, created) VALUES (?, ?, ?, ?)",
         ).run(input.old_slug, input.new_slug, input.note ?? null, timestamp);
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({
         old_slug: input.old_slug,
@@ -482,7 +497,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             pages.push({ slug: p.slug, old_domain: p.domain, new_domain: newDomain });
           }
         });
-        retryWrite(() => tx());
+        retryWrite(() => tx.immediate());
 
         return Promise.resolve({ moved: pages.length, pages, pointers_written: 0 });
       }
@@ -511,7 +526,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             pages.push({ slug, old_domain: page.domain, new_domain: input.new_domain! });
           }
         });
-        retryWrite(() => tx());
+        retryWrite(() => tx.immediate());
 
         return Promise.resolve({ moved: pages.length, pages, pointers_written: 0 });
       }
@@ -573,7 +588,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           );
         }
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({
         moved: 1,
@@ -722,7 +737,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           }
         }
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({
         target_slug: input.target_slug,
@@ -776,7 +791,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           db.prepare('DELETE FROM pages WHERE id = ?').run(row.id);
         }
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({ purged: input.slugs.length, slugs: input.slugs });
     } catch (e) {
@@ -847,7 +862,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           }
         }
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({
         verified: rows.length,
@@ -927,7 +942,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           revision.body, timestamp, page.id,
         );
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve({
         slug: input.slug,
@@ -1004,7 +1019,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           added++;
         }
       });
-      retryWrite(() => tx());
+      retryWrite(() => tx.immediate());
 
       return Promise.resolve(added);
     } catch (e) {
