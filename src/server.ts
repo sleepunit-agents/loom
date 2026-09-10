@@ -53,6 +53,13 @@ import { knowledgeHistory } from './tools/knowledge-history.js';
 
 export interface LoomServerConfig {
   contextDir: string;
+  /**
+   * Optional path to the knowledge-gaps directory (e.g. `~/Art/.knowledge-gaps`).
+   * When set, zero-result knowledge_recall calls append a miss entry to
+   * `${gapsDir}/recall-miss.jsonl`, feeding the expansion engine's second
+   * signal channel. Set via LOOM_GAPS_DIR env var in production.
+   */
+  gapsDir?: string;
 }
 
 export interface LoomServerInstance {
@@ -62,7 +69,7 @@ export interface LoomServerInstance {
 // ─── Server Factory ───────────────────────────────────────────────────────────
 
 export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
-  const { contextDir } = config;
+  const { contextDir, gapsDir } = config;
 
   // Refuse to boot against a stack this loom build doesn't understand.
   assertStackVersionCompatible(contextDir);
@@ -671,7 +678,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       ),
     },
     async ({ slug, query, domain, limit, detail, sort_by_verified }) => {
-      const result = await knowledgeRecall(contextDir, { slug, query, domain, limit, detail, sort_by_verified });
+      const result = await knowledgeRecall(contextDir, { slug, query, domain, limit, detail, sort_by_verified }, gapsDir);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

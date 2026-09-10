@@ -47,12 +47,16 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   if (values.help) { io.stdout(USAGE); return 0; }
 
   const contextDir = resolveContextDir();
+  // Optional: gaps directory for recall-miss logging (LOOM_GAPS_DIR env var).
+  // When set, knowledge_recall misses are appended to ${gapsDir}/recall-miss.jsonl
+  // so the knowledge-mine script can surface them as expansion candidates.
+  const gapsDir = process.env.LOOM_GAPS_DIR || undefined;
 
   if (values.http) {
     const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     const token = process.env.LOOM_BEARER_TOKEN || undefined;
-    const handle = await startHttpServer({ contextDir, host, port, token });
+    const handle = await startHttpServer({ contextDir, host, port, token, gapsDir });
     io.stderr(
       `loom: HTTP MCP daemon on http://${handle.host}:${handle.port} ` +
         `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`,
@@ -62,7 +66,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 0;
   }
 
-  const { server } = createLoomServer({ contextDir });
+  const { server } = createLoomServer({ contextDir, gapsDir });
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // connect() resolves when the stdio transport STARTS, not when it closes.
