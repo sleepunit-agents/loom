@@ -8,6 +8,7 @@
 import { createBackend } from '../backends/index.js';
 import type { MemoryInput, MemoryRef } from '../backends/types.js';
 import { EPISODE_CATEGORY, EPISODE_DEFAULT_TTL } from '../categories.js';
+import { recordSuccess, recordFailure } from '../backends/recorder-health.js';
 
 /**
  * Lint-on-write (c-loom-strictness §lint): validate the record BEFORE it reaches
@@ -42,8 +43,17 @@ export async function remember(
   const backend = createBackend(contextDir);
   // An episode is short-term by definition: without an explicit ttl it gets the
   // tier default, so a body can never accidentally leave a permanent episode.
-  if (input.category === EPISODE_CATEGORY && !input.ttl) {
+  const isEpisode = input.category === EPISODE_CATEGORY;
+  if (isEpisode && !input.ttl) {
     input = { ...input, ttl: EPISODE_DEFAULT_TTL };
   }
-  return backend.remember(input);
+  try {
+    const ref = await backend.remember(input);
+    // Record health only for episode writes — that's the path identity.ts monitors.
+    if (isEpisode) recordSuccess(contextDir);
+    return ref;
+  } catch (err) {
+    if (isEpisode) recordFailure(contextDir, err);
+    throw err;
+  }
 }
