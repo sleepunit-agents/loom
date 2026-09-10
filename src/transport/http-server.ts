@@ -47,6 +47,11 @@ export interface HttpServeOptions {
   maxBytes?: number;
   /** SSE keep-alive ping interval (ms). Default HEARTBEAT_MS; tests use a small value. */
   heartbeatMs?: number;
+  /**
+   * Optional path to the knowledge-gaps directory. Forwarded to
+   * createLoomServer so zero-result knowledge_recall calls can log misses.
+   */
+  gapsDir?: string;
 }
 
 export interface HttpServeHandle {
@@ -93,7 +98,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const sessions = new Map<string, StreamableHTTPServerTransport>();
 
   async function openSession(): Promise<StreamableHTTPServerTransport> {
-    const { server } = createLoomServer({ contextDir: opts.contextDir });
+    const { server } = createLoomServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir });
     // Fires AFTER the initialize handshake completes — getClientVersion() is
     // populated here (it is not yet at onsessioninitialized). Logging the peer
     // makes the resolved harness observable and reveals an unmapped client's

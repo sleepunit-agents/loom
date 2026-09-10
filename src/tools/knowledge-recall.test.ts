@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { knowledgeRecall } from './knowledge-recall.js';
@@ -341,6 +341,98 @@ describe('knowledgeRecall', () => {
       await seedPage('page', 'test', 'Page', 'A page.');
       const result = await knowledgeRecall(tempDir, { detail: 'index' });
       expect(result).not.toContain('verified:');
+    });
+  });
+
+  // ── Recall-miss logging ─────────────────────────────────────────────────────
+
+  describe('recall-miss logging', () => {
+    let gapsDir: string;
+
+    beforeEach(() => {
+      gapsDir = mkdtempSync(join(tmpdir(), 'loom-gaps-'));
+    });
+    afterEach(() => {
+      rmSync(gapsDir, { recursive: true, force: true });
+    });
+
+    const missFile = () => join(gapsDir, 'recall-miss.jsonl');
+
+    function readMisses(): Array<{ query: string | null; slug: string | null; at: string }> {
+      if (!existsSync(missFile())) return [];
+      return readFileSync(missFile(), 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+    }
+
+    it('appends a query miss entry when a query returns no results', async () => {
+      await knowledgeRecall(tempDir, { query: 'nonexistent topic' }, gapsDir);
+      const misses = readMisses();
+      expect(misses).toHaveLength(1);
+      expect(misses[0].query).toBe('nonexistent topic');
+      expect(misses[0].slug).toBeNull();
+      expect(misses[0].at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it('appends a slug miss entry when an exact-slug lookup finds nothing', async () => {
+      await knowledgeRecall(tempDir, { slug: 'no-such-page' }, gapsDir);
+      const misses = readMisses();
+      expect(misses).toHaveLength(1);
+      expect(misses[0].slug).toBe('no-such-page');
+      expect(misses[0].query).toBeNull();
+    });
+
+    it('does NOT log a miss when a query returns results', async () => {
+      await seedPage('rings', 'music', 'Rings', 'Resonator module.');
+      await knowledgeRecall(tempDir, { query: 'resonator' }, gapsDir);
+      expect(existsSync(missFile())).toBe(false);
+    });
+
+    it('does NOT log a miss when browsing with no query', async () => {
+      await knowledgeRecall(tempDir, {}, gapsDir);
+      expect(existsSync(missFile())).toBe(false);
+    });
+
+    it('does NOT log a miss for an archived slug (different error path)', async () => {
+      // Archived pages return a specific "it is archived" message — not a true
+      // miss, so we don't log them. (A miss log would re-prompt research on
+      // a page Art intentionally retired.)
+      await seedPage('old-page', 'test', 'Old', 'Old content.');
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        await backend.archivePage('old-page', { note: 'test archive' });
+      } finally {
+        backend.close();
+      }
+      await knowledgeRecall(tempDir, { slug: 'old-page' }, gapsDir);
+      expect(existsSync(missFile())).toBe(false);
+    });
+
+    it('accumulates multiple misses across calls', async () => {
+      await knowledgeRecall(tempDir, { query: 'first miss' }, gapsDir);
+      await knowledgeRecall(tempDir, { query: 'second miss' }, gapsDir);
+      await knowledgeRecall(tempDir, { slug: 'slug-miss' }, gapsDir);
+      const misses = readMisses();
+      expect(misses).toHaveLength(3);
+      expect(misses[0].query).toBe('first miss');
+      expect(misses[1].query).toBe('second miss');
+      expect(misses[2].slug).toBe('slug-miss');
+    });
+
+    it('does not write a miss file when gapsDir is not provided', async () => {
+      await knowledgeRecall(tempDir, { query: 'no gapsDir' });
+      // No gapsDir means no file created anywhere — the gapsDir-less call
+      // cannot write to a default location; it simply does nothing.
+      expect(existsSync(missFile())).toBe(false);
+    });
+
+    it('creates the gapsDir if it does not exist yet', async () => {
+      const nested = join(gapsDir, 'sub', 'nested');
+      await knowledgeRecall(tempDir, { query: 'deep dir test' }, nested);
+      const misses = readFileSync(join(nested, 'recall-miss.jsonl'), 'utf8');
+      expect(misses).toContain('deep dir test');
     });
   });
 });

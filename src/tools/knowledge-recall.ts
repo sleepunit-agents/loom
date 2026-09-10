@@ -4,7 +4,7 @@
  * Two detail tiers:
  *   'full'  — whole entity pages with citations (the synthesis unit).
  *             Stamps last_accessed / hit_count via queryPages — the usage
- *             signal the Phase-4 expansion engine depends on.
+ *             signal the Phase-4 expansion engine reads.
  *   'index' — one compact entry per page (slug, domain, sourcing, anchor,
  *             snippet). Does NOT stamp access: appearing in a listing is
  *             not a read.
@@ -13,7 +13,17 @@
  * (no query). Full output is size-guarded — once the budget is spent,
  * remaining pages degrade to index entries instead of blowing the
  * tool-result limit. Never surfaces archived pages.
+ *
+ * Miss logging: when gapsDir is set, every zero-result query (and every
+ * slug lookup that finds nothing) is appended to
+ * `${gapsDir}/recall-miss.jsonl` as a structured record. The knowledge-mine
+ * script reads that file alongside transcript clusters — so gaps Art tried
+ * to recall but couldn't surface become a second signal channel for the
+ * expansion engine. The append is best-effort; a write failure never
+ * disrupts the caller.
  */
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { createKnowledgeBackend } from '../backends/index.js';
 import type { KnowledgePageWithCitations } from '../backends/types.js';
 
@@ -42,6 +52,36 @@ export interface KnowledgeRecallInput {
  * typical MCP tool-result caps, with room for the citations and framing.
  */
 const FULL_OUTPUT_CHAR_BUDGET = 24_000;
+
+/**
+ * Append one recall-miss entry to `${gapsDir}/recall-miss.jsonl`.
+ *
+ * Called when a query returns zero results or a slug lookup finds nothing.
+ * The write is best-effort — failures are silently swallowed so a disk or
+ * permission error never disrupts the caller's recall.
+ *
+ * Entry shape:
+ *   query  — the natural-language query string, or null for slug lookups
+ *   slug   — the exact slug that was looked up, or null for query searches
+ *   at     — ISO 8601 UTC timestamp
+ */
+function appendRecallMiss(
+  gapsDir: string | undefined,
+  miss: { query?: string; slug?: string },
+): void {
+  if (!gapsDir || (!miss.query && !miss.slug)) return;
+  try {
+    mkdirSync(gapsDir, { recursive: true });
+    const entry = JSON.stringify({
+      query: miss.query ?? null,
+      slug: miss.slug ?? null,
+      at: new Date().toISOString(),
+    });
+    appendFileSync(join(gapsDir, 'recall-miss.jsonl'), entry + '\n', 'utf8');
+  } catch {
+    // Never let a miss-log failure surface to the caller.
+  }
+}
 
 /** Max characters of body shown per index entry snippet. */
 const SNIPPET_LENGTH = 200;
@@ -97,6 +137,7 @@ function formatIndexEntry(page: KnowledgePageWithCitations, showVerified = false
 export async function knowledgeRecall(
   contextDir: string,
   input: KnowledgeRecallInput,
+  gapsDir?: string,
 ): Promise<string> {
   const detail = input.detail ?? (input.query ? 'full' : 'index');
 
@@ -106,6 +147,7 @@ export async function knowledgeRecall(
     if (input.slug) {
       const peek = await backend.getPage(input.slug);
       if (!peek) {
+        appendRecallMiss(gapsDir, { slug: input.slug });
         return `No knowledge page found for slug \`${input.slug}\`.`;
       }
       if (peek.status === 'archived') {
@@ -134,6 +176,10 @@ export async function knowledgeRecall(
 
     if (pages.length === 0) {
       const q = input.query ? `"${input.query}"` : '(no query)';
+      // Log query misses only — browsing (no query given) is not a named gap.
+      if (input.query) {
+        appendRecallMiss(gapsDir, { query: input.query });
+      }
       return `No knowledge pages found for ${q}.`;
     }
 
