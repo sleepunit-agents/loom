@@ -17,6 +17,7 @@ import { resolveDefaultContextPath } from '../config.js';
 import { pathSegmentError } from '../path-safety.js';
 import { digestForContext } from '../backends/salience.js';
 import { tapeForContext } from '../backends/episodes.js';
+import { readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
 
 async function readOptional(path: string): Promise<string | null> {
   try {
@@ -130,8 +131,10 @@ export async function loadIdentity(
         tape,
       );
     }
-  } catch {
-    // the tape must never block identity load
+  } catch (tapeErr) {
+    // The tape must never block identity load, but a failure here means the
+    // episode store may be broken — record it so the next body sees a warning.
+    recordFailure(contextDir, tapeErr);
   }
 
   // Boot digest — the salience-tiered view of episodic memory, so a fresh sleeve
@@ -217,6 +220,18 @@ export async function loadIdentity(
     if (adapter) {
       parts.push(adapter);
     }
+  }
+
+  // Recorder health warning (t-562) — appended LAST so it is closest to the
+  // model's first reply. Only shown when the episode recorder has failed
+  // FAILURE_THRESHOLD consecutive times. Best-effort: ledger read errors are
+  // silently ignored so the health check never blocks identity load.
+  try {
+    const health = readHealth(contextDir);
+    const warning = warningBlock(health);
+    if (warning) parts.push(warning);
+  } catch {
+    // health ledger read must never block identity load
   }
 
   return parts.join('\n\n---\n\n');

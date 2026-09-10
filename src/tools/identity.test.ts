@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadIdentity } from './identity.js';
+import { FAILURE_THRESHOLD } from '../backends/recorder-health.js';
 
 describe('loadIdentity', () => {
   let tempDir: string;
@@ -305,5 +306,85 @@ describe('loadIdentity — path-segment validation', () => {
     const result = await loadIdentity(tempDir, 'loom');
     expect(result).toContain('# Project: loom');
     expect(result).toContain('Loom project brief');
+  });
+});
+
+describe('loadIdentity — recorder health warning (t-562)', () => {
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'loom-recorder-health-'));
+    await writeFile(join(tempDir, 'IDENTITY.md'), 'I am Art.');
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('omits the warning block when no health ledger exists', async () => {
+    const result = await loadIdentity(tempDir);
+    expect(result).not.toContain('Recorder Health Warning');
+  });
+
+  it('omits the warning block when failures are below the threshold', async () => {
+    const health = {
+      consecutiveFailures: FAILURE_THRESHOLD - 1,
+      failingSince: '2026-09-10T01:00:00.000Z',
+      lastError: 'SQLITE_BUSY',
+      lastSuccess: null,
+    };
+    await writeFile(
+      join(tempDir, 'recorder-health.json'),
+      JSON.stringify(health),
+      'utf-8',
+    );
+    const result = await loadIdentity(tempDir);
+    expect(result).not.toContain('Recorder Health Warning');
+  });
+
+  it('appends the warning block when failures reach the threshold', async () => {
+    const health = {
+      consecutiveFailures: FAILURE_THRESHOLD,
+      failingSince: '2026-09-10T01:00:00.000Z',
+      lastError: 'SQLITE_BUSY: database is locked',
+      lastSuccess: '2026-09-09T23:00:00.000Z',
+    };
+    await writeFile(
+      join(tempDir, 'recorder-health.json'),
+      JSON.stringify(health),
+      'utf-8',
+    );
+    const result = await loadIdentity(tempDir);
+    expect(result).toContain('⚠️ Recorder Health Warning');
+    expect(result).toContain(`${FAILURE_THRESHOLD} consecutive`);
+    expect(result).toContain('2026-09-10T01:00:00.000Z');
+    expect(result).toContain('SQLITE_BUSY');
+  });
+
+  it('warning is appended after the identity block (placed last in output)', async () => {
+    const health = {
+      consecutiveFailures: FAILURE_THRESHOLD,
+      failingSince: '2026-09-10T01:00:00.000Z',
+      lastError: 'disk full',
+      lastSuccess: null,
+    };
+    await writeFile(
+      join(tempDir, 'recorder-health.json'),
+      JSON.stringify(health),
+      'utf-8',
+    );
+    const result = await loadIdentity(tempDir);
+    const identityPos = result.indexOf('I am Art.');
+    const warningPos = result.indexOf('Recorder Health Warning');
+    expect(identityPos).toBeGreaterThanOrEqual(0);
+    expect(warningPos).toBeGreaterThan(identityPos);
+  });
+
+  it('still loads identity when health ledger contains malformed JSON', async () => {
+    await writeFile(join(tempDir, 'recorder-health.json'), '{not valid json', 'utf-8');
+    const result = await loadIdentity(tempDir);
+    // Malformed ledger → treated as healthy → no warning
+    expect(result).toContain('I am Art.');
+    expect(result).not.toContain('Recorder Health Warning');
   });
 });
