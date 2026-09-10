@@ -47,11 +47,11 @@
   "author": "Art E Fish + Jonathan Barket",
   "license": "AGPL-3.0-or-later",
   "dependencies": {
-    "@anush008/tokenizers": "0.0.0",
+    "@anush008/tokenizers": "0.6.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.3",
-    "onnxruntime-node": "1.21.0",
+    "onnxruntime-node": "1.29.0",
     "preact": "^10.29.8",
     "sqlite-vec": "^0.1.9",
     "tar": "^7.5.22",
