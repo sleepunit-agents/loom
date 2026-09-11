@@ -49,6 +49,50 @@ describe('loom knowledge', () => {
       expect(stdout).toMatch(/sourced/i);
     });
 
+    it('writes when --context-dir precedes the subcommand (t-665)', async () => {
+      // The help text calls --context-dir global. It used to be honoured
+      // only AFTER the subcommand; in front of it the process fell through
+      // to the MCP stdio server, read an empty stdin and exited 0 having
+      // written nothing. Assert the page is really there, not just exit 0
+      // — exit 0 was exactly what the broken form returned.
+      const write = await runCliCaptured([
+        '--context-dir', tempDir,
+        'knowledge', 'write',
+        '--slug', 'flag-first',
+        '--title', 'Flag First',
+        '--domain', 'test/dispatch',
+        '--body', 'written through the flag-first form',
+        '--citation', JSON.stringify({
+          claim: 'flag-first writes',
+          source_kind: 'web',
+          source_locator: 'https://example.invalid/t-665',
+          excerpt: 'flag-first writes',
+        }),
+      ]);
+      expect(write.code).toBe(0);
+      expect(write.stdout).toMatch(/flag-first/);
+
+      const read = await runCliCaptured(
+        ['knowledge', 'recall', 'flag-first form', '--context-dir', tempDir, '--json'],
+      );
+      expect(read.code).toBe(0);
+      const pages = JSON.parse(read.stdout) as Array<{ slug: string }>;
+      expect(pages.map((pg) => pg.slug)).toContain('flag-first');
+    });
+
+    it('rejects an invalid write in the flag-first position (t-665)', async () => {
+      // The same argv minus the citation. The broken form exited 0 here
+      // too: it never reached validation at all.
+      const { code } = await runCliCaptured([
+        '--context-dir', tempDir,
+        'knowledge', 'write',
+        '--title', 'No Citation',
+        '--domain', 'test/dispatch',
+        '--body', 'no citation supplied',
+      ]);
+      expect(code).not.toBe(0);
+    });
+
     it('marks page provisional with conversation-only citation', async () => {
       const { stdout, code } = await runCliCaptured([
         'knowledge', 'write',

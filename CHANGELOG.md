@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--context-dir` (and the other global flags) now work in front of the
+  subcommand, as the help text has always claimed.** `loom --context-dir DIR
+  knowledge write …` used to route to the stdio MCP server instead of the CLI:
+  the entry point dispatched on `argv[2]`, which was `--context-dir`, not a known
+  verb. The server read an empty stdin and exited 0, so a *write* verb reported
+  success having never entered the write path — and never even reached argument
+  validation, exiting 0 on an invocation that the working flag order rejects with
+  exit 1. Measured against a disposable context dir: no `knowledge.db` was created
+  and no row was written. Both entry points now resolve the subcommand past any
+  leading global flags, skipping flag values in pairs so `--context-dir recall`
+  still names a directory rather than invoking `recall`. Bare
+  `loom --context-dir DIR` with no subcommand remains the MCP path. (t-665)
+
 ## [0.5.0] - 2026-09-04
 
 ### Changed
