@@ -8,6 +8,7 @@ import { resolveRepoRoot } from '../config.js';
 import type { IOStreams } from './io.js';
 import { realStreams } from './io.js';
 import { SUBCOMMANDS } from './subcommands.js';
+import { firstNonGlobalIndex } from './args.js';
 
 const TOP_HELP = `Usage: loom <command> [options]
 
@@ -47,7 +48,12 @@ async function readVersion(): Promise<string> {
 }
 
 export async function runCli(argv: string[], io: IOStreams = realStreams()): Promise<number> {
-  const first = argv[0];
+  // The subcommand is the first token that is not a leading global flag,
+  // so the flags the help text calls global work in front of it too. When
+  // it is already at argv[0] — the overwhelmingly common form — subIdx is
+  // 0 and every line below behaves exactly as it did before.
+  const subIdx = firstNonGlobalIndex(argv);
+  const first = argv[subIdx];
 
   if (first === '--help' || first === '-h' || first === undefined) {
     io.stdout(TOP_HELP);
@@ -64,7 +70,9 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   }
 
   const sub = first;
-  const rest = argv.slice(1);
+  // Drop only the subcommand token; the globals that preceded it stay in
+  // argv so each command's own extractGlobalFlags still sees them.
+  const rest = [...argv.slice(0, subIdx), ...argv.slice(subIdx + 1)];
   switch (sub) {
     case 'wake': {
       const { run } = await import('./wake.js');

@@ -2,10 +2,16 @@
 /**
  * Loom — CLI + stdio MCP entry point.
  *
- * When argv[2] is a known CLI subcommand or --help/--version, routes to
- * src/cli/index.ts. Otherwise (or if argv is empty / only flags), falls
- * through to the MCP stdio server so existing .mcp.json configs keep
- * working.
+ * When the first non-global token is a known CLI subcommand or
+ * --help/--version, routes to src/cli/index.ts. Otherwise (or if argv is
+ * empty / only flags), falls through to the MCP stdio server so existing
+ * .mcp.json configs keep working.
+ *
+ * "First non-global token", not argv[2]: --context-dir and friends are
+ * documented as global flags, so `loom --context-dir DIR knowledge write`
+ * has to reach the CLI. Routing on argv[2] alone sent it to the stdio
+ * server instead, which read an empty stdin and exited 0 — a write verb
+ * reporting success having never entered the write path (t-665).
  *
  * Configure via environment variables:
  *   LOOM_CONTEXT_DIR         — path to identity/memory directory (required)
@@ -20,11 +26,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createLoomServer } from './server.js';
 import { resolveContextDir } from './config.js';
 import { SUBCOMMANDS } from './cli/subcommands.js';
+import { firstNonGlobalIndex } from './cli/args.js';
 
 const CLI_KEYWORDS: ReadonlySet<string> = new Set(SUBCOMMANDS);
 
 function isCliInvocation(argv: string[]): boolean {
-  const first = argv[2];
+  const args = argv.slice(2);
+  const first = args[firstNonGlobalIndex(args)];
   if (first === undefined) return false;
   if (first === '--help' || first === '-h') return true;
   if (first === '--version' || first === '-V') return true;
