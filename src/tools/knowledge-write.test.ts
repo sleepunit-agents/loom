@@ -96,6 +96,36 @@ describe('knowledgeWrite', () => {
     }
   });
 
+  it('repo citation on a world-class domain stays sourced, not internal (t-660)', async () => {
+    // A world-class page (domain does NOT start with "ours/") with a repo citation
+    // must NOT be classified as internal — repo citations only trigger internal for ours/ pages.
+    const result = await knowledgeWrite(tempDir, {
+      domain: 'programming/github',
+      title: 'GitHub Actions run — what it records about what it tested',
+      body: 'GitHub Actions records the ref, SHA, and workflow file on each run.',
+      citations: [
+        {
+          claim: 'Actions records ref and SHA on each run',
+          source_kind: 'repo',
+          source_locator: 'https://github.com/actions/checkout/blob/main/action.yml',
+          excerpt: 'ref: inputs.ref',
+        },
+      ],
+    });
+
+    expect(result).toMatch(/Sourcing: sourced/);
+    expect(result).not.toMatch(/internal/i);
+
+    const backend = createKnowledgeBackend(tempDir);
+    try {
+      const page = await backend.getPage('github-actions-run-what-it-records-about-what-it-tested');
+      expect(page).not.toBeNull();
+      expect(page!.sourcing).toBe('sourced');
+    } finally {
+      backend.close();
+    }
+  });
+
   it('returns error when no citations provided', async () => {
     const result = await knowledgeWrite(tempDir, {
       domain: 'test',

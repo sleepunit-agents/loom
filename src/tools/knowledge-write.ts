@@ -52,15 +52,20 @@ function slugify(title: string): string {
 /**
  * §E1: Epistemic gate.
  * - conversation-only → provisional (both classes).
- * - any repo citation → internal (ours/ class; repo = git path/commit/ref).
- * - any web citation, no repo → sourced (world/ default).
+ * - ours/ domain + any repo citation → internal (ours/ class artifact; repo = git path/commit/ref).
+ * - any web/repo citation on a non-ours/ domain → sourced (world/ default).
+ *
+ * NOTE: repo citations on world-class pages (domain does NOT start with "ours/") are treated
+ * as sourced, not internal. A citation to github.com/someone-else/project is a world source.
+ * Only citations to our own repos, combined with an ours/ domain, signal an internal artifact.
  */
 function determineSourcing(
   citations: KnowledgeWriteInput['citations'],
+  domain: string,
 ): 'sourced' | 'provisional' | 'internal' {
   if (citations.length === 0) return 'provisional';
   if (citations.every((c) => c.source_kind === 'conversation')) return 'provisional';
-  if (citations.some((c) => c.source_kind === 'repo')) return 'internal';
+  if (domain.startsWith('ours/') && citations.some((c) => c.source_kind === 'repo')) return 'internal';
   return 'sourced';
 }
 
@@ -81,7 +86,7 @@ export async function knowledgeWrite(
     return 'Error: could not derive a slug from the title. Provide an explicit slug.';
   }
 
-  const sourcing = determineSourcing(input.citations);
+  const sourcing = determineSourcing(input.citations, input.domain);
   const backend = createKnowledgeBackend(contextDir);
   try {
     const result = await backend.writePage({
