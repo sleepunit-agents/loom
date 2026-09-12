@@ -44,7 +44,14 @@ export { isCliInvocation };
 async function main() {
   if (isCliInvocation(process.argv)) {
     const { runCli } = await import('./cli/index.js');
-    process.exit(await runCli(process.argv.slice(2)));
+    const code = await runCli(process.argv.slice(2));
+    // Drain stdout before exiting — without this, large outputs (e.g.
+    // `loom memory list --json` on a big store) truncate at 64 KiB when
+    // piped because process.exit() tears down the stream before the OS
+    // buffer drains (t-198). process.stdout.write('', cb) fires after all
+    // prior writes have been handed to the OS.
+    process.stdout.write('', () => process.exit(code));
+    return;
   }
   const contextDir = resolveContextDir();
   const { server } = createLoomServer({ contextDir });
