@@ -591,8 +591,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     'title/domain follow the write, citations always appended with exact-duplicate dedup — safe to re-send.\n' +
     'Epistemic gate (§E1):\n' +
     '  • conversation-only citations → provisional (both classes).\n' +
-    '  • any repo citation → internal (ours/ class; repo = git path / commit / live-system probe).\n' +
-    '  • any web citation, no repo → sourced (world/ default).\n' +
+    '  • ours/ domain + any repo citation → internal (ours/ class artifact; repo = git path / commit / live-system probe).\n' +
+    '  • any web/repo citation on a non-ours/ domain → sourced (world/ default).\n' +
+    '  NOTE: repo citations on world-class pages (domain not starting with "ours/") are treated as sourced, not internal.\n' +
+    '  A citation to github.com/someone-else/project is a world source.\n' +
     'World filing test: knowledge must be true independent of Jonathan. For our own artifacts use ours/.',
     {
       title: z.string().describe('Page title — the entity name (e.g. "Mutable Instruments Rings") or artifact name (e.g. "breakbrain density model")'),
@@ -620,13 +622,14 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         claim: z.string().describe('The assertion this citation supports'),
         source_kind: z.enum(['web', 'loom_memory', 'conversation', 'repo']).describe(
           'web = external URL; loom_memory = opaque memory ref; conversation = session distillation; ' +
-          'repo = git repo path / commit / live-system probe (ours/ class)',
+          'repo = git repo path / commit / live-system probe (signals internal only when domain is ours/; ' +
+          'on world-class pages, treated as sourced)',
         ),
         source_locator: z.string().optional().describe('URL, memory ref, session ID, or repo path + commit hash'),
         excerpt: z.string().describe('Inline supporting quote or repo excerpt — link-rot insurance (max 4 KB)'),
       })).describe(
         'Support citations. At least one required. ' +
-        'All-conversation → provisional. Any repo → internal (ours/). Any web → sourced.',
+        'All-conversation → provisional. ours/ domain + repo → internal. Any web or repo on non-ours/ → sourced.',
       ),
       created_by: z.string().optional().describe(
         'ours/ class: who created or last owned this artifact (e.g. "art", "jonathan"). ' +
