@@ -126,6 +126,44 @@ describe('knowledgeWrite', () => {
     }
   });
 
+  it('repo citation stays sourced when ours/ is in the domain but not its prefix (t-718)', async () => {
+    const result = await knowledgeWrite(tempDir, {
+      domain: 'programming/ours/tools',
+      title: 'Ours not as prefix',
+      body: 'A repo-cited page whose domain contains ours without being in the ours/ class.',
+      citations: [
+        {
+          claim: 'the repo records it',
+          source_kind: 'repo',
+          source_locator: 'https://github.com/actions/checkout/blob/main/action.yml',
+          excerpt: 'ref: inputs.ref',
+        },
+      ],
+    });
+
+    expect(result).toMatch(/Sourcing: sourced/);
+    expect(result).not.toMatch(/internal/i);
+  });
+
+  it('repo citation stays sourced when the domain starts with ours but not ours/ (t-718)', async () => {
+    const result = await knowledgeWrite(tempDir, {
+      domain: 'oursource/tools',
+      title: 'Ours without the slash',
+      body: 'A repo-cited page whose domain contains ours without being in the ours/ class.',
+      citations: [
+        {
+          claim: 'the repo records it',
+          source_kind: 'repo',
+          source_locator: 'https://github.com/actions/checkout/blob/main/action.yml',
+          excerpt: 'ref: inputs.ref',
+        },
+      ],
+    });
+
+    expect(result).toMatch(/Sourcing: sourced/);
+    expect(result).not.toMatch(/internal/i);
+  });
+
   it('returns error when no citations provided', async () => {
     const result = await knowledgeWrite(tempDir, {
       domain: 'test',
