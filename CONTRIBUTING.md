@@ -8,7 +8,8 @@
   <email>`). Use `git commit -s`. The DCO is the Developer Certificate
   of Origin 1.1 — you're asserting you have the right to submit the
   change, nothing more. See https://developercertificate.org.
-  This includes merge commits you make (`git pull`, `git merge`); the
+  This includes merge commits you make (`git pull --signoff`,
+  `git merge --signoff`); the
   only exemption is a merge GitHub itself commits ("Update branch", or
   resolving conflicts in the web editor). CI fails a PR with any commit
   missing the line (`scripts/check-signoff.sh`).

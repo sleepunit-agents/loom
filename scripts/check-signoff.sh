@@ -10,11 +10,13 @@
 # resolution), which nobody can sign. Anyone can set that committer email to
 # slip a merge past this; accepted, because anyone can also type a sign-off.
 # The check catches a forgotten sign-off; it does not stop a false one.
+# It checks the PR's commits, not what lands on main: a squash merge copies
+# their messages into one body, where the sign-offs need not be trailers.
 # Exit 0 pass, 1 fail, 2 usage; any git error fails the check (exit 128),
 # never passes it. Tests: scripts/check-signoff.test.ts.
 set -euo pipefail
 
-fix_hint='Sign off with `git commit -s` (or `git commit --amend -s --no-edit`; `git rebase --signoff BASE` for a branch).'
+fix_hint='Sign off with `git commit -s` (`git merge --signoff` / `git pull --signoff` for a merge; `git commit --amend -s --no-edit` to fix the last commit; `git rebase --signoff BASE` for a branch without merges).'
 
 # stdin: a commit message. Succeeds when it has a well-formed sign-off trailer.
 signed_off() {

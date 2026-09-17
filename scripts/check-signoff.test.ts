@@ -114,6 +114,18 @@ describe('check-signoff --message', () => {
     expect(check('--message', unsigned)).toBe(1);
   });
 
+  it('rejects a sign-off that is not in the trailers', () => {
+    const inBody = join(dir, 'in-body.txt');
+    writeFileSync(inBody, `subject\n\n${SIGNED}\n\nmore prose after it\n`);
+    expect(check('--message', inBody)).toBe(1);
+  });
+
+  it("accepts the editor's comment block below the trailers, as the hook receives it", () => {
+    const edited = join(dir, 'edited.txt');
+    writeFileSync(edited, `subject\n\n${SIGNED}\n\n# Please enter the commit message for your changes.\n`);
+    expect(check('--message', edited)).toBe(0);
+  });
+
   it('exits 2 on usage errors', () => {
     expect(check()).toBe(2);
     expect(check('--range', 'HEAD')).toBe(2);
