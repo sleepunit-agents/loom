@@ -8,6 +8,14 @@
   <email>`). Use `git commit -s`. The DCO is the Developer Certificate
   of Origin 1.1 — you're asserting you have the right to submit the
   change, nothing more. See https://developercertificate.org.
+  This includes merge commits you make (`git pull --signoff`,
+  `git merge --signoff`); the
+  only exemption is a merge GitHub itself commits ("Update branch", or
+  resolving conflicts in the web editor). CI fails a PR with any commit
+  missing the line (`scripts/check-signoff.sh`).
+  To catch it before you push, enable the local hook once per clone:
+  `git config core.hooksPath .githooks` (this replaces any hooks you keep
+  in `.git/hooks`).
 - No CLA. No copyright assignment. You keep your copyright; you license
   it to the project under AGPL.
 
@@ -73,8 +81,8 @@ this case.
 - No new external dependencies without a prior issue — loom's
   portability is load-bearing.
 - Tests sit alongside source as `*.test.ts` (Vitest).
-- Commit messages: imperative mood, one-line subject under 72 chars,
-  optional body explaining "why" not "what".
+- Commit messages: imperative mood, one-line subject, optional body
+  explaining "why" not "what".
 
 ## License, relitigated
 

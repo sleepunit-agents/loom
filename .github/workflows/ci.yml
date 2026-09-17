@@ -10,6 +10,23 @@ permissions:
   contents: read
 
 jobs:
+  signoff:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # From the base branch's current tip, not base.sha: a re-run or a
+      # stale event would otherwise count main's own commits as the PR's.
+      - name: Every commit in the PR is signed off
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-signoff.sh --range "origin/$BASE_REF" "$HEAD_SHA"
+
   test:
     name: build + test
     runs-on: ubuntu-latest
