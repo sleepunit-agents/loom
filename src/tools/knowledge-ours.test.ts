@@ -46,6 +46,23 @@ describe('ours/ knowledge class', () => {
     expect(result).toMatch(/ours\/art-ops/);
   });
 
+  it('repo citation to someone else\'s repo on an ours/ domain is still internal (t-718)', async () => {
+    // The check reads domain and source_kind only, never the locator.
+    const result = await knowledgeWrite(tempDir, {
+      title: 'checkout action notes',
+      domain: 'ours/art-ops',
+      body: 'How our CI uses actions/checkout.',
+      citations: [{
+        claim: 'checkout takes a ref input',
+        source_kind: 'repo',
+        source_locator: 'https://github.com/actions/checkout/blob/main/action.yml',
+        excerpt: 'ref:',
+      }],
+    });
+
+    expect(result).toMatch(/Sourcing: internal/);
+  });
+
   it('stores and retrieves created_by and version', async () => {
     await knowledgeWrite(tempDir, {
       title: 'breakbrain density model',
