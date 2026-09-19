@@ -56,14 +56,15 @@ function slugify(title: string): string {
  * - any web/repo citation on a non-ours/ domain → sourced (world/ default).
  *
  * NOTE: repo citations on world-class pages (domain does NOT start with "ours/") are treated
- * as sourced, not internal. A citation to github.com/someone-else/project is a world source.
- * Only citations to our own repos, combined with an ours/ domain, signal an internal artifact.
+ * as sourced, not internal.
+ * The check is on the domain and source_kind only, never on the locator: any repo-kind citation
+ * (ours or someone else's) on a domain that starts with "ours/" makes the page internal.
+ * knowledgeWrite rejects an empty citation list before calling this.
  */
 function determineSourcing(
   citations: KnowledgeWriteInput['citations'],
   domain: string,
 ): 'sourced' | 'provisional' | 'internal' {
-  if (citations.length === 0) return 'provisional';
   if (citations.every((c) => c.source_kind === 'conversation')) return 'provisional';
   if (domain.startsWith('ours/') && citations.some((c) => c.source_kind === 'repo')) return 'internal';
   return 'sourced';
