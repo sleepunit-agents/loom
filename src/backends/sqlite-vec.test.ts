@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteVecBackend } from './sqlite-vec.js';
+import { SqliteVecBackend, bufToF32 } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
 
 /**
@@ -28,6 +28,28 @@ function makeKeywordEmbedder(): EmbeddingProvider {
     embedBatch: vi.fn(async (ts: string[]) => ts.map(encode)),
   };
 }
+
+describe('bufToF32', () => {
+  it('returns a Float32Array with the correct values for an aligned buffer', () => {
+    const floats = [1.0, 2.0, 3.0, 4.0];
+    const buf = Buffer.from(new Float32Array(floats).buffer);
+    expect(buf.byteOffset % 4).toBe(0);
+    const result = bufToF32(buf);
+    expect(Array.from(result)).toEqual(floats);
+  });
+
+  it('handles an unaligned Buffer without throwing (t-330)', () => {
+    const floats = [1.0, 2.0, 3.0, 4.0];
+    // Allocate with a 1-byte prefix so byteOffset=1 is guaranteed non-4-aligned.
+    // Write each float manually with writeFloatLE to avoid alignment constraints.
+    const pool = Buffer.allocUnsafe(floats.length * 4 + 1);
+    const view = pool.subarray(1);
+    for (let i = 0; i < floats.length; i++) view.writeFloatLE(floats[i], i * 4);
+    expect(view.byteOffset % 4).not.toBe(0);
+    const result = bufToF32(view);
+    expect(Array.from(result)).toEqual(floats);
+  });
+});
 
 describe('SqliteVecBackend', () => {
   let tmpDir: string;
@@ -764,6 +786,50 @@ describe('SqliteVecBackend', () => {
 
       const report = await backend.audit({ similarityThreshold: 0.5 });
       expect(report.duplicates.length).toBeLessThanOrEqual(1);
+    });
+
+    it('sorts duplicate pairs by descending similarity before truncating (t-333)', async () => {
+      // Insert a cluster of 4 "loom alpha" memories (very similar) plus one
+      // "loom gamma" memory that will form a lower-similarity pair with the
+      // cluster. With maxDuplicates=1 the reported pair must be the highest-
+      // similarity one, not the pair discovered first by insertion order.
+      for (let i = 0; i < 4; i++) {
+        await backend.remember({
+          category: 'project',
+          title: `cluster-${i}`,
+          content: 'loom alpha',
+        });
+      }
+      await backend.remember({
+        category: 'project',
+        title: 'outlier',
+        content: 'loom gamma',
+      });
+
+      const report = await backend.audit({ similarityThreshold: 0.5, maxDuplicates: 1 });
+      expect(report.duplicates).toHaveLength(1);
+      // The single reported pair must be two cluster members (highest similarity),
+      // not a cluster-member/outlier pair (lower similarity).
+      const [pair] = report.duplicates;
+      expect(pair.relevance).toBeGreaterThan(0.9);
+      expect(pair.a.title).toMatch(/^cluster-/);
+      expect(pair.b.title).toMatch(/^cluster-/);
+    });
+
+    it('surfaces cluster members beyond nearest-neighbour (t-333 k>2)', async () => {
+      // Five near-identical memories. With k=2 the old code only found the
+      // single nearest neighbour per memory, making a cluster of 5 appear as
+      // a partial chain. With k=10 all intra-cluster pairs should be findable.
+      for (let i = 0; i < 5; i++) {
+        await backend.remember({
+          category: 'project',
+          title: `cluster-k-${i}`,
+          content: 'loom alpha',
+        });
+      }
+      const report = await backend.audit({ similarityThreshold: 0.5 });
+      // C(5,2) = 10 distinct intra-cluster pairs; we should find more than 1.
+      expect(report.duplicates.length).toBeGreaterThan(1);
     });
   });
 
