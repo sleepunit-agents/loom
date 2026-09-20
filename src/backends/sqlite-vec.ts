@@ -467,11 +467,7 @@ export class SqliteVecBackend implements MemoryBackend {
         .prepare('SELECT embedding FROM vec_memories WHERE rowid = ?')
         .get(BigInt(row.id)) as { embedding: Buffer } | undefined;
       if (!vecRow) throw new Error(`findSimilar: embedding missing for ${input.ref}`);
-      queryVector = Array.from(new Float32Array(
-        vecRow.embedding.buffer,
-        vecRow.embedding.byteOffset,
-        vecRow.embedding.byteLength / 4,
-      ));
+      queryVector = Array.from(bufToF32(vecRow.embedding));
     } else {
       queryVector = await (this.embedder.embedQuery?.(input.text!) ??
         this.embedder.embed(input.text!));
@@ -537,27 +533,38 @@ export class SqliteVecBackend implements MemoryBackend {
       }
     }
 
-    // Duplicate detection: for each memory, MATCH its stored embedding,
-    // take the top non-self neighbour, keep pairs above threshold, dedupe.
-    const duplicates: DuplicatePair[] = [];
+    // Duplicate detection: batch-load all embeddings in one query, then
+    // for each memory find its k-nearest neighbours (k=10 to surface
+    // clusters, not just the single closest), collect ALL pairs above the
+    // threshold, sort by descending similarity, and truncate to maxDuplicates.
+    // One DB query per row (the MATCH) instead of two (fetch + MATCH).
+    const allPairs: DuplicatePair[] = [];
     const seenPair = new Set<string>();
     const pairKey = (a: number, b: number) =>
       a < b ? `${a}:${b}` : `${b}:${a}`;
     const byIdRow = new Map(rows.map((r) => [r.id, r]));
 
+    // Load all stored embeddings in one pass so the inner loop only runs
+    // the MATCH query rather than a fetch-then-match pair.
+    const allEmbedRows = this.db
+      .prepare('SELECT rowid, embedding FROM vec_memories')
+      .all() as { rowid: number | bigint; embedding: Buffer }[];
+    const embeddingMap = new Map<number, Buffer>();
+    for (const er of allEmbedRows) {
+      embeddingMap.set(Number(er.rowid), er.embedding);
+    }
+
+    const kNeighbours = 10;
     const vecStmt = this.db.prepare(
       `SELECT rowid, distance FROM vec_memories
-       WHERE embedding MATCH ? AND k = 2
+       WHERE embedding MATCH ? AND k = ${kNeighbours}
        ORDER BY distance`,
     );
 
     for (const r of rows) {
-      if (duplicates.length >= maxDuplicates) break;
-      const stored = this.db
-        .prepare('SELECT embedding FROM vec_memories WHERE rowid = ?')
-        .get(BigInt(r.id)) as { embedding: Buffer } | undefined;
-      if (!stored) continue;
-      const hits = vecStmt.all(stored.embedding) as VecMatch[];
+      const emb = embeddingMap.get(r.id);
+      if (!emb) continue;
+      const hits = vecStmt.all(emb) as VecMatch[];
       for (const h of hits) {
         if (h.rowid === r.id) continue;
         const relevance = 1 - h.distance;
@@ -567,14 +574,18 @@ export class SqliteVecBackend implements MemoryBackend {
         seenPair.add(key);
         const other = byIdRow.get(h.rowid);
         if (!other) continue;
-        duplicates.push({
+        allPairs.push({
           a: { ref: r.ref, title: r.title },
           b: { ref: other.ref, title: other.title },
           relevance,
         });
-        if (duplicates.length >= maxDuplicates) break;
       }
     }
+
+    // Sort highest-similarity pairs first so the truncation keeps the worst
+    // duplicates, not just the ones discovered first by insertion order.
+    allPairs.sort((x, y) => y.relevance - x.relevance);
+    const duplicates = allPairs.slice(0, maxDuplicates);
 
     return {
       totalMemories: rows.length,
@@ -916,11 +927,7 @@ export class SqliteVecBackend implements MemoryBackend {
     for (const id of ids) {
       const row = stmt.get(BigInt(id)) as { embedding: Buffer } | undefined;
       if (!row) continue;
-      out.set(id, new Float32Array(
-        row.embedding.buffer,
-        row.embedding.byteOffset,
-        row.embedding.byteLength / 4,
-      ));
+      out.set(id, bufToF32(row.embedding));
     }
     return out;
   }
@@ -980,6 +987,14 @@ export class SqliteVecBackend implements MemoryBackend {
 // ── Helpers ──
 
 const EMPTY_VECTOR: Float32Array = new Float32Array(0);
+
+/** Float32Array view of a Buffer; copies only when alignment forces it. */
+export function bufToF32(buf: Buffer): Float32Array {
+  if (buf.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0) {
+    return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / Float32Array.BYTES_PER_ELEMENT);
+  }
+  return new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+}
 
 function clamp01(x: number): number {
   if (!Number.isFinite(x)) return DEFAULT_DIVERSITY;
