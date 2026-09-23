@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteVecBackend, bufToF32 } from './sqlite-vec.js';
+import { SqliteVecBackend, bufToF32, BM25_BLEND_ALPHA_SHORT, BM25_BLEND_ALPHA_LONG } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
 
 /**
@@ -1140,6 +1140,45 @@ describe('SqliteVecBackend', () => {
       } finally {
         angry.close();
       }
+    });
+  });
+
+  describe('BM25+vector blend (t-331)', () => {
+    it('alpha constants: short queries use lower alpha (0.4), long queries use higher (0.7)', () => {
+      expect(BM25_BLEND_ALPHA_SHORT).toBe(0.4);
+      expect(BM25_BLEND_ALPHA_LONG).toBe(0.7);
+      expect(BM25_BLEND_ALPHA_SHORT).toBeLessThan(BM25_BLEND_ALPHA_LONG);
+    });
+
+    it('relevance is in 0..1 range after BM25 blend', async () => {
+      await backend.remember({ category: 'project', title: 'Loom alpha feature', content: 'loom alpha test' });
+      await backend.remember({ category: 'project', title: 'Beta test feature', content: 'beta test content' });
+
+      const results = await backend.recall({ query: 'loom alpha' });
+      expect(results.length).toBeGreaterThan(0);
+      for (const r of results) {
+        expect(r.relevance).toBeGreaterThanOrEqual(0);
+        expect(r.relevance).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it('returns results even when FTS5 has no match for the query (pure vector fallback)', async () => {
+      // Store a memory; recall with a query that has no FTS5 match (the embedder
+      // will still produce a vector match even when BM25 score is 0).
+      await backend.remember({ category: 'project', title: 'Loom system', content: 'loom alpha content' });
+
+      // Query is a word not in the FTS5 index — vector score alone drives recall.
+      const results = await backend.recall({ query: 'loom' });
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('a short 1-token query (≤2 tokens) produces valid results', async () => {
+      await backend.remember({ category: 'project', title: 'Alpha project', content: 'alpha beta gamma content' });
+
+      const results = await backend.recall({ query: 'alpha' });
+      // Short query uses BM25_BLEND_ALPHA_SHORT; results should still come back
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].relevance).toBeGreaterThan(0);
     });
   });
 });

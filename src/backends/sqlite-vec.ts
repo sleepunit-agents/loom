@@ -73,6 +73,15 @@ export interface SqliteVecConfig {
 /** Body snapshots retained per memory; oldest pruned beyond this cap (mirrors knowledge wing). */
 const MAX_REVISIONS_PER_MEMORY = 10;
 
+/**
+ * BM25+vector blend alpha weights (t-331).
+ * score = alpha * vector_score + (1-alpha) * bm25_score
+ * Short queries (≤2 tokens) shift weight toward lexical so exact-keyword searches
+ * aren't drowned out by semantic near-misses. Long queries lean on the vector.
+ */
+export const BM25_BLEND_ALPHA_SHORT = 0.4;
+export const BM25_BLEND_ALPHA_LONG = 0.7;
+
 interface MemoryRow {
   id: number;
   uuid: string;
@@ -189,15 +198,30 @@ export class SqliteVecBackend implements MemoryBackend {
       return true;
     });
 
+    // BM25+vector blend (t-331): compute FTS5 BM25 scores for the candidate set
+    // and blend with the vector cosine similarity scores.
+    // Short queries (≤2 tokens) shift weight toward BM25 — exact keyword searches
+    // must not be drowned out by semantic near-misses.
+    const tokens = input.query.trim().split(/\s+/).filter((t) => t.length > 0);
+    const alpha = tokens.length <= 2 ? BM25_BLEND_ALPHA_SHORT : BM25_BLEND_ALPHA_LONG;
+    const bm25Scores = this.getBm25Scores(input.query, candidates.map((c) => c.mem.id));
+
+    // Blend and re-sort. Vector score = 1 - cosine distance (0..1, higher = better).
+    // BM25 score is already normalized to 0..1 by getBm25Scores.
+    const blended = candidates.map((c) => ({
+      ...c,
+      blendedScore: alpha * (1 - c.distance) + (1 - alpha) * (bm25Scores.get(c.mem.id) ?? 0),
+    })).sort((a, b) => b.blendedScore - a.blendedScore);
+
     // MMR only re-orders/selects among candidates that already passed the
     // filters; with <= limit candidates it returns them in relevance order.
-    let hits = candidates;
+    let hits = blended;
     let diversityDrops = 0;
-    if (diversity > 0 && candidates.length > limit) {
-      const vectors = this.loadVectors(candidates.map((c) => c.mem.id));
-      const pool = candidates.map((hit) => ({
+    if (diversity > 0 && blended.length > limit) {
+      const vectors = this.loadVectors(blended.map((c) => c.mem.id));
+      const pool = blended.map((hit) => ({
         hit,
-        relevance: 1 - hit.distance,
+        relevance: hit.blendedScore,
         vector: vectors.get(hit.mem.id) ?? EMPTY_VECTOR,
       }));
       const picked = mmrSelect(pool, limit, diversity);
@@ -205,7 +229,7 @@ export class SqliteVecBackend implements MemoryBackend {
       diversityDrops = picked.diversityDrops;
     }
 
-    const results = hits.map((h) => rowToMatch(h.mem, h.distance));
+    const results = hits.map((h) => rowToMatch(h.mem, h.distance, h.blendedScore));
     const hitIds = hits.map((h) => h.mem.id);
 
     if (hitIds.length > 0) {
@@ -907,6 +931,52 @@ export class SqliteVecBackend implements MemoryBackend {
     return out;
   }
 
+  /**
+   * Compute normalized BM25 scores (0..1) for a set of memory rowids.
+   *
+   * Runs an FTS5 MATCH for `query` and normalizes the raw BM25 values (which are
+   * negative: more negative = more relevant) to a 0..1 range within the matched
+   * set. Memory ids not in the FTS5 results get score 0 (pure vector wins for them).
+   * Returns an empty map on FTS5 error so the caller gracefully degrades to vectors.
+   *
+   * Single-letter tokens like 'I' are quoted so FTS5 never stopwords them.
+   */
+  private getBm25Scores(query: string, rowIds: number[]): Map<number, number> {
+    if (rowIds.length === 0) return new Map();
+    const tokens = query.trim().split(/\s+/).filter((t) => t.length > 0);
+    if (tokens.length === 0) return new Map();
+
+    const ftsQuery = tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' ');
+
+    let rows: Array<{ rowid: number; score: number }>;
+    try {
+      rows = this.db.prepare(
+        'SELECT rowid, bm25(fts_memories) AS score FROM fts_memories WHERE fts_memories MATCH ?',
+      ).all(ftsQuery) as Array<{ rowid: number; score: number }>;
+    } catch {
+      return new Map(); // FTS5 query error — skip blend for this call
+    }
+
+    if (rows.length === 0) return new Map();
+
+    // Normalize |bm25| to 0..1 within the matched set: best match → 1, worst → 0.
+    const rowIdSet = new Set(rowIds);
+    const relevant = rows.filter((r) => rowIdSet.has(r.rowid));
+    if (relevant.length === 0) return new Map();
+
+    const absScores = relevant.map((r) => Math.abs(r.score));
+    const maxAbs = Math.max(...absScores);
+    const minAbs = Math.min(...absScores);
+    const range = maxAbs - minAbs;
+
+    const out = new Map<number, number>();
+    for (let i = 0; i < relevant.length; i++) {
+      const normalized = range > 0 ? (absScores[i] - minAbs) / range : 1.0;
+      out.set(relevant[i].rowid, normalized);
+    }
+    return out;
+  }
+
   private observeRecall(obs: RecallObservation): void {
     if (!this.config.onRecall) return;
     try {
@@ -1003,7 +1073,7 @@ function toVecBuffer(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
 }
 
-function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
+function rowToMatch(row: MemoryRow, distance: number, blendedScore?: number): MemoryMatch {
   return {
     path: row.ref,
     title: row.title,
@@ -1011,7 +1081,8 @@ function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
     project: row.project ?? undefined,
     created: row.created,
     content: row.content,
-    relevance: 1 - distance,
+    // Use the blended score when available; fall back to pure vector similarity.
+    relevance: blendedScore ?? (1 - distance),
     lastAccessed: row.last_accessed ?? undefined,
     ttl: row.ttl ?? undefined,
     expiresAt: row.expires_at ?? undefined,

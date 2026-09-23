@@ -150,6 +150,7 @@ describe('pendingMigrations', () => {
     expect(pending.map((m) => m.id)).toEqual([
       'add_archived', 'add_archive_note', 'idx_memories_archived', 'add_salience', 'add_proposals',
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
+      'add_fts_memories',
     ]);
   });
 

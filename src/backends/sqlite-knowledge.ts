@@ -308,14 +308,38 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       const db = this.ensureOpen();
       const limit = input.limit ?? 10;
 
+      // BM25 path: when a query is given and not in stale-first verification mode.
+      // Uses FTS5 for relevance ranking; falls back to LIKE when FTS5 returns nothing
+      // so partial/substring matches still surface (backward compat).
+      if (input.query && !input.sortByVerified) {
+        // Never filter by token length — 'I' and 'II' are semantically meaningful
+        // (e.g. "Digitakt I" vs "Digitakt II") and must never be stopworded or dropped.
+        const tokens = input.query.trim().split(/\s+/).filter((t) => t.length > 0);
+        const rows = this.queryPagesBm25(db, tokens, input, limit);
+
+        if (rows.length > 0 && input.stampAccess !== false) {
+          const now = new Date().toISOString();
+          const stamp = db.prepare(
+            'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
+          );
+          const tx = db.transaction((ids: number[]) => {
+            for (const id of ids) stamp.run(now, id);
+          });
+          retryWrite(() => tx(rows.map((r) => r.id)));
+        }
+
+        return Promise.resolve(rows.map((page) => ({
+          ...page,
+          citations: this.fetchCitationsForPage(db, page.id),
+        })));
+      }
+
+      // Non-query / sort-by-verified path: original LIKE + sort logic.
       const clauses: string[] = [];
       const params: unknown[] = [];
 
       if (input.query) {
-        // Split into tokens on whitespace. Never filter by token length —
-        // single-letter tokens like 'I' and roman numerals like 'II' are
-        // semantically meaningful (e.g. "Digitakt I" vs "Digitakt II") and
-        // must never be stopworded or dropped.
+        // sort_by_verified + query: LIKE filter, stale-first sort (verification engine).
         const tokens = input.query.trim().split(/\s+/).filter((t) => t.length > 0);
         for (const token of tokens) {
           const likePattern = `%${token}%`;
@@ -371,6 +395,81 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     } catch (e) {
       return Promise.reject(e);
     }
+  }
+
+  /**
+   * BM25-ranked search via FTS5. Falls back to LIKE when FTS5 returns 0 results
+   * so partial/substring matches still surface (the tokenizer produces whole-word
+   * tokens; LIKE catches the prefix/infix cases FTS5 misses).
+   *
+   * FTS5 BM25 is negative (more negative = more relevant); ORDER BY ASC gives the
+   * best matches first. Single-letter tokens like 'I' are quoted verbatim —
+   * unicode61 never stopwords them, preserving "Digitakt I" vs "Digitakt II" distinction.
+   */
+  private queryPagesBm25(
+    db: Database,
+    tokens: string[],
+    input: KnowledgeQueryInput,
+    limit: number,
+  ): KnowledgePage[] {
+    // Build domain/status filter applied in the outer query after the FTS5 JOIN.
+    const filterClauses: string[] = [];
+    const filterParams: unknown[] = [];
+    if (input.excludeStatus) {
+      filterClauses.push('p.status != ?');
+      filterParams.push(input.excludeStatus);
+    }
+    if (input.domain) {
+      filterClauses.push('(p.domain = ? OR p.domain LIKE ?)');
+      filterParams.push(input.domain, `${input.domain}/%`);
+    }
+    const filterWhere = filterClauses.length > 0 ? `AND ${filterClauses.join(' AND ')}` : '';
+
+    // Each token is double-quoted so FTS5 treats it as a single-word phrase term,
+    // never as a prefix operator or boolean keyword. The implicit AND of multiple
+    // quoted terms means all tokens must appear in the document.
+    const ftsQuery = tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' ');
+
+    try {
+      const rows = db.prepare(`
+        SELECT p.*
+        FROM pages p
+        JOIN (
+          SELECT rowid, bm25(fts_pages) AS bm25_score
+          FROM fts_pages
+          WHERE fts_pages MATCH ?
+        ) f ON p.id = f.rowid
+        WHERE 1=1 ${filterWhere}
+        ORDER BY f.bm25_score ASC
+        LIMIT ?
+      `).all(ftsQuery, ...filterParams, limit) as KnowledgePage[];
+
+      if (rows.length > 0) return rows;
+    } catch {
+      // FTS5 query error or index not ready — fall through to LIKE.
+    }
+
+    // LIKE fallback: covers substring matches FTS5 tokenization wouldn't produce.
+    const likeClauses: string[] = [];
+    const likeParams: unknown[] = [];
+    for (const token of tokens) {
+      const p = `%${token}%`;
+      likeClauses.push('(title LIKE ? OR body LIKE ? OR domain LIKE ?)');
+      likeParams.push(p, p, p);
+    }
+    if (input.excludeStatus) {
+      likeClauses.push('status != ?');
+      likeParams.push(input.excludeStatus);
+    }
+    if (input.domain) {
+      likeClauses.push('(domain = ? OR domain LIKE ?)');
+      likeParams.push(input.domain, `${input.domain}/%`);
+    }
+    const likeWhere = likeClauses.length > 0 ? `WHERE ${likeClauses.join(' AND ')}` : '';
+    likeParams.push(limit);
+    return db.prepare(
+      `SELECT * FROM pages ${likeWhere} ORDER BY hit_count DESC, updated DESC, created DESC LIMIT ?`,
+    ).all(...likeParams) as KnowledgePage[];
   }
 
   archivePage(input: KnowledgeArchiveInput): Promise<KnowledgeArchiveResult> {
@@ -1076,6 +1175,24 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       `CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain)`,
       `CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug)`,
       `CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status)`,
+      // FTS5 virtual table for BM25 lexical scoring (t-331: BM25+vector blend).
+      // External-content table backed by pages (must come AFTER pages is created).
+      // unicode61 tokenizer (FTS5 default) never stopwords short tokens — 'I' and
+      // 'II' are distinct terms, preserving "Digitakt I" vs "Digitakt II" precision.
+      `CREATE VIRTUAL TABLE IF NOT EXISTS fts_pages
+       USING fts5(title, body, domain, content='pages', content_rowid='id')`,
+      `CREATE TRIGGER IF NOT EXISTS fts_pages_ai AFTER INSERT ON pages BEGIN
+         INSERT INTO fts_pages(rowid, title, body, domain)
+         VALUES (new.id, new.title, new.body, new.domain);
+       END`,
+      `CREATE TRIGGER IF NOT EXISTS fts_pages_ad AFTER DELETE ON pages BEGIN
+         INSERT INTO fts_pages(fts_pages, rowid) VALUES ('delete', old.id);
+       END`,
+      `CREATE TRIGGER IF NOT EXISTS fts_pages_au AFTER UPDATE ON pages BEGIN
+         INSERT INTO fts_pages(fts_pages, rowid) VALUES ('delete', old.id);
+         INSERT INTO fts_pages(rowid, title, body, domain)
+         VALUES (new.id, new.title, new.body, new.domain);
+       END`,
       `CREATE TABLE IF NOT EXISTS citations (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
         page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
@@ -1108,6 +1225,13 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     ];
     for (const sql of statements) {
       this.db!.prepare(sql).run();
+    }
+    // Rebuild FTS5 index if out of sync — happens on first open after the FTS5 table
+    // was added to an existing DB (pages exist but fts_pages is empty).
+    const ftsCount = (this.db!.prepare('SELECT COUNT(*) AS c FROM fts_pages').get() as { c: number }).c;
+    const pagesCount = (this.db!.prepare('SELECT COUNT(*) AS c FROM pages').get() as { c: number }).c;
+    if (ftsCount !== pagesCount) {
+      this.db!.prepare("INSERT INTO fts_pages(fts_pages) VALUES ('rebuild')").run();
     }
     // Idempotent migrations for existing DBs (ALTER ADD COLUMN has no IF NOT EXISTS).
     const pageCols = (this.db!.prepare('PRAGMA table_info(pages)').all() as Array<{ name: string }>).map((c) => c.name);

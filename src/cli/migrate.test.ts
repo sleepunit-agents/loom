@@ -105,6 +105,27 @@ function buildCurrentDb(dir: string): string {
   db.prepare(`
     CREATE VIRTUAL TABLE vec_memories USING vec0(embedding float[4] distance_metric=cosine)
   `).run();
+  // add_fts_memories migration (t-331)
+  db.prepare(`
+    CREATE VIRTUAL TABLE fts_memories
+    USING fts5(title, content, content='memories', content_rowid='id')
+  `).run();
+  db.prepare(`
+    CREATE TRIGGER fts_memories_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO fts_memories(rowid, title, content) VALUES (new.id, new.title, new.content);
+    END
+  `).run();
+  db.prepare(`
+    CREATE TRIGGER fts_memories_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO fts_memories(fts_memories, rowid) VALUES ('delete', old.id);
+    END
+  `).run();
+  db.prepare(`
+    CREATE TRIGGER fts_memories_au AFTER UPDATE ON memories BEGIN
+      INSERT INTO fts_memories(fts_memories, rowid) VALUES ('delete', old.id);
+      INSERT INTO fts_memories(rowid, title, content) VALUES (new.id, new.title, new.content);
+    END
+  `).run();
   db.close();
   return dbPath;
 }

@@ -307,6 +307,47 @@ describe('knowledgeRecall', () => {
     });
   });
 
+  // ── BM25 ranking: higher-relevance results rank first ──────────────────────
+  //
+  // The term "resonator" appears in one page's title and once in another's body.
+  // BM25 (with length normalisation) should rank the title-match higher because
+  // the term frequency is higher relative to the document length.
+  // The test is intentionally conservative: it only asserts ordering, not scores.
+
+  describe('BM25 ranking', () => {
+    it('ranks a title-match above a body-only match for the same term', async () => {
+      // "resonator" in title → short doc, high TF weight → ranks first
+      await seedPage('title-match', 'test', 'Resonator Module', 'A short description.');
+      // "resonator" buried in a long body → lower TF/length weight → ranks second
+      const longBody = `${'Unrelated context. '.repeat(30)}Contains the word resonator somewhere in a long block of text.`;
+      await seedPage('body-match', 'test', 'Some Module', longBody);
+
+      const result = await knowledgeRecall(tempDir, { query: 'resonator', detail: 'index' });
+      const titlePos = result.indexOf('title-match');
+      const bodyPos = result.indexOf('body-match');
+      expect(titlePos).toBeGreaterThan(-1);
+      expect(bodyPos).toBeGreaterThan(-1);
+      expect(titlePos).toBeLessThan(bodyPos); // title-match ranks first
+    });
+
+    it('short query (single token) still finds correct pages', async () => {
+      await seedPage('rings', 'music/eurorack', 'Rings', 'Physical modelling resonator.');
+      await seedPage('other', 'test', 'Unrelated', 'Nothing to do with anything.');
+
+      const result = await knowledgeRecall(tempDir, { query: 'rings' });
+      expect(result).toMatch(/Rings/);
+      expect(result).not.toMatch(/Unrelated/);
+    });
+
+    it('falls back to LIKE for partial tokens not in FTS5 index', async () => {
+      // "resonat" is not a whole word — FTS5 won't match but LIKE fallback will
+      await seedPage('rings', 'music/eurorack', 'Rings', 'Physical modelling resonator for eurorack.');
+
+      const result = await knowledgeRecall(tempDir, { query: 'resonat' });
+      expect(result).toMatch(/Rings/); // LIKE fallback finds partial match
+    });
+  });
+
   describe('sort_by_verified', () => {
     it('orders never-verified then stalest-first and shows verified stamps', async () => {
       await seedPage('fresh', 'test', 'Fresh', 'Recently verified page.');

@@ -177,6 +177,41 @@ export const MIGRATIONS: readonly Migration[] = [
       ).run();
     },
   },
+  {
+    id: 'add_fts_memories',
+    description: 'FTS5 virtual table + sync triggers for BM25 lexical scoring blend (t-331)',
+    pending: (db) => !hasTable(db, 'fts_memories'),
+    run: (db) => {
+      // External-content FTS5 table backed by memories. The unicode61 tokenizer
+      // never stopwords short tokens — 'I', 'II', etc. remain distinct query terms.
+      db.prepare(`
+        CREATE VIRTUAL TABLE fts_memories
+        USING fts5(title, content, content='memories', content_rowid='id')
+      `).run();
+      // Keep FTS5 index in sync with memories table via triggers.
+      db.prepare(`
+        CREATE TRIGGER fts_memories_ai AFTER INSERT ON memories BEGIN
+          INSERT INTO fts_memories(rowid, title, content) VALUES (new.id, new.title, new.content);
+        END
+      `).run();
+      db.prepare(`
+        CREATE TRIGGER fts_memories_ad AFTER DELETE ON memories BEGIN
+          INSERT INTO fts_memories(fts_memories, rowid) VALUES ('delete', old.id);
+        END
+      `).run();
+      db.prepare(`
+        CREATE TRIGGER fts_memories_au AFTER UPDATE ON memories BEGIN
+          INSERT INTO fts_memories(fts_memories, rowid) VALUES ('delete', old.id);
+          INSERT INTO fts_memories(rowid, title, content) VALUES (new.id, new.title, new.content);
+        END
+      `).run();
+      // Populate from existing memories (all rows; archived filter applied at query time).
+      const count = (db.prepare('SELECT COUNT(*) AS c FROM memories').get() as { c: number }).c;
+      if (count > 0) {
+        db.prepare("INSERT INTO fts_memories(fts_memories) VALUES ('rebuild')").run();
+      }
+    },
+  },
 ];
 
 /**
