@@ -356,6 +356,14 @@ export interface KnowledgePageInput {
   verified_at?: string;
   /** The version/date the claims are valid as-of, e.g. "Syntakt OS 1.21" or "as of 2026-05". */
   freshness_anchor?: string;
+  /**
+   * Machine-readable SLA class. When omitted, derived automatically: a
+   * version-anchored page (freshness_anchor matches /v?\d+\.\d+/) → 'software';
+   * device-domain page (domain starts with 'music/gear' or 'monitor/hardware') →
+   * 'device'; all others → 'default'. SLAs: device=7d, software=14d, default=30d.
+   * Pass explicitly to override the derived value.
+   */
+  sla_class?: 'device' | 'software' | 'default';
   citations?: KnowledgeCitationInput[];
   /**
    * How `body` combines with an existing page on upsert.
@@ -401,6 +409,12 @@ export interface KnowledgePage {
   verified_at?: string | null;
   /** The version/date the claims are valid as-of, e.g. "Syntakt OS 1.21". */
   freshness_anchor?: string | null;
+  /**
+   * Machine-readable SLA class: 'device' (7d), 'software' (14d), 'default' (30d).
+   * Derived from freshness_anchor shape and domain on write; may be overridden
+   * explicitly via KnowledgePageInput.sla_class.
+   */
+  sla_class: string;
   /** ours/ class: who created or last owned this artifact (e.g. "art", "jonathan"). */
   created_by?: string | null;
   /** ours/ class: artifact version or revision tag (e.g. "v2", "2026-08-19"). */

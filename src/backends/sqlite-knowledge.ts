@@ -140,8 +140,8 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         citationsDeduped = 0;
 
         const existing = db.prepare(
-          'SELECT id, uuid, title, body FROM pages WHERE slug = ?',
-        ).get(input.slug) as { id: number; uuid: string; title: string; body: string } | undefined;
+          'SELECT id, uuid, title, body, freshness_anchor FROM pages WHERE slug = ?',
+        ).get(input.slug) as { id: number; uuid: string; title: string; body: string; freshness_anchor: string | null } | undefined;
 
         uuid = existing?.uuid ?? randomUUID();
         pageId = existing?.id ?? 0;
@@ -150,6 +150,10 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           ? `${existing.body}\n\n${input.body}`
           : input.body;
         if (existing) enforcePageBodyCap(newBody);
+
+        // Derive sla_class from the final anchor + domain; caller may override.
+        const finalAnchor = input.freshness_anchor ?? existing?.freshness_anchor ?? null;
+        const slaClass: string = input.sla_class ?? deriveSlaClass(finalAnchor, input.domain);
 
         if (existing) {
           // Replace-writes destroy the stored body — snapshot it first so the
@@ -164,13 +168,14 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           // (Creation still stamps write time — the page was just synthesized
           // against its sources.)
           // created_by / version are preserved across upserts when omitted.
+          // sla_class is always re-derived from the final anchor + domain.
           db.prepare(
-            `UPDATE pages SET title = ?, domain = ?, body = ?, sourcing = ?, verified_at = COALESCE(?, verified_at), freshness_anchor = COALESCE(?, freshness_anchor), created_by = COALESCE(?, created_by), version = COALESCE(?, version), updated = ? WHERE id = ?`,
-          ).run(title, input.domain, newBody, sourcing, input.verified_at ?? null, input.freshness_anchor ?? null, input.created_by ?? null, input.version ?? null, timestamp, pageId);
+            `UPDATE pages SET title = ?, domain = ?, body = ?, sourcing = ?, verified_at = COALESCE(?, verified_at), freshness_anchor = COALESCE(?, freshness_anchor), created_by = COALESCE(?, created_by), version = COALESCE(?, version), sla_class = ?, updated = ? WHERE id = ?`,
+          ).run(title, input.domain, newBody, sourcing, input.verified_at ?? null, input.freshness_anchor ?? null, input.created_by ?? null, input.version ?? null, slaClass, timestamp, pageId);
         } else {
           const result = db.prepare(
-            `INSERT INTO pages (uuid, slug, title, domain, body, sourcing, provenance, verified_at, freshness_anchor, created_by, version, created, updated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO pages (uuid, slug, title, domain, body, sourcing, provenance, verified_at, freshness_anchor, sla_class, created_by, version, created, updated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             uuid,
             input.slug,
@@ -181,6 +186,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             input.provenance ?? null,
             input.verified_at ?? timestamp,
             input.freshness_anchor ?? null,
+            slaClass,
             input.created_by ?? null,
             input.version ?? null,
             timestamp,
@@ -613,11 +619,11 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         return Promise.reject(new Error('mergePages: source_slugs must not be empty'));
       }
 
-      type PageRow = { id: number; body: string; verified_at: string | null; freshness_anchor: string | null };
+      type PageRow = { id: number; body: string; verified_at: string | null; freshness_anchor: string | null; domain: string };
       type SourceRow = PageRow & { slug: string };
 
       const targetRow = db.prepare(
-        'SELECT id, body, verified_at, freshness_anchor FROM pages WHERE slug = ?',
+        'SELECT id, body, verified_at, freshness_anchor, domain FROM pages WHERE slug = ?',
       ).get(input.target_slug) as PageRow | undefined;
 
       if (!targetRow) {
@@ -699,10 +705,11 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           citationsMoved += after;
         }
 
-        // Update target: verified_at, freshness_anchor, updated.
+        // Update target: verified_at, freshness_anchor, sla_class, updated.
+        const mergedSlaClass = deriveSlaClass(freshnessAnchor ?? null, targetRow.domain);
         db.prepare(
-          'UPDATE pages SET verified_at = ?, freshness_anchor = ?, updated = ? WHERE id = ?',
-        ).run(maxVerifiedAt, freshnessAnchor ?? null, timestamp, targetRow.id);
+          'UPDATE pages SET verified_at = ?, freshness_anchor = ?, sla_class = ?, updated = ? WHERE id = ?',
+        ).run(maxVerifiedAt, freshnessAnchor ?? null, mergedSlaClass, timestamp, targetRow.id);
 
         // Optionally append loser bodies to target body.
         if (input.append_loser_bodies) {
@@ -824,11 +831,11 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       }
 
       // Validate every slug before stamping anything — no partial batches.
-      type PageRow = { id: number; status: string; body: string };
-      const rows: Array<{ id: number; slug: string; body: string }> = [];
+      type PageRow = { id: number; status: string; body: string; freshness_anchor: string | null; domain: string };
+      const rows: Array<{ id: number; slug: string; body: string; freshness_anchor: string | null; domain: string }> = [];
       for (const slug of slugs) {
         const page = db.prepare(
-          'SELECT id, status, body FROM pages WHERE slug = ?',
+          'SELECT id, status, body, freshness_anchor, domain FROM pages WHERE slug = ?',
         ).get(slug) as PageRow | undefined;
 
         if (!page) {
@@ -839,15 +846,17 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             `verifyPages: page '${slug}' is archived — restore it before verifying`,
           ));
         }
-        rows.push({ id: page.id, slug, body: page.body });
+        rows.push({ id: page.id, slug, body: page.body, freshness_anchor: page.freshness_anchor, domain: page.domain });
       }
 
       let noted = false;
       const tx = db.transaction(() => {
         for (const row of rows) {
+          const finalAnchor = input.freshness_anchor ?? row.freshness_anchor;
+          const slaClass = deriveSlaClass(finalAnchor, row.domain);
           db.prepare(
-            'UPDATE pages SET verified_at = ?, freshness_anchor = COALESCE(?, freshness_anchor) WHERE id = ?',
-          ).run(verifiedAt, input.freshness_anchor ?? null, row.id);
+            'UPDATE pages SET verified_at = ?, freshness_anchor = COALESCE(?, freshness_anchor), sla_class = ? WHERE id = ?',
+          ).run(verifiedAt, input.freshness_anchor ?? null, slaClass, row.id);
 
           if (input.note) {
             const dateLabel = verifiedAt.slice(0, 10);
@@ -1066,7 +1075,8 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         last_accessed TEXT,
         hit_count     INTEGER NOT NULL DEFAULT 0,
         verified_at   TEXT,
-        freshness_anchor TEXT
+        freshness_anchor TEXT,
+        sla_class     TEXT NOT NULL DEFAULT 'default'
       )`,
       `CREATE INDEX IF NOT EXISTS idx_pages_domain ON pages(domain)`,
       `CREATE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug)`,
@@ -1122,10 +1132,52 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     if (!pageCols.includes('version')) {
       this.db!.prepare('ALTER TABLE pages ADD COLUMN version TEXT').run();
     }
+    // sla_class: machine-readable freshness SLA class (t-434, 2026-09-25).
+    // DEFAULT 'default' covers all rows created before this migration.
+    // Backfill then upgrades rows whose anchor or domain implies a non-default class.
+    if (!pageCols.includes('sla_class')) {
+      this.db!.prepare("ALTER TABLE pages ADD COLUMN sla_class TEXT NOT NULL DEFAULT 'default'").run();
+      // Backfill: re-derive for every existing row.
+      const rows = this.db!.prepare(
+        "SELECT id, freshness_anchor, domain FROM pages",
+      ).all() as Array<{ id: number; freshness_anchor: string | null; domain: string }>;
+      const update = this.db!.prepare("UPDATE pages SET sla_class = ? WHERE id = ?");
+      const backfill = this.db!.transaction(() => {
+        for (const row of rows) {
+          const klass = deriveSlaClass(row.freshness_anchor, row.domain);
+          if (klass !== 'default') {
+            update.run(klass, row.id);
+          }
+        }
+      });
+      backfill();
+    }
   }
 }
 
 // ── Helpers ──
+
+/**
+ * SLA class derivation — deterministic, no model required (t-434).
+ *
+ * Priority:
+ *   1. version-anchored: freshness_anchor matches /v?\d+\.\d+/ → 'software' (14d)
+ *   2. device-domain: domain starts with a known device-domain prefix → 'device' (7d)
+ *   3. else → 'default' (30d)
+ *
+ * Callers may override with KnowledgePageInput.sla_class.
+ */
+const DEVICE_DOMAIN_PREFIXES: readonly string[] = ['music/gear', 'monitor/hardware'];
+const RE_SLA_VERSION = /v?\d+\.\d+/i;
+
+export function deriveSlaClass(
+  anchor: string | null | undefined,
+  domain: string,
+): 'device' | 'software' | 'default' {
+  if (anchor && RE_SLA_VERSION.test(anchor)) return 'software';
+  if (DEVICE_DOMAIN_PREFIXES.some((p) => domain === p || domain.startsWith(`${p}/`))) return 'device';
+  return 'default';
+}
 
 function enforcePageBodyCap(body: string): void {
   if (body.length > MAX_PAGE_BODY_LENGTH) {

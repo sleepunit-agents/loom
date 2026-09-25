@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { SqliteKnowledgeBackend } from './sqlite-knowledge.js';
+import { SqliteKnowledgeBackend, deriveSlaClass } from './sqlite-knowledge.js';
 
 describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
   let tmpDir: string;
@@ -367,6 +367,108 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
       const revisions = await backend.listRevisions('new-slug');
       expect(revisions).toHaveLength(1);
       expect((await backend.getRevision(revisions[0].id))!.body).toBe('One.');
+    });
+  });
+
+  // ─── sla_class derivation (t-434) ────────────────────────────────────────────
+
+  describe('deriveSlaClass', () => {
+    it('returns software for version-anchored pages', () => {
+      expect(deriveSlaClass('Syntakt OS 1.55B', 'music/gear/elektron')).toBe('software');
+      expect(deriveSlaClass('v2.1.263', 'ai/claude-code')).toBe('software');
+      expect(deriveSlaClass('bd 1.2.2', 'ai/agent-orchestration')).toBe('software');
+    });
+
+    it('returns device for device-domain pages without a version anchor', () => {
+      expect(deriveSlaClass('as of 2026', 'music/gear/elektron')).toBe('device');
+      expect(deriveSlaClass(null, 'music/gear')).toBe('device');
+      expect(deriveSlaClass(undefined, 'monitor/hardware')).toBe('device');
+      expect(deriveSlaClass('2026-09-01', 'music/gear/push-3')).toBe('device');
+    });
+
+    it('returns software when version anchor is present even on a device domain (version wins)', () => {
+      expect(deriveSlaClass('Push 3 OS 1.1.0', 'music/gear/ableton/push-3')).toBe('software');
+    });
+
+    it('returns default for date/year anchors outside device domains', () => {
+      expect(deriveSlaClass('as of 2026', 'ai/agent-orchestration')).toBe('default');
+      expect(deriveSlaClass('2026-06-11', 'music/artists')).toBe('default');
+      expect(deriveSlaClass(null, 'ai/claude-code')).toBe('default');
+    });
+  });
+
+  describe('sla_class persistence', () => {
+    it('stores the derived sla_class on create', async () => {
+      await backend.writePage({
+        slug: 'version-page',
+        title: 'version-page',
+        domain: 'music/gear/elektron',
+        body: 'body',
+        freshness_anchor: 'Syntakt OS 1.55B',
+      });
+      expect((await backend.getPage('version-page'))!.sla_class).toBe('software');
+    });
+
+    it('stores device class for device-domain page without version anchor', async () => {
+      await backend.writePage({
+        slug: 'gear-page',
+        title: 'gear-page',
+        domain: 'music/gear/elektron',
+        body: 'body',
+        freshness_anchor: 'as of 2026',
+      });
+      expect((await backend.getPage('gear-page'))!.sla_class).toBe('device');
+    });
+
+    it('defaults to default class', async () => {
+      await seed('plain');
+      expect((await backend.getPage('plain'))!.sla_class).toBe('default');
+    });
+
+    it('re-derives sla_class when freshness_anchor changes on writePage', async () => {
+      await backend.writePage({
+        slug: 'changing',
+        title: 'changing',
+        domain: 'ai/agent-orchestration',
+        body: 'body',
+        freshness_anchor: 'as of 2026',
+      });
+      expect((await backend.getPage('changing'))!.sla_class).toBe('default');
+
+      await backend.writePage({
+        slug: 'changing',
+        title: 'changing',
+        domain: 'ai/agent-orchestration',
+        body: 'body',
+        freshness_anchor: 'bd 1.2.2',
+      });
+      expect((await backend.getPage('changing'))!.sla_class).toBe('software');
+    });
+
+    it('accepts an explicit sla_class override', async () => {
+      await backend.writePage({
+        slug: 'override',
+        title: 'override',
+        domain: 'music/artists',
+        body: 'body',
+        freshness_anchor: 'as of 2026',
+        sla_class: 'device',
+      });
+      expect((await backend.getPage('override'))!.sla_class).toBe('device');
+    });
+
+    it('re-derives sla_class when freshness_anchor changes on verifyPages', async () => {
+      await backend.writePage({
+        slug: 'verify-anchor',
+        title: 'verify-anchor',
+        domain: 'ai/agent-orchestration',
+        body: 'body',
+        freshness_anchor: 'as of 2026',
+      });
+      expect((await backend.getPage('verify-anchor'))!.sla_class).toBe('default');
+
+      await backend.verifyPages({ slug: 'verify-anchor', freshness_anchor: 'v1.2.0' });
+      expect((await backend.getPage('verify-anchor'))!.sla_class).toBe('software');
     });
   });
 });
