@@ -133,7 +133,8 @@ export async function loadIdentity(
     }
   } catch (tapeErr) {
     // The tape must never block identity load, but a failure here means the
-    // episode store may be broken — record it so the next body sees a warning.
+    // episode store may be broken — log it and record it so the next body sees a warning.
+    console.error('[loom:identity] tape read failed:', tapeErr);
     recordFailure(contextDir, tapeErr);
   }
 
