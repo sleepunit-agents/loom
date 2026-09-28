@@ -21,5 +21,6 @@ export async function update(
     return `Memory not found: "${identifier}". Use recall to find the correct reference.`;
   }
 
-  return `Memory updated: ${result.ref}`;
+  const snap = result.snapshotId !== undefined ? ` (snapshot #${result.snapshotId})` : '';
+  return `Memory updated: ${result.ref}${snap}`;
 }

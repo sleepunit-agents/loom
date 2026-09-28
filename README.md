@@ -55,6 +55,14 @@ an agent's persistent state:
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.
+- **`memory_history`** — body-revision history for a memory. `update()` snapshots
+  the displaced body into `memory_revisions` before overwriting it. List a
+  memory's snapshots (id, op, replaced_at, char count), or read one snapshot's
+  full content by `revision_id`. To put a snapshot back, use
+  `memory_revision_restore`.
+- **`memory_revision_restore`** — restore a snapshotted memory body back onto
+  the memory. Snapshots the current body first, so restore is never destructive.
+  Use `memory_history` to list revision IDs before calling this.
 - **`memory_propose` / `memory_proposals` / `memory_ratify` / `memory_reject`** —
   the capture-propose queue: a staging area a background lane drafts memory
   writes into, that Art ratifies before they become canon. A proposal is **not**

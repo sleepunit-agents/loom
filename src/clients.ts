@@ -21,7 +21,7 @@ import { assertSafePathSegment } from './path-safety.js';
 export const TOOLS = [
   'identity', 'dossier', 'remember', 'recall', 'update', 'forget',
   'memory_list', 'memory_prune', 'find_similar', 'memory_audit', 'episodes',
-  'memory_archive', 'memory_restore',
+  'memory_archive', 'memory_restore', 'memory_history', 'memory_revision_restore',
   'memory_propose', 'memory_proposals', 'memory_ratify', 'memory_reject',
   'update_identity', 'bootstrap', 'harness_init', 'harness_describe',
   'knowledge_write', 'knowledge_recall', 'knowledge_maintain',

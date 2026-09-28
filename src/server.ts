@@ -48,6 +48,8 @@ import { knowledgeMerge } from './tools/knowledge-merge.js';
 import { knowledgePurge } from './tools/knowledge-purge.js';
 import { knowledgeVerify } from './tools/knowledge-verify.js';
 import { knowledgeHistory } from './tools/knowledge-history.js';
+import { memoryHistory } from './tools/memory-history.js';
+import { memoryRevisionRestore } from './tools/memory-revision-restore.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -911,6 +913,42 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ slug, revision_id, restore }) => {
       const result = await knowledgeHistory(contextDir, { slug, revision_id, restore });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.tool(
+    'memory_history',
+    'Body-revision history for a memory. update() snapshots the displaced body into ' +
+    'memory_revisions before overwriting it — this tool is the read surface. ' +
+    'Two modes: ref alone lists snapshots (metadata only — id, op, replaced_at, char count); ' +
+    'ref + revision_id reads one snapshot\'s full content. ' +
+    'To put a snapshot back, use memory_revision_restore.',
+    {
+      ref: z.string().describe('Ref of the memory (category/title slug).'),
+      revision_id: z.number().int().positive().optional().describe(
+        'Revision to read (from the listing). Omit to list all revisions.',
+      ),
+    },
+    async ({ ref, revision_id }) => {
+      const result = await memoryHistory(contextDir, { ref, revision_id });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.tool(
+    'memory_revision_restore',
+    'Restore a snapshotted memory body back onto the memory. ' +
+    'Snapshots the current body first, so restore is never destructive. ' +
+    'Use memory_history to list revision IDs before calling this.',
+    {
+      ref: z.string().describe('Ref of the memory (category/title slug).'),
+      revision_id: z.number().int().positive().describe(
+        'Id of the revision to restore (from memory_history listing).',
+      ),
+    },
+    async ({ ref, revision_id }) => {
+      const result = await memoryRevisionRestore(contextDir, { ref, revision_id });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
