@@ -115,7 +115,7 @@ function openMemoriesDb(contextDir: string): Database | null {
   const dbPath = resolveSqliteDbPath(contextDir);
   if (!existsSync(dbPath)) return null;
   const db = new BetterSqlite3(dbPath, { readonly: true });
-  db.pragma('busy_timeout = 0');
+  db.pragma('busy_timeout = 5000');
   return db;
 }
 

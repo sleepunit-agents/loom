@@ -51,6 +51,12 @@ const MAX_REVISIONS_PER_PAGE = 10;
 export interface SqliteKnowledgeConfig {
   /** Absolute path to the knowledge SQLite database file */
   dbPath: string;
+  /**
+   * SQLite busy_timeout in ms — how long to retry a locked write before
+   * surfacing SQLITE_BUSY. Defaults to 5000; pass a small value in tests
+   * that exercise the SQLITE_BUSY path so they don't wait the full window.
+   */
+  busyTimeoutMs?: number;
 }
 
 export class SqliteKnowledgeBackend implements KnowledgeBackend {
@@ -61,10 +67,9 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     // Open in constructor for schema init; caller closes after use.
     this.db = new BetterSqlite3(config.dbPath);
     this.db.pragma('journal_mode = WAL');
-    // Single-writer (c-loom-strictness §single-writer): fail fast on a second
-    // concurrent writer (SQLITE_BUSY) instead of blocking for the 5s default —
-    // see sqlite-vec.ts for the rationale. The knowledge wing shares the policy.
-    this.db.pragma('busy_timeout = 0');
+    // busy_timeout: concurrent sleeves retry brief write-lock windows rather
+    // than failing immediately — see sqlite-vec.ts for the full rationale.
+    this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
     this.db.pragma('user_version = 1');
     this.initSchema();
   }
