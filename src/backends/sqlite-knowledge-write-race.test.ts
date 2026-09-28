@@ -27,8 +27,9 @@ describe('SqliteKnowledgeBackend.writePage — two-connection races', () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'loom-race-'));
     dbPath = join(tmpDir, 'knowledge.db');
-    a = new SqliteKnowledgeBackend({ dbPath });
-    b = new SqliteKnowledgeBackend({ dbPath });
+    // Short timeout so tests that exercise the SQLITE_BUSY path don't wait 5s.
+    a = new SqliteKnowledgeBackend({ dbPath, busyTimeoutMs: 50 });
+    b = new SqliteKnowledgeBackend({ dbPath, busyTimeoutMs: 50 });
   });
 
   afterEach(() => {

@@ -89,7 +89,7 @@ function hasTable(db: Database, table: string): boolean {
 function openProposalsDb(contextDir: string): Database {
   const dbPath = resolveSqliteDbPath(contextDir);
   const db = new BetterSqlite3(dbPath);
-  db.pragma('busy_timeout = 0');
+  db.pragma('busy_timeout = 5000');
   if (!hasTable(db, 'proposals')) runMigrations(db, { strict: false });
   return db;
 }
