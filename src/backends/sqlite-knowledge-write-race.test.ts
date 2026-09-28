@@ -54,7 +54,7 @@ describe('SqliteKnowledgeBackend.writePage — two-connection races', () => {
     let fired = false;
     db.prepare = (sql: string) => {
       const stmt = originalPrepare(sql);
-      if (!sql.includes('SELECT id, uuid, title, body FROM pages')) return stmt;
+      if (!sql.includes('SELECT id, uuid, title, body, freshness_anchor FROM pages')) return stmt;
       const originalGet = stmt.get.bind(stmt);
       stmt.get = (...args: unknown[]) => {
         const row = originalGet(...args);
