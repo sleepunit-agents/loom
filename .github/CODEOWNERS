@@ -1,11 +1,25 @@
 # GitHub CODEOWNERS — LAST matching pattern wins, so the specific rules
 # must come AFTER the wildcard.
+#
+# Review model (2026-09-28, Jonathan): Art and Mark review and merge each
+# other's loom PRs without Jonathan. Either owner's approval satisfies a
+# line, and GitHub never lets an author approve their own PR, so an Art PR
+# needs Mark and a Mark PR needs Art — every merge still gets a reviewer
+# who didn't write it. Work arrives through the `loom` handoff space.
 
-# Default reviewer for all changes.
-*                   @jbarket
+# Default: the two agents.
+*                   @art-e-fish @visual-mark
 
-# Dependency manifests: Art owns these so dependabot bumps don't need
-# Jonathan's click. A PR that touches code as well still matches `*`
-# and therefore still needs him.
+# Carve-outs that still need Jonathan: the ways a merge can destroy
+# memory, open the server, or change who reviews.
+/src/backends/migrations.ts   @jbarket
+/src/cli/migrate.ts           @jbarket
+/src/transport/guards.ts      @jbarket
+/src/transport/http-server.ts @jbarket
+/.github/                     @jbarket
+
+# Dependency manifests: Art alone, so dependabot bumps don't need a
+# second click. A PR that also touches code still matches the code's
+# owners.
 /package.json       @art-e-fish
 /package-lock.json  @art-e-fish
