@@ -55,7 +55,7 @@ export async function memoryHistory(
     );
   } catch (e) {
     return `Error: ${(e as Error).message}`;
-  } finally {
-    backend.close();
   }
+  // No close(): createBackend hands out the shared, process-cached handle.
+  // Closing it here would kill any in-flight call on the same backend.
 }
