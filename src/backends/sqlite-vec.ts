@@ -964,9 +964,33 @@ export class SqliteVecBackend implements MemoryBackend {
     runMigrations(this.db, { strict: true });
   }
 
-  private deleteById(ids: number[]): void {
+  /**
+   * Hard-delete rows by id. Every call is journaled to memory_deletions first
+   * (t-436) — this is the ONLY path that permanently destroys a memory, so it
+   * is the one place that must record what it destroyed. The journal table is
+   * standalone (keyed by ref, no FK to memories) so it survives the delete it
+   * describes.
+   */
+  private deleteById(ids: number[], op: 'forget' | 'prune' = 'forget'): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT ref, category, title, project, content, created
+         FROM memories WHERE id IN (${placeholders})`,
+      )
+      .all(...ids) as {
+      ref: string;
+      category: string;
+      title: string;
+      project: string | null;
+      content: string;
+      created: string;
+    }[];
+    const journalStmt = this.db.prepare(
+      `INSERT INTO memory_deletions (ref, category, title, project, content, created, deleted_at, op)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
     const delMem = this.db.prepare(
       `DELETE FROM memories WHERE id IN (${placeholders})`,
     );
@@ -974,7 +998,20 @@ export class SqliteVecBackend implements MemoryBackend {
       `DELETE FROM vec_memories WHERE rowid IN (${placeholders})`,
     );
     const bigIds = ids.map((n) => BigInt(n));
+    const deletedAt = new Date().toISOString();
     const tx = this.db.transaction(() => {
+      for (const row of rows) {
+        journalStmt.run(
+          row.ref,
+          row.category,
+          row.title,
+          row.project,
+          row.content,
+          row.created,
+          deletedAt,
+          op,
+        );
+      }
       delMem.run(...ids);
       delVec.run(...bigIds);
     });

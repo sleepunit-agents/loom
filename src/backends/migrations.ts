@@ -177,6 +177,34 @@ export const MIGRATIONS: readonly Migration[] = [
       ).run();
     },
   },
+  {
+    id: 'add_memory_deletions',
+    description:
+      'Add memory_deletions table — an append-only journal of every hard delete ' +
+      '(deleteById), so forget()/prune() leave a trace of what was removed and ' +
+      'why (t-436). Standalone, keyed by ref — deliberately NOT a child table of ' +
+      'memories, so it survives the delete it records (that FK-cascade blind spot ' +
+      'is the bug this fixes).',
+    pending: (db) => !hasTable(db, 'memory_deletions'),
+    run: (db) => {
+      db.prepare(`
+        CREATE TABLE memory_deletions (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          ref        TEXT NOT NULL,
+          category   TEXT NOT NULL,
+          title      TEXT NOT NULL,
+          project    TEXT,
+          content    TEXT NOT NULL,
+          created    TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          op         TEXT NOT NULL
+        )
+      `).run();
+      db.prepare(
+        'CREATE INDEX idx_memory_deletions_ref ON memory_deletions(ref)',
+      ).run();
+    },
+  },
 ];
 
 /**

@@ -93,6 +93,33 @@ describe('runMigrations', () => {
     db.close();
   });
 
+  it('creates the memory_deletions journal table on an old-schema DB (t-436)', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'deletions.db'));
+
+    const results = runMigrations(db, { strict: true });
+    const applied = results.filter((r) => r.status === 'applied').map((r) => r.id);
+    expect(applied).toContain('add_memory_deletions');
+
+    const tbl = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_deletions'")
+      .get() as { name: string } | undefined;
+    expect(tbl?.name).toBe('memory_deletions');
+
+    const cols = (db.pragma('table_info(memory_deletions)') as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(
+      expect.arrayContaining([
+        'id', 'ref', 'category', 'title', 'project', 'content', 'created', 'deleted_at', 'op',
+      ]),
+    );
+
+    // Standalone table — no FK to memories, unlike memory_revisions (that
+    // ON DELETE CASCADE is exactly the bug t-436 fixes).
+    const fks = db.pragma('foreign_key_list(memory_deletions)') as unknown[];
+    expect(fks).toHaveLength(0);
+
+    db.close();
+  });
+
   it('skips already-applied migrations (idempotent)', () => {
     const db = openOldSchemaDb(join(tmpDir, 'idm.db'));
     runMigrations(db, { strict: true });
@@ -150,6 +177,7 @@ describe('pendingMigrations', () => {
     expect(pending.map((m) => m.id)).toEqual([
       'add_archived', 'add_archive_note', 'idx_memories_archived', 'add_salience', 'add_proposals',
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
+      'add_memory_deletions',
     ]);
   });
 
