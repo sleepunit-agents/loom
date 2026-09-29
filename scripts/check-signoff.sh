@@ -19,8 +19,14 @@ set -euo pipefail
 fix_hint='Sign off with `git commit -s` (`git merge --signoff` / `git pull --signoff` for a merge; `git commit --amend -s --no-edit` to fix the last commit; `git rebase --signoff BASE` for a branch without merges).'
 
 # stdin: a commit message. Succeeds when it has a well-formed sign-off trailer.
+#
+# --no-divider: without it, a bare "---" line is read as the format-patch
+# divider between message and diff, and everything after it — including a
+# real trailer — is discarded. Dependabot's commits have exactly that shape
+# (body, then "---", then a YAML metadata block, then the sign-off), so the
+# default would drop a sign-off it actually carries.
 signed_off() {
-  git interpret-trailers --parse | grep -qE '^Signed-off-by: [^<>]*[^<> ] <[^<>@ ]+@[^<> ]+>$'
+  git interpret-trailers --parse --no-divider | grep -qE '^Signed-off-by: [^<>]*[^<> ] <[^<>@ ]+@[^<> ]+>$'
 }
 
 case "${1:-}" in
