@@ -51,11 +51,16 @@ describe('c-loom-transport: HTTP daemon', () => {
     await client.close();
   });
 
-  // ac-lt-dispatch-total: unknown tool -> typed error envelope, not a panic
-  it('returns a typed error for an unknown tool (dispatch totality)', async () => {
+  // ac-lt-dispatch-total: unknown tool -> a typed JSON-RPC error, not a panic.
+  // Split-SDK behavior change (t-886): the 1.x McpServer answered an unknown
+  // tool name with a CallToolResult{isError:true}; the 2.x McpServer answers
+  // it at the protocol level (-32602, thrown client-side as McpError) and
+  // reserves isError:true for a known tool whose execution/validation fails
+  // (see the next test). Either way dispatch totality holds — the session
+  // survives and serves the next call — so this asserts the new shape.
+  it('returns a protocol-level error for an unknown tool (dispatch totality)', async () => {
     const client = await connectClient(handle.port, TOKEN);
-    const r = await client.callTool({ name: 'no_such_tool', arguments: {} });
-    expect(r.isError).toBe(true); // typed envelope, never an uncaught throw
+    await expect(client.callTool({ name: 'no_such_tool', arguments: {} })).rejects.toThrow(/no_such_tool/);
     // server still alive for the next call — no panic path
     const ok = await client.callTool({ name: 'recall', arguments: { query: 'x' } });
     expect(textOf(ok)).toMatch(/No memories found/);

@@ -11,7 +11,7 @@ const skillMd = readFileSync(join(repoRoot, 'assets', 'skill', 'SKILL.md'), 'utf
 const serverSrc = readFileSync(join(repoRoot, 'src', 'server.ts'), 'utf-8');
 
 function extractServerTools(): string[] {
-  const matches = [...serverSrc.matchAll(/server\.tool\(\s*['"](\w+)['"]/g)];
+  const matches = [...serverSrc.matchAll(/server\.registerTool\(\s*['"](\w+)['"]/g)];
   return matches.map((m) => m[1]);
 }
 

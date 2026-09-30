@@ -48,8 +48,10 @@
   "license": "AGPL-3.0-or-later",
   "dependencies": {
     "@anush008/tokenizers": "0.0.0",
+    "@modelcontextprotocol/core": "^2.2.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.2.0",
     "better-sqlite3": "^13.0.3",
     "onnxruntime-node": "1.21.0",
     "preact": "^10.29.8",

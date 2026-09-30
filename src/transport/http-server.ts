@@ -16,8 +16,9 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { isInitializeRequest, EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { Readable } from 'node:stream';
+import { WebStandardStreamableHTTPServerTransport, isInitializeRequest } from '@modelcontextprotocol/server';
+import { EmptyResultSchema } from '@modelcontextprotocol/core';
 import { createLoomServer } from '../server.js';
 import {
   assertSafeBind,
@@ -68,6 +69,48 @@ function sendError(res: ServerResponse, status: number, message: string): void {
   res.end(JSON.stringify({ error: message }));
 }
 
+/**
+ * The split 2.x transport speaks Web Standard Request/Response, not node's
+ * (req, res) pair — bridge node:http to it. Only method/url/headers are
+ * needed on the way in: bodies are pre-read/parsed by collectBody and handed
+ * to handleRequest via options.parsedBody, so the Request itself is bodyless.
+ */
+function nodeRequestToWebRequest(req: IncomingMessage): Request {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) headers.append(key, v);
+    } else {
+      headers.set(key, value);
+    }
+  }
+  return new Request(url, { method: req.method, headers });
+}
+
+async function sendWebResponse(res: ServerResponse, webRes: Response): Promise<void> {
+  const headers: Record<string, string> = {};
+  webRes.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+  res.writeHead(webRes.status, headers);
+  if (!webRes.body) {
+    res.end();
+    return;
+  }
+  const nodeStream = Readable.fromWeb(webRes.body as import('node:stream/web').ReadableStream<Uint8Array>);
+  await new Promise<void>((resolve, reject) => {
+    nodeStream.pipe(res);
+    nodeStream.on('end', resolve);
+    nodeStream.on('error', reject);
+    res.on('close', () => {
+      nodeStream.destroy();
+      resolve();
+    });
+  });
+}
+
 const OVERSIZED = Symbol('oversized');
 
 function collectBody(req: IncomingMessage, cap: number): Promise<string | typeof OVERSIZED> {
@@ -95,9 +138,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
 
   // One transport (+ its connected server) per live MCP session.
-  const sessions = new Map<string, StreamableHTTPServerTransport>();
+  const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
-  async function openSession(): Promise<StreamableHTTPServerTransport> {
+  async function openSession(): Promise<WebStandardStreamableHTTPServerTransport> {
     const { server } = createLoomServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir });
     // Fires AFTER the initialize handshake completes — getClientVersion() is
     // populated here (it is not yet at onsessioninitialized). Logging the peer
@@ -107,7 +150,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       const peer = server.server.getClientVersion();
       process.stderr.write(`loom: peer connected client=${JSON.stringify(peer ?? null)}\n`);
     };
-    const transport = new StreamableHTTPServerTransport({
+    const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
@@ -168,9 +211,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (req.method === 'GET' || req.method === 'DELETE') {
         const existing = sessionId ? sessions.get(sessionId) : undefined;
         if (existing) {
-          return existing.handleRequest(req, res).catch((e: unknown) =>
-            sendError(res, 500, `internal: ${(e as Error).message}`),
-          );
+          return existing
+            .handleRequest(nodeRequestToWebRequest(req))
+            .then((webRes) => sendWebResponse(res, webRes))
+            .catch((e: unknown) => sendError(res, 500, `internal: ${(e as Error).message}`));
         }
         if (sessionId) {
           res.writeHead(404, { 'content-type': 'application/json' });
@@ -212,7 +256,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
       // Dispatch totality + typed envelopes (unknown tool / bad args -> JSON-RPC
       // error) are the SDK server's job from here — never a raw throw out.
-      await transport.handleRequest(req, res, parsed);
+      const webRes = await transport.handleRequest(nodeRequestToWebRequest(req), { parsedBody: parsed });
+      await sendWebResponse(res, webRes);
     })().catch((e: unknown) => sendError(res, 500, `internal: ${(e as Error).message}`));
   });
 
