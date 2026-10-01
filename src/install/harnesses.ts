@@ -53,7 +53,12 @@ export const INSTALL_TARGETS: Readonly<Record<InstallTargetKey, InstallTarget>> 
     mcpConfigHint: '~/.codex/config.toml',
     invoke: 'use the loom-setup skill',
     restart: 'restart the Codex session',
-    toolPrefix: 'mcp_loom_',
+    // mcp__loom__, not mcp_loom_: a live Codex session's own tool catalog
+    // names it mcp__loom__identity (t-397, verified 2026-09-05 by mark).
+    // Matches the MCP-native double-underscore convention claude-code and
+    // gemini-cli also use — single-underscore is a Hermes/OpenClaw/NemoClaw
+    // quirk (docs/archive/specs/2026-04-20-filesystem-injection-design.md).
+    toolPrefix: 'mcp__loom__',
   },
   'gemini-cli': {
     key: 'gemini-cli',
@@ -62,7 +67,9 @@ export const INSTALL_TARGETS: Readonly<Record<InstallTargetKey, InstallTarget>> 
     mcpConfigHint: '~/.gemini/settings.json',
     invoke: 'use the loom-setup skill',
     restart: 'exit and restart Gemini CLI',
-    toolPrefix: 'mcp_loom_',
+    // mcp__loom__: same MCP-native convention as codex above; src/clients.ts
+    // and the injection adapter already treat gemini-cli this way (t-397).
+    toolPrefix: 'mcp__loom__',
   },
   'opencode': {
     key: 'opencode',

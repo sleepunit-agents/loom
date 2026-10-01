@@ -26,12 +26,13 @@ describe('INSTALL_TARGETS', () => {
 
   it('codex lives under ~/.agents/skills', () => {
     const t = getInstallTarget('codex');
-    expect(t.toolPrefix).toBe('mcp_loom_');
+    expect(t.toolPrefix).toBe('mcp__loom__');
     expect(resolveSkillPath(t, '/home/u')).toBe('/home/u/.agents/skills/loom-setup.md');
   });
 
   it('gemini-cli shares ~/.agents/skills with codex', () => {
     const t = getInstallTarget('gemini-cli');
+    expect(t.toolPrefix).toBe('mcp__loom__');
     expect(resolveSkillPath(t, '/home/u')).toBe('/home/u/.agents/skills/loom-setup.md');
   });
 
