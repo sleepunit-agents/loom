@@ -200,15 +200,22 @@ export const MIGRATIONS: readonly Migration[] = [
       db.prepare('ALTER TABLE memories ADD COLUMN uniq TEXT').run();
       db.prepare('CREATE INDEX idx_memories_uniq ON memories(uniq)').run();
 
-      // Backfill: compute uniq for every existing row so future restatements
-      // of pre-t-335 content also reheat. Rows are processed oldest-first;
-      // if multiple existing rows already share the same normalized content
-      // (an unresolved historical duplicate), only the first gets the uniq
+      // Backfill: compute uniq for every existing ACTIVE row so future
+      // restatements of pre-t-335 content also reheat. Archived rows are
+      // skipped entirely (left NULL) — remember()'s lookup only ever matches
+      // uniq against archived = 0, so giving an archived row a uniq value
+      // would do nothing except let it silently claim the key ahead of an
+      // active row with identical content (processed later, by id) that
+      // actually needs it. Rows are processed oldest-first; if multiple
+      // active rows already share the same normalized content (an
+      // unresolved historical duplicate), only the first gets the uniq
       // value — later ones are left NULL rather than silently pointing a
       // future reheat at an arbitrary survivor. Those clusters are exactly
       // what memory_audit + the new merge verb are for.
       const rows = db
-        .prepare('SELECT id, category, project, title, content FROM memories ORDER BY id ASC')
+        .prepare(
+          'SELECT id, category, project, title, content FROM memories WHERE archived = 0 ORDER BY id ASC',
+        )
         .all() as { id: number; category: string; project: string | null; title: string; content: string }[];
       const seen = new Set<string>();
       const update = db.prepare('UPDATE memories SET uniq = ? WHERE id = ?');

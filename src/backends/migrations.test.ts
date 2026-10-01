@@ -223,6 +223,36 @@ describe('add_times_seen / add_uniq migrations (t-335)', () => {
     db.close();
   });
 
+  it('backfill skips archived rows entirely, so an active row never loses the uniq key to one', () => {
+    // Build a DB already at the schema add_uniq expects (every column it
+    // reads/writes present, uniq still NULL everywhere) with an ARCHIVED row
+    // inserted before its active duplicate — if the backfill didn't filter
+    // on archived, the archived row (lower id) would claim the shared uniq
+    // key first and leave the active row NULL.
+    const db = openOldSchemaDb(join(tmpDir, 'archived-first.db'));
+    db.prepare('ALTER TABLE memories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0').run();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created, archived)
+       VALUES ('u1', 'project/archived-first', 'Same title', 'project', 'Same body', '{}', ?, 1)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created, archived)
+       VALUES ('u2', 'project/active-second', 'Same title', 'project', 'Same body', '{}', ?, 0)`,
+    ).run(now);
+
+    const addUniq = MIGRATIONS.find((m) => m.id === 'add_uniq')!;
+    addUniq.run(db);
+
+    const rows = db.prepare('SELECT ref, archived, uniq FROM memories ORDER BY id ASC').all() as
+      { ref: string; archived: number; uniq: string | null }[];
+    expect(rows[0].archived).toBe(1);
+    expect(rows[0].uniq).toBeNull();
+    expect(rows[1].archived).toBe(0);
+    expect(rows[1].uniq).not.toBeNull();
+    db.close();
+  });
+
   it('idx_memories_uniq index exists after migration', () => {
     const db = openOldSchemaDb(join(tmpDir, 'idx.db'));
     runMigrations(db, { strict: true });
