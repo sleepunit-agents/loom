@@ -61,10 +61,13 @@ function buildCurrentDb(dir: string): string {
       archive_note TEXT,
       salience REAL NOT NULL DEFAULT 0,
       sourcing TEXT,
-      provenance TEXT
+      provenance TEXT,
+      times_seen INTEGER NOT NULL DEFAULT 1,
+      uniq TEXT
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();
+  db.prepare(`CREATE INDEX idx_memories_uniq ON memories(uniq)`).run();
   db.prepare(`
     CREATE TABLE proposals (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
