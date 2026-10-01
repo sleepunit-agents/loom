@@ -53,7 +53,7 @@ jobs:
       # model against golden vectors; this caches the ~90 MB download so that
       # costs one fetch rather than one per run.
       - name: Cache embedding model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/loom/fastembed
           key: loom-embedding-model-fast-bge-small-en-v1.5-v1
