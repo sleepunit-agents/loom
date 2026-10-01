@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { HARNESSES, HARNESS_KEYS, resolveHarnessPath, type HarnessKey } from './harnesses.js';
+import { INSTALL_TARGETS } from '../install/harnesses.js';
 
 describe('HARNESSES preset table', () => {
   it('exposes exactly three keys: claude-code, codex, gemini-cli', () => {
@@ -30,6 +31,14 @@ describe('HARNESSES preset table', () => {
   it('HarnessKey type narrows to the three string literals', () => {
     const k: HarnessKey = 'claude-code';
     expect(HARNESSES[k]).toBeDefined();
+  });
+});
+
+describe('install/injection toolPrefix agreement (t-397)', () => {
+  it('every shared harness key gets the same toolPrefix from both adapters', () => {
+    for (const key of HARNESS_KEYS) {
+      expect(HARNESSES[key].toolPrefix).toBe(INSTALL_TARGETS[key].toolPrefix);
+    }
   });
 });
 
