@@ -227,6 +227,29 @@ export interface MemorySupersededResult {
   archived: boolean;
 }
 
+// ─── Memory Merge Types ──────────────────────────────────────────────────────
+
+export interface MemoryMergeInput {
+  /** Refs of the losing memories to fold into the target (all must be active). */
+  source_refs: string[];
+  /** Ref of the canonical memory that survives the merge (must already exist, active). */
+  target_ref: string;
+  /** Optional note about this merge, stored in supersession tombstones on the losers. */
+  note?: string;
+  /** Hard-delete losers after archiving/superseding them (default false). */
+  hard_delete_losers?: boolean;
+  /** Append loser bodies to the target content under section markers (default false). */
+  append_loser_bodies?: boolean;
+}
+
+export interface MemoryMergeResult {
+  target_ref: string;
+  sources_merged: number;
+  /** Target's times_seen after summing in each merged source's count. */
+  times_seen: number;
+  losers: { ref: string; title: string; content: string }[];
+}
+
 export interface PruneResult {
   /** Memories that were archived (moved to archive tier) because their TTL expired */
   expired: string[];
@@ -328,6 +351,13 @@ export interface MemoryBackend {
   restoreRevision(input: MemoryRevisionRestoreInput): Promise<MemoryRevisionRestoreResult>;
   /** Archive old_ref with a tombstone and record that new_ref supersedes it. */
   supersede(input: MemorySupersededInput): Promise<MemorySupersededResult>;
+  /**
+   * Consolidate 2+ memories into one canonical row. Acts on an audit()
+   * duplicate-finding: sources are archived with a supersession pointer to
+   * the target (parity with supersede(), but N:1), times_seen is summed
+   * onto the target, and bodies are optionally concatenated.
+   */
+  mergeMemories(input: MemoryMergeInput): Promise<MemoryMergeResult>;
   /** Release the underlying store handle. Cached backends evict on close. */
   close(): void;
 }

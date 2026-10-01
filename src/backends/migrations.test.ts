@@ -150,6 +150,7 @@ describe('pendingMigrations', () => {
     expect(pending.map((m) => m.id)).toEqual([
       'add_archived', 'add_archive_note', 'idx_memories_archived', 'add_salience', 'add_proposals',
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
+      'add_times_seen', 'add_uniq',
     ]);
   });
 
@@ -160,6 +161,74 @@ describe('pendingMigrations', () => {
     db.close();
 
     expect(pending).toHaveLength(0);
+  });
+});
+
+describe('add_times_seen / add_uniq migrations (t-335)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-t335-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('backfills times_seen = 1 for pre-existing rows', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'ts.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u1', 'project/a-1', 'A', 'project', 'body', '{}', ?)`,
+    ).run(now);
+
+    runMigrations(db, { strict: true });
+
+    const row = db.prepare("SELECT times_seen FROM memories WHERE ref = 'project/a-1'")
+      .get() as { times_seen: number };
+    expect(row.times_seen).toBe(1);
+    db.close();
+  });
+
+  it('backfills uniq for every existing row from its current content', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'uq.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u1', 'project/a-1', 'A title', 'project', 'A body', '{}', ?)`,
+    ).run(now);
+
+    runMigrations(db, { strict: true });
+
+    const row = db.prepare("SELECT uniq FROM memories WHERE ref = 'project/a-1'")
+      .get() as { uniq: string | null };
+    expect(row.uniq).not.toBeNull();
+    expect(row.uniq).toMatch(/^[0-9a-f]{64}$/);
+    db.close();
+  });
+
+  it('on a pre-existing duplicate cluster, only the first (lowest id) row gets a uniq value', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'cluster.db'));
+    const now = new Date().toISOString();
+    for (const [uuid, ref] of [['u1', 'project/a-1'], ['u2', 'project/a-2'], ['u3', 'project/a-3']]) {
+      db.prepare(
+        `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+         VALUES (?, ?, 'Same title', 'project', 'Same body', '{}', ?)`,
+      ).run(uuid, ref, now);
+    }
+
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id ASC').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows[0].uniq).not.toBeNull();
+    expect(rows[1].uniq).toBeNull();
+    expect(rows[2].uniq).toBeNull();
+    db.close();
+  });
+
+  it('idx_memories_uniq index exists after migration', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'idx.db'));
+    runMigrations(db, { strict: true });
+    const idx = (db.pragma('index_list(memories)') as { name: string }[]).map((i) => i.name);
+    expect(idx).toContain('idx_memories_uniq');
+    db.close();
   });
 });
 

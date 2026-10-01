@@ -9,6 +9,7 @@
  * existing entries (future migrations may depend on prior state).
  */
 import type { Database } from 'better-sqlite3';
+import { computeUniqKey } from './dedup.js';
 
 export interface Migration {
   readonly id: string;
@@ -175,6 +176,48 @@ export const MIGRATIONS: readonly Migration[] = [
       db.prepare(
         'CREATE INDEX idx_memory_supersessions_new ON memory_supersessions(new_ref)',
       ).run();
+    },
+  },
+  {
+    id: 'add_times_seen',
+    description:
+      'Add times_seen counter — bumped when remember() reheats an exact restatement instead of inserting (t-335)',
+    pending: (db) => !hasColumn(db, 'memories', 'times_seen'),
+    run: (db) => {
+      // DEFAULT 1 backfills existing rows too: each was "seen" at least once
+      // (the write that created it), even though restatements before t-335
+      // weren't counted.
+      db.prepare('ALTER TABLE memories ADD COLUMN times_seen INTEGER NOT NULL DEFAULT 1').run();
+    },
+  },
+  {
+    id: 'add_uniq',
+    description:
+      'Add uniq dedup key column + index, backfilled from existing rows, so write-time ' +
+      'remember() can reheat an exact restatement instead of inserting a duplicate (t-335)',
+    pending: (db) => !hasColumn(db, 'memories', 'uniq'),
+    run: (db) => {
+      db.prepare('ALTER TABLE memories ADD COLUMN uniq TEXT').run();
+      db.prepare('CREATE INDEX idx_memories_uniq ON memories(uniq)').run();
+
+      // Backfill: compute uniq for every existing row so future restatements
+      // of pre-t-335 content also reheat. Rows are processed oldest-first;
+      // if multiple existing rows already share the same normalized content
+      // (an unresolved historical duplicate), only the first gets the uniq
+      // value — later ones are left NULL rather than silently pointing a
+      // future reheat at an arbitrary survivor. Those clusters are exactly
+      // what memory_audit + the new merge verb are for.
+      const rows = db
+        .prepare('SELECT id, category, project, title, content FROM memories ORDER BY id ASC')
+        .all() as { id: number; category: string; project: string | null; title: string; content: string }[];
+      const seen = new Set<string>();
+      const update = db.prepare('UPDATE memories SET uniq = ? WHERE id = ?');
+      for (const row of rows) {
+        const key = computeUniqKey(row);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        update.run(key, row.id);
+      }
     },
   },
 ];
