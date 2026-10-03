@@ -284,6 +284,34 @@ must carry a matching `Authorization: Bearer …` header (compared in
 constant time). When unset, the network boundary alone gates access —
 appropriate for a token-less tailnet-only daemon.
 
+### Knowledge-only scope — a second identity without memory tools
+
+`loom serve --http --scope knowledge` starts a second, standalone daemon
+that registers **only** the `knowledge_*` tools — no `identity`,
+`remember`/`recall`, or any other memory-wing tool is on its surface.
+This is how a second identity (e.g. a teammate's agent) can read/write a
+shared knowledge store without ever being handed access to memory. Same
+bind-safety as above; auth is a **per-identity bearer** instead of one
+shared token, so the acting identity is derived from which token was
+presented — never from a request field — and a session is pinned to
+whichever identity opened it.
+
+```bash
+LOOM_KNOWLEDGE_BEARER_TOKENS="art:abc123,mark:def456" \
+  loom serve --http --scope knowledge --port 8788
+```
+
+| Variable | Flag | Default | Description |
+|---|---|---|---|
+| `LOOM_KNOWLEDGE_HTTP_PORT` | `--port` | `8788` | Port to listen on |
+| `LOOM_KNOWLEDGE_BEARER_TOKENS` | — | *(required)* | `"identity:token,identity:token"` — refuses to start if empty |
+
+Both scopes share the same backing store (`knowledge.db` under the
+context dir) and the same tool implementation — the full server (identity
+hardcoded to its own name) and the scoped service go through the exact
+same registration code, so there's no separate "local" code path that
+could drift from the one the scoped service uses.
+
 ### Session and stream behavior
 
 - **One server per session.** Each MCP session (keyed by the
@@ -572,6 +600,8 @@ All configuration is through environment variables:
 | `LOOM_HTTP_HOST` | `127.0.0.1` | Bind host for `loom serve --http` (bind-safety enforced) |
 | `LOOM_HTTP_PORT` | `8787` | Bind port for `loom serve --http` |
 | `LOOM_BEARER_TOKEN` | *(unset)* | Bearer token required on every HTTP request when set |
+| `LOOM_KNOWLEDGE_HTTP_PORT` | `8788` | Bind port for `loom serve --http --scope knowledge` |
+| `LOOM_KNOWLEDGE_BEARER_TOKENS` | *(unset)* | `"identity:token,identity:token"` — required for `--scope knowledge` |
 
 `--context-dir <path>` works as a CLI alternative to
 `LOOM_CONTEXT_DIR`.

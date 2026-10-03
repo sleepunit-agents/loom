@@ -11,6 +11,21 @@
  * Two knowledge classes (t-81, 2026-08-31):
  *   world/ — facts true independent of us (default).
  *   ours/  — Art-created artifacts; domain starts with "ours/", sourcing = "internal".
+ *
+ * Knowledge is a shared surface, not a scratchpad (t-677): a second identity
+ * (e.g. Mark) and Jonathan can read everything filed here. A conversation-
+ * only citation isn't just weakly-sourced — it's often a sign that a page is
+ * really raw inner-monologue or working-out-loud that leaked out of a
+ * conversation and into what's supposed to be finished, audience-ready
+ * synthesis. That's doubly a misfile now: wrong store (memory, via
+ * `remember`) AND wrong audience (private reasoning, not something to hand
+ * another reader). The misfile audit below flags it either way.
+ *
+ * Cold/expansion ranking intentionally stays on the shared pages.hit_count /
+ * last_accessed aggregate rather than any per-reader breakdown (knowledge_access,
+ * t-677) — any identity's read keeps a page off the cold list, which is the
+ * correct aggregate signal; splitting it per-identity here would make the list
+ * miss pages a *different* reader keeps alive.
  */
 import { createKnowledgeBackend } from '../backends/index.js';
 import type { KnowledgePageWithCitations } from '../backends/types.js';
@@ -130,7 +145,9 @@ function formatMaintainReport(
     );
     lines.push(
       '> **World class:** knowledge is true independent of Jonathan — provisional/conversation-only pages belong in memory.\n' +
-      '> **Ours class (domain: ours/):** should have at least one `repo` citation to reach `internal` sourcing.',
+      '> **Ours class (domain: ours/):** should have at least one `repo` citation to reach `internal` sourcing.\n' +
+      '> Knowledge is shared with other identities and Jonathan now — a conversation-only page may also be ' +
+      'private inner-monologue that never belonged here, not just under-cited.',
     );
     for (const p of misfiled) {
       const reason = p.sourcing === 'provisional' ? 'provisional' : 'conversation-only citations';
