@@ -9,9 +9,14 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const readme = readFileSync(join(repoRoot, 'README.md'), 'utf-8');
 const skillMd = readFileSync(join(repoRoot, 'assets', 'skill', 'SKILL.md'), 'utf-8');
 const serverSrc = readFileSync(join(repoRoot, 'src', 'server.ts'), 'utf-8');
+// knowledge_* tools register via registerKnowledgeTools() (t-677), shared
+// between the full server and the standalone knowledge-only HTTP service —
+// scan both sources so moving tools out of server.ts doesn't make them
+// invisible to this contract.
+const knowledgeToolsSrc = readFileSync(join(repoRoot, 'src', 'transport', 'knowledge-tools.ts'), 'utf-8');
 
 function extractServerTools(): string[] {
-  const matches = [...serverSrc.matchAll(/server\.tool\(\s*['"](\w+)['"]/g)];
+  const matches = [...(serverSrc + knowledgeToolsSrc).matchAll(/server\.tool\(\s*['"](\w+)['"]/g)];
   return matches.map((m) => m[1]);
 }
 

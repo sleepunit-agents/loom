@@ -7,6 +7,7 @@ import {
   isSafeBindHost,
   assertSafeBind,
   checkBearer,
+  checkBearerMulti,
   checkPayloadSize,
   DEFAULT_MAX_BODY_BYTES,
 } from './guards.js';
@@ -64,6 +65,40 @@ describe('c-loom-transport: auth gate (ac-lt-auth-gate)', () => {
   it('allows any call when no token is configured (network is the boundary)', () => {
     expect(checkBearer(undefined, undefined).ok).toBe(true);
     expect(checkBearer('', 'anything').ok).toBe(true);
+  });
+});
+
+describe('c-loom-transport: multi-token auth gate (t-677)', () => {
+  const tokens = { art: 'art-token-123', mark: 'mark-token-456' };
+
+  it('resolves the identity for a matching token, with or without the Bearer scheme', () => {
+    expect(checkBearerMulti(tokens, 'Bearer art-token-123')).toEqual({ ok: true, identity: 'art' });
+    expect(checkBearerMulti(tokens, 'mark-token-456')).toEqual({ ok: true, identity: 'mark' });
+  });
+
+  it('refuses no/empty/unknown token', () => {
+    expect(checkBearerMulti(tokens, undefined).ok).toBe(false);
+    expect(checkBearerMulti(tokens, '').ok).toBe(false);
+    expect(checkBearerMulti(tokens, 'Bearer nope').ok).toBe(false);
+  });
+
+  it('never returns an identity on a refused call', () => {
+    const r = checkBearerMulti(tokens, 'Bearer nope');
+    expect(r.ok).toBe(false);
+    expect(r.identity).toBeUndefined();
+  });
+
+  it('refuses every call when no identities are configured — never an open scoped endpoint', () => {
+    expect(checkBearerMulti(undefined, 'Bearer anything').ok).toBe(false);
+    expect(checkBearerMulti({}, 'Bearer anything').ok).toBe(false);
+  });
+
+  it("one identity's token never matches another identity's slot", () => {
+    // Guards against an implementation that checks values without binding
+    // the match back to the right key.
+    const r = checkBearerMulti(tokens, 'Bearer mark-token-456');
+    expect(r.identity).toBe('mark');
+    expect(r.identity).not.toBe('art');
   });
 });
 

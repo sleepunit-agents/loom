@@ -13,15 +13,27 @@
  * session, so sessions are cheap routing handles over a shared contextDir.
  * WHERE it binds on the mesh is deployment (the portable-MCP ADR); THAT it
  * refuses an unsafe bind is this contract.
+ *
+ * Two auth modes, same plumbing (t-677):
+ *   - single `token` — the full loom server (identity/memory/knowledge), one
+ *     shared secret, no identity resolution. The original/default shape.
+ *   - `tokens` (token → identity map) — a scoped server (e.g. the
+ *     knowledge-only service) where the bearer itself names the caller, so
+ *     the acting identity is derivable server-side for attribution and is
+ *     bound to the session at open time (a later request on the same
+ *     session presenting a DIFFERENT identity's token is refused, not
+ *     silently re-attributed).
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest, EmptyResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createLoomServer } from '../server.js';
 import {
   assertSafeBind,
   checkBearer,
+  checkBearerMulti,
   checkPayloadSize,
   DEFAULT_MAX_BODY_BYTES,
 } from './guards.js';
@@ -42,16 +54,31 @@ export interface HttpServeOptions {
   contextDir: string;
   host: string;
   port: number;
-  /** When set, every request must present this bearer token. */
+  /** Single-token mode: every request must present this bearer token. */
   token?: string;
+  /**
+   * Multi-token mode (t-677): token → identity. Mutually exclusive with
+   * `token` — when set, `checkBearerMulti` resolves the caller's identity
+   * from whichever configured token it presents instead of a single shared
+   * secret. Required for `createServer` factories that need an identity
+   * (e.g. the knowledge-only service); refuses every call if empty.
+   */
+  tokens?: Record<string, string>;
   maxBytes?: number;
   /** SSE keep-alive ping interval (ms). Default HEARTBEAT_MS; tests use a small value. */
   heartbeatMs?: number;
   /**
-   * Optional path to the knowledge-gaps directory. Forwarded to
-   * createLoomServer so zero-result knowledge_recall calls can log misses.
+   * Optional path to the knowledge-gaps directory. Forwarded to the server
+   * factory so zero-result knowledge_recall calls can log misses.
    */
   gapsDir?: string;
+  /**
+   * Server factory for this endpoint. Defaults to the full loom server
+   * (createLoomServer, identity 'art') — pass createKnowledgeOnlyServer to
+   * scope the endpoint to knowledge tools only. `identity` is resolved from
+   * `tokens` per connection; always 'art' in single-token/no-auth mode.
+   */
+  createServer?: (ctx: { contextDir: string; gapsDir?: string; identity: string }) => { server: McpServer };
 }
 
 export interface HttpServeHandle {
@@ -91,14 +118,30 @@ function collectBody(req: IncomingMessage, cap: number): Promise<string | typeof
 export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServeHandle> {
   // Bind-safety (ac-lt-bind-safety): refuse an unsafe host BEFORE we open a socket.
   assertSafeBind(opts.host);
+  if (opts.token && opts.tokens) {
+    throw new Error('startHttpServer: pass either token or tokens, not both');
+  }
+  // A scoped server factory (e.g. the knowledge-only service) always needs
+  // to know WHO is calling for attribution — refuse to boot it open or on a
+  // single shared secret with no identity behind it.
+  if (opts.createServer && (!opts.tokens || Object.keys(opts.tokens).length === 0)) {
+    throw new Error(
+      'startHttpServer: a scoped createServer requires a non-empty tokens map ' +
+        '(per-identity bearer) — refusing to serve it unauthenticated or identity-less.',
+    );
+  }
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BODY_BYTES;
   const heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
 
-  // One transport (+ its connected server) per live MCP session.
-  const sessions = new Map<string, StreamableHTTPServerTransport>();
+  const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer(ctx));
 
-  async function openSession(): Promise<StreamableHTTPServerTransport> {
-    const { server } = createLoomServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir });
+  // One transport (+ its connected server) per live MCP session, plus the
+  // identity it was opened for — a multi-token session is pinned to that
+  // identity for its lifetime (see the mismatch check in the request handler).
+  const sessions = new Map<string, { transport: StreamableHTTPServerTransport; identity: string }>();
+
+  async function openSession(identity: string): Promise<StreamableHTTPServerTransport> {
+    const { server } = makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
     // Fires AFTER the initialize handshake completes — getClientVersion() is
     // populated here (it is not yet at onsessioninitialized). Logging the peer
     // makes the resolved harness observable and reveals an unmapped client's
@@ -111,7 +154,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       sessionIdGenerator: () => randomUUID(),
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
-        sessions.set(sid, transport);
+        sessions.set(sid, { transport, identity });
       },
     });
 
@@ -148,9 +191,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   const http = createServer((req, res) => {
     void (async () => {
-      // Auth gate (ac-lt-auth-gate): reject unauthenticated when a token is set.
-      const auth = checkBearer(opts.token, req.headers['authorization']);
+      // Auth gate (ac-lt-auth-gate): reject unauthenticated when a token (or
+      // token map) is configured. Multi-token mode additionally resolves
+      // WHICH identity made this call — the bearer itself is the identity
+      // claim (t-677); there is no separate login step.
+      const auth: { ok: boolean; error?: string; identity?: string } = opts.tokens
+        ? checkBearerMulti(opts.tokens, req.headers['authorization'])
+        : checkBearer(opts.token, req.headers['authorization']);
       if (!auth.ok) return sendError(res, 401, auth.error!);
+      const identity = auth.identity ?? 'art';
 
       // Oversized guard (ac-lt-oversized-guard): fast path on declared length.
       const declared = Number(req.headers['content-length'] ?? 0);
@@ -160,15 +209,24 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
+      // A session is pinned to the identity that opened it. Presenting a
+      // DIFFERENT identity's valid token against an existing session id is
+      // refused outright rather than silently re-attributed or routed —
+      // the per-identity bearer only means anything if a session can't be
+      // hijacked across identities by replaying its id with another token.
+      const existingSession = sessionId ? sessions.get(sessionId) : undefined;
+      if (existingSession && existingSession.identity !== identity) {
+        return sendError(res, 401, 'unauthorized: session belongs to a different identity');
+      }
+
       // GET = the server->client SSE stream (server push: listChanged, progress,
       // elicitation, ui:// updates). It attaches to an established session, so a
       // GET routes to that session's transport. The stream is kept alive by the
       // per-session heartbeat. A GET for a session we no longer hold is 404 (the
       // client re-initializes); a GET with no session at all is 405.
       if (req.method === 'GET' || req.method === 'DELETE') {
-        const existing = sessionId ? sessions.get(sessionId) : undefined;
-        if (existing) {
-          return existing.handleRequest(req, res).catch((e: unknown) =>
+        if (existingSession) {
+          return existingSession.transport.handleRequest(req, res).catch((e: unknown) =>
             sendError(res, 500, `internal: ${(e as Error).message}`),
           );
         }
@@ -194,7 +252,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
       }
 
-      let transport = sessionId ? sessions.get(sessionId) : undefined;
+      let transport = existingSession?.transport;
       if (!transport) {
         if (sessionId) {
           // A session id we don't have (expired / dropped). Per MCP spec, 404
@@ -207,7 +265,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         if (!isInitializeRequest(parsed)) {
           return sendError(res, 400, 'bad-input: no valid session; expected an initialize request');
         }
-        transport = await openSession();
+        transport = await openSession(identity);
       }
 
       // Dispatch totality + typed envelopes (unknown tool / bad args -> JSON-RPC
@@ -227,7 +285,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     port,
     host: opts.host,
     async close() {
-      for (const t of sessions.values()) await t.close().catch(() => undefined);
+      for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {
         // Force-close lingering keep-alive/SSE sockets so close() can't hang.

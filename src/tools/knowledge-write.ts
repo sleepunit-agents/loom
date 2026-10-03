@@ -13,6 +13,12 @@
  *
  * Filing test for world/ pages: knowledge is true independent of Jonathan; if
  * it's about Jonathan / our work use memory or ours/ instead, not the world class.
+ *
+ * Shared surface, not a scratchpad (t-677): knowledge is readable by other
+ * identities (e.g. Mark) and by Jonathan, not just the identity that wrote
+ * it. Write pages as finished synthesis for that audience — no raw
+ * inner-monologue reasoning, no private-to-you deliberation. That kind of
+ * content belongs in memory (`remember`), not here.
  */
 import { createKnowledgeBackend } from '../backends/index.js';
 
@@ -73,6 +79,13 @@ function determineSourcing(
 export async function knowledgeWrite(
   contextDir: string,
   input: KnowledgeWriteInput,
+  /**
+   * Acting identity (t-677) — 'art' for the local/stdio server, or whichever
+   * identity the standalone knowledge-http service resolved from its
+   * per-identity bearer token. Defaults created_by for ours/ pages when the
+   * caller doesn't supply one explicitly; never overrides an explicit value.
+   */
+  identity: string = 'art',
 ): Promise<string> {
   if (input.citations.length === 0) {
     return (
@@ -99,7 +112,7 @@ export async function knowledgeWrite(
       freshness_anchor: input.freshness_anchor,
       bodyMode: input.mode,
       citations: input.citations,
-      created_by: input.created_by,
+      created_by: input.created_by ?? (input.domain.startsWith('ours/') ? identity : undefined),
       version: input.version,
     });
 

@@ -453,6 +453,20 @@ export interface KnowledgeQueryInput {
    * never-verified pages first. Overrides the default hit-count ordering.
    */
   sortByVerified?: boolean;
+  /**
+   * Who is reading (t-677). When stampAccess fires, this identity's row in
+   * knowledge_access is upserted alongside the shared pages.hit_count /
+   * last_accessed aggregate. Defaults to 'unknown' when omitted — callers
+   * that care about attribution should always pass the acting identity.
+   */
+  identity?: string;
+}
+
+/** One reader's access stats on a page (t-677 per-identity attribution). */
+export interface KnowledgeAccessStat {
+  identity: string;
+  hit_count: number;
+  last_accessed: string | null;
 }
 
 export interface KnowledgePageRef {
@@ -642,8 +656,12 @@ export interface KnowledgePurgeResult {
 export interface KnowledgeBackend {
   /** Upsert an entity page by slug; create or append. */
   writePage(input: KnowledgePageInput): Promise<KnowledgeWriteResult>;
-  /** Get a single page by slug. opts.stampAccess marks the fetch as a real read (last_accessed / hit_count). */
-  getPage(slug: string, opts?: { stampAccess?: boolean }): Promise<KnowledgePageWithCitations | null>;
+  /**
+   * Get a single page by slug. opts.stampAccess marks the fetch as a real
+   * read (last_accessed / hit_count); opts.identity attributes that read
+   * to a reader (t-677) — defaults to 'unknown' when omitted.
+   */
+  getPage(slug: string, opts?: { stampAccess?: boolean; identity?: string }): Promise<KnowledgePageWithCitations | null>;
   /** List pages with optional filters. */
   listPages(input?: KnowledgeQueryInput): Promise<KnowledgePageWithCitations[]>;
   /** LIKE search over title, body, and domain. */
@@ -670,6 +688,16 @@ export interface KnowledgeBackend {
   getRevision(revisionId: number): Promise<KnowledgeRevision | null>;
   /** Restore a revision's body onto its page; the displaced body is snapshotted first. */
   restoreRevision(input: KnowledgeRevisionRestoreInput): Promise<KnowledgeRevisionRestoreResult>;
+  /**
+   * Per-identity read stats for a page (t-677), newest-touched first. This
+   * is the fine-grained "who's reading this" breakdown; it is NOT consulted
+   * by knowledge_maintain's cold/expansion ranking, which deliberately keeps
+   * using the shared pages.hit_count / last_accessed aggregate — that
+   * aggregate already answers "has anyone read this recently" correctly
+   * across readers, so splitting it per-identity there would only make the
+   * cold list miss pages a *different* reader keeps alive.
+   */
+  getAccessStats(pageId: number): Promise<KnowledgeAccessStat[]>;
   /** Close the underlying SQLite connection. */
   close(): void;
 }
