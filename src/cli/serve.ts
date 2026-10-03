@@ -52,14 +52,21 @@ Bind-safety refuses a public host in both scopes.
  */
 export function parseIdentityTokens(raw: string): Record<string, string> {
   const tokens: Record<string, string> = {};
-  for (const pair of raw.split(',')) {
-    const trimmed = pair.trim();
+  const pairs = raw.split(',');
+  for (let i = 0; i < pairs.length; i++) {
+    const trimmed = pairs[i].trim();
     if (!trimmed) continue;
     const idx = trimmed.indexOf(':');
     const identity = idx > 0 ? trimmed.slice(0, idx).trim() : '';
     const token = idx > 0 ? trimmed.slice(idx + 1).trim() : '';
     if (!identity || !token) {
-      throw new Error(`malformed identity:token pair "${trimmed}" — expected "identity:token"`);
+      // Never echo `trimmed` — a malformed pair is exactly the shape a
+      // pasted-without-colon secret takes, and this error can land in
+      // stderr/journal/CI logs. Report position only, never content.
+      throw new Error(
+        `malformed identity:token pair at position ${i + 1} — expected "identity:token", ` +
+          `got ${identity ? 'an identity with no token' : 'no identity'} (value withheld from this error)`,
+      );
     }
     tokens[identity] = token;
   }

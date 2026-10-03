@@ -35,7 +35,11 @@ export function createKnowledgeOnlyServer(config: KnowledgeServerConfig): Knowle
     version: pkg.version,
   });
 
-  registerKnowledgeTools(server, { contextDir, gapsDir, identity });
+  // Multi-identity surface: a caller-asserted created_by that names a
+  // DIFFERENT identity than its own bearer resolved to is an attribution
+  // spoof, not a legitimate attribution (t-677 authorization finding) —
+  // the full/local server leaves this open since it's single-operator.
+  registerKnowledgeTools(server, { contextDir, gapsDir, identity, restrictCreatedByToIdentity: true });
 
   return { server };
 }

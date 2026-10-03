@@ -39,11 +39,22 @@ export interface RegisterKnowledgeToolsOptions {
    * never from a tool argument, so a caller can't spoof attribution.
    */
   identity: string;
+  /**
+   * Reject a knowledge_write whose explicit `created_by` differs from
+   * `identity` (t-677 authorization finding). `created_by` is caller-
+   * asserted, free-text metadata — on the single-operator full server
+   * that's fine (Art legitimately attributes ours/ pages to "jonathan").
+   * On the multi-identity knowledge-only service it would let identity B
+   * claim authorship as identity A, which the per-identity bearer exists
+   * specifically to prevent. Default false (full-server behavior
+   * unchanged); createKnowledgeOnlyServer sets this true.
+   */
+  restrictCreatedByToIdentity?: boolean;
 }
 
 /** Registers the full knowledge_* tool surface (11 tools) on `server`. */
 export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledgeToolsOptions): void {
-  const { contextDir, gapsDir, identity } = opts;
+  const { contextDir, gapsDir, identity, restrictCreatedByToIdentity = false } = opts;
 
   server.tool(
     'knowledge_write',
@@ -101,7 +112,9 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       ),
       created_by: z.string().optional().describe(
         'ours/ class: who created or last owned this artifact (e.g. "art", "jonathan"). ' +
-        'Preserved across upserts when omitted; defaults to the calling identity for ours/ pages.',
+        'Preserved across upserts when omitted; defaults to the calling identity for ours/ pages. ' +
+        'On the knowledge-only service this must equal your own identity — you cannot attribute ' +
+        'a write to a different identity than the one your bearer token resolved to.',
       ),
       version: z.string().optional().describe(
         'ours/ class: artifact version or revision tag (e.g. "v2", "2026-08-31", "t-81"). ' +
@@ -109,6 +122,16 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       ),
     },
     async ({ title, domain, body, slug, freshness_anchor, mode, citations, created_by, version }) => {
+      if (restrictCreatedByToIdentity && created_by !== undefined && created_by !== identity) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Error: created_by ("${created_by}") must match your own identity ` +
+              `("${identity}") on the knowledge-only service — cross-identity attribution ` +
+              `isn't allowed here. Omit created_by to default to your identity.`,
+          }],
+        };
+      }
       const result = await knowledgeWrite(
         contextDir,
         { title, domain, body, slug, freshness_anchor, mode, citations, created_by, version },

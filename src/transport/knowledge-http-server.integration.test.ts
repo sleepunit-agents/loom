@@ -128,6 +128,30 @@ describe('t-677: knowledge-only HTTP service', () => {
     }
   });
 
+  it('refuses a created_by that claims a different identity than the caller (attribution spoofing)', async () => {
+    const { client } = await connect(handle.port, TOKENS.mark);
+    const result = await client.callTool({
+      name: 'knowledge_write',
+      arguments: {
+        title: 'spoofed artifact',
+        domain: 'ours/art-ops',
+        body: 'mark trying to claim this was art',
+        citations: [{ claim: 'x', source_kind: 'repo', source_locator: 'x@HEAD', excerpt: 'x' }],
+        created_by: 'art',
+      },
+    });
+    expect(textOf(result)).toMatch(/must match your own identity/);
+    await client.close();
+
+    // Nothing was written under art's name.
+    const backend = createKnowledgeBackend(tmpDir);
+    try {
+      expect(await backend.getPage('spoofed-artifact')).toBeNull();
+    } finally {
+      backend.close();
+    }
+  });
+
   it("refuses a request that replays another identity's token against an existing session", async () => {
     const { transport } = await connect(handle.port, TOKENS.art);
     const sessionId = transport.sessionId;
