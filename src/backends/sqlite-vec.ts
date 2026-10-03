@@ -999,7 +999,25 @@ function clamp01(x: number): number {
   return Math.min(1, Math.max(0, x));
 }
 
+/**
+ * An all-zero (or otherwise signal-free) embedding matches every row
+ * equally in cosine search — it doesn't fail loudly, it just sits there
+ * forever as a vector that neither rejects nor ever truly matches
+ * anything. Refuse to persist one instead of writing that landmine (t-334;
+ * mirrors Memori's embedding_rows_have_signal).
+ */
+function hasEmbeddingSignal(vector: number[]): boolean {
+  let sumSq = 0;
+  for (const v of vector) sumSq += v * v;
+  return sumSq > 1e-12;
+}
+
 function toVecBuffer(vector: number[]): Buffer {
+  if (!hasEmbeddingSignal(vector)) {
+    throw new Error(
+      `refusing to persist a degenerate embedding — ${vector.length} dims with no real signal (all-zero or near-zero)`,
+    );
+  }
   return Buffer.from(new Float32Array(vector).buffer);
 }
 
