@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **All 34 MCP tools now declare `ToolAnnotations`** (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`), so a client gating
+  approval on these hints (e.g. Codex under `approval: never`) can tell a
+  read from a write instead of refusing every call uniformly. Hints follow
+  actual behavior, not tool-name conventions: `recall`/`knowledge_recall`
+  are NOT read-only (they stamp `last_accessed`/`hit_count`, which
+  `knowledge_maintain` reads to find cold pages); `knowledge_history` and
+  `memory_revision_restore` are destructive in their restore mode even
+  though the displaced body is snapshotted first. `openWorldHint` is
+  `false` everywhere — loom has no outbound network calls. This does not
+  by itself prove any client relaxes its approval gate on these hints; that
+  needs a live `tools/list` exchange against an updated server (tracked
+  separately). (t-415)
+
 - **`--context-dir` (and the other global flags) now work in front of the
   subcommand, as the help text has always claimed.** `loom --context-dir DIR
   knowledge write …` used to route to the stdio MCP server instead of the CLI:
