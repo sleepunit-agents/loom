@@ -102,4 +102,55 @@ describe('knowledgeVerify', () => {
     const result = await knowledgeVerify(tempDir, {});
     expect(result).toMatch(/Error/i);
   });
+
+  describe('actor attribution (t-675)', () => {
+    const originalIdentity = process.env.LOOM_IDENTITY;
+
+    afterEach(() => {
+      if (originalIdentity === undefined) {
+        delete process.env.LOOM_IDENTITY;
+      } else {
+        process.env.LOOM_IDENTITY = originalIdentity;
+      }
+    });
+
+    it('records the verifier from the resolved loom identity — never a tool argument', async () => {
+      await writePage('my-page');
+      process.env.LOOM_IDENTITY = 'mark';
+
+      const result = await knowledgeVerify(tempDir, { slug: 'my-page' });
+      expect(result).toContain('mark');
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const [v] = await backend.getVerifications('my-page');
+        expect(v.verifier).toBe('mark');
+        expect(v.outcome).toBe('confirmed');
+        expect(v.citation_checked).toBe(false);
+      } finally {
+        backend.close();
+      }
+    });
+
+    it('passes through outcome and citation_checked', async () => {
+      await writePage('my-page');
+      process.env.LOOM_IDENTITY = 'art';
+
+      const result = await knowledgeVerify(tempDir, {
+        slug: 'my-page',
+        outcome: 'stale',
+        citation_checked: true,
+      });
+      expect(result).toContain('stale');
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const [v] = await backend.getVerifications('my-page');
+        expect(v.outcome).toBe('stale');
+        expect(v.citation_checked).toBe(true);
+      } finally {
+        backend.close();
+      }
+    });
+  });
 });

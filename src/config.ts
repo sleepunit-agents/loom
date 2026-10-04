@@ -14,10 +14,10 @@
  *   2. --context-dir CLI argument
  *   3. ~/.config/loom/default (fallback)
  */
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'node:fs';
 
 /**
  * The single canonical helper for the default context path. Every call
@@ -81,6 +81,28 @@ export function resolveSqliteDbPath(contextDir: string): string {
 
 export function resolveKnowledgeDbPath(contextDir: string): string {
   return process.env.LOOM_KNOWLEDGE_DB_PATH ?? resolve(contextDir, 'knowledge.db');
+}
+
+/**
+ * Resolve the acting identity's name for actor attribution (knowledge
+ * pages.author / page_revisions.actor / verifications.verifier). This is
+ * deliberately NOT a tool argument — an LLM-supplied free-text identity is
+ * spoofable (any caller could claim to be any identity), so it is derived
+ * server-side from the connection instead.
+ *
+ * LOOM_IDENTITY overrides explicitly (useful for the multi-identity
+ * knowledge service, where each bearer token maps to a known identity).
+ * Otherwise derived from the context dir's real path basename — this
+ * resolves symlink aliases (e.g. `~/.config/loom/default` -> the real
+ * `.../loom/art` dir) to the actual identity name rather than the alias.
+ */
+export function resolveIdentityName(contextDir: string): string {
+  if (process.env.LOOM_IDENTITY) return process.env.LOOM_IDENTITY;
+  try {
+    return basename(realpathSync(contextDir));
+  } catch {
+    return basename(contextDir);
+  }
 }
 
 /**

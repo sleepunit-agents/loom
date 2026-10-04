@@ -12,6 +12,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Knowledge actor attribution: `pages.author`, `page_revisions.actor`, and a
+  `verifications` table (page_id, verifier, verified_at, outcome,
+  citation_checked).** Previously the only attribution field was
+  `created_by` — free text, meaning "who owns this `ours/` artifact," not
+  "who actually wrote or verified it" — so there was no way to tell who wrote
+  a page's first version, who performed a given body revision, or who has
+  verified a page and found what. `pages.author` is stamped once at creation
+  and never changed by later upserts; `page_revisions.actor` is stamped on
+  every body-replacing write and every history-restore; `verifications` is an
+  attributed audit trail additive to the existing `pages.verified_at` stamp
+  (which stays as the fast single-column freshness field everything else
+  sorts/filters on). All three are resolved server-side from the caller's
+  loom identity (`resolveIdentityName()` — `LOOM_IDENTITY` env override, else
+  the context dir's real basename) — never a free-text tool argument, so no
+  caller can claim another identity's authorship or verification.
+  `knowledge_verify` gains `outcome` ('confirmed' | 'stale' | 'corrected') and
+  `citation_checked` parameters; `knowledge_history`'s listing now shows who
+  performed each revision and surfaces the page's verification history. (t-675)
+
 ### Fixed
 
 - **`--context-dir` (and the other global flags) now work in front of the

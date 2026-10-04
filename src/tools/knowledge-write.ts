@@ -15,6 +15,7 @@
  * it's about Jonathan / our work use memory or ours/ instead, not the world class.
  */
 import { createKnowledgeBackend } from '../backends/index.js';
+import { resolveIdentityName } from '../config.js';
 
 export interface KnowledgeWriteInput {
   domain: string;
@@ -88,6 +89,7 @@ export async function knowledgeWrite(
   }
 
   const sourcing = determineSourcing(input.citations, input.domain);
+  const actor = resolveIdentityName(contextDir);
   const backend = createKnowledgeBackend(contextDir);
   try {
     const result = await backend.writePage({
@@ -101,6 +103,7 @@ export async function knowledgeWrite(
       citations: input.citations,
       created_by: input.created_by,
       version: input.version,
+      actor,
     });
 
     const sourcingNote =

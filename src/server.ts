@@ -865,9 +865,11 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   server.tool(
     'knowledge_verify',
     'Stamp a knowledge page as verified WITHOUT touching its body — sets verified_at ' +
-    'and optionally freshness_anchor. This is the verification engine\'s primitive: ' +
-    'use it (never knowledge_write) to record "claims still hold". An optional note ' +
-    'appends a dated "## Verification" section to the body (append-only, single-page ' +
+    'and optionally freshness_anchor, and records an attributed verification (verifier, ' +
+    'outcome, whether citations were checked) — the verifier is always YOUR loom identity, ' +
+    'resolved server-side, never a field you can set. This is the verification engine\'s ' +
+    'primitive: use it (never knowledge_write) to record "claims still hold". An optional ' +
+    'note appends a dated "## Verification" section to the body (append-only, single-page ' +
     'mode). Batch mode (slugs) stamps many pages with a shared timestamp; archived ' +
     'pages are rejected; a batch with any unknown slug is rejected whole.',
     {
@@ -888,9 +890,18 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Optional verification note — appended to the body as a "## Verification — <date>" ' +
         'section. Never replaces the body. Single-page mode only.',
       ),
+      outcome: z.enum(['confirmed', 'stale', 'corrected']).optional().describe(
+        'What this verification found. Defaults to "confirmed" (the claims still hold). ' +
+        '"stale" flags it as out of date without fixing it; "corrected" means you fixed it ' +
+        '(pair with a knowledge_write, or the note field, describing the fix).',
+      ),
+      citation_checked: z.boolean().optional().describe(
+        'Did you actually check the page\'s citations against their sources (not just ' +
+        'the body text)? Defaults to false.',
+      ),
     },
-    async ({ slug, slugs, verified_at, freshness_anchor, note }) => {
-      const result = await knowledgeVerify(contextDir, { slug, slugs, verified_at, freshness_anchor, note });
+    async ({ slug, slugs, verified_at, freshness_anchor, note, outcome, citation_checked }) => {
+      const result = await knowledgeVerify(contextDir, { slug, slugs, verified_at, freshness_anchor, note, outcome, citation_checked });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

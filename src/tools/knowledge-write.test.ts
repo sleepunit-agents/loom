@@ -375,4 +375,51 @@ describe('knowledgeWrite', () => {
       backend.close();
     }
   });
+
+  describe('actor attribution (t-675)', () => {
+    const originalIdentity = process.env.LOOM_IDENTITY;
+
+    afterEach(() => {
+      if (originalIdentity === undefined) {
+        delete process.env.LOOM_IDENTITY;
+      } else {
+        process.env.LOOM_IDENTITY = originalIdentity;
+      }
+    });
+
+    it('stamps author from the resolved loom identity — never a tool argument', async () => {
+      process.env.LOOM_IDENTITY = 'art';
+      await seedRings();
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const page = await backend.getPage('rings');
+        expect(page!.author).toBe('art');
+      } finally {
+        backend.close();
+      }
+    });
+
+    it('a differently-identified caller cannot steal or change authorship on upsert', async () => {
+      process.env.LOOM_IDENTITY = 'art';
+      await seedRings();
+
+      process.env.LOOM_IDENTITY = 'mark';
+      await knowledgeWrite(tempDir, {
+        slug: 'rings',
+        domain: 'music/eurorack',
+        title: 'Rings',
+        body: 'Revised by a different identity.',
+        citations: [baseCitation],
+      });
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const page = await backend.getPage('rings');
+        expect(page!.author).toBe('art');
+      } finally {
+        backend.close();
+      }
+    });
+  });
 });
