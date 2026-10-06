@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`MemoryMatch` carries `similarity` alongside `relevance`, and `scope`
+  alongside `project`.** `relevance` is now the post-MMR score that actually
+  decided a result's rank — equal to `similarity` (raw cosine) unless MMR
+  re-ranking traded a pick off against ones already selected, in which case
+  the two now diverge and both are visible (modeled on MemoriLabs/Memori's
+  `FactSearchResult.{similarity, rank_score}` split). Separately, every
+  memory now has an effective `scope` ('project' or 'global'): `recall` and
+  `memory similar` exclude a project-scoped memory tagged to a *different*
+  project than the one passed via `--project`/`project`, while global-scoped
+  memories (category default for `user`/`reference`, any untagged memory, or
+  an explicit `scope: "global"` at write time) still come through regardless.
+  Closes the gap where a preference learned on one project could surface
+  while working on an unrelated one. `remember` (MCP tool and `loom remember
+  --scope`) takes an explicit `project | global` override for the categories
+  where the category default can't tell (`self`, `feedback`) — e.g. a
+  security/git/tool-workflow lesson learned in one project but true
+  everywhere. (t-337)
+
 ### Fixed
 
 - **`--context-dir` (and the other global flags) now work in front of the

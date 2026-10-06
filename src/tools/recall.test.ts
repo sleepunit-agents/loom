@@ -10,6 +10,8 @@ describe('formatMatchResult', () => {
     created: '2026-03-25T10:00:00.000Z',
     content: 'The body of the memory.',
     relevance: 1.5,
+    similarity: 1.5,
+    scope: 'global',
   };
 
   it('formats a match with title, metadata, and content', () => {
@@ -58,6 +60,8 @@ describe('formatResults', () => {
     created: '2026-01-01T00:00:00.000Z',
     content: 'Body',
     relevance: 1,
+    similarity: 1,
+    scope: 'global',
   });
 
   it('reports the correct count', () => {

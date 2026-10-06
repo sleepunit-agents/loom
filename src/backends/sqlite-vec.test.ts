@@ -1053,9 +1053,12 @@ describe('SqliteVecBackend', () => {
     // "loom alpha gamma" ranks the duplicates first (0.816) and gamma third
     // (0.577); with the default diversity MMR swaps the second duplicate for gamma.
     async function seed(b: SqliteVecBackend): Promise<void> {
-      await b.remember({ category: 'project', title: 'Loom alpha plan', content: 'loom alpha' });
-      await b.remember({ category: 'project', title: 'Loom alpha plan (dup)', content: 'loom alpha' });
-      await b.remember({ category: 'project', title: 'Gamma note', content: 'gamma' });
+      // Tagged to 'other' so the project-filter test below exercises real
+      // cross-project exclusion rather than an untagged memory's (global by
+      // construction, t-337) default visibility.
+      await b.remember({ category: 'project', title: 'Loom alpha plan', content: 'loom alpha', project: 'other' });
+      await b.remember({ category: 'project', title: 'Loom alpha plan (dup)', content: 'loom alpha', project: 'other' });
+      await b.remember({ category: 'project', title: 'Gamma note', content: 'gamma', project: 'other' });
     }
 
     it('displaces a near-duplicate with a less-relevant but different memory', async () => {
@@ -1140,6 +1143,82 @@ describe('SqliteVecBackend', () => {
       } finally {
         angry.close();
       }
+    });
+  });
+
+  describe('memory scope discipline (t-337)', () => {
+    it('excludes a project-scoped memory tagged to a different project', async () => {
+      await backend.remember({
+        category: 'project', title: 'Pond auth notes', content: 'pond auth flow', project: 'pond',
+      });
+      const hits = await backend.recall({ query: 'pond auth flow', project: 'norns' });
+      expect(hits.map((h) => h.title)).not.toContain('Pond auth notes');
+    });
+
+    it('still surfaces a memory tagged to the exact project being recalled', async () => {
+      await backend.remember({
+        category: 'project', title: 'Pond auth notes', content: 'pond auth flow', project: 'pond',
+      });
+      const hits = await backend.recall({ query: 'pond auth flow', project: 'pond' });
+      expect(hits.map((h) => h.title)).toContain('Pond auth notes');
+    });
+
+    it('a user-category memory surfaces regardless of project, even tagged to one', async () => {
+      await backend.remember({
+        category: 'user', title: 'Terse replies preferred', content: 'terse replies preference', project: 'pond',
+      });
+      const hits = await backend.recall({ query: 'terse replies preference', project: 'norns' });
+      expect(hits.map((h) => h.title)).toContain('Terse replies preferred');
+    });
+
+    it('an untagged memory surfaces regardless of the recall project filter', async () => {
+      await backend.remember({ category: 'reference', title: 'General git tip', content: 'read only git ops' });
+      const hits = await backend.recall({ query: 'read only git ops', project: 'norns' });
+      expect(hits.map((h) => h.title)).toContain('General git tip');
+    });
+
+    it('an explicit scope: global override beats the project-category default', async () => {
+      await backend.remember({
+        category: 'feedback',
+        title: 'Confirm before force-push',
+        content: 'force push caution',
+        project: 'pond',
+        scope: 'global',
+      });
+      const hits = await backend.recall({ query: 'force push caution', project: 'norns' });
+      expect(hits.map((h) => h.title)).toContain('Confirm before force-push');
+    });
+
+    it('feedback defaults to project scope — excluded from an unrelated project without an override', async () => {
+      await backend.remember({
+        category: 'feedback',
+        title: 'Do not mock the db in these tests',
+        content: 'db mock caution',
+        project: 'pond',
+      });
+      const hits = await backend.recall({ query: 'db mock caution', project: 'norns' });
+      expect(hits.map((h) => h.title)).not.toContain('Do not mock the db in these tests');
+    });
+
+    it('exposes the effective scope on the returned MemoryMatch', async () => {
+      await backend.remember({ category: 'user', title: 'A global fact', content: 'global fact body' });
+      const hits = await backend.recall({ query: 'global fact body' });
+      expect(hits[0].scope).toBe('global');
+    });
+
+    it('findSimilar enforces the same scope discipline as recall', async () => {
+      const { ref: anchor } = await backend.remember({
+        category: 'project', title: 'Pond anchor', content: 'pond anchor body', project: 'pond',
+      });
+      await backend.remember({
+        category: 'project', title: 'Pond sibling', content: 'pond anchor body', project: 'pond',
+      });
+      await backend.remember({
+        category: 'project', title: 'Norns sibling', content: 'pond anchor body', project: 'norns',
+      });
+      const neighbours = await backend.findSimilar({ ref: anchor, project: 'pond' });
+      expect(neighbours.map((n) => n.title)).toContain('Pond sibling');
+      expect(neighbours.map((n) => n.title)).not.toContain('Norns sibling');
     });
   });
 });

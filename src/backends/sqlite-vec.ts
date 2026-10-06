@@ -50,6 +50,7 @@ import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
 import { runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
+import { effectiveScope, isVisibleInProject } from './scope.js';
 
 function slugify(text: string): string {
   return text
@@ -93,6 +94,8 @@ interface MemoryRow {
   sourcing: string | null;
   /** Free-form origin text (t-328). NULL on legacy records. */
   provenance: string | null;
+  /** Explicit scope override (t-337b). NULL defers to the category default. */
+  scope: string | null;
 }
 
 interface VecMatch {
@@ -133,8 +136,8 @@ export class SqliteVecBackend implements MemoryBackend {
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
-        created, ttl, expires_at, salience, sourcing, provenance
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created, ttl, expires_at, salience, sourcing, provenance, scope
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
@@ -155,6 +158,7 @@ export class SqliteVecBackend implements MemoryBackend {
         1.0, // a freshly authored memory is hot; the lane decays it from here
         input.sourcing ?? null,
         input.provenance ?? null,
+        input.scope ?? null,
       );
       insertVec.run(BigInt(result.lastInsertRowid), toVecBuffer(vector));
     });
@@ -185,13 +189,17 @@ export class SqliteVecBackend implements MemoryBackend {
     const poolSize = diversity > 0 ? Math.max(limit * 3, 12) : limit;
     const candidates = this.searchVectors(queryVector, poolSize, poolSize * 4, (mem) => {
       if (categoryFilter && mem.category !== categoryFilter) return false;
-      if (projectFilter && mem.project !== projectFilter) return false;
+      if (!isVisibleInProject(mem, projectFilter)) return false;
       return true;
     });
 
     // MMR only re-orders/selects among candidates that already passed the
     // filters; with <= limit candidates it returns them in relevance order.
+    // `blended` carries the score that actually drove each pick, aligned by
+    // index with `hits` — null means MMR didn't touch anything, so the
+    // blended score is just the raw similarity (see rowToMatch).
     let hits = candidates;
+    let blended: number[] | null = null;
     let diversityDrops = 0;
     if (diversity > 0 && candidates.length > limit) {
       const vectors = this.loadVectors(candidates.map((c) => c.mem.id));
@@ -202,10 +210,11 @@ export class SqliteVecBackend implements MemoryBackend {
       }));
       const picked = mmrSelect(pool, limit, diversity);
       hits = picked.selected.map((c) => c.hit);
+      blended = picked.scores;
       diversityDrops = picked.diversityDrops;
     }
 
-    const results = hits.map((h) => rowToMatch(h.mem, h.distance));
+    const results = hits.map((h, i) => rowToMatch(h.mem, h.distance, blended?.[i]));
     const hitIds = hits.map((h) => h.mem.id);
 
     if (hitIds.length > 0) {
@@ -482,7 +491,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const hits = this.searchVectors(queryVector, limit, startK, (mem, vr) => {
       if (anchorId !== null && vr.rowid === anchorId) return false;
       if (categoryFilter && mem.category !== categoryFilter) return false;
-      if (projectFilter && (mem.project ?? null) !== projectFilter) return false;
+      if (!isVisibleInProject(mem, projectFilter)) return false;
       if (1 - vr.distance < minRelevance) return false;
       return true;
     });
@@ -1003,7 +1012,13 @@ function toVecBuffer(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
 }
 
-function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
+/**
+ * `blendedRelevance`, when given, is the MMR score that actually placed this
+ * row (see recall()'s `blended` array) — omit it (findSimilar, or recall
+ * when MMR didn't run) and relevance falls back to the raw similarity.
+ */
+function rowToMatch(row: MemoryRow, distance: number, blendedRelevance?: number): MemoryMatch {
+  const similarity = 1 - distance;
   return {
     path: row.ref,
     title: row.title,
@@ -1011,7 +1026,9 @@ function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
     project: row.project ?? undefined,
     created: row.created,
     content: row.content,
-    relevance: 1 - distance,
+    relevance: blendedRelevance ?? similarity,
+    similarity,
+    scope: effectiveScope(row),
     lastAccessed: row.last_accessed ?? undefined,
     ttl: row.ttl ?? undefined,
     expiresAt: row.expires_at ?? undefined,

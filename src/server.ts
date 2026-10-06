@@ -187,9 +187,17 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'E.g. "wake:w-74fccc 2026-09-07", "Jonathan, Discord #loom", "lane:letters". ' +
         'For episodes, prefer metadata.where (already conventional); provenance carries detail.'
       ),
+      scope: z.enum(['project', 'global']).optional().describe(
+        'Override this memory\'s recall visibility. Omit to take the category default: ' +
+        '"user" and "reference" default global, everything else defaults to project-scoped ' +
+        'when a project is set (global when it isn\'t — nothing to scope against). Set this ' +
+        'explicitly to "global" for a fact learned in one project that actually applies ' +
+        'everywhere — a security, git, or tool-workflow practice, not a language/framework/' +
+        'file-layout/code-style/error-handling convention (those stay project-scoped).'
+      ),
     },
-    async ({ category, title, content, project, metadata, ttl, sourcing, provenance }) => {
-      const ref = await remember(contextDir, { category, title, content, project, metadata, ttl, sourcing, provenance });
+    async ({ category, title, content, project, metadata, ttl, sourcing, provenance, scope }) => {
+      const ref = await remember(contextDir, { category, title, content, project, metadata, ttl, sourcing, provenance, scope });
       return { content: [{ type: 'text' as const, text: `Memory stored: "${ref.title}" → ${ref.ref}` }] };
     },
   );
@@ -204,7 +212,12 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       query: z.string().describe('What to search for — topic, keyword, or question'),
       category: z.string().optional().describe('Filter to a specific memory category, or omit for all'),
-      project: z.string().optional().describe('Filter to a specific project'),
+      project: z.string().optional().describe(
+        'Scope to a specific project — pass the project you are currently working in. ' +
+        'Enforces scope discipline (t-337): memories tagged to a different project are ' +
+        'excluded unless their effective scope is global (user/reference by default, or ' +
+        'anything written with scope: "global"). Omit to search without project scoping.'
+      ),
       limit: z.number().int().positive().optional().describe('Maximum results to return (default: 10)'),
       diversity: z.number().min(0).max(1).optional().describe(
         'MMR diversity 0..1 (default 0.3 = 1−λ). 0 reproduces the plain relevance ranking; ' +
