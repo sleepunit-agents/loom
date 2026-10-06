@@ -227,9 +227,16 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       title: z.string().optional().describe('Title of the memory to update (used with category)'),
       content: z.string().optional().describe('New content (replaces existing body)'),
       metadata: z.record(z.string(), z.unknown()).optional().describe('Metadata fields to add or update'),
+      observation: z.enum(['confirm', 'contradict']).optional().describe(
+        'Feedback memories only: record a confirming or contradicting observation. ' +
+        '"confirm" raises confidence (+0.05, capped at 0.9), "contradict" lowers it ' +
+        '(-0.1, floored at 0.3); either way the evidence count goes up. Ignored on ' +
+        'non-feedback memories. Confidence decays toward neutral the longer it goes ' +
+        'unconfirmed — see the feedback category description on remember.'
+      ),
     },
-    async ({ ref, category, title, content, metadata }) => {
-      const result = await update(contextDir, { ref, category, title, content, metadata });
+    async ({ ref, category, title, content, metadata, observation }) => {
+      const result = await update(contextDir, { ref, category, title, content, metadata, observation });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

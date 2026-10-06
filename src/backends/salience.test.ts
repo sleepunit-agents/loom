@@ -13,6 +13,12 @@ import {
   assembleDigest,
   recomputeSalienceForContext,
   digestForContext,
+  clampConfidence,
+  applyObservation,
+  decayedConfidence,
+  FEEDBACK_CONFIDENCE_MIN,
+  FEEDBACK_CONFIDENCE_MAX,
+  FEEDBACK_CONFIDENCE_DEFAULT,
   type DigestRow,
 } from './salience.js';
 import { remember } from '../tools/remember.js';
@@ -44,6 +50,65 @@ describe('temperature (per-category half-life decay + access bump)', () => {
     };
     const order = Object.entries(cases).sort((a, b) => b[1] - a[1]).map(([k]) => k);
     expect(order).toEqual(['old-but-recalled', 'fresh-project', 'identity-fact', 'old-untouched']);
+  });
+});
+
+// ── Feedback confidence model (t-338): confidence + evidence count, computed
+// in code (never a prompt), decay reused from temperature()/HALF_LIVES above.
+describe('clampConfidence', () => {
+  it('holds confidence within [0.3, 0.9]', () => {
+    expect(clampConfidence(0.95)).toBe(FEEDBACK_CONFIDENCE_MAX);
+    expect(clampConfidence(0.1)).toBe(FEEDBACK_CONFIDENCE_MIN);
+    expect(clampConfidence(0.6)).toBe(0.6);
+  });
+});
+
+describe('applyObservation', () => {
+  it('raises confidence by 0.05 on confirm', () => {
+    expect(applyObservation(0.6, 'confirm')).toBeCloseTo(0.65, 5);
+  });
+
+  it('lowers confidence by 0.1 on contradict', () => {
+    expect(applyObservation(0.6, 'contradict')).toBeCloseTo(0.5, 5);
+  });
+
+  it('a contradicting observation measurably lowers confidence even at the floor', () => {
+    const atFloor = applyObservation(FEEDBACK_CONFIDENCE_MIN, 'contradict');
+    expect(atFloor).toBe(FEEDBACK_CONFIDENCE_MIN); // can't go below the floor
+    const aboveFloor = applyObservation(0.5, 'contradict');
+    expect(aboveFloor).toBeLessThan(0.5); // but a real drop registers above it
+  });
+
+  it('never exceeds the max on repeated confirms', () => {
+    let c = FEEDBACK_CONFIDENCE_DEFAULT;
+    for (let i = 0; i < 20; i++) c = applyObservation(c, 'confirm');
+    expect(c).toBe(FEEDBACK_CONFIDENCE_MAX);
+  });
+});
+
+describe('decayedConfidence (reuses temperature()/HALF_LIVES — no separate decay rule)', () => {
+  it('returns the raw value at the moment of touch', () => {
+    expect(decayedConfidence(0.8, daysAgo(0), 'feedback', NOW)).toBeCloseTo(0.8, 5);
+  });
+
+  it('relaxes toward the neutral default as the memory cools', () => {
+    // feedback half-life = 30d (HALF_LIVES.feedback): at 30 days old, temp = 0.5,
+    // so the value should sit halfway between raw and FEEDBACK_CONFIDENCE_DEFAULT.
+    const raw = 0.8;
+    const decayed = decayedConfidence(raw, daysAgo(30), 'feedback', NOW);
+    expect(decayed).toBeCloseTo(FEEDBACK_CONFIDENCE_DEFAULT + (raw - FEEDBACK_CONFIDENCE_DEFAULT) * 0.5, 2);
+    expect(decayed).toBeLessThan(raw);
+    expect(decayed).toBeGreaterThan(FEEDBACK_CONFIDENCE_DEFAULT);
+  });
+
+  it('approaches the neutral default for a very old, unconfirmed memory', () => {
+    const decayed = decayedConfidence(0.9, daysAgo(365), 'feedback', NOW);
+    expect(decayed).toBeCloseTo(FEEDBACK_CONFIDENCE_DEFAULT, 1);
+  });
+
+  it('decays a low (contradicted) raw value back up toward neutral, not further down', () => {
+    const decayed = decayedConfidence(FEEDBACK_CONFIDENCE_MIN, daysAgo(60), 'feedback', NOW);
+    expect(decayed).toBeGreaterThan(FEEDBACK_CONFIDENCE_MIN);
   });
 });
 

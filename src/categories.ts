@@ -26,6 +26,9 @@ export const EPISODE_CATEGORY = 'episode';
 /** Episodes expire by default — they are a tape, not the stack. */
 export const EPISODE_DEFAULT_TTL = '48h';
 
+/** The category that carries evidence-backed confidence (t-338). */
+export const FEEDBACK_CATEGORY = 'feedback';
+
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number];
 
 export function isMemoryCategory(value: string): value is MemoryCategory {
