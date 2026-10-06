@@ -177,6 +177,29 @@ export const MIGRATIONS: readonly Migration[] = [
       ).run();
     },
   },
+  {
+    id: 'add_confidence',
+    description:
+      'Add confidence column — evidence-backed trust score for feedback memories, ' +
+      'computed in code (t-338)',
+    pending: (db) => !hasColumn(db, 'memories', 'confidence'),
+    run: (db) => {
+      // NULL = not applicable (non-feedback memories never get a confidence
+      // score). remember() seeds it for category='feedback'; update() adjusts
+      // it on a confirm/contradict observation.
+      db.prepare('ALTER TABLE memories ADD COLUMN confidence REAL').run();
+    },
+  },
+  {
+    id: 'add_evidence_count',
+    description:
+      'Add evidence_count column — number of observations backing a feedback ' +
+      'memory\'s confidence (t-338)',
+    pending: (db) => !hasColumn(db, 'memories', 'evidence_count'),
+    run: (db) => {
+      db.prepare('ALTER TABLE memories ADD COLUMN evidence_count INTEGER NOT NULL DEFAULT 0').run();
+    },
+  },
 ];
 
 /**

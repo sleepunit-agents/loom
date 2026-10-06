@@ -50,6 +50,12 @@ import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
 import { runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
+import { FEEDBACK_CATEGORY } from '../categories.js';
+import {
+  FEEDBACK_CONFIDENCE_DEFAULT,
+  applyObservation,
+  decayedConfidence,
+} from './salience.js';
 
 function slugify(text: string): string {
   return text
@@ -93,6 +99,10 @@ interface MemoryRow {
   sourcing: string | null;
   /** Free-form origin text (t-328). NULL on legacy records. */
   provenance: string | null;
+  /** Evidence-backed confidence, feedback memories only (t-338). NULL = not applicable. */
+  confidence: number | null;
+  /** Observation count behind `confidence` (t-338). 0 for non-feedback memories. */
+  evidence_count: number;
 }
 
 interface VecMatch {
@@ -130,11 +140,20 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const vector = await this.embedder.embed(`${input.title}\n\n${input.content}`);
 
+    // A feedback memory is evidence-backed from the moment it's written: the
+    // observation that created it is the first piece of evidence. Every other
+    // category leaves confidence NULL ("not applicable") — this model is
+    // scoped to feedback, per t-338, not a generic trust score.
+    const isFeedback = input.category === FEEDBACK_CATEGORY;
+    const confidence = isFeedback ? FEEDBACK_CONFIDENCE_DEFAULT : null;
+    const evidenceCount = isFeedback ? 1 : 0;
+
     const insertMem = this.db.prepare(`
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
-        created, ttl, expires_at, salience, sourcing, provenance
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created, ttl, expires_at, salience, sourcing, provenance,
+        confidence, evidence_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
@@ -155,6 +174,8 @@ export class SqliteVecBackend implements MemoryBackend {
         1.0, // a freshly authored memory is hot; the lane decays it from here
         input.sourcing ?? null,
         input.provenance ?? null,
+        confidence,
+        evidenceCount,
       );
       insertVec.run(BigInt(result.lastInsertRowid), toVecBuffer(vector));
     });
@@ -312,9 +333,19 @@ export class SqliteVecBackend implements MemoryBackend {
       : existingMeta;
     const updatedAt = new Date().toISOString();
 
+    // Confirm/contradict (t-338): computed in code, feedback memories only.
+    // A confirm/contradict call IS an observation, so it always stamps
+    // `updated` (the decay clock) even when no content changed.
+    let newConfidence: number | undefined;
+    let newEvidenceCount: number | undefined;
+    if (input.observation && row.category === FEEDBACK_CATEGORY) {
+      newConfidence = applyObservation(row.confidence ?? FEEDBACK_CONFIDENCE_DEFAULT, input.observation);
+      newEvidenceCount = row.evidence_count + 1;
+    }
+
     const updateStmt = this.db.prepare(`
       UPDATE memories
-      SET content = ?, metadata = ?, updated = ?
+      SET content = ?, metadata = ?, updated = ?, confidence = ?, evidence_count = ?
       WHERE id = ?
     `);
     const updateVec = this.db.prepare(
@@ -332,12 +363,25 @@ export class SqliteVecBackend implements MemoryBackend {
     }
 
     const tx = this.db.transaction(() => {
-      updateStmt.run(newContent, JSON.stringify(newMeta), updatedAt, row!.id);
+      updateStmt.run(
+        newContent,
+        JSON.stringify(newMeta),
+        updatedAt,
+        newConfidence ?? row!.confidence,
+        newEvidenceCount ?? row!.evidence_count,
+        row!.id,
+      );
       updateVec.run(toVecBuffer(vector), BigInt(row!.id));
     });
     retryWrite(() => tx());
 
-    return { updated: true, ref: row.ref, snapshotId };
+    return {
+      updated: true,
+      ref: row.ref,
+      snapshotId,
+      confidence: newConfidence,
+      evidenceCount: newEvidenceCount,
+    };
   }
 
   async prune(options?: {
@@ -422,7 +466,8 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const rows = this.db
       .prepare(
-        `SELECT ref, title, category, project, created, sourcing, provenance
+        `SELECT ref, title, category, project, created, updated, sourcing, provenance,
+                confidence, evidence_count
          FROM memories ${where}
          ORDER BY created DESC LIMIT ?`,
       )
@@ -432,8 +477,11 @@ export class SqliteVecBackend implements MemoryBackend {
       category: string;
       project: string | null;
       created: string;
+      updated: string | null;
       sourcing: string | null;
       provenance: string | null;
+      confidence: number | null;
+      evidence_count: number;
     }[];
 
     return rows.map((r) => ({
@@ -444,6 +492,11 @@ export class SqliteVecBackend implements MemoryBackend {
       created: r.created,
       sourcing: (r.sourcing as MemorySourcing) ?? undefined,
       provenance: r.provenance ?? undefined,
+      confidence:
+        r.confidence !== null
+          ? decayedConfidence(r.confidence, r.updated ?? r.created, r.category, Date.now())
+          : undefined,
+      evidenceCount: r.confidence !== null ? r.evidence_count : undefined,
     }));
   }
 
@@ -1003,6 +1056,18 @@ function toVecBuffer(vector: number[]): Buffer {
   return Buffer.from(new Float32Array(vector).buffer);
 }
 
+/**
+ * Decayed confidence for display: undefined for non-feedback memories (NULL
+ * stored confidence), else the raw value relaxed toward neutral by how long
+ * it's been since the last observation. `updated` (not `last_accessed`) is
+ * the decay clock — see decayedConfidence()'s doc comment in salience.ts.
+ */
+function decayedRowConfidence(row: MemoryRow): number | undefined {
+  if (row.confidence === null) return undefined;
+  const lastObserved = row.updated ?? row.created;
+  return decayedConfidence(row.confidence, lastObserved, row.category, Date.now());
+}
+
 function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
   return {
     path: row.ref,
@@ -1017,5 +1082,7 @@ function rowToMatch(row: MemoryRow, distance: number): MemoryMatch {
     expiresAt: row.expires_at ?? undefined,
     sourcing: (row.sourcing as MemorySourcing) ?? undefined,
     provenance: row.provenance ?? undefined,
+    confidence: decayedRowConfidence(row),
+    evidenceCount: row.confidence !== null ? row.evidence_count : undefined,
   };
 }

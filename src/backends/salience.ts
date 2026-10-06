@@ -53,6 +53,57 @@ export function tierOf(temp: number): Tier {
   return 'Cool';
 }
 
+/**
+ * Feedback confidence model (t-338, parent t-325).
+ *
+ * Stolen from affaan-m/ECC's instinct design (confidence range 0.3-0.9,
+ * evidence-backed, +0.05 per confirming observation, -0.1 per contradicting
+ * one) — deliberately NOT their implementation. In ECC that arithmetic lives
+ * only as prose in a prompt (agents/observer.md) fed to an LLM; instinct-cli.py
+ * never computes, adjusts, or decays the number anywhere. Here the arithmetic
+ * is plain functions loom's own code calls from remember()/update() — never a
+ * prompt. Decay reuses `temperature()` above (same HALF_LIVES table) instead
+ * of a second, separate -0.02/week rule: one decay mechanism, not two.
+ */
+export const FEEDBACK_CONFIDENCE_MIN = 0.3;
+export const FEEDBACK_CONFIDENCE_MAX = 0.9;
+/** Starting value for a newly observed feedback memory, and the value decay relaxes toward. */
+export const FEEDBACK_CONFIDENCE_DEFAULT = 0.6;
+export const FEEDBACK_CONFIRM_DELTA = 0.05;
+export const FEEDBACK_CONTRADICT_DELTA = -0.1;
+
+export function clampConfidence(value: number): number {
+  return Math.min(FEEDBACK_CONFIDENCE_MAX, Math.max(FEEDBACK_CONFIDENCE_MIN, value));
+}
+
+/** Apply one confirming or contradicting observation to a stored confidence value. */
+export function applyObservation(current: number, kind: 'confirm' | 'contradict'): number {
+  const delta = kind === 'confirm' ? FEEDBACK_CONFIRM_DELTA : FEEDBACK_CONTRADICT_DELTA;
+  return clampConfidence(current + delta);
+}
+
+/**
+ * Confidence after decay: relax the evidence-weighted raw value toward the
+ * neutral default as the memory cools, scaled by the SAME exponential
+ * half-life curve as salience (`temperature()`, same HALF_LIVES table) — a
+ * fully-decayed (temp→0) memory reads as neutral, a freshly-touched one
+ * (temp=1) reads as its raw evidence-backed value.
+ *
+ * `lastTouchIso` should be the last OBSERVATION time (the row's `updated`,
+ * falling back to `created`) — not `last_accessed`. A plain recall shouldn't
+ * reheat confidence; only a new confirm/contradict (which goes through
+ * update() and stamps `updated`) is new evidence.
+ */
+export function decayedConfidence(
+  rawConfidence: number,
+  lastTouchIso: string,
+  category: string,
+  nowMs: number,
+): number {
+  const temp = temperature(lastTouchIso, category, nowMs);
+  return FEEDBACK_CONFIDENCE_DEFAULT + (rawConfidence - FEEDBACK_CONFIDENCE_DEFAULT) * temp;
+}
+
 interface SalienceRow {
   id: number;
   category: string;
