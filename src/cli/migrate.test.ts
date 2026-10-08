@@ -103,6 +103,20 @@ function buildCurrentDb(dir: string): string {
   db.prepare(`CREATE INDEX idx_memory_supersessions_old ON memory_supersessions(old_ref)`).run();
   db.prepare(`CREATE INDEX idx_memory_supersessions_new ON memory_supersessions(new_ref)`).run();
   db.prepare(`
+    CREATE TABLE memory_deletions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      ref        TEXT NOT NULL,
+      category   TEXT NOT NULL,
+      title      TEXT NOT NULL,
+      project    TEXT,
+      content    TEXT NOT NULL,
+      created    TEXT NOT NULL,
+      deleted_at TEXT NOT NULL,
+      op         TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE INDEX idx_memory_deletions_ref ON memory_deletions(ref)`).run();
+  db.prepare(`
     CREATE VIRTUAL TABLE vec_memories USING vec0(embedding float[4] distance_metric=cosine)
   `).run();
   db.close();

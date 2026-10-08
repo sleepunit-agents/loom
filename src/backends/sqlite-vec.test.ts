@@ -208,6 +208,76 @@ describe('SqliteVecBackend', () => {
     expect(remaining[0].project).toBe('beta');
   });
 
+  // ── Deletion journal (t-436) ────────────────────────────────────────────────
+
+  it('records a deletion journal entry when forget() hard-deletes by ref', async () => {
+    const { ref } = await backend.remember({
+      category: 'project',
+      title: 'Gamma import',
+      content: 'gamma work',
+      project: 'alpha-proj',
+    });
+
+    await backend.forget({ ref });
+
+    const db = backend.getDatabase();
+    const row = db
+      .prepare('SELECT * FROM memory_deletions WHERE ref = ?')
+      .get(ref) as
+      | {
+          ref: string;
+          category: string;
+          title: string;
+          project: string | null;
+          content: string;
+          created: string;
+          deleted_at: string;
+          op: string;
+        }
+      | undefined;
+
+    expect(row).toBeDefined();
+    expect(row!.category).toBe('project');
+    expect(row!.title).toBe('Gamma import');
+    expect(row!.project).toBe('alpha-proj');
+    expect(row!.content).toBe('gamma work');
+    expect(row!.op).toBe('forget');
+    expect(row!.created).toBeTruthy();
+    expect(row!.deleted_at).toBeTruthy();
+
+    // The journal row must outlive the memory row it describes — it is not
+    // a child table with ON DELETE CASCADE onto memories (the bug this
+    // fixes). Deleting the memory again (a no-op forget) must not touch it.
+    const stillThere = db
+      .prepare('SELECT ref FROM memory_deletions WHERE ref = ?')
+      .get(ref);
+    expect(stillThere).toBeDefined();
+  });
+
+  it('records a deletion journal entry per row on bulk forget by project', async () => {
+    await backend.remember({
+      category: 'project',
+      title: 'A',
+      content: 'loom a',
+      project: 'alpha',
+    });
+    await backend.remember({
+      category: 'project',
+      title: 'B',
+      content: 'loom b',
+      project: 'alpha',
+    });
+
+    await backend.forget({ project: 'alpha' });
+
+    const db = backend.getDatabase();
+    const rows = db
+      .prepare("SELECT title, op FROM memory_deletions WHERE project = 'alpha'")
+      .all() as { title: string; op: string }[];
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.op === 'forget')).toBe(true);
+  });
+
   it('updates content and re-embeds', async () => {
     const { ref } = await backend.remember({
       category: 'project',
