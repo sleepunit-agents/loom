@@ -16,6 +16,9 @@ Body is read from stdin (when piped) or $EDITOR (when interactive).
 Options:
   --category <name>      Category: user|project|self|feedback|reference|pursuit (default: reference)
   --project <name>       Project tag
+  --scope <project|global>  Override recall visibility (default: category default — see
+                          backends/scope.ts; "global" for a fact that applies regardless
+                          of which project it was learned on)
   --ttl <dur>            TTL like "7d", "30d", or "permanent"
   --refs <csv>           Comma-separated reference refs stored in metadata
   --meta <json>          JSON object merged into metadata (e.g. '{"where":"voice"}')
@@ -33,6 +36,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       options: {
         category: { type: 'string' },
         project:  { type: 'string' },
+        scope:    { type: 'string' },
         ttl:      { type: 'string' },
         refs:     { type: 'string' },
         meta:     { type: 'string' },
@@ -53,6 +57,12 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   const category = parsed.values.category ?? 'reference';
   if (!isMemoryCategory(category)) {
     io.stderr(`Unknown category "${category}". Valid categories: ${MEMORY_CATEGORIES.join(', ')}.\n`);
+    return 2;
+  }
+
+  const scope = parsed.values.scope;
+  if (scope !== undefined && scope !== 'project' && scope !== 'global') {
+    io.stderr(`--scope must be "project" or "global".\n`);
     return 2;
   }
 
@@ -91,6 +101,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     title,
     content: body,
     project:  parsed.values.project,
+    scope,
     ttl:      parsed.values.ttl,
     metadata,
   });

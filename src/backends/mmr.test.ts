@@ -82,6 +82,20 @@ describe('mmrSelect', () => {
   });
 
   it('handles an empty pool', () => {
-    expect(mmrSelect([], 5)).toEqual({ selected: [], diversityDrops: 0 });
+    expect(mmrSelect([], 5)).toEqual({ selected: [], scores: [], diversityDrops: 0 });
+  });
+
+  it('exposes the blended score that drove each pick, aligned with `selected`', () => {
+    // Untouched pool (diversity 0): the blended score is just each item's own relevance.
+    const plain = mmrSelect(pool, 2, 0);
+    expect(plain.scores).toEqual(plain.selected.map((c) => c.relevance));
+
+    // MMR active: the blended score is NOT the raw relevance for a diversity-promoted pick.
+    const { selected, scores } = mmrSelect(pool, 3, DEFAULT_DIVERSITY);
+    expect(selected.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+    expect(scores).toHaveLength(3);
+    const cIdx = selected.findIndex((c) => c.id === 'c');
+    expect(scores[cIdx]).not.toBeCloseTo(selected[cIdx].relevance);
+    expect(scores[cIdx]).toBeCloseTo(0.35, 2); // 0.7·0.5 − 0.3·0, per the comment above
   });
 });

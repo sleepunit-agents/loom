@@ -20,6 +20,9 @@
  */
 export type MemorySourcing = 'observed' | 'relayed' | 'inferred' | 'system';
 
+export type { MemoryScope } from './scope.js';
+import type { MemoryScope } from './scope.js';
+
 export interface MemoryInput {
   category: string;
   title: string;
@@ -40,6 +43,17 @@ export interface MemoryInput {
    * prefer metadata.where (already conventional); this carries additional detail.
    */
   provenance?: string;
+  /**
+   * Explicit scope override — 'project' (only recallable while scoped to
+   * this memory's project) or 'global' (recallable regardless of project).
+   * Omit to take the category default (see backends/scope.ts): 'user' and
+   * 'reference' default global, everything else defaults project when a
+   * project is attached, global when it isn't. Set this explicitly to flag
+   * a genuinely cross-project fact learned in a project context — e.g. a
+   * git/security/tool-workflow practice that happened to surface while
+   * working on one project but applies everywhere (t-337).
+   */
+  scope?: MemoryScope;
 }
 
 export interface MemoryRef {
@@ -97,7 +111,20 @@ export interface MemoryMatch {
   project?: string;
   created: string;
   content: string;
+  /**
+   * Final ranking score for this result's position in the returned list.
+   * Equals `similarity` unless MMR re-ranking (recall's `diversity` > 0)
+   * traded this pick off against ones already selected — in that case this
+   * is the blended score (λ·similarity − (1−λ)·max similarity-to-selected)
+   * that actually placed it, not its raw similarity. See `similarity` for
+   * the pre-MMR number alongside it (t-337a; modeled on MemoriLabs/Memori's
+   * FactSearchResult.{similarity, rank_score} split).
+   */
   relevance: number;
+  /** Raw cosine similarity (1 − distance) to the query, before any MMR re-ranking. */
+  similarity: number;
+  /** Effective scope this memory was recalled under — see backends/scope.ts (t-337b). */
+  scope: MemoryScope;
   /** ISO timestamp of last recall hit, if tracked */
   lastAccessed?: string;
   /** TTL value if set (e.g. "7d", "permanent") */
