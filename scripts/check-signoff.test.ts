@@ -126,6 +126,19 @@ describe('check-signoff --message', () => {
     expect(check('--message', edited)).toBe(0);
   });
 
+  it("accepts dependabot's trailer, which sits after a bare '---' line", () => {
+    // Dependabot's real format: subject, body, a bare "---" line, a YAML
+    // metadata block, then the sign-off. `git interpret-trailers` treats a
+    // bare "---" as a format-patch divider and discards everything after it
+    // by default — including a real trailer — unless told not to.
+    const dependabot = join(dir, 'dependabot.txt');
+    writeFileSync(
+      dependabot,
+      `chore(deps): bump foo\n\nBumps foo from 1 to 2.\n\n---\nupdated-dependencies:\n- dependency-name: foo\n...\n\n${SIGNED}\n`,
+    );
+    expect(check('--message', dependabot)).toBe(0);
+  });
+
   it('exits 2 on usage errors', () => {
     expect(check()).toBe(2);
     expect(check('--range', 'HEAD')).toBe(2);
