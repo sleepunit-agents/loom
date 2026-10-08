@@ -83,6 +83,39 @@ describe('SqliteVecBackend', () => {
     expect(results[0].relevance).toBeGreaterThan(0);
   });
 
+  it('refuses to persist a degenerate (all-zero) embedding (t-334)', async () => {
+    const zeroEmbedder: EmbeddingProvider = {
+      dimensions: 4,
+      embed: vi.fn(async () => [0, 0, 0, 0]),
+      embedBatch: vi.fn(async (ts: string[]) => ts.map(() => [0, 0, 0, 0])),
+    };
+    const zeroDir = mkdtempSync(join(tmpdir(), 'loom-sqlite-vec-zero-'));
+    const zeroBackend = new SqliteVecBackend(
+      { dbPath: join(zeroDir, 'test.db') },
+      zeroEmbedder,
+    );
+    try {
+      await expect(
+        zeroBackend.remember({
+          category: 'project',
+          title: 'Degenerate embedding',
+          content: 'This would otherwise match everything in cosine search',
+        }),
+      ).rejects.toThrow(/degenerate embedding/i);
+
+      // The failed vector write must have rolled back the memory row too —
+      // a half-written memory with no embedding is just a different bug.
+      const count = zeroBackend
+        .getDatabase()
+        .prepare('SELECT COUNT(*) AS c FROM memories')
+        .get() as { c: number };
+      expect(count.c).toBe(0);
+    } finally {
+      zeroBackend.close();
+      rmSync(zeroDir, { recursive: true, force: true });
+    }
+  });
+
   it('stores and returns sourcing and provenance on remember/recall', async () => {
     await backend.remember({
       category: 'self',
