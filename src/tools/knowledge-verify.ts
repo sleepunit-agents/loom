@@ -8,6 +8,7 @@
  * "## Verification" section — append-only, never replace.
  */
 import { createKnowledgeBackend } from '../backends/index.js';
+import { resolveIdentityName } from '../config.js';
 
 export interface KnowledgeVerifyToolInput {
   slug?: string;
@@ -15,12 +16,17 @@ export interface KnowledgeVerifyToolInput {
   verified_at?: string;
   freshness_anchor?: string;
   note?: string;
+  /** What the verification found. Defaults to 'confirmed' (the claims still hold). */
+  outcome?: 'confirmed' | 'stale' | 'corrected';
+  /** Did the verifier actually check the page's citations against their sources? Defaults to false. */
+  citation_checked?: boolean;
 }
 
 export async function knowledgeVerify(
   contextDir: string,
   input: KnowledgeVerifyToolInput,
 ): Promise<string> {
+  const verifier = resolveIdentityName(contextDir);
   const backend = createKnowledgeBackend(contextDir);
   try {
     const result = await backend.verifyPages({
@@ -29,17 +35,21 @@ export async function knowledgeVerify(
       verified_at: input.verified_at,
       freshness_anchor: input.freshness_anchor,
       note: input.note,
+      verifier,
+      outcome: input.outcome,
+      citation_checked: input.citation_checked,
     });
 
     const stamp = result.verified_at;
+    const outcome = input.outcome ?? 'confirmed';
     if (result.verified === 1) {
       const extras: string[] = [];
       if (input.freshness_anchor) extras.push(`anchor → ${input.freshness_anchor}`);
       if (result.noted) extras.push('note appended');
       const suffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
-      return `Verified \`${result.slugs[0]}\` — verified_at stamped to ${stamp}${suffix}. Body untouched${result.noted ? ' except appended note' : ''}.`;
+      return `Verified \`${result.slugs[0]}\` by ${verifier} — outcome: ${outcome}, verified_at stamped to ${stamp}${suffix}. Body untouched${result.noted ? ' except appended note' : ''}.`;
     }
-    return `Verified ${result.verified} page(s) — verified_at stamped to ${stamp}: ${result.slugs.map((s) => `\`${s}\``).join(', ')}. Bodies untouched.`;
+    return `Verified ${result.verified} page(s) by ${verifier} — outcome: ${outcome}, verified_at stamped to ${stamp}: ${result.slugs.map((s) => `\`${s}\``).join(', ')}. Bodies untouched.`;
   } catch (e) {
     return `Error: ${(e as Error).message}`;
   } finally {

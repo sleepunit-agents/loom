@@ -381,6 +381,15 @@ export interface KnowledgePageInput {
    * (e.g. "v2", "2026-08-19", "t-81"). Preserved across upserts when omitted.
    */
   version?: string;
+  /**
+   * Caller's loom identity, resolved server-side (never a free-text tool
+   * argument — that would let any caller claim any authorship). Stamped as
+   * pages.author only on creation (the identity that wrote v1 — never
+   * overwritten by later upserts) and as page_revisions.actor on any
+   * snapshot this call produces. Omitted means "unknown" (legacy direct
+   * callers, tests) rather than a hard requirement.
+   */
+  actor?: string;
 }
 
 export interface KnowledgeCitationInput {
@@ -419,6 +428,12 @@ export interface KnowledgePage {
   created_by?: string | null;
   /** ours/ class: artifact version or revision tag (e.g. "v2", "2026-08-19"). */
   version?: string | null;
+  /**
+   * Identity that wrote v1 of this page — set once at creation, never
+   * changed by later upserts. Null for pages created before this column
+   * existed, or written by a direct backend caller that omitted actor.
+   */
+  author?: string | null;
 }
 
 export interface KnowledgeCitation {
@@ -586,6 +601,16 @@ export interface KnowledgeVerifyInput {
   freshness_anchor?: string;
   /** Optional note — appended to the body as a "## Verification — <date>" section (single-page mode only). */
   note?: string;
+  /**
+   * Caller's loom identity, resolved server-side (never a free-text tool
+   * argument). Recorded as verifications.verifier for every page stamped
+   * by this call. Omitted means "unknown" (legacy direct callers, tests).
+   */
+  verifier?: string;
+  /** What the verification found. Defaults to 'confirmed' (the claims still hold). */
+  outcome?: 'confirmed' | 'stale' | 'corrected';
+  /** Whether the verifier actually checked the page's citations against their sources. Defaults to false. */
+  citation_checked?: boolean;
 }
 
 export interface KnowledgeVerifyResult {
@@ -594,6 +619,17 @@ export interface KnowledgeVerifyResult {
   verified_at: string;
   /** True when a note section was appended to the body. */
   noted: boolean;
+}
+
+/** A verification record — who verified a page, when, and what they found. */
+export interface KnowledgeVerificationRecord {
+  id: number;
+  page_id: number;
+  /** Resolved loom identity of the verifier; null for pre-attribution rows. */
+  verifier: string | null;
+  verified_at: string;
+  outcome: string;
+  citation_checked: boolean;
 }
 
 /** Revision listing entry — metadata only, no body payload. */
@@ -606,6 +642,8 @@ export interface KnowledgeRevisionMeta {
   op: string;
   replaced_at: string;
   body_length: number;
+  /** Resolved loom identity that performed the action, null for pre-attribution rows. */
+  actor: string | null;
 }
 
 export interface KnowledgeRevision extends Omit<KnowledgeRevisionMeta, 'body_length'> {
@@ -615,6 +653,8 @@ export interface KnowledgeRevision extends Omit<KnowledgeRevisionMeta, 'body_len
 export interface KnowledgeRevisionRestoreInput {
   slug: string;
   revision_id: number;
+  /** Caller's loom identity, resolved server-side — recorded on the snapshot this restore takes of the displaced body. */
+  actor?: string;
 }
 
 export interface KnowledgeRevisionRestoreResult {
@@ -664,6 +704,8 @@ export interface KnowledgeBackend {
   purgePages(input: KnowledgePurgeInput): Promise<KnowledgePurgeResult>;
   /** Stamp verified_at / freshness_anchor without touching the body (optional appended note in single-page mode). */
   verifyPages(input: KnowledgeVerifyInput): Promise<KnowledgeVerifyResult>;
+  /** List verification records for a page, newest first. */
+  getVerifications(slug: string): Promise<KnowledgeVerificationRecord[]>;
   /** List body snapshots for a page, newest first. Metadata only — no body payloads. */
   listRevisions(slug: string): Promise<KnowledgeRevisionMeta[]>;
   /** Fetch one revision including its full body. */

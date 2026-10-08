@@ -28,7 +28,7 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  async function seed(slug: string, opts: { body?: string; verified_at?: string; freshness_anchor?: string } = {}) {
+  async function seed(slug: string, opts: { body?: string; verified_at?: string; freshness_anchor?: string; actor?: string } = {}) {
     await backend.writePage({
       slug,
       title: slug,
@@ -36,6 +36,7 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
       body: opts.body ?? `Body of ${slug}`,
       verified_at: opts.verified_at,
       freshness_anchor: opts.freshness_anchor,
+      actor: opts.actor,
     });
   }
 
@@ -197,6 +198,77 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
       await seed('a');
       await expect(backend.verifyPages({})).rejects.toThrow();
       await expect(backend.verifyPages({ slug: 'a', slugs: ['a'] })).rejects.toThrow();
+    });
+  });
+
+  // ─── verifications (t-675: attributed audit trail, not just a bare stamp) ──
+
+  describe('verifications', () => {
+    it('records a verification row alongside the verified_at stamp', async () => {
+      await seed('page');
+
+      await backend.verifyPages({ slug: 'page', verifier: 'mark' });
+
+      const verifications = await backend.getVerifications('page');
+      expect(verifications).toHaveLength(1);
+      expect(verifications[0].verifier).toBe('mark');
+      expect(verifications[0].outcome).toBe('confirmed');
+      expect(verifications[0].citation_checked).toBe(false);
+    });
+
+    it('defaults outcome to confirmed and citation_checked to false when omitted', async () => {
+      await seed('page');
+      await backend.verifyPages({ slug: 'page' });
+
+      const [v] = await backend.getVerifications('page');
+      expect(v.verifier).toBeNull();
+      expect(v.outcome).toBe('confirmed');
+      expect(v.citation_checked).toBe(false);
+    });
+
+    it('records outcome and citation_checked when the verifier supplies them', async () => {
+      await seed('page');
+      await backend.verifyPages({
+        slug: 'page',
+        verifier: 'art',
+        outcome: 'stale',
+        citation_checked: true,
+      });
+
+      const [v] = await backend.getVerifications('page');
+      expect(v.outcome).toBe('stale');
+      expect(v.citation_checked).toBe(true);
+    });
+
+    it('records one verification per page in batch mode', async () => {
+      await seed('a');
+      await seed('b');
+
+      await backend.verifyPages({ slugs: ['a', 'b'], verifier: 'art' });
+
+      expect(await backend.getVerifications('a')).toHaveLength(1);
+      expect(await backend.getVerifications('b')).toHaveLength(1);
+    });
+
+    it('accumulates verifications across repeated calls, newest first', async () => {
+      await seed('page');
+
+      await backend.verifyPages({ slug: 'page', verifier: 'art', verified_at: '2026-01-01T00:00:00.000Z' });
+      await backend.verifyPages({ slug: 'page', verifier: 'mark', verified_at: '2026-02-01T00:00:00.000Z' });
+
+      const verifications = await backend.getVerifications('page');
+      expect(verifications).toHaveLength(2);
+      expect(verifications[0].verifier).toBe('mark');
+      expect(verifications[1].verifier).toBe('art');
+    });
+
+    it('rejects getVerifications for an unknown page', async () => {
+      await expect(backend.getVerifications('ghost')).rejects.toThrow(/not found/);
+    });
+
+    it('returns an empty list for a page that has never been verified', async () => {
+      await seed('page');
+      expect(await backend.getVerifications('page')).toEqual([]);
     });
   });
 
@@ -367,6 +439,52 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
       const revisions = await backend.listRevisions('new-slug');
       expect(revisions).toHaveLength(1);
       expect((await backend.getRevision(revisions[0].id))!.body).toBe('One.');
+    });
+  });
+
+  // ─── actor attribution (t-675) ──────────────────────────────────────────────
+
+  describe('actor attribution', () => {
+    it('stamps pages.author from the creating call, and never changes it on upsert', async () => {
+      await seed('page', { actor: 'art' });
+      expect((await backend.getPage('page'))!.author).toBe('art');
+
+      // A later update by a different identity must not steal authorship.
+      await backend.writePage({ slug: 'page', title: 'page', domain: 'test', body: 'v2', actor: 'mark' });
+      expect((await backend.getPage('page'))!.author).toBe('art');
+    });
+
+    it('leaves author null when the creating call omits actor', async () => {
+      await seed('page');
+      expect((await backend.getPage('page'))!.author).toBeNull();
+    });
+
+    it('records the acting identity on a write-replace snapshot', async () => {
+      await seed('page', { body: 'v1', actor: 'art' });
+      await backend.writePage({ slug: 'page', title: 'page', domain: 'test', body: 'v2', actor: 'mark' });
+
+      const [revision] = await backend.listRevisions('page');
+      expect(revision.actor).toBe('mark');
+    });
+
+    it('records the acting identity on a history-restore snapshot', async () => {
+      await seed('page', { body: 'v1', actor: 'art' });
+      await backend.writePage({ slug: 'page', title: 'page', domain: 'test', body: 'v2', actor: 'art' });
+
+      const [toRestore] = await backend.listRevisions('page');
+      await backend.restoreRevision({ slug: 'page', revision_id: toRestore.id, actor: 'mark' });
+
+      const [newestSnapshot] = await backend.listRevisions('page');
+      expect(newestSnapshot.op).toBe('history-restore');
+      expect(newestSnapshot.actor).toBe('mark');
+    });
+
+    it('leaves revision actor null when the call omits it', async () => {
+      await seed('page', { body: 'v1' });
+      await backend.writePage({ slug: 'page', title: 'page', domain: 'test', body: 'v2' });
+
+      const [revision] = await backend.listRevisions('page');
+      expect(revision.actor).toBeNull();
     });
   });
 
