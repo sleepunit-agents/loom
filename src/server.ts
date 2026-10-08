@@ -25,6 +25,7 @@ import { findSimilar } from './tools/find-similar.js';
 import { memoryAudit } from './tools/memory-audit.js';
 import { archive } from './tools/archive.js';
 import { restore } from './tools/restore.js';
+import { memoryMerge } from './tools/memory-merge.js';
 import {
   propose,
   listProposals,
@@ -373,6 +374,40 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ ref, category, title }) => {
       const result = await restore(contextDir, { ref, category, title });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.tool(
+    'memory_merge',
+    'Consolidate 2+ memories into one canonical row. Acts on a memory_audit duplicate ' +
+    'finding: pick the survivor (target_ref) and fold the rest (source_refs) into it. ' +
+    'Sources are archived with a tombstone and a supersession pointer to the target ' +
+    '(same mechanism as memory_archive/supersede, N:1 instead of 1:1); the target\'s ' +
+    'times_seen sums in each source\'s count. Unlike forget/archive on a duplicate pair, ' +
+    'this consolidates both sides into one row instead of just discarding one.',
+    {
+      source_refs: z.array(z.string()).describe(
+        'Refs of the losing memories to fold into the target (all must be active)',
+      ),
+      target_ref: z.string().describe(
+        'Ref of the canonical memory that survives the merge (must already exist, active)',
+      ),
+      note: z.string().optional().describe(
+        'Optional note about this merge, stored in supersession tombstones on the losers',
+      ),
+      hard_delete_losers: z.boolean().optional().describe(
+        'Hard-delete losers after archiving/superseding them (default false).',
+      ),
+      append_loser_bodies: z.boolean().optional().describe(
+        'Append loser bodies to the target content under section markers (default false). ' +
+        'Off by default — review loser bodies (returned in the result) before deciding.',
+      ),
+    },
+    async ({ source_refs, target_ref, note, hard_delete_losers, append_loser_bodies }) => {
+      const result = await memoryMerge(contextDir, {
+        source_refs, target_ref, note, hard_delete_losers, append_loser_bodies,
+      });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
