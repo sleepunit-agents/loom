@@ -14,11 +14,14 @@ const USAGE = `Usage: loom update <ref> [options]
        loom update --category <cat> --title <exact> [options]
 
 Updates content (from stdin or \$EDITOR) and/or metadata on an existing
-memory.
+memory. --confirm/--contradict record an observation against a feedback
+memory's confidence instead — no body required for those.
 
 Options:
   --category <name>      Identify by category (with --title)
   --title <exact>        Identify by title (with --category)
+  --confirm               Feedback memories only: raise confidence (+0.05)
+  --contradict            Feedback memories only: lower confidence (-0.1)
   --json                 Emit UpdateResult
   --context-dir <path>   Agent context dir
   --help, -h             Show this help
@@ -31,9 +34,11 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     parsed = parseArgs({
       args: rest,
       options: {
-        category: { type: 'string' },
-        title:    { type: 'string' },
-        help:     { type: 'boolean', short: 'h' },
+        category:   { type: 'string' },
+        title:      { type: 'string' },
+        confirm:    { type: 'boolean' },
+        contradict: { type: 'boolean' },
+        help:       { type: 'boolean', short: 'h' },
       },
       strict: true,
       allowPositionals: true,
@@ -50,25 +55,39 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     io.stderr(`Provide a <ref> or --category+--title.\n${USAGE}`);
     return 2;
   }
+  if (parsed.values.confirm && parsed.values.contradict) {
+    io.stderr(`--confirm and --contradict are mutually exclusive.\n${USAGE}`);
+    return 2;
+  }
+  const observation = parsed.values.confirm
+    ? 'confirm' as const
+    : parsed.values.contradict
+      ? 'contradict' as const
+      : undefined;
 
   const env = resolveEnv(global, io.env);
   try { assertStackVersionCompatible(env.contextDir); }
   catch (err) { io.stderr(`${(err as Error).message}\n`); return 1; }
 
-  let body: string;
-  try {
-    body = await readBody(io, 'update');
-  } catch (err) {
-    io.stderr(`${(err as Error).message}\n`);
-    return 1;
+  // A pure observation needs no new body — --confirm/--contradict alone is a
+  // complete update. Any other call still requires one (existing behavior).
+  let body: string | undefined;
+  if (!observation) {
+    try {
+      body = await readBody(io, 'update');
+    } catch (err) {
+      io.stderr(`${(err as Error).message}\n`);
+      return 1;
+    }
+    if (!body) { io.stderr(`body cannot be empty\n`); return 2; }
   }
-  if (!body) { io.stderr(`body cannot be empty\n`); return 2; }
 
   const input: UpdateInput = {
     ref,
     category: parsed.values.category,
     title:    parsed.values.title,
     content:  body,
+    observation,
   };
 
   if (env.json) {

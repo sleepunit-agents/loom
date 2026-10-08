@@ -319,6 +319,128 @@ describe('SqliteVecBackend', () => {
     expect(revisions.length).toBeLessThanOrEqual(10);
   });
 
+  // ── Feedback confidence + evidence count (t-338) ────────────────────────────
+  describe('feedback confidence', () => {
+    it('seeds a feedback memory with default confidence and evidence_count 1', async () => {
+      const { ref } = await backend.remember({
+        category: 'feedback',
+        title: 'Always run tsc before claiming done',
+        content: 'vitest alone misses type errors.',
+      });
+      const hits = await backend.recall({ query: 'tsc before claiming done' });
+      expect(hits[0].confidence).toBeCloseTo(0.6, 5);
+      expect(hits[0].evidenceCount).toBe(1);
+
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT confidence, evidence_count FROM memories WHERE ref = ?').get(ref) as {
+        confidence: number;
+        evidence_count: number;
+      };
+      expect(row.confidence).toBeCloseTo(0.6, 5);
+      expect(row.evidence_count).toBe(1);
+    });
+
+    it('leaves confidence/evidenceCount undefined for non-feedback categories', async () => {
+      await backend.remember({ category: 'project', title: 'Not feedback', content: 'loom' });
+      const hits = await backend.recall({ query: 'not feedback' });
+      expect(hits[0].confidence).toBeUndefined();
+      expect(hits[0].evidenceCount).toBeUndefined();
+    });
+
+    it('a confirming observation raises confidence and bumps evidence_count', async () => {
+      const { ref } = await backend.remember({
+        category: 'feedback',
+        title: 'Confirmable',
+        content: 'loom original',
+      });
+      const result = await backend.update({ ref, observation: 'confirm' });
+      expect(result.updated).toBe(true);
+      expect(result.confidence).toBeCloseTo(0.65, 5); // 0.6 + 0.05
+      expect(result.evidenceCount).toBe(2); // 1 at creation + this observation
+    });
+
+    it('a contradicting observation measurably lowers confidence (done-when bar)', async () => {
+      const { ref } = await backend.remember({
+        category: 'feedback',
+        title: 'Contradictable',
+        content: 'loom original',
+      });
+      const result = await backend.update({ ref, observation: 'contradict' });
+      expect(result.updated).toBe(true);
+      expect(result.confidence).toBeCloseTo(0.5, 5); // 0.6 - 0.1
+      expect(result.confidence!).toBeLessThan(0.6);
+      expect(result.evidenceCount).toBe(2);
+
+      const hits = await backend.recall({ query: 'contradictable' });
+      expect(hits[0].confidence).toBeCloseTo(0.5, 5);
+    });
+
+    it('accumulates evidence across repeated observations and clamps at the bounds', async () => {
+      const { ref } = await backend.remember({
+        category: 'feedback',
+        title: 'Repeatedly confirmed',
+        content: 'loom',
+      });
+      for (let i = 0; i < 10; i++) {
+        await backend.update({ ref, observation: 'confirm' });
+      }
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT confidence, evidence_count FROM memories WHERE ref = ?').get(ref) as {
+        confidence: number;
+        evidence_count: number;
+      };
+      expect(row.confidence).toBeCloseTo(0.9, 5); // clamped at FEEDBACK_CONFIDENCE_MAX
+      expect(row.evidence_count).toBe(11); // 1 at creation + 10 observations
+    });
+
+    it('ignores the observation flag on a non-feedback memory', async () => {
+      const { ref } = await backend.remember({
+        category: 'project',
+        title: 'Not feedback, but tagged',
+        content: 'loom',
+      });
+      const result = await backend.update({ ref, observation: 'confirm' });
+      expect(result.updated).toBe(true);
+      expect(result.confidence).toBeUndefined();
+      expect(result.evidenceCount).toBeUndefined();
+    });
+
+    it('a plain content update (no observation) does not change confidence or evidence_count', async () => {
+      const { ref } = await backend.remember({
+        category: 'feedback',
+        title: 'Edited but not observed',
+        content: 'loom v1',
+      });
+      await backend.update({ ref, content: 'loom v2' });
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT confidence, evidence_count FROM memories WHERE ref = ?').get(ref) as {
+        confidence: number;
+        evidence_count: number;
+      };
+      expect(row.confidence).toBeCloseTo(0.6, 5);
+      expect(row.evidence_count).toBe(1);
+    });
+
+    it('decays confidence toward neutral the longer it goes unconfirmed', async () => {
+      const { ref } = await backend.remember({
+        category: 'feedback',
+        title: 'Aging feedback',
+        content: 'loom',
+      });
+      await backend.update({ ref, observation: 'confirm' }); // raw 0.65, stamps `updated`
+      // Age `updated` by 30 days (feedback half-life) to simulate the passage of time.
+      const db = backend.getDatabase();
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      db.prepare('UPDATE memories SET updated = ? WHERE ref = ?').run(thirtyDaysAgo, ref);
+
+      const hits = await backend.recall({ query: 'aging feedback' });
+      // temp(30d, feedback half-life 30d) = 0.5 → halfway from 0.65 back to neutral 0.6.
+      expect(hits[0].confidence).toBeCloseTo(0.625, 2);
+      expect(hits[0].confidence!).toBeLessThan(0.65);
+      expect(hits[0].confidence!).toBeGreaterThan(0.6);
+    });
+  });
+
   // ── Supersession edge (t-327) ──────────────────────────────────────────────
 
   it('supersedes an old memory and records the edge', async () => {
