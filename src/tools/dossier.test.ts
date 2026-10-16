@@ -83,7 +83,7 @@ describe('loadDossier', () => {
 
   it('appends client adapter for gemini-cli', async () => {
     const result = await loadDossier(tempDir, undefined, 'gemini-cli');
-    expect(result).toContain('mcp__loom__');
+    expect(result).toContain('`mcp_loom_identity`');
   });
 
   it('silently ignores unknown client names', async () => {

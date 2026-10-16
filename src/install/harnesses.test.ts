@@ -32,7 +32,7 @@ describe('INSTALL_TARGETS', () => {
 
   it('gemini-cli shares ~/.agents/skills with codex', () => {
     const t = getInstallTarget('gemini-cli');
-    expect(t.toolPrefix).toBe('mcp__loom__');
+    expect(t.toolPrefix).toBe('mcp_loom_');
     expect(resolveSkillPath(t, '/home/u')).toBe('/home/u/.agents/skills/loom-setup.md');
   });
 

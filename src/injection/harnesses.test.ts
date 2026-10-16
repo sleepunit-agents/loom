@@ -18,7 +18,7 @@ describe('HARNESSES preset table', () => {
       expect(p.display.length).toBeGreaterThan(0);
       expect(typeof p.defaultPath).toBe('string');
       expect(p.defaultPath.startsWith(homedir())).toBe(true);
-      expect(p.toolPrefix).toBe('mcp__loom__');
+      expect(p.toolPrefix).toBe(key === 'gemini-cli' ? 'mcp_loom_' : 'mcp__loom__');
     }
   });
 

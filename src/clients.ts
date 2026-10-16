@@ -14,6 +14,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertSafePathSegment } from './path-safety.js';
+import { INSTALL_TARGETS } from './install/harnesses.js';
 
 // ─── Tool list ────────────────────────────────────────────────────────────────
 
@@ -39,12 +40,12 @@ const ADAPTERS: Record<string, string> = {
   'claude-code': `## Runtime: Claude Code
 
 You are running in Claude Code (Anthropic CLI). Loom tools use double-underscore prefix:
-${toolList('mcp__loom__')}`,
+${toolList(INSTALL_TARGETS['claude-code'].toolPrefix)}`,
 
   'gemini-cli': `## Runtime: Gemini CLI
 
-You are running in Gemini CLI (Google). Loom tools use double-underscore prefix:
-${toolList('mcp__loom__')}`,
+You are running in Gemini CLI (Google). Loom tools use single-underscore prefix:
+${toolList(INSTALL_TARGETS['gemini-cli'].toolPrefix)}`,
 };
 
 // ─── Loader ──────────────────────────────────────────────────────────────────

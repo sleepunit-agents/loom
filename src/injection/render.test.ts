@@ -42,6 +42,19 @@ describe('renderBlock', () => {
     expect(block).toContain('`mcp__loom__remember`');
   });
 
+  it('renders Gemini CLI calls with its single-underscore namespace (t-397)', () => {
+    // gemini-cli joins server + '_' + tool and prepends 'mcp_'
+    // (MCP_QUALIFIED_NAME_SEPARATOR / generateValidName, packages/core/src/tools/mcp-tool.ts @ b25669d).
+    const block = renderBlock(HARNESSES['gemini-cli'], contextDir);
+    expect(block).toContain('`mcp_loom_identity`');
+    expect(block).not.toContain('mcp__loom__');
+  });
+
+  it('renders Codex calls with the double-underscore namespace (t-397)', () => {
+    const block = renderBlock(HARNESSES['codex'], contextDir);
+    expect(block).toContain('`mcp__loom__identity`');
+  });
+
   it('interpolates the literal context dir', () => {
     const block = renderBlock(HARNESSES['gemini-cli'], contextDir);
     expect(block).toContain(`Context dir: ${contextDir}`);
