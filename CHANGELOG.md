@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   are NOT read-only (they stamp `last_accessed`/`hit_count`, which
   `knowledge_maintain` reads to find cold pages); `knowledge_history` and
   `memory_revision_restore` are destructive in their restore mode even
-  though the displaced body is snapshotted first. `openWorldHint` is
+  though the displaced body is snapshotted first. `update`,
+  `knowledge_write` and `knowledge_move` are NOT idempotent: a repeated
+  `observation` bumps the evidence count again, a repeated append stores
+  the body twice, and a repeated prefix move into a child of itself
+  (`music` → `music/gear`) nests again. `openWorldHint` is
   `false` everywhere — loom has no outbound network calls. This does not
   by itself prove any client relaxes its approval gate on these hints; that
   needs a live `tools/list` exchange against an updated server (tracked

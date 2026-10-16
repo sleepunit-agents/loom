@@ -239,7 +239,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'unconfirmed — see the feedback category description on remember.'
       ),
     },
-    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     async ({ ref, category, title, content, metadata, observation }) => {
       const result = await update(contextDir, { ref, category, title, content, metadata, observation });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -670,7 +670,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Preserved across upserts when omitted.',
       ),
     },
-    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     async ({ title, domain, body, slug, freshness_anchor, mode, citations, created_by, version }) => {
       const result = await knowledgeWrite(contextDir, { title, domain, body, slug, freshness_anchor, mode, citations, created_by, version });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -812,7 +812,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Batch prefix mode: replacement domain prefix (e.g. "instruments/elektron").',
       ),
     },
-    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix }) => {
       const result = await knowledgeMove(contextDir, {
         slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix,
