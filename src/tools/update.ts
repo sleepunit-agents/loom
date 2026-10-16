@@ -22,5 +22,9 @@ export async function update(
   }
 
   const snap = result.snapshotId !== undefined ? ` (snapshot #${result.snapshotId})` : '';
-  return `Memory updated: ${result.ref}${snap}`;
+  const conf =
+    result.confidence !== undefined
+      ? ` — confidence now ${result.confidence.toFixed(2)} (${result.evidenceCount} observations)`
+      : '';
+  return `Memory updated: ${result.ref}${snap}${conf}`;
 }
