@@ -103,6 +103,12 @@ interface MemoryRow {
   confidence: number | null;
   /** Observation count behind `confidence` (t-338). 0 for non-feedback memories. */
   evidence_count: number;
+  /**
+   * When `confidence` last took an observation — the decay clock (t-338).
+   * Separate from `updated`, which every edit, archive and restore stamps.
+   * NULL falls back to `created`.
+   */
+  observed_at: string | null;
 }
 
 interface VecMatch {
@@ -152,8 +158,8 @@ export class SqliteVecBackend implements MemoryBackend {
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
         created, ttl, expires_at, salience, sourcing, provenance,
-        confidence, evidence_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        confidence, evidence_count, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
@@ -176,6 +182,7 @@ export class SqliteVecBackend implements MemoryBackend {
         input.provenance ?? null,
         confidence,
         evidenceCount,
+        isFeedback ? timestamp : null,
       );
       insertVec.run(BigInt(result.lastInsertRowid), toVecBuffer(vector));
     });
@@ -311,73 +318,91 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   async update(input: UpdateInput): Promise<UpdateResult> {
-    let row: MemoryRow | undefined;
+    let found: { id: number; ref: string; title: string } | undefined;
     if (input.ref) {
-      row = this.db
-        .prepare('SELECT * FROM memories WHERE ref = ?')
-        .get(input.ref) as MemoryRow | undefined;
+      found = this.db
+        .prepare('SELECT id, ref, title FROM memories WHERE ref = ?')
+        .get(input.ref) as typeof found;
     } else if (input.category && input.title) {
-      row = this.db
-        .prepare('SELECT * FROM memories WHERE category = ? AND title = ?')
-        .get(input.category, input.title) as MemoryRow | undefined;
+      found = this.db
+        .prepare('SELECT id, ref, title FROM memories WHERE category = ? AND title = ?')
+        .get(input.category, input.title) as typeof found;
     } else {
       return { updated: false };
     }
 
-    if (!row) return { updated: false };
+    if (!found) return { updated: false };
+    const { id, ref, title } = found;
 
-    const newContent = input.content ?? row.content;
-    const existingMeta = JSON.parse(row.metadata) as Record<string, unknown>;
-    const newMeta = input.metadata
-      ? { ...existingMeta, ...input.metadata }
-      : existingMeta;
+    // The only async step, so it runs before the transaction. Everything that
+    // reads the row runs INSIDE the transaction below, against a fresh read —
+    // a row read up here would be stale by the time an overlapping update()
+    // commits, and writing it back would drop that update's content, metadata
+    // or evidence (PR130 review).
+    const vector =
+      input.content !== undefined ? await this.embedder.embed(`${title}\n\n${input.content}`) : undefined;
+
     const updatedAt = new Date().toISOString();
-
-    // Confirm/contradict (t-338): computed in code, feedback memories only.
-    // A confirm/contradict call IS an observation, so it always stamps
-    // `updated` (the decay clock) even when no content changed.
+    let snapshotId: number | undefined;
     let newConfidence: number | undefined;
     let newEvidenceCount: number | undefined;
-    if (input.observation && row.category === FEEDBACK_CATEGORY) {
-      newConfidence = applyObservation(row.confidence ?? FEEDBACK_CONFIDENCE_DEFAULT, input.observation);
-      newEvidenceCount = row.evidence_count + 1;
-    }
 
-    const updateStmt = this.db.prepare(`
-      UPDATE memories
-      SET content = ?, metadata = ?, updated = ?, confidence = ?, evidence_count = ?
-      WHERE id = ?
-    `);
-    const updateVec = this.db.prepare(
-      'UPDATE vec_memories SET embedding = ? WHERE rowid = ?',
-    );
+    const tx = this.db.transaction((): boolean => {
+      const row = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as MemoryRow | undefined;
+      if (!row) return false; // deleted between lookup and write
 
-    const vector = await this.embedder.embed(`${row.title}\n\n${newContent}`);
+      // Only the columns this call is about get written; everything else is
+      // left as the row has it now.
+      const sets = ['updated = ?'];
+      const params: unknown[] = [updatedAt];
 
-    // Snapshot the current body before overwriting — same protection the knowledge
-    // wing added after the 2026-06-01 verify run stomped 13 pages with no recovery.
-    // Only snapshot when content actually changes to avoid noise in the history.
-    let snapshotId: number | undefined;
-    if (input.content !== undefined && input.content !== row.content) {
-      snapshotId = this.snapshotRevision(row.id, row.ref, row.content, 'update', updatedAt);
-    }
+      const contentChanged = input.content !== undefined && input.content !== row.content;
+      if (contentChanged) {
+        // Snapshot the current body before overwriting — same protection the
+        // knowledge wing added after the 2026-06-01 verify run stomped 13
+        // pages with no recovery. Only on a real change, to keep history quiet.
+        snapshotId = this.snapshotRevision(row.id, row.ref, row.content, 'update', updatedAt);
+        sets.push('content = ?');
+        params.push(input.content);
+      }
 
-    const tx = this.db.transaction(() => {
-      updateStmt.run(
-        newContent,
-        JSON.stringify(newMeta),
-        updatedAt,
-        newConfidence ?? row!.confidence,
-        newEvidenceCount ?? row!.evidence_count,
-        row!.id,
-      );
-      updateVec.run(toVecBuffer(vector), BigInt(row!.id));
+      if (input.metadata) {
+        const existingMeta = JSON.parse(row.metadata) as Record<string, unknown>;
+        sets.push('metadata = ?');
+        params.push(JSON.stringify({ ...existingMeta, ...input.metadata }));
+      }
+
+      // Confirm/contradict (t-338): computed in code, feedback memories only.
+      // The delta applies to the confidence as it reads NOW (decay
+      // materialized), then the evidence clock restarts — so a contradict
+      // always lowers the current value and a confirm always raises it, and
+      // the evidence an aged score has already lost can't come back.
+      if (input.observation && row.category === FEEDBACK_CATEGORY) {
+        const current =
+          row.confidence !== null
+            ? decayedConfidence(row.confidence, row.observed_at ?? row.created, row.category, Date.parse(updatedAt))
+            : FEEDBACK_CONFIDENCE_DEFAULT;
+        newConfidence = applyObservation(current, input.observation);
+        newEvidenceCount = row.evidence_count + 1;
+        sets.push('confidence = ?', 'evidence_count = ?', 'observed_at = ?');
+        params.push(newConfidence, newEvidenceCount, updatedAt);
+      }
+
+      this.db.prepare(`UPDATE memories SET ${sets.join(', ')} WHERE id = ?`).run(...params, row.id);
+      if (contentChanged) {
+        this.db
+          .prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?')
+          .run(toVecBuffer(vector!), BigInt(row.id));
+      }
+      return true;
     });
-    retryWrite(() => tx());
+    // IMMEDIATE takes the write lock before the read, so another process
+    // (loom-http and the CLI share the file) can't commit between them.
+    if (!retryWrite(() => tx.immediate())) return { updated: false };
 
     return {
       updated: true,
-      ref: row.ref,
+      ref,
       snapshotId,
       confidence: newConfidence,
       evidenceCount: newEvidenceCount,
@@ -466,8 +491,8 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const rows = this.db
       .prepare(
-        `SELECT ref, title, category, project, created, updated, sourcing, provenance,
-                confidence, evidence_count
+        `SELECT ref, title, category, project, created, sourcing, provenance,
+                confidence, evidence_count, observed_at
          FROM memories ${where}
          ORDER BY created DESC LIMIT ?`,
       )
@@ -477,11 +502,11 @@ export class SqliteVecBackend implements MemoryBackend {
       category: string;
       project: string | null;
       created: string;
-      updated: string | null;
       sourcing: string | null;
       provenance: string | null;
       confidence: number | null;
       evidence_count: number;
+      observed_at: string | null;
     }[];
 
     return rows.map((r) => ({
@@ -494,7 +519,7 @@ export class SqliteVecBackend implements MemoryBackend {
       provenance: r.provenance ?? undefined,
       confidence:
         r.confidence !== null
-          ? decayedConfidence(r.confidence, r.updated ?? r.created, r.category, Date.now())
+          ? decayedConfidence(r.confidence, r.observed_at ?? r.created, r.category, Date.now())
           : undefined,
       evidenceCount: r.confidence !== null ? r.evidence_count : undefined,
     }));
@@ -1059,12 +1084,12 @@ function toVecBuffer(vector: number[]): Buffer {
 /**
  * Decayed confidence for display: undefined for non-feedback memories (NULL
  * stored confidence), else the raw value relaxed toward neutral by how long
- * it's been since the last observation. `updated` (not `last_accessed`) is
- * the decay clock — see decayedConfidence()'s doc comment in salience.ts.
+ * it's been since the last observation. `observed_at` (not `updated`, which
+ * every edit stamps, nor `last_accessed`) is the decay clock — see decayedConfidence()'s doc comment in salience.ts.
  */
 function decayedRowConfidence(row: MemoryRow): number | undefined {
   if (row.confidence === null) return undefined;
-  const lastObserved = row.updated ?? row.created;
+  const lastObserved = row.observed_at ?? row.created;
   return decayedConfidence(row.confidence, lastObserved, row.category, Date.now());
 }
 

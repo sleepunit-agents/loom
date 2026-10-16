@@ -63,7 +63,8 @@ function buildCurrentDb(dir: string): string {
       sourcing TEXT,
       provenance TEXT,
       confidence REAL,
-      evidence_count INTEGER NOT NULL DEFAULT 0
+      evidence_count INTEGER NOT NULL DEFAULT 0,
+      observed_at TEXT
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();

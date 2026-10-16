@@ -427,17 +427,106 @@ describe('SqliteVecBackend', () => {
         title: 'Aging feedback',
         content: 'loom',
       });
-      await backend.update({ ref, observation: 'confirm' }); // raw 0.65, stamps `updated`
-      // Age `updated` by 30 days (feedback half-life) to simulate the passage of time.
+      await backend.update({ ref, observation: 'confirm' }); // raw 0.65, stamps `observed_at`
+      // Age the evidence clock by 30 days (feedback half-life) to simulate the passage of time.
       const db = backend.getDatabase();
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
-      db.prepare('UPDATE memories SET updated = ? WHERE ref = ?').run(thirtyDaysAgo, ref);
+      db.prepare('UPDATE memories SET observed_at = ? WHERE ref = ?').run(thirtyDaysAgo, ref);
 
       const hits = await backend.recall({ query: 'aging feedback' });
       // temp(30d, feedback half-life 30d) = 0.5 → halfway from 0.65 back to neutral 0.6.
       expect(hits[0].confidence).toBeCloseTo(0.625, 2);
       expect(hits[0].confidence!).toBeLessThan(0.65);
       expect(hits[0].confidence!).toBeGreaterThan(0.6);
+    });
+
+    // Review regressions (visual-mark, PR130 @ 4fdf5e4). Each ages a
+    // non-neutral score so reheating/resurrection is visible.
+    const HALF_YEAR_MS = 180 * 86_400_000;
+    const ageEvidence = (ref: string, ms: number) => {
+      const past = new Date(Date.now() - ms).toISOString();
+      backend
+        .getDatabase()
+        .prepare('UPDATE memories SET updated = ?, observed_at = ? WHERE ref = ?')
+        .run(past, past, ref);
+    };
+    const listedConfidence = async (title: string) =>
+      (await backend.list({ category: 'feedback' })).find((e) => e.title === title)!.confidence!;
+
+    it('a metadata-only edit does not reheat aged confidence', async () => {
+      const { ref } = await backend.remember({ category: 'feedback', title: 'Aged then edited', content: 'loom' });
+      for (let i = 0; i < 6; i++) await backend.update({ ref, observation: 'confirm' }); // raw 0.9
+      ageEvidence(ref, HALF_YEAR_MS);
+      const before = await listedConfidence('Aged then edited');
+      expect(before).toBeCloseTo(0.6046875, 5);
+
+      await backend.update({ ref, metadata: { typoFixed: true } });
+      expect(await listedConfidence('Aged then edited')).toBeCloseTo(before, 5);
+    });
+
+    it('archive/restore does not reheat aged confidence', async () => {
+      const { ref } = await backend.remember({ category: 'feedback', title: 'Aged then archived', content: 'loom' });
+      for (let i = 0; i < 6; i++) await backend.update({ ref, observation: 'confirm' });
+      ageEvidence(ref, HALF_YEAR_MS);
+      const before = await listedConfidence('Aged then archived');
+      await backend.archive({ ref });
+      await backend.restore({ ref });
+      expect(await listedConfidence('Aged then archived')).toBeCloseTo(before, 5);
+    });
+
+    it('contradicting aged feedback lowers its current confidence', async () => {
+      const { ref } = await backend.remember({ category: 'feedback', title: 'Aged then contradicted', content: 'loom' });
+      for (let i = 0; i < 6; i++) await backend.update({ ref, observation: 'confirm' });
+      ageEvidence(ref, HALF_YEAR_MS);
+      const before = await listedConfidence('Aged then contradicted');
+
+      const result = await backend.update({ ref, observation: 'contradict' });
+      const after = await listedConfidence('Aged then contradicted');
+      expect(after).toBeLessThan(before);
+      expect(after).toBeCloseTo(before - 0.1, 5);
+      expect(result.confidence).toBeCloseTo(before - 0.1, 5);
+    });
+
+    it('confirming aged low-confidence feedback raises its current confidence', async () => {
+      const { ref } = await backend.remember({ category: 'feedback', title: 'Aged low then confirmed', content: 'loom' });
+      for (let i = 0; i < 3; i++) await backend.update({ ref, observation: 'contradict' }); // raw 0.3
+      ageEvidence(ref, HALF_YEAR_MS);
+      const before = await listedConfidence('Aged low then confirmed');
+      expect(before).toBeGreaterThan(0.3);
+
+      await backend.update({ ref, observation: 'confirm' });
+      const after = await listedConfidence('Aged low then confirmed');
+      expect(after).toBeGreaterThan(before);
+      expect(after).toBeCloseTo(before + 0.05, 5);
+    });
+
+    it('overlapping confirmations each count as an observation', async () => {
+      const { ref } = await backend.remember({ category: 'feedback', title: 'Confirmed twice at once', content: 'loom' });
+      await Promise.all([
+        backend.update({ ref, observation: 'confirm' }),
+        backend.update({ ref, observation: 'confirm' }),
+      ]);
+      const row = backend
+        .getDatabase()
+        .prepare('SELECT confidence, evidence_count FROM memories WHERE ref = ?')
+        .get(ref) as { confidence: number; evidence_count: number };
+      expect(row.evidence_count).toBe(3);
+      expect(row.confidence).toBeCloseTo(0.7, 5);
+    });
+
+    it('an overlapping plain edit does not overwrite newer evidence', async () => {
+      const { ref } = await backend.remember({ category: 'feedback', title: 'Edited while confirmed', content: 'loom v1' });
+      await Promise.all([
+        backend.update({ ref, content: 'loom v2' }),
+        backend.update({ ref, observation: 'confirm' }),
+      ]);
+      const row = backend
+        .getDatabase()
+        .prepare('SELECT content, confidence, evidence_count FROM memories WHERE ref = ?')
+        .get(ref) as { content: string; confidence: number; evidence_count: number };
+      expect(row.content).toBe('loom v2');
+      expect(row.evidence_count).toBe(2);
+      expect(row.confidence).toBeCloseTo(0.65, 5);
     });
   });
 

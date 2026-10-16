@@ -89,10 +89,11 @@ export function applyObservation(current: number, kind: 'confirm' | 'contradict'
  * fully-decayed (temp→0) memory reads as neutral, a freshly-touched one
  * (temp=1) reads as its raw evidence-backed value.
  *
- * `lastTouchIso` should be the last OBSERVATION time (the row's `updated`,
- * falling back to `created`) — not `last_accessed`. A plain recall shouldn't
- * reheat confidence; only a new confirm/contradict (which goes through
- * update() and stamps `updated`) is new evidence.
+ * `lastTouchIso` should be the last OBSERVATION time (the row's
+ * `observed_at`, falling back to `created`) — not `updated` and not
+ * `last_accessed`. A recall, an edit, an archive or a restore isn't
+ * evidence and mustn't reheat confidence; only a confirm/contradict (which
+ * goes through update() and stamps `observed_at`) is.
  */
 export function decayedConfidence(
   rawConfidence: number,

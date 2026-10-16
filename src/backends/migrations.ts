@@ -200,6 +200,22 @@ export const MIGRATIONS: readonly Migration[] = [
       db.prepare('ALTER TABLE memories ADD COLUMN evidence_count INTEGER NOT NULL DEFAULT 0').run();
     },
   },
+  {
+    id: 'add_observed_at',
+    description:
+      'Add observed_at column — when a feedback memory\'s confidence last took an ' +
+      'observation; the decay clock, separate from `updated` (t-338)',
+    pending: (db) => !hasColumn(db, 'memories', 'observed_at'),
+    run: (db) => {
+      // NULL falls back to `created`. Rows that already carry a confidence
+      // got it from an observation no later than their last update, so
+      // that's the best clock available for them.
+      db.prepare('ALTER TABLE memories ADD COLUMN observed_at TEXT').run();
+      db.prepare(
+        'UPDATE memories SET observed_at = COALESCE(updated, created) WHERE confidence IS NOT NULL',
+      ).run();
+    },
+  },
 ];
 
 /**
