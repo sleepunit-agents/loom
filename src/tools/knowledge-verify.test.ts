@@ -102,4 +102,58 @@ describe('knowledgeVerify', () => {
     const result = await knowledgeVerify(tempDir, {});
     expect(result).toMatch(/Error/i);
   });
+
+  describe('actor attribution (t-675)', () => {
+    it('records the verifier from the acting identity — never a tool argument', async () => {
+      await writePage('my-page');
+
+      const result = await knowledgeVerify(tempDir, { slug: 'my-page' }, 'mark');
+      expect(result).toContain('mark');
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const [v] = await backend.getVerifications('my-page');
+        expect(v.verifier).toBe('mark');
+        expect(v.outcome).toBe('confirmed');
+        expect(v.citation_checked).toBe(false);
+      } finally {
+        backend.close();
+      }
+    });
+
+    it('passes through outcome and citation_checked', async () => {
+      await writePage('my-page');
+
+      const result = await knowledgeVerify(tempDir, {
+        slug: 'my-page',
+        outcome: 'stale',
+        citation_checked: true,
+      });
+      expect(result).toContain('stale');
+      expect(result).toContain('verified_at NOT advanced');
+      expect(result).not.toContain('stamped to');
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const [v] = await backend.getVerifications('my-page');
+        expect(v.outcome).toBe('stale');
+        expect(v.citation_checked).toBe(true);
+      } finally {
+        backend.close();
+      }
+    });
+
+    it('says the stamp advanced for confirmed, in single and batch output', async () => {
+      await writePage('p1');
+      await writePage('p2');
+
+      const single = await knowledgeVerify(tempDir, { slug: 'p1' });
+      const batch = await knowledgeVerify(tempDir, { slugs: ['p1', 'p2'] });
+      expect(single).toContain('verified_at stamped to');
+      expect(batch).toContain('verified_at stamped to');
+
+      const staleBatch = await knowledgeVerify(tempDir, { slugs: ['p1', 'p2'], outcome: 'stale' });
+      expect(staleBatch).toContain('verified_at NOT advanced');
+    });
+  });
 });

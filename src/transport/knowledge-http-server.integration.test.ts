@@ -128,6 +128,41 @@ describe('t-677: knowledge-only HTTP service', () => {
     }
   });
 
+  it('t-675: author, revision actor, and verifier come from each caller\'s bearer, not the server\'s context dir', async () => {
+    const citations = [{ claim: 'x', source_kind: 'web', source_locator: 'https://example.com/x', excerpt: 'x' }];
+    const { client: artClient } = await connect(handle.port, TOKENS.art);
+    await artClient.callTool({
+      name: 'knowledge_write',
+      arguments: { title: 'Rings', domain: 'music/eurorack', body: 'v1', citations },
+    });
+    await artClient.close();
+
+    const { client: markClient } = await connect(handle.port, TOKENS.mark);
+    await markClient.callTool({
+      name: 'knowledge_write',
+      arguments: { slug: 'rings', title: 'Rings', domain: 'music/eurorack', body: 'v2 by mark', citations },
+    });
+    const verified = await markClient.callTool({
+      name: 'knowledge_verify',
+      arguments: { slug: 'rings', outcome: 'stale', citation_checked: true },
+    });
+    expect(textOf(verified)).toContain('by mark');
+    await markClient.close();
+
+    const backend = createKnowledgeBackend(tmpDir);
+    try {
+      const page = await backend.getPage('rings');
+      expect(page!.author).toBe('art'); // first writer, never overwritten by mark's upsert
+      const [rev] = await backend.listRevisions('rings');
+      expect(rev.actor).toBe('mark'); // mark displaced v1
+      const [v] = await backend.getVerifications('rings');
+      expect(v.verifier).toBe('mark');
+      expect(v.outcome).toBe('stale');
+    } finally {
+      backend.close();
+    }
+  });
+
   it('refuses a created_by that claims a different identity than the caller (attribution spoofing)', async () => {
     const { client } = await connect(handle.port, TOKENS.mark);
     const result = await client.callTool({

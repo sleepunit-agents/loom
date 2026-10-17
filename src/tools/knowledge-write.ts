@@ -114,6 +114,7 @@ export async function knowledgeWrite(
       citations: input.citations,
       created_by: input.created_by ?? (input.domain.startsWith('ours/') ? identity : undefined),
       version: input.version,
+      actor: identity,
     });
 
     const sourcingNote =

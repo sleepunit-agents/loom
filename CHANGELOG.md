@@ -14,6 +14,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Knowledge actor attribution: `pages.author`, `page_revisions.actor`, and a
+  `verifications` table (page_id, verifier, verified_at, outcome,
+  citation_checked).** Previously the only attribution field was
+  `created_by` — free text, meaning "who owns this `ours/` artifact," not
+  "who actually wrote or verified it" — so there was no way to tell who wrote
+  a page's first version, who performed a given body revision, or who has
+  verified a page and found what. `pages.author` is stamped once at creation
+  and never changed by later upserts; `page_revisions.actor` is stamped on
+  every body-replacing write and every history-restore; `verifications` is an
+  attributed audit trail additive to the existing `pages.verified_at` stamp
+  (which stays as the fast single-column freshness field everything else
+  sorts/filters on). All three are resolved server-side, never a free-text
+  tool argument, so no caller can claim another identity's authorship or
+  verification: MCP calls use the connection's identity from
+  `registerKnowledgeTools` ('art' on the main server, the bearer-resolved
+  identity on the knowledge-only service); the CLI and eurorack import use
+  `resolveIdentityName()` (`LOOM_IDENTITY` env override, else the context
+  dir's real basename).
+  `knowledge_verify` gains `outcome` ('confirmed' | 'stale' | 'corrected') and
+  `citation_checked` parameters; `knowledge_history`'s listing now shows who
+  performed each revision and surfaces the page's verification history. (t-675)
+  An outcome of 'stale' is a failed verification: it is recorded in
+  `verifications` but does NOT advance `pages.verified_at`, so a known-wrong
+  page keeps its place at the front of the stale-first queue; the result's
+  new `stamped` flag (and the tool output) says whether the stamp moved.
+
 - **`MemoryMatch` carries `similarity` alongside `relevance`, and `scope`
   alongside `project`.** `relevance` is now the post-MMR score that actually
   decided a result's rank — equal to `similarity` (raw cosine) unless MMR

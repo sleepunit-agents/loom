@@ -2,8 +2,9 @@
  * Knowledge tool registration (t-677) — factored out of server.ts so there
  * is exactly ONE implementation of "how a knowledge tool call turns into a
  * backend call with identity attribution", shared by:
- *   - the full loom server (createLoomServer, identity hardcoded to 'art') —
- *     Art's own stdio/mesh session, same code path as the service below.
+ *   - the full loom server (createLoomServer), where `identity` is the local
+ *     one (resolveIdentityName: LOOM_IDENTITY, else the context dir's name) —
+ *     same code path as the service below.
  *   - the standalone knowledge-only HTTP service (createKnowledgeOnlyServer),
  *     where `identity` is resolved per-connection from the per-identity
  *     bearer token (checkBearerMulti) and never from a client-supplied field.
@@ -33,8 +34,8 @@ export interface RegisterKnowledgeToolsOptions {
   /** Knowledge-gaps dir for recall-miss logging (see knowledge-recall.ts). */
   gapsDir?: string;
   /**
-   * The identity making calls through this registration. 'art' for the main
-   * server; for the standalone knowledge-only service this is resolved per
+   * The identity making calls through this registration. The local identity
+   * (resolveIdentityName) for the main server; for the standalone knowledge-only service this is resolved per
    * connection from the per-identity bearer token at session-open time —
    * never from a tool argument, so a caller can't spoof attribution.
    */
@@ -417,9 +418,11 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
     {
       description:
       'Stamp a knowledge page as verified WITHOUT touching its body — sets verified_at ' +
-      'and optionally freshness_anchor. This is the verification engine\'s primitive: ' +
-      'use it (never knowledge_write) to record "claims still hold". An optional note ' +
-      'appends a dated "## Verification" section to the body (append-only, single-page ' +
+      'and optionally freshness_anchor, and records an attributed verification (verifier, ' +
+      'outcome, whether citations were checked) — the verifier is always YOUR loom identity, ' +
+      'resolved server-side, never a field you can set. This is the verification engine\'s ' +
+      'primitive: use it (never knowledge_write) to record "claims still hold". An optional ' +
+      'note appends a dated "## Verification" section to the body (append-only, single-page ' +
       'mode). Batch mode (slugs) stamps many pages with a shared timestamp; archived ' +
       'pages are rejected; a batch with any unknown slug is rejected whole.',
       inputSchema:
@@ -441,11 +444,26 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
           'Optional verification note — appended to the body as a "## Verification — <date>" ' +
           'section. Never replaces the body. Single-page mode only.',
         ),
+        outcome: z.enum(['confirmed', 'stale', 'corrected']).optional().describe(
+          'What this verification found. Defaults to "confirmed" (the claims still hold). ' +
+          '"stale" flags it as out of date without fixing it — recorded in the audit trail but ' +
+          'verified_at is NOT advanced, so the page stays at the front of the stale-first queue; ' +
+          '"corrected" means you fixed it ' +
+          '(pair with a knowledge_write, or the note field, describing the fix).',
+        ),
+        citation_checked: z.boolean().optional().describe(
+          'Did you actually check the page\'s citations against their sources (not just ' +
+          'the body text)? Defaults to false.',
+        ),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
-    async ({ slug, slugs, verified_at, freshness_anchor, note }) => {
-      const result = await knowledgeVerify(contextDir, { slug, slugs, verified_at, freshness_anchor, note });
+    async ({ slug, slugs, verified_at, freshness_anchor, note, outcome, citation_checked }) => {
+      const result = await knowledgeVerify(
+        contextDir,
+        { slug, slugs, verified_at, freshness_anchor, note, outcome, citation_checked },
+        identity,
+      );
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -472,7 +490,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ slug, revision_id, restore }) => {
-      const result = await knowledgeHistory(contextDir, { slug, revision_id, restore });
+      const result = await knowledgeHistory(contextDir, { slug, revision_id, restore }, identity);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

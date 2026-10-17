@@ -6,6 +6,7 @@ import { knowledgeWrite } from '../tools/knowledge-write.js';
 import { knowledgeRecall } from '../tools/knowledge-recall.js';
 import { knowledgeMaintain } from '../tools/knowledge-maintain.js';
 import { createKnowledgeBackend } from '../backends/index.js';
+import { resolveIdentityName } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import { renderJson } from './io.js';
 import type { IOStreams } from './io.js';
@@ -126,6 +127,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
           body,
           sourcing,
           citations,
+          actor: resolveIdentityName(env.contextDir),
         });
         renderJson(io, result);
         return 0;

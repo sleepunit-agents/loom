@@ -102,4 +102,49 @@ describe('knowledgeHistory', () => {
     const result = await knowledgeHistory(tempDir, { slug: 'ghost' });
     expect(result).toMatch(/Error/i);
   });
+
+  it('shows the recorded verifications alongside revisions', async () => {
+    await writePage('my-page', 'Body.');
+    const { knowledgeVerify } = await import('./knowledge-verify.js');
+    await knowledgeVerify(tempDir, { slug: 'my-page', outcome: 'confirmed', citation_checked: true });
+
+    const result = await knowledgeHistory(tempDir, { slug: 'my-page' });
+    expect(result).toMatch(/verification/i);
+    expect(result).toContain('confirmed');
+    expect(result).toContain('citations checked');
+  });
+
+  describe('actor attribution (t-675)', () => {
+    it('records who performed a restore — the acting identity, never a tool argument', async () => {
+      await writePage('my-page', 'Good body.');
+      await writePage('my-page', 'Stomped body.');
+
+      const b0 = createKnowledgeBackend(tempDir);
+      let revId: number;
+      try {
+        revId = (await b0.listRevisions('my-page'))[0].id;
+      } finally {
+        b0.close();
+      }
+
+      await knowledgeHistory(tempDir, { slug: 'my-page', revision_id: revId, restore: true }, 'mark');
+
+      const b = createKnowledgeBackend(tempDir);
+      try {
+        const [newest] = await b.listRevisions('my-page');
+        expect(newest.op).toBe('history-restore');
+        expect(newest.actor).toBe('mark');
+      } finally {
+        b.close();
+      }
+    });
+
+    it('listing shows who performed each revision', async () => {
+      await writePage('my-page', 'v1');
+      await writePage('my-page', 'v2');
+
+      const result = await knowledgeHistory(tempDir, { slug: 'my-page' });
+      expect(result).toContain('art');
+    });
+  });
 });
