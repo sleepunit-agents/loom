@@ -20,6 +20,9 @@
  */
 export type MemorySourcing = 'observed' | 'relayed' | 'inferred' | 'system';
 
+export type { MemoryScope } from './scope.js';
+import type { MemoryScope } from './scope.js';
+
 export interface MemoryInput {
   category: string;
   title: string;
@@ -40,6 +43,17 @@ export interface MemoryInput {
    * prefer metadata.where (already conventional); this carries additional detail.
    */
   provenance?: string;
+  /**
+   * Explicit scope override — 'project' (only recallable while scoped to
+   * this memory's project) or 'global' (recallable regardless of project).
+   * Omit to take the category default (see backends/scope.ts): 'user' and
+   * 'reference' default global, everything else defaults project when a
+   * project is attached, global when it isn't. Set this explicitly to flag
+   * a genuinely cross-project fact learned in a project context — e.g. a
+   * git/security/tool-workflow practice that happened to surface while
+   * working on one project but applies everywhere (t-337).
+   */
+  scope?: MemoryScope;
 }
 
 export interface MemoryRef {
@@ -97,7 +111,20 @@ export interface MemoryMatch {
   project?: string;
   created: string;
   content: string;
+  /**
+   * Final ranking score for this result's position in the returned list.
+   * Equals `similarity` unless MMR re-ranking (recall's `diversity` > 0)
+   * traded this pick off against ones already selected — in that case this
+   * is the blended score (λ·similarity − (1−λ)·max similarity-to-selected)
+   * that actually placed it, not its raw similarity. See `similarity` for
+   * the pre-MMR number alongside it (t-337a; modeled on MemoriLabs/Memori's
+   * FactSearchResult.{similarity, rank_score} split).
+   */
   relevance: number;
+  /** Raw cosine similarity (1 − distance) to the query, before any MMR re-ranking. */
+  similarity: number;
+  /** Effective scope this memory was recalled under — see backends/scope.ts (t-337b). */
+  scope: MemoryScope;
   /** ISO timestamp of last recall hit, if tracked */
   lastAccessed?: string;
   /** TTL value if set (e.g. "7d", "permanent") */
@@ -108,6 +135,14 @@ export interface MemoryMatch {
   sourcing?: MemorySourcing;
   /** Free-form origin text (surface / person / session). Null on legacy records. */
   provenance?: string;
+  /**
+   * Evidence-backed confidence (0.3-0.9), feedback memories only (t-338).
+   * Decayed toward neutral by category half-life — see salience.ts
+   * decayedConfidence(). Undefined for non-feedback memories.
+   */
+  confidence?: number;
+  /** Number of observations (creation + confirm/contradict) behind `confidence`. */
+  evidenceCount?: number;
 }
 
 export interface ForgetInput {
@@ -134,6 +169,13 @@ export interface UpdateInput {
   content?: string;
   /** Metadata fields to add or update */
   metadata?: Record<string, unknown>;
+  /**
+   * Record an observation against this memory's confidence (feedback
+   * memories only, t-338): 'confirm' raises it, 'contradict' lowers it.
+   * Computed in code (see salience.ts applyObservation) — never a prompt.
+   * Ignored on non-feedback memories.
+   */
+  observation?: 'confirm' | 'contradict';
 }
 
 export interface ForgetResult {
@@ -176,6 +218,10 @@ export interface UpdateResult {
   ref?: string;
   /** Id of the body snapshot taken before content was overwritten (if any). */
   snapshotId?: number;
+  /** Raw (undecayed) confidence after applying `observation`, when one was given. */
+  confidence?: number;
+  /** Evidence count after applying `observation`, when one was given. */
+  evidenceCount?: number;
 }
 
 // ─── Memory Revision Types ───────────────────────────────────────────────────
@@ -227,6 +273,29 @@ export interface MemorySupersededResult {
   archived: boolean;
 }
 
+// ─── Memory Merge Types ──────────────────────────────────────────────────────
+
+export interface MemoryMergeInput {
+  /** Refs of the losing memories to fold into the target (all must be active). */
+  source_refs: string[];
+  /** Ref of the canonical memory that survives the merge (must already exist, active). */
+  target_ref: string;
+  /** Optional note about this merge, stored in supersession tombstones on the losers. */
+  note?: string;
+  /** Hard-delete losers after archiving/superseding them (default false). */
+  hard_delete_losers?: boolean;
+  /** Append loser bodies to the target content under section markers (default false). */
+  append_loser_bodies?: boolean;
+}
+
+export interface MemoryMergeResult {
+  target_ref: string;
+  sources_merged: number;
+  /** Target's times_seen after summing in each merged source's count. */
+  times_seen: number;
+  losers: { ref: string; title: string; content: string }[];
+}
+
 export interface PruneResult {
   /** Memories that were archived (moved to archive tier) because their TTL expired */
   expired: string[];
@@ -250,6 +319,10 @@ export interface MemoryEntry {
   sourcing?: MemorySourcing;
   /** Free-form origin text (surface / person / session). Null on legacy records. */
   provenance?: string;
+  /** Decayed confidence (feedback memories only, t-338). */
+  confidence?: number;
+  /** Observation count behind `confidence`. */
+  evidenceCount?: number;
 }
 
 export interface FindSimilarInput {
@@ -328,6 +401,13 @@ export interface MemoryBackend {
   restoreRevision(input: MemoryRevisionRestoreInput): Promise<MemoryRevisionRestoreResult>;
   /** Archive old_ref with a tombstone and record that new_ref supersedes it. */
   supersede(input: MemorySupersededInput): Promise<MemorySupersededResult>;
+  /**
+   * Consolidate 2+ memories into one canonical row. Acts on an audit()
+   * duplicate-finding: sources are archived with a supersession pointer to
+   * the target (parity with supersede(), but N:1), times_seen is summed
+   * onto the target, and bodies are optionally concatenated.
+   */
+  mergeMemories(input: MemoryMergeInput): Promise<MemoryMergeResult>;
   /** Release the underlying store handle. Cached backends evict on close. */
   close(): void;
 }
@@ -468,6 +548,20 @@ export interface KnowledgeQueryInput {
    * never-verified pages first. Overrides the default hit-count ordering.
    */
   sortByVerified?: boolean;
+  /**
+   * Who is reading (t-677). When stampAccess fires, this identity's row in
+   * knowledge_access is upserted alongside the shared pages.hit_count /
+   * last_accessed aggregate. Defaults to 'unknown' when omitted — callers
+   * that care about attribution should always pass the acting identity.
+   */
+  identity?: string;
+}
+
+/** One reader's access stats on a page (t-677 per-identity attribution). */
+export interface KnowledgeAccessStat {
+  identity: string;
+  hit_count: number;
+  last_accessed: string | null;
 }
 
 export interface KnowledgePageRef {
@@ -689,8 +783,12 @@ export interface KnowledgePurgeResult {
 export interface KnowledgeBackend {
   /** Upsert an entity page by slug; create or append. */
   writePage(input: KnowledgePageInput): Promise<KnowledgeWriteResult>;
-  /** Get a single page by slug. opts.stampAccess marks the fetch as a real read (last_accessed / hit_count). */
-  getPage(slug: string, opts?: { stampAccess?: boolean }): Promise<KnowledgePageWithCitations | null>;
+  /**
+   * Get a single page by slug. opts.stampAccess marks the fetch as a real
+   * read (last_accessed / hit_count); opts.identity attributes that read
+   * to a reader (t-677) — defaults to 'unknown' when omitted.
+   */
+  getPage(slug: string, opts?: { stampAccess?: boolean; identity?: string }): Promise<KnowledgePageWithCitations | null>;
   /** List pages with optional filters. */
   listPages(input?: KnowledgeQueryInput): Promise<KnowledgePageWithCitations[]>;
   /** LIKE search over title, body, and domain. */
@@ -719,6 +817,16 @@ export interface KnowledgeBackend {
   getRevision(revisionId: number): Promise<KnowledgeRevision | null>;
   /** Restore a revision's body onto its page; the displaced body is snapshotted first. */
   restoreRevision(input: KnowledgeRevisionRestoreInput): Promise<KnowledgeRevisionRestoreResult>;
+  /**
+   * Per-identity read stats for a page (t-677), newest-touched first. This
+   * is the fine-grained "who's reading this" breakdown; it is NOT consulted
+   * by knowledge_maintain's cold/expansion ranking, which deliberately keeps
+   * using the shared pages.hit_count / last_accessed aggregate — that
+   * aggregate already answers "has anyone read this recently" correctly
+   * across readers, so splitting it per-identity there would only make the
+   * cold list miss pages a *different* reader keeps alive.
+   */
+  getAccessStats(pageId: number): Promise<KnowledgeAccessStat[]>;
   /** Close the underlying SQLite connection. */
   close(): void;
 }

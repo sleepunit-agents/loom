@@ -104,21 +104,10 @@ describe('knowledgeVerify', () => {
   });
 
   describe('actor attribution (t-675)', () => {
-    const originalIdentity = process.env.LOOM_IDENTITY;
-
-    afterEach(() => {
-      if (originalIdentity === undefined) {
-        delete process.env.LOOM_IDENTITY;
-      } else {
-        process.env.LOOM_IDENTITY = originalIdentity;
-      }
-    });
-
-    it('records the verifier from the resolved loom identity — never a tool argument', async () => {
+    it('records the verifier from the acting identity — never a tool argument', async () => {
       await writePage('my-page');
-      process.env.LOOM_IDENTITY = 'mark';
 
-      const result = await knowledgeVerify(tempDir, { slug: 'my-page' });
+      const result = await knowledgeVerify(tempDir, { slug: 'my-page' }, 'mark');
       expect(result).toContain('mark');
 
       const backend = createKnowledgeBackend(tempDir);
@@ -134,7 +123,6 @@ describe('knowledgeVerify', () => {
 
     it('passes through outcome and citation_checked', async () => {
       await writePage('my-page');
-      process.env.LOOM_IDENTITY = 'art';
 
       const result = await knowledgeVerify(tempDir, {
         slug: 'my-page',
@@ -158,7 +146,6 @@ describe('knowledgeVerify', () => {
     it('says the stamp advanced for confirmed, in single and batch output', async () => {
       await writePage('p1');
       await writePage('p2');
-      process.env.LOOM_IDENTITY = 'art';
 
       const single = await knowledgeVerify(tempDir, { slug: 'p1' });
       const batch = await knowledgeVerify(tempDir, { slugs: ['p1', 'p2'] });

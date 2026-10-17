@@ -25,10 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   every body-replacing write and every history-restore; `verifications` is an
   attributed audit trail additive to the existing `pages.verified_at` stamp
   (which stays as the fast single-column freshness field everything else
-  sorts/filters on). All three are resolved server-side from the caller's
-  loom identity (`resolveIdentityName()` — `LOOM_IDENTITY` env override, else
-  the context dir's real basename) — never a free-text tool argument, so no
-  caller can claim another identity's authorship or verification.
+  sorts/filters on). All three are resolved server-side, never a free-text
+  tool argument, so no caller can claim another identity's authorship or
+  verification: MCP calls use the connection's identity from
+  `registerKnowledgeTools` ('art' on the main server, the bearer-resolved
+  identity on the knowledge-only service); the CLI and eurorack import use
+  `resolveIdentityName()` (`LOOM_IDENTITY` env override, else the context
+  dir's real basename).
   `knowledge_verify` gains `outcome` ('confirmed' | 'stale' | 'corrected') and
   `citation_checked` parameters; `knowledge_history`'s listing now shows who
   performed each revision and surfaces the page's verification history. (t-675)
@@ -37,7 +40,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   page keeps its place at the front of the stale-first queue; the result's
   new `stamped` flag (and the tool output) says whether the stamp moved.
 
+- **`MemoryMatch` carries `similarity` alongside `relevance`, and `scope`
+  alongside `project`.** `relevance` is now the post-MMR score that actually
+  decided a result's rank — equal to `similarity` (raw cosine) unless MMR
+  re-ranking traded a pick off against ones already selected, in which case
+  the two now diverge and both are visible (modeled on MemoriLabs/Memori's
+  `FactSearchResult.{similarity, rank_score}` split). Separately, every
+  memory now has an effective `scope` ('project' or 'global'): `recall` and
+  `memory similar` exclude a project-scoped memory tagged to a *different*
+  project than the one passed via `--project`/`project`, while global-scoped
+  memories (category default for `user`/`reference`, any untagged memory, or
+  an explicit `scope: "global"` at write time) still come through regardless.
+  Closes the gap where a preference learned on one project could surface
+  while working on an unrelated one. `remember` (MCP tool and `loom remember
+  --scope`) takes an explicit `project | global` override for the categories
+  where the category default can't tell (`self`, `feedback`) — e.g. a
+  security/git/tool-workflow lesson learned in one project but true
+  everywhere. (t-337)
+
 ### Fixed
+
+- **All 34 MCP tools now declare `ToolAnnotations`** (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`), so a client gating
+  approval on these hints (e.g. Codex under `approval: never`) can tell a
+  read from a write instead of refusing every call uniformly. Hints follow
+  actual behavior, not tool-name conventions: `recall`/`knowledge_recall`
+  are NOT read-only (they stamp `last_accessed`/`hit_count`, which
+  `knowledge_maintain` reads to find cold pages); `knowledge_history` and
+  `memory_revision_restore` are destructive in their restore mode even
+  though the displaced body is snapshotted first. `update`,
+  `knowledge_write` and `knowledge_move` are NOT idempotent: a repeated
+  `observation` bumps the evidence count again, a repeated append stores
+  the body twice, and a repeated prefix move into a child of itself
+  (`music` → `music/gear`) nests again. `openWorldHint` is
+  `false` everywhere — loom has no outbound network calls. This does not
+  by itself prove any client relaxes its approval gate on these hints; that
+  needs a live `tools/list` exchange against an updated server (tracked
+  separately). (t-415)
 
 - **`--context-dir` (and the other global flags) now work in front of the
   subcommand, as the help text has always claimed.** `loom --context-dir DIR

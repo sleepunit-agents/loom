@@ -7,7 +7,6 @@
  * displaces — restoring is never itself a destructive overwrite.
  */
 import { createKnowledgeBackend } from '../backends/index.js';
-import { resolveIdentityName } from '../config.js';
 
 export interface KnowledgeHistoryToolInput {
   slug: string;
@@ -18,6 +17,11 @@ export interface KnowledgeHistoryToolInput {
 export async function knowledgeHistory(
   contextDir: string,
   input: KnowledgeHistoryToolInput,
+  /**
+   * Acting identity (t-677/t-675) — recorded as page_revisions.actor when
+   * restore: true snapshots the displaced body.
+   */
+  identity: string = 'art',
 ): Promise<string> {
   if (!input.slug) {
     return 'Error: slug is required.';
@@ -33,7 +37,7 @@ export async function knowledgeHistory(
       const result = await backend.restoreRevision({
         slug: input.slug,
         revision_id: input.revision_id,
-        actor: resolveIdentityName(contextDir),
+        actor: identity,
       });
       return (
         `Restored revision #${result.revision_id} onto \`${result.slug}\`. ` +

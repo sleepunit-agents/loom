@@ -8,7 +8,6 @@
  * "## Verification" section — append-only, never replace.
  */
 import { createKnowledgeBackend } from '../backends/index.js';
-import { resolveIdentityName } from '../config.js';
 
 export interface KnowledgeVerifyToolInput {
   slug?: string;
@@ -25,8 +24,14 @@ export interface KnowledgeVerifyToolInput {
 export async function knowledgeVerify(
   contextDir: string,
   input: KnowledgeVerifyToolInput,
+  /**
+   * Acting identity (t-677/t-675) — 'art' for the local/stdio server, or
+   * whichever identity the knowledge-http service resolved from its
+   * per-identity bearer token. Recorded as the verification's verifier.
+   */
+  identity: string = 'art',
 ): Promise<string> {
-  const verifier = resolveIdentityName(contextDir);
+  const verifier = identity;
   const backend = createKnowledgeBackend(contextDir);
   try {
     const result = await backend.verifyPages({

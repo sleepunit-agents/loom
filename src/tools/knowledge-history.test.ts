@@ -115,18 +115,7 @@ describe('knowledgeHistory', () => {
   });
 
   describe('actor attribution (t-675)', () => {
-    const originalIdentity = process.env.LOOM_IDENTITY;
-
-    afterEach(() => {
-      if (originalIdentity === undefined) {
-        delete process.env.LOOM_IDENTITY;
-      } else {
-        process.env.LOOM_IDENTITY = originalIdentity;
-      }
-    });
-
-    it('records who performed a restore — resolved from the loom identity, never a tool argument', async () => {
-      process.env.LOOM_IDENTITY = 'art';
+    it('records who performed a restore — the acting identity, never a tool argument', async () => {
       await writePage('my-page', 'Good body.');
       await writePage('my-page', 'Stomped body.');
 
@@ -138,8 +127,7 @@ describe('knowledgeHistory', () => {
         b0.close();
       }
 
-      process.env.LOOM_IDENTITY = 'mark';
-      await knowledgeHistory(tempDir, { slug: 'my-page', revision_id: revId, restore: true });
+      await knowledgeHistory(tempDir, { slug: 'my-page', revision_id: revId, restore: true }, 'mark');
 
       const b = createKnowledgeBackend(tempDir);
       try {
@@ -152,7 +140,6 @@ describe('knowledgeHistory', () => {
     });
 
     it('listing shows who performed each revision', async () => {
-      process.env.LOOM_IDENTITY = 'art';
       await writePage('my-page', 'v1');
       await writePage('my-page', 'v2');
 
