@@ -22,18 +22,27 @@
  * category and project are not normalized at all: they are identifiers, so
  * they are compared exactly (missing project = empty string).
  *
+ * The key also carries the memory's *effective* scope (backends/scope.ts):
+ * restating a project-scoped memory with scope: 'global' is a different
+ * write (it changes who can recall it), so it must not reheat the scoped
+ * row and drop the promotion. An explicit scope equal to the category
+ * default is the same write and still reheats.
+ *
  * This only catches character-identical restatements (after normalization).
  * It is not a replacement for audit's similarity-based duplicate detection —
  * paraphrases, reworded titles, or trimmed content still need audit + merge.
  */
 import { createHash } from 'node:crypto';
 import type { Database } from 'better-sqlite3';
+import { effectiveScope } from './scope.js';
 
 export interface UniqKeyInput {
   category: string;
   project?: string | null;
   title: string;
   content: string;
+  /** Explicit scope override, if any — folded to the effective scope. */
+  scope?: string | null;
 }
 
 function normalize(text: string): string {
@@ -50,6 +59,7 @@ export function computeUniqKey(input: UniqKeyInput): string {
   const basis = JSON.stringify([
     input.category,
     input.project ?? '',
+    effectiveScope(input),
     normalize(input.title),
     normalize(input.content),
   ]);
@@ -70,7 +80,13 @@ export function computeUniqKey(input: UniqKeyInput): string {
  */
 export function rebuildUniqKeys(db: Database): void {
   const rows = db
-    .prepare('SELECT id, category, project, title, content, archived FROM memories ORDER BY id ASC')
+    .prepare(
+      // scope only exists from add_scope on; a DB that predates it has no
+      // explicit overrides, so NULL (category default) is exact.
+      `SELECT id, category, project, title, content, archived,
+              ${hasScopeColumn(db) ? 'scope' : 'NULL AS scope'}
+       FROM memories ORDER BY id ASC`,
+    )
     .all() as {
       id: number;
       category: string;
@@ -78,6 +94,7 @@ export function rebuildUniqKeys(db: Database): void {
       title: string;
       content: string;
       archived: number;
+      scope: string | null;
     }[];
   const seen = new Set<string>();
   const update = db.prepare('UPDATE memories SET uniq = ? WHERE id = ?');
@@ -98,4 +115,9 @@ export function rebuildUniqKeys(db: Database): void {
       update.run(key, row.id);
     }
   })();
+}
+
+function hasScopeColumn(db: Database): boolean {
+  const info = db.pragma('table_info(memories)') as { name: string }[];
+  return info.some((c) => c.name === 'scope');
 }

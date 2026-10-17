@@ -154,6 +154,7 @@ export class SqliteVecBackend implements MemoryBackend {
       project: input.project,
       title: input.title,
       content: input.content,
+      scope: input.scope,
     });
 
     // Write-time dedup (t-335): a character-identical restatement (after
@@ -773,17 +774,18 @@ export class SqliteVecBackend implements MemoryBackend {
       content: string;
       category: string;
       project: string | null;
+      scope: string | null;
     };
     let rows: RestoreRow[] = [];
 
     if (input.ref) {
       const row = this.db
-        .prepare('SELECT id, ref, title, content, category, project FROM memories WHERE ref = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project, scope FROM memories WHERE ref = ? AND archived = 1')
         .get(input.ref) as RestoreRow | undefined;
       if (row) rows = [row];
     } else if (input.category && input.title) {
       rows = this.db
-        .prepare('SELECT id, ref, title, content, category, project FROM memories WHERE category = ? AND title = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project, scope FROM memories WHERE category = ? AND title = ? AND archived = 1')
         .all(input.category, input.title) as RestoreRow[];
     } else {
       return { restored: [] };
@@ -1097,7 +1099,7 @@ export class SqliteVecBackend implements MemoryBackend {
    */
   private claimableUniq(
     id: number,
-    row: { category: string; project: string | null; title: string; content: string },
+    row: { category: string; project: string | null; title: string; content: string; scope: string | null },
   ): string | null {
     const key = computeUniqKey(row);
     const holder = this.db

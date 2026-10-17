@@ -155,3 +155,17 @@ describe('computeUniqKey — meaning-bearing characters (PR120 review, round 2)'
     expect(a).not.toBe(b);
   });
 });
+
+describe('computeUniqKey — scope (#129 interaction)', () => {
+  it('differs when effective scope differs', () => {
+    const base = { category: 'project', title: 'T', content: 'C', project: 'loom' };
+    expect(computeUniqKey(base)).not.toBe(computeUniqKey({ ...base, scope: 'global' }));
+  });
+
+  it('is the same when an explicit scope equals the category default', () => {
+    const base = { category: 'project', title: 'T', content: 'C', project: 'loom' };
+    expect(computeUniqKey(base)).toBe(computeUniqKey({ ...base, scope: 'project' }));
+    const user = { category: 'user', title: 'T', content: 'C', project: 'loom' };
+    expect(computeUniqKey(user)).toBe(computeUniqKey({ ...user, scope: 'global' }));
+  });
+});

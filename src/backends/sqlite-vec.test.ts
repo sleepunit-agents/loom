@@ -1526,6 +1526,25 @@ describe('SqliteVecBackend', () => {
       expect(rows[1]).toMatchObject({ content: y.content ?? base.content, project: y.project ?? null });
     });
 
+    it('does NOT collapse a restatement that changes effective scope (#129 interaction)', async () => {
+      const base = { category: 'project', title: 'Git hygiene', content: 'Sign off every commit', project: 'loom' };
+      const first = await backend.remember(base);
+      const second = await backend.remember({ ...base, scope: 'global' });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const rows = db.prepare('SELECT scope, times_seen FROM memories ORDER BY id').all() as
+        { scope: string | null; times_seen: number }[];
+      expect(rows).toEqual([{ scope: null, times_seen: 1 }, { scope: 'global', times_seen: 1 }]);
+    });
+
+    it('reheats when an explicit scope equals the category default (same effective scope)', async () => {
+      const base = { category: 'project', title: 'Git hygiene', content: 'Sign off every commit', project: 'loom' };
+      const first = await backend.remember(base);
+      const second = await backend.remember({ ...base, scope: 'project' });
+      expect(second.ref).toBe(first.ref);
+    });
+
     it('bumps updated (last-seen) on reheat', async () => {
       const { ref } = await backend.remember({
         category: 'project',
