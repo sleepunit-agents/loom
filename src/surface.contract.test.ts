@@ -16,7 +16,7 @@ const serverSrc = readFileSync(join(repoRoot, 'src', 'server.ts'), 'utf-8');
 const knowledgeToolsSrc = readFileSync(join(repoRoot, 'src', 'transport', 'knowledge-tools.ts'), 'utf-8');
 
 function extractServerTools(): string[] {
-  const matches = [...(serverSrc + knowledgeToolsSrc).matchAll(/server\.tool\(\s*['"](\w+)['"]/g)];
+  const matches = [...(serverSrc + knowledgeToolsSrc).matchAll(/server\.registerTool\(\s*['"](\w+)['"]/g)];
   return matches.map((m) => m[1]);
 }
 

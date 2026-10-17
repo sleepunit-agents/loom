@@ -14,7 +14,7 @@
  * or deploys it; standing it up is a separate, deliberate operational step.
  */
 import { parseArgs } from 'node:util';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createLoomServer } from '../server.js';
 import { createKnowledgeOnlyServer } from '../transport/knowledge-server.js';
 import { startHttpServer } from '../transport/http-server.js';
