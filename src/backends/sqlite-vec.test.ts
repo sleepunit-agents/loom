@@ -1501,6 +1501,87 @@ describe('SqliteVecBackend', () => {
     });
   });
 
+  describe('dedup key stays in sync with body mutations (PR120 review)', () => {
+    const countRows = (b: SqliteVecBackend) =>
+      (b.getDatabase().prepare('SELECT COUNT(*) AS n FROM memories').get() as { n: number }).n;
+
+    it('update(): restating the OLD body after an update inserts it instead of returning the updated row', async () => {
+      const first = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.update({ ref: first.ref, content: 'beta' });
+
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(again.ref).not.toBe(first.ref);
+      expect(countRows(backend)).toBe(2);
+      const row = backend.getDatabase()
+        .prepare('SELECT content FROM memories WHERE ref = ?').get(again.ref) as { content: string };
+      expect(row.content).toBe('alpha');
+    });
+
+    it('update(): restating the NEW body reheats the updated row instead of inserting a duplicate', async () => {
+      const first = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.update({ ref: first.ref, content: 'beta' });
+
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      expect(again.ref).toBe(first.ref);
+      expect(countRows(backend)).toBe(1);
+    });
+
+    it('update() into a body another active row already holds leaves exactly one active key holder', async () => {
+      const a = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      const b = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      await backend.update({ ref: b.ref, content: 'alpha' });
+
+      const holders = backend.getDatabase()
+        .prepare('SELECT ref FROM memories WHERE archived = 0 AND uniq = (SELECT uniq FROM memories WHERE ref = ?)')
+        .all(a.ref) as { ref: string }[];
+      expect(holders.map((h) => h.ref)).toEqual([a.ref]);
+      // ...and beta is free again, so restating it is a fresh write.
+      const beta = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      expect([a.ref, b.ref]).not.toContain(beta.ref);
+    });
+
+    it('restoreRevision(): the key follows the restored body', async () => {
+      const first = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.update({ ref: first.ref, content: 'beta' });
+      // This snapshot holds 'beta' (the body the gamma update replaced).
+      const { snapshotId } = await backend.update({ ref: first.ref, content: 'gamma' });
+      const res = await backend.restoreRevision({ ref: first.ref, revision_id: snapshotId! });
+      expect(res.restored).toBe(true);
+
+      const beta = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      expect(beta.ref).toBe(first.ref);
+      const alpha = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(alpha.ref).not.toBe(first.ref);
+      expect(countRows(backend)).toBe(2);
+    });
+
+    it('restore(): un-archiving a row whose body was re-remembered meanwhile does not create a second key holder', async () => {
+      const old = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.archive({ ref: old.ref });
+      const fresh = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(fresh.ref).not.toBe(old.ref);
+
+      await backend.restore({ ref: old.ref });
+
+      const holders = backend.getDatabase()
+        .prepare('SELECT ref FROM memories WHERE archived = 0 AND uniq = (SELECT uniq FROM memories WHERE ref = ?)')
+        .all(fresh.ref) as { ref: string }[];
+      expect(holders.map((h) => h.ref)).toEqual([fresh.ref]);
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(again.ref).toBe(fresh.ref);
+    });
+
+    it('restore(): an un-archived row with no competing holder gets its key back', async () => {
+      const old = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.archive({ ref: old.ref });
+      await backend.restore({ ref: old.ref });
+
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(again.ref).toBe(old.ref);
+      expect(countRows(backend)).toBe(1);
+    });
+  });
+
   describe('mergeMemories', () => {
     it('folds a source into the target: archives source, sums times_seen, records supersession', async () => {
       const target = await backend.remember({

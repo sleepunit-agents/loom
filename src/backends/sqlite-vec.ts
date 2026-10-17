@@ -407,8 +407,10 @@ export class SqliteVecBackend implements MemoryBackend {
         // knowledge wing added after the 2026-06-01 verify run stomped 13
         // pages with no recovery. Only on a real change, to keep history quiet.
         snapshotId = this.snapshotRevision(row.id, row.ref, row.content, 'update', updatedAt);
-        sets.push('content = ?');
-        params.push(input.content);
+        sets.push('content = ?', 'uniq = ?');
+        // The dedup key describes the current body — a stale one would make
+        // remember() of the OLD body return this row (PR120 review).
+        params.push(input.content, this.claimableUniq(row.id, { ...row, content: input.content! }));
       }
 
       if (input.metadata) {
@@ -755,17 +757,24 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   async restore(input: RestoreInput): Promise<RestoreResult> {
-    type RestoreRow = { id: number; ref: string; title: string; content: string };
+    type RestoreRow = {
+      id: number;
+      ref: string;
+      title: string;
+      content: string;
+      category: string;
+      project: string | null;
+    };
     let rows: RestoreRow[] = [];
 
     if (input.ref) {
       const row = this.db
-        .prepare('SELECT id, ref, title, content FROM memories WHERE ref = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project FROM memories WHERE ref = ? AND archived = 1')
         .get(input.ref) as RestoreRow | undefined;
       if (row) rows = [row];
     } else if (input.category && input.title) {
       rows = this.db
-        .prepare('SELECT id, ref, title, content FROM memories WHERE category = ? AND title = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project FROM memories WHERE category = ? AND title = ? AND archived = 1')
         .all(input.category, input.title) as RestoreRow[];
     } else {
       return { restored: [] };
@@ -780,7 +789,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const now = new Date().toISOString();
     const stmt = this.db.prepare(
-      'UPDATE memories SET archived = 0, archive_note = NULL, updated = ? WHERE id = ?',
+      'UPDATE memories SET archived = 0, archive_note = NULL, uniq = ?, updated = ? WHERE id = ?',
     );
     // Delete-then-insert: legacy rows archived before delete-on-archive
     // may still hold a vector, and vec0 rowids must stay unique.
@@ -790,7 +799,10 @@ export class SqliteVecBackend implements MemoryBackend {
     );
     const tx = this.db.transaction(() => {
       rows.forEach((row, i) => {
-        stmt.run(now, row.id);
+        // Re-derive the key: the row may carry a stale or pre-rekey one, and
+        // while it sat archived the same body may have been remembered again
+        // — that active row keeps the key (PR120 review).
+        stmt.run(this.claimableUniq(row.id, row), now, row.id);
         delVec.run(BigInt(row.id));
         insVec.run(BigInt(row.id), toVecBuffer(vectors[i]));
       });
@@ -854,13 +866,18 @@ export class SqliteVecBackend implements MemoryBackend {
     const vector = await this.embedder.embed(`${mem.title}\n\n${rev.content}`);
 
     const updateStmt = this.db.prepare(
-      'UPDATE memories SET content = ?, updated = ? WHERE id = ?',
+      'UPDATE memories SET content = ?, uniq = ?, updated = ? WHERE id = ?',
     );
     const updateVec = this.db.prepare(
       'UPDATE vec_memories SET embedding = ? WHERE rowid = ?',
     );
     const tx = this.db.transaction(() => {
-      updateStmt.run(rev.content, timestamp, mem.id);
+      updateStmt.run(
+        rev.content,
+        this.claimableUniq(mem.id, { ...mem, content: rev.content }),
+        timestamp,
+        mem.id,
+      );
       updateVec.run(toVecBuffer(vector), BigInt(mem.id));
     });
     retryWrite(() => tx());
@@ -964,18 +981,11 @@ export class SqliteVecBackend implements MemoryBackend {
       }
     }
 
-    let newUniq = targetRow.uniq;
     let vector: number[] | undefined;
     if (newContent !== targetRow.content) {
       // Snapshot the target body before overwriting — same protection update() gives.
       this.snapshotRevision(targetRow.id, targetRow.ref, targetRow.content, 'update', timestamp);
       vector = await this.embedder.embed(`${targetRow.title}\n\n${newContent}`);
-      newUniq = computeUniqKey({
-        category: targetRow.category,
-        project: targetRow.project,
-        title: targetRow.title,
-        content: newContent,
-      });
     }
 
     const updateTarget = this.db.prepare(
@@ -995,9 +1005,6 @@ export class SqliteVecBackend implements MemoryBackend {
     const deleteMem = this.db.prepare('DELETE FROM memories WHERE id = ?');
 
     const tx = this.db.transaction(() => {
-      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, targetRow.id);
-      if (vector) updateVec.run(toVecBuffer(vector), BigInt(targetRow.id));
-
       for (const source of sourceRows) {
         // Re-parent revision history before the source row can be deleted.
         repointRevisions.run(targetRow.id, source.id);
@@ -1017,6 +1024,15 @@ export class SqliteVecBackend implements MemoryBackend {
           deleteMem.run(source.id);
         }
       }
+
+      // After the sources are archived, so a key one of them held is free
+      // for the target's (possibly concatenated) body.
+      const newUniq =
+        newContent !== targetRow.content
+          ? this.claimableUniq(targetRow.id, { ...targetRow, content: newContent })
+          : targetRow.uniq;
+      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, targetRow.id);
+      if (vector) updateVec.run(toVecBuffer(vector), BigInt(targetRow.id));
     });
     retryWrite(() => tx());
 
@@ -1037,6 +1053,24 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   // ── Internals ──
+
+  /**
+   * The dedup key a row should hold for the given body, or NULL when another
+   * ACTIVE row already holds that key — the existing holder keeps it, same
+   * policy as the migration backfill (rebuildUniqKeys). Call inside the
+   * write transaction that changes the body, so the check and the write see
+   * the same state.
+   */
+  private claimableUniq(
+    id: number,
+    row: { category: string; project: string | null; title: string; content: string },
+  ): string | null {
+    const key = computeUniqKey(row);
+    const holder = this.db
+      .prepare('SELECT id FROM memories WHERE uniq = ? AND archived = 0 AND id != ? LIMIT 1')
+      .get(key, id);
+    return holder ? null : key;
+  }
 
   /**
    * Insert a content snapshot into memory_revisions and prune beyond the per-memory
