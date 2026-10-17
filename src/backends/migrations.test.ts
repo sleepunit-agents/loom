@@ -180,6 +180,7 @@ describe('pendingMigrations', () => {
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
       'add_confidence', 'add_evidence_count', 'add_observed_at',
       'add_memory_deletions',
+      'add_scope',
       'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique', 'rekey_uniq_exact',
     ]);
   });

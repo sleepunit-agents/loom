@@ -246,6 +246,18 @@ export const MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    id: 'add_scope',
+    description:
+      'Add scope column — explicit project|global visibility override, enforced ' +
+      'at recall against the category default (backends/scope.ts, t-337)',
+    pending: (db) => !hasColumn(db, 'memories', 'scope'),
+    run: (db) => {
+      // NULL on legacy records and any write that doesn't set it explicitly:
+      // effectiveScope() falls back to the category default in that case.
+      db.prepare('ALTER TABLE memories ADD COLUMN scope TEXT').run();
+    },
+  },
+  {
     id: 'add_times_seen',
     description:
       'Add times_seen counter — bumped when remember() reheats an exact restatement instead of inserting (t-335)',

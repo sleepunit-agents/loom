@@ -65,6 +65,7 @@ function buildCurrentDb(dir: string): string {
       confidence REAL,
       evidence_count INTEGER NOT NULL DEFAULT 0,
       observed_at TEXT,
+      scope TEXT,
       times_seen INTEGER NOT NULL DEFAULT 1,
       uniq TEXT
     )
