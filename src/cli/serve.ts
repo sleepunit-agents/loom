@@ -6,7 +6,7 @@
  * Bind-safety refuses a public/0.0.0.0 host; Tailscale is the access control.
  */
 import { parseArgs } from 'node:util';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createLoomServer } from '../server.js';
 import { startHttpServer } from '../transport/http-server.js';
 import { resolveContextDir } from '../config.js';
