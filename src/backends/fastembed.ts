@@ -63,13 +63,33 @@ export class FastEmbedProvider implements EmbeddingProvider {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
     const embedder = await this.ensureEmbedder();
-    const vectors = await collectBatches(embedder.embed(texts, 32));
-    if (vectors.length !== texts.length) {
-      throw new Error(
-        `fastembed: embedBatch() produced ${vectors.length} vectors for ${texts.length} inputs (model ${this.config.model})`,
-      );
+
+    // Staged fallback ladder (t-334): a batch-level failure anywhere in a
+    // large request must not take remember()/recall() down with it. Each
+    // rung is strictly less efficient but more isolated than the one above
+    // it; only descend when the rung above actually failed or came back
+    // short.
+    const rungs: Array<() => Promise<number[][]>> = [
+      () => collectBatches(embedder.embed(texts, 32)), // 1. one batched call
+      () => collectBatches(embedder.embed(texts, 1)), // 2. sequential, still whole-array
+      () => embedOneByOne(texts, (t) => this.embed(t)), // 3. isolated, one call per text
+    ];
+
+    let lastErr: unknown;
+    for (const runRung of rungs) {
+      try {
+        const vectors = await runRung();
+        if (vectors.length === texts.length && vectors.every((v) => v.length > 0)) {
+          return vectors;
+        }
+        lastErr = new Error(
+          `fastembed: embedBatch() produced ${vectors.length} vectors for ${texts.length} inputs (model ${this.config.model})`,
+        );
+      } catch (err) {
+        lastErr = err;
+      }
     }
-    return vectors;
+    throw lastErr;
   }
 
   async embedQuery(text: string): Promise<number[]> {
@@ -117,5 +137,15 @@ async function collectBatches(
   for await (const batch of gen) {
     for (const vector of batch) out.push(Array.from(vector));
   }
+  return out;
+}
+
+/** Rung 3 of the embedBatch fallback ladder: one isolated call per text. */
+async function embedOneByOne(
+  texts: string[],
+  embedOne: (text: string) => Promise<number[]>,
+): Promise<number[][]> {
+  const out: number[][] = [];
+  for (const text of texts) out.push(await embedOne(text));
   return out;
 }

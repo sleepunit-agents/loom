@@ -98,14 +98,15 @@ describe('FastEmbedProvider', () => {
     );
   });
 
-  it('throws when embedBatch returns fewer vectors than inputs', async () => {
-    initMock.mockResolvedValue(
-      makeFakeEmbedder({ batches: [[[0.1, 0.2, 0.3]]] }),
-    );
+  it('throws after exhausting the fallback ladder when every rung fails', async () => {
+    // Always yields zero vectors, at every batch size — batch, sequential,
+    // and the per-text embed() calls of the one-by-one rung all come up
+    // empty, so there is genuinely nothing to fall back to.
+    initMock.mockResolvedValue(makeFakeEmbedder({ batches: [] }));
     const provider = makeProvider();
 
     await expect(provider.embedBatch(['a', 'b'])).rejects.toThrow(
-      /1 vectors for 2 inputs/,
+      /embed\(\) produced no vector/,
     );
   });
 
@@ -113,5 +114,57 @@ describe('FastEmbedProvider', () => {
     const provider = makeProvider();
     await expect(provider.embedBatch([])).resolves.toEqual([]);
     expect(initMock).not.toHaveBeenCalled();
+  });
+
+  describe('embedBatch fallback ladder (t-334)', () => {
+    it('degrades batch -> sequential -> one-by-one when every multi-text call fails', async () => {
+      const embed = vi.fn((texts: string[]) => {
+        if (texts.length > 1) throw new Error('batch exploded');
+        return batchGen([texts.map(() => [0.1, 0.2, 0.3])]);
+      });
+      initMock.mockResolvedValue({ embed, queryEmbed: vi.fn() } as unknown as FlagEmbedding);
+      const provider = makeProvider();
+
+      await expect(provider.embedBatch(['a', 'b', 'c'])).resolves.toEqual([
+        [0.1, 0.2, 0.3],
+        [0.1, 0.2, 0.3],
+        [0.1, 0.2, 0.3],
+      ]);
+      // rung 1 (batch of 3) + rung 2 (sequential, still 3) both throw;
+      // rung 3 makes one isolated call per text.
+      expect(embed).toHaveBeenCalledTimes(2 + 3);
+      expect(embed.mock.calls.filter(([texts]) => texts.length === 1)).toHaveLength(3);
+    });
+
+    it('recovers at the sequential rung without reaching one-by-one', async () => {
+      const embed = vi.fn((texts: string[], batchSize: number) => {
+        if (batchSize === 32) throw new Error('batch exploded');
+        return batchGen([texts.map(() => [0.4, 0.5, 0.6])]);
+      });
+      initMock.mockResolvedValue({ embed, queryEmbed: vi.fn() } as unknown as FlagEmbedding);
+      const provider = makeProvider();
+
+      await expect(provider.embedBatch(['a', 'b'])).resolves.toEqual([
+        [0.4, 0.5, 0.6],
+        [0.4, 0.5, 0.6],
+      ]);
+      // One failed batch call, one successful sequential call — never
+      // dropped to per-text calls.
+      expect(embed).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not degrade when the full batch call succeeds', async () => {
+      const embed = vi.fn((texts: string[]) =>
+        batchGen([texts.map(() => [0.7, 0.8, 0.9])]),
+      );
+      initMock.mockResolvedValue({ embed, queryEmbed: vi.fn() } as unknown as FlagEmbedding);
+      const provider = makeProvider();
+
+      await expect(provider.embedBatch(['a', 'b'])).resolves.toEqual([
+        [0.7, 0.8, 0.9],
+        [0.7, 0.8, 0.9],
+      ]);
+      expect(embed).toHaveBeenCalledTimes(1);
+    });
   });
 });

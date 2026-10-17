@@ -45,12 +45,26 @@ export const EmbeddingModel = {
 export type EmbeddingModelName = (typeof EmbeddingModel)[keyof typeof EmbeddingModel];
 
 /**
- * Where model tarballs come from. The upstream default is a Qdrant-owned GCS
- * bucket whose access has broken at least twice (fastembed-js issues #18, #33)
- * and which nobody maintains any more; the env override exists so a broken
- * bucket is a config change, not a release.
+ * Where model tarballs come from. The upstream default was a Qdrant-owned
+ * GCS bucket; as of 2026-10-16 every object in it 403s (t-1262) and nobody
+ * at Qdrant maintains it, so it isn't coming back. The replacement is a
+ * GitHub Release asset in this repo (sleepunit-agents/loom, tag
+ * models-fast-bge-small-en-v1.5-v1): the exact bytes this box had already
+ * downloaded from the GCS bucket before it died, reuploaded rather than
+ * re-exported, and confirmed bit-identical against the
+ * embedding-runtime.parity.test.ts golden vectors before upload. That
+ * matters: the public Hugging Face re-exports of this model are either
+ * int8/fp16-quantized or built with a different ONNX optimizer pass, and
+ * produce embeddings close to but not bit-identical with every vector
+ * already stored in a loom database. Only fast-bge-small-en-v1.5 — the
+ * model loom actually defaults to (src/backends/index.ts) — has a release
+ * asset; other EmbeddingModel entries will fail download() with a clear
+ * "set LOOM_MODEL_BASE_URL" error until someone needs one and mirrors it
+ * the same way. The env override exists so a dead host is a config change,
+ * not a release.
  */
-const DEFAULT_MODEL_BASE_URL = 'https://storage.googleapis.com/qdrant-fastembed';
+const DEFAULT_MODEL_BASE_URL =
+  'https://github.com/sleepunit-agents/loom/releases/download/models-fast-bge-small-en-v1.5-v1';
 
 export interface FlagEmbeddingInit {
   model: EmbeddingModelName;
@@ -272,6 +286,13 @@ function download(outputPath: string, model: EmbeddingModelName): Promise<void> 
   const base = process.env.LOOM_MODEL_BASE_URL ?? DEFAULT_MODEL_BASE_URL;
   const url = `${base}/${remoteName}.tar.gz`;
 
+  // GitHub Release assets (the new default host) 302 to a signed, short-lived
+  // blob URL; the GCS bucket they replace never redirected, so this following
+  // logic didn't previously exist.
+  return fetchToFile(url, outputPath, 5);
+}
+
+function fetchToFile(url: string | URL, outputPath: string, redirectsLeft: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const fail = (err: Error): void => {
       // A partial archive on disk would be treated as a complete download on
@@ -279,19 +300,29 @@ function download(outputPath: string, model: EmbeddingModelName): Promise<void> 
       if (existsSync(outputPath)) unlinkSync(outputPath);
       reject(err);
     };
-    const file = createWriteStream(outputPath);
-    file.on('error', fail);
     httpsGet(url, { headers: { 'User-Agent': 'loom' } }, (response) => {
-      if (response.statusCode !== 200) {
+      const { statusCode, headers } = response;
+      if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
+        response.resume();
+        if (redirectsLeft <= 0) {
+          fail(new Error(`Model download failed: too many redirects fetching ${url.toString()}`));
+          return;
+        }
+        fetchToFile(new URL(headers.location, url), outputPath, redirectsLeft - 1).then(resolve, fail);
+        return;
+      }
+      if (statusCode !== 200) {
         response.resume();
         fail(
           new Error(
-            `Model download failed: ${url} returned HTTP ${response.statusCode}. ` +
+            `Model download failed: ${url.toString()} returned HTTP ${statusCode}. ` +
               'Set LOOM_MODEL_BASE_URL to fetch models from a different host.',
           ),
         );
         return;
       }
+      const file = createWriteStream(outputPath);
+      file.on('error', fail);
       response.on('error', fail);
       response.pipe(file);
       file.on('finish', () => {
