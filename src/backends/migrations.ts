@@ -257,7 +257,8 @@ export const MIGRATIONS: readonly Migration[] = [
     // uniq_active_unique (below) re-keys too and replaces this index.
     pending: (db) =>
       !hasIndex(db, 'memories', 'idx_memories_uniq_v2') &&
-      !hasIndex(db, 'memories', 'idx_memories_uniq_active'),
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
     run: (db) => {
       rebuildUniqKeys(db);
       db.prepare('CREATE INDEX IF NOT EXISTS idx_memories_uniq_v2 ON memories(uniq)').run();
@@ -269,7 +270,10 @@ export const MIGRATIONS: readonly Migration[] = [
     description:
       'Make uniq UNIQUE among active rows (partial index), so two concurrent ' +
       'remember() calls of the same content cannot both insert (PR120 review)',
-    pending: (db) => !hasIndex(db, 'memories', 'idx_memories_uniq_active'),
+    // rekey_uniq_exact (below) replaces this index with idx_memories_uniq_exact.
+    pending: (db) =>
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
     run: (db) => {
       db.transaction(() => {
         // Re-key first: any active duplicates written before this index
@@ -281,6 +285,30 @@ export const MIGRATIONS: readonly Migration[] = [
         ).run();
         db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
         db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+      }).immediate();
+    },
+  },
+  {
+    id: 'rekey_uniq_exact',
+    description:
+      'Recompute every uniq key with the exact normalizer — the previous one folded ' +
+      'case, punctuation and whitespace, and compared project ids loosely, so ' +
+      '"Offset -5"/"Offset 5", "1.5"/"15" and projects foo-bar/foobar shared a key ' +
+      '(PR120 review, round 2)',
+    // Marker: the unique index this migration creates, under a new name so
+    // databases keyed by the folding normalizer are detectable.
+    pending: (db) => !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      db.transaction(() => {
+        // Drop the old indexes first so the new unique index is built once,
+        // over the final keys only.
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_active').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+        rebuildUniqKeys(db);
+        db.prepare(
+          'CREATE UNIQUE INDEX idx_memories_uniq_exact ON memories(uniq) WHERE archived = 0',
+        ).run();
       }).immediate();
     },
   },

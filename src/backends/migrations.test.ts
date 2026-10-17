@@ -152,7 +152,7 @@ describe('pendingMigrations', () => {
       'add_archived', 'add_archive_note', 'idx_memories_archived', 'add_salience', 'add_proposals',
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
       'add_confidence', 'add_evidence_count', 'add_observed_at',
-      'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique',
+      'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique', 'rekey_uniq_exact',
     ]);
   });
 
@@ -255,12 +255,13 @@ describe('add_times_seen / add_uniq migrations (t-335)', () => {
     db.close();
   });
 
-  it('after all migrations, uniq is covered by one UNIQUE partial index (idx_memories_uniq_active)', () => {
+  it('after all migrations, uniq is covered by one UNIQUE partial index (idx_memories_uniq_exact)', () => {
     const db = openOldSchemaDb(join(tmpDir, 'idx.db'));
     runMigrations(db, { strict: true });
     const idx = db.pragma('index_list(memories)') as { name: string; unique: number; partial: number }[];
-    const active = idx.find((i) => i.name === 'idx_memories_uniq_active');
+    const active = idx.find((i) => i.name === 'idx_memories_uniq_exact');
     expect(active).toMatchObject({ unique: 1, partial: 1 });
+    expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq_active');
     expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq');
     expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq_v2');
     db.close();
@@ -369,6 +370,72 @@ describe('uniq_active_unique migration (PR120 review)', () => {
       { ref: string; uniq: string | null }[];
     expect(rows).toEqual([{ ref: 'project/s-1', uniq: key }, { ref: 'project/s-2', uniq: null }]);
     expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe('rekey_uniq_exact migration (PR120 review, round 2)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-exact-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  /** A DB that ran every migration up to and including uniq_active_unique. */
+  function atUniqActiveUnique(path: string): BetterSqlite3.Database {
+    const db = openOldSchemaDb(path);
+    for (const m of MIGRATIONS) {
+      if (m.id === 'rekey_uniq_exact') break;
+      if (m.pending(db)) m.run(db);
+    }
+    return db;
+  }
+
+  function insert(db: BetterSqlite3.Database, ref: string, project: string | null, content: string, uniq: string | null) {
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, project, content, metadata, created, uniq)
+       VALUES (?, ?, 'T', 'project', ?, ?, '{}', ?, ?)`,
+    ).run(ref, ref, project, content, new Date().toISOString(), uniq);
+  }
+
+  it('gives rows the punctuation-folding key had merged their own keys back', () => {
+    const db = atUniqActiveUnique(join(tmpDir, 'folded.db'));
+    // Under the folding normalizer "Offset -5"/"Offset 5" and the
+    // foo-bar/foobar projects shared a key: the first row held it, the
+    // second stayed NULL.
+    insert(db, 'project/o1', null, 'Offset -5', 'folded-offset');
+    insert(db, 'project/o2', null, 'Offset 5', null);
+    insert(db, 'project/p1', 'foo-bar', 'same', 'folded-project');
+    insert(db, 'project/p2', 'foobar', 'same', null);
+
+    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact']);
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows).toEqual([
+      { ref: 'project/o1', uniq: computeUniqKey({ category: 'project', title: 'T', content: 'Offset -5' }) },
+      { ref: 'project/o2', uniq: computeUniqKey({ category: 'project', title: 'T', content: 'Offset 5' }) },
+      { ref: 'project/p1', uniq: computeUniqKey({ category: 'project', project: 'foo-bar', title: 'T', content: 'same' }) },
+      { ref: 'project/p2', uniq: computeUniqKey({ category: 'project', project: 'foobar', title: 'T', content: 'same' }) },
+    ]);
+    expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
+  });
+
+  it('does not trip the unique index when a row\'s new key is a later row\'s old key', () => {
+    const db = atUniqActiveUnique(join(tmpDir, 'swap.db'));
+    const keyA = computeUniqKey({ category: 'project', title: 'T', content: 'a' });
+    const keyB = computeUniqKey({ category: 'project', title: 'T', content: 'b' });
+    // Stale keys, swapped: rekeying row a (lower id) first writes keyA while
+    // row b still holds it.
+    insert(db, 'project/a', null, 'a', keyB);
+    insert(db, 'project/b', null, 'b', keyA);
+
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows).toEqual([{ ref: 'project/a', uniq: keyA }, { ref: 'project/b', uniq: keyB }]);
     db.close();
   });
 });

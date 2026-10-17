@@ -163,7 +163,7 @@ export class SqliteVecBackend implements MemoryBackend {
     // another connection on the same file) can insert the same key while we
     // await the embedder. The authoritative check is repeated inside the
     // IMMEDIATE insert transaction below, and the partial UNIQUE index
-    // idx_memories_uniq_active makes a second active holder impossible
+    // idx_memories_uniq_exact makes a second active holder impossible
     // (PR120 review).
     const hit = this.db
       .prepare('SELECT 1 FROM memories WHERE uniq = ? AND archived = 0')

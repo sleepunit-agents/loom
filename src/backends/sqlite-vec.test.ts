@@ -1412,16 +1412,16 @@ describe('SqliteVecBackend', () => {
       expect(row.times_seen).toBe(2);
     });
 
-    it('reheats across case/punctuation/whitespace differences, not just byte-identical text', async () => {
+    it('reheats across edge/trailing whitespace and line-ending differences only', async () => {
       const first = await backend.remember({
         category: 'self',
         title: 'vitest does not typecheck',
-        content: 'run npx tsc --noEmit before calling a loom branch done.',
+        content: 'Run npx tsc --noEmit before calling a loom branch done.\nEvery time.',
       });
       const second = await backend.remember({
         category: 'self',
-        title: '  Vitest Does Not Typecheck!!',
-        content: 'Run npx tsc --noEmit, before calling a loom branch done',
+        title: 'vitest does not typecheck  ',
+        content: '\nRun npx tsc --noEmit before calling a loom branch done. \r\nEvery time.\n',
       });
 
       expect(second.ref).toBe(first.ref);
@@ -1430,6 +1430,27 @@ describe('SqliteVecBackend', () => {
         .prepare('SELECT times_seen FROM memories WHERE ref = ?')
         .get(first.ref) as { times_seen: number };
       expect(row.times_seen).toBe(2);
+    });
+
+    // PR120 review, round 2: each pair reproduced as one row, times_seen=2,
+    // second write lost, under the case/punctuation-folding normalizer.
+    it.each([
+      ['a sign', { content: 'Offset -5' }, { content: 'Offset 5' }],
+      ['a decimal point', { content: 'Version 1.5' }, { content: 'Version 15' }],
+      ['a hyphen in the project id', { project: 'foo-bar' }, { project: 'foobar' }],
+      ['case', { content: 'Deploy to US region' }, { content: 'Deploy to us region' }],
+    ])('does NOT collapse writes that differ only by %s', async (_label, x, y) => {
+      const base = { category: 'project', title: 'Same title', content: 'Same content' };
+      const first = await backend.remember({ ...base, ...x });
+      const second = await backend.remember({ ...base, ...y });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const rows = db.prepare('SELECT project, content, times_seen FROM memories ORDER BY id').all() as
+        { project: string | null; content: string; times_seen: number }[];
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.times_seen)).toEqual([1, 1]);
+      expect(rows[1]).toMatchObject({ content: y.content ?? base.content, project: y.project ?? null });
     });
 
     it('bumps updated (last-seen) on reheat', async () => {

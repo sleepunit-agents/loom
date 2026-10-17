@@ -8,13 +8,19 @@
  * so an exact restatement collides with the existing row's `uniq` value and
  * reheats it instead of inserting.
  *
- * Normalization is deliberately conservative (PR120 review): it only folds
- * differences that cannot change meaning in any script — Unicode
- * compatibility forms (NFKC), case, whitespace and punctuation (\p{P}).
- * Letters, combining marks and numbers in every script, and symbols (emoji,
- * operators, currency), are kept. The first version stripped everything
- * outside [a-z0-9], which reduced any CJK/Cyrillic/Arabic/... memory to the
- * empty string and made all of them collide — silent data loss.
+ * Normalization is deliberately minimal (PR120 review, two rounds). The key
+ * must only fold differences that can never change what a memory says, and
+ * almost every character can: a sign ("-5" vs "5"), a decimal point ("1.5"
+ * vs "15"), a hyphen in an identifier ("foo-bar" vs "foobar"), a space
+ * ("foo bar" vs "foobar"), case ("US" vs "us"), a compatibility form ("x²"
+ * vs "x2"), indentation in a code snippet. Earlier versions folded case and
+ * punctuation (and, first, everything outside [a-z0-9]); each silently merged
+ * distinct writes. What is folded now, in title and content only:
+ *   - canonical Unicode equivalence (NFC — the same text, encoded two ways)
+ *   - line-ending style (CRLF/CR → LF)
+ *   - whitespace at the end of each line, and at the start/end of the field
+ * category and project are not normalized at all: they are identifiers, so
+ * they are compared exactly (missing project = empty string).
  *
  * This only catches character-identical restatements (after normalization).
  * It is not a replacement for audit's similarity-based duplicate detection —
@@ -31,20 +37,19 @@ export interface UniqKeyInput {
 }
 
 function normalize(text: string): string {
-  const folded = text.normalize('NFKC').toLowerCase();
-  const stripped = folded.replace(/[\p{P}\p{White_Space}]+/gu, '');
-  // A field made only of punctuation ("...", "?!") would otherwise collapse
-  // to "" and collide with every other punctuation-only field. Keep it
-  // verbatim (minus surrounding whitespace) instead.
-  return stripped.length > 0 ? stripped : folded.trim();
+  return text
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[^\S\n]+$/gm, '')
+    .trim();
 }
 
 export function computeUniqKey(input: UniqKeyInput): string {
   // JSON array, not a delimiter join: no field content can alias a
   // different split of the same characters across fields.
   const basis = JSON.stringify([
-    normalize(input.category),
-    normalize(input.project ?? ''),
+    input.category,
+    input.project ?? '',
     normalize(input.title),
     normalize(input.content),
   ]);
@@ -77,6 +82,10 @@ export function rebuildUniqKeys(db: Database): void {
   const seen = new Set<string>();
   const update = db.prepare('UPDATE memories SET uniq = ? WHERE id = ?');
   db.transaction(() => {
+    // Clear every key first. Rekeying row by row in place could otherwise
+    // write a row's new key while a later row still holds it as a stale old
+    // key, and trip the unique index on active rows.
+    db.prepare('UPDATE memories SET uniq = NULL').run();
     for (const row of rows) {
       let key: string | null = null;
       if (row.archived === 0) {

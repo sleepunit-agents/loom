@@ -7,17 +7,23 @@ describe('computeUniqKey', () => {
     expect(computeUniqKey(input)).toBe(computeUniqKey(input));
   });
 
-  it('is insensitive to case, punctuation, and whitespace differences', () => {
+  it('ignores only edge whitespace, trailing spaces on a line, and line-ending style', () => {
     const a = computeUniqKey({
       category: 'project',
       title: 'Loom rescue plan',
-      content: 'Migrate from Qdrant to sqlite-vec.',
+      content: 'Migrate from Qdrant to sqlite-vec.\nThen cut over.',
     });
     const b = computeUniqKey({
       category: 'project',
-      title: '  LOOM, rescue-plan!! ',
-      content: 'migrate   from qdrant to sqlite vec',
+      title: '  Loom rescue plan\t',
+      content: '\nMigrate from Qdrant to sqlite-vec.  \r\nThen cut over.\n',
     });
+    expect(a).toBe(b);
+  });
+
+  it('treats canonically equivalent Unicode (NFC vs NFD) as the same text', () => {
+    const a = computeUniqKey({ category: 'project', title: 'Caf\u00e9', content: 'x' });
+    const b = computeUniqKey({ category: 'project', title: 'Cafe\u0301', content: 'x' });
     expect(a).toBe(b);
   });
 
@@ -88,10 +94,64 @@ describe('computeUniqKey — non-Latin text (PR120 review)', () => {
     const b = computeUniqKey({ category: 'project', title: 'a', content: 'b|c' });
     expect(a).not.toBe(b);
   });
+});
 
-  it('still collapses case and whitespace in non-Latin text', () => {
-    const a = computeUniqKey({ category: 'project', title: 'Москва', content: 'столица  России.' });
-    const b = computeUniqKey({ category: 'project', title: 'МОСКВА', content: 'Столица России' });
-    expect(a).toBe(b);
+describe('computeUniqKey — meaning-bearing characters (PR120 review, round 2)', () => {
+  it('keeps a sign: "Offset -5" and "Offset 5" stay distinct', () => {
+    const a = computeUniqKey({ category: 'project', title: 'Offset', content: 'Offset -5' });
+    const b = computeUniqKey({ category: 'project', title: 'Offset', content: 'Offset 5' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps a decimal point: "Version 1.5" and "Version 15" stay distinct', () => {
+    const a = computeUniqKey({ category: 'project', title: 'Version', content: 'Version 1.5' });
+    const b = computeUniqKey({ category: 'project', title: 'Version', content: 'Version 15' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps project identifiers exact: "foo-bar" and "foobar" stay distinct', () => {
+    const a = computeUniqKey({ category: 'project', title: 'T', content: 'C', project: 'foo-bar' });
+    const b = computeUniqKey({ category: 'project', title: 'T', content: 'C', project: 'foobar' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps project identifiers exact: case and surrounding whitespace count', () => {
+    const base = { category: 'project', title: 'T', content: 'C' };
+    const keys = [
+      computeUniqKey({ ...base, project: 'loom' }),
+      computeUniqKey({ ...base, project: 'Loom' }),
+      computeUniqKey({ ...base, project: ' loom' }),
+    ];
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('keeps word boundaries: "foo bar" and "foobar" stay distinct', () => {
+    const a = computeUniqKey({ category: 'project', title: 'T', content: 'foo bar' });
+    const b = computeUniqKey({ category: 'project', title: 'T', content: 'foobar' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps case: "US" and "us" stay distinct', () => {
+    const a = computeUniqKey({ category: 'project', title: 'T', content: 'US' });
+    const b = computeUniqKey({ category: 'project', title: 'T', content: 'us' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps compatibility characters: "x²" and "x2" stay distinct (no NFKC)', () => {
+    const a = computeUniqKey({ category: 'project', title: 'T', content: 'x\u00b2' });
+    const b = computeUniqKey({ category: 'project', title: 'T', content: 'x2' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps leading indentation inside content', () => {
+    const a = computeUniqKey({ category: 'project', title: 'T', content: 'if x:\n    y()\nz()' });
+    const b = computeUniqKey({ category: 'project', title: 'T', content: 'if x:\n    y()\n    z()' });
+    expect(a).not.toBe(b);
+  });
+
+  it('keeps internal runs of whitespace', () => {
+    const a = computeUniqKey({ category: 'project', title: 'T', content: 'a  b' });
+    const b = computeUniqKey({ category: 'project', title: 'T', content: 'a b' });
+    expect(a).not.toBe(b);
   });
 });
