@@ -100,6 +100,35 @@ export function checkBearer(
   return { ok: true };
 }
 
+/**
+ * Multi-token auth gate (t-677): each configured token maps to one identity,
+ * so a single scoped endpoint (the knowledge-only service) can serve several
+ * identities while still deriving WHICH one made a given call — the bearer
+ * itself is the identity claim, there is no separate login step. Same
+ * refusal shape as checkBearer; `identity` is only set on success.
+ *
+ * Every candidate token is compared with the same timing-safe routine as
+ * checkBearer, so this doesn't reintroduce a timing side-channel by doing a
+ * plain map lookup instead.
+ */
+export function checkBearerMulti(
+  configured: Record<string, string> | undefined,
+  presented: string | undefined,
+): GuardResult & { identity?: string } {
+  const entries = configured ? Object.entries(configured) : [];
+  if (entries.length === 0) {
+    return { ok: false, error: 'unauthorized: no identities configured for this endpoint' };
+  }
+  const token = (presented ?? '').replace(/^Bearer\s+/i, '').trim();
+  if (token === '') return { ok: false, error: 'unauthorized: missing bearer token' };
+  for (const [identity, candidate] of entries) {
+    if (timingSafeEqual(token, candidate)) {
+      return { ok: true, identity };
+    }
+  }
+  return { ok: false, error: 'unauthorized: bearer token mismatch' };
+}
+
 /** Oversized guard: refuse a body beyond the cap before the handler runs. */
 export function checkPayloadSize(bytes: number, cap: number = DEFAULT_MAX_BODY_BYTES): GuardResult {
   if (bytes > cap) {
