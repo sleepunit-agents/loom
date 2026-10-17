@@ -2,8 +2,9 @@
  * Knowledge tool registration (t-677) — factored out of server.ts so there
  * is exactly ONE implementation of "how a knowledge tool call turns into a
  * backend call with identity attribution", shared by:
- *   - the full loom server (createLoomServer, identity hardcoded to 'art') —
- *     Art's own stdio/mesh session, same code path as the service below.
+ *   - the full loom server (createLoomServer), where `identity` is the local
+ *     one (resolveIdentityName: LOOM_IDENTITY, else the context dir's name) —
+ *     same code path as the service below.
  *   - the standalone knowledge-only HTTP service (createKnowledgeOnlyServer),
  *     where `identity` is resolved per-connection from the per-identity
  *     bearer token (checkBearerMulti) and never from a client-supplied field.
@@ -33,8 +34,8 @@ export interface RegisterKnowledgeToolsOptions {
   /** Knowledge-gaps dir for recall-miss logging (see knowledge-recall.ts). */
   gapsDir?: string;
   /**
-   * The identity making calls through this registration. 'art' for the main
-   * server; for the standalone knowledge-only service this is resolved per
+   * The identity making calls through this registration. The local identity
+   * (resolveIdentityName) for the main server; for the standalone knowledge-only service this is resolved per
    * connection from the per-identity bearer token at session-open time —
    * never from a tool argument, so a caller can't spoof attribution.
    */

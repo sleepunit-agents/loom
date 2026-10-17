@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { assertStackVersionCompatible, assertContextBootable, resolveRepoRoot } from './config.js';
+import { assertStackVersionCompatible, assertContextBootable, resolveRepoRoot, resolveIdentityName } from './config.js';
 import { MEMORY_CATEGORIES } from './categories.js';
 import { loadIdentity, resolveClientFromPeer } from './tools/identity.js';
 import { loadDossier } from './tools/dossier.js';
@@ -737,10 +737,11 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   );
 
   // ─── Knowledge ──────────────────────────────────────────────────────────────
-  // Art is always identity 'art' here — this is Art's own stdio/mesh server.
-  // The standalone knowledge-only service (knowledge-http-server.ts) resolves
-  // identity per-connection from its per-identity bearer token instead.
-  registerKnowledgeTools(server, { contextDir, gapsDir, identity: 'art' });
+  // The local identity — LOOM_IDENTITY, else the context dir's real name —
+  // since this server runs as whichever identity owns contextDir, not only
+  // Art. The standalone knowledge-only service (knowledge-http-server.ts)
+  // resolves identity per-connection from its per-identity bearer token instead.
+  registerKnowledgeTools(server, { contextDir, gapsDir, identity: resolveIdentityName(contextDir) });
 
   server.registerTool(
     'memory_history',

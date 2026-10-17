@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLoomServer, type LoomServerConfig } from './server.js';
 import { CURRENT_STACK_VERSION } from './config.js';
+import { createKnowledgeBackend } from './backends/index.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -202,5 +203,89 @@ describe('createLoomServer — blank identity guard', () => {
     const contextDir = makeContextDir(tmpDir);
     writeFileSync(join(contextDir, 'IDENTITY.md'), '# Test\n');
     expect(() => createLoomServer({ contextDir })).not.toThrow();
+  });
+});
+
+// t-675 (Mark, review 5558293087): the full server's knowledge registration
+// must attribute to the LOCAL identity — the context dir's identity, or
+// LOOM_IDENTITY — never a hard-coded 'art'. Covers author, replace actor,
+// restore actor, and verifier, for a non-Art context and for the override.
+describe('createLoomServer — knowledge attribution uses the local identity', () => {
+  let tmpDir: string;
+  const savedIdentity = process.env.LOOM_IDENTITY;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'server-identity-'));
+    delete process.env.LOOM_IDENTITY;
+  });
+
+  afterEach(() => {
+    if (savedIdentity === undefined) delete process.env.LOOM_IDENTITY;
+    else process.env.LOOM_IDENTITY = savedIdentity;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function exercise(contextDir: string) {
+    const { server } = createLoomServer({ contextDir });
+    const client = new Client({ name: 'identity-test', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const citations = [{ claim: 'x', source_kind: 'web', source_locator: 'https://example.com/x', excerpt: 'x' }];
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      const call = async (name: string, args: Record<string, unknown>) => {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError, `${name}: ${JSON.stringify(result.content)}`).toBeFalsy();
+        return result;
+      };
+      await call('knowledge_write', { title: 'Rings', domain: 'music/eurorack', body: 'v1', citations });
+      await call('knowledge_write', { slug: 'rings', title: 'Rings', domain: 'music/eurorack', body: 'v2', citations });
+      const backend = createKnowledgeBackend(contextDir);
+      let revisionId: number;
+      try {
+        revisionId = (await backend.listRevisions('rings'))[0].id;
+      } finally {
+        backend.close();
+      }
+      await call('knowledge_history', { slug: 'rings', revision_id: revisionId, restore: true });
+      await call('knowledge_verify', { slug: 'rings', outcome: 'confirmed', citation_checked: true });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+
+    const backend = createKnowledgeBackend(contextDir);
+    try {
+      const page = await backend.getPage('rings');
+      const revisions = await backend.listRevisions('rings');
+      const [verification] = await backend.getVerifications('rings');
+      return {
+        author: page!.author,
+        revisionActors: revisions.map((r) => r.actor),
+        verifier: verification.verifier,
+        body: page!.body,
+      };
+    } finally {
+      backend.close();
+    }
+  }
+
+  it('attributes to the context dir identity (a non-Art context)', async () => {
+    const contextDir = join(tmpDir, 'mark');
+    mkdirSync(join(contextDir, 'memories'), { recursive: true });
+    const got = await exercise(contextDir);
+    expect(got.body).toContain('v1'); // the restore actually ran
+    expect(got.author).toBe('mark');
+    expect(got.revisionActors).toEqual(['mark', 'mark']); // replace + restore
+    expect(got.verifier).toBe('mark');
+  });
+
+  it('LOOM_IDENTITY overrides the context dir name', async () => {
+    process.env.LOOM_IDENTITY = 'gabe';
+    const contextDir = join(tmpDir, 'mark');
+    mkdirSync(join(contextDir, 'memories'), { recursive: true });
+    const got = await exercise(contextDir);
+    expect(got.author).toBe('gabe');
+    expect(got.revisionActors).toEqual(['gabe', 'gabe']);
+    expect(got.verifier).toBe('gabe');
   });
 });
