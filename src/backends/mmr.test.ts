@@ -30,6 +30,22 @@ describe('cosineSimilarity', () => {
     expect(cosineSimilarity([2, 2], [1, 1])).toBeCloseTo(1);
     expect(cosineSimilarity([0, 0], [1, 1])).toBe(0);
   });
+
+  it('raises on a dimension mismatch instead of silently comparing a truncated prefix (t-334)', () => {
+    // Pre-fix, Math.min(a.length, b.length) would score these as identical
+    // (both reduce to the shared [1, 0] prefix) even though b carries real
+    // signal in dimensions the model-version change added.
+    expect(() => cosineSimilarity([1, 0], [1, 0, 1])).toThrow(/dimension mismatch/i);
+    expect(() => cosineSimilarity([1, 0, 1], [1, 0])).toThrow(/dimension mismatch/i);
+  });
+
+  it('still treats a zero-length vector as the "no embedding" sentinel, not a mismatch', () => {
+    // sqlite-vec.ts falls back to a length-0 vector when a lookup misses;
+    // that's a distinct case from two real embeddings of different sizes
+    // and must keep returning 0 rather than throwing.
+    expect(cosineSimilarity([], [1, 0, 0])).toBe(0);
+    expect(cosineSimilarity([1, 0, 0], [])).toBe(0);
+  });
 });
 
 describe('mmrSelect', () => {

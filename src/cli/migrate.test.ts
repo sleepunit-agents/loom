@@ -62,6 +62,9 @@ function buildCurrentDb(dir: string): string {
       salience REAL NOT NULL DEFAULT 0,
       sourcing TEXT,
       provenance TEXT,
+      confidence REAL,
+      evidence_count INTEGER NOT NULL DEFAULT 0,
+      observed_at TEXT,
       scope TEXT
     )
   `).run();

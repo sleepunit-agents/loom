@@ -109,6 +109,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'pass it here to load that mode\'s playbook alongside the identity.',
       ),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ project, client, model, role }) => {
       // Precedence: explicit param > data-driven manifest resolution > the
       // static code-map seed fallback > LOOM_CLIENT (inside loadIdentity).
@@ -145,6 +146,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Appends the role brief to the dossier.',
       ),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ project, client, model, role }) => {
       const peer = server.server.getClientVersion()?.name;
       // A connected peer always gets its harness OR an onboarding prompt (via its
@@ -196,6 +198,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'file-layout/code-style/error-handling convention (those stay project-scoped).'
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ category, title, content, project, metadata, ttl, sourcing, provenance, scope }) => {
       const ref = await remember(contextDir, { category, title, content, project, metadata, ttl, sourcing, provenance, scope });
       return { content: [{ type: 'text' as const, text: `Memory stored: "${ref.title}" → ${ref.ref}` }] };
@@ -224,6 +227,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'higher trades relevance for coverage of distinct memories.'
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ query, category, project, limit, diversity }) => {
       const result = await recall(contextDir, { query, category, project, limit, diversity });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -240,9 +244,17 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       title: z.string().optional().describe('Title of the memory to update (used with category)'),
       content: z.string().optional().describe('New content (replaces existing body)'),
       metadata: z.record(z.string(), z.unknown()).optional().describe('Metadata fields to add or update'),
+      observation: z.enum(['confirm', 'contradict']).optional().describe(
+        'Feedback memories only: record a confirming or contradicting observation. ' +
+        '"confirm" raises confidence (+0.05, capped at 0.9), "contradict" lowers it ' +
+        '(-0.1, floored at 0.3); either way the evidence count goes up. Ignored on ' +
+        'non-feedback memories. Confidence decays toward neutral the longer it goes ' +
+        'unconfirmed — see the feedback category description on remember.'
+      ),
     },
-    async ({ ref, category, title, content, metadata }) => {
-      const result = await update(contextDir, { ref, category, title, content, metadata });
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    async ({ ref, category, title, content, metadata, observation }) => {
+      const result = await update(contextDir, { ref, category, title, content, metadata, observation });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -264,6 +276,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Single-target deletions (ref, or category+title) never need it.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     async ({ ref, category, title, project, title_pattern, confirm }) => {
       const result = await forget(contextDir, { ref, category, title, project, title_pattern, confirm });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -277,6 +290,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       dry_run: z.boolean().optional().describe('Preview only — show what would be pruned without deleting (default: false)'),
       stale_days: z.number().int().positive().optional().describe('Days since last access to consider a memory stale (default: 30)'),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     async ({ dry_run, stale_days }) => {
       const result = await prune(contextDir, { dryRun: dry_run, staleDays: stale_days });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -292,6 +306,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       project: z.string().optional().describe('Filter to a specific project'),
       limit: z.number().int().positive().optional().describe('Maximum results (default: 50)'),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ category, project, limit }) => {
       const result = await memoryList(contextDir, { category, project, limit });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -307,6 +322,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       hours: z.number().positive().optional().describe('Look-back window in hours (default 24)'),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ hours }) => {
       const tape = tapeForContext(contextDir, { hours, tokenBudget: 6000 });
       return { content: [{ type: 'text' as const, text: tape ?? `No episodes in the last ${hours ?? 24}h.` }] };
@@ -327,6 +343,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       project: z.string().optional().describe('Restrict candidates to a project'),
       min_relevance: z.number().min(0).max(1).optional().describe('Drop matches below this cosine similarity (0..1)'),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ ref, text, limit, category, project, min_relevance }) => {
       const result = await findSimilar(contextDir, {
         ref, text, limit, category, project, minRelevance: min_relevance,
@@ -346,6 +363,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       similarity_threshold: z.number().min(0).max(1).optional().describe('Cosine floor for duplicate pairs, 0..1 (default 0.85)'),
       max_duplicates: z.number().int().positive().optional().describe('Cap on duplicate pairs returned (default 20)'),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ stale_days, similarity_threshold, max_duplicates }) => {
       const result = await memoryAudit(contextDir, {
         staleDays: stale_days,
@@ -368,6 +386,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       title: z.string().optional().describe('Title of specific memory to archive'),
       note: z.string().optional().describe('Tombstone note: why this memory is being retired'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ ref, category, title, note }) => {
       const result = await archive(contextDir, { ref, category, title, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -384,6 +403,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       category: z.string().optional().describe('Category (used with title)'),
       title: z.string().optional().describe('Title of the archived memory to restore'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ ref, category, title }) => {
       const result = await restore(contextDir, { ref, category, title });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -415,6 +435,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       metadata: z.record(z.string(), z.unknown()).optional().describe('Arbitrary key-value metadata'),
       source: z.string().optional().describe('Where this proposal came from, e.g. a lane name'),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ category, title, content, project, ttl, metadata, source }) => {
       const { id, uuid } = propose(contextDir, { category, title, content, project, ttl, metadata, source });
       return { content: [{ type: 'text' as const, text: `Proposal staged: #${id} "${title}" (${uuid}) — pending ratification` }] };
@@ -428,6 +449,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     'do not appear in recall, memory_list, find_similar, or the boot digest. ' +
     'Ratify one with memory_ratify or discard it with memory_reject.',
     {},
+    { readOnlyHint: true, openWorldHint: false },
     async () => {
       const rows = listProposals(contextDir);
       if (rows.length === 0) {
@@ -459,6 +481,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       project: z.string().optional().describe('Override the proposed project on accept'),
       ttl: z.string().optional().describe('Override the proposed TTL on accept'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ id, title, content, category, project, ttl }) => {
       try {
         const ref = await ratifyProposal(contextDir, id, { title, content, category, project, ttl });
@@ -480,6 +503,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       id: z.number().int().positive().describe('Proposal id (from memory_proposals)'),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     async ({ id }) => {
       const removed = rejectProposal(contextDir, id);
       return {
@@ -513,6 +537,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         '"replace" updates an existing section (default), "append" adds a new section'
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ file, section, content, mode }) => {
       const result = await updateIdentity(contextDir, { file, section, content, mode });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -540,6 +565,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       ),
       force: z.boolean().optional().describe('Overwrite existing identity files (default: false)'),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ user, name, purpose, voice, preferences, clients, force }) => {
       const result = await bootstrap(contextDir, { user, name, purpose, voice, preferences, clients, force });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -568,6 +594,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'is scaffolded.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     async ({ name, overwrite, target }) => {
       const text = await harnessInit(contextDir, { name, overwrite, target });
       return { content: [{ type: 'text' as const, text }] };
@@ -587,6 +614,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       content: z.string().describe('The manifest body (markdown). Frontmatter is stamped automatically.'),
       version: z.string().optional().describe('Manifest version stamp (default "0.1").'),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     async ({ content, version }) => {
       const peer = server.server.getClientVersion()?.name;
       const text = await harnessDescribe(contextDir, { content, version }, peer);
@@ -655,6 +683,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Preserved across upserts when omitted.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     async ({ title, domain, body, slug, freshness_anchor, mode, citations, created_by, version }) => {
       const result = await knowledgeWrite(contextDir, { title, domain, body, slug, freshness_anchor, mode, citations, created_by, version });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -695,6 +724,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'SLA filter can run from the listing alone.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ slug, query, domain, limit, detail, sort_by_verified }) => {
       const result = await knowledgeRecall(contextDir, { slug, query, domain, limit, detail, sort_by_verified }, gapsDir);
       return { content: [{ type: 'text' as const, text: result }] };
@@ -720,6 +750,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Days without access before a page is cold (default 30)',
       ),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ expansion_hit_threshold, thin_body_threshold, cold_days }) => {
       const result = await knowledgeMaintain(contextDir, {
         expansionHitThreshold: expansion_hit_threshold,
@@ -741,6 +772,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       slug: z.string().describe('Slug of the knowledge page to archive'),
       note: z.string().optional().describe('Tombstone note: why this page is being retired'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ slug, note }) => {
       const result = await knowledgeArchive(contextDir, { slug, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -755,6 +787,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       slug: z.string().describe('Slug of the archived knowledge page to restore'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ slug }) => {
       const result = await knowledgeRestore(contextDir, { slug });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -792,6 +825,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Batch prefix mode: replacement domain prefix (e.g. "instruments/elektron").',
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix }) => {
       const result = await knowledgeMove(contextDir, {
         slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix,
@@ -827,6 +861,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Append loser page bodies to the target body under section markers (default false). Off by default — curator normally hand-merges body content.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ source_slugs, target_slug, note, hard_delete_losers, append_loser_bodies }) => {
       const result = await knowledgeMerge(contextDir, {
         source_slugs, target_slug, note, hard_delete_losers, append_loser_bodies,
@@ -847,6 +882,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       new_slug: z.string().describe('Slug of the canonical replacement page (must already exist)'),
       note: z.string().optional().describe('Optional note explaining the merge or supersession decision'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ old_slug, new_slug, note }) => {
       const result = await knowledgeSupersede(contextDir, { old_slug, new_slug, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -869,6 +905,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Must be explicitly true — required safety gate for an irreversible operation.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ slugs, confirm }) => {
       const result = await knowledgePurge(contextDir, { slugs, confirm });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -902,6 +939,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'section. Never replaces the body. Single-page mode only.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ slug, slugs, verified_at, freshness_anchor, note }) => {
       const result = await knowledgeVerify(contextDir, { slug, slugs, verified_at, freshness_anchor, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -924,6 +962,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Restore the revision\'s body onto the page. Requires revision_id.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ slug, revision_id, restore }) => {
       const result = await knowledgeHistory(contextDir, { slug, revision_id, restore });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -943,6 +982,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Revision to read (from the listing). Omit to list all revisions.',
       ),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ ref, revision_id }) => {
       const result = await memoryHistory(contextDir, { ref, revision_id });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -960,6 +1000,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         'Id of the revision to restore (from memory_history listing).',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ ref, revision_id }) => {
       const result = await memoryRevisionRestore(contextDir, { ref, revision_id });
       return { content: [{ type: 'text' as const, text: result }] };
