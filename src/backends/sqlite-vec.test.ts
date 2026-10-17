@@ -1819,6 +1819,81 @@ describe('SqliteVecBackend', () => {
       expect(supersession.new_ref).toBe(target.ref);
     });
 
+    it('hard_delete_losers journals each deleted source to memory_deletions (op merge)', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({
+        category: 'project', title: 'Loser', content: 'only copy of this body', project: 'p1',
+      });
+
+      await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        hard_delete_losers: true,
+      });
+
+      const db = backend.getDatabase();
+      const journal = db
+        .prepare('SELECT ref, category, title, project, content, op FROM memory_deletions WHERE ref = ?')
+        .all(source.ref);
+      expect(journal).toEqual([{
+        ref: source.ref,
+        category: 'project',
+        title: 'Loser',
+        project: 'p1',
+        content: 'only copy of this body',
+        op: 'merge',
+      }]);
+    });
+
+    it('hard_delete_losers with append_loser_bodies keeps the body in the target and the journal', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'extra' });
+
+      await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        hard_delete_losers: true,
+        append_loser_bodies: true,
+      });
+
+      const db = backend.getDatabase();
+      const merged = db.prepare('SELECT content FROM memories WHERE ref = ?').get(target.ref) as { content: string };
+      expect(merged.content).toContain('extra');
+      const journal = db
+        .prepare('SELECT content FROM memory_deletions WHERE ref = ?')
+        .get(source.ref) as { content: string };
+      expect(journal.content).toBe('extra');
+    });
+
+    it('rolls back the hard delete and its journal entry when the merge transaction fails', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'extra' });
+
+      // claimableUniq runs inside the transaction, after the source delete.
+      (backend as unknown as { claimableUniq: () => never }).claimableUniq = () => {
+        throw new Error('boom');
+      };
+      await expect(
+        backend.mergeMemories({
+          source_refs: [source.ref],
+          target_ref: target.ref,
+          hard_delete_losers: true,
+          append_loser_bodies: true,
+        }),
+      ).rejects.toThrow('boom');
+
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT content, archived FROM memories WHERE ref = ?').get(source.ref) as
+        { content: string; archived: number };
+      expect(row).toEqual({ content: 'extra', archived: 0 });
+      const journalCount = db
+        .prepare('SELECT COUNT(*) AS n FROM memory_deletions WHERE ref = ?')
+        .get(source.ref) as { n: number };
+      expect(journalCount.n).toBe(0);
+      const targetRow = db.prepare('SELECT content FROM memories WHERE ref = ?').get(target.ref) as { content: string };
+      expect(targetRow.content).toBe('base');
+    });
+
     it('re-parents revision history from source to target', async () => {
       const source = await backend.remember({ category: 'project', title: 'Loser', content: 'v1' });
       await backend.update({ ref: source.ref, content: 'v2' }); // snapshots v1 into memory_revisions

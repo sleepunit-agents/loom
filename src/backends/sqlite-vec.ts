@@ -1013,8 +1013,6 @@ export class SqliteVecBackend implements MemoryBackend {
     const insertSup = this.db.prepare(
       'INSERT INTO memory_supersessions (old_ref, new_ref, note, created) VALUES (?, ?, ?, ?)',
     );
-    const deleteMem = this.db.prepare('DELETE FROM memories WHERE id = ?');
-
     const tx = this.db.transaction(() => {
       for (const source of sourceRows) {
         // Re-parent revision history before the source row can be deleted.
@@ -1032,7 +1030,9 @@ export class SqliteVecBackend implements MemoryBackend {
         insertSup.run(source.ref, input.target_ref, input.note ?? null, timestamp);
 
         if (input.hard_delete_losers) {
-          deleteMem.run(source.id);
+          // Journaled like every other hard delete (t-436); nested here, so
+          // the journal row and the delete commit or roll back with the merge.
+          this.deleteByIdTx([source.id], 'merge')();
         }
       }
 
@@ -1272,22 +1272,23 @@ export class SqliteVecBackend implements MemoryBackend {
    * standalone (keyed by ref, no FK to memories) so it survives the delete it
    * describes.
    */
-  private deleteById(ids: number[], op: 'forget' | 'prune' = 'forget'): void {
+  private deleteById(ids: number[], op: DeletionOp = 'forget'): void {
     if (ids.length === 0) return;
+    const tx = this.deleteByIdTx(ids, op);
+    retryWrite(() => tx());
+  }
+
+  /**
+   * The journal-then-delete transaction behind deleteById. Callers already
+   * inside a transaction (mergeMemories with hard_delete_losers) invoke it
+   * directly; better-sqlite3 nests it as a savepoint.
+   */
+  private deleteByIdTx(ids: number[], op: DeletionOp) {
     const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(
-        `SELECT ref, category, title, project, content, created
-         FROM memories WHERE id IN (${placeholders})`,
-      )
-      .all(...ids) as {
-      ref: string;
-      category: string;
-      title: string;
-      project: string | null;
-      content: string;
-      created: string;
-    }[];
+    const selectRows = this.db.prepare(
+      `SELECT ref, category, title, project, content, created
+       FROM memories WHERE id IN (${placeholders})`,
+    );
     const journalStmt = this.db.prepare(
       `INSERT INTO memory_deletions (ref, category, title, project, content, created, deleted_at, op)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1299,8 +1300,18 @@ export class SqliteVecBackend implements MemoryBackend {
       `DELETE FROM vec_memories WHERE rowid IN (${placeholders})`,
     );
     const bigIds = ids.map((n) => BigInt(n));
-    const deletedAt = new Date().toISOString();
-    const tx = this.db.transaction(() => {
+    return this.db.transaction(() => {
+      // Read inside the transaction, so the journal records exactly the
+      // rows this delete removes.
+      const rows = selectRows.all(...ids) as {
+        ref: string;
+        category: string;
+        title: string;
+        project: string | null;
+        content: string;
+        created: string;
+      }[];
+      const deletedAt = new Date().toISOString();
       for (const row of rows) {
         journalStmt.run(
           row.ref,
@@ -1316,11 +1327,13 @@ export class SqliteVecBackend implements MemoryBackend {
       delMem.run(...ids);
       delVec.run(...bigIds);
     });
-    retryWrite(() => tx());
   }
 }
 
 // ── Helpers ──
+
+/** memory_deletions.op: which path hard-deleted the row. */
+type DeletionOp = 'forget' | 'prune' | 'merge';
 
 const EMPTY_VECTOR: Float32Array = new Float32Array(0);
 
