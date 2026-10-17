@@ -179,6 +179,7 @@ describe('pendingMigrations', () => {
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
       'add_confidence', 'add_evidence_count', 'add_observed_at',
       'add_memory_deletions',
+      'add_scope',
     ]);
   });
 
