@@ -39,7 +39,11 @@ import type {
   KnowledgeRevisionMeta,
   KnowledgeRevisionRestoreInput,
   KnowledgeRevisionRestoreResult,
+  KnowledgeAccessStat,
 } from './types.js';
+
+/** Identity attributed to a stamped access when the caller doesn't pass one. */
+const UNKNOWN_IDENTITY = 'unknown';
 
 /** Hard size caps — enforced at write boundary (design §A3). */
 const MAX_PAGE_BODY_LENGTH = 64 * 1024; // 64 KB
@@ -242,7 +246,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     }
   }
 
-  getPage(slug: string, opts?: { stampAccess?: boolean }): Promise<KnowledgePageWithCitations | null> {
+  getPage(slug: string, opts?: { stampAccess?: boolean; identity?: string }): Promise<KnowledgePageWithCitations | null> {
     try {
       const db = this.ensureOpen();
 
@@ -254,11 +258,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
 
       if (opts?.stampAccess) {
         const now = new Date().toISOString();
-        retryWrite(() =>
-          db.prepare(
-            'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
-          ).run(now, page.id),
-        );
+        this.recordAccess(db, [page.id], opts.identity ?? UNKNOWN_IDENTITY, now);
         page.last_accessed = now;
         page.hit_count += 1;
       }
@@ -361,13 +361,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       // appearing in a listing is not a read.
       if (rows.length > 0 && input.stampAccess !== false) {
         const now = new Date().toISOString();
-        const stamp = db.prepare(
-          'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
-        );
-        const tx = db.transaction((ids: number[]) => {
-          for (const id of ids) stamp.run(now, id);
-        });
-        retryWrite(() => tx(rows.map((r) => r.id)));
+        this.recordAccess(db, rows.map((r) => r.id), input.identity ?? UNKNOWN_IDENTITY, now);
       }
 
       return Promise.resolve(rows.map((page) => ({
@@ -1041,6 +1035,19 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     }
   }
 
+  getAccessStats(pageId: number): Promise<KnowledgeAccessStat[]> {
+    try {
+      const db = this.ensureOpen();
+      const rows = db.prepare(
+        `SELECT identity, hit_count, last_accessed FROM knowledge_access
+         WHERE page_id = ? ORDER BY last_accessed DESC`,
+      ).all(pageId) as KnowledgeAccessStat[];
+      return Promise.resolve(rows);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
   close(): void {
     if (this.db) {
       this.db.close();
@@ -1049,6 +1056,34 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
   }
 
   // ── Internals ──
+
+  /**
+   * Stamp a real read on each page id: bump the shared pages.hit_count /
+   * last_accessed aggregate (unchanged legacy behavior — this is what
+   * knowledge_maintain's cold/expansion ranking reads) AND upsert the
+   * per-identity row in knowledge_access (t-677 attribution). Both updates
+   * happen in one transaction so a crash between them can't desync the
+   * aggregate from the per-reader breakdown.
+   */
+  private recordAccess(db: Database, pageIds: number[], identity: string, now: string): void {
+    const bumpPage = db.prepare(
+      'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
+    );
+    const upsertAccess = db.prepare(
+      `INSERT INTO knowledge_access (page_id, identity, hit_count, last_accessed)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT(page_id, identity) DO UPDATE SET
+         hit_count = hit_count + 1,
+         last_accessed = excluded.last_accessed`,
+    );
+    const tx = db.transaction((ids: number[]) => {
+      for (const id of ids) {
+        bumpPage.run(now, id);
+        upsertAccess.run(id, identity, now);
+      }
+    });
+    retryWrite(() => tx(pageIds));
+  }
 
   private ensureOpen(): Database {
     if (!this.db) {
@@ -1115,6 +1150,16 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         replaced_at TEXT NOT NULL
       )`,
       `CREATE INDEX IF NOT EXISTS idx_page_revisions_page ON page_revisions(page_id)`,
+      // Per-identity read attribution (t-677) — additive to pages.hit_count/
+      // last_accessed, never a replacement. See getAccessStats/recordAccess.
+      `CREATE TABLE IF NOT EXISTS knowledge_access (
+        page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        identity      TEXT NOT NULL,
+        hit_count     INTEGER NOT NULL DEFAULT 0,
+        last_accessed TEXT,
+        PRIMARY KEY (page_id, identity)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_knowledge_access_page ON knowledge_access(page_id)`,
     ];
     for (const sql of statements) {
       this.db!.prepare(sql).run();
