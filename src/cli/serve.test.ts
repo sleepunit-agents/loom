@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runCliCaptured } from './test-helpers.js';
 import { parseIdentityTokens } from './serve.js';
 
@@ -27,6 +30,39 @@ describe('loom serve argv', () => {
     const { stderr, code } = await runCliCaptured(['serve', '--http', '--scope', 'nope']);
     expect(code).toBe(2);
     expect(stderr).toMatch(/Unknown --scope/);
+  });
+
+  it('rejects an unknown --scope value without --http too', async () => {
+    const { stderr, code } = await runCliCaptured(['serve', '--scope', 'nope']);
+    expect(code).toBe(2);
+    expect(stderr).toMatch(/Unknown --scope/);
+  });
+
+  // PR #124 review (P2): `--scope knowledge` without `--http` used to fall
+  // through to the stdio branch and serve the FULL 34-tool surface
+  // (identity/memory/dossier included) — a silent widening of exactly the
+  // surface the flag asked to narrow. It must be a usage error before any
+  // transport opens. The race guards the regression shape: the old code
+  // never returns (stdio server holds open), so "still running after 2s"
+  // means a server came up.
+  it('rejects --scope knowledge without --http (no silent fall-through to the full stdio server)', async () => {
+    const ctx = mkdtempSync(join(tmpdir(), 'loom-serve-scope-'));
+    const prior = process.env.LOOM_CONTEXT_DIR;
+    process.env.LOOM_CONTEXT_DIR = ctx;
+    try {
+      const result = await Promise.race([
+        runCliCaptured(['serve', '--scope', 'knowledge']),
+        new Promise<'server-started'>((r) => setTimeout(() => r('server-started'), 2000)),
+      ]);
+      expect(result).not.toBe('server-started');
+      const { stderr, code } = result as Exclude<typeof result, 'server-started'>;
+      expect(code).toBe(2);
+      expect(stderr).toMatch(/--scope knowledge requires --http/);
+    } finally {
+      if (prior === undefined) delete process.env.LOOM_CONTEXT_DIR;
+      else process.env.LOOM_CONTEXT_DIR = prior;
+      rmSync(ctx, { recursive: true, force: true });
+    }
   });
 
   it('refuses --scope knowledge with no LOOM_KNOWLEDGE_BEARER_TOKENS configured', async () => {

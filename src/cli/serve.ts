@@ -28,7 +28,8 @@ mesh-reachable HTTP daemon instead.
 
 Options:
   --http                 Serve over HTTP instead of stdio
-  --scope <full|knowledge>  Tool surface for --http (default full)
+  --scope <full|knowledge>  Tool surface for --http (default full);
+                         knowledge without --http is rejected
   --host <h>             HTTP bind host (env LOOM_HTTP_HOST, default 127.0.0.1)
   --port <n>             HTTP port (env LOOM_HTTP_PORT, or LOOM_KNOWLEDGE_HTTP_PORT
                          for --scope knowledge, default 8787 / 8788)
@@ -96,6 +97,18 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
 
   if (values.scope !== 'full' && values.scope !== 'knowledge') {
     io.stderr(`Unknown --scope "${values.scope}" — expected "full" or "knowledge".\n${USAGE}`);
+    return 2;
+  }
+
+  // The knowledge-only surface exists only as an HTTP service. Without
+  // --http the stdio branch below would open the FULL server — every
+  // identity/memory/dossier tool — under a flag that asked for less
+  // (PR #124 review). Refuse before any transport opens.
+  if (values.scope === 'knowledge' && !values.http) {
+    io.stderr(
+      `--scope knowledge requires --http — the knowledge-only surface is HTTP-only; ` +
+        `refusing to start the full stdio server instead.\n${USAGE}`,
+    );
     return 2;
   }
 
