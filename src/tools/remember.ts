@@ -27,6 +27,9 @@ export function validateMemoryInput(input: MemoryInput): string | null {
   if (typeof input.category !== 'string' || input.category.trim() === '') {
     return 'memory category is required and cannot be empty';
   }
+  if (input.scope !== undefined && input.scope !== 'project' && input.scope !== 'global') {
+    return 'scope must be "project" or "global"';
+  }
   return null;
 }
 
