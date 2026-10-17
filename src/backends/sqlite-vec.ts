@@ -44,12 +44,15 @@ import type {
   MemoryRevisionRestoreResult,
   MemorySupersededInput,
   MemorySupersededResult,
+  MemoryMergeInput,
+  MemoryMergeResult,
 } from './types.js';
 import { computeExpiresAt, isExpired } from './ttl.js';
 import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
 import { runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
+import { computeUniqKey } from './dedup.js';
 import { effectiveScope, isVisibleInProject } from './scope.js';
 import { FEEDBACK_CATEGORY } from '../categories.js';
 import {
@@ -110,6 +113,10 @@ interface MemoryRow {
    * NULL falls back to `created`.
    */
   observed_at: string | null;
+  /** Write-time dedup key (t-335). NULL on rows from an unresolved historical duplicate cluster. */
+  uniq: string | null;
+  /** Times this exact content (by uniq) has been remembered, including the original write. */
+  times_seen: number;
   /** Explicit scope override (t-337b). NULL defers to the category default. */
   scope: string | null;
 }
@@ -141,8 +148,38 @@ export class SqliteVecBackend implements MemoryBackend {
   // ── MemoryBackend interface ──
 
   async remember(input: MemoryInput): Promise<MemoryRef> {
-    const uuid = randomUUID();
     const timestamp = new Date().toISOString();
+    const uniqKey = computeUniqKey({
+      category: input.category,
+      project: input.project,
+      title: input.title,
+      content: input.content,
+      scope: input.scope,
+    });
+
+    // Write-time dedup (t-335): a character-identical restatement (after
+    // normalizing) reheats the existing active row instead of inserting a
+    // second one. Scoped to active rows only — an archived memory that gets
+    // restated is a deliberate un-archive-by-rewrite, not a reheat.
+    //
+    // This first lookup is only a fast path that skips the embedder for a
+    // restatement. It is NOT the guarantee: another writer (this process or
+    // another connection on the same file) can insert the same key while we
+    // await the embedder. The authoritative check is repeated inside the
+    // IMMEDIATE insert transaction below, and the partial UNIQUE index
+    // idx_memories_uniq_exact makes a second active holder impossible
+    // (PR120 review).
+    const hit = this.db
+      .prepare('SELECT 1 FROM memories WHERE uniq = ? AND archived = 0')
+      .get(uniqKey);
+    if (hit) {
+      // Re-read under the write lock; if the holder was archived meanwhile,
+      // fall through to a fresh insert.
+      const reheated = retryWrite(() => this.reheatTx(uniqKey, timestamp).immediate());
+      if (reheated) return reheated;
+    }
+
+    const uuid = randomUUID();
     const slug = slugify(input.title);
     const ref = `${input.category}/${slug}-${uuid.slice(0, 8)}`;
     const expiresAt = computeExpiresAt(timestamp, input.ttl);
@@ -161,14 +198,18 @@ export class SqliteVecBackend implements MemoryBackend {
       INSERT INTO memories (
         uuid, ref, title, category, project, content, metadata,
         created, ttl, expires_at, salience, sourcing, provenance,
-        confidence, evidence_count, observed_at, scope
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        confidence, evidence_count, observed_at, scope, uniq
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertVec = this.db.prepare(
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
     );
 
-    const tx = this.db.transaction(() => {
+    const tx = this.db.transaction((): MemoryRef | undefined => {
+      // Recheck under the write lock: a concurrent writer may have stored
+      // this exact content while we were embedding.
+      const winner = this.reheatTx(uniqKey, timestamp)();
+      if (winner) return winner;
       const result = insertMem.run(
         uuid,
         ref,
@@ -187,10 +228,15 @@ export class SqliteVecBackend implements MemoryBackend {
         evidenceCount,
         isFeedback ? timestamp : null,
         input.scope ?? null,
+        uniqKey,
       );
       insertVec.run(BigInt(result.lastInsertRowid), toVecBuffer(vector));
+      return undefined;
     });
-    retryWrite(() => tx());
+    // IMMEDIATE: take the write lock before the recheck, so no other
+    // connection can commit the same key between the check and the insert.
+    const reheated = retryWrite(() => tx.immediate());
+    if (reheated) return reheated;
 
     return {
       ref,
@@ -371,8 +417,10 @@ export class SqliteVecBackend implements MemoryBackend {
         // knowledge wing added after the 2026-06-01 verify run stomped 13
         // pages with no recovery. Only on a real change, to keep history quiet.
         snapshotId = this.snapshotRevision(row.id, row.ref, row.content, 'update', updatedAt);
-        sets.push('content = ?');
-        params.push(input.content);
+        sets.push('content = ?', 'uniq = ?');
+        // The dedup key describes the current body — a stale one would make
+        // remember() of the OLD body return this row (PR120 review).
+        params.push(input.content, this.claimableUniq(row.id, { ...row, content: input.content! }));
       }
 
       if (input.metadata) {
@@ -719,17 +767,25 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   async restore(input: RestoreInput): Promise<RestoreResult> {
-    type RestoreRow = { id: number; ref: string; title: string; content: string };
+    type RestoreRow = {
+      id: number;
+      ref: string;
+      title: string;
+      content: string;
+      category: string;
+      project: string | null;
+      scope: string | null;
+    };
     let rows: RestoreRow[] = [];
 
     if (input.ref) {
       const row = this.db
-        .prepare('SELECT id, ref, title, content FROM memories WHERE ref = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project, scope FROM memories WHERE ref = ? AND archived = 1')
         .get(input.ref) as RestoreRow | undefined;
       if (row) rows = [row];
     } else if (input.category && input.title) {
       rows = this.db
-        .prepare('SELECT id, ref, title, content FROM memories WHERE category = ? AND title = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project, scope FROM memories WHERE category = ? AND title = ? AND archived = 1')
         .all(input.category, input.title) as RestoreRow[];
     } else {
       return { restored: [] };
@@ -744,7 +800,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const now = new Date().toISOString();
     const stmt = this.db.prepare(
-      'UPDATE memories SET archived = 0, archive_note = NULL, updated = ? WHERE id = ?',
+      'UPDATE memories SET archived = 0, archive_note = NULL, uniq = ?, updated = ? WHERE id = ?',
     );
     // Delete-then-insert: legacy rows archived before delete-on-archive
     // may still hold a vector, and vec0 rowids must stay unique.
@@ -754,12 +810,15 @@ export class SqliteVecBackend implements MemoryBackend {
     );
     const tx = this.db.transaction(() => {
       rows.forEach((row, i) => {
-        stmt.run(now, row.id);
+        // Re-derive the key: the row may carry a stale or pre-rekey one, and
+        // while it sat archived the same body may have been remembered again
+        // — that active row keeps the key (PR120 review).
+        stmt.run(this.claimableUniq(row.id, row), now, row.id);
         delVec.run(BigInt(row.id));
         insVec.run(BigInt(row.id), toVecBuffer(vectors[i]));
       });
     });
-    retryWrite(() => tx());
+    retryWrite(() => tx.immediate());
 
     return { restored: rows.map((r) => r.ref) };
   }
@@ -818,16 +877,21 @@ export class SqliteVecBackend implements MemoryBackend {
     const vector = await this.embedder.embed(`${mem.title}\n\n${rev.content}`);
 
     const updateStmt = this.db.prepare(
-      'UPDATE memories SET content = ?, updated = ? WHERE id = ?',
+      'UPDATE memories SET content = ?, uniq = ?, updated = ? WHERE id = ?',
     );
     const updateVec = this.db.prepare(
       'UPDATE vec_memories SET embedding = ? WHERE rowid = ?',
     );
     const tx = this.db.transaction(() => {
-      updateStmt.run(rev.content, timestamp, mem.id);
+      updateStmt.run(
+        rev.content,
+        this.claimableUniq(mem.id, { ...mem, content: rev.content }),
+        timestamp,
+        mem.id,
+      );
       updateVec.run(toVecBuffer(vector), BigInt(mem.id));
     });
-    retryWrite(() => tx());
+    retryWrite(() => tx.immediate());
 
     return { ref: input.ref, revision_id: input.revision_id, restored: true, snapshot_id: snapshotId };
   }
@@ -884,6 +948,113 @@ export class SqliteVecBackend implements MemoryBackend {
     return Promise.resolve({ old_ref: input.old_ref, new_ref: input.new_ref, archived: true });
   }
 
+  async mergeMemories(input: MemoryMergeInput): Promise<MemoryMergeResult> {
+    if (!input.source_refs || input.source_refs.length === 0) {
+      return Promise.reject(new Error('mergeMemories: source_refs must not be empty'));
+    }
+
+    const targetRow = this.db
+      .prepare('SELECT * FROM memories WHERE ref = ? AND archived = 0')
+      .get(input.target_ref) as MemoryRow | undefined;
+    if (!targetRow) {
+      return Promise.reject(
+        new Error(`mergeMemories: target_ref not found or already archived: ${input.target_ref}`),
+      );
+    }
+
+    const sourceRows: MemoryRow[] = [];
+    for (const ref of input.source_refs) {
+      if (ref === input.target_ref) {
+        return Promise.reject(
+          new Error(`mergeMemories: source_ref '${ref}' is the same as target_ref — cannot merge a memory into itself`),
+        );
+      }
+      const row = this.db
+        .prepare('SELECT * FROM memories WHERE ref = ? AND archived = 0')
+        .get(ref) as MemoryRow | undefined;
+      if (!row) {
+        return Promise.reject(
+          new Error(`mergeMemories: source_ref not found or already archived: ${ref}`),
+        );
+      }
+      sourceRows.push(row);
+    }
+
+    const timestamp = new Date().toISOString();
+    const losers = sourceRows.map((r) => ({ ref: r.ref, title: r.title, content: r.content }));
+    const combinedTimesSeen =
+      targetRow.times_seen + sourceRows.reduce((sum, r) => sum + r.times_seen, 0);
+
+    let newContent = targetRow.content;
+    if (input.append_loser_bodies) {
+      for (const loser of losers) {
+        newContent += `\n\n--- merged from ${loser.ref} ---\n\n${loser.content}`;
+      }
+    }
+
+    let vector: number[] | undefined;
+    if (newContent !== targetRow.content) {
+      // Snapshot the target body before overwriting — same protection update() gives.
+      this.snapshotRevision(targetRow.id, targetRow.ref, targetRow.content, 'update', timestamp);
+      vector = await this.embedder.embed(`${targetRow.title}\n\n${newContent}`);
+    }
+
+    const updateTarget = this.db.prepare(
+      'UPDATE memories SET content = ?, times_seen = ?, updated = ?, uniq = ? WHERE id = ?',
+    );
+    const updateVec = this.db.prepare('UPDATE vec_memories SET embedding = ? WHERE rowid = ?');
+    const repointRevisions = this.db.prepare(
+      'UPDATE memory_revisions SET memory_id = ? WHERE memory_id = ?',
+    );
+    const archiveSource = this.db.prepare(
+      'UPDATE memories SET archived = 1, archive_note = ?, updated = ? WHERE id = ?',
+    );
+    const delVec = this.db.prepare('DELETE FROM vec_memories WHERE rowid = ?');
+    const insertSup = this.db.prepare(
+      'INSERT INTO memory_supersessions (old_ref, new_ref, note, created) VALUES (?, ?, ?, ?)',
+    );
+    const tx = this.db.transaction(() => {
+      for (const source of sourceRows) {
+        // Re-parent revision history before the source row can be deleted.
+        repointRevisions.run(targetRow.id, source.id);
+
+        const tombstoneNote = input.note
+          ? `Merged into ${input.target_ref}. ${input.note}`
+          : `Merged into ${input.target_ref}.`;
+        archiveSource.run(
+          JSON.stringify({ note: tombstoneNote, archived_at: timestamp }),
+          timestamp,
+          source.id,
+        );
+        delVec.run(BigInt(source.id));
+        insertSup.run(source.ref, input.target_ref, input.note ?? null, timestamp);
+
+        if (input.hard_delete_losers) {
+          // Journaled like every other hard delete (t-436); nested here, so
+          // the journal row and the delete commit or roll back with the merge.
+          this.deleteByIdTx([source.id], 'merge')();
+        }
+      }
+
+      // After the sources are archived, so a key one of them held is free
+      // for the target's (possibly concatenated) body.
+      const newUniq =
+        newContent !== targetRow.content
+          ? this.claimableUniq(targetRow.id, { ...targetRow, content: newContent })
+          : targetRow.uniq;
+      updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, targetRow.id);
+      if (vector) updateVec.run(toVecBuffer(vector), BigInt(targetRow.id));
+    });
+    retryWrite(() => tx.immediate());
+
+    return {
+      target_ref: input.target_ref,
+      sources_merged: sourceRows.length,
+      times_seen: combinedTimesSeen,
+      losers,
+    };
+  }
+
   close(): void {
     this.db.close();
   }
@@ -893,6 +1064,49 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   // ── Internals ──
+
+  /**
+   * A transaction that reheats the active row holding `uniqKey` (times_seen
+   * + 1, updated = timestamp) and returns its ref, or returns undefined if no
+   * active row holds it. Run it with .immediate() on its own, or call it
+   * inside another transaction (better-sqlite3 nests it as a savepoint).
+   */
+  private reheatTx(uniqKey: string, timestamp: string) {
+    return this.db.transaction((): MemoryRef | undefined => {
+      const existing = this.db
+        .prepare('SELECT id, ref, title, category FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
+        .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'> | undefined;
+      if (!existing) return undefined;
+      this.db
+        .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ? WHERE id = ?')
+        .run(timestamp, existing.id);
+      const slashIdx = existing.ref.indexOf('/');
+      return {
+        ref: existing.ref,
+        category: existing.category,
+        filename: slashIdx >= 0 ? existing.ref.slice(slashIdx + 1) : existing.ref,
+        title: existing.title,
+      };
+    });
+  }
+
+  /**
+   * The dedup key a row should hold for the given body, or NULL when another
+   * ACTIVE row already holds that key — the existing holder keeps it, same
+   * policy as the migration backfill (rebuildUniqKeys). Call inside the
+   * write transaction that changes the body, so the check and the write see
+   * the same state.
+   */
+  private claimableUniq(
+    id: number,
+    row: { category: string; project: string | null; title: string; content: string; scope: string | null },
+  ): string | null {
+    const key = computeUniqKey(row);
+    const holder = this.db
+      .prepare('SELECT id FROM memories WHERE uniq = ? AND archived = 0 AND id != ? LIMIT 1')
+      .get(key, id);
+    return holder ? null : key;
+  }
 
   /**
    * Insert a content snapshot into memory_revisions and prune beyond the per-memory
@@ -1058,22 +1272,23 @@ export class SqliteVecBackend implements MemoryBackend {
    * standalone (keyed by ref, no FK to memories) so it survives the delete it
    * describes.
    */
-  private deleteById(ids: number[], op: 'forget' | 'prune' = 'forget'): void {
+  private deleteById(ids: number[], op: DeletionOp = 'forget'): void {
     if (ids.length === 0) return;
+    const tx = this.deleteByIdTx(ids, op);
+    retryWrite(() => tx());
+  }
+
+  /**
+   * The journal-then-delete transaction behind deleteById. Callers already
+   * inside a transaction (mergeMemories with hard_delete_losers) invoke it
+   * directly; better-sqlite3 nests it as a savepoint.
+   */
+  private deleteByIdTx(ids: number[], op: DeletionOp) {
     const placeholders = ids.map(() => '?').join(',');
-    const rows = this.db
-      .prepare(
-        `SELECT ref, category, title, project, content, created
-         FROM memories WHERE id IN (${placeholders})`,
-      )
-      .all(...ids) as {
-      ref: string;
-      category: string;
-      title: string;
-      project: string | null;
-      content: string;
-      created: string;
-    }[];
+    const selectRows = this.db.prepare(
+      `SELECT ref, category, title, project, content, created
+       FROM memories WHERE id IN (${placeholders})`,
+    );
     const journalStmt = this.db.prepare(
       `INSERT INTO memory_deletions (ref, category, title, project, content, created, deleted_at, op)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1085,8 +1300,18 @@ export class SqliteVecBackend implements MemoryBackend {
       `DELETE FROM vec_memories WHERE rowid IN (${placeholders})`,
     );
     const bigIds = ids.map((n) => BigInt(n));
-    const deletedAt = new Date().toISOString();
-    const tx = this.db.transaction(() => {
+    return this.db.transaction(() => {
+      // Read inside the transaction, so the journal records exactly the
+      // rows this delete removes.
+      const rows = selectRows.all(...ids) as {
+        ref: string;
+        category: string;
+        title: string;
+        project: string | null;
+        content: string;
+        created: string;
+      }[];
+      const deletedAt = new Date().toISOString();
       for (const row of rows) {
         journalStmt.run(
           row.ref,
@@ -1102,11 +1327,13 @@ export class SqliteVecBackend implements MemoryBackend {
       delMem.run(...ids);
       delVec.run(...bigIds);
     });
-    retryWrite(() => tx());
   }
 }
 
 // ── Helpers ──
+
+/** memory_deletions.op: which path hard-deleted the row. */
+type DeletionOp = 'forget' | 'prune' | 'merge';
 
 const EMPTY_VECTOR: Float32Array = new Float32Array(0);
 

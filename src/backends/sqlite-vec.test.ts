@@ -1460,6 +1460,473 @@ describe('SqliteVecBackend', () => {
     });
   });
 
+  describe('write-time dedup (t-335)', () => {
+    it('reheats an exact restatement instead of inserting a duplicate row', async () => {
+      const first = await backend.remember({
+        category: 'project',
+        title: 'Loom rescue plan',
+        content: 'Migrate from Qdrant to sqlite-vec',
+      });
+      const second = await backend.remember({
+        category: 'project',
+        title: 'Loom rescue plan',
+        content: 'Migrate from Qdrant to sqlite-vec',
+      });
+
+      expect(second.ref).toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const count = (db.prepare('SELECT COUNT(*) AS n FROM memories').get() as { n: number }).n;
+      expect(count).toBe(1);
+
+      const row = db
+        .prepare('SELECT times_seen FROM memories WHERE ref = ?')
+        .get(first.ref) as { times_seen: number };
+      expect(row.times_seen).toBe(2);
+    });
+
+    it('reheats across edge/trailing whitespace and line-ending differences only', async () => {
+      const first = await backend.remember({
+        category: 'self',
+        title: 'vitest does not typecheck',
+        content: 'Run npx tsc --noEmit before calling a loom branch done.\nEvery time.',
+      });
+      const second = await backend.remember({
+        category: 'self',
+        title: 'vitest does not typecheck  ',
+        content: '\nRun npx tsc --noEmit before calling a loom branch done. \r\nEvery time.\n',
+      });
+
+      expect(second.ref).toBe(first.ref);
+      const db = backend.getDatabase();
+      const row = db
+        .prepare('SELECT times_seen FROM memories WHERE ref = ?')
+        .get(first.ref) as { times_seen: number };
+      expect(row.times_seen).toBe(2);
+    });
+
+    // PR120 review, round 2: each pair reproduced as one row, times_seen=2,
+    // second write lost, under the case/punctuation-folding normalizer.
+    it.each([
+      ['a sign', { content: 'Offset -5' }, { content: 'Offset 5' }],
+      ['a decimal point', { content: 'Version 1.5' }, { content: 'Version 15' }],
+      ['a hyphen in the project id', { project: 'foo-bar' }, { project: 'foobar' }],
+      ['case', { content: 'Deploy to US region' }, { content: 'Deploy to us region' }],
+    ])('does NOT collapse writes that differ only by %s', async (_label, x, y) => {
+      const base = { category: 'project', title: 'Same title', content: 'Same content' };
+      const first = await backend.remember({ ...base, ...x });
+      const second = await backend.remember({ ...base, ...y });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const rows = db.prepare('SELECT project, content, times_seen FROM memories ORDER BY id').all() as
+        { project: string | null; content: string; times_seen: number }[];
+      expect(rows).toHaveLength(2);
+      expect(rows.map((r) => r.times_seen)).toEqual([1, 1]);
+      expect(rows[1]).toMatchObject({ content: y.content ?? base.content, project: y.project ?? null });
+    });
+
+    it('does NOT collapse a restatement that changes effective scope (#129 interaction)', async () => {
+      const base = { category: 'project', title: 'Git hygiene', content: 'Sign off every commit', project: 'loom' };
+      const first = await backend.remember(base);
+      const second = await backend.remember({ ...base, scope: 'global' });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const rows = db.prepare('SELECT scope, times_seen FROM memories ORDER BY id').all() as
+        { scope: string | null; times_seen: number }[];
+      expect(rows).toEqual([{ scope: null, times_seen: 1 }, { scope: 'global', times_seen: 1 }]);
+    });
+
+    it('reheats when an explicit scope equals the category default (same effective scope)', async () => {
+      const base = { category: 'project', title: 'Git hygiene', content: 'Sign off every commit', project: 'loom' };
+      const first = await backend.remember(base);
+      const second = await backend.remember({ ...base, scope: 'project' });
+      expect(second.ref).toBe(first.ref);
+    });
+
+    it('bumps updated (last-seen) on reheat', async () => {
+      const { ref } = await backend.remember({
+        category: 'project',
+        title: 'Stable title',
+        content: 'Stable content',
+      });
+      const db = backend.getDatabase();
+      db.prepare("UPDATE memories SET updated = '2020-01-01T00:00:00.000Z' WHERE ref = ?").run(ref);
+
+      await backend.remember({
+        category: 'project',
+        title: 'Stable title',
+        content: 'Stable content',
+      });
+
+      const row = db.prepare('SELECT updated FROM memories WHERE ref = ?').get(ref) as { updated: string };
+      expect(row.updated).not.toBe('2020-01-01T00:00:00.000Z');
+    });
+
+    it('does NOT reheat when title differs, even with identical content (near-dup, not exact)', async () => {
+      const a = await backend.remember({ category: 'project', title: 'A', content: 'same body' });
+      const b = await backend.remember({ category: 'project', title: 'B', content: 'same body' });
+      expect(b.ref).not.toBe(a.ref);
+
+      const db = backend.getDatabase();
+      const count = (db.prepare('SELECT COUNT(*) AS n FROM memories').get() as { n: number }).n;
+      expect(count).toBe(2);
+    });
+
+    it('does NOT reheat across different projects', async () => {
+      const a = await backend.remember({
+        category: 'project', title: 'T', content: 'C', project: 'pond',
+      });
+      const b = await backend.remember({
+        category: 'project', title: 'T', content: 'C', project: 'loom',
+      });
+      expect(b.ref).not.toBe(a.ref);
+    });
+
+    it('does NOT collapse distinct non-Latin memories (PR120 review: 日本/東京 vs 中国/北京)', async () => {
+      const first = await backend.remember({ category: 'project', title: '日本', content: '東京' });
+      const second = await backend.remember({ category: 'project', title: '中国', content: '北京' });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const bodies = (db.prepare('SELECT content FROM memories ORDER BY id').all() as { content: string }[])
+        .map((r) => r.content);
+      expect(bodies).toEqual(['東京', '北京']);
+    });
+
+    it('does NOT reheat an archived memory — restating it creates a fresh active row', async () => {
+      const first = await backend.remember({
+        category: 'project', title: 'Archived then restated', content: 'original body',
+      });
+      await backend.archive({ ref: first.ref });
+
+      const second = await backend.remember({
+        category: 'project', title: 'Archived then restated', content: 'original body',
+      });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const activeCount = (
+        db.prepare('SELECT COUNT(*) AS n FROM memories WHERE archived = 0').get() as { n: number }
+      ).n;
+      expect(activeCount).toBe(1);
+    });
+  });
+
+  describe('dedup key stays in sync with body mutations (PR120 review)', () => {
+    const countRows = (b: SqliteVecBackend) =>
+      (b.getDatabase().prepare('SELECT COUNT(*) AS n FROM memories').get() as { n: number }).n;
+
+    it('update(): restating the OLD body after an update inserts it instead of returning the updated row', async () => {
+      const first = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.update({ ref: first.ref, content: 'beta' });
+
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(again.ref).not.toBe(first.ref);
+      expect(countRows(backend)).toBe(2);
+      const row = backend.getDatabase()
+        .prepare('SELECT content FROM memories WHERE ref = ?').get(again.ref) as { content: string };
+      expect(row.content).toBe('alpha');
+    });
+
+    it('update(): restating the NEW body reheats the updated row instead of inserting a duplicate', async () => {
+      const first = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.update({ ref: first.ref, content: 'beta' });
+
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      expect(again.ref).toBe(first.ref);
+      expect(countRows(backend)).toBe(1);
+    });
+
+    it('update() into a body another active row already holds leaves exactly one active key holder', async () => {
+      const a = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      const b = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      await backend.update({ ref: b.ref, content: 'alpha' });
+
+      const holders = backend.getDatabase()
+        .prepare('SELECT ref FROM memories WHERE archived = 0 AND uniq = (SELECT uniq FROM memories WHERE ref = ?)')
+        .all(a.ref) as { ref: string }[];
+      expect(holders.map((h) => h.ref)).toEqual([a.ref]);
+      // ...and beta is free again, so restating it is a fresh write.
+      const beta = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      expect([a.ref, b.ref]).not.toContain(beta.ref);
+    });
+
+    it('restoreRevision(): the key follows the restored body', async () => {
+      const first = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.update({ ref: first.ref, content: 'beta' });
+      // This snapshot holds 'beta' (the body the gamma update replaced).
+      const { snapshotId } = await backend.update({ ref: first.ref, content: 'gamma' });
+      const res = await backend.restoreRevision({ ref: first.ref, revision_id: snapshotId! });
+      expect(res.restored).toBe(true);
+
+      const beta = await backend.remember({ category: 'project', title: 'Status', content: 'beta' });
+      expect(beta.ref).toBe(first.ref);
+      const alpha = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(alpha.ref).not.toBe(first.ref);
+      expect(countRows(backend)).toBe(2);
+    });
+
+    it('restore(): un-archiving a row whose body was re-remembered meanwhile does not create a second key holder', async () => {
+      const old = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.archive({ ref: old.ref });
+      const fresh = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(fresh.ref).not.toBe(old.ref);
+
+      await backend.restore({ ref: old.ref });
+
+      const holders = backend.getDatabase()
+        .prepare('SELECT ref FROM memories WHERE archived = 0 AND uniq = (SELECT uniq FROM memories WHERE ref = ?)')
+        .all(fresh.ref) as { ref: string }[];
+      expect(holders.map((h) => h.ref)).toEqual([fresh.ref]);
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(again.ref).toBe(fresh.ref);
+    });
+
+    it('restore(): an un-archived row with no competing holder gets its key back', async () => {
+      const old = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      await backend.archive({ ref: old.ref });
+      await backend.restore({ ref: old.ref });
+
+      const again = await backend.remember({ category: 'project', title: 'Status', content: 'alpha' });
+      expect(again.ref).toBe(old.ref);
+      expect(countRows(backend)).toBe(1);
+    });
+  });
+
+  describe('mergeMemories', () => {
+    it('folds a source into the target: archives source, sums times_seen, records supersession', async () => {
+      const target = await backend.remember({
+        category: 'project', title: 'Survivor', content: 'canonical body',
+      });
+      const source = await backend.remember({
+        category: 'project', title: 'Loser', content: 'near-duplicate body',
+      });
+
+      const result = await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        note: 'audit cluster cleanup',
+      });
+
+      expect(result.sources_merged).toBe(1);
+      expect(result.times_seen).toBe(2); // 1 (target) + 1 (source)
+      expect(result.losers).toEqual([
+        { ref: source.ref, title: 'Loser', content: 'near-duplicate body' },
+      ]);
+
+      const db = backend.getDatabase();
+      const targetRow = db
+        .prepare('SELECT archived, times_seen, content FROM memories WHERE ref = ?')
+        .get(target.ref) as { archived: number; times_seen: number; content: string };
+      expect(targetRow.archived).toBe(0);
+      expect(targetRow.times_seen).toBe(2);
+      expect(targetRow.content).toBe('canonical body'); // append_loser_bodies defaults off
+
+      const sourceRow = db
+        .prepare('SELECT archived, archive_note FROM memories WHERE ref = ?')
+        .get(source.ref) as { archived: number; archive_note: string };
+      expect(sourceRow.archived).toBe(1);
+      expect(JSON.parse(sourceRow.archive_note).note).toContain('Merged into');
+      expect(JSON.parse(sourceRow.archive_note).note).toContain('audit cluster cleanup');
+
+      const supersession = db
+        .prepare('SELECT old_ref, new_ref FROM memory_supersessions WHERE old_ref = ?')
+        .get(source.ref) as { old_ref: string; new_ref: string };
+      expect(supersession.new_ref).toBe(target.ref);
+
+      // Archived source drops out of recall.
+      const results = await backend.recall({ query: 'near-duplicate body canonical body', limit: 10 });
+      expect(results.map((r) => r.title)).not.toContain('Loser');
+    });
+
+    it('consolidates a cluster found by audit (3+ near-duplicates) into one survivor', async () => {
+      await backend.remember({ category: 'project', title: 'cluster-0', content: 'loom alpha' });
+      await backend.remember({ category: 'project', title: 'cluster-1', content: 'loom alpha' });
+      await backend.remember({ category: 'project', title: 'cluster-2', content: 'loom alpha' });
+
+      const report = await backend.audit({ similarityThreshold: 0.5 });
+      const clusterRefs = new Set<string>();
+      for (const pair of report.duplicates) {
+        clusterRefs.add(pair.a.ref);
+        clusterRefs.add(pair.b.ref);
+      }
+      expect(clusterRefs.size).toBe(3);
+
+      const [targetRef, ...sourceRefs] = [...clusterRefs];
+      const result = await backend.mergeMemories({ source_refs: sourceRefs, target_ref: targetRef });
+      expect(result.sources_merged).toBe(2);
+
+      const db = backend.getDatabase();
+      const activeInCluster = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM memories WHERE ref IN (${clusterRefs.size === 0 ? "''" : [...clusterRefs].map(() => '?').join(',')}) AND archived = 0`,
+        )
+        .get(...clusterRefs) as { n: number };
+      expect(activeInCluster.n).toBe(1);
+
+      const reportAfter = await backend.audit({ similarityThreshold: 0.5 });
+      const remainingClusterPairs = reportAfter.duplicates.filter(
+        (p) => clusterRefs.has(p.a.ref) || clusterRefs.has(p.b.ref),
+      );
+      expect(remainingClusterPairs).toHaveLength(0);
+    });
+
+    it('append_loser_bodies concatenates content, re-embeds, and recomputes uniq', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'extra detail' });
+
+      await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        append_loser_bodies: true,
+      });
+
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT content, uniq FROM memories WHERE ref = ?').get(target.ref) as {
+        content: string;
+        uniq: string;
+      };
+      expect(row.content).toContain('base');
+      expect(row.content).toContain('extra detail');
+      expect(row.content).toContain(source.ref);
+
+      // A fresh remember() of the ORIGINAL (pre-merge) target content must no
+      // longer reheat this row — its uniq now reflects the merged content.
+      const fresh = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      expect(fresh.ref).not.toBe(target.ref);
+    });
+
+    it('hard_delete_losers removes the source row after superseding it', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'extra' });
+
+      await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        hard_delete_losers: true,
+      });
+
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT id FROM memories WHERE ref = ?').get(source.ref);
+      expect(row).toBeUndefined();
+
+      // The supersession edge survives the hard delete (plain TEXT refs, no FK).
+      const supersession = db
+        .prepare('SELECT new_ref FROM memory_supersessions WHERE old_ref = ?')
+        .get(source.ref) as { new_ref: string };
+      expect(supersession.new_ref).toBe(target.ref);
+    });
+
+    it('hard_delete_losers journals each deleted source to memory_deletions (op merge)', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({
+        category: 'project', title: 'Loser', content: 'only copy of this body', project: 'p1',
+      });
+
+      await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        hard_delete_losers: true,
+      });
+
+      const db = backend.getDatabase();
+      const journal = db
+        .prepare('SELECT ref, category, title, project, content, op FROM memory_deletions WHERE ref = ?')
+        .all(source.ref);
+      expect(journal).toEqual([{
+        ref: source.ref,
+        category: 'project',
+        title: 'Loser',
+        project: 'p1',
+        content: 'only copy of this body',
+        op: 'merge',
+      }]);
+    });
+
+    it('hard_delete_losers with append_loser_bodies keeps the body in the target and the journal', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'extra' });
+
+      await backend.mergeMemories({
+        source_refs: [source.ref],
+        target_ref: target.ref,
+        hard_delete_losers: true,
+        append_loser_bodies: true,
+      });
+
+      const db = backend.getDatabase();
+      const merged = db.prepare('SELECT content FROM memories WHERE ref = ?').get(target.ref) as { content: string };
+      expect(merged.content).toContain('extra');
+      const journal = db
+        .prepare('SELECT content FROM memory_deletions WHERE ref = ?')
+        .get(source.ref) as { content: string };
+      expect(journal.content).toBe('extra');
+    });
+
+    it('rolls back the hard delete and its journal entry when the merge transaction fails', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'extra' });
+
+      // claimableUniq runs inside the transaction, after the source delete.
+      (backend as unknown as { claimableUniq: () => never }).claimableUniq = () => {
+        throw new Error('boom');
+      };
+      await expect(
+        backend.mergeMemories({
+          source_refs: [source.ref],
+          target_ref: target.ref,
+          hard_delete_losers: true,
+          append_loser_bodies: true,
+        }),
+      ).rejects.toThrow('boom');
+
+      const db = backend.getDatabase();
+      const row = db.prepare('SELECT content, archived FROM memories WHERE ref = ?').get(source.ref) as
+        { content: string; archived: number };
+      expect(row).toEqual({ content: 'extra', archived: 0 });
+      const journalCount = db
+        .prepare('SELECT COUNT(*) AS n FROM memory_deletions WHERE ref = ?')
+        .get(source.ref) as { n: number };
+      expect(journalCount.n).toBe(0);
+      const targetRow = db.prepare('SELECT content FROM memories WHERE ref = ?').get(target.ref) as { content: string };
+      expect(targetRow.content).toBe('base');
+    });
+
+    it('re-parents revision history from source to target', async () => {
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'v1' });
+      await backend.update({ ref: source.ref, content: 'v2' }); // snapshots v1 into memory_revisions
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'base' });
+
+      await backend.mergeMemories({ source_refs: [source.ref], target_ref: target.ref });
+
+      const revisions = await backend.listRevisions(target.ref);
+      expect(revisions.some((r) => r.content_length > 0 && r.ref === source.ref)).toBe(true);
+    });
+
+    it('rejects a target that does not exist or is archived', async () => {
+      const source = await backend.remember({ category: 'project', title: 'Loser', content: 'x' });
+      await expect(
+        backend.mergeMemories({ source_refs: [source.ref], target_ref: 'project/nope-00000000' }),
+      ).rejects.toThrow(/target_ref not found/);
+    });
+
+    it('rejects a source ref equal to the target ref', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'x' });
+      await expect(
+        backend.mergeMemories({ source_refs: [target.ref], target_ref: target.ref }),
+      ).rejects.toThrow(/same as target_ref/);
+    });
+
+    it('rejects an unknown source ref', async () => {
+      const target = await backend.remember({ category: 'project', title: 'Survivor', content: 'x' });
+      await expect(
+        backend.mergeMemories({ source_refs: ['project/missing-00000000'], target_ref: target.ref }),
+      ).rejects.toThrow(/source_ref not found/);
+    });
+  });
+
   describe('memory scope discipline (t-337)', () => {
     it('excludes a project-scoped memory tagged to a different project', async () => {
       await backend.remember({

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { MIGRATIONS, runMigrations, pendingMigrations } from './migrations.js';
+import { computeUniqKey } from './dedup.js';
 import { SqliteVecBackend } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
 
@@ -180,6 +181,7 @@ describe('pendingMigrations', () => {
       'add_confidence', 'add_evidence_count', 'add_observed_at',
       'add_memory_deletions',
       'add_scope',
+      'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique', 'rekey_uniq_exact',
     ]);
   });
 
@@ -190,6 +192,108 @@ describe('pendingMigrations', () => {
     db.close();
 
     expect(pending).toHaveLength(0);
+  });
+});
+
+describe('add_times_seen / add_uniq migrations (t-335)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-t335-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('backfills times_seen = 1 for pre-existing rows', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'ts.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u1', 'project/a-1', 'A', 'project', 'body', '{}', ?)`,
+    ).run(now);
+
+    runMigrations(db, { strict: true });
+
+    const row = db.prepare("SELECT times_seen FROM memories WHERE ref = 'project/a-1'")
+      .get() as { times_seen: number };
+    expect(row.times_seen).toBe(1);
+    db.close();
+  });
+
+  it('backfills uniq for every existing row from its current content', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'uq.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u1', 'project/a-1', 'A title', 'project', 'A body', '{}', ?)`,
+    ).run(now);
+
+    runMigrations(db, { strict: true });
+
+    const row = db.prepare("SELECT uniq FROM memories WHERE ref = 'project/a-1'")
+      .get() as { uniq: string | null };
+    expect(row.uniq).not.toBeNull();
+    expect(row.uniq).toMatch(/^[0-9a-f]{64}$/);
+    db.close();
+  });
+
+  it('on a pre-existing duplicate cluster, only the first (lowest id) row gets a uniq value', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'cluster.db'));
+    const now = new Date().toISOString();
+    for (const [uuid, ref] of [['u1', 'project/a-1'], ['u2', 'project/a-2'], ['u3', 'project/a-3']]) {
+      db.prepare(
+        `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+         VALUES (?, ?, 'Same title', 'project', 'Same body', '{}', ?)`,
+      ).run(uuid, ref, now);
+    }
+
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id ASC').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows[0].uniq).not.toBeNull();
+    expect(rows[1].uniq).toBeNull();
+    expect(rows[2].uniq).toBeNull();
+    db.close();
+  });
+
+  it('backfill skips archived rows entirely, so an active row never loses the uniq key to one', () => {
+    // Build a DB already at the schema add_uniq expects (every column it
+    // reads/writes present, uniq still NULL everywhere) with an ARCHIVED row
+    // inserted before its active duplicate — if the backfill didn't filter
+    // on archived, the archived row (lower id) would claim the shared uniq
+    // key first and leave the active row NULL.
+    const db = openOldSchemaDb(join(tmpDir, 'archived-first.db'));
+    db.prepare('ALTER TABLE memories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0').run();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created, archived)
+       VALUES ('u1', 'project/archived-first', 'Same title', 'project', 'Same body', '{}', ?, 1)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created, archived)
+       VALUES ('u2', 'project/active-second', 'Same title', 'project', 'Same body', '{}', ?, 0)`,
+    ).run(now);
+
+    const addUniq = MIGRATIONS.find((m) => m.id === 'add_uniq')!;
+    addUniq.run(db);
+
+    const rows = db.prepare('SELECT ref, archived, uniq FROM memories ORDER BY id ASC').all() as
+      { ref: string; archived: number; uniq: string | null }[];
+    expect(rows[0].archived).toBe(1);
+    expect(rows[0].uniq).toBeNull();
+    expect(rows[1].archived).toBe(0);
+    expect(rows[1].uniq).not.toBeNull();
+    db.close();
+  });
+
+  it('after all migrations, uniq is covered by one UNIQUE partial index (idx_memories_uniq_exact)', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'idx.db'));
+    runMigrations(db, { strict: true });
+    const idx = db.pragma('index_list(memories)') as { name: string; unique: number; partial: number }[];
+    const active = idx.find((i) => i.name === 'idx_memories_uniq_exact');
+    expect(active).toMatchObject({ unique: 1, partial: 1 });
+    expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq_active');
+    expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq');
+    expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq_v2');
+    db.close();
   });
 });
 
@@ -225,5 +329,142 @@ describe('SqliteVecBackend auto-migration on connect', () => {
     expect(hits.map((h) => h.path)).not.toContain('project/test-abc');
 
     backend.close();
+  });
+});
+
+describe('rekey_uniq_unicode migration (PR120 review)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-rekey-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('recomputes keys stored by the old ASCII-only normalization', () => {
+    // A DB that already ran add_uniq under the old normalizer: both CJK rows
+    // normalized to the same empty basis, so the first holds that legacy
+    // key and the second was left NULL as a "duplicate".
+    const db = openOldSchemaDb(join(tmpDir, 'legacy.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u1', 'project/jp', '日本', 'project', '東京', '{}', ?)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u2', 'project/cn', '中国', 'project', '北京', '{}', ?)`,
+    ).run(now);
+    for (const m of MIGRATIONS) {
+      if (m.id === 'rekey_uniq_unicode') break;
+      if (m.pending(db)) m.run(db);
+    }
+    db.prepare("UPDATE memories SET uniq = 'legacy-ascii-key' WHERE ref = 'project/jp'").run();
+    db.prepare("UPDATE memories SET uniq = NULL WHERE ref = 'project/cn'").run();
+
+    expect(pendingMigrations(db).map((m) => m.id)).toContain('rekey_uniq_unicode');
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows[0].uniq).toBe(computeUniqKey({ category: 'project', title: '日本', content: '東京' }));
+    expect(rows[1].uniq).toBe(computeUniqKey({ category: 'project', title: '中国', content: '北京' }));
+    expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe('uniq_active_unique migration (PR120 review)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-uq-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('applies over active rows that already share a key (written by the old race) and keeps the oldest as holder', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'raced.db'));
+    for (const m of MIGRATIONS) {
+      if (m.id === 'uniq_active_unique') break;
+      if (m.pending(db)) m.run(db);
+    }
+    const now = new Date().toISOString();
+    const key = computeUniqKey({ category: 'project', title: 'Status', content: 'alpha' });
+    for (const [uuid, ref] of [['u1', 'project/s-1'], ['u2', 'project/s-2']]) {
+      db.prepare(
+        `INSERT INTO memories (uuid, ref, title, category, content, metadata, created, uniq)
+         VALUES (?, ?, 'Status', 'project', 'alpha', '{}', ?, ?)`,
+      ).run(uuid, ref, now, key);
+    }
+
+    const results = runMigrations(db, { strict: true });
+    expect(results.find((r) => r.id === 'uniq_active_unique')?.status).toBe('applied');
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows).toEqual([{ ref: 'project/s-1', uniq: key }, { ref: 'project/s-2', uniq: null }]);
+    expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe('rekey_uniq_exact migration (PR120 review, round 2)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-exact-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  /** A DB that ran every migration up to and including uniq_active_unique. */
+  function atUniqActiveUnique(path: string): BetterSqlite3.Database {
+    const db = openOldSchemaDb(path);
+    for (const m of MIGRATIONS) {
+      if (m.id === 'rekey_uniq_exact') break;
+      if (m.pending(db)) m.run(db);
+    }
+    return db;
+  }
+
+  function insert(db: BetterSqlite3.Database, ref: string, project: string | null, content: string, uniq: string | null) {
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, project, content, metadata, created, uniq)
+       VALUES (?, ?, 'T', 'project', ?, ?, '{}', ?, ?)`,
+    ).run(ref, ref, project, content, new Date().toISOString(), uniq);
+  }
+
+  it('gives rows the punctuation-folding key had merged their own keys back', () => {
+    const db = atUniqActiveUnique(join(tmpDir, 'folded.db'));
+    // Under the folding normalizer "Offset -5"/"Offset 5" and the
+    // foo-bar/foobar projects shared a key: the first row held it, the
+    // second stayed NULL.
+    insert(db, 'project/o1', null, 'Offset -5', 'folded-offset');
+    insert(db, 'project/o2', null, 'Offset 5', null);
+    insert(db, 'project/p1', 'foo-bar', 'same', 'folded-project');
+    insert(db, 'project/p2', 'foobar', 'same', null);
+
+    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact']);
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows).toEqual([
+      { ref: 'project/o1', uniq: computeUniqKey({ category: 'project', title: 'T', content: 'Offset -5' }) },
+      { ref: 'project/o2', uniq: computeUniqKey({ category: 'project', title: 'T', content: 'Offset 5' }) },
+      { ref: 'project/p1', uniq: computeUniqKey({ category: 'project', project: 'foo-bar', title: 'T', content: 'same' }) },
+      { ref: 'project/p2', uniq: computeUniqKey({ category: 'project', project: 'foobar', title: 'T', content: 'same' }) },
+    ]);
+    expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
+  });
+
+  it('does not trip the unique index when a row\'s new key is a later row\'s old key', () => {
+    const db = atUniqActiveUnique(join(tmpDir, 'swap.db'));
+    const keyA = computeUniqKey({ category: 'project', title: 'T', content: 'a' });
+    const keyB = computeUniqKey({ category: 'project', title: 'T', content: 'b' });
+    // Stale keys, swapped: rekeying row a (lower id) first writes keyA while
+    // row b still holds it.
+    insert(db, 'project/a', null, 'a', keyB);
+    insert(db, 'project/b', null, 'b', keyA);
+
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows).toEqual([{ ref: 'project/a', uniq: keyA }, { ref: 'project/b', uniq: keyB }]);
+    db.close();
   });
 });

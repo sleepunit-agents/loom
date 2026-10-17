@@ -9,6 +9,7 @@
  * existing entries (future migrations may depend on prior state).
  */
 import type { Database } from 'better-sqlite3';
+import { rebuildUniqKeys } from './dedup.js';
 
 export interface Migration {
   readonly id: string;
@@ -254,6 +255,101 @@ export const MIGRATIONS: readonly Migration[] = [
       // NULL on legacy records and any write that doesn't set it explicitly:
       // effectiveScope() falls back to the category default in that case.
       db.prepare('ALTER TABLE memories ADD COLUMN scope TEXT').run();
+    },
+  },
+  {
+    id: 'add_times_seen',
+    description:
+      'Add times_seen counter — bumped when remember() reheats an exact restatement instead of inserting (t-335)',
+    pending: (db) => !hasColumn(db, 'memories', 'times_seen'),
+    run: (db) => {
+      // DEFAULT 1 backfills existing rows too: each was "seen" at least once
+      // (the write that created it), even though restatements before t-335
+      // weren't counted.
+      db.prepare('ALTER TABLE memories ADD COLUMN times_seen INTEGER NOT NULL DEFAULT 1').run();
+    },
+  },
+  {
+    id: 'add_uniq',
+    description:
+      'Add uniq dedup key column + index, backfilled from existing rows, so write-time ' +
+      'remember() can reheat an exact restatement instead of inserting a duplicate (t-335)',
+    pending: (db) => !hasColumn(db, 'memories', 'uniq'),
+    run: (db) => {
+      db.prepare('ALTER TABLE memories ADD COLUMN uniq TEXT').run();
+      db.prepare('CREATE INDEX idx_memories_uniq ON memories(uniq)').run();
+
+      // Backfill: compute uniq for every existing ACTIVE row so future
+      // restatements of pre-t-335 content also reheat. Archived rows stay
+      // NULL and, within a pre-existing duplicate cluster, only the oldest
+      // active row gets the key — see rebuildUniqKeys().
+      rebuildUniqKeys(db);
+    },
+  },
+  {
+    id: 'rekey_uniq_unicode',
+    description:
+      'Recompute every uniq key with the Unicode-preserving normalizer — the first ' +
+      'normalizer stripped all non-ASCII text, so distinct non-Latin memories shared ' +
+      'one key (PR120 review)',
+    // Marker: the index this migration creates. Databases that ran add_uniq
+    // under the old normalizer have only idx_memories_uniq.
+    // uniq_active_unique (below) re-keys too and replaces this index.
+    pending: (db) =>
+      !hasIndex(db, 'memories', 'idx_memories_uniq_v2') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      rebuildUniqKeys(db);
+      db.prepare('CREATE INDEX IF NOT EXISTS idx_memories_uniq_v2 ON memories(uniq)').run();
+      db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+    },
+  },
+  {
+    id: 'uniq_active_unique',
+    description:
+      'Make uniq UNIQUE among active rows (partial index), so two concurrent ' +
+      'remember() calls of the same content cannot both insert (PR120 review)',
+    // rekey_uniq_exact (below) replaces this index with idx_memories_uniq_exact.
+    pending: (db) =>
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      db.transaction(() => {
+        // Re-key first: any active duplicates written before this index
+        // existed (the race it closes, or stale keys from before update()
+        // refreshed them) would otherwise make CREATE UNIQUE INDEX fail.
+        rebuildUniqKeys(db);
+        db.prepare(
+          'CREATE UNIQUE INDEX idx_memories_uniq_active ON memories(uniq) WHERE archived = 0',
+        ).run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+      }).immediate();
+    },
+  },
+  {
+    id: 'rekey_uniq_exact',
+    description:
+      'Recompute every uniq key with the exact normalizer — the previous one folded ' +
+      'case, punctuation and whitespace, and compared project ids loosely, so ' +
+      '"Offset -5"/"Offset 5", "1.5"/"15" and projects foo-bar/foobar shared a key ' +
+      '(PR120 review, round 2)',
+    // Marker: the unique index this migration creates, under a new name so
+    // databases keyed by the folding normalizer are detectable.
+    pending: (db) => !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      db.transaction(() => {
+        // Drop the old indexes first so the new unique index is built once,
+        // over the final keys only.
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_active').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+        rebuildUniqKeys(db);
+        db.prepare(
+          'CREATE UNIQUE INDEX idx_memories_uniq_exact ON memories(uniq) WHERE archived = 0',
+        ).run();
+      }).immediate();
     },
   },
 ];

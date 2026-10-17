@@ -55,6 +55,12 @@ an agent's persistent state:
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.
+- **`memory_merge`** — consolidate 2+ memories into one canonical row. Acts on
+  a `memory_audit` duplicate-finding: sources are archived with a tombstone
+  and a supersession pointer to the target, the target's times-seen counter
+  sums in each source's count, and bodies can optionally be concatenated.
+  Unlike `forget`/`memory_archive` on a duplicate pair, this consolidates
+  both sides into one row instead of only discarding one.
 - **`memory_history`** — body-revision history for a memory. `update()` snapshots
   the displaced body into `memory_revisions` before overwriting it. List a
   memory's snapshots (id, op, replaced_at, char count), or read one snapshot's

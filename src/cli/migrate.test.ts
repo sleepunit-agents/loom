@@ -65,10 +65,13 @@ function buildCurrentDb(dir: string): string {
       confidence REAL,
       evidence_count INTEGER NOT NULL DEFAULT 0,
       observed_at TEXT,
-      scope TEXT
+      scope TEXT,
+      times_seen INTEGER NOT NULL DEFAULT 1,
+      uniq TEXT
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();
+  db.prepare(`CREATE UNIQUE INDEX idx_memories_uniq_exact ON memories(uniq) WHERE archived = 0`).run();
   db.prepare(`
     CREATE TABLE proposals (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
