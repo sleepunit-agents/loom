@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { MIGRATIONS, runMigrations, pendingMigrations } from './migrations.js';
+import { computeUniqKey } from './dedup.js';
 import { SqliteVecBackend } from './sqlite-vec.js';
 import type { EmbeddingProvider } from './types.js';
 
@@ -151,7 +152,7 @@ describe('pendingMigrations', () => {
       'add_archived', 'add_archive_note', 'idx_memories_archived', 'add_salience', 'add_proposals',
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
       'add_confidence', 'add_evidence_count', 'add_observed_at',
-      'add_times_seen', 'add_uniq',
+      'add_times_seen', 'add_uniq', 'rekey_uniq_unicode',
     ]);
   });
 
@@ -254,11 +255,11 @@ describe('add_times_seen / add_uniq migrations (t-335)', () => {
     db.close();
   });
 
-  it('idx_memories_uniq index exists after migration', () => {
+  it('a uniq lookup index exists after migration (idx_memories_uniq_v2 after the rekey)', () => {
     const db = openOldSchemaDb(join(tmpDir, 'idx.db'));
     runMigrations(db, { strict: true });
     const idx = (db.pragma('index_list(memories)') as { name: string }[]).map((i) => i.name);
-    expect(idx).toContain('idx_memories_uniq');
+    expect(idx).toContain('idx_memories_uniq_v2');
     db.close();
   });
 });
@@ -295,5 +296,44 @@ describe('SqliteVecBackend auto-migration on connect', () => {
     expect(hits.map((h) => h.path)).not.toContain('project/test-abc');
 
     backend.close();
+  });
+});
+
+describe('rekey_uniq_unicode migration (PR120 review)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-rekey-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('recomputes keys stored by the old ASCII-only normalization', () => {
+    // A DB that already ran add_uniq under the old normalizer: both CJK rows
+    // normalized to the same empty basis, so the first holds that legacy
+    // key and the second was left NULL as a "duplicate".
+    const db = openOldSchemaDb(join(tmpDir, 'legacy.db'));
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u1', 'project/jp', '日本', 'project', '東京', '{}', ?)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO memories (uuid, ref, title, category, content, metadata, created)
+       VALUES ('u2', 'project/cn', '中国', 'project', '北京', '{}', ?)`,
+    ).run(now);
+    for (const m of MIGRATIONS) {
+      if (m.id === 'rekey_uniq_unicode') break;
+      if (m.pending(db)) m.run(db);
+    }
+    db.prepare("UPDATE memories SET uniq = 'legacy-ascii-key' WHERE ref = 'project/jp'").run();
+    db.prepare("UPDATE memories SET uniq = NULL WHERE ref = 'project/cn'").run();
+
+    expect(pendingMigrations(db).map((m) => m.id)).toContain('rekey_uniq_unicode');
+    runMigrations(db, { strict: true });
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows[0].uniq).toBe(computeUniqKey({ category: 'project', title: '日本', content: '東京' }));
+    expect(rows[1].uniq).toBe(computeUniqKey({ category: 'project', title: '中国', content: '北京' }));
+    expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
   });
 });

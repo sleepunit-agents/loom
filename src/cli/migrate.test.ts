@@ -70,7 +70,7 @@ function buildCurrentDb(dir: string): string {
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();
-  db.prepare(`CREATE INDEX idx_memories_uniq ON memories(uniq)`).run();
+  db.prepare(`CREATE INDEX idx_memories_uniq_v2 ON memories(uniq)`).run();
   db.prepare(`
     CREATE TABLE proposals (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

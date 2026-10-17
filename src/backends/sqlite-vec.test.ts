@@ -1471,6 +1471,17 @@ describe('SqliteVecBackend', () => {
       expect(b.ref).not.toBe(a.ref);
     });
 
+    it('does NOT collapse distinct non-Latin memories (PR120 review: 日本/東京 vs 中国/北京)', async () => {
+      const first = await backend.remember({ category: 'project', title: '日本', content: '東京' });
+      const second = await backend.remember({ category: 'project', title: '中国', content: '北京' });
+      expect(second.ref).not.toBe(first.ref);
+
+      const db = backend.getDatabase();
+      const bodies = (db.prepare('SELECT content FROM memories ORDER BY id').all() as { content: string }[])
+        .map((r) => r.content);
+      expect(bodies).toEqual(['東京', '北京']);
+    });
+
     it('does NOT reheat an archived memory — restating it creates a fresh active row', async () => {
       const first = await backend.remember({
         category: 'project', title: 'Archived then restated', content: 'original body',
