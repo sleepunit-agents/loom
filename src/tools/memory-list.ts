@@ -10,7 +10,9 @@ import type { ListInput, MemoryEntry } from '../backends/types.js';
 
 export function formatEntry(e: MemoryEntry): string {
   const projectTag = e.project ? ` [${e.project}]` : '';
-  return `- **${e.title}** — ${e.category}${projectTag} (${e.created.slice(0, 10)})\n  ref: \`${e.ref}\``;
+  const confidenceTag =
+    e.confidence !== undefined ? ` · confidence ${e.confidence.toFixed(2)} (${e.evidenceCount} obs)` : '';
+  return `- **${e.title}** — ${e.category}${projectTag} (${e.created.slice(0, 10)})${confidenceTag}\n  ref: \`${e.ref}\``;
 }
 
 export function formatEntries(entries: MemoryEntry[]): string {

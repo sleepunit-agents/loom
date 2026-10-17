@@ -108,6 +108,14 @@ export interface MemoryMatch {
   sourcing?: MemorySourcing;
   /** Free-form origin text (surface / person / session). Null on legacy records. */
   provenance?: string;
+  /**
+   * Evidence-backed confidence (0.3-0.9), feedback memories only (t-338).
+   * Decayed toward neutral by category half-life — see salience.ts
+   * decayedConfidence(). Undefined for non-feedback memories.
+   */
+  confidence?: number;
+  /** Number of observations (creation + confirm/contradict) behind `confidence`. */
+  evidenceCount?: number;
 }
 
 export interface ForgetInput {
@@ -134,6 +142,13 @@ export interface UpdateInput {
   content?: string;
   /** Metadata fields to add or update */
   metadata?: Record<string, unknown>;
+  /**
+   * Record an observation against this memory's confidence (feedback
+   * memories only, t-338): 'confirm' raises it, 'contradict' lowers it.
+   * Computed in code (see salience.ts applyObservation) — never a prompt.
+   * Ignored on non-feedback memories.
+   */
+  observation?: 'confirm' | 'contradict';
 }
 
 export interface ForgetResult {
@@ -176,6 +191,10 @@ export interface UpdateResult {
   ref?: string;
   /** Id of the body snapshot taken before content was overwritten (if any). */
   snapshotId?: number;
+  /** Raw (undecayed) confidence after applying `observation`, when one was given. */
+  confidence?: number;
+  /** Evidence count after applying `observation`, when one was given. */
+  evidenceCount?: number;
 }
 
 // ─── Memory Revision Types ───────────────────────────────────────────────────
@@ -250,6 +269,10 @@ export interface MemoryEntry {
   sourcing?: MemorySourcing;
   /** Free-form origin text (surface / person / session). Null on legacy records. */
   provenance?: string;
+  /** Decayed confidence (feedback memories only, t-338). */
+  confidence?: number;
+  /** Observation count behind `confidence`. */
+  evidenceCount?: number;
 }
 
 export interface FindSimilarInput {

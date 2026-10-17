@@ -121,6 +121,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'Preserved across upserts when omitted.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     async ({ title, domain, body, slug, freshness_anchor, mode, citations, created_by, version }) => {
       if (restrictCreatedByToIdentity && created_by !== undefined && created_by !== identity) {
         return {
@@ -175,6 +176,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'SLA filter can run from the listing alone.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ slug, query, domain, limit, detail, sort_by_verified }) => {
       const result = await knowledgeRecall(
         contextDir,
@@ -212,6 +214,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'Days without access before a page is cold (default 30)',
       ),
     },
+    { readOnlyHint: true, openWorldHint: false },
     async ({ expansion_hit_threshold, thin_body_threshold, cold_days }) => {
       const result = await knowledgeMaintain(contextDir, {
         expansionHitThreshold: expansion_hit_threshold,
@@ -233,6 +236,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       slug: z.string().describe('Slug of the knowledge page to archive'),
       note: z.string().optional().describe('Tombstone note: why this page is being retired'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ slug, note }) => {
       const result = await knowledgeArchive(contextDir, { slug, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -247,6 +251,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
     {
       slug: z.string().describe('Slug of the archived knowledge page to restore'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ slug }) => {
       const result = await knowledgeRestore(contextDir, { slug });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -265,6 +270,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       new_slug: z.string().describe('Slug of the canonical replacement page (must already exist)'),
       note: z.string().optional().describe('Optional note explaining the merge or supersession decision'),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     async ({ old_slug, new_slug, note }) => {
       const result = await knowledgeSupersede(contextDir, { old_slug, new_slug, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -302,6 +308,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'Batch prefix mode: replacement domain prefix (e.g. "instruments/elektron").',
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     async ({ slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix }) => {
       const result = await knowledgeMove(contextDir, {
         slug, new_slug, new_domain, leave_pointer, slugs, from_domain_prefix, to_domain_prefix,
@@ -337,6 +344,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'Append loser page bodies to the target body under section markers (default false). Off by default — curator normally hand-merges body content.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ source_slugs, target_slug, note, hard_delete_losers, append_loser_bodies }) => {
       const result = await knowledgeMerge(contextDir, {
         source_slugs, target_slug, note, hard_delete_losers, append_loser_bodies,
@@ -361,6 +369,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'Must be explicitly true — required safety gate for an irreversible operation.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ slugs, confirm }) => {
       const result = await knowledgePurge(contextDir, { slugs, confirm });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -394,6 +403,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'section. Never replaces the body. Single-page mode only.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     async ({ slug, slugs, verified_at, freshness_anchor, note }) => {
       const result = await knowledgeVerify(contextDir, { slug, slugs, verified_at, freshness_anchor, note });
       return { content: [{ type: 'text' as const, text: result }] };
@@ -416,6 +426,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         'Restore the revision\'s body onto the page. Requires revision_id.',
       ),
     },
+    { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     async ({ slug, revision_id, restore }) => {
       const result = await knowledgeHistory(contextDir, { slug, revision_id, restore });
       return { content: [{ type: 'text' as const, text: result }] };
