@@ -41,7 +41,8 @@ export async function memoryMerge(
     return lines.join('\n');
   } catch (e) {
     return `Error: ${(e as Error).message}`;
-  } finally {
-    backend.close();
   }
+  // No close(): createBackend hands out the shared, process-cached handle.
+  // Closing it here would kill any in-flight call on the same backend
+  // (PR120 review — same lifecycle bug fixed in memory_history).
 }

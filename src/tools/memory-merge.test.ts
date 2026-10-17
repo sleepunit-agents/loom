@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { memoryMerge } from './memory-merge.js';
 import { memoryAudit } from './memory-audit.js';
 import { remember } from './remember.js';
-import { createBackend } from '../backends/index.js';
+import { createBackend, closeAllBackends } from '../backends/index.js';
 
 describe('memoryMerge tool', () => {
   let tmpDir: string;
@@ -15,6 +15,8 @@ describe('memoryMerge tool', () => {
   });
 
   afterEach(() => {
+    // memoryMerge no longer closes the shared handle (the process owns it).
+    closeAllBackends();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

@@ -1,5 +1,5 @@
 /**
- * memory_history / memory_revision_restore — shared-backend lifecycle.
+ * memory_history / memory_revision_restore / memory_merge — shared-backend lifecycle.
  *
  * createBackend hands every tool the same process-cached SqliteVecBackend.
  * A tool that closes it kills any other call still in flight on that handle
@@ -42,6 +42,7 @@ vi.mock('../backends/fastembed.js', () => ({
 import { createBackend, closeAllBackends } from '../backends/index.js';
 import { memoryHistory } from './memory-history.js';
 import { memoryRevisionRestore } from './memory-revision-restore.js';
+import { memoryMerge } from './memory-merge.js';
 
 /** Arm the gate; resolves `entered` once an embed() call is parked on it. */
 function holdNextEmbed(): { entered: Promise<void>; release: () => void } {
@@ -108,5 +109,23 @@ describe('memory history tools share the cached backend', () => {
     await expect(pending).resolves.toMatchObject({ updated: true });
     expect(createBackend(dir)).toBe(backend);
     expect(await memoryHistory(dir, { ref })).toContain('snapshot(s)');
+  });
+
+  it('memory_merge does not close the handle under an in-flight update (PR120 review)', async () => {
+    const ref = await seed();
+    const backend = createBackend(dir);
+    const a = await backend.remember({ category: 'project', title: 'Merge survivor', content: 'kept' });
+    const b = await backend.remember({ category: 'project', title: 'Merge loser', content: 'folded' });
+
+    const { entered, release } = holdNextEmbed();
+    const pending = backend.update({ ref, content: 'third body' });
+    await entered;
+
+    const merged = await memoryMerge(dir, { source_refs: [b.ref], target_ref: a.ref });
+    expect(merged).toContain('Merged 1 memory(ies)');
+
+    release();
+    await expect(pending).resolves.toMatchObject({ updated: true });
+    expect(createBackend(dir)).toBe(backend);
   });
 });
