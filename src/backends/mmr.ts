@@ -38,7 +38,19 @@ export interface MmrResult<T> {
 export const DEFAULT_DIVERSITY = 0.3;
 
 export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
-  const n = Math.min(a.length, b.length);
+  // A zero-length vector is the "no embedding available" sentinel (e.g. a
+  // lookup miss in the caller) — treat it as no similarity, same as before.
+  // A mismatch between two REAL vectors means the embedding dimension
+  // changed between model versions somewhere upstream; silently comparing
+  // the overlapping prefix (the old Math.min(a.length, b.length) behavior)
+  // hid that corruption instead of catching it. Raise instead (t-334).
+  if (a.length === 0 || b.length === 0) return 0;
+  if (a.length !== b.length) {
+    throw new Error(
+      `cosineSimilarity: dimension mismatch (${a.length} vs ${b.length}) — embeddings from different model versions can't be compared`,
+    );
+  }
+  const n = a.length;
   let dot = 0;
   let na = 0;
   let nb = 0;
