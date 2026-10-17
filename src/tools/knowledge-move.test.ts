@@ -272,6 +272,24 @@ describe('knowledgeMove', () => {
     }
   });
 
+  // t-415 review (loom#127): prefix mode is NOT idempotent when the target
+  // prefix extends the source — a repeat call matches the already-moved pages
+  // again. This is why knowledge_move must not advertise idempotentHint.
+  it('repeating a prefix move into a child of itself nests again (not idempotent)', async () => {
+    await seedPage('mixer', 'music');
+
+    const args = { from_domain_prefix: 'music', to_domain_prefix: 'music/gear' };
+    expect(await knowledgeMove(tempDir, args)).not.toMatch(/Error/i);
+    expect(await knowledgeMove(tempDir, args)).not.toMatch(/Error/i);
+
+    const b = createKnowledgeBackend(tempDir);
+    try {
+      expect((await b.getPage('mixer'))!.domain).toBe('music/gear/gear');
+    } finally {
+      b.close();
+    }
+  });
+
   it('prefix batch reports 0 when no pages match prefix', async () => {
     await seedPage('something', 'other/domain');
     const result = await knowledgeMove(tempDir, {
