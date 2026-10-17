@@ -40,16 +40,18 @@ export async function knowledgeVerify(
       citation_checked: input.citation_checked,
     });
 
-    const stamp = result.verified_at;
     const outcome = input.outcome ?? 'confirmed';
+    const stamp = result.stamped
+      ? `verified_at stamped to ${result.verified_at}`
+      : `recorded at ${result.verified_at}; verified_at NOT advanced (stale is a failed verification)`;
     if (result.verified === 1) {
       const extras: string[] = [];
       if (input.freshness_anchor) extras.push(`anchor → ${input.freshness_anchor}`);
       if (result.noted) extras.push('note appended');
       const suffix = extras.length > 0 ? ` (${extras.join(', ')})` : '';
-      return `Verified \`${result.slugs[0]}\` by ${verifier} — outcome: ${outcome}, verified_at stamped to ${stamp}${suffix}. Body untouched${result.noted ? ' except appended note' : ''}.`;
+      return `Verified \`${result.slugs[0]}\` by ${verifier} — outcome: ${outcome}, ${stamp}${suffix}. Body untouched${result.noted ? ' except appended note' : ''}.`;
     }
-    return `Verified ${result.verified} page(s) by ${verifier} — outcome: ${outcome}, verified_at stamped to ${stamp}: ${result.slugs.map((s) => `\`${s}\``).join(', ')}. Bodies untouched.`;
+    return `Verified ${result.verified} page(s) by ${verifier} — outcome: ${outcome}, ${stamp}: ${result.slugs.map((s) => `\`${s}\``).join(', ')}. Bodies untouched.`;
   } catch (e) {
     return `Error: ${(e as Error).message}`;
   } finally {

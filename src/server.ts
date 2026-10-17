@@ -892,7 +892,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       ),
       outcome: z.enum(['confirmed', 'stale', 'corrected']).optional().describe(
         'What this verification found. Defaults to "confirmed" (the claims still hold). ' +
-        '"stale" flags it as out of date without fixing it; "corrected" means you fixed it ' +
+        '"stale" flags it as out of date without fixing it — recorded in the audit trail but ' +
+        'verified_at is NOT advanced, so the page stays at the front of the stale-first queue; ' +
+        '"corrected" means you fixed it ' +
         '(pair with a knowledge_write, or the note field, describing the fix).',
       ),
       citation_checked: z.boolean().optional().describe(

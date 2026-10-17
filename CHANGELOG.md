@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `knowledge_verify` gains `outcome` ('confirmed' | 'stale' | 'corrected') and
   `citation_checked` parameters; `knowledge_history`'s listing now shows who
   performed each revision and surfaces the page's verification history. (t-675)
+  An outcome of 'stale' is a failed verification: it is recorded in
+  `verifications` but does NOT advance `pages.verified_at`, so a known-wrong
+  page keeps its place at the front of the stale-first queue; the result's
+  new `stamped` flag (and the tool output) says whether the stamp moved.
 
 ### Fixed
 

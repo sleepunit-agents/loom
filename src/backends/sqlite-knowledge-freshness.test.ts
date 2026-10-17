@@ -240,6 +240,85 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
       expect(v.citation_checked).toBe(true);
     });
 
+    // Mark's PR125 review: "stale" means "checked, and it's out of date" — a
+    // failed verification. It must leave the audit row WITHOUT renewing the
+    // successful-freshness stamp, or a known-wrong page sinks in the
+    // stale-first queue exactly when it most needs follow-up.
+    it('a stale outcome records the audit row but does not advance verified_at (single)', async () => {
+      await seed('known-wrong', { body: 'Outdated claim', verified_at: '2026-01-01T00:00:00.000Z' });
+      await seed('other', { verified_at: '2026-06-01T00:00:00.000Z' });
+
+      const result = await backend.verifyPages({
+        slug: 'known-wrong',
+        outcome: 'stale',
+        verifier: 'mark',
+        verified_at: '2026-10-17T14:00:00.000Z',
+      });
+
+      expect(result.stamped).toBe(false);
+      const page = await backend.getPage('known-wrong');
+      expect(page!.verified_at).toBe('2026-01-01T00:00:00.000Z');
+      expect(page!.body).toBe('Outdated claim');
+      const [v] = await backend.getVerifications('known-wrong');
+      expect(v.outcome).toBe('stale');
+      expect(v.verifier).toBe('mark');
+      expect(v.verified_at).toBe('2026-10-17T14:00:00.000Z');
+
+      const order = await backend.queryPages({ sortByVerified: true, stampAccess: false, excludeStatus: 'archived' });
+      expect(order.map((p) => p.slug)).toEqual(['known-wrong', 'other']);
+    });
+
+    it('a stale outcome does not advance verified_at for any page in a batch', async () => {
+      await seed('a', { verified_at: '2026-01-01T00:00:00.000Z' });
+      await seed('b', { verified_at: '2026-02-01T00:00:00.000Z' });
+
+      const result = await backend.verifyPages({
+        slugs: ['a', 'b'],
+        outcome: 'stale',
+        verifier: 'mark',
+        verified_at: '2026-10-17T14:00:00.000Z',
+      });
+
+      expect(result.stamped).toBe(false);
+      expect((await backend.getPage('a'))!.verified_at).toBe('2026-01-01T00:00:00.000Z');
+      expect((await backend.getPage('b'))!.verified_at).toBe('2026-02-01T00:00:00.000Z');
+      expect((await backend.getVerifications('a'))[0].outcome).toBe('stale');
+      expect((await backend.getVerifications('b'))[0].outcome).toBe('stale');
+    });
+
+    it('a stale outcome still appends its note (the why is worth keeping)', async () => {
+      await seed('page', { body: 'Outdated claim', verified_at: '2026-01-01T00:00:00.000Z' });
+
+      const result = await backend.verifyPages({
+        slug: 'page',
+        outcome: 'stale',
+        note: 'OS 2.0 changed this',
+        verified_at: '2026-10-17T14:00:00.000Z',
+      });
+
+      expect(result.noted).toBe(true);
+      const page = await backend.getPage('page');
+      expect(page!.body).toContain('OS 2.0 changed this');
+      expect(page!.verified_at).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    for (const outcome of ['confirmed', 'corrected'] as const) {
+      it(`a ${outcome} outcome advances verified_at (single and batch)`, async () => {
+        await seed('one', { verified_at: '2026-01-01T00:00:00.000Z' });
+        await seed('x', { verified_at: '2026-01-01T00:00:00.000Z' });
+        await seed('y', { verified_at: '2026-01-01T00:00:00.000Z' });
+
+        const single = await backend.verifyPages({ slug: 'one', outcome, verified_at: '2026-10-17T14:00:00.000Z' });
+        const batch = await backend.verifyPages({ slugs: ['x', 'y'], outcome, verified_at: '2026-10-17T14:00:00.000Z' });
+
+        expect(single.stamped).toBe(true);
+        expect(batch.stamped).toBe(true);
+        for (const slug of ['one', 'x', 'y']) {
+          expect((await backend.getPage(slug))!.verified_at).toBe('2026-10-17T14:00:00.000Z');
+        }
+      });
+    }
+
     it('records one verification per page in batch mode', async () => {
       await seed('a');
       await seed('b');

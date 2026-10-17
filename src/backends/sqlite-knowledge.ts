@@ -864,14 +864,20 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         'INSERT INTO verifications (page_id, verifier, verified_at, outcome, citation_checked) VALUES (?, ?, ?, ?, ?)',
       );
 
+      // verified_at means "last SUCCESSFUL verification" — it drives the
+      // stale-first queue and SLA checks. A 'stale' outcome is a failed
+      // verification: it goes in the audit trail but must not renew the
+      // stamp, or a known-wrong page drops to the back of the queue.
+      const stamped = outcome !== 'stale';
+
       let noted = false;
       const tx = db.transaction(() => {
         for (const row of rows) {
           const finalAnchor = input.freshness_anchor ?? row.freshness_anchor;
           const slaClass = deriveSlaClass(finalAnchor, row.domain);
           db.prepare(
-            'UPDATE pages SET verified_at = ?, freshness_anchor = COALESCE(?, freshness_anchor), sla_class = ? WHERE id = ?',
-          ).run(verifiedAt, input.freshness_anchor ?? null, slaClass, row.id);
+            'UPDATE pages SET verified_at = CASE WHEN ? THEN ? ELSE verified_at END, freshness_anchor = COALESCE(?, freshness_anchor), sla_class = ? WHERE id = ?',
+          ).run(stamped ? 1 : 0, verifiedAt, input.freshness_anchor ?? null, slaClass, row.id);
 
           if (input.note) {
             const dateLabel = verifiedAt.slice(0, 10);
@@ -885,8 +891,9 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             noted = true;
           }
 
-          // The attributed audit trail (t-675) — additive to the bare
-          // verified_at stamp above, which stays for freshness sort/SLA.
+          // The attributed audit trail (t-675) — recorded for every outcome,
+          // additive to the verified_at stamp above (which stays for
+          // freshness sort/SLA and only moves on success).
           insertVerification.run(row.id, input.verifier ?? null, verifiedAt, outcome, citationChecked);
         }
       });
@@ -896,6 +903,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         verified: rows.length,
         slugs: rows.map((r) => r.slug),
         verified_at: verifiedAt,
+        stamped,
         noted,
       });
     } catch (e) {

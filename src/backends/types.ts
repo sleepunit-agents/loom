@@ -616,7 +616,14 @@ export interface KnowledgeVerifyInput {
 export interface KnowledgeVerifyResult {
   verified: number;
   slugs: string[];
+  /** The verification time recorded in the audit trail. */
   verified_at: string;
+  /**
+   * True when pages.verified_at was advanced to `verified_at`. False for an
+   * outcome of 'stale' — a failed verification is audited but does not
+   * renew the page's successful-freshness stamp.
+   */
+  stamped: boolean;
   /** True when a note section was appended to the body. */
   noted: boolean;
 }
