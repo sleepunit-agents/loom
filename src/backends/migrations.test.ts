@@ -152,7 +152,7 @@ describe('pendingMigrations', () => {
       'add_archived', 'add_archive_note', 'idx_memories_archived', 'add_salience', 'add_proposals',
       'add_memory_revisions', 'add_sourcing', 'add_provenance', 'add_memory_supersessions',
       'add_confidence', 'add_evidence_count', 'add_observed_at',
-      'add_times_seen', 'add_uniq', 'rekey_uniq_unicode',
+      'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique',
     ]);
   });
 
@@ -255,11 +255,14 @@ describe('add_times_seen / add_uniq migrations (t-335)', () => {
     db.close();
   });
 
-  it('a uniq lookup index exists after migration (idx_memories_uniq_v2 after the rekey)', () => {
+  it('after all migrations, uniq is covered by one UNIQUE partial index (idx_memories_uniq_active)', () => {
     const db = openOldSchemaDb(join(tmpDir, 'idx.db'));
     runMigrations(db, { strict: true });
-    const idx = (db.pragma('index_list(memories)') as { name: string }[]).map((i) => i.name);
-    expect(idx).toContain('idx_memories_uniq_v2');
+    const idx = db.pragma('index_list(memories)') as { name: string; unique: number; partial: number }[];
+    const active = idx.find((i) => i.name === 'idx_memories_uniq_active');
+    expect(active).toMatchObject({ unique: 1, partial: 1 });
+    expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq');
+    expect(idx.map((i) => i.name)).not.toContain('idx_memories_uniq_v2');
     db.close();
   });
 });
@@ -333,6 +336,38 @@ describe('rekey_uniq_unicode migration (PR120 review)', () => {
       { ref: string; uniq: string | null }[];
     expect(rows[0].uniq).toBe(computeUniqKey({ category: 'project', title: '日本', content: '東京' }));
     expect(rows[1].uniq).toBe(computeUniqKey({ category: 'project', title: '中国', content: '北京' }));
+    expect(pendingMigrations(db)).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe('uniq_active_unique migration (PR120 review)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = mkdtempSync(join(tmpdir(), 'loom-mig-uq-')); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('applies over active rows that already share a key (written by the old race) and keeps the oldest as holder', () => {
+    const db = openOldSchemaDb(join(tmpDir, 'raced.db'));
+    for (const m of MIGRATIONS) {
+      if (m.id === 'uniq_active_unique') break;
+      if (m.pending(db)) m.run(db);
+    }
+    const now = new Date().toISOString();
+    const key = computeUniqKey({ category: 'project', title: 'Status', content: 'alpha' });
+    for (const [uuid, ref] of [['u1', 'project/s-1'], ['u2', 'project/s-2']]) {
+      db.prepare(
+        `INSERT INTO memories (uuid, ref, title, category, content, metadata, created, uniq)
+         VALUES (?, ?, 'Status', 'project', 'alpha', '{}', ?, ?)`,
+      ).run(uuid, ref, now, key);
+    }
+
+    const results = runMigrations(db, { strict: true });
+    expect(results.find((r) => r.id === 'uniq_active_unique')?.status).toBe('applied');
+
+    const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as
+      { ref: string; uniq: string | null }[];
+    expect(rows).toEqual([{ ref: 'project/s-1', uniq: key }, { ref: 'project/s-2', uniq: null }]);
     expect(pendingMigrations(db)).toHaveLength(0);
     db.close();
   });

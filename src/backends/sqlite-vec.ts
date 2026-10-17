@@ -157,30 +157,22 @@ export class SqliteVecBackend implements MemoryBackend {
     // normalizing) reheats the existing active row instead of inserting a
     // second one. Scoped to active rows only — an archived memory that gets
     // restated is a deliberate un-archive-by-rewrite, not a reheat.
-    const existing = this.db
-      .prepare(
-        `SELECT ref, title, category FROM memories
-         WHERE uniq = ? AND archived = 0
-         ORDER BY id ASC LIMIT 1`,
-      )
-      .get(uniqKey) as Pick<MemoryRow, 'ref' | 'title' | 'category'> | undefined;
-
-    if (existing) {
-      retryWrite(() =>
-        this.db
-          .prepare(
-            'UPDATE memories SET times_seen = times_seen + 1, updated = ? WHERE ref = ?',
-          )
-          .run(timestamp, existing.ref),
-      );
-      const slashIdx = existing.ref.indexOf('/');
-      const filename = slashIdx >= 0 ? existing.ref.slice(slashIdx + 1) : existing.ref;
-      return {
-        ref: existing.ref,
-        category: existing.category,
-        filename,
-        title: existing.title,
-      };
+    //
+    // This first lookup is only a fast path that skips the embedder for a
+    // restatement. It is NOT the guarantee: another writer (this process or
+    // another connection on the same file) can insert the same key while we
+    // await the embedder. The authoritative check is repeated inside the
+    // IMMEDIATE insert transaction below, and the partial UNIQUE index
+    // idx_memories_uniq_active makes a second active holder impossible
+    // (PR120 review).
+    const hit = this.db
+      .prepare('SELECT 1 FROM memories WHERE uniq = ? AND archived = 0')
+      .get(uniqKey);
+    if (hit) {
+      // Re-read under the write lock; if the holder was archived meanwhile,
+      // fall through to a fresh insert.
+      const reheated = retryWrite(() => this.reheatTx(uniqKey, timestamp).immediate());
+      if (reheated) return reheated;
     }
 
     const uuid = randomUUID();
@@ -209,7 +201,11 @@ export class SqliteVecBackend implements MemoryBackend {
       'INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)',
     );
 
-    const tx = this.db.transaction(() => {
+    const tx = this.db.transaction((): MemoryRef | undefined => {
+      // Recheck under the write lock: a concurrent writer may have stored
+      // this exact content while we were embedding.
+      const winner = this.reheatTx(uniqKey, timestamp)();
+      if (winner) return winner;
       const result = insertMem.run(
         uuid,
         ref,
@@ -230,8 +226,12 @@ export class SqliteVecBackend implements MemoryBackend {
         uniqKey,
       );
       insertVec.run(BigInt(result.lastInsertRowid), toVecBuffer(vector));
+      return undefined;
     });
-    retryWrite(() => tx());
+    // IMMEDIATE: take the write lock before the recheck, so no other
+    // connection can commit the same key between the check and the insert.
+    const reheated = retryWrite(() => tx.immediate());
+    if (reheated) return reheated;
 
     return {
       ref,
@@ -807,7 +807,7 @@ export class SqliteVecBackend implements MemoryBackend {
         insVec.run(BigInt(row.id), toVecBuffer(vectors[i]));
       });
     });
-    retryWrite(() => tx());
+    retryWrite(() => tx.immediate());
 
     return { restored: rows.map((r) => r.ref) };
   }
@@ -880,7 +880,7 @@ export class SqliteVecBackend implements MemoryBackend {
       );
       updateVec.run(toVecBuffer(vector), BigInt(mem.id));
     });
-    retryWrite(() => tx());
+    retryWrite(() => tx.immediate());
 
     return { ref: input.ref, revision_id: input.revision_id, restored: true, snapshot_id: snapshotId };
   }
@@ -1034,7 +1034,7 @@ export class SqliteVecBackend implements MemoryBackend {
       updateTarget.run(newContent, combinedTimesSeen, timestamp, newUniq, targetRow.id);
       if (vector) updateVec.run(toVecBuffer(vector), BigInt(targetRow.id));
     });
-    retryWrite(() => tx());
+    retryWrite(() => tx.immediate());
 
     return {
       target_ref: input.target_ref,
@@ -1053,6 +1053,31 @@ export class SqliteVecBackend implements MemoryBackend {
   }
 
   // ── Internals ──
+
+  /**
+   * A transaction that reheats the active row holding `uniqKey` (times_seen
+   * + 1, updated = timestamp) and returns its ref, or returns undefined if no
+   * active row holds it. Run it with .immediate() on its own, or call it
+   * inside another transaction (better-sqlite3 nests it as a savepoint).
+   */
+  private reheatTx(uniqKey: string, timestamp: string) {
+    return this.db.transaction((): MemoryRef | undefined => {
+      const existing = this.db
+        .prepare('SELECT id, ref, title, category FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
+        .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'> | undefined;
+      if (!existing) return undefined;
+      this.db
+        .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ? WHERE id = ?')
+        .run(timestamp, existing.id);
+      const slashIdx = existing.ref.indexOf('/');
+      return {
+        ref: existing.ref,
+        category: existing.category,
+        filename: slashIdx >= 0 ? existing.ref.slice(slashIdx + 1) : existing.ref,
+        title: existing.title,
+      };
+    });
+  }
 
   /**
    * The dedup key a row should hold for the given body, or NULL when another

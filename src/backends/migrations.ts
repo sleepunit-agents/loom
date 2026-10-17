@@ -254,11 +254,34 @@ export const MIGRATIONS: readonly Migration[] = [
       'one key (PR120 review)',
     // Marker: the index this migration creates. Databases that ran add_uniq
     // under the old normalizer have only idx_memories_uniq.
-    pending: (db) => !hasIndex(db, 'memories', 'idx_memories_uniq_v2'),
+    // uniq_active_unique (below) re-keys too and replaces this index.
+    pending: (db) =>
+      !hasIndex(db, 'memories', 'idx_memories_uniq_v2') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active'),
     run: (db) => {
       rebuildUniqKeys(db);
       db.prepare('CREATE INDEX IF NOT EXISTS idx_memories_uniq_v2 ON memories(uniq)').run();
       db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+    },
+  },
+  {
+    id: 'uniq_active_unique',
+    description:
+      'Make uniq UNIQUE among active rows (partial index), so two concurrent ' +
+      'remember() calls of the same content cannot both insert (PR120 review)',
+    pending: (db) => !hasIndex(db, 'memories', 'idx_memories_uniq_active'),
+    run: (db) => {
+      db.transaction(() => {
+        // Re-key first: any active duplicates written before this index
+        // existed (the race it closes, or stale keys from before update()
+        // refreshed them) would otherwise make CREATE UNIQUE INDEX fail.
+        rebuildUniqKeys(db);
+        db.prepare(
+          'CREATE UNIQUE INDEX idx_memories_uniq_active ON memories(uniq) WHERE archived = 0',
+        ).run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+      }).immediate();
     },
   },
 ];
