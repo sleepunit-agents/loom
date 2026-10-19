@@ -26,14 +26,23 @@ const backendModules = readdirSync(join(repoRoot, 'src', 'backends'))
 const backendSources = backendModules.map((f) => read('src', 'backends', f)).join('\n');
 const tables = [...backendSources.matchAll(/CREATE (?:VIRTUAL )?TABLE (?:IF NOT EXISTS )?(\w+)/g)].map((m) => m[1]);
 
+// A name only counts as standalone: `recall` inside `knowledge_recall`, or
+// `memory.ts` inside `sqlite-memory.ts`, must not satisfy it.
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const standalone = (name: string) => new RegExp(`(?<![\\w-])${escape(name)}(?![\\w-])`, 'g');
+const names = (doc: string, name: string) => standalone(name).test(doc);
+
+/** `doc` with every standalone occurrence of `name` removed, longer identifiers kept. */
+const erase = (doc: string, name: string) => doc.replace(standalone(name), '');
+
 /** Every moving part `doc` fails to name, labelled by kind. */
 function missingFrom(doc: string): string[] {
   return [
-    ...tools.filter((t) => !doc.includes(t)).map((t) => `tool "${t}"`),
-    ...widgetTools.filter((t) => !doc.includes(t)).map((t) => `widget tool "${t}"`),
+    ...tools.filter((t) => !names(doc, t)).map((t) => `tool "${t}"`),
+    ...widgetTools.filter((t) => !names(doc, t)).map((t) => `widget tool "${t}"`),
     ...SUBCOMMANDS.filter((c) => !doc.includes(`\`${c}\``)).map((c) => `subcommand "${c}"`),
-    ...backendModules.filter((f) => !doc.includes(f)).map((f) => `src/backends/${f}`),
-    ...[...new Set(tables)].filter((t) => !doc.includes(t)).map((t) => `table "${t}"`),
+    ...backendModules.filter((f) => !names(doc, f)).map((f) => `src/backends/${f}`),
+    ...[...new Set(tables)].filter((t) => !names(doc, t)).map((t) => `table "${t}"`),
   ];
 }
 
@@ -59,6 +68,14 @@ describe('docs/architecture.md covers every moving part', () => {
     ['retry.ts', 'src/backends/retry.ts'],
     ['memory_deletions', 'table "memory_deletions"'],
   ])('fails when %s is erased from the map', (name, expected) => {
-    expect(missingFrom(map.replaceAll(name, ''))).toContain(expected);
+    expect(missingFrom(erase(map, name))).toContain(expected);
+  });
+
+  it('does not let a longer identifier stand in for a shorter one', () => {
+    const withoutRecall = erase(map, 'recall');
+    expect(withoutRecall).toContain('knowledge_recall');
+    const missing = missingFrom(withoutRecall);
+    expect(missing).toContain('tool "recall"');
+    expect(missing).not.toContain('tool "knowledge_recall"');
   });
 });
