@@ -4,7 +4,7 @@ Every moving part of loom and where they touch, drawn from the source.
 The diagrams are Mermaid, so GitHub renders them in place.
 
 This map is kept honest by `src/architecture.contract.test.ts`. Every
-registered MCP tool, every CLI subcommand, every `src/backends/` module
+registered MCP tool (including the MCP-App widget tools), every CLI subcommand, every `src/backends/` module
 and every SQLite table must be named on this page, or CI fails. When you
 add one of those, draw it here in the same PR.
 
@@ -22,8 +22,8 @@ flowchart LR
     R{"first non-global token<br/>is a subcommand?"}
     STDIO["stdio MCP<br/>default"]
     CLI["CLI<br/>src/cli/*"]
-    HTTPF["loom serve --http<br/>--scope full · :8787<br/>one bearer token"]
-    HTTPK["loom serve --http<br/>--scope knowledge · :8788<br/>bearer names the identity"]
+    HTTPF["loom serve --http<br/>--scope full · :8787<br/>bearer token optional"]
+    HTTPK["loom serve --http<br/>--scope knowledge · :8788<br/>bearer tokens required,<br/>each names the identity"]
     G["transport/guards.ts<br/>safe bind · bearer · payload cap"]
   end
 
@@ -36,7 +36,7 @@ flowchart LR
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history"]
     end
-    APPS["MCP-App widgets<br/>env-gated LOOM_MCP_APP_HELLO<br/>widgets/*.tsx → dist/widgets"]
+    APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end
 
   subgraph engine["Engine: src/backends"]
@@ -138,8 +138,9 @@ flowchart LR
   INS --> RC["recall<br/>embed query → cosine → mmr.ts<br/>stamps last_accessed"]
   RC --> LOG["recall-log.ts → telemetry/recall.jsonl"]
   INS --> UPD["update → memory_revisions snapshot"]
-  INS --> ARC["memory_archive / memory_merge<br/>tombstone + memory_supersessions"]
-  INS --> DEL["forget / memory_prune<br/>memory_deletions"]
+  INS --> ARC["memory_archive · memory_merge<br/>tombstone, embedding dropped<br/>merge adds memory_supersessions"]
+  INS --> PRN["memory_prune<br/>archives expired rows, TTL elapsed tombstone<br/>stale rows only reported"]
+  INS --> DEL["forget · memory_merge hard_delete_losers<br/>journal to memory_deletions, then delete"]
   INS --> SALN["salience.ts<br/>decays by category half-life,<br/>reheats on access"]
 ```
 
