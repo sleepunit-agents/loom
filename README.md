@@ -16,6 +16,10 @@ which model or client it runs in.
 
 > When the harness changes, the agent persists.
 
+**See it whole:** [`docs/architecture.md`](docs/architecture.md) maps every
+moving part (entry points, tool wings, backends, stores) and how they
+touch, as diagrams GitHub renders in place.
+
 ## Demo
 
 [![asciicast](https://asciinema.org/a/5bUMXCLmCRc8lg51.svg)](https://asciinema.org/a/5bUMXCLmCRc8lg51)
@@ -662,6 +666,9 @@ and `docs/archive/plans/` — implementation history, frozen after merge.
 
 ## Docs
 
+- [`docs/architecture.md`](docs/architecture.md) — loom at a glance:
+  every moving part and how they touch. A contract test fails CI when a
+  new tool, subcommand, backend module or table isn't on it.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — install
   failures, MCP tools not appearing, fastembed download issues, and
   what each `loom doctor` field means.
