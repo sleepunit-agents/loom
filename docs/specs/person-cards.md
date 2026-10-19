@@ -47,7 +47,7 @@ That is the design rule, and everything below follows from it:
 3. **A card is not a knowledge page.** Knowledge is "true independent of the
    human"; a person's card is contextual to the agent's work with them. The
    existing rule (no knowledge pages for people) stands. Today it is a
-   convention only. Criterion 7 adds a heuristic report for it, not
+   convention only. Criterion 13 adds a heuristic report for it, not
    enforcement (see the trade-off there). A card is a third kind of record.
 4. **A card is not the memories.** The tagged memories stay where they are,
    remain the evidence, and remain the thing `recall` searches. The card
@@ -131,15 +131,24 @@ for the caller to compute; loom does not store them.
   become empty, and `name` is still required.
 - Writing a slug that does not exist creates the card, and `name` is
   required.
-- A write whose merged result equals the current card is a no-op. It is not
-  stored, it does not snapshot, and it returns `unchanged: true`.
+- A write whose merged result equals the current card (compared as
+  canonical JSON with sorted keys) and that does not pass `summary` is a
+  no-op. It is not stored, it does not snapshot, and it returns
+  `unchanged: true`. Validation runs before the comparison, so an invalid
+  request is rejected even when it would change nothing. Removing a field that
+  is not there (`null`) is allowed and changes nothing.
 
 ### Timestamps
 
 - `updated`: set on every stored write, verify, archive, restore and revision
   restore.
-- `synthesized_at`: set **only** when a write passes `summary` (including on
-  create). Nothing else moves it. A card that has never had a summary has
+- `synthesized_at`: set when a write passes `summary` (including on create),
+  **even if the summary text is unchanged**. Passing `summary` is how the
+  agent says "I re-read the evidence and this is still right". So a write that
+  passes `summary` is never a no-op: it stores, snapshots, and moves
+  `synthesized_at`. No other write moves it. A revision restore sets it to
+  the restored snapshot's value, because an old summary is exactly as fresh as
+  when it was written. A card that has never had a summary has
   `synthesized_at: null`.
 
 ### Staleness on `where`
@@ -262,16 +271,24 @@ something then *enforces* has granted itself authority. So:
 - It adds a `# In the room` block **after the tape and before Top of Mind**.
 - Slugs are deduplicated in first-seen order. An empty list or no `people`
   gives no block, so existing callers see no change.
-- **Room budget:** at most 4 cards and 6,000 chars of card text. Cards are
-  added in list order until the next one would go over. The slugs left out are
-  named on one closing line: `_(cards omitted for budget: a, b)_`.
+- **Room budget:** the whole block, placeholders included, is at most 6,500
+  chars, and `people` is truncated to its first 8 distinct slugs before
+  anything else happens. Slugs are processed in list order. Each rendered card
+  uses one of 4 card slots and its length counts against 6,000 chars.
+  Placeholder lines use no card slot, but their length counts. The first card
+  that would go over a limit is skipped and processing continues, so a smaller
+  card later in the list can still fit. Skipped and truncated slugs are named
+  on one closing line, `_(cards omitted for budget: a, b)_`, which holds at
+  most 8 slugs at ≤ 64 chars each.
 - Each slug gets one of: the rendered card, `_(no card for <slug>)_`,
   `_(card for <slug> is archived)_`, or `_(invalid slug: <slug>)_` for a slug
   that fails path-segment validation. None of these fail identity.
-- **Best-effort, like the tape:** if the store cannot be opened, the people
-  table is missing (not migrated yet), or a row's JSON does not parse, the
-  affected cards (or the whole block) are left out. The error is logged and
-  passed to `recordFailure`. Identity never fails because of cards.
+- **Best-effort, like the tape:** if the store cannot be opened or the
+  people table is missing (not migrated yet), the whole block is left out. If
+  one row's JSON does not parse, only that slug is affected: it renders
+  `_(card for <slug> is unreadable)_` and the other cards still render. Each
+  failure is logged and passed to `recordFailure`. Identity never fails because
+  of cards.
 
 **Synthesis**
 - The agent writes `summary`, normally in a consolidation pass. loom does not
@@ -290,8 +307,9 @@ identity and the CLI open the store through the same resolver. `people`
 columns: `slug` (PK), `name`, `card_json`, `archived_at`, `archived_by`,
 `archive_reason`, `updated`, `synthesized_at`.
 
-Cards are per context directory, the same as memory. An agent's cards are its
-own.
+Cards belong to **the database**, the same as memories. Two context
+directories that point `LOOM_SQLITE_DB_PATH` at one file share their memories
+today, and they share cards the same way. This doc does not change that.
 
 ## The harness side (Art's bridge: not loom's code, recorded so the seam is clear)
 
@@ -341,10 +359,13 @@ own.
 9. **Revisions.** `person_revision_restore` with another slug's revision id
    is rejected. A successful restore adds a `revision_restore` snapshot. The
    number of revisions kept is capped at 10.
-10. **Atomicity.** Two `person_write` calls on separate connections to the
-    same db file, setting different `how` fields, both survive. (This is
-    serialized through `BEGIN IMMEDIATE`, and the test interleaves them through
-    `busy_timeout`.)
+10. **Atomicity.** The test opens a second connection, takes
+    `BEGIN IMMEDIATE`, and then calls `person_write` on the first. The call
+    waits up to the store's `busy_timeout` and then fails with a clear "store
+    busy" error. Nothing is written and no revision is added. After the lock
+    is released, writes of two different `how` fields from both connections
+    both survive. (This follows the knowledge-wing race test. The caller sees
+    either success or a busy error, never a lost field.)
 11. **Path safety.** Slugs validate with `pathSegmentError` and the slug
     regex at every surface.
 12. **One writer, stated.** The dossier text says worker bodies must not
@@ -354,13 +375,20 @@ own.
     slug or title contains a person card's slug or exact `name` as a possible
     person-page misfile. *Trade-off, stated:* this is a report, not
     enforcement. A page about someone who has no card, or a page that names
-    them some other way, still passes. It reads the cards of the same context
-    directory. If the memory store cannot be opened it skips the check and
-    says so. It inherits the existing 1,000-page scan limit.
+    them some other way, still passes. Matching is case-insensitive on whole
+    hyphen- or space-delimited words, uses only active cards, and skips pages
+    that are already exempt from the misfile audit (`ours/` with internal
+    sourcing). **Only the full loom server and CLI run this check.** The
+    knowledge-only server (`src/transport/knowledge-server.ts`) serves other
+    identities and never opens the memory database. There, `knowledge_maintain`
+    leaves the check out and says so, so cards never leak through a shared
+    surface. It inherits the existing 1,000-page scan limit.
 
 ## First slice
 
-Ship criteria 1–8, 11 and 12, the CLI read, and the identity `people` param.
+Ship **all of criteria 1–12**, the CLI read, and the identity `people` param.
+Revisions and atomicity are behaviour every write depends on, so they are not
+deferred. Only criterion 13 (the misfile heuristic) may land later.
 
 The ops acceptance below is outside loom's tests: it is checked in Art's
 bridge, not in this repo. Seed one card by hand, `patrick-kells`, with
@@ -372,8 +400,18 @@ Eastern time without being told.
 
 Next: cards for the other tier-2 people, moving the `why` text out of
 `people.json`, and a consolidation-lane step that refreshes summaries with a
-high `memories_since_synthesis`. Criteria 9, 10 and 13 land then, if they did
-not land in the first slice.
+`memories_since_synthesis` ≥ 5. Criterion 13 lands then if it did not land in
+the first slice.
+
+## Left to the implementation PR, deliberately
+
+Some details are pinned by the implementation's vitest suite rather than
+written out here: escaping inside rendered values (newlines become spaces,
+Markdown is passed through as-is), how multiple `may` entries are separated
+(` · `), the exact slug regex (`^[a-z0-9]+(-[a-z0-9]+)*$`), the text format of
+`loom person list`, and the tombstone column names. Each of those is a choice
+a reviewer can check in the implementation PR's diff and tests. None of them
+changes what the agent or a harness sees in a way this doc relies on.
 
 ## Decided, not open
 
