@@ -132,7 +132,15 @@ for the caller to compute; loom does not store them.
   `summary` and `name` replace. `may`, when passed, replaces the whole array.
   Sections not passed are untouched.
 - `merge: false`: the card becomes exactly what was passed. Omitted sections
-  become empty, and `name` is still required.
+  become empty, and `name` is still required. Omitting `summary` here removes
+  the summary (see Timestamps).
+- **Where `null` is allowed.** Only as the value of a named field directly
+  under `where` or `how`, in a merge write: that is the delete. Everywhere else
+  it is rejected with an error naming the path: any `null` under
+  `merge: false`, `name`/`summary`/`where`/`how`/`may` themselves as `null`,
+  `null` inside a `where` envelope (`value`, `verified_at`, …), inside an
+  array value, or as a `may` entry or its `text`/`source`. To clear a whole
+  section, use `merge: false`.
 - Writing a slug that does not exist creates the card, and `name` is
   required.
 - A write whose merged result equals the current card (compared as
@@ -152,8 +160,12 @@ for the caller to compute; loom does not store them.
   passes `summary` is never a no-op: it stores, snapshots, and moves
   `synthesized_at`. No other write moves it. A revision restore sets it to
   the restored snapshot's value, because an old summary is exactly as fresh as
-  when it was written. A card that has never had a summary has
-  `synthesized_at: null`.
+  when it was written. A card with no summary has `synthesized_at: null`.
+- A `merge: false` write that omits `summary` removes the summary **and resets
+  `synthesized_at` to `null`**. Keeping the old timestamp would date a summary
+  that no longer exists: `memories_since_synthesis` would count only memories
+  newer than it, could read zero, and the consolidation step would never
+  resynthesize the card.
 
 ### Staleness on `where`
 
@@ -349,7 +361,12 @@ today, and they share cards the same way. This doc does not change that.
    and the other `how` fields unchanged. `how.tz: null` removes `tz`.
    `merge: false` with only `name` empties every section. Repeating an
    identical write that **omits `summary`** returns `unchanged: true` and adds
-   no revision.
+   no revision. `null` is rejected, with the path named, for `summary: null`,
+   `how: null`, `where.x.verified_at: null`, a `null` inside an array value,
+   and any `null` under `merge: false`.
+   `merge: false` without `summary` on a card that had one leaves `summary`
+   empty and `synthesized_at: null`, and `person_list` counts every tagged
+   memory in `memories_since_synthesis`.
 3. **Staleness.** With a fixed clock: a `where` field verified
    `14d + 1s` ago (default threshold) renders `[STALE 14d]`. One verified
    exactly 14d ago renders `[ok]`. One with no `verified_at` renders
@@ -376,7 +393,10 @@ today, and they share cards the same way. This doc does not change that.
    is missing from `person_list` by default, and rejects write, verify and
    revision restore. `person_restore` brings it back with its fields intact.
 9. **Revisions.** `person_revision_restore` with another slug's revision id
-   is rejected. A successful restore adds a `revision_restore` snapshot. The
+   is rejected. A successful restore adds a `revision_restore` snapshot.
+   Restoring the revision from before a summary-removing `merge: false` write
+   brings back both the summary and that snapshot's `synthesized_at`;
+   restoring the one after it gives no summary and `synthesized_at: null`. The
    number of revisions kept is capped at 10.
 10. **Atomicity.** This mirrors `src/backends/sqlite-knowledge-write-race.test.ts`.
     A test hook fires right after `person_write` reads the existing row, and
