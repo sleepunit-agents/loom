@@ -46,7 +46,11 @@ That is the design rule, and everything below follows from it:
    boot.
 3. **A card is not a knowledge page.** Knowledge is "true independent of the
    human"; a person's card is contextual to the agent's work with them. The
-   existing rule (no knowledge pages for people) stands. Today it is a
+   rule Art has followed until now (no knowledge pages for people, in its
+   bridge's `people.json` header) stands, and this doc makes it loom's policy
+   for **contextual** person records. That is narrower than it sounds: loom's
+   CONTEXT.md line ("knowledge is about the world") still allows a page about
+   a public figure's published work. Today it is a
    convention only. Criterion 13 adds a heuristic report for it, not
    enforcement (see the trade-off there). A card is a third kind of record.
 4. **A card is not the memories.** The tagged memories stay where they are,
@@ -207,8 +211,10 @@ timestamps) before it applies. No-ops insert nothing. The newest 10 are kept
 per slug, and older ones are pruned in the same transaction.
 
 `person_revision_restore({slug, revision_id})` rejects a revision belonging to
-another slug. It validates the snapshot against the current schema and rejects
-it if that fails. It snapshots the card it displaces (op `revision_restore`)
+another slug. It validates the snapshot's card **structurally** (keys, types,
+lengths and the worst-case render cap) and rejects it if that fails. Time
+checks (future `verified_at`) are not re-applied, because the snapshot was
+valid when it was written. It snapshots the card it displaces (op `revision_restore`)
 and does not change archive state.
 
 ## Atomicity
@@ -245,14 +251,21 @@ something then *enforces* has granted itself authority. So:
   replaced only if one is passed. Values are not changed. It is
   all-or-nothing: an empty list, an unknown field or a missing card rejects
   the whole call. It deliberately has no outcomes and no audit table, unlike
-  `knowledge_verify`. A failed check is recorded by not stamping. It snapshots
-  (op `verify`).
-- `person_archive` / `person_restore` work as in Archive.
+  `knowledge_verify`. A failed check is recorded by not stamping. `verified_at`
+  and `source` get the same validation as on write. A verify that changes
+  nothing is a no-op, like any other. Otherwise it snapshots (op `verify`).
+- `person_archive({slug, reason})` / `person_restore({slug})` work as in
+  Archive. `reason` is required (≤ 200 chars). The actor is the calling
+  agent's name, which is the same value `knowledge_write` uses for `author`.
+  Archiving an archived card, or restoring an active one, is a no-op and
+  returns `unchanged: true`. Either call on a missing card is rejected.
 
 **Read**
-- `person({slug, include_archived?})` returns `{rendered, card, archived,
-  updated, synthesized_at}`. A missing card returns `{found: false}`, which is
-  not an error.
+- `person({slug, include_archived?})` returns `{found: true, rendered, card,
+  archived, updated, synthesized_at}`. A missing card returns `{found: false}`,
+  which is not an error. An archived card read without `include_archived`
+  returns `{found: true, archived: true}` and nothing else, and the CLI exits
+  4 for it.
 - `person_list({include_archived?})` returns, per card: slug, name, archived,
   updated, synthesized_at, stale and unverified field counts, and
   `memories_since_synthesis`. That last one is the count of memories with
@@ -277,15 +290,20 @@ something then *enforces* has granted itself authority. So:
   uses one of 4 card slots and its length counts against 6,000 chars.
   Placeholder lines use no card slot, but their length counts. The first card
   that would go over a limit is skipped and processing continues, so a smaller
-  card later in the list can still fit. Skipped and truncated slugs are named
-  on one closing line, `_(cards omitted for budget: a, b)_`, which holds at
-  most 8 slugs at ≤ 64 chars each.
+  card later in the list can still fit. Any slug longer than 64 chars is
+  replaced by `_(invalid slug)_` and never echoed. 400 chars of the 6,500 are
+  reserved for the closing line: `_(N cards omitted for budget: a, b, …)_`,
+  which lists the omitted slugs (skipped ones first, then truncated ones)
+  until the next would overflow, and then ends in `…`. The count N is always
+  the full number omitted.
 - Each slug gets one of: the rendered card, `_(no card for <slug>)_`,
-  `_(card for <slug> is archived)_`, or `_(invalid slug: <slug>)_` for a slug
-  that fails path-segment validation. None of these fail identity.
+  `_(card for <slug> is archived)_`, `_(card for <slug> is unreadable)_`, or
+  `_(invalid slug: <slug>)_` for a slug that fails `pathSegmentError` **or**
+  the slug regex (`Patrick` is invalid). None of these fail identity.
 - **Best-effort, like the tape:** if the store cannot be opened or the
   people table is missing (not migrated yet), the whole block is left out. If
-  one row's JSON does not parse, only that slug is affected: it renders
+  one row's JSON does not parse, fails the stored-card schema, or throws
+  while rendering, only that slug is affected: it renders
   `_(card for <slug> is unreadable)_` and the other cards still render. Each
   failure is logged and passed to `recordFailure`. Identity never fails because
   of cards.
@@ -329,8 +347,9 @@ today, and they share cards the same way. This doc does not change that.
    `"terse"`.
 2. **Merge.** A write passing only `how.tz` leaves `summary`, `where`, `may`
    and the other `how` fields unchanged. `how.tz: null` removes `tz`.
-   `merge: false` with only `name` empties every section. A repeated
-   identical write returns `unchanged: true` and adds no revision.
+   `merge: false` with only `name` empties every section. Repeating an
+   identical write that **omits `summary`** returns `unchanged: true` and adds
+   no revision.
 3. **Staleness.** With a fixed clock: a `where` field verified
    `14d + 1s` ago (default threshold) renders `[STALE 14d]`. One verified
    exactly 14d ago renders `[ok]`. One with no `verified_at` renders
@@ -359,13 +378,14 @@ today, and they share cards the same way. This doc does not change that.
 9. **Revisions.** `person_revision_restore` with another slug's revision id
    is rejected. A successful restore adds a `revision_restore` snapshot. The
    number of revisions kept is capped at 10.
-10. **Atomicity.** The test opens a second connection, takes
-    `BEGIN IMMEDIATE`, and then calls `person_write` on the first. The call
-    waits up to the store's `busy_timeout` and then fails with a clear "store
-    busy" error. Nothing is written and no revision is added. After the lock
-    is released, writes of two different `how` fields from both connections
-    both survive. (This follows the knowledge-wing race test. The caller sees
-    either success or a busy error, never a lost field.)
+10. **Atomicity.** This mirrors `src/backends/sqlite-knowledge-write-race.test.ts`.
+    A test hook fires right after `person_write` reads the existing row, and
+    in it a second connection tries to write a different `how` field. Pass
+    condition: the competing write cannot land inside that window (it gets
+    `SQLITE_BUSY`, then retries after the first commits), and the final card
+    holds **both** fields. An implementation that reads outside the
+    transaction fails, because the hook's write lands and is then
+    overwritten.
 11. **Path safety.** Slugs validate with `pathSegmentError` and the slug
     regex at every surface.
 12. **One writer, stated.** The dossier text says worker bodies must not
