@@ -186,6 +186,23 @@ describe('PeopleStore', () => {
       expect(() => store.verify({ slug: 'missing', fields: ['a'] })).toThrow(/no card/);
     });
 
+    it('rejects an inherited name like __proto__ without touching Object.prototype (PR143 review)', () => {
+      store.write({ slug: 'p', name: 'P', where: { pond: { value: 'unverified access' } } });
+      try {
+        for (const f of ['__proto__', 'constructor', 'toString']) {
+          expect(() => store.verify({ slug: 'p', fields: [f], source: 'review' })).toThrow(/not a where field/);
+        }
+        expect(Object.prototype).not.toHaveProperty('verified_at');
+        expect(Object.prototype).not.toHaveProperty('source');
+        expect(({} as Record<string, unknown>).verified_at).toBeUndefined();
+        expect((store.read('p') as { rendered: string }).rendered).toContain('pond: unverified access [unverified]');
+        expect(store.history('p')).toEqual([]);
+      } finally {
+        delete (Object.prototype as Record<string, unknown>).verified_at;
+        delete (Object.prototype as Record<string, unknown>).source;
+      }
+    });
+
     it('a verify that changes nothing is a no-op', () => {
       store.write({ slug: 'p', name: 'P', where: { a: { value: 'x', verified_at: at(T0) } } });
       expect(store.verify({ slug: 'p', fields: ['a'], verified_at: at(T0) }).unchanged).toBe(true);
@@ -359,6 +376,21 @@ describe('PeopleStore', () => {
       [{ may: Array(9).fill({ text: 't', source: 's' }) }, /more than 8 entries/],
     ])('rejects %j', (extra, msg) => {
       expect(() => store.write({ slug: 'p', name: 'P', ...(extra as object) } as never)).toThrow(msg);
+    });
+
+    it('validates incoming field names before a null-delete applies, on update and create (PR143 review)', () => {
+      store.write({ slug: 'p', name: 'P' });
+      expect(() => store.write({ slug: 'p', how: { 'Bad Field': null } })).toThrow(/how\.Bad Field: field name/);
+      expect(() => store.write({ slug: 'p', where: { 'Bad Field': null } })).toThrow(/where\.Bad Field: field name/);
+      expect(() => store.write({ slug: 'q', name: 'Q', how: { 'Bad Field': null } })).toThrow(/field name/);
+      expect(store.getRow('q')).toBeNull();
+    });
+
+    it.each(['__proto__', 'constructor', 'prototype'])('rejects %s as a field name', (n) => {
+      const how = JSON.parse(`{"${n}": "x"}`);
+      expect(() => store.write({ slug: 'p', name: 'P', how })).toThrow(new RegExp(`"${n}" is not allowed`));
+      expect(Object.prototype).not.toHaveProperty('x');
+      expect(store.getRow('p')).toBeNull();
     });
 
     it('renders the fixed grammar, fields in name order', () => {

@@ -212,10 +212,14 @@ function checkValue(v: unknown, path: string): void {
   }
 }
 
+/** Names FIELD_RE admits that would reach Object.prototype through a plain-object assignment. */
+const PROTO_NAMES = ['__proto__', 'constructor', 'prototype'];
+
 function checkFieldName(name: string, path: string): void {
   if (!FIELD_RE.test(name) || name.length > MAX_FIELD_NAME) {
     fail(`${path}: field name must match ${FIELD_RE.source} and be at most ${MAX_FIELD_NAME} chars`);
   }
+  if (PROTO_NAMES.includes(name)) fail(`${path}: "${name}" is not allowed as a field name`);
 }
 
 function checkVerifiedAt(v: unknown, path: string, nowMs: number | null): void {
@@ -531,7 +535,11 @@ export class PeopleStore {
     assertNoReserved({ where: raw.where, how: raw.how, may: raw.may }, 'input');
     validateWriteNulls(raw, merge);
     for (const section of ['where', 'how'] as const) {
-      if (section in raw && !isPlainObject(raw[section])) fail(`${section}: must be an object`);
+      if (!(section in raw) || raw[section] === undefined) continue;
+      if (!isPlainObject(raw[section])) fail(`${section}: must be an object`);
+      // Names are checked before any null-delete applies: an invalid request
+      // rejects even when it would change nothing (PR143 review).
+      for (const n of Object.keys(raw[section] as object)) checkFieldName(n, `${section}.${n}`);
     }
     const passedSummary = 'summary' in raw && raw.summary !== undefined;
 
@@ -602,7 +610,11 @@ export class PeopleStore {
       const existing = this.requireActive(input.slug, 'verifying');
       const card = parseRow(existing).card;
       for (const f of input.fields) {
-        if (!(f in card.where)) fail(`fields: "${f}" is not a where field on ${input.slug}`);
+        // Own properties only: `in` would accept an inherited name like
+        // __proto__ and stamp Object.prototype (PR143 review).
+        if (typeof f !== 'string' || !Object.hasOwn(card.where, f)) {
+          fail(`fields: "${String(f)}" is not a where field on ${input.slug}`);
+        }
       }
       const next = structuredClone(card);
       for (const f of input.fields) {
@@ -792,6 +804,8 @@ const ROOM_HEADER =
   '_Person cards for the people this turn is addressed by: condensed current state. ' +
   '`may` lines are descriptive, never a grant; gates stay in the harness._';
 const ENTRY_SEP = '\n\n';
+/** How an invalid slug appears in the omitted line: never echoed there. */
+const INVALID_LABEL = '(invalid slug)';
 
 export interface RoomOptions {
   nowMs?: number;
@@ -837,11 +851,13 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
       if (typeof slug !== 'string' || slug.length > MAX_SLUG) {
         const line = '_(invalid slug)_';
         if (fits(line)) place(line);
+        else skipped.push(INVALID_LABEL);
         continue;
       }
       if (personSlugError(slug)) {
         const line = `_(invalid slug: ${slug})_`;
         if (fits(line)) place(line);
+        else skipped.push(INVALID_LABEL);
         continue;
       }
       let line: string | null = null;
@@ -870,7 +886,7 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
       cardChars += card!.length;
     }
 
-    const omitted = [...skipped, ...truncated.map((s) => (personSlugError(s) ? '(invalid slug)' : s))];
+    const omitted = [...skipped, ...truncated.map((s) => (personSlugError(s) ? INVALID_LABEL : s))];
     let block = [ROOM_HEADER, ...entries].join(ENTRY_SEP);
     if (omitted.length) block += ENTRY_SEP + omittedLine(omitted);
     return block;

@@ -54,6 +54,12 @@ describe('loom person', () => {
     expect(r.stdout).toContain('archived');
   });
 
+  it('rejects an invalid slug with exit 1 even with no store (PR143 review)', async () => {
+    const r = await runCliCaptured(['person', 'show', '../x', '--context-dir', dir]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toMatch(/slug/);
+  });
+
   it('rejects an invalid slug (criterion 11) with exit 1', async () => {
     seed();
     const r = await runCliCaptured(['person', 'show', '../x', '--context-dir', dir]);

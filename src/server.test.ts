@@ -353,6 +353,25 @@ describe('createLoomServer — person cards over MCP', () => {
       expect(await text('identity', { people: ['patrick-kells'] })).toContain('_(card for patrick-kells is archived)_');
       await text('person_restore', { slug: 'patrick-kells' });
 
+      // Unknown keys reject at the MCP boundary instead of being stripped (PR143 review).
+      const before = await text('person', { slug: 'patrick-kells' });
+      const histBefore = await text('person_history', { slug: 'patrick-kells' });
+      const strays = [
+        { slug: 'patrick-kells', name: 'P', live: { tasks: ['x'] } },
+        { slug: 'patrick-kells', name: 'Patrick Kells', merge: false, hows: { tz: 'x' } },
+        { slug: 'new-person', name: 'N', live: {} },
+      ];
+      for (const args of strays) {
+        const r = await client.callTool({ name: 'person_write', arguments: args });
+        const msg = (r.content as { text: string }[])[0].text;
+        expect(r.isError || msg.startsWith('Error'), msg).toBeTruthy();
+        expect(msg).toMatch(/live|hows|[Uu]nrecognized/);
+      }
+      expect(await text('person', { slug: 'patrick-kells' })).toBe(before);
+      expect(await text('person_history', { slug: 'patrick-kells' })).toBe(histBefore);
+      expect(JSON.parse(await text('person', { slug: 'new-person' }))).toEqual({ found: false });
+      expect(await text('person_history', { slug: '../x' })).toMatch(/^Error: slug/);
+
       const history = JSON.parse(await text('person_history', { slug: 'patrick-kells' }));
       expect(history.map((h: { op: string }) => h.op)).toEqual(['restore', 'archive', 'verify']);
       const restored = JSON.parse(await text('person_revision_restore', { slug: 'patrick-kells', revision_id: history[2].id }));

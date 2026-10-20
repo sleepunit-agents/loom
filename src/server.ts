@@ -806,7 +806,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   // ─── People ─────────────────────────────────────────────────────────────────
   // Person cards (docs/specs/person-cards.md): the condensed current state of a
   // human the agent works with. Current state, overwritten; revisions keep the
-  // past. Descriptive only — never an authorization surface.
+  // past. Descriptive only — never an authorization surface. Schemas are
+  // strict: a raw shape strips unknown keys, and a misspelled section on a
+  // merge: false write would then silently clear state (PR143 review).
 
   const cardValue = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
   const slugParam = z.string().describe('Person slug: lowercase [a-z0-9-], e.g. "patrick-kells".');
@@ -822,8 +824,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       'Passing summary says "I re-read the evidence and this is still right" and moves ' +
       'synthesized_at. Reserved keys (tier, field, projects, scope, trust) are rejected: gates ' +
       'stay in the harness. Worker bodies must not call this — cards are written by Art.',
-      inputSchema:
-      {
+      inputSchema: z.object({
         slug: slugParam,
         name: z.string().optional().describe('Display name (required on create and on merge: false), ≤ 80 chars.'),
         summary: z.string().optional().describe('Short synthesized summary, ≤ 1,200 chars.'),
@@ -849,7 +850,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'What they were said to be allowed to do, each with its source. Descriptive, not a grant. Replaces the whole list.',
         ),
         merge: z.boolean().optional().describe('Default true. false: the card becomes exactly what was passed.'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
@@ -865,13 +866,12 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       'Stamp where fields on a person card as checked: sets verified_at (default now) and, if ' +
       'passed, source. Values are not changed. All-or-nothing: an unknown field rejects the call. ' +
       'A failed check is recorded by not stamping.',
-      inputSchema:
-      {
+      inputSchema: z.object({
         slug: slugParam,
         fields: z.array(z.string()).describe('where field names to stamp.'),
         verified_at: z.string().optional().describe('ISO-8601 UTC; default now; not in the future.'),
         source: z.string().optional().describe('What you checked against, e.g. "pond /api/tadpoles".'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug, fields, verified_at, source }) => {
@@ -886,11 +886,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       description:
       'Soft-retire a person card with a tombstone (who, when, why). An archived card is left ' +
       'out of identity\'s room block and person_list, and rejects writes until person_restore.',
-      inputSchema:
-      {
+      inputSchema: z.object({
         slug: slugParam,
         reason: z.string().describe('Why the card is being retired, ≤ 200 chars.'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug, reason }) => {
@@ -903,7 +902,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     'person_restore',
     {
       description: 'Reactivate an archived person card, fields intact.',
-      inputSchema: { slug: slugParam },
+      inputSchema: z.object({ slug: slugParam }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug }) => {
@@ -919,11 +918,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       'Read one person card: {found, rendered, card, archived, updated, synthesized_at}. ' +
       'A missing card is {found: false}, not an error. where fields carry a freshness marker: ' +
       '[ok], [unverified], or [STALE <n>d] — never trust a stale one without re-checking.',
-      inputSchema:
-      {
+      inputSchema: z.object({
         slug: slugParam,
         include_archived: z.boolean().optional().describe('Return an archived card in full (default false).'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug, include_archived }) => {
@@ -939,10 +937,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       'List person cards with slug, name, archived, updated, synthesized_at, stale and unverified ' +
       'field counts, and memories_since_synthesis (tagged user memories newer than the summary — ' +
       'how the consolidation lane finds summaries that have fallen behind).',
-      inputSchema:
-      {
+      inputSchema: z.object({
         include_archived: z.boolean().optional().describe('Include archived cards (default false).'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ include_archived }) => {
@@ -957,7 +954,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       description:
       'Revision history of a person card, newest first: id, op, replaced_at. Every stored change ' +
       'snapshots the previous card; the newest 10 are kept. Use person_revision_restore to put one back.',
-      inputSchema: { slug: slugParam },
+      inputSchema: z.object({ slug: slugParam }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug }) => {
@@ -972,11 +969,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       description:
       'Put a person card back to a revision from person_history (card and its synthesized_at). ' +
       'Snapshots the current card first, so it is never destructive. Archive state is unchanged.',
-      inputSchema:
-      {
+      inputSchema: z.object({
         slug: slugParam,
         revision_id: z.number().int().positive().describe('Revision id from person_history.'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ slug, revision_id }) => {

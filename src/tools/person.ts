@@ -11,6 +11,7 @@
 import { resolveIdentityName } from '../config.js';
 import {
   openPeopleStore,
+  personSlugError,
   PersonCardError,
   UnreadableCardError,
   type PeopleStore,
@@ -20,6 +21,12 @@ import {
 } from '../backends/people.js';
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
+
+/** Slugs validate before anything else, store or no store (criterion 11). */
+function assertSlug(slug: string): void {
+  const err = personSlugError(slug);
+  if (err) throw new PersonCardError(`slug: ${err}`);
+}
 
 function errorText(e: unknown): string {
   if (e instanceof PersonCardError || e instanceof UnreadableCardError) return `Error: ${e.message}`;
@@ -68,6 +75,7 @@ export async function personRevisionRestore(
 
 /** The `person` read. Throws on an invalid slug or an unreadable row; the MCP wrapper turns that into text. */
 export function readPerson(contextDir: string, slug: string, includeArchived = false): PersonReadResult {
+  assertSlug(slug);
   const store = openPeopleStore(contextDir, { readonly: true });
   if (!store) return { found: false };
   try {
@@ -105,6 +113,7 @@ export async function personList(contextDir: string, input: { include_archived?:
 
 export async function personHistory(contextDir: string, input: { slug: string }): Promise<string> {
   try {
+    assertSlug(input.slug);
     const store = openPeopleStore(contextDir, { readonly: true });
     if (!store) return json([]);
     try {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import { loadIdentity } from './identity.js';
 import { remember } from './remember.js';
-import { openPeopleStore, roomBlock } from '../backends/people.js';
+import { openPeopleStore, roomBlock, renderCard, type PersonCard } from '../backends/people.js';
 import { recomputeSalienceForContext } from '../backends/salience.js';
 import { closeAllBackends } from '../backends/index.js';
 import { resolveSqliteDbPath } from '../config.js';
@@ -150,6 +150,30 @@ describe('identity people param — # In the room', () => {
       expect(b2).toContain('_(no card for p7)_');
       expect(b2).not.toContain('no card for p8');
       expect(b2).toContain('_(3 cards omitted for budget: p8, p9, p10)_');
+    });
+
+    it.each([
+      ['a short invalid slug', 'INVALID'],
+      ['an over-64-char slug', 'q'.repeat(65)],
+    ])('counts %s that cannot fit as omitted, never echoing it (PR143 review)', (_label, bad) => {
+      // Four cards as large as still fit together: the entry budget is then
+      // too full for even the 16-char invalid placeholder.
+      const sized = (len: number) => {
+        for (const s of ['a', 'b', 'c', 'd']) {
+          const base: PersonCard = { slug: s, name: s, summary: 'x'.repeat(1200), where: {}, how: { f: '' }, may: [] };
+          const pad = len - renderCard(base, 0).length;
+          write(s, s, { summary: base.summary, how: { f: 'y'.repeat(Math.min(pad, 200)), g: 'z'.repeat(Math.max(pad - 200 - ' · g: '.length, 0)) } });
+        }
+        return roomBlock(dir, ['a', 'b', 'c', 'd', bad, 'later'])!;
+      };
+      let len = 1500;
+      let block = sized(len);
+      while ((block.match(/^## /gm) ?? []).length < 4) block = sized(--len);
+      expect(block.match(/^## /gm)).toHaveLength(4);
+      expect(block).not.toContain('_(invalid slug');
+      expect(block).not.toContain(bad);
+      expect(block.split('\n\n').at(-1)).toBe('_(2 cards omitted for budget: (invalid slug), later)_');
+      expect(block.length).toBeLessThanOrEqual(6500);
     });
 
     it('a long omitted list ends in … and keeps the full count', () => {
