@@ -31,6 +31,7 @@ import { WebStandardStreamableHTTPServerTransport, isInitializeRequest } from '@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { EmptyResultSchema } from '@modelcontextprotocol/core';
 import { createLoomServer } from '../server.js';
+import { createBackend } from '../backends/index.js';
 import {
   assertSafeBind,
   checkBearer,
@@ -175,6 +176,20 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   }
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BODY_BYTES;
   const heartbeatMs = opts.heartbeatMs ?? HEARTBEAT_MS;
+
+  // Eager-migrate (t-1270): the default full server's memory backend runs
+  // pending schema migrations in its constructor (strict — throws loud on a
+  // bad migration), but that constructor previously only ran lazily, on
+  // whichever session's first backend-touching tool call happened to land
+  // first. A restart with new pending migrations looked fully up — the
+  // daemon bound its port and answered health probes — while memories.db
+  // still had the old schema underneath it, until some real caller's first
+  // write tripped over missing columns. Force that construction now, before
+  // the socket opens, so a bad or pending migration fails startup instead of
+  // a session three hops later. Scoped to the default server only — a scoped
+  // createServer (e.g. the knowledge-only service) never touches this
+  // backend, so forcing it there would just pay for an unused embedder load.
+  if (!opts.createServer) createBackend(opts.contextDir);
 
   const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer(ctx));
 
