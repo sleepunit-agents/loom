@@ -17,6 +17,7 @@ import { resolveDefaultContextPath } from '../config.js';
 import { pathSegmentError } from '../path-safety.js';
 import { digestForContext } from '../backends/salience.js';
 import { tapeForContext } from '../backends/episodes.js';
+import { roomBlock } from '../backends/people.js';
 import { readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
 
 async function readOptional(path: string): Promise<string | null> {
@@ -66,6 +67,8 @@ export async function loadIdentity(
   client?: string,
   model?: string,
   role?: string,
+  /** Slugs of the people the turn is addressed by: adds the `# In the room` block. */
+  people?: readonly string[],
   /** Override the default context path — used in unit tests only. */
   _defaultPathForTest?: string,
 ): Promise<string> {
@@ -136,6 +139,18 @@ export async function loadIdentity(
     // episode store may be broken — log it and record it so the next body sees a warning.
     console.error('[loom:identity] tape read failed:', tapeErr);
     recordFailure(contextDir, tapeErr);
+  }
+
+  // The room (person cards, docs/specs/person-cards.md) — after the tape and
+  // before Top of Mind, so the body knows who it is talking to before it reads
+  // anything ranked. Best-effort like the tape: no store, an unmigrated store or
+  // no people gives no block; one unreadable card only affects its own slug.
+  try {
+    const room = roomBlock(contextDir, people, { onFailure: (e) => recordFailure(contextDir, e) });
+    if (room) parts.push(room);
+  } catch (roomErr) {
+    console.error('[loom:identity] room block failed:', roomErr);
+    recordFailure(contextDir, roomErr);
   }
 
   // Boot digest — the salience-tiered view of episodic memory, so a fresh sleeve

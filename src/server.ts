@@ -41,6 +41,16 @@ import { registerHelloApp } from './transport/mcp-app-hello.js';
 import { registerKnowledgeTools } from './transport/knowledge-tools.js';
 import { memoryHistory } from './tools/memory-history.js';
 import { memoryRevisionRestore } from './tools/memory-revision-restore.js';
+import {
+  personWrite,
+  personVerify,
+  personArchive,
+  personRestore,
+  person,
+  personList,
+  personHistory,
+  personRevisionRestore,
+} from './tools/person.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -102,10 +112,14 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'dispatched into a mode ("wonder", "tend", "retro", "consolidate", "identity"), ' +
           'pass it here to load that mode\'s playbook alongside the identity.',
         ),
+        people: z.array(z.string()).optional().describe(
+          'Slugs of the people this turn is addressed by (the room), e.g. ["patrick-kells"]. ' +
+          'Adds an "# In the room" block with their person cards. Omit for no block.',
+        ),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role }) => {
+    async ({ project, client, model, role, people }) => {
       // Precedence: explicit param > data-driven manifest resolution > the
       // static code-map seed fallback > LOOM_CLIENT (inside loadIdentity).
       const peer = server.server.getClientVersion()?.name;
@@ -113,7 +127,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // normalized name); LOOM_CLIENT is only the no-peer fallback (in loadIdentity).
       const effectiveClient =
         client ?? (await resolvePeerToHarness(contextDir, peer)) ?? resolveClientFromPeer(peer) ?? (peer ? normalizePeer(peer) : undefined);
-      const result = await loadIdentity(contextDir, project, effectiveClient, model, role);
+      const result = await loadIdentity(contextDir, project, effectiveClient, model, role, people);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -785,6 +799,184 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ ref, revision_id }) => {
       const result = await memoryRevisionRestore(contextDir, { ref, revision_id });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  // ─── People ─────────────────────────────────────────────────────────────────
+  // Person cards (docs/specs/person-cards.md): the condensed current state of a
+  // human the agent works with. Current state, overwritten; revisions keep the
+  // past. Descriptive only — never an authorization surface. Schemas are
+  // strict: a raw shape strips unknown keys, and a misspelled section on a
+  // merge: false write would then silently clear state (PR143 review).
+
+  const cardValue = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
+  const slugParam = z.string().describe('Person slug: lowercase [a-z0-9-], e.g. "patrick-kells".');
+
+  server.registerTool(
+    'person_write',
+    {
+      description:
+      'Write a person card — the condensed current state of what you know about one human ' +
+      '(not a knowledge page, not the memories: those stay the evidence). merge (default true) ' +
+      'merges where/how one level deep (a field passed as null is removed), and replaces name, ' +
+      'summary and may when passed; merge: false makes the card exactly what was passed. ' +
+      'Passing summary says "I re-read the evidence and this is still right" and moves ' +
+      'synthesized_at. Reserved keys (tier, field, projects, scope, trust) are rejected: gates ' +
+      'stay in the harness. Worker bodies must not call this — cards are written by Art.',
+      inputSchema: z.object({
+        slug: slugParam,
+        name: z.string().optional().describe('Display name (required on create and on merge: false), ≤ 80 chars.'),
+        summary: z.string().optional().describe('Short synthesized summary, ≤ 1,200 chars.'),
+        where: z.record(
+          z.string(),
+          z.union([
+            z.object({
+              value: cardValue,
+              verified_at: z.string().optional(),
+              source: z.string().optional(),
+              stale_after_days: z.number().int().optional(),
+            }).passthrough(),
+            z.null(),
+          ]),
+        ).optional().describe(
+          'Where the person is in each system: field -> {value, verified_at?, source?, stale_after_days?}. ' +
+          'null removes a field (merge writes only).',
+        ),
+        how: z.record(z.string(), z.union([cardValue, z.null()])).optional().describe(
+          'How to work with them: field -> value (e.g. tz, mode, loop_in). null removes a field.',
+        ),
+        may: z.array(z.object({ text: z.string(), source: z.string() }).passthrough()).optional().describe(
+          'What they were said to be allowed to do, each with its source. Descriptive, not a grant. Replaces the whole list.',
+        ),
+        merge: z.boolean().optional().describe('Default true. false: the card becomes exactly what was passed.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      const result = await personWrite(contextDir, input as Parameters<typeof personWrite>[1]);
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_verify',
+    {
+      description:
+      'Stamp where fields on a person card as checked: sets verified_at (default now) and, if ' +
+      'passed, source. Values are not changed. All-or-nothing: an unknown field rejects the call. ' +
+      'A failed check is recorded by not stamping.',
+      inputSchema: z.object({
+        slug: slugParam,
+        fields: z.array(z.string()).describe('where field names to stamp.'),
+        verified_at: z.string().optional().describe('ISO-8601 UTC; default now; not in the future.'),
+        source: z.string().optional().describe('What you checked against, e.g. "pond /api/tadpoles".'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ slug, fields, verified_at, source }) => {
+      const result = await personVerify(contextDir, { slug, fields, verified_at, source });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_archive',
+    {
+      description:
+      'Soft-retire a person card with a tombstone (who, when, why). An archived card is left ' +
+      'out of identity\'s room block and person_list, and rejects writes until person_restore.',
+      inputSchema: z.object({
+        slug: slugParam,
+        reason: z.string().describe('Why the card is being retired, ≤ 200 chars.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ slug, reason }) => {
+      const result = await personArchive(contextDir, { slug, reason });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_restore',
+    {
+      description: 'Reactivate an archived person card, fields intact.',
+      inputSchema: z.object({ slug: slugParam }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ slug }) => {
+      const result = await personRestore(contextDir, { slug });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person',
+    {
+      description:
+      'Read one person card: {found, rendered, card, archived, updated, synthesized_at}. ' +
+      'A missing card is {found: false}, not an error. where fields carry a freshness marker: ' +
+      '[ok], [unverified], or [STALE <n>d] — never trust a stale one without re-checking.',
+      inputSchema: z.object({
+        slug: slugParam,
+        include_archived: z.boolean().optional().describe('Return an archived card in full (default false).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ slug, include_archived }) => {
+      const result = await person(contextDir, { slug, include_archived });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_list',
+    {
+      description:
+      'List person cards with slug, name, archived, updated, synthesized_at, stale and unverified ' +
+      'field counts, and memories_since_synthesis (tagged user memories newer than the summary — ' +
+      'how the consolidation lane finds summaries that have fallen behind).',
+      inputSchema: z.object({
+        include_archived: z.boolean().optional().describe('Include archived cards (default false).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ include_archived }) => {
+      const result = await personList(contextDir, { include_archived });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_history',
+    {
+      description:
+      'Revision history of a person card, newest first: id, op, replaced_at. Every stored change ' +
+      'snapshots the previous card; the newest 10 are kept. Use person_revision_restore to put one back.',
+      inputSchema: z.object({ slug: slugParam }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ slug }) => {
+      const result = await personHistory(contextDir, { slug });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_revision_restore',
+    {
+      description:
+      'Put a person card back to a revision from person_history (card and its synthesized_at). ' +
+      'Snapshots the current card first, so it is never destructive. Archive state is unchanged.',
+      inputSchema: z.object({
+        slug: slugParam,
+        revision_id: z.number().int().positive().describe('Revision id from person_history.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async ({ slug, revision_id }) => {
+      const result = await personRevisionRestore(contextDir, { slug, revision_id });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

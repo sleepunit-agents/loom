@@ -351,6 +351,41 @@ export const MIGRATIONS: readonly Migration[] = [
         ).run();
       }).immediate();
     },
+  },  {
+    id: 'people_cards',
+    description:
+      'Add people + person_revisions: person cards, the condensed current state of a ' +
+      'human the agent works with (docs/specs/person-cards.md, t-1376). Additive — ' +
+      'dropping both tables is the whole backout',
+    pending: (db) => !hasTable(db, 'people') || !hasTable(db, 'person_revisions'),
+    run: (db) => {
+      db.transaction(() => {
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS people (
+            slug           TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            card_json      TEXT NOT NULL,
+            archived_at    TEXT,
+            archived_by    TEXT,
+            archive_reason TEXT,
+            updated        TEXT NOT NULL,
+            synthesized_at TEXT
+          )`,
+        ).run();
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS person_revisions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug          TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            op            TEXT NOT NULL,
+            replaced_at   TEXT NOT NULL
+          )`,
+        ).run();
+        db.prepare(
+          'CREATE INDEX IF NOT EXISTS idx_person_revisions_slug ON person_revisions(slug, id)',
+        ).run();
+      }).immediate();
+    },
   },
 ];
 

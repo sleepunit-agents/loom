@@ -27,6 +27,8 @@ export const TOOLS = [
   'knowledge_write', 'knowledge_recall', 'knowledge_maintain',
   'knowledge_archive', 'knowledge_restore', 'knowledge_supersede', 'knowledge_move', 'knowledge_merge',
   'knowledge_purge', 'knowledge_verify', 'knowledge_history',
+  'person_write', 'person_verify', 'person_archive', 'person_restore',
+  'person', 'person_list', 'person_history', 'person_revision_restore',
 ];
 
 function toolList(prefix: string): string {

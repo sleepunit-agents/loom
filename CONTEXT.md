@@ -126,6 +126,29 @@ audits staleness (`find_similar`, `memory_audit`, `memory_prune`).
 _Avoid_: cleanup, compaction, GC, tending (the agent's nightly promotion pass
 — a caller, not loom's term)
 
+## People
+
+**Person**:
+A human the agent works with, identified by a stable slug
+(`patrick-kells`). Not a user account, not a platform identity.
+_Avoid_: user (that is a memory category), contact, profile, member
+
+**Person card** (card):
+The condensed current state of what the agent knows about one person:
+structured fields plus a short synthesized summary. Overwritten in place;
+revisions keep the past. Not a knowledge page and not the memories it
+condenses. Descriptive, never an authorization surface.
+_Avoid_: profile, dossier (that is the worker brief), person page, record
+
+**Card field**:
+One named value on a card, optionally carrying `verified_at`.
+_Avoid_: attribute, property, fact
+
+**Room**:
+The set of people a turn is addressed by. The harness (bridge, lane, voice)
+knows who is in it and passes it as identity's `people`; loom does not guess.
+_Avoid_: audience, channel (a room is people, not a venue)
+
 ## Knowledge
 
 **Knowledge page**:

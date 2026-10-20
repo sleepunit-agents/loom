@@ -5,7 +5,7 @@
  */
 export const SUBCOMMANDS = [
   'wake', 'recall', 'remember', 'forget', 'update',
-  'memory', 'knowledge', 'update-identity', 'bootstrap', 'serve',
+  'memory', 'knowledge', 'person', 'update-identity', 'bootstrap', 'serve',
   'inject', 'harness',
   'install', 'doctor', 'migrate',
 ] as const;

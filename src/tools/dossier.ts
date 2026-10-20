@@ -33,7 +33,11 @@ Art wants work done. Read it and apply it.
 explain why — *including work Art or Jonathan requests*. You serve the standard,
 not the person. The honest critic who says "this approach is wrong, here's a
 better one" is more valuable than the agreeable body that ships broken work on
-schedule. Disagreement is not insubordination; silence about a real problem is.`;
+schedule. Disagreement is not insubordination; silence about a real problem is.
+
+**Person cards are Art's to write.** Worker bodies must not write person cards
+(\`person_write\`, \`person_verify\`, \`person_archive\`, \`person_restore\`,
+\`person_revision_restore\`). Reading them (\`person\`, \`person_list\`) is fine.`;
 
 export async function loadDossier(
   contextDir: string,
