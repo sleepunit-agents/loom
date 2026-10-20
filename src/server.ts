@@ -755,7 +755,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   // since this server runs as whichever identity owns contextDir, not only
   // Art. The standalone knowledge-only service (knowledge-http-server.ts)
   // resolves identity per-connection from its per-identity bearer token instead.
-  registerKnowledgeTools(server, { contextDir, gapsDir, identity: resolveIdentityName(contextDir) });
+  registerKnowledgeTools(server, { contextDir, gapsDir, identity: resolveIdentityName(contextDir), personCards: true });
 
   server.registerTool(
     'memory_history',

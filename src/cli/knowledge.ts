@@ -16,7 +16,7 @@ const USAGE = `Usage: loom knowledge <subcommand> [options]
 Subcommands:
   write     Upsert an entity page (create or append/revise body in place)
   recall    Search knowledge pages (LIKE over title+body+domain)
-  maintain  Read-only health report (expansion candidates, cold pages, misfile audit)
+  maintain  Read-only health report (expansion candidates, cold pages, misfile audit, person-page check)
 
 Options (write):
   --slug <slug>              Entity key for upsert (default: derived from title)
@@ -230,6 +230,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     expansionHitThreshold,
     thinBodyThreshold,
     coldDays,
+    personCards: true,
   });
   io.stdout(text.endsWith('\n') ? text : text + '\n');
   return 0;
