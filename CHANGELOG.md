@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Person cards: `people` + `person_revisions`, eight `person_*` tools,
+  `loom person show|list`, and identity's `people` param.** A card is the
+  condensed current state of one human the agent works with: `where` fields
+  carrying a freshness marker (`[ok]`, `[unverified]`, `[STALE <n>d]`), `how`
+  fields (time zone, mode, who to loop in), descriptive `may` entries each with
+  a source, and a short agent-written summary. One value per field,
+  overwritten in place; every stored change snapshots the previous row (newest
+  10 kept), and every mutation is one `BEGIN IMMEDIATE` transaction. Cards are
+  not an authorization surface: the harness's gating names (`tier`, `field`,
+  `projects`, `scope`, `trust`) are rejected anywhere on a card.
+  `identity({people: [slug, ...]})` adds an `# In the room` block after the
+  tape (≤ 4 cards, 6,500 chars, best-effort). The dossier now says worker
+  bodies must not write cards. Design and acceptance criteria:
+  `docs/specs/person-cards.md` (criteria 1–12; the misfile heuristic, 13, is
+  still to come).
+
 - **Knowledge actor attribution: `pages.author`, `page_revisions.actor`, and a
   `verifications` table (page_id, verifier, verified_at, outcome,
   citation_checked).** Previously the only attribution field was

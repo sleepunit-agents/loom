@@ -104,7 +104,7 @@ describe('through the real store', () => {
     await remember(dir, { category: 'episode', title: 'ep-one', content: 'what happened', metadata: { where: 'voice' } });
     await remember(dir, { category: 'project', title: 'proj-one', content: 'durable' });
     recomputeSalienceForContext(dir, Date.now());
-    const id = await loadIdentity(dir, undefined, undefined, undefined, undefined, '/nonexistent-default');
+    const id = await loadIdentity(dir, undefined, undefined, undefined, undefined, undefined, '/nonexistent-default');
     const tapeAt = id.indexOf('# Last 24h across bodies');
     expect(tapeAt).toBeGreaterThan(id.indexOf('# Preferences'));
     expect(tapeAt).toBeLessThan(id.indexOf('# Top of Mind'));
@@ -113,7 +113,7 @@ describe('through the real store', () => {
 
   it('no episodes → no block', async () => {
     writeFileSync(join(dir, 'IDENTITY.md'), 'Creed');
-    const id = await loadIdentity(dir, undefined, undefined, undefined, undefined, '/nonexistent-default');
+    const id = await loadIdentity(dir, undefined, undefined, undefined, undefined, undefined, '/nonexistent-default');
     expect(id).not.toContain('Last 24h across bodies');
   });
 });

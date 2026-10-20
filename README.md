@@ -148,6 +148,18 @@ an agent's persistent state:
   itself a destructive overwrite. Revisions follow the page across renames and
   are purged with it.
 
+- **Person cards** — `person_write`, `person_verify`, `person_archive`,
+  `person_restore`, `person`, `person_list`, `person_history`,
+  `person_revision_restore`. A card is the condensed current state of one human
+  the agent works with (where they are in each system, with a freshness marker;
+  how to work with them; what they were said to be allowed to do, each with a
+  source). One value per field, overwritten; the past lives in revisions. Cards
+  are descriptive, never a grant: the harness's gating names (`tier`, `scope`,
+  …) are rejected on write. `identity({people: [slug, ...]})` adds an
+  `# In the room` block with the cards of the people a turn is addressed by.
+  CLI: `loom person show <slug>` / `loom person list`. Design:
+  `docs/specs/person-cards.md`.
+
 Everything lives on disk as plain markdown plus a single SQLite file.
 No daemon, no external service, no GPU.
 
@@ -487,6 +499,10 @@ npx @jbarket/loomai memory recompute-salience --context-dir ~/.config/loom/my-ag
 npx @jbarket/loomai memory proposals --context-dir ~/.config/loom/my-agent
 npx @jbarket/loomai memory ratify 3 --context-dir ~/.config/loom/my-agent
 npx @jbarket/loomai memory reject 4 --context-dir ~/.config/loom/my-agent
+
+# Read a person card (exit 3 when there is none) / list cards and their freshness
+npx @jbarket/loomai person show patrick-kells --context-dir ~/.config/loom/my-agent
+npx @jbarket/loomai person list --context-dir ~/.config/loom/my-agent
 
 # Run loom as an HTTP MCP daemon (mesh-reachable; default stays stdio)
 npx @jbarket/loomai serve --http --host 127.0.0.1 --port 8787

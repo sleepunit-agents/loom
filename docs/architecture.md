@@ -34,6 +34,7 @@ flowchart LR
       IDW["Identity wing<br/>identity · dossier · update_identity<br/>bootstrap · harness_init · harness_describe"]
       MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
+      PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
@@ -48,6 +49,7 @@ flowchart LR
     SAL["salience.ts<br/>temperature + boot digest"]
     EPI["episodes.ts<br/>the 24h tape"]
     PROP["proposals.ts"]
+    PPL["people.ts<br/>PeopleStore · renderCard · roomBlock"]
     OBS["recall-log.ts · recorder-health.ts"]
     MIG["migrations.ts"]
   end
@@ -71,7 +73,7 @@ flowchart LR
   P -. mesh .-> G
   G --> HTTPF --> FULL
   G --> HTTPK --> KONLY
-  CLI -- "wake · recall · remember · memory · knowledge<br/>call the same tool functions" --> wings
+  CLI -- "wake · recall · remember · memory · knowledge · person<br/>call the same tool functions" --> wings
   CLI -- "inject · install" --> DOT
 
   FULL --> wings & APPS
@@ -79,15 +81,18 @@ flowchart LR
 
   IDW --> MD
   IDW --> SAL & EPI & OBS
+  IDW -- "people param:<br/># In the room" --> PPL
   MEMW --> FACT
   PROPW --> PROP
+  PEOW --> PPL
   KW --> KB
   KW --> GAPS
   FACT --> VEC
   VEC --> EMB --> CACHE
   VEC --> HELP & MIG
   VEC --> MEMDB
-  SAL & EPI & PROP --> MEMDB
+  SAL & EPI & PROP & PPL --> MEMDB
+  PPL --> MIG
   OBS --> TEL
   KB --> KDB
 ```
@@ -98,6 +103,11 @@ Two things this picture says that are easy to miss:
   `memories.db` is about the user and the work and is searched by vector.
   `knowledge.db` holds facts about the world and is searched with LIKE.
   `assertKnowledgePathsNotCoLocated` refuses to let them share a file.
+- **Person cards live on memory's side of the line.** `people` and
+  `person_revisions` are in `memories.db`, next to the `user` memories they
+  condense, never in `knowledge.db`. A card is current state (one value
+  per field, overwritten; the past only in revisions) and is descriptive,
+  never a gate: the harness keeps tiers and scopes in its own file.
 - **The knowledge-only server is smaller, not just locked down.** A peer
   on `--scope knowledge` never sees identity or memory tools in its tool
   list, and the knowledge wing pins `created_by` to the identity its
@@ -112,7 +122,8 @@ parts, in this order. `loom wake` prints the same thing without MCP.
 flowchart TB
   A["# Identity<br/>IDENTITY.md, the terminal creed"] --> B["# Preferences<br/>preferences.md"]
   B --> C["# Last 24h across bodies<br/>episodes.ts: the tape, time-ordered, never ranked"]
-  C --> D["# Top of Mind<br/>salience.ts: hottest memories first, to a token budget"]
+  C --> R2["# In the room<br/>people.ts roomBlock: person cards for the people param<br/>only when people is passed; best-effort, ≤ 4 cards, 6,500 chars"]
+  R2 --> D["# Top of Mind<br/>salience.ts: hottest memories first, to a token budget"]
   D --> E["# Self-Model<br/>self-model.md"]
   E --> F["# Mode: role<br/>roles/&lt;role&gt;.md, if a role was passed"]
   F --> G["# Project<br/>projects/&lt;project&gt;.md"]
@@ -144,11 +155,32 @@ flowchart LR
   INS --> SALN["salience.ts<br/>decays by category half-life,<br/>reheats on access"]
 ```
 
+## A person card's life
+
+```mermaid
+flowchart LR
+  PW["person_write<br/>merge one level deep, null removes a field"] --> TX{"BEGIN IMMEDIATE<br/>read · merge · validate · snapshot · write · prune"}
+  PV["person_verify<br/>stamps where.*.verified_at"] --> TX
+  PA["person_archive · person_restore"] --> TX
+  PR["person_revision_restore"] --> TX
+  TX --> PT[("people")]
+  TX -- "previous row, newest 10 kept" --> RV[("person_revisions")]
+  PT --> RD["person · person_list · loom person show|list<br/>rendered: [ok] · [unverified] · [STALE nd]"]
+  PT --> ROOM["identity people: [...]<br/># In the room"]
+  MEM[("memories: category user,<br/>metadata.person = slug")] -. "memories_since_synthesis" .-> RD
+```
+
+The tagged memories stay the evidence; the card condenses them and does not
+own them. loom never generates a summary: the agent writes it, and
+`person_list`'s `memories_since_synthesis` is how a lane finds the ones that
+have fallen behind.
+
 ## Where everything is stored
 
 | Store | Tables / files | Backend |
 |---|---|---|
 | `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
+| `memories.db` (people) | `people`, `person_revisions` | `people.ts`, created by the `people_cards` migration |
 | `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access` | `sqlite-knowledge.ts` |
 | Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
 | Telemetry | `telemetry/recall.jsonl`, `recorder-health.json` | `recall-log.ts`, `recorder-health.ts` |
@@ -165,7 +197,7 @@ flowchart LR
 | `src/transport/http-server.ts` | StreamableHTTP front, one server per MCP session |
 | `src/transport/guards.ts` | Safe bind, bearer check, payload cap |
 | `src/transport/mcp-app-hello.ts` | Env-gated MCP-App widget probes |
-| `src/tools/*` | One file per MCP tool; the CLI calls these too |
+| `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |
 | `src/cli/*` | One file per subcommand |
 | `src/blocks/*` | Harness and model manifest blocks for the identity payload |
 | `src/injection/*` | `loom inject`: managed `loom:start`/`loom:end` block in harness dotfiles |
@@ -180,6 +212,7 @@ flowchart LR
 | `src/backends/salience.ts` | Temperature and the Top of Mind digest |
 | `src/backends/episodes.ts` | The episode tape |
 | `src/backends/proposals.ts` | Capture-propose queue |
+| `src/backends/people.ts` | Person cards: validation, render, store, the identity room block |
 | `src/backends/dedup.ts` | Write-time exact-restatement key |
 | `src/backends/scope.ts` | Project vs global visibility |
 | `src/backends/ttl.ts` | TTL parsing and expiry |
@@ -190,5 +223,5 @@ flowchart LR
 | `src/backends/recorder-health.ts` | Episode-write failure ledger |
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
-`memory`, `knowledge`, `update-identity`, `bootstrap`, `serve`, `inject`,
+`memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,
 `harness`, `install`, `doctor`, `migrate`.
