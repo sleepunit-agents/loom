@@ -16,25 +16,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { McpServer as LegacyMcpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   registerAppResource,
   registerAppTool,
   RESOURCE_MIME_TYPE,
 } from '@modelcontextprotocol/ext-apps/server';
 
-/**
- * ext-apps is pinned at ^1.7.5 (t-886) — its registerAppResource/registerAppTool
- * are typed against the OLD @modelcontextprotocol/sdk McpServer, but the real
- * server (src/server.ts) is now built on the split @modelcontextprotocol/server
- * McpServer. Both still expose the same registerResource/registerTool methods
- * at runtime (verified against ext-apps' compiled JS), so this is a type-only
- * seam — cast once here rather than carrying the old sdk package as an actual
- * runtime dependency.
- */
-function asLegacyServer(server: McpServer): LegacyMcpServer {
-  return server as unknown as LegacyMcpServer;
-}
 import { resolveRepoRoot } from '../config.js';
 import { digestData } from '../backends/salience.js';
 import { listProposals } from '../backends/proposals.js';
@@ -50,7 +37,7 @@ interface ProbeApp {
 function registerApp(server: McpServer, app: ProbeApp): void {
   const html = readFileSync(join(resolveRepoRoot(), 'dist', 'widgets', app.htmlFile), 'utf-8');
   registerAppResource(
-    asLegacyServer(server),
+    server,
     `${app.tool}-ui`,
     app.uri,
     { description: app.description },
@@ -59,7 +46,7 @@ function registerApp(server: McpServer, app: ProbeApp): void {
     }),
   );
   registerAppTool(
-    asLegacyServer(server),
+    server,
     app.tool,
     {
       description: app.description,
