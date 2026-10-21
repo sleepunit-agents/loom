@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { resolveContextDir, resolveDefaultContextPath, assertContextBootable } from './config.js';
+import { resolveContextDir, resolveDefaultContextPath, assertContextBootable, resolveIdentityName } from './config.js';
 import {
   CURRENT_STACK_VERSION,
   STACK_VERSION_FILE,
@@ -14,6 +14,7 @@ import {
   ensureStackVersion,
   assertStackVersionCompatible,
 } from './config.js';
+import { symlinkSync } from 'node:fs';
 
 describe('resolveContextDir', () => {
   const originalEnv = process.env.LOOM_CONTEXT_DIR;
@@ -77,6 +78,51 @@ describe('resolveContextDir', () => {
     expect(resolveContextDir()).toBe(
       resolve(homedir(), '.config', 'loom', 'default'),
     );
+  });
+});
+
+describe('resolveIdentityName', () => {
+  const originalEnv = process.env.LOOM_IDENTITY;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'loom-identity-'));
+  });
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.LOOM_IDENTITY;
+    } else {
+      process.env.LOOM_IDENTITY = originalEnv;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('LOOM_IDENTITY overrides everything else', () => {
+    process.env.LOOM_IDENTITY = 'mark';
+    expect(resolveIdentityName(join(dir, 'art'))).toBe('mark');
+  });
+
+  it('derives the identity from the context dir basename', () => {
+    delete process.env.LOOM_IDENTITY;
+    const artDir = join(dir, 'art');
+    mkdirSync(artDir, { recursive: true });
+    expect(resolveIdentityName(artDir)).toBe('art');
+  });
+
+  it('resolves a symlinked context dir to the real identity, not the alias', () => {
+    delete process.env.LOOM_IDENTITY;
+    const realDir = join(dir, 'art');
+    mkdirSync(realDir, { recursive: true });
+    const aliasPath = join(dir, 'default');
+    symlinkSync(realDir, aliasPath);
+
+    expect(resolveIdentityName(aliasPath)).toBe('art');
+  });
+
+  it('falls back to basename when the dir does not exist (no realpath to resolve)', () => {
+    delete process.env.LOOM_IDENTITY;
+    expect(resolveIdentityName(join(dir, 'ghost'))).toBe('ghost');
   });
 });
 

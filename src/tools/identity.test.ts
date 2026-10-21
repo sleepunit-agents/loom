@@ -105,13 +105,13 @@ describe('loadIdentity', () => {
   it('throws when contextDir equals the default path and IDENTITY.md is missing', async () => {
     // tempDir has no IDENTITY.md; pass tempDir as the default path override
     await expect(
-      loadIdentity(tempDir, undefined, undefined, undefined, undefined, tempDir),
+      loadIdentity(tempDir, undefined, undefined, undefined, undefined, undefined, tempDir),
     ).rejects.toThrow(/no loom context configured/);
   });
 
   it('does not throw when contextDir equals the default path but IDENTITY.md exists', async () => {
     await writeFile(join(tempDir, 'IDENTITY.md'), '# Art\n');
-    const result = await loadIdentity(tempDir, undefined, undefined, undefined, undefined, tempDir);
+    const result = await loadIdentity(tempDir, undefined, undefined, undefined, undefined, undefined, tempDir);
     expect(result).toContain('# Art');
   });
 

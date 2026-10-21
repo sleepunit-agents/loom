@@ -64,10 +64,14 @@ function buildCurrentDb(dir: string): string {
       provenance TEXT,
       confidence REAL,
       evidence_count INTEGER NOT NULL DEFAULT 0,
-      observed_at TEXT
+      observed_at TEXT,
+      scope TEXT,
+      times_seen INTEGER NOT NULL DEFAULT 1,
+      uniq TEXT
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();
+  db.prepare(`CREATE UNIQUE INDEX idx_memories_uniq_exact ON memories(uniq) WHERE archived = 0`).run();
   db.prepare(`
     CREATE TABLE proposals (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +98,10 @@ function buildCurrentDb(dir: string): string {
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memory_revisions_memory ON memory_revisions(memory_id)`).run();
+  db.prepare(`CREATE TABLE people (slug TEXT PRIMARY KEY, name TEXT NOT NULL, card_json TEXT NOT NULL,
+    archived_at TEXT, archived_by TEXT, archive_reason TEXT, updated TEXT NOT NULL, synthesized_at TEXT)`).run();
+  db.prepare(`CREATE TABLE person_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL)`).run();
   db.prepare(`
     CREATE TABLE memory_supersessions (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,6 +113,20 @@ function buildCurrentDb(dir: string): string {
   `).run();
   db.prepare(`CREATE INDEX idx_memory_supersessions_old ON memory_supersessions(old_ref)`).run();
   db.prepare(`CREATE INDEX idx_memory_supersessions_new ON memory_supersessions(new_ref)`).run();
+  db.prepare(`
+    CREATE TABLE memory_deletions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      ref        TEXT NOT NULL,
+      category   TEXT NOT NULL,
+      title      TEXT NOT NULL,
+      project    TEXT,
+      content    TEXT NOT NULL,
+      created    TEXT NOT NULL,
+      deleted_at TEXT NOT NULL,
+      op         TEXT NOT NULL
+    )
+  `).run();
+  db.prepare(`CREATE INDEX idx_memory_deletions_ref ON memory_deletions(ref)`).run();
   db.prepare(`
     CREATE VIRTUAL TABLE vec_memories USING vec0(embedding float[4] distance_metric=cosine)
   `).run();

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLoomServer, type LoomServerConfig } from './server.js';
 import { CURRENT_STACK_VERSION } from './config.js';
+import { createKnowledgeBackend } from './backends/index.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -75,6 +76,7 @@ describe('createLoomServer', () => {
     find_similar: { readOnlyHint: true, openWorldHint: false },
     memory_audit: { readOnlyHint: true, openWorldHint: false },
     memory_archive: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    memory_merge: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     memory_restore: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     memory_propose: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     memory_proposals: { readOnlyHint: true, openWorldHint: false },
@@ -97,6 +99,14 @@ describe('createLoomServer', () => {
     knowledge_history: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     memory_history: { readOnlyHint: true, openWorldHint: false },
     memory_revision_restore: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    person_write: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    person_verify: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    person_archive: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    person_restore: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    person: { readOnlyHint: true, openWorldHint: false },
+    person_list: { readOnlyHint: true, openWorldHint: false },
+    person_history: { readOnlyHint: true, openWorldHint: false },
+    person_revision_restore: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   };
 
   it('advertises correct ToolAnnotations for every registered tool', async () => {
@@ -201,5 +211,173 @@ describe('createLoomServer — blank identity guard', () => {
     const contextDir = makeContextDir(tmpDir);
     writeFileSync(join(contextDir, 'IDENTITY.md'), '# Test\n');
     expect(() => createLoomServer({ contextDir })).not.toThrow();
+  });
+});
+
+// t-675 (Mark, review 5558293087): the full server's knowledge registration
+// must attribute to the LOCAL identity — the context dir's identity, or
+// LOOM_IDENTITY — never a hard-coded 'art'. Covers author, replace actor,
+// restore actor, and verifier, for a non-Art context and for the override.
+describe('createLoomServer — knowledge attribution uses the local identity', () => {
+  let tmpDir: string;
+  const savedIdentity = process.env.LOOM_IDENTITY;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'server-identity-'));
+    delete process.env.LOOM_IDENTITY;
+  });
+
+  afterEach(() => {
+    if (savedIdentity === undefined) delete process.env.LOOM_IDENTITY;
+    else process.env.LOOM_IDENTITY = savedIdentity;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function exercise(contextDir: string) {
+    const { server } = createLoomServer({ contextDir });
+    const client = new Client({ name: 'identity-test', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const citations = [{ claim: 'x', source_kind: 'web', source_locator: 'https://example.com/x', excerpt: 'x' }];
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      const call = async (name: string, args: Record<string, unknown>) => {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError, `${name}: ${JSON.stringify(result.content)}`).toBeFalsy();
+        return result;
+      };
+      await call('knowledge_write', { title: 'Rings', domain: 'music/eurorack', body: 'v1', citations });
+      await call('knowledge_write', { slug: 'rings', title: 'Rings', domain: 'music/eurorack', body: 'v2', citations });
+      const backend = createKnowledgeBackend(contextDir);
+      let revisionId: number;
+      try {
+        revisionId = (await backend.listRevisions('rings'))[0].id;
+      } finally {
+        backend.close();
+      }
+      await call('knowledge_history', { slug: 'rings', revision_id: revisionId, restore: true });
+      await call('knowledge_verify', { slug: 'rings', outcome: 'confirmed', citation_checked: true });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+
+    const backend = createKnowledgeBackend(contextDir);
+    try {
+      const page = await backend.getPage('rings');
+      const revisions = await backend.listRevisions('rings');
+      const [verification] = await backend.getVerifications('rings');
+      return {
+        author: page!.author,
+        revisionActors: revisions.map((r) => r.actor),
+        verifier: verification.verifier,
+        body: page!.body,
+      };
+    } finally {
+      backend.close();
+    }
+  }
+
+  it('attributes to the context dir identity (a non-Art context)', async () => {
+    const contextDir = join(tmpDir, 'mark');
+    mkdirSync(join(contextDir, 'memories'), { recursive: true });
+    const got = await exercise(contextDir);
+    expect(got.body).toContain('v1'); // the restore actually ran
+    expect(got.author).toBe('mark');
+    expect(got.revisionActors).toEqual(['mark', 'mark']); // replace + restore
+    expect(got.verifier).toBe('mark');
+  });
+
+  it('LOOM_IDENTITY overrides the context dir name', async () => {
+    process.env.LOOM_IDENTITY = 'gabe';
+    const contextDir = join(tmpDir, 'mark');
+    mkdirSync(join(contextDir, 'memories'), { recursive: true });
+    const got = await exercise(contextDir);
+    expect(got.author).toBe('gabe');
+    expect(got.revisionActors).toEqual(['gabe', 'gabe']);
+    expect(got.verifier).toBe('gabe');
+  });
+});
+
+describe('createLoomServer — person cards over MCP', () => {
+  let tmpDir: string;
+  const savedIdentity = process.env.LOOM_IDENTITY;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'server-person-'));
+    process.env.LOOM_IDENTITY = 'art';
+  });
+
+  afterEach(() => {
+    if (savedIdentity === undefined) delete process.env.LOOM_IDENTITY;
+    else process.env.LOOM_IDENTITY = savedIdentity;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('writes, reads, lists, archives and splices a card into identity', async () => {
+    const contextDir = makeContextDir(tmpDir);
+    writeFileSync(join(contextDir, 'IDENTITY.md'), 'Creed');
+    const { server } = createLoomServer({ contextDir });
+    const client = new Client({ name: 'person-test', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      const text = async (name: string, args: Record<string, unknown>) => {
+        const result = await client.callTool({ name, arguments: args });
+        return (result.content as { text: string }[])[0].text;
+      };
+
+      const written = JSON.parse(await text('person_write', {
+        slug: 'patrick-kells',
+        name: 'Patrick Kells',
+        summary: 'Field lead.',
+        where: { pond: { value: 'field / et-livonia' } },
+        how: { tz: 'America/New_York', mode: 'terse' },
+        may: [{ text: 'may draft field-setup changes', source: 'Jonathan, Discord #pond 2026-10-08' }],
+      }));
+      expect(written).toMatchObject({ unchanged: false, revision_id: null });
+
+      expect(await text('person_write', { slug: 'patrick-kells', how: { tier: 2 } })).toMatch(/^Error: .*"tier" is a reserved key/);
+      expect(await text('person_verify', { slug: 'patrick-kells', fields: ['pond'] })).toContain('"verified_at"');
+
+      const read = JSON.parse(await text('person', { slug: 'patrick-kells' }));
+      expect(read.rendered).toContain('pond: field / et-livonia [ok]');
+      expect(JSON.parse(await text('person', { slug: 'nobody' }))).toEqual({ found: false });
+      expect(JSON.parse(await text('person_list', {}))[0]).toMatchObject({ slug: 'patrick-kells', stale: 0, unverified: 0 });
+
+      const identity = await text('identity', { people: ['patrick-kells'] });
+      expect(identity).toContain('# In the room');
+      expect(identity).toContain('**How:** mode: terse · tz: America/New_York');
+
+      const archived = JSON.parse(await text('person_archive', { slug: 'patrick-kells', reason: 'test' }));
+      expect(archived.archived).toBe(true);
+      expect(await text('identity', { people: ['patrick-kells'] })).toContain('_(card for patrick-kells is archived)_');
+      await text('person_restore', { slug: 'patrick-kells' });
+
+      // Unknown keys reject at the MCP boundary instead of being stripped (PR143 review).
+      const before = await text('person', { slug: 'patrick-kells' });
+      const histBefore = await text('person_history', { slug: 'patrick-kells' });
+      const strays = [
+        { slug: 'patrick-kells', name: 'P', live: { tasks: ['x'] } },
+        { slug: 'patrick-kells', name: 'Patrick Kells', merge: false, hows: { tz: 'x' } },
+        { slug: 'new-person', name: 'N', live: {} },
+      ];
+      for (const args of strays) {
+        const r = await client.callTool({ name: 'person_write', arguments: args });
+        const msg = (r.content as { text: string }[])[0].text;
+        expect(r.isError || msg.startsWith('Error'), msg).toBeTruthy();
+        expect(msg).toMatch(/live|hows|[Uu]nrecognized/);
+      }
+      expect(await text('person', { slug: 'patrick-kells' })).toBe(before);
+      expect(await text('person_history', { slug: 'patrick-kells' })).toBe(histBefore);
+      expect(JSON.parse(await text('person', { slug: 'new-person' }))).toEqual({ found: false });
+      expect(await text('person_history', { slug: '../x' })).toMatch(/^Error: slug/);
+
+      const history = JSON.parse(await text('person_history', { slug: 'patrick-kells' }));
+      expect(history.map((h: { op: string }) => h.op)).toEqual(['restore', 'archive', 'verify']);
+      const restored = JSON.parse(await text('person_revision_restore', { slug: 'patrick-kells', revision_id: history[2].id }));
+      expect(restored.card.where.pond.verified_at).toBeUndefined();
+    } finally {
+      await client.close();
+    }
   });
 });

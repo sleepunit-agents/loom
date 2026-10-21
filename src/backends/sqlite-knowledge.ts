@@ -35,11 +35,16 @@ import type {
   KnowledgePurgeResult,
   KnowledgeVerifyInput,
   KnowledgeVerifyResult,
+  KnowledgeVerificationRecord,
   KnowledgeRevision,
   KnowledgeRevisionMeta,
   KnowledgeRevisionRestoreInput,
   KnowledgeRevisionRestoreResult,
+  KnowledgeAccessStat,
 } from './types.js';
+
+/** Identity attributed to a stamped access when the caller doesn't pass one. */
+const UNKNOWN_IDENTITY = 'unknown';
 
 /** Hard size caps — enforced at write boundary (design §A3). */
 const MAX_PAGE_BODY_LENGTH = 64 * 1024; // 64 KB
@@ -165,7 +170,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           // page is recoverable (the 2026-06-01 verify run stomped 13 bodies
           // with no recovery path other than transcript archaeology).
           if (appliedMode === 'replace' && newBody !== existing.body) {
-            this.snapshotRevision(db, pageId, input.slug, existing.body, 'write-replace', timestamp);
+            this.snapshotRevision(db, pageId, input.slug, existing.body, 'write-replace', timestamp, input.actor ?? null);
           }
 
           // verified_at is a verification stamp, not a write stamp: an update
@@ -173,14 +178,16 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           // (Creation still stamps write time — the page was just synthesized
           // against its sources.)
           // created_by / version are preserved across upserts when omitted.
+          // author is deliberately absent from this UPDATE — it is the
+          // identity that wrote v1 and is never changed by a later upsert.
           // sla_class is always re-derived from the final anchor + domain.
           db.prepare(
             `UPDATE pages SET title = ?, domain = ?, body = ?, sourcing = ?, verified_at = COALESCE(?, verified_at), freshness_anchor = COALESCE(?, freshness_anchor), created_by = COALESCE(?, created_by), version = COALESCE(?, version), sla_class = ?, updated = ? WHERE id = ?`,
           ).run(title, input.domain, newBody, sourcing, input.verified_at ?? null, input.freshness_anchor ?? null, input.created_by ?? null, input.version ?? null, slaClass, timestamp, pageId);
         } else {
           const result = db.prepare(
-            `INSERT INTO pages (uuid, slug, title, domain, body, sourcing, provenance, verified_at, freshness_anchor, sla_class, created_by, version, created, updated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO pages (uuid, slug, title, domain, body, sourcing, provenance, verified_at, freshness_anchor, sla_class, created_by, version, author, created, updated)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).run(
             uuid,
             input.slug,
@@ -194,6 +201,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             slaClass,
             input.created_by ?? null,
             input.version ?? null,
+            input.actor ?? null,
             timestamp,
             timestamp,
           );
@@ -242,7 +250,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     }
   }
 
-  getPage(slug: string, opts?: { stampAccess?: boolean }): Promise<KnowledgePageWithCitations | null> {
+  getPage(slug: string, opts?: { stampAccess?: boolean; identity?: string }): Promise<KnowledgePageWithCitations | null> {
     try {
       const db = this.ensureOpen();
 
@@ -254,11 +262,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
 
       if (opts?.stampAccess) {
         const now = new Date().toISOString();
-        retryWrite(() =>
-          db.prepare(
-            'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
-          ).run(now, page.id),
-        );
+        this.recordAccess(db, [page.id], opts.identity ?? UNKNOWN_IDENTITY, now);
         page.last_accessed = now;
         page.hit_count += 1;
       }
@@ -361,13 +365,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       // appearing in a listing is not a read.
       if (rows.length > 0 && input.stampAccess !== false) {
         const now = new Date().toISOString();
-        const stamp = db.prepare(
-          'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
-        );
-        const tx = db.transaction((ids: number[]) => {
-          for (const id of ids) stamp.run(now, id);
-        });
-        retryWrite(() => tx(rows.map((r) => r.id)));
+        this.recordAccess(db, rows.map((r) => r.id), input.identity ?? UNKNOWN_IDENTITY, now);
       }
 
       return Promise.resolve(rows.map((page) => ({
@@ -854,14 +852,26 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         rows.push({ id: page.id, slug, body: page.body, freshness_anchor: page.freshness_anchor, domain: page.domain });
       }
 
+      const outcome = input.outcome ?? 'confirmed';
+      const citationChecked = input.citation_checked ? 1 : 0;
+      const insertVerification = db.prepare(
+        'INSERT INTO verifications (page_id, verifier, verified_at, outcome, citation_checked) VALUES (?, ?, ?, ?, ?)',
+      );
+
+      // verified_at means "last SUCCESSFUL verification" — it drives the
+      // stale-first queue and SLA checks. A 'stale' outcome is a failed
+      // verification: it goes in the audit trail but must not renew the
+      // stamp, or a known-wrong page drops to the back of the queue.
+      const stamped = outcome !== 'stale';
+
       let noted = false;
       const tx = db.transaction(() => {
         for (const row of rows) {
           const finalAnchor = input.freshness_anchor ?? row.freshness_anchor;
           const slaClass = deriveSlaClass(finalAnchor, row.domain);
           db.prepare(
-            'UPDATE pages SET verified_at = ?, freshness_anchor = COALESCE(?, freshness_anchor), sla_class = ? WHERE id = ?',
-          ).run(verifiedAt, input.freshness_anchor ?? null, slaClass, row.id);
+            'UPDATE pages SET verified_at = CASE WHEN ? THEN ? ELSE verified_at END, freshness_anchor = COALESCE(?, freshness_anchor), sla_class = ? WHERE id = ?',
+          ).run(stamped ? 1 : 0, verifiedAt, input.freshness_anchor ?? null, slaClass, row.id);
 
           if (input.note) {
             const dateLabel = verifiedAt.slice(0, 10);
@@ -874,6 +884,11 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
             ).run(newBody, timestamp, row.id);
             noted = true;
           }
+
+          // The attributed audit trail (t-675) — recorded for every outcome,
+          // additive to the verified_at stamp above (which stays for
+          // freshness sort/SLA and only moves on success).
+          insertVerification.run(row.id, input.verifier ?? null, verifiedAt, outcome, citationChecked);
         }
       });
       retryWrite(() => tx.immediate());
@@ -882,8 +897,38 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         verified: rows.length,
         slugs: rows.map((r) => r.slug),
         verified_at: verifiedAt,
+        stamped,
         noted,
       });
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
+  getVerifications(slug: string): Promise<KnowledgeVerificationRecord[]> {
+    try {
+      const db = this.ensureOpen();
+
+      const page = db.prepare('SELECT id FROM pages WHERE slug = ?').get(slug) as
+        | { id: number }
+        | undefined;
+      if (!page) {
+        return Promise.reject(new Error(`getVerifications: page not found: ${slug}`));
+      }
+
+      const rows = db.prepare(
+        `SELECT id, page_id, verifier, verified_at, outcome, citation_checked
+         FROM verifications WHERE page_id = ? ORDER BY id DESC`,
+      ).all(page.id) as Array<{
+        id: number;
+        page_id: number;
+        verifier: string | null;
+        verified_at: string;
+        outcome: string;
+        citation_checked: number;
+      }>;
+
+      return Promise.resolve(rows.map((r) => ({ ...r, citation_checked: r.citation_checked !== 0 })));
     } catch (e) {
       return Promise.reject(e);
     }
@@ -901,7 +946,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       }
 
       const rows = db.prepare(
-        `SELECT id, page_id, slug, op, replaced_at, LENGTH(body) AS body_length
+        `SELECT id, page_id, slug, op, replaced_at, actor, LENGTH(body) AS body_length
          FROM page_revisions WHERE page_id = ? ORDER BY id DESC`,
       ).all(page.id) as KnowledgeRevisionMeta[];
 
@@ -915,7 +960,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     try {
       const db = this.ensureOpen();
       const row = db.prepare(
-        'SELECT id, page_id, slug, op, replaced_at, body FROM page_revisions WHERE id = ?',
+        'SELECT id, page_id, slug, op, replaced_at, actor, body FROM page_revisions WHERE id = ?',
       ).get(revisionId) as KnowledgeRevision | undefined;
       return Promise.resolve(row ?? null);
     } catch (e) {
@@ -951,7 +996,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       const tx = db.transaction(() => {
         // The body being displaced is itself preserved — a restore must
         // never be the second irreversible overwrite in the story.
-        snapshotId = this.snapshotRevision(db, page.id, input.slug, page.body, 'history-restore', timestamp);
+        snapshotId = this.snapshotRevision(db, page.id, input.slug, page.body, 'history-restore', timestamp, input.actor ?? null);
         db.prepare('UPDATE pages SET body = ?, updated = ? WHERE id = ?').run(
           revision.body, timestamp, page.id,
         );
@@ -982,11 +1027,12 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     body: string,
     op: string,
     timestamp: string,
+    actor: string | null = null,
   ): number {
     const result = retryWrite(() =>
       db.prepare(
-        'INSERT INTO page_revisions (page_id, slug, body, op, replaced_at) VALUES (?, ?, ?, ?, ?)',
-      ).run(pageId, slug, body, op, timestamp),
+        'INSERT INTO page_revisions (page_id, slug, body, op, replaced_at, actor) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(pageId, slug, body, op, timestamp, actor),
     );
     retryWrite(() =>
       db.prepare(
@@ -1041,6 +1087,19 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     }
   }
 
+  getAccessStats(pageId: number): Promise<KnowledgeAccessStat[]> {
+    try {
+      const db = this.ensureOpen();
+      const rows = db.prepare(
+        `SELECT identity, hit_count, last_accessed FROM knowledge_access
+         WHERE page_id = ? ORDER BY last_accessed DESC`,
+      ).all(pageId) as KnowledgeAccessStat[];
+      return Promise.resolve(rows);
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
   close(): void {
     if (this.db) {
       this.db.close();
@@ -1049,6 +1108,34 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
   }
 
   // ── Internals ──
+
+  /**
+   * Stamp a real read on each page id: bump the shared pages.hit_count /
+   * last_accessed aggregate (unchanged legacy behavior — this is what
+   * knowledge_maintain's cold/expansion ranking reads) AND upsert the
+   * per-identity row in knowledge_access (t-677 attribution). Both updates
+   * happen in one transaction so a crash between them can't desync the
+   * aggregate from the per-reader breakdown.
+   */
+  private recordAccess(db: Database, pageIds: number[], identity: string, now: string): void {
+    const bumpPage = db.prepare(
+      'UPDATE pages SET last_accessed = ?, hit_count = hit_count + 1 WHERE id = ?',
+    );
+    const upsertAccess = db.prepare(
+      `INSERT INTO knowledge_access (page_id, identity, hit_count, last_accessed)
+       VALUES (?, ?, 1, ?)
+       ON CONFLICT(page_id, identity) DO UPDATE SET
+         hit_count = hit_count + 1,
+         last_accessed = excluded.last_accessed`,
+    );
+    const tx = db.transaction((ids: number[]) => {
+      for (const id of ids) {
+        bumpPage.run(now, id);
+        upsertAccess.run(id, identity, now);
+      }
+    });
+    retryWrite(() => tx(pageIds));
+  }
 
   private ensureOpen(): Database {
     if (!this.db) {
@@ -1115,6 +1202,29 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         replaced_at TEXT NOT NULL
       )`,
       `CREATE INDEX IF NOT EXISTS idx_page_revisions_page ON page_revisions(page_id)`,
+      // Actor attribution (t-675): who verified a page, when, and what they
+      // found. Additive to pages.verified_at (which stays the fast single-
+      // column freshness stamp everything else queries/sorts on) — this
+      // table is the attributed audit trail underneath it.
+      `CREATE TABLE IF NOT EXISTS verifications (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_id          INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        verifier         TEXT,
+        verified_at      TEXT NOT NULL,
+        outcome          TEXT NOT NULL DEFAULT 'confirmed',
+        citation_checked INTEGER NOT NULL DEFAULT 0
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_verifications_page ON verifications(page_id)`,
+      // Per-identity read attribution (t-677) — additive to pages.hit_count/
+      // last_accessed, never a replacement. See getAccessStats/recordAccess.
+      `CREATE TABLE IF NOT EXISTS knowledge_access (
+        page_id       INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        identity      TEXT NOT NULL,
+        hit_count     INTEGER NOT NULL DEFAULT 0,
+        last_accessed TEXT,
+        PRIMARY KEY (page_id, identity)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_knowledge_access_page ON knowledge_access(page_id)`,
     ];
     for (const sql of statements) {
       this.db!.prepare(sql).run();
@@ -1156,6 +1266,16 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
         }
       });
       backfill();
+    }
+    // Actor attribution (t-675): identity that wrote v1 of the page. Set
+    // only at creation (writePage) — never backfilled, since there is no
+    // way to recover who actually wrote pre-existing rows.
+    if (!pageCols.includes('author')) {
+      this.db!.prepare('ALTER TABLE pages ADD COLUMN author TEXT').run();
+    }
+    const revisionCols = (this.db!.prepare('PRAGMA table_info(page_revisions)').all() as Array<{ name: string }>).map((c) => c.name);
+    if (!revisionCols.includes('actor')) {
+      this.db!.prepare('ALTER TABLE page_revisions ADD COLUMN actor TEXT').run();
     }
   }
 }

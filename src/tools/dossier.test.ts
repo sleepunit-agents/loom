@@ -22,6 +22,14 @@ describe('loadDossier', () => {
     expect(result).toContain('Push-back mandate');
   });
 
+  it('says worker bodies must not write person cards (person-cards criterion 12)', async () => {
+    const result = await loadDossier(tempDir);
+    expect(result).toContain('Worker bodies must not write person cards');
+    for (const tool of ['person_write', 'person_verify', 'person_archive', 'person_restore', 'person_revision_restore']) {
+      expect(result).toContain(`\`${tool}\``);
+    }
+  });
+
   it('does NOT include IDENTITY.md content', async () => {
     await writeFile(join(tempDir, 'IDENTITY.md'), 'TOP SECRET CREED');
     const result = await loadDossier(tempDir);

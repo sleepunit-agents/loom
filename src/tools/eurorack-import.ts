@@ -11,6 +11,7 @@ import { join, relative, extname, basename, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createKnowledgeBackend } from '../backends/index.js';
+import { resolveIdentityName } from '../config.js';
 
 // ─── Context dir resolution ───────────────────────────────────────────────────
 
@@ -164,6 +165,7 @@ export async function importEurorack(options: ImportOptions): Promise<ImportRepo
 
   const files = discoverFiles(repoPath);
   const records: ImportRecord[] = [];
+  const actor = resolveIdentityName(contextDir);
 
   const backend = dryRun ? null : createKnowledgeBackend(contextDir);
   try {
@@ -197,6 +199,7 @@ export async function importEurorack(options: ImportOptions): Promise<ImportRepo
           sourcing: 'provisional',
           provenance,
           citations: [],
+          actor,
         });
         records.push({ relPath, slug, title, domain, status: 'created' });
       } catch (err) {

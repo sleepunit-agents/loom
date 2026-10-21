@@ -12,6 +12,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Person cards: `people` + `person_revisions`, eight `person_*` tools,
+  `loom person show|list`, and identity's `people` param.** A card is the
+  condensed current state of one human the agent works with: `where` fields
+  carrying a freshness marker (`[ok]`, `[unverified]`, `[STALE <n>d]`), `how`
+  fields (time zone, mode, who to loop in), descriptive `may` entries each with
+  a source, and a short agent-written summary. One value per field,
+  overwritten in place; every stored change snapshots the previous row (newest
+  10 kept), and every mutation is one `BEGIN IMMEDIATE` transaction. Cards are
+  not an authorization surface: the harness's gating names (`tier`, `field`,
+  `projects`, `scope`, `trust`) are rejected anywhere on a card.
+  `identity({people: [slug, ...]})` adds an `# In the room` block after the
+  tape (≤ 4 cards, 6,500 chars, best-effort). The dossier now says worker
+  bodies must not write cards. Design and acceptance criteria:
+  `docs/specs/person-cards.md` (criteria 1–12; the misfile heuristic, 13, is
+  still to come).
+
+- **Knowledge actor attribution: `pages.author`, `page_revisions.actor`, and a
+  `verifications` table (page_id, verifier, verified_at, outcome,
+  citation_checked).** Previously the only attribution field was
+  `created_by` — free text, meaning "who owns this `ours/` artifact," not
+  "who actually wrote or verified it" — so there was no way to tell who wrote
+  a page's first version, who performed a given body revision, or who has
+  verified a page and found what. `pages.author` is stamped once at creation
+  and never changed by later upserts; `page_revisions.actor` is stamped on
+  every body-replacing write and every history-restore; `verifications` is an
+  attributed audit trail additive to the existing `pages.verified_at` stamp
+  (which stays as the fast single-column freshness field everything else
+  sorts/filters on). All three are resolved server-side, never a free-text
+  tool argument, so no caller can claim another identity's authorship or
+  verification: MCP calls use the connection's identity from
+  `registerKnowledgeTools` ('art' on the main server, the bearer-resolved
+  identity on the knowledge-only service); the CLI and eurorack import use
+  `resolveIdentityName()` (`LOOM_IDENTITY` env override, else the context
+  dir's real basename).
+  `knowledge_verify` gains `outcome` ('confirmed' | 'stale' | 'corrected') and
+  `citation_checked` parameters; `knowledge_history`'s listing now shows who
+  performed each revision and surfaces the page's verification history. (t-675)
+  An outcome of 'stale' is a failed verification: it is recorded in
+  `verifications` but does NOT advance `pages.verified_at`, so a known-wrong
+  page keeps its place at the front of the stale-first queue; the result's
+  new `stamped` flag (and the tool output) says whether the stamp moved.
+
+- **`MemoryMatch` carries `similarity` alongside `relevance`, and `scope`
+  alongside `project`.** `relevance` is now the post-MMR score that actually
+  decided a result's rank — equal to `similarity` (raw cosine) unless MMR
+  re-ranking traded a pick off against ones already selected, in which case
+  the two now diverge and both are visible (modeled on MemoriLabs/Memori's
+  `FactSearchResult.{similarity, rank_score}` split). Separately, every
+  memory now has an effective `scope` ('project' or 'global'): `recall` and
+  `memory similar` exclude a project-scoped memory tagged to a *different*
+  project than the one passed via `--project`/`project`, while global-scoped
+  memories (category default for `user`/`reference`, any untagged memory, or
+  an explicit `scope: "global"` at write time) still come through regardless.
+  Closes the gap where a preference learned on one project could surface
+  while working on an unrelated one. `remember` (MCP tool and `loom remember
+  --scope`) takes an explicit `project | global` override for the categories
+  where the category default can't tell (`self`, `feedback`) — e.g. a
+  security/git/tool-workflow lesson learned in one project but true
+  everywhere. (t-337)
+
 ### Fixed
 
 - **All 34 MCP tools now declare `ToolAnnotations`** (`readOnlyHint`,
