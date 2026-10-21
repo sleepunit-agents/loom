@@ -21,6 +21,14 @@
  * `remember`) AND wrong audience (private reasoning, not something to hand
  * another reader). The misfile audit below flags it either way.
  *
+ * Person-page misfile check (criterion 13, docs/specs/person-cards.md): an
+ * active page whose slug or title names an active person card — its slug or
+ * exact name, as whole hyphen/space-delimited words, case-insensitive — may be
+ * a person page that belongs on the card. A report, not enforcement. Cards
+ * live in the memory database, so the check is opt-in (`personCards`): the
+ * full server and the CLI turn it on; the knowledge-only server serves other
+ * identities, never opens that database, and says the check was not run.
+ *
  * Cold/expansion ranking intentionally stays on the shared pages.hit_count /
  * last_accessed aggregate rather than any per-reader breakdown (knowledge_access,
  * t-677) — any identity's read keeps a page off the cold list, which is the
@@ -29,6 +37,7 @@
  */
 import { createKnowledgeBackend } from '../backends/index.js';
 import type { KnowledgePageWithCitations } from '../backends/types.js';
+import { listPeople } from './person.js';
 
 export interface KnowledgeMaintainOptions {
   /** hit_count threshold for expansion candidates (default 3) */
@@ -37,7 +46,19 @@ export interface KnowledgeMaintainOptions {
   thinBodyThreshold?: number;
   /** days since last_accessed to consider cold (default 30) */
   coldDays?: number;
+  /**
+   * Run the person-page misfile check, which reads person cards from the
+   * memory database. Default false — only the full server and CLI pass true.
+   */
+  personCards?: boolean;
 }
+
+interface PersonMisfile {
+  page: KnowledgePageWithCitations;
+  card: string;
+}
+
+type PersonCheck = { run: false } | { run: true; hits: PersonMisfile[] } | { run: true; error: string };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -47,11 +68,47 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * ours/ pages that are still provisional ARE flagged: they lack a repo citation.
  */
 function isMisfiled(page: KnowledgePageWithCitations): boolean {
-  // ours/ class with internal sourcing: correct placement, never a misfile.
-  if (page.domain.startsWith('ours/') && page.sourcing === 'internal') return false;
+  if (isAuditExempt(page)) return false;
   if (page.sourcing === 'provisional') return true;
   if (page.citations.length === 0) return false;
   return page.citations.every((c) => c.source_kind === 'conversation');
+}
+
+/** ours/ class with internal sourcing: correct placement, never a misfile of any kind. */
+function isAuditExempt(page: KnowledgePageWithCitations): boolean {
+  return page.domain.startsWith('ours/') && page.sourcing === 'internal';
+}
+
+/** Whole words, delimited by hyphens and whitespace only, lowercased. */
+function words(s: string): string[] {
+  return s.toLowerCase().split(/[\s-]+/).filter(Boolean);
+}
+
+function containsRun(hay: string[], needle: string[]): boolean {
+  if (needle.length === 0) return false;
+  outer: for (let i = 0; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return true;
+  }
+  return false;
+}
+
+function personMisfiles(contextDir: string, pages: KnowledgePageWithCitations[]): PersonCheck {
+  let cards;
+  try {
+    cards = listPeople(contextDir);
+  } catch (e) {
+    return { run: true, error: (e as Error).message ?? String(e) };
+  }
+  const needles = cards.map((c) => ({ slug: c.slug, runs: [words(c.slug), words(c.name)] }));
+  const hits: PersonMisfile[] = [];
+  for (const page of pages) {
+    if (page.status !== 'active' || isAuditExempt(page)) continue;
+    const hays = [words(page.slug), words(page.title)];
+    const match = needles.find((n) => n.runs.some((r) => hays.some((h) => containsRun(h, r))));
+    if (match) hits.push({ page, card: match.slug });
+  }
+  return { run: true, hits };
 }
 
 function isCold(page: KnowledgePageWithCitations, thresholdMs: number): boolean {
@@ -83,8 +140,10 @@ export async function knowledgeMaintain(
       (p) => isMisfiled(p) && p.status === 'active',
     );
 
+    const people: PersonCheck = options.personCards ? personMisfiles(contextDir, pages) : { run: false };
+
     const activeCount = pages.filter((p) => p.status === 'active').length;
-    return formatMaintainReport(activeCount, expansionCandidates, coldPages, misfiled, {
+    return formatMaintainReport(activeCount, expansionCandidates, coldPages, misfiled, people, {
       hitThreshold,
       bodyThreshold,
       coldDays: options.coldDays ?? 30,
@@ -99,6 +158,7 @@ function formatMaintainReport(
   expansion: KnowledgePageWithCitations[],
   cold: KnowledgePageWithCitations[],
   misfiled: KnowledgePageWithCitations[],
+  people: PersonCheck,
   thresholds: { hitThreshold: number; bodyThreshold: number; coldDays: number },
 ): string {
   const lines: string[] = [];
@@ -155,6 +215,32 @@ function formatMaintainReport(
         ? '→ add a repo citation (git path / commit)'
         : '→ add a web citation or relocate to memory';
       lines.push(`- \`${p.slug}\` — *${p.title}* (${p.domain}) — ${reason} ${hint}`);
+    }
+  }
+
+  // ── Person-page misfile check ─────────────────────────────────────────────
+  lines.push('');
+  lines.push('## Person-page misfile check (slug or title names a person card)');
+  lines.push('');
+  if (!people.run) {
+    lines.push(
+      'Not run — person cards live in the memory database, which this surface does not read ' +
+      '(the knowledge-only server never opens it). `loom knowledge maintain` and the full loom server run it.',
+    );
+  } else if ('error' in people) {
+    lines.push(`Not run — could not read person cards: ${people.error}`);
+  } else if (people.hits.length === 0) {
+    lines.push('None — no active page names a person card.');
+  } else {
+    lines.push(
+      `${people.hits.length} page${people.hits.length === 1 ? '' : 's'} may be about a person:`,
+    );
+    lines.push(
+      '> A heuristic, not enforcement. Contextual state about a person belongs on their card ' +
+      '(person_write), not in knowledge; a page about a public figure\'s published work can stay.',
+    );
+    for (const { page: p, card } of people.hits) {
+      lines.push(`- \`${p.slug}\` — *${p.title}* (${p.domain}) — names card \`${card}\``);
     }
   }
 

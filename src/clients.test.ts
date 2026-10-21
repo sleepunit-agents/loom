@@ -14,7 +14,8 @@ describe('getBuiltInAdapter', () => {
   it('returns adapter for gemini-cli', () => {
     const adapter = getBuiltInAdapter('gemini-cli');
     expect(adapter).toContain('Gemini');
-    expect(adapter).toContain('mcp__loom__');
+    expect(adapter).toContain('`mcp_loom_identity`');
+    expect(adapter).not.toContain('mcp__loom__');
   });
 
   it('returns null for unknown client', () => {

@@ -119,7 +119,7 @@ describe('loadIdentity', () => {
     await writeFile(join(tempDir, 'IDENTITY.md'), 'Creed');
     const result = await loadIdentity(tempDir, undefined, 'gemini-cli');
     expect(result).toContain('Gemini');
-    expect(result).toContain('mcp__loom__');
+    expect(result).toContain('`mcp_loom_identity`');
   });
 
   it('appends client adapter for claude-code', async () => {

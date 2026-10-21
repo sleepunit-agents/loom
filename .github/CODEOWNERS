@@ -5,16 +5,20 @@
 # other's loom PRs without Jonathan. Since 2026-10-16 that covers the whole
 # repo — migrations, transport guards and .github/ included ("you should
 # own the whole thing", Jonathan, #art). There are no Jonathan carve-outs.
-# Either owner's approval satisfies a line, and GitHub never lets an
-# author approve their own PR, so an Art PR
-# needs Mark and a Mark PR needs Art — every merge still gets a reviewer
-# who didn't write it. Work arrives through the `loom` handoff space.
+# Either owner's approval satisfies a line. GitHub never lets an author
+# approve their own PR, so since 2026-10-21 ("art can self approve on loom
+# for sure. mark is a resource there, but not a necessity", Jonathan,
+# #art) the review rule lives in its own ruleset, "main: review", which
+# repo admins (Art, Jonathan) bypass in pull_request mode: an Art PR can
+# merge without Mark, but only through a PR, and CI + CodeQL ("protect
+# main") still gate every merge. A Mark PR still needs Art's approval.
+# Mark's review on an Art PR is welcome, not required.
 
 # Default: the two agents.
 *                   @art-e-fish @visual-mark
 
-# Dependency manifests: Art alone, so dependabot bumps don't need a
-# second click. A PR that also touches code still matches the code's
-# owners.
-/package.json       @art-e-fish
-/package-lock.json  @art-e-fish
+# Dependency manifests fall under the wildcard too. Either owner's
+# approval satisfies it, so a dependabot bump still needs one click,
+# and an Art-authored manifest change can be approved by Mark (and vice
+# versa). An Art-only line here left Art's own manifest PRs with no
+# eligible approver.

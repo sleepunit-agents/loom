@@ -51,11 +51,18 @@ export interface RegisterKnowledgeToolsOptions {
    * unchanged); createKnowledgeOnlyServer sets this true.
    */
   restrictCreatedByToIdentity?: boolean;
+  /**
+   * Let knowledge_maintain run the person-page misfile check, which reads
+   * person cards from the memory database. The full server sets this; the
+   * knowledge-only service must not — it never opens the memory database,
+   * so cards cannot leak through a shared surface (person-cards spec, c13).
+   */
+  personCards?: boolean;
 }
 
 /** Registers the full knowledge_* tool surface (11 tools) on `server`. */
 export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledgeToolsOptions): void {
-  const { contextDir, gapsDir, identity, restrictCreatedByToIdentity = false } = opts;
+  const { contextDir, gapsDir, identity, restrictCreatedByToIdentity = false, personCards = false } = opts;
 
   server.registerTool(
     'knowledge_write',
@@ -201,14 +208,17 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
     'knowledge_maintain',
     {
       description:
-      'Read-only health report for the knowledge store. Three branches: ' +
+      'Read-only health report for the knowledge store. Four branches: ' +
       '(1) expansion candidates — thin body + high hit_count (needs deepening); ' +
       '(2) cold pages — not accessed recently (unused or undiscovered); ' +
       '(3) misfile audit — provisional sourcing or conversation-only citations ' +
       '(world/ class: should be in the memory store instead — including pages that drifted in as ' +
       'personal/inner-monologue content rather than shared-ready synthesis, which matters more now ' +
       'that knowledge is read by other identities and by Jonathan, not just you; ' +
-      'ours/ class with internal sourcing are NOT misfiles — they are correct).\n' +
+      'ours/ class with internal sourcing are NOT misfiles — they are correct); ' +
+      '(4) person-page check — an active page whose slug or title names a person card (its slug or ' +
+      'exact name, whole words) may belong on the card instead; a report, not enforcement. Only the ' +
+      'full loom server runs (4); the knowledge-only server says it was not run.\n' +
       'Cold/expansion ranking reads the shared hit_count/last_accessed aggregate (any reader\'s access ' +
       'keeps a page warm), not a per-identity breakdown — per-reader stats exist (knowledge_access) for ' +
       'attribution, but splitting cold-ranking by identity would make the list miss pages a *different* ' +
@@ -233,6 +243,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
         expansionHitThreshold: expansion_hit_threshold,
         thinBodyThreshold: thin_body_threshold,
         coldDays: cold_days,
+        personCards,
       });
       return { content: [{ type: 'text' as const, text: result }] };
     },

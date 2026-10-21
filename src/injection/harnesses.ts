@@ -2,9 +2,15 @@
  * Harness preset table for `loom inject`. Each entry names a target
  * harness, its canonical default path, and the MCP tool prefix to emit
  * in the injected instruction block.
+ *
+ * toolPrefix is NOT redeclared here — it's read from
+ * `src/install/harnesses.ts`'s INSTALL_TARGETS, which is the single
+ * source of truth for the prefix per harness (t-397: the two tables used
+ * to carry independent, disagreeing hardcoded values for codex).
  */
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { INSTALL_TARGETS } from '../install/harnesses.js';
 
 export type HarnessKey = 'claude-code' | 'codex' | 'gemini-cli';
 
@@ -26,19 +32,19 @@ export const HARNESSES: Readonly<Record<HarnessKey, HarnessPreset>> = {
     key: 'claude-code',
     display: 'Claude Code',
     defaultPath: join(homedir(), '.claude', 'CLAUDE.md'),
-    toolPrefix: 'mcp__loom__',
+    toolPrefix: INSTALL_TARGETS['claude-code'].toolPrefix,
   },
   'codex': {
     key: 'codex',
     display: 'Codex',
     defaultPath: join(homedir(), '.codex', 'AGENTS.md'),
-    toolPrefix: 'mcp__loom__',
+    toolPrefix: INSTALL_TARGETS['codex'].toolPrefix,
   },
   'gemini-cli': {
     key: 'gemini-cli',
     display: 'Gemini CLI',
     defaultPath: join(homedir(), '.gemini', 'GEMINI.md'),
-    toolPrefix: 'mcp__loom__',
+    toolPrefix: INSTALL_TARGETS['gemini-cli'].toolPrefix,
   },
 };
 
