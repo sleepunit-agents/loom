@@ -53,7 +53,9 @@ export const INSTALL_TARGETS: Readonly<Record<InstallTargetKey, InstallTarget>> 
     mcpConfigHint: '~/.codex/config.toml',
     invoke: 'use the loom-setup skill',
     restart: 'restart the Codex session',
-    toolPrefix: 'mcp_loom_',
+    // mcp__loom__, not mcp_loom_: a live Codex session's own tool catalog
+    // names it mcp__loom__identity (t-397, verified 2026-09-05 by mark).
+    toolPrefix: 'mcp__loom__',
   },
   'gemini-cli': {
     key: 'gemini-cli',
@@ -62,6 +64,10 @@ export const INSTALL_TARGETS: Readonly<Record<InstallTargetKey, InstallTarget>> 
     mcpConfigHint: '~/.gemini/settings.json',
     invoke: 'use the loom-setup skill',
     restart: 'exit and restart Gemini CLI',
+    // mcp_loom_, single underscores: gemini-cli joins server + '_' + tool
+    // and prepends 'mcp_' (MCP_QUALIFIED_NAME_SEPARATOR / generateValidName in
+    // packages/core/src/tools/mcp-tool.ts @ b25669d), so the model sees
+    // mcp_loom_identity (t-397, caught by mark in review of #122).
     toolPrefix: 'mcp_loom_',
   },
   'opencode': {
