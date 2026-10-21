@@ -17,8 +17,8 @@
 # Default: the two agents.
 *                   @art-e-fish @visual-mark
 
-# Dependency manifests: Art alone, so dependabot bumps don't need a
-# second click. A PR that also touches code still matches the code's
-# owners.
-/package.json       @art-e-fish
-/package-lock.json  @art-e-fish
+# Dependency manifests fall under the wildcard too. Either owner's
+# approval satisfies it, so a dependabot bump still needs one click,
+# and an Art-authored manifest change can be approved by Mark (and vice
+# versa). An Art-only line here left Art's own manifest PRs with no
+# eligible approver.
