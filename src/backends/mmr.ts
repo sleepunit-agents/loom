@@ -28,6 +28,14 @@ export interface MmrResult<T> {
   /** Chosen candidates in selection order (first pick = most relevant). */
   selected: T[];
   /**
+   * The score that actually drove each pick, same order/index as `selected`:
+   * score(c) = λ·relevance(c) − (1−λ)·max_{s ∈ selected} sim(c, s). Equals
+   * the candidate's own `relevance` when MMR made no change (diversity 0 or
+   * pool <= limit) — "blended" only means something once MMR has traded a
+   * pick off against the ones already chosen.
+   */
+  scores: number[];
+  /**
    * How many of the top-`limit` candidates by relevance were displaced by
    * a less-relevant-but-different one. 0 means MMR changed nothing.
    */
@@ -38,7 +46,19 @@ export interface MmrResult<T> {
 export const DEFAULT_DIVERSITY = 0.3;
 
 export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
-  const n = Math.min(a.length, b.length);
+  // A zero-length vector is the "no embedding available" sentinel (e.g. a
+  // lookup miss in the caller) — treat it as no similarity, same as before.
+  // A mismatch between two REAL vectors means the embedding dimension
+  // changed between model versions somewhere upstream; silently comparing
+  // the overlapping prefix (the old Math.min(a.length, b.length) behavior)
+  // hid that corruption instead of catching it. Raise instead (t-334).
+  if (a.length === 0 || b.length === 0) return 0;
+  if (a.length !== b.length) {
+    throw new Error(
+      `cosineSimilarity: dimension mismatch (${a.length} vs ${b.length}) — embeddings from different model versions can't be compared`,
+    );
+  }
+  const n = a.length;
   let dot = 0;
   let na = 0;
   let nb = 0;
@@ -64,14 +84,16 @@ export function mmrSelect<T extends MmrCandidate>(
   limit: number,
   diversity: number = DEFAULT_DIVERSITY,
 ): MmrResult<T> {
-  if (!(limit > 0)) return { selected: [], diversityDrops: 0 };
+  if (!(limit > 0)) return { selected: [], scores: [], diversityDrops: 0 };
   if (!(diversity > 0) || candidates.length <= limit) {
-    return { selected: candidates.slice(0, limit), diversityDrops: 0 };
+    const picked = candidates.slice(0, limit);
+    return { selected: picked, scores: picked.map((c) => c.relevance), diversityDrops: 0 };
   }
   const lambda = 1 - Math.min(diversity, 1);
 
   const remaining = candidates.map((_, i) => i);
   const chosen: number[] = [];
+  const chosenScores: number[] = [];
   // maxSim[i]: similarity of candidate i to the closest already-selected item.
   const maxSim = new Float64Array(candidates.length);
 
@@ -88,6 +110,7 @@ export function mmrSelect<T extends MmrCandidate>(
       }
     }
     chosen.push(best);
+    chosenScores.push(bestScore);
     remaining.splice(remaining.indexOf(best), 1);
     const pickedVec = candidates[best].vector;
     for (const i of remaining) {
@@ -103,5 +126,5 @@ export function mmrSelect<T extends MmrCandidate>(
   const chosenSet = new Set(chosen);
   const diversityDrops = topByRelevance.filter((i) => !chosenSet.has(i)).length;
 
-  return { selected: chosen.map((i) => candidates[i]), diversityDrops };
+  return { selected: chosen.map((i) => candidates[i]), scores: chosenScores, diversityDrops };
 }

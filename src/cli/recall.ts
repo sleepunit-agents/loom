@@ -15,7 +15,8 @@ Search memories semantically.
 
 Options:
   --category <name>      Filter by category
-  --project <name>       Filter by project
+  --project <name>       Scope to a project — excludes other projects' project-scoped
+                          memories (t-337); global-scoped memories still come through
   --limit <n>            Max results (default backend-specific)
   --diversity <f>        MMR diversity 0..1 (default 0.3); 0 = pure relevance order
   --json                 Emit MemoryMatch[] as JSON

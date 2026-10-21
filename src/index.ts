@@ -22,7 +22,7 @@
  */
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createLoomServer } from './server.js';
 import { resolveContextDir } from './config.js';
 import { SUBCOMMANDS } from './cli/subcommands.js';
