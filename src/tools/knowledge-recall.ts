@@ -138,6 +138,12 @@ export async function knowledgeRecall(
   contextDir: string,
   input: KnowledgeRecallInput,
   gapsDir?: string,
+  /**
+   * Acting identity (t-677) — 'art' for the local/stdio server, or whichever
+   * identity the standalone knowledge-http service resolved from its
+   * per-identity bearer token. Attributes stamped reads in knowledge_access.
+   */
+  identity: string = 'art',
 ): Promise<string> {
   const detail = input.detail ?? (input.query ? 'full' : 'index');
 
@@ -158,7 +164,7 @@ export async function knowledgeRecall(
           `Use knowledge_restore to bring it back.`
         );
       }
-      const page = await backend.getPage(input.slug, { stampAccess: true });
+      const page = await backend.getPage(input.slug, { stampAccess: true, identity });
       return `# Knowledge recall — 1 result\n\n${formatPage(page!)}`;
     }
 
@@ -172,6 +178,7 @@ export async function knowledgeRecall(
       // Index browsing must not inflate hit_count (expansion-engine signal).
       stampAccess: detail === 'full',
       sortByVerified: input.sort_by_verified,
+      identity,
     });
 
     if (pages.length === 0) {

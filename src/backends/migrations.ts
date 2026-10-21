@@ -9,6 +9,7 @@
  * existing entries (future migrations may depend on prior state).
  */
 import type { Database } from 'better-sqlite3';
+import { rebuildUniqKeys } from './dedup.js';
 
 export interface Migration {
   readonly id: string;
@@ -175,6 +176,215 @@ export const MIGRATIONS: readonly Migration[] = [
       db.prepare(
         'CREATE INDEX idx_memory_supersessions_new ON memory_supersessions(new_ref)',
       ).run();
+    },
+  },
+  {
+    id: 'add_confidence',
+    description:
+      'Add confidence column — evidence-backed trust score for feedback memories, ' +
+      'computed in code (t-338)',
+    pending: (db) => !hasColumn(db, 'memories', 'confidence'),
+    run: (db) => {
+      // NULL = not applicable (non-feedback memories never get a confidence
+      // score). remember() seeds it for category='feedback'; update() adjusts
+      // it on a confirm/contradict observation.
+      db.prepare('ALTER TABLE memories ADD COLUMN confidence REAL').run();
+    },
+  },
+  {
+    id: 'add_evidence_count',
+    description:
+      'Add evidence_count column — number of observations backing a feedback ' +
+      'memory\'s confidence (t-338)',
+    pending: (db) => !hasColumn(db, 'memories', 'evidence_count'),
+    run: (db) => {
+      db.prepare('ALTER TABLE memories ADD COLUMN evidence_count INTEGER NOT NULL DEFAULT 0').run();
+    },
+  },
+  {
+    id: 'add_observed_at',
+    description:
+      'Add observed_at column — when a feedback memory\'s confidence last took an ' +
+      'observation; the decay clock, separate from `updated` (t-338)',
+    pending: (db) => !hasColumn(db, 'memories', 'observed_at'),
+    run: (db) => {
+      // NULL falls back to `created`. Rows that already carry a confidence
+      // got it from an observation no later than their last update, so
+      // that's the best clock available for them.
+      db.prepare('ALTER TABLE memories ADD COLUMN observed_at TEXT').run();
+      db.prepare(
+        'UPDATE memories SET observed_at = COALESCE(updated, created) WHERE confidence IS NOT NULL',
+      ).run();
+    },
+  },
+  {
+    id: 'add_memory_deletions',
+    description:
+      'Add memory_deletions table — an append-only journal of every hard delete ' +
+      '(deleteById), so forget()/prune() leave a trace of what was removed and ' +
+      'why (t-436). Standalone, keyed by ref — deliberately NOT a child table of ' +
+      'memories, so it survives the delete it records (that FK-cascade blind spot ' +
+      'is the bug this fixes).',
+    pending: (db) => !hasTable(db, 'memory_deletions'),
+    run: (db) => {
+      db.prepare(`
+        CREATE TABLE memory_deletions (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          ref        TEXT NOT NULL,
+          category   TEXT NOT NULL,
+          title      TEXT NOT NULL,
+          project    TEXT,
+          content    TEXT NOT NULL,
+          created    TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          op         TEXT NOT NULL
+        )
+      `).run();
+      db.prepare(
+        'CREATE INDEX idx_memory_deletions_ref ON memory_deletions(ref)',
+      ).run();
+    },
+  },
+  {
+    id: 'add_scope',
+    description:
+      'Add scope column — explicit project|global visibility override, enforced ' +
+      'at recall against the category default (backends/scope.ts, t-337)',
+    pending: (db) => !hasColumn(db, 'memories', 'scope'),
+    run: (db) => {
+      // NULL on legacy records and any write that doesn't set it explicitly:
+      // effectiveScope() falls back to the category default in that case.
+      db.prepare('ALTER TABLE memories ADD COLUMN scope TEXT').run();
+    },
+  },
+  {
+    id: 'add_times_seen',
+    description:
+      'Add times_seen counter — bumped when remember() reheats an exact restatement instead of inserting (t-335)',
+    pending: (db) => !hasColumn(db, 'memories', 'times_seen'),
+    run: (db) => {
+      // DEFAULT 1 backfills existing rows too: each was "seen" at least once
+      // (the write that created it), even though restatements before t-335
+      // weren't counted.
+      db.prepare('ALTER TABLE memories ADD COLUMN times_seen INTEGER NOT NULL DEFAULT 1').run();
+    },
+  },
+  {
+    id: 'add_uniq',
+    description:
+      'Add uniq dedup key column + index, backfilled from existing rows, so write-time ' +
+      'remember() can reheat an exact restatement instead of inserting a duplicate (t-335)',
+    pending: (db) => !hasColumn(db, 'memories', 'uniq'),
+    run: (db) => {
+      db.prepare('ALTER TABLE memories ADD COLUMN uniq TEXT').run();
+      db.prepare('CREATE INDEX idx_memories_uniq ON memories(uniq)').run();
+
+      // Backfill: compute uniq for every existing ACTIVE row so future
+      // restatements of pre-t-335 content also reheat. Archived rows stay
+      // NULL and, within a pre-existing duplicate cluster, only the oldest
+      // active row gets the key — see rebuildUniqKeys().
+      rebuildUniqKeys(db);
+    },
+  },
+  {
+    id: 'rekey_uniq_unicode',
+    description:
+      'Recompute every uniq key with the Unicode-preserving normalizer — the first ' +
+      'normalizer stripped all non-ASCII text, so distinct non-Latin memories shared ' +
+      'one key (PR120 review)',
+    // Marker: the index this migration creates. Databases that ran add_uniq
+    // under the old normalizer have only idx_memories_uniq.
+    // uniq_active_unique (below) re-keys too and replaces this index.
+    pending: (db) =>
+      !hasIndex(db, 'memories', 'idx_memories_uniq_v2') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      rebuildUniqKeys(db);
+      db.prepare('CREATE INDEX IF NOT EXISTS idx_memories_uniq_v2 ON memories(uniq)').run();
+      db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+    },
+  },
+  {
+    id: 'uniq_active_unique',
+    description:
+      'Make uniq UNIQUE among active rows (partial index), so two concurrent ' +
+      'remember() calls of the same content cannot both insert (PR120 review)',
+    // rekey_uniq_exact (below) replaces this index with idx_memories_uniq_exact.
+    pending: (db) =>
+      !hasIndex(db, 'memories', 'idx_memories_uniq_active') &&
+      !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      db.transaction(() => {
+        // Re-key first: any active duplicates written before this index
+        // existed (the race it closes, or stale keys from before update()
+        // refreshed them) would otherwise make CREATE UNIQUE INDEX fail.
+        rebuildUniqKeys(db);
+        db.prepare(
+          'CREATE UNIQUE INDEX idx_memories_uniq_active ON memories(uniq) WHERE archived = 0',
+        ).run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+      }).immediate();
+    },
+  },
+  {
+    id: 'rekey_uniq_exact',
+    description:
+      'Recompute every uniq key with the exact normalizer — the previous one folded ' +
+      'case, punctuation and whitespace, and compared project ids loosely, so ' +
+      '"Offset -5"/"Offset 5", "1.5"/"15" and projects foo-bar/foobar shared a key ' +
+      '(PR120 review, round 2)',
+    // Marker: the unique index this migration creates, under a new name so
+    // databases keyed by the folding normalizer are detectable.
+    pending: (db) => !hasIndex(db, 'memories', 'idx_memories_uniq_exact'),
+    run: (db) => {
+      db.transaction(() => {
+        // Drop the old indexes first so the new unique index is built once,
+        // over the final keys only.
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_active').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq_v2').run();
+        db.prepare('DROP INDEX IF EXISTS idx_memories_uniq').run();
+        rebuildUniqKeys(db);
+        db.prepare(
+          'CREATE UNIQUE INDEX idx_memories_uniq_exact ON memories(uniq) WHERE archived = 0',
+        ).run();
+      }).immediate();
+    },
+  },  {
+    id: 'people_cards',
+    description:
+      'Add people + person_revisions: person cards, the condensed current state of a ' +
+      'human the agent works with (docs/specs/person-cards.md, t-1376). Additive — ' +
+      'dropping both tables is the whole backout',
+    pending: (db) => !hasTable(db, 'people') || !hasTable(db, 'person_revisions'),
+    run: (db) => {
+      db.transaction(() => {
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS people (
+            slug           TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            card_json      TEXT NOT NULL,
+            archived_at    TEXT,
+            archived_by    TEXT,
+            archive_reason TEXT,
+            updated        TEXT NOT NULL,
+            synthesized_at TEXT
+          )`,
+        ).run();
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS person_revisions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug          TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            op            TEXT NOT NULL,
+            replaced_at   TEXT NOT NULL
+          )`,
+        ).run();
+        db.prepare(
+          'CREATE INDEX IF NOT EXISTS idx_person_revisions_slug ON person_revisions(slug, id)',
+        ).run();
+      }).immediate();
     },
   },
 ];

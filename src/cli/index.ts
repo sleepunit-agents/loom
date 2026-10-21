@@ -22,6 +22,7 @@ Commands:
                      Browse / clean / find duplicates / health report
   knowledge write|recall|maintain
                      Write / search / health-report the knowledge store
+  person show|list   Read person cards (condensed current state per person)
   update-identity    Edit preferences.md / self-model.md sections
   bootstrap          Initialize a fresh agent
   serve              Explicit MCP stdio startup (same as no args)
@@ -88,6 +89,10 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
     }
     case 'knowledge': {
       const { run } = await import('./knowledge.js');
+      return run(rest, io);
+    }
+    case 'person': {
+      const { run } = await import('./person.js');
       return run(rest, io);
     }
     case 'forget': {

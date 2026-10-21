@@ -16,7 +16,10 @@ export function formatMatchResult(m: MemoryMatch): string {
   // not ground truth). Provenance follows in parens when present.
   const sourcingTag = m.sourcing ? ` · ${m.sourcing}` : '';
   const provenanceTag = m.provenance ? ` (${m.provenance})` : '';
-  return `## ${m.title}\n*${m.category}${projectTag} — ${m.created.slice(0, 10)}${sourcingTag}${provenanceTag}*\n\n${m.content}`;
+  // Decayed confidence, feedback memories only — undefined elsewhere (t-338).
+  const confidenceTag =
+    m.confidence !== undefined ? ` · confidence ${m.confidence.toFixed(2)} (${m.evidenceCount} obs)` : '';
+  return `## ${m.title}\n*${m.category}${projectTag} — ${m.created.slice(0, 10)}${sourcingTag}${provenanceTag}${confidenceTag}*\n\n${m.content}`;
 }
 
 export function formatResults(matches: MemoryMatch[]): string {

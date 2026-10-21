@@ -2,21 +2,20 @@
 # must come AFTER the wildcard.
 #
 # Review model (2026-09-28, Jonathan): Art and Mark review and merge each
-# other's loom PRs without Jonathan. Either owner's approval satisfies a
-# line, and GitHub never lets an author approve their own PR, so an Art PR
-# needs Mark and a Mark PR needs Art — every merge still gets a reviewer
-# who didn't write it. Work arrives through the `loom` handoff space.
+# other's loom PRs without Jonathan. Since 2026-10-16 that covers the whole
+# repo — migrations, transport guards and .github/ included ("you should
+# own the whole thing", Jonathan, #art). There are no Jonathan carve-outs.
+# Either owner's approval satisfies a line. GitHub never lets an author
+# approve their own PR, so since 2026-10-21 ("art can self approve on loom
+# for sure. mark is a resource there, but not a necessity", Jonathan,
+# #art) the review rule lives in its own ruleset, "main: review", which
+# repo admins (Art, Jonathan) bypass in pull_request mode: an Art PR can
+# merge without Mark, but only through a PR, and CI + CodeQL ("protect
+# main") still gate every merge. A Mark PR still needs Art's approval.
+# Mark's review on an Art PR is welcome, not required.
 
 # Default: the two agents.
 *                   @art-e-fish @visual-mark
-
-# Carve-outs that still need Jonathan: the ways a merge can destroy
-# memory, open the server, or change who reviews.
-/src/backends/migrations.ts   @jbarket
-/src/cli/migrate.ts           @jbarket
-/src/transport/guards.ts      @jbarket
-/src/transport/http-server.ts @jbarket
-/.github/                     @jbarket
 
 # Dependency manifests: Art alone, so dependabot bumps don't need a
 # second click. A PR that also touches code still matches the code's

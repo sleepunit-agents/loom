@@ -310,6 +310,32 @@ describe('knowledgeWrite', () => {
     }
   });
 
+  // t-415 review (loom#127): append is NOT idempotent — the same call twice
+  // stores the body twice. This is why knowledge_write must not advertise
+  // idempotentHint.
+  it('repeating the same append call duplicates the body (not idempotent)', async () => {
+    await seedRings();
+
+    const args = {
+      slug: 'rings',
+      domain: 'music/eurorack',
+      title: 'Rings',
+      body: '## Addendum\nNew section.',
+      mode: 'append' as const,
+      citations: [{ ...baseCitation, claim: 'Addendum claim', excerpt: 'Addendum excerpt.' }],
+    };
+    await knowledgeWrite(tempDir, args);
+    await knowledgeWrite(tempDir, args);
+
+    const backend = createKnowledgeBackend(tempDir);
+    try {
+      const page = await backend.getPage('rings');
+      expect(page!.body).toBe('Original body.\n\n## Addendum\nNew section.\n\n## Addendum\nNew section.');
+    } finally {
+      backend.close();
+    }
+  });
+
   it('append mode enforces the combined body cap', async () => {
     await knowledgeWrite(tempDir, {
       slug: 'big',
@@ -374,5 +400,39 @@ describe('knowledgeWrite', () => {
     } finally {
       backend.close();
     }
+  });
+
+  describe('actor attribution (t-675)', () => {
+    it('stamps author from the acting identity — never a tool argument', async () => {
+      await seedRings();
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const page = await backend.getPage('rings');
+        expect(page!.author).toBe('art');
+      } finally {
+        backend.close();
+      }
+    });
+
+    it('a differently-identified caller cannot steal or change authorship on upsert', async () => {
+      await seedRings();
+
+      await knowledgeWrite(tempDir, {
+        slug: 'rings',
+        domain: 'music/eurorack',
+        title: 'Rings',
+        body: 'Revised by a different identity.',
+        citations: [baseCitation],
+      }, 'mark');
+
+      const backend = createKnowledgeBackend(tempDir);
+      try {
+        const page = await backend.getPage('rings');
+        expect(page!.author).toBe('art');
+      } finally {
+        backend.close();
+      }
+    });
   });
 });

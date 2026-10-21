@@ -16,6 +16,10 @@ which model or client it runs in.
 
 > When the harness changes, the agent persists.
 
+**See it whole:** [`docs/architecture.md`](docs/architecture.md) maps every
+moving part (entry points, tool wings, backends, stores) and how they
+touch, as diagrams GitHub renders in place.
+
 ## Demo
 
 [![asciicast](https://asciinema.org/a/5bUMXCLmCRc8lg51.svg)](https://asciinema.org/a/5bUMXCLmCRc8lg51)
@@ -55,6 +59,12 @@ an agent's persistent state:
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.
+- **`memory_merge`** — consolidate 2+ memories into one canonical row. Acts on
+  a `memory_audit` duplicate-finding: sources are archived with a tombstone
+  and a supersession pointer to the target, the target's times-seen counter
+  sums in each source's count, and bodies can optionally be concatenated.
+  Unlike `forget`/`memory_archive` on a duplicate pair, this consolidates
+  both sides into one row instead of only discarding one.
 - **`memory_history`** — body-revision history for a memory. `update()` snapshots
   the displaced body into `memory_revisions` before overwriting it. List a
   memory's snapshots (id, op, replaced_at, char count), or read one snapshot's
@@ -137,6 +147,18 @@ an agent's persistent state:
   one back — the body it displaces is snapshotted first, so a restore is never
   itself a destructive overwrite. Revisions follow the page across renames and
   are purged with it.
+
+- **Person cards** — `person_write`, `person_verify`, `person_archive`,
+  `person_restore`, `person`, `person_list`, `person_history`,
+  `person_revision_restore`. A card is the condensed current state of one human
+  the agent works with (where they are in each system, with a freshness marker;
+  how to work with them; what they were said to be allowed to do, each with a
+  source). One value per field, overwritten; the past lives in revisions. Cards
+  are descriptive, never a grant: the harness's gating names (`tier`, `scope`,
+  …) are rejected on write. `identity({people: [slug, ...]})` adds an
+  `# In the room` block with the cards of the people a turn is addressed by.
+  CLI: `loom person show <slug>` / `loom person list`. Design:
+  `docs/specs/person-cards.md`.
 
 Everything lives on disk as plain markdown plus a single SQLite file.
 No daemon, no external service, no GPU.
@@ -283,6 +305,34 @@ A `LOOM_BEARER_TOKEN` adds defense in depth: when set, every request
 must carry a matching `Authorization: Bearer …` header (compared in
 constant time). When unset, the network boundary alone gates access —
 appropriate for a token-less tailnet-only daemon.
+
+### Knowledge-only scope — a second identity without memory tools
+
+`loom serve --http --scope knowledge` starts a second, standalone daemon
+that registers **only** the `knowledge_*` tools — no `identity`,
+`remember`/`recall`, or any other memory-wing tool is on its surface.
+This is how a second identity (e.g. a teammate's agent) can read/write a
+shared knowledge store without ever being handed access to memory. Same
+bind-safety as above; auth is a **per-identity bearer** instead of one
+shared token, so the acting identity is derived from which token was
+presented — never from a request field — and a session is pinned to
+whichever identity opened it.
+
+```bash
+LOOM_KNOWLEDGE_BEARER_TOKENS="art:abc123,mark:def456" \
+  loom serve --http --scope knowledge --port 8788
+```
+
+| Variable | Flag | Default | Description |
+|---|---|---|---|
+| `LOOM_KNOWLEDGE_HTTP_PORT` | `--port` | `8788` | Port to listen on |
+| `LOOM_KNOWLEDGE_BEARER_TOKENS` | — | *(required)* | `"identity:token,identity:token"` — refuses to start if empty |
+
+Both scopes share the same backing store (`knowledge.db` under the
+context dir) and the same tool implementation — the full server (identity
+hardcoded to its own name) and the scoped service go through the exact
+same registration code, so there's no separate "local" code path that
+could drift from the one the scoped service uses.
 
 ### Session and stream behavior
 
@@ -450,6 +500,10 @@ npx @jbarket/loomai memory proposals --context-dir ~/.config/loom/my-agent
 npx @jbarket/loomai memory ratify 3 --context-dir ~/.config/loom/my-agent
 npx @jbarket/loomai memory reject 4 --context-dir ~/.config/loom/my-agent
 
+# Read a person card (exit 3 when there is none) / list cards and their freshness
+npx @jbarket/loomai person show patrick-kells --context-dir ~/.config/loom/my-agent
+npx @jbarket/loomai person list --context-dir ~/.config/loom/my-agent
+
 # Run loom as an HTTP MCP daemon (mesh-reachable; default stays stdio)
 npx @jbarket/loomai serve --http --host 127.0.0.1 --port 8787
 
@@ -572,6 +626,8 @@ All configuration is through environment variables:
 | `LOOM_HTTP_HOST` | `127.0.0.1` | Bind host for `loom serve --http` (bind-safety enforced) |
 | `LOOM_HTTP_PORT` | `8787` | Bind port for `loom serve --http` |
 | `LOOM_BEARER_TOKEN` | *(unset)* | Bearer token required on every HTTP request when set |
+| `LOOM_KNOWLEDGE_HTTP_PORT` | `8788` | Bind port for `loom serve --http --scope knowledge` |
+| `LOOM_KNOWLEDGE_BEARER_TOKENS` | *(unset)* | `"identity:token,identity:token"` — required for `--scope knowledge` |
 
 `--context-dir <path>` works as a CLI alternative to
 `LOOM_CONTEXT_DIR`.
@@ -626,6 +682,9 @@ and `docs/archive/plans/` — implementation history, frozen after merge.
 
 ## Docs
 
+- [`docs/architecture.md`](docs/architecture.md) — loom at a glance:
+  every moving part and how they touch. A contract test fails CI when a
+  new tool, subcommand, backend module or table isn't on it.
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — install
   failures, MCP tools not appearing, fastembed download issues, and
   what each `loom doctor` field means.
