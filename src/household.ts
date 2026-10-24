@@ -21,6 +21,12 @@ import { basename, dirname, join, resolve } from 'node:path';
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 const HOUSEHOLD_FILE = 'household.json';
 const TOKENS_FILE = 'tokens.json';
+/**
+ * When each token was last used, by sha256. Its own file so the daemon never
+ * rewrites tokens.json: a read-modify-write there could race a `loom token
+ * revoke` and quietly undo it.
+ */
+const USED_FILE = 'tokens.used.json';
 
 export interface Household {
   /** $LOOM_HOME: where household.json lives. */
@@ -119,16 +125,29 @@ function writePrivate(path: string, body: string): void {
   renameSync(tmp, path);
 }
 
+function loadUsed(home: string): Record<string, string> {
+  try {
+    const raw = readJson(join(home, USED_FILE)) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === 'string'));
+  } catch { return {}; }
+}
+
+/** Every token record, with when it was last used merged in. */
 export function loadTokens(home: string): TokenRecord[] {
   const path = join(home, TOKENS_FILE);
   if (!existsSync(path)) return [];
   const raw = readJson(path) as { v?: number; tokens?: unknown };
   if (raw?.v !== 1 || !Array.isArray(raw.tokens)) throw new HouseholdError(`${path}: expected {"v": 1, "tokens": [...]}`);
-  return raw.tokens as TokenRecord[];
+  const used = loadUsed(home);
+  return (raw.tokens as TokenRecord[]).map((t) => {
+    const { last_used: _ignored, ...rest } = t;
+    return used[t.sha256] ? { ...rest, last_used: used[t.sha256] } : rest;
+  });
 }
 
 function saveTokens(home: string, tokens: TokenRecord[]): void {
-  writePrivate(join(home, TOKENS_FILE), JSON.stringify({ v: 1, tokens }, null, 2) + '\n');
+  const records = tokens.map(({ last_used: _l, ...t }) => t);
+  writePrivate(join(home, TOKENS_FILE), JSON.stringify({ v: 1, tokens: records }, null, 2) + '\n');
 }
 
 /** A role must name an agent this household has. */
@@ -199,13 +218,11 @@ export class TokenResolver {
     const now = Date.now();
     if (now - (this.lastTouch.get(digest) ?? 0) < 60_000) return;
     this.lastTouch.set(digest, now);
+    // Only tokens.used.json, never tokens.json: see USED_FILE.
     try {
-      const tokens = loadTokens(this.h.home);
-      const t = tokens.find((x) => x.sha256 === digest);
-      if (!t) return;
-      t.last_used = new Date(now).toISOString();
-      saveTokens(this.h.home, tokens);
-      this.cache = null;
+      const used = loadUsed(this.h.home);
+      used[digest] = new Date(now).toISOString();
+      writePrivate(join(this.h.home, USED_FILE), JSON.stringify(used) + '\n');
     } catch { /* last-used is a nicety; never fail a request over it */ }
   }
 }

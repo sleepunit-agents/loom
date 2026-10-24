@@ -74,6 +74,18 @@ describe('household files', () => {
     expect(loadTokens(h.home)[0].revoked).toBeTruthy();
   });
 
+  it('using a token never rewrites tokens.json, so it can\'t undo a revoke that lands meanwhile', () => {
+    const { token } = createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    const before = readFileSync(join(h.home, 'tokens.json'), 'utf-8');
+    const r = new TokenResolver(h);
+    expect(r.resolve(token)).toEqual({ kind: 'owner' });
+    expect(readFileSync(join(h.home, 'tokens.json'), 'utf-8')).toBe(before);
+    expect(loadTokens(h.home)[0].last_used).toBeTruthy();
+    revokeToken(h, 'page');
+    expect(r.resolve(token)).toBeNull();
+    expect(loadTokens(h.home)[0]).toMatchObject({ revoked: expect.any(String), last_used: expect.any(String) });
+  });
+
   it('init moves a plain context dir into a household and leaves a symlink that still finds it', () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-init-'));
     try {
