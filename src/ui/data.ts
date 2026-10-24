@@ -6,7 +6,7 @@
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
-import { DEFAULT_HALF_LIFE_DAYS, HALF_LIVES, pickForDigest, temperature, tierOf, type Tier } from '../backends/salience.js';
+import { DEFAULT_HALF_LIFE_DAYS, HALF_LIVES, decayedRecallHeat, heatOf, pickForDigest, temperature, tierOf, type Tier } from '../backends/salience.js';
 
 const EPISODE = 'episode';
 
@@ -27,8 +27,11 @@ export interface MemoryView {
   person: string | null;
   /** The stored field, refreshed by the consolidation lane. */
   stored: number;
-  /** Heat right now, from the timestamps: what the digest uses. */
+  /** Heat right now (heatOf): what the digest uses. */
   heat: number;
+  /** Its two parts: from being written or edited, and from being recalled. */
+  writtenHeat: number;
+  recallHeat: number;
   tier: Tier;
   halfLifeDays: number;
   /** Whether it's in the boot digest: what the agent wakes up holding. */
@@ -40,9 +43,10 @@ interface Row {
   sourcing: string | null; scope: string | null; created: string; updated: string | null;
   last_accessed: string | null; expires_at: string | null; times_seen: number | null;
   metadata: string | null; salience: number | null;
+  recall_heat: number | null; recall_heat_at: string | null;
 }
 
-const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, last_accessed, expires_at, times_seen, metadata, salience';
+const COLUMNS = 'ref, title, category, project, content, sourcing, scope, created, updated, last_accessed, expires_at, times_seen, metadata, salience, recall_heat, recall_heat_at';
 
 function open(contextDir: string): BetterSqlite3.Database | null {
   const path = resolveSqliteDbPath(contextDir);
@@ -70,13 +74,14 @@ function personOf(metadata: string | null): string | null {
 }
 
 function view(r: Row, nowMs: number, inDigest = false): MemoryView {
-  const touch = r.last_accessed ?? r.updated ?? r.created;
-  const heat = temperature(touch, r.category, nowMs);
+  const heat = heatOf(r, nowMs);
+  const writtenHeat = temperature(r.updated ?? r.created, r.category, nowMs);
+  const recallHeat = decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs);
   return {
     ref: r.ref, title: r.title, category: r.category, project: r.project, content: r.content,
     sourcing: r.sourcing, scope: r.scope, created: r.created, updated: r.updated,
     lastAccessed: r.last_accessed, expiresAt: r.expires_at, timesSeen: r.times_seen ?? 1,
-    person: personOf(r.metadata), stored: r.salience ?? heat, heat, tier: tierOf(heat),
+    person: personOf(r.metadata), stored: r.salience ?? heat, heat, writtenHeat, recallHeat, tier: tierOf(heat),
     halfLifeDays: HALF_LIVES[r.category] ?? DEFAULT_HALF_LIFE_DAYS, inDigest,
   };
 }

@@ -73,15 +73,17 @@ const heatTone = (h: number): Tone | undefined => (h >= 0.6 ? 'warn' : h < 0.2 ?
 
 /** The plain-language reason a memory has the heat it has. */
 function why(m: MemoryView, tz: string, nowMs: number, people: Map<string, string>): string {
-  const touched = m.lastAccessed
-    ? `Last recalled ${ago(m.lastAccessed, tz, nowMs)}.`
-    : m.updated ? `Edited ${ago(m.updated, tz, nowMs)}, never recalled.` : `Written ${ago(m.created, tz, nowMs)}, never recalled.`;
-  const decay = `${m.category[0].toUpperCase()}${m.category.slice(1)} memories cool by half every ${m.halfLifeDays} days, so it's at ${m.heat.toFixed(2)} now.`;
-  const where = m.inDigest ? 'That puts it in what I wake up holding.' : 'That\'s below what I wake up holding.';
+  const written = m.updated ? `Edited ${ago(m.updated, tz, nowMs)}.` : `Written ${ago(m.created, tz, nowMs)}.`;
+  const recalled = m.recallHeat >= 0.01
+    ? ` Being recalled adds ${m.recallHeat.toFixed(2)} (last ${ago(m.lastAccessed, tz, nowMs)}): the top result of a recall adds the most, an incidental one little.`
+    : m.lastAccessed ? '' : ' Never recalled.';
+  const source = m.recallHeat > m.writtenHeat ? 'recall' : 'when it was written';
+  const decay = ` ${m.category[0].toUpperCase()}${m.category.slice(1)} memories cool by half every ${m.halfLifeDays} days; it's at ${m.heat.toFixed(2)} now, from ${source}.`;
+  const where = m.inDigest ? ' That puts it in what I wake up holding.' : ' That\'s below what I wake up holding.';
   const about = m.person
     ? ` It's about ${people.get(m.person) ?? m.person}, but nothing limits it to conversations with them.`
     : '';
-  return `${touched} ${decay} ${where}${about}`;
+  return `${written}${recalled}${decay}${where}${about}`;
 }
 
 function memoryDetails(m: MemoryView, tz: string, nowMs: number, people: Map<string, string>): Block {
@@ -95,6 +97,8 @@ function memoryDetails(m: MemoryView, tz: string, nowMs: number, people: Map<str
         type: 'kv',
         items: [
           { label: 'heat now', value: m.heat.toFixed(2) },
+          { label: 'from writing', value: m.writtenHeat.toFixed(2) },
+          { label: 'from recall', value: m.recallHeat.toFixed(2) },
           ...(Math.abs(m.stored - m.heat) > 0.05 ? [{ label: 'stored (lane)', value: m.stored.toFixed(2) }] : []),
           { label: 'half-life', value: `${m.halfLifeDays} days` },
           { label: 'sourcing', value: m.sourcing ?? 'unknown' },
