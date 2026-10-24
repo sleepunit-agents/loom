@@ -24,6 +24,15 @@ function whereOf(metadata: string, project: string | null): string {
   return project?.trim() || '?';
 }
 
+/** loom's zone (LOOM_TIMEZONE, then TZ), and one that Intl accepts: a bad value never breaks the page. */
+export function uiTimeZone(): string {
+  for (const z of [process.env.LOOM_TIMEZONE, process.env.TZ, 'America/Chicago']) {
+    if (!z) continue;
+    try { new Intl.DateTimeFormat('en-US', { timeZone: z }); return z; } catch { /* next */ }
+  }
+  return 'UTC';
+}
+
 function tierTone(tier: string): Tone | undefined {
   return tier === 'cold' ? 'muted' : undefined;
 }
@@ -38,7 +47,7 @@ export function agentName(contextDir: string): string {
 }
 
 export function coreSections(contextDir: string, opts: { timeZone?: string; nowMs?: number } = {}): Section[] {
-  const timeZone = opts.timeZone ?? process.env.TZ ?? 'America/Chicago';
+  const timeZone = opts.timeZone ?? uiTimeZone();
   const digest = digestData(contextDir, TOP_OF_MIND);
   const episodes = episodeRows(contextDir, { hours: TAPE_HOURS, nowMs: opts.nowMs });
   const pending = listProposals(contextDir).filter((p) => p.status === 'pending');

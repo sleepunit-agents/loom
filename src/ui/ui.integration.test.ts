@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
@@ -147,7 +147,7 @@ describe('loom UI over HTTP', () => {
     expect(body.pieces).toEqual([{ piece: 'shuttle', sections: [expect.objectContaining({ id: 'bridges' })] }]);
     const cookie = await login();
     const html = await (await fetch(`${base}/ui`, { headers: { cookie } })).text();
-    expect(html).toContain('href="#shuttle"');
+    expect(html).toContain('href="#g-shuttle"');
     expect(html).toContain('Bridges');
   });
 
@@ -178,10 +178,84 @@ describe('loom UI over HTTP', () => {
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 
-  it('logout clears the cookie', async () => {
-    const res = await fetch(`${base}/ui/logout`, { redirect: 'manual' });
+  it('logout clears the cookie, and only on POST (no cross-site GET logout)', async () => {
+    expect((await fetch(`${base}/ui/logout`, { redirect: 'manual' })).status).toBe(405);
+    const res = await fetch(`${base}/ui/logout`, { method: 'POST', redirect: 'manual' });
     expect(res.status).toBe(303);
     expect(res.headers.get('set-cookie')).toMatch(/Max-Age=0/);
+  });
+
+  it('a tampered or forged cookie is refused', async () => {
+    const cookie = await login();
+    const [name, value] = cookie.split('=');
+    const [iat, mac] = value.split('.');
+    for (const bad of [`${Number(iat) - 1}.${mac}`, `${iat}.${'0'.repeat(64)}`, 'garbage', `${iat}`]) {
+      const res = await fetch(`${base}/ui/sections.json`, { headers: { cookie: `${name}=${bad}` } });
+      expect(res.status).toBe(401);
+    }
+  });
+
+  it('the login page names no agent, and an oversized login is cut off', async () => {
+    const page = await (await fetch(`${base}/ui/login`)).text();
+    expect(page).not.toContain('Test Agent');
+    const res = await fetch(`${base}/ui/login`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'token=' + 'x'.repeat(100_000),
+    }).catch(() => undefined);
+    if (res) expect([401, 413]).toContain(res.status);
+  });
+
+  it('concurrent page loads run each piece once', async () => {
+    const count = join(bin, 'count');
+    await piece(bin, 'counted', `echo x >> '${count}'; echo '${goodAnswer}'`);
+    await Promise.all(Array.from({ length: 10 }, () =>
+      fetch(`${base}/ui/sections.json`, { headers: { authorization: `Bearer ${TOKEN}` } }).then((r) => r.text())));
+    expect((await readFile(count, 'utf-8')).trim().split('\n')).toHaveLength(1);
+  });
+
+  it('a piece that leaves a helper holding stdout still answers in time', async () => {
+    await piece(bin, 'helper', `(sleep 20 &); echo '${goodAnswer}'`);
+    const t0 = Date.now();
+    const body = await (await fetch(`${base}/ui/sections.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
+      pieces: Array<{ piece: string }>;
+    };
+    expect(Date.now() - t0).toBeLessThan(2500);
+    expect(body.pieces.map((p) => p.piece)).toEqual(['helper']);
+  });
+
+  it('a timeout kills the piece\'s whole process group', async () => {
+    const pidFile = join(bin, 'child.pid');
+    await piece(bin, 'hangs', `sleep 30 & echo $! > '${pidFile}'; wait`);
+    await fetch(`${base}/ui/sections.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    const pid = Number((await readFile(pidFile, 'utf-8')).trim());
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(pid, 0)).toThrow();
+  }, 10000);
+
+  it('pieces never see loom\'s bearer token; a piece named loom is ignored', async () => {
+    const seen = join(bin, 'seen');
+    await piece(bin, 'peek', `printf '%s' "$LOOM_BEARER_TOKEN" > '${seen}'; echo '${goodAnswer}'`);
+    await piece(bin, 'loom', `echo '${goodAnswer}'`);
+    process.env.LOOM_BEARER_TOKEN = TOKEN;
+    try {
+      const body = await (await fetch(`${base}/ui/sections.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
+        pieces: Array<{ piece: string }>;
+      };
+      expect(body.pieces.map((p) => p.piece)).toEqual(['peek']);
+      expect(await readFile(seen, 'utf-8')).toBe('');
+    } finally {
+      delete process.env.LOOM_BEARER_TOKEN;
+    }
+  });
+
+  it('a bad TZ never breaks the page', async () => {
+    const saved = process.env.TZ;
+    process.env.TZ = ':/etc/localtime';
+    try {
+      const cookie = await login();
+      expect((await fetch(`${base}/ui`, { headers: { cookie } })).status).toBe(200);
+    } finally {
+      if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+    }
   });
 });
 
@@ -190,11 +264,13 @@ describe('loom UI: open and scoped daemons', () => {
   beforeEach(async () => { clearPieceCache(); stack = await mkdtemp(join(tmpdir(), 'loom-ui-open-')); });
   afterEach(async () => { await rm(stack, { recursive: true, force: true }); });
 
-  it('a daemon with no token serves the page without a login (like /mcp)', async () => {
+  it('a daemon with no token serves no page (an open page is DNS-rebindable; same rule as /cli)', async () => {
     const h = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0 });
     try {
-      const res = await fetch(`http://127.0.0.1:${h.port}/ui`, { redirect: 'manual' });
-      expect(res.status).toBe(200);
+      for (const path of ['/ui', '/ui/sections.json', '/ui/login']) {
+        const res = await fetch(`http://127.0.0.1:${h.port}${path}`, { redirect: 'manual' });
+        expect(res.status).toBe(403);
+      }
     } finally { await h.close(); }
   });
 

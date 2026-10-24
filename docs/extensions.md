@@ -119,15 +119,18 @@ loom-<piece> ui --json
   and the page carries no script. A piece can't put HTML or JS on loom's page.
   An answer that doesn't validate is dropped whole.
 - **Limits:** 10 sections, 20 blocks a section, 200 items or rows, 12
-  columns, 2000 characters a string. 3 seconds and 512 KB per answer.
-  Answers are cached for 30 seconds.
+  columns, 2000 characters a string. 3 seconds and 512 KB per answer. On a
+  timeout, the piece's whole process group is killed. Answers are cached for
+  45 seconds, and concurrent page loads share one run per piece.
 - **No configuration.** Installing a piece is what makes it appear. A
   piece with no `ui` verb (or one that times out or fails) simply isn't on the
   page, and the footer lists it as "no page". The page is read-only. Actions,
   such as an approval button, come with the first piece that needs them.
-- **loom-http's environment is the piece's environment.** `PATH` decides which
-  pieces exist for the page, and the piece's own variables (for example
-  `TASKSTORE_DB`, `SHUTTLE_INSTANCE`) have to be in the daemon's environment.
+- **loom-http's environment is the piece's environment**, minus loom's own
+  bearer tokens. `PATH` decides which pieces exist for the page, and the
+  piece's own variables (for example `TASKSTORE_DB`, `SHUTTLE_INSTANCE`) have
+  to be in the daemon's environment. A piece can't be named `loom`, because
+  that's the page's own group.
 
 ## Pieces today
 

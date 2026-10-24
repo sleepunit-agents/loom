@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   text, link). Pieces send data, never markup: everything is escaped, the page
   has no script, and a CSP forbids script and framing. Invalid answers are
   dropped whole, and a slow or missing piece is left out.
-  - **Login:** the bearer token, once; the cookie holds an HMAC of it.
+  - **Login:** the bearer token, once. The page requires `LOOM_BEARER_TOKEN` (no
+    token gives 403, like `/cli`). The cookie is keyed per daemon process, isn't
+    the token, and lasts 30 days or until a restart. Pieces never see loom's
+    tokens; on a timeout their whole process group is killed; concurrent loads
+    share one run per piece.
   - **`/ui/sections.json`:** the same data, for scripts.
   - **Scope:** full scope only.
 

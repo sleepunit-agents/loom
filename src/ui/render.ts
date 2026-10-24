@@ -39,8 +39,10 @@ function renderBlock(b: Block): string {
   }
 }
 
+// Ids are namespaced (g- groups, s-<source>--<id> sections) so no piece's
+// anchors can land on another's or on loom's.
 function renderSection(s: Section, source: string): string {
-  return `<section class="card" id="${esc(source)}-${esc(s.id)}"><h2>${esc(s.title)}</h2>${s.blocks.map(renderBlock).join('')}</section>`;
+  return `<section class="card" id="s-${esc(source)}--${esc(s.id)}"><h2>${esc(s.title)}</h2>${s.blocks.map(renderBlock).join('')}</section>`;
 }
 
 const STYLE = `
@@ -60,6 +62,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}.group{margin-bottom:24px}.grou
 .tone-ok dd,.tone-ok .text{color:var(--ok)}.tone-warn dd,.tone-warn .text{color:var(--warn)}.tone-bad dd,.tone-bad .text{color:var(--bad)}.tone-muted dd,.tone-muted .text{color:var(--muted)}
 a{color:var(--accent)}footer{max-width:1100px;margin:0 auto;padding:0 16px 24px;color:var(--muted);font-size:12px}
 form.login{max-width:360px;margin:48px auto;padding:16px}form.login input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
+form.inline{display:inline}form.inline button{background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:underline}
 form.login button{margin-top:10px;padding:9px 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit}.err{color:var(--bad)}
 `;
 
@@ -76,24 +79,24 @@ export function renderPage(opts: {
   generatedAt: string;
 }): string {
   const groups = [{ source: 'loom', sections: opts.core }, ...opts.pieces.map((p) => ({ source: p.piece, sections: p.sections }))];
-  const nav = groups.map((g) => `<a href="#${esc(g.source)}">${esc(g.source)}</a>`).join('');
+  const nav = groups.map((g) => `<a href="#g-${esc(g.source)}">${esc(g.source)}</a>`).join('');
   const main = groups
-    .map((g) => `<div class="group" id="${esc(g.source)}"><h2 class="source">${esc(g.source)}</h2><div class="grid">${
+    .map((g) => `<div class="group" id="g-${esc(g.source)}"><h2 class="source">${esc(g.source)}</h2><div class="grid">${
       g.sections.map((s) => renderSection(s, g.source)).join('')}</div></div>`)
     .join('');
   const quiet = opts.skipped.length ? ` · pieces with no page: ${opts.skipped.map((s) => esc(s.piece)).join(', ')}` : '';
   return shell(
     `${opts.agent} · loom`,
     `<header><h1>${esc(opts.agent)}</h1><div class="sub">loom</div></header><nav>${nav}</nav><main>${main}</main>` +
-      `<footer>Updated ${esc(opts.generatedAt)} · refreshes every 30s${quiet} · <a href="/ui/logout">log out</a></footer>`,
+      `<footer>Updated ${esc(opts.generatedAt)} · refreshes every 30s${quiet} · <form class="inline" method="post" action="/ui/logout"><button type="submit">log out</button></form></footer>`,
     true,
   );
 }
 
-export function renderLogin(agent: string, error?: string): string {
+export function renderLogin(error?: string): string {
   return shell(
-    `${agent} · loom`,
-    `<form class="login" method="post" action="/ui/login"><h1>${esc(agent)}</h1><p class="sub">loom: paste the bearer token once (it's kept as a cookie on this browser).</p>${
+    'loom',
+    `<form class="login" method="post" action="/ui/login"><h1>loom</h1><p class="sub">Paste the bearer token once. This browser keeps a cookie (until the daemon restarts, or 30 days).</p>${
       error ? `<p class="err">${esc(error)}</p>` : ''}<input type="password" name="token" autocomplete="current-password" autofocus aria-label="token"><button type="submit">Open</button></form>`,
     false,
   );
