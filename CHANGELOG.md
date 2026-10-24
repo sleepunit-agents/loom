@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-24
+
+### Security
+
+- **`harness_init` could write any file the daemon's user can.** Its
+  `target` was a free path and the harness name could carry newlines, so any
+  MCP caller could append to another agent's `IDENTITY.md` or plant a command
+  in a shell rc file. Over HTTP the target is now refused: it names a file on
+  the server, never the caller's. Locally it must be a harness instruction
+  file (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, …), judged at its real path.
+  Names refuse control characters, and managed-block writes use a random,
+  exclusive temp file. Found by the security review of the household work.
+
 ### Added
 
 - **The household, phase 1: one loom, several agents**
@@ -684,7 +697,8 @@ Initial public release.
   stack and all added external-service dependencies or operational
   overhead.
 
-[Unreleased]: https://github.com/sleepunit-agents/loom/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/sleepunit-agents/loom/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/sleepunit-agents/loom/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/sleepunit-agents/loom/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/sleepunit-agents/loom/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/sleepunit-agents/loom/compare/v0.8.0...v0.9.0
