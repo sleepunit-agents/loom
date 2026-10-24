@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **loom's page is at the root.** `/`, `/mind`, `/people`, `/memory/<ref>`,
+  `/p/<piece>/…`, `/act/<source>`, `/login`, `/logout` and `/pieces.json`.
+  The old `/ui/…` addresses redirect (308) to the same page. MCP still
+  answers everywhere else, and at `/` for a POST, a request with an MCP
+  session, or an event-stream GET. The session cookie's path is `/`.
+
 ## [0.9.0] - 2026-10-24
 
 ### Changed

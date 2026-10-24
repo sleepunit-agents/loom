@@ -94,7 +94,7 @@ rules exist so that day doesn't need a redesign.
 
 ## The page: how a piece shows up on loom's page
 
-loom-http serves a page at `/ui`. loom draws the frame (navigation, sign-in,
+loom-http serves a page at its root (`/`). loom draws the frame (navigation, sign-in,
 styles, the guard on every button) and its own pages: **Home** (the tape,
 plus what needs you), **Mind** (top of mind and why), one memory, and
 **People**. Everything else comes from the pieces that are installed. loom's
@@ -119,7 +119,7 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
 ```
 
 - **`tab`** puts the piece in the navigation. Its pages are served under
-  `/ui/p/<piece>/`. Without a tab the piece has no pages.
+  `/p/<piece>/`. Without a tab the piece has no pages.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
 - **`asks`** are things only the owner can decide. They're listed under

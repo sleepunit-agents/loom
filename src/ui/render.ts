@@ -19,8 +19,8 @@ export function esc(s: string): string {
 /** Whose page this is: loom's own (`loom`) or a piece's. */
 export interface Source { id: string; base: string }
 
-export const CORE: Source = { id: 'loom', base: '/ui/' };
-export const pieceSource = (piece: string): Source => ({ id: piece, base: `/ui/p/${piece}/` });
+export const CORE: Source = { id: 'loom', base: '/' };
+export const pieceSource = (piece: string): Source => ({ id: piece, base: `/p/${piece}/` });
 
 export interface RenderContext {
   source: Source;
@@ -42,7 +42,7 @@ export function pageHref(link: string, source: Source): string {
   const s = splitPage(link);
   if (!s) return '#';
   const base = s.core ? CORE.base : source.base;
-  const url = s.path === '' ? (base === CORE.base ? '/ui' : base.replace(/\/$/, '')) : base + s.path;
+  const url = s.path === '' ? (base === CORE.base ? '/' : base.replace(/\/$/, '')) : base + s.path;
   return url + qs(s.query);
 }
 
@@ -61,7 +61,7 @@ function hiddenInputs(fields: Record<string, string>): string {
 
 function actionForm(ctx: RenderContext, action: string, inner: string, cls: string): string {
   const back = ctx.path + qs(ctx.query);
-  return `<form class="${cls}" method="post" action="/ui/act/${esc(ctx.source.id)}">${hiddenInputs({ _csrf: ctx.csrf, _action: action, _path: back })}${inner}</form>`;
+  return `<form class="${cls}" method="post" action="/act/${esc(ctx.source.id)}">${hiddenInputs({ _csrf: ctx.csrf, _action: action, _path: back })}${inner}</form>`;
 }
 
 let fieldSeq = 0;
@@ -122,7 +122,7 @@ function renderBlock(b: Block, ctx: RenderContext): string {
     case 'filters': {
       const current = ctx.query[b.param] ?? '';
       return `<nav class="filters" aria-label="Filter">${b.options.map((o) => {
-        const href = ctx.source.base === CORE.base && ctx.path === '' ? '/ui' : pageHref(ctx.path, ctx.source);
+        const href = pageHref(ctx.path, ctx.source);
         const target = href + qs({ ...ctx.query, [b.param]: o.value });
         const on = o.value === current;
         return `<a class="pill${on ? ' on' : ''}" href="${esc(target)}"${on ? ' aria-current="true"' : ''}>${esc(o.label)}</a>`;
@@ -239,9 +239,9 @@ function chromeTop(c: Chrome): string {
   const core = c.nav.filter((n) => !n.piece);
   const pieces = c.nav.filter((n) => n.piece);
   const tab = (n: Chrome['nav'][number]) => `<a href="${esc(n.href)}"${n.current ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`;
-  return `<header class="top"><div class="top-in"><a class="brand" href="/ui"><svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h16M3 11h16M3 17h16"></path><path d="M7 2v18M15 2v18" opacity=".55"></path></svg>loom <span class="who">· ${esc(c.agent)}</span></a>` +
+  return `<header class="top"><div class="top-in"><a class="brand" href="/"><svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h16M3 11h16M3 17h16"></path><path d="M7 2v18M15 2v18" opacity=".55"></path></svg>loom <span class="who">· ${esc(c.agent)}</span></a>` +
     `<nav class="tabs" aria-label="Sections">${core.map(tab).join('')}${pieces.length ? `<span class="sep" aria-hidden="true"></span>${pieces.map(tab).join('')}` : ''}</nav>` +
-    `<div class="top-right"><span class="mono">${esc(c.clock)}</span><form class="inline" method="post" action="/ui/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
+    `<div class="top-right"><span class="mono">${esc(c.clock)}</span><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
 }
 
 function chromeFoot(c: Chrome, refresh: boolean): string {
@@ -302,7 +302,7 @@ export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles
 export function renderLogin(error?: string): string {
   return document(
     'loom',
-    `<form class="login" method="post" action="/ui/login"><h1>loom</h1><p class="sub">Paste the bearer token once. This browser keeps a cookie (until the daemon restarts, or 30 days).</p>${
+    `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Paste the bearer token once. This browser keeps a cookie (until the daemon restarts, or 30 days).</p>${
       error ? `<p class="err">${esc(error)}</p>` : ''}<input type="password" name="token" autocomplete="current-password" autofocus aria-label="token"><button type="submit">Open</button></form>`,
     false,
   );
