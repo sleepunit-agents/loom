@@ -22,7 +22,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { resolveKnowledgeDbPath } from './config.js';
 import { commonsPeoplePath, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
-import { personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
+import { personArchive, personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
 import { remember } from './tools/remember.js';
 import { closeAllBackends } from './backends/index.js';
 import { harnessInit } from './tools/harness.js';
@@ -608,5 +608,8 @@ describe('the commons: people', () => {
     st.close();
     const handle = await startHttpServer({ contextDir: art(), host: '127.0.0.1', port: 0, household: h });
     await handle.close();
+    // And not onto an archived card.
+    await personArchive(art(), { slug: loren.slug, reason: 'test' });
+    expect(await personRevisionRestore(art(), { slug: loren.slug, revision_id: pre.id })).toMatch(/archived/);
   });
 });
