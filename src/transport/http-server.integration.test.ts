@@ -97,7 +97,9 @@ describe('c-loom-transport: session lifecycle (no-stream + recovery)', () => {
 
   // A GET with no established session can't attach a stream -> 405.
   it('returns 405 for a GET with no session', async () => {
-    const res = await fetch(`http://127.0.0.1:${handle.port}/`, { method: 'GET' });
+    // An MCP client's GET asks for the event stream; a plain browser GET of
+    // `/` is loom's page instead (src/ui).
+    const res = await fetch(`http://127.0.0.1:${handle.port}/`, { method: 'GET', headers: { accept: 'text/event-stream' } });
     expect(res.status).toBe(405);
   });
 

@@ -198,7 +198,7 @@ have fallen behind.
 | `src/transport/knowledge-server.ts` | Knowledge-only MCP server |
 | `src/transport/http-server.ts` | StreamableHTTP front, one server per MCP session |
 | `src/transport/guards.ts` | Safe bind, bearer check, payload cap |
-| `src/ui/*` | `/ui`: loom's page. `core.ts` (its own sections), `piece-sections.ts` (`loom-<piece> ui --json`), `sections.ts` (the vocabulary and its validation), `render.ts`, `handler.ts` (routes and login) |
+| `src/ui/*` | loom's page, at the daemon's root. `core.ts` (loom's own pages and actions), `data.ts` (their queries), `pieces.ts` (running `loom-<piece> ui …`), `vocab.ts` (the page vocabulary and its validation), `render.ts`, `handler.ts` (routes, sessions, the guards on actions) |
 | `src/transport/cli-endpoint.ts` | `POST /cli`: runs a store verb's argv through `runCliLocal` (no remote mode on its path) on the server's stack (full scope only) |
 | `src/transport/mcp-app-hello.ts` | Env-gated MCP-App widget probes |
 | `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |

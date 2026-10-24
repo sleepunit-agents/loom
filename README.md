@@ -383,9 +383,12 @@ header, or a body that isn't `application/json`). The knowledge-only daemon
 has no `/cli`. Every other command (`doctor`, `inject`, `serve`, …) stays
 local, and `--url` on one of them is an error.
 
-### loom's page — `/ui`
+### loom's page
 
-The full-scope daemon serves a web page at `/ui`. **Home** is the tape:
+The full-scope daemon serves a web page at its root (`/`; the old `/ui/…`
+addresses redirect). MCP shares the root: a POST, a request with an MCP
+session or an event-stream GET is MCP's, a plain browser GET is the page.
+**Home** is the tape:
 what every body did in the last day, by hour and by where it happened, with
 top of mind and the people cards that need a look beside it. **Mind** lists
 every memory by heat and says why each one has it, which is how you find a
@@ -409,7 +412,7 @@ until the daemon restarts. Every form carries an anti-forgery token bound to
 that session, a cross-site post is refused, and another site can link to the
 page but not embed or fetch it. A form's fields go to the piece on stdin, and loom never logs, keeps
 or puts them in a URL. Scripts can send the bearer header instead (for
-example `/ui/pieces.json` for the pieces' manifests). The page runs no script
+example `/pieces.json` for the pieces' manifests). The page runs no script
 and is served under a CSP that forbids script and framing. Pieces never
 receive loom's bearer tokens.
 

@@ -92,7 +92,7 @@ describe('the vocabulary pieces send', () => {
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', href: 'javascript:alert(1)' }] }] }, /http\(s\)/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', href: '/relative' }] }] }, /absolute/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', page: '../../cli' }] }] }, /page link/],
-    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', page: '/ui/act/loom' }] }] }, /page link/],
+    [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'link', text: 'x', page: '/act/loom' }] }] }, /page link/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'html', html: '<b>' }] }] }, /unknown block type/],
     [{ title: 'T', sections: [{ id: 'Bad Id', blocks: [] }] }, /section.id/],
     [{ title: 'T', sections: [{ id: 's', blocks: [{ type: 'text', text: 'x'.repeat(2001) }] }] }, /longer than/],
@@ -123,10 +123,10 @@ describe('the vocabulary pieces send', () => {
     // Into loom, only loom's own pages.
     for (const bad of ['loom:p/other/x', 'loom:act/loom', 'loom:login', 'loom:logout', 'loom:pieces.json']) expect(splitPage(bad)).toBeNull();
     for (const ok of ['loom:', 'loom:mind?category=user', 'loom:people', 'loom:people/pat', 'loom:memory/user/a-1']) expect(splitPage(ok)).not.toBeNull();
-    expect(pageHref('task/t-1', pieceSource('tasks'))).toBe('/ui/p/tasks/task/t-1');
-    expect(pageHref('', pieceSource('tasks'))).toBe('/ui/p/tasks');
-    expect(pageHref('loom:people/pat', pieceSource('tasks'))).toBe('/ui/people/pat');
-    expect(pageHref('loom:', pieceSource('tasks'))).toBe('/ui');
+    expect(pageHref('task/t-1', pieceSource('tasks'))).toBe('/p/tasks/task/t-1');
+    expect(pageHref('', pieceSource('tasks'))).toBe('/p/tasks');
+    expect(pageHref('loom:people/pat', pieceSource('tasks'))).toBe('/people/pat');
+    expect(pageHref('loom:', pieceSource('tasks'))).toBe('/');
   });
 
   it('esc() leaves nothing that can open a tag or an attribute', () => {
@@ -163,7 +163,7 @@ describe('loom UI over HTTP', () => {
   });
 
   async function login(): Promise<string> {
-    const res = await fetch(`${base}/ui/login`, {
+    const res = await fetch(`${base}/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: `token=${encodeURIComponent(TOKEN)}`,
@@ -190,13 +190,13 @@ describe('loom UI over HTTP', () => {
   }
 
   it('sends a browser without a cookie to the login page', async () => {
-    const res = await fetch(`${base}/ui`, { redirect: 'manual' });
+    const res = await fetch(`${base}/`, { redirect: 'manual' });
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/ui/login');
+    expect(res.headers.get('location')).toBe('/login');
   });
 
   it('refuses a wrong token at login', async () => {
-    const res = await fetch(`${base}/ui/login`, {
+    const res = await fetch(`${base}/login`, {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'token=wrong', redirect: 'manual',
     });
     expect(res.status).toBe(401);
@@ -205,7 +205,7 @@ describe('loom UI over HTTP', () => {
 
   it('Home is the tape, with top of mind beside it, under a no-script CSP', async () => {
     const cookie = await login();
-    const res = await get('/ui', cookie);
+    const res = await get('/', cookie);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toMatch(/default-src 'none'/);
     const html = await res.text();
@@ -213,16 +213,16 @@ describe('loom UI over HTTP', () => {
     expect(html).toContain('What&#39;s happening');
     expect(html).toContain('shipped the ui');
     expect(html).toContain('a hot memory');
-    expect(html).toContain('href="/ui/mind"');
+    expect(html).toContain('href="/mind"');
     expect(html).not.toContain('<script');
   });
 
   it('the tape filters by where it happened', async () => {
     const cookie = await login();
-    const html = await (await get('/ui?where=discord', cookie)).text();
+    const html = await (await get('/?where=discord', cookie)).text();
     expect(html).toContain('talked on discord');
     expect(html).not.toContain('shipped the ui');
-    expect(html).toContain('class="pill on" href="/ui?where=discord"');
+    expect(html).toContain('class="pill on" href="/?where=discord"');
   });
 
   it('Mind explains heat, and an aged memory sits below a fresh one with no recompute', async () => {
@@ -231,7 +231,7 @@ describe('loom UI over HTTP', () => {
     db.prepare('UPDATE memories SET created = ?, salience = 1 WHERE title = ?').run(new Date(Date.now() - 90 * 86_400_000).toISOString(), 'an old memory');
     db.close();
     const cookie = await login();
-    const html = await (await get('/ui/mind', cookie)).text();
+    const html = await (await get('/mind', cookie)).text();
     expect(html).toContain('What I wake up holding');
     expect(html.indexOf('a hot memory')).toBeLessThan(html.indexOf('an old memory'));
     expect(html).toMatch(/Project memories cool by half every 10 days/);
@@ -242,28 +242,28 @@ describe('loom UI over HTTP', () => {
     const db = new BetterSqlite3(resolveSqliteDbPath(stack), { readonly: true });
     const ref = (db.prepare("SELECT ref FROM memories WHERE title = 'a hot memory'").get() as { ref: string }).ref;
     db.close();
-    const html = await (await get(`/ui/memory/${ref}`, cookie)).text();
+    const html = await (await get(`/memory/${ref}`, cookie)).text();
     expect(html).toContain('<h1>a hot memory</h1>');
     expect(html).toContain('half-life');
-    expect((await get('/ui/memory/nope/none', cookie)).status).toBe(404);
-    expect((await get('/ui/people', cookie)).status).toBe(200);
+    expect((await get('/memory/nope/none', cookie)).status).toBe(404);
+    expect((await get('/people', cookie)).status).toBe(200);
     // A piece may link to someone with no card: a page that says so, not an error.
-    expect(await (await get('/ui/people/no-such-person', cookie)).text()).toContain('no person card for no-such-person');
+    expect(await (await get('/people/no-such-person', cookie)).text()).toContain('no person card for no-such-person');
   });
 
   it('pending proposals show on Mind (not Home), and ratify / reject work from the page', async () => {
     propose(stack, { category: 'feedback', title: 'please ratify me', content: 'c', source: 'test' });
     propose(stack, { category: 'feedback', title: 'please reject me', content: 'c', source: 'test' });
     const cookie = await login();
-    expect(await (await get('/ui', cookie)).text()).not.toContain('please ratify me');
-    const mind = await (await get('/ui/mind', cookie)).text();
+    expect(await (await get('/', cookie)).text()).not.toContain('please ratify me');
+    const mind = await (await get('/mind', cookie)).text();
     expect(mind).toContain('2 proposals waiting');
     const csrf = csrfOf(mind);
     const [a, b] = listProposals(stack);
-    const r1 = await post('/ui/act/loom', cookie, { _csrf: csrf, _action: 'ratify', _path: 'mind', id: String(a.id) });
+    const r1 = await post('/act/loom', cookie, { _csrf: csrf, _action: 'ratify', _path: 'mind', id: String(a.id) });
     expect(r1.status).toBe(303);
-    const r2 = await post('/ui/act/loom', cookie, { _csrf: csrf, _action: 'reject', _path: 'mind', id: String(b.id) });
-    expect(r2.headers.get('location')).toMatch(/^\/ui\/mind\?_flash=[0-9a-f]+$/);
+    const r2 = await post('/act/loom', cookie, { _csrf: csrf, _action: 'reject', _path: 'mind', id: String(b.id) });
+    expect(r2.headers.get('location')).toMatch(/^\/mind\?_flash=[0-9a-f]+$/);
     expect(listProposals(stack)).toHaveLength(0);
     const after = await (await get(r2.headers.get('location')!, cookie)).text();
     expect(after).toContain(`Proposal #${b.id} rejected.`);
@@ -274,15 +274,15 @@ describe('loom UI over HTTP', () => {
   it('an action without the anti-forgery token, or from another site, is refused', async () => {
     propose(stack, { category: 'feedback', title: 'p', content: 'c', source: 'test' });
     const cookie = await login();
-    const csrf = csrfOf(await (await get('/ui/mind', cookie)).text());
+    const csrf = csrfOf(await (await get('/mind', cookie)).text());
     const id = String(listProposals(stack)[0].id);
-    expect((await post('/ui/act/loom', cookie, { _action: 'reject', id })).status).toBe(403);
-    expect((await post('/ui/act/loom', cookie, { _csrf: '0'.repeat(64), _action: 'reject', id })).status).toBe(403);
-    expect((await post('/ui/act/loom', cookie, { _csrf: csrf, _action: 'reject', id }, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
-    expect((await post('/ui/act/loom', cookie, { _csrf: csrf, _action: 'reject', id }, { origin: 'https://evil.example' })).status).toBe(403);
+    expect((await post('/act/loom', cookie, { _action: 'reject', id })).status).toBe(403);
+    expect((await post('/act/loom', cookie, { _csrf: '0'.repeat(64), _action: 'reject', id })).status).toBe(403);
+    expect((await post('/act/loom', cookie, { _csrf: csrf, _action: 'reject', id }, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    expect((await post('/act/loom', cookie, { _csrf: csrf, _action: 'reject', id }, { origin: 'https://evil.example' })).status).toBe(403);
     expect(listProposals(stack)).toHaveLength(1);
     // A script with the bearer header has no ambient credential to forge, so it needs no token.
-    const res = await fetch(`${base}/ui/act/loom`, {
+    const res = await fetch(`${base}/act/loom`, {
       method: 'POST', redirect: 'manual',
       headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ _action: 'reject', id }).toString(),
@@ -293,13 +293,13 @@ describe('loom UI over HTTP', () => {
 
   it('an installed piece gets a tab, a tile and its asks, with no configuration', async () => {
     await piece(bin, 'shuttle', `[ "$1 $2" = "ui --json" ] && echo '${manifest}'`);
-    const body = await (await fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
+    const body = await (await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
       pieces: Array<{ piece: string; manifest: { tab: { label: string } } }>;
     };
     expect(body.pieces.map((p) => [p.piece, p.manifest.tab.label])).toEqual([['shuttle', 'Bridges']]);
     const cookie = await login();
-    const html = await (await get('/ui', cookie)).text();
-    expect(html).toContain('<a href="/ui/p/shuttle">Bridges</a>');
+    const html = await (await get('/', cookie)).text();
+    expect(html).toContain('<a href="/p/shuttle">Bridges</a>');
     expect(html).toContain('2 live');
     expect(html).toContain('Your call');
     expect(html).toContain('Slack bridge is dark');
@@ -308,26 +308,26 @@ describe('loom UI over HTTP', () => {
   it('a first-version piece still shows, as its own page', async () => {
     await piece(bin, 'old', `[ "$1 $2" = "ui --json" ] && echo '${legacy}'`);
     const cookie = await login();
-    const html = await (await get('/ui/p/old', cookie)).text();
+    const html = await (await get('/p/old', cookie)).text();
     expect(html).toContain('<h2>Bridges</h2>');
-    expect((await get('/ui/p/old/deeper', cookie)).status).toBe(404);
+    expect((await get('/p/old/deeper', cookie)).status).toBe(404);
   });
 
   it('a piece page renders its forms and buttons; an action reaches the piece on stdin only', async () => {
     const seen = join(bin, 'seen');
     await piece(bin, 'vault', fullPiece(seen));
     const cookie = await login();
-    const html = await (await get('/ui/p/vault', cookie)).text();
+    const html = await (await get('/p/vault', cookie)).text();
     expect(html).toContain('<h1>Vault</h1>');
     expect(html).toContain('type="password" autocomplete="off" data-1p-ignore');
     expect(html).not.toContain('MUST-NOT-RENDER');
-    expect(html).toContain('action="/ui/act/vault"');
-    expect(html).toContain('href="/ui/p/vault/item/alpha"');
+    expect(html).toContain('action="/act/vault"');
+    expect(html).toContain('href="/p/vault/item/alpha"');
     const csrf = csrfOf(html);
-    const res = await post('/ui/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'sentry-dsn', value: 'hunter2-secret' });
+    const res = await post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'sentry-dsn', value: 'hunter2-secret' });
     expect(res.status).toBe(303);
     const to = res.headers.get('location')!;
-    expect(to).toMatch(/^\/ui\/p\/vault\?_flash=/);
+    expect(to).toMatch(/^\/p\/vault\?_flash=/);
     expect(to).not.toContain('hunter2');
     expect(JSON.parse(await readFile(seen, 'utf-8'))).toEqual({ action: 'add', path: '', fields: { name: 'sentry-dsn', value: 'hunter2-secret' } });
     expect(await (await get(to, cookie)).text()).toContain('Stored.');
@@ -338,7 +338,7 @@ describe('loom UI over HTTP', () => {
     await piece(bin, 'garbage', 'echo "{not json"');
     await piece(bin, 'slow', `sleep 10; echo '${manifest}'`);
     const t0 = Date.now();
-    const body = await (await fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
+    const body = await (await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
       pieces: unknown[]; skipped: Array<{ piece: string; reason: string }>;
     };
     expect(Date.now() - t0).toBeLessThan(6000);
@@ -349,14 +349,14 @@ describe('loom UI over HTTP', () => {
       slow: 'timed out',
     });
     const cookie = await login();
-    expect((await get('/ui', cookie)).status).toBe(200);
+    expect((await get('/', cookie)).status).toBe(200);
   }, 15000);
 
   it('a piece can\'t inject markup: its strings are escaped', async () => {
     const evil = JSON.stringify({ v: 2, tab: { label: '<img src=x onerror=alert(1)>' }, tile: { label: 'x', value: '</a><script>alert(1)</script>' } });
     await piece(bin, 'evil', `echo '${evil}'`);
     const cookie = await login();
-    const html = await (await get('/ui', cookie)).text();
+    const html = await (await get('/', cookie)).text();
     expect(html).not.toContain('<script>alert');
     expect(html).not.toContain('<img src=x');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
@@ -373,21 +373,65 @@ describe('loom UI over HTTP', () => {
     });
     // Dot segments are resolved before routing, so they land on another route, which refuses
     // (the cookie is no bearer for /cli)...
-    for (const p of ['/ui/p/vault/..', '/ui/p/vault/%2e%2e/%2e%2e/cli', '/ui/memory/../../x', '/ui/p/nope']) {
+    for (const p of ['/p/vault/..', '/p/vault/%2e%2e/%2e%2e/cli', '/memory/../../x', '/p/nope']) {
       expect([401, 404]).toContain(await raw(p));
     }
     // ...and an encoded slash that would smuggle a .. segment to the piece is refused.
-    for (const p of ['/ui/p/vault/a%2F..%2Fb', '/ui/p/vault/a%2F%2E%2E%2Fb', '/ui/memory/x%2F..%2F..%2Fy']) {
+    for (const p of ['/p/vault/a%2F..%2Fb', '/p/vault/a%2F%2E%2E%2Fb', '/memory/x%2F..%2F..%2Fy']) {
       expect(await raw(p)).toBe(404);
     }
   });
 
   it('logout clears the cookie, and only on a same-site POST', async () => {
-    expect((await fetch(`${base}/ui/logout`, { redirect: 'manual' })).status).toBe(405);
-    expect((await fetch(`${base}/ui/logout`, { method: 'POST', redirect: 'manual', headers: { 'sec-fetch-site': 'cross-site' } })).status).toBe(403);
-    const res = await fetch(`${base}/ui/logout`, { method: 'POST', redirect: 'manual' });
+    expect((await fetch(`${base}/logout`, { redirect: 'manual' })).status).toBe(405);
+    expect((await fetch(`${base}/logout`, { method: 'POST', redirect: 'manual', headers: { 'sec-fetch-site': 'cross-site' } })).status).toBe(403);
+    const res = await fetch(`${base}/logout`, { method: 'POST', redirect: 'manual' });
     expect(res.status).toBe(303);
     expect(res.headers.get('set-cookie')).toMatch(/Max-Age=0/);
+  });
+
+  it('/ is the page for a browser, and MCP\'s for an MCP client', async () => {
+    const cookie = await login();
+    expect(await (await get('/', cookie)).text()).toContain('What&#39;s happening');
+    // An MCP initialize posted to the root is MCP's, not the page's.
+    const init = await fetch(`${base}/`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } }),
+    });
+    expect(init.status).toBe(200);
+    expect(init.headers.get('mcp-session-id')).toBeTruthy();
+    // An event-stream GET to the root is MCP's too.
+    const sse = await fetch(`${base}/`, { headers: { authorization: `Bearer ${TOKEN}`, accept: 'text/event-stream' }, redirect: 'manual' });
+    expect(sse.headers.get('content-security-policy')).toBeNull();
+    await sse.body?.cancel();
+  });
+
+  it('old /ui addresses redirect to the same page at the root', async () => {
+    for (const [from, to] of [['/ui', '/'], ['/ui/', '/'], ['/ui/mind?category=user', '/mind?category=user'], ['/ui/p/tasks/task/t-1', '/p/tasks/task/t-1']]) {
+      const res = await fetch(`${base}${from}`, { redirect: 'manual' });
+      expect(res.status).toBe(308);
+      expect(res.headers.get('location')).toBe(to);
+    }
+    // Never off-site: extra slashes or backslashes can't make a protocol-relative URL.
+    const raw = (path: string) => new Promise<string>((resolve, reject) => {
+      const r = httpRequest({ host: '127.0.0.1', port: handle.port, path }, (res) => { res.resume(); resolve(res.headers.location ?? ''); });
+      r.on('error', reject);
+      r.end();
+    });
+    for (const p of ['/ui//evil.example', '/ui///evil.example/x', '/ui/\\evil.example', '/ui/%2F%2Fevil.example']) {
+      const loc = await raw(p);
+      expect(loc.startsWith('/')).toBe(true);
+      expect(loc.startsWith('//')).toBe(false);
+      expect(loc.startsWith('/\\')).toBe(false);
+    }
+  });
+
+  it('the session cookie is scoped to the whole site now', async () => {
+    const res = await fetch(`${base}/login`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${TOKEN}`, redirect: 'manual',
+    });
+    expect(res.headers.get('set-cookie')).toMatch(/Path=\/;/);
   });
 
   it('the UI cookie is not a bearer: /cli still refuses it', async () => {
@@ -403,24 +447,24 @@ describe('loom UI over HTTP', () => {
     const cookie = await login();
     const [name, value] = cookie.split('=');
     for (const bad of [value.slice(0, -1) + (value.endsWith('0') ? '1' : '0'), '0'.repeat(64), 'garbage', `${value}.x`]) {
-      const res = await fetch(`${base}/ui/pieces.json`, { headers: { cookie: `${name}=${bad}` } });
+      const res = await fetch(`${base}/pieces.json`, { headers: { cookie: `${name}=${bad}` } });
       expect(res.status).toBe(401);
     }
   });
 
   it('logout revokes the session server-side: a copy of the cookie stops working', async () => {
     const cookie = await login();
-    expect((await get('/ui', cookie)).status).toBe(200);
-    const res = await fetch(`${base}/ui/logout`, { method: 'POST', redirect: 'manual', headers: { cookie } });
+    expect((await get('/', cookie)).status).toBe(200);
+    const res = await fetch(`${base}/logout`, { method: 'POST', redirect: 'manual', headers: { cookie } });
     expect(res.status).toBe(303);
-    expect((await get('/ui', cookie)).headers.get('location')).toBe('/ui/login');
+    expect((await get('/', cookie)).headers.get('location')).toBe('/login');
   });
 
   it('another site (or another port here) can link to the page but not embed or fetch it', async () => {
     const cookie = await login();
     // Raw requests: fetch() sets its own sec-fetch-* headers.
     const as = (h: Record<string, string>) => new Promise<number>((resolve, reject) => {
-      const r = httpRequest({ host: '127.0.0.1', port: handle.port, path: '/ui/mind', headers: { cookie, ...h } }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+      const r = httpRequest({ host: '127.0.0.1', port: handle.port, path: '/mind', headers: { cookie, ...h } }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
       r.on('error', reject);
       r.end();
     });
@@ -434,7 +478,7 @@ describe('loom UI over HTTP', () => {
   it('a malformed escape in a path is a missing page, not a server error', async () => {
     await piece(bin, 'vault', fullPiece(join(bin, 'seen')));
     const cookie = await login();
-    for (const p of ['/ui/p/vault/%E0', '/ui/memory/%E0%A4%A']) {
+    for (const p of ['/p/vault/%E0', '/memory/%E0%A4%A']) {
       const res = await get(p, cookie);
       expect(res.status).toBe(404);
       expect(res.headers.get('content-security-policy')).toMatch(/default-src 'none'/);
@@ -445,19 +489,19 @@ describe('loom UI over HTTP', () => {
     const seen = join(bin, 'seen');
     await piece(bin, 'vault', fullPiece(seen));
     const cookie = await login();
-    const csrf = csrfOf(await (await get('/ui/p/vault', cookie)).text());
+    const csrf = csrfOf(await (await get('/p/vault', cookie)).text());
     const fields: Record<string, string> = { _csrf: csrf, _action: 'add', _path: '' };
     for (let i = 0; i < 20; i++) fields[`h${i}`] = 'hidden';
     for (let i = 0; i < 9; i++) fields[`f${i}`] = 'visible';
     fields.constructor = 'kept';
     fields.value = 'the-secret';
-    expect((await post('/ui/act/vault', cookie, fields)).status).toBe(303);
+    expect((await post('/act/vault', cookie, fields)).status).toBe(303);
     const got = JSON.parse(await readFile(seen, 'utf-8')).fields as Record<string, string>;
     expect(Object.keys(got)).toHaveLength(31);
     expect(got.value).toBe('the-secret');
     expect(got.constructor).toBe('kept');
     for (let i = 0; i < 30; i++) fields[`x${i}`] = 'more';
-    expect((await post('/ui/act/vault', cookie, fields)).status).toBe(400);
+    expect((await post('/act/vault', cookie, fields)).status).toBe(400);
   });
 
   it('a piece\'s result is labeled with the piece, and keeps the query of the page it names', async () => {
@@ -465,17 +509,17 @@ describe('loom UI over HTTP', () => {
     const body = fullPiece(seen).replace(`'{"ok":true,"message":"Stored.","page":""}'`, `'{"ok":true,"message":"Stored.","page":"loom:mind?category=user"}'`);
     await piece(bin, 'vault', body);
     const cookie = await login();
-    const csrf = csrfOf(await (await get('/ui/p/vault', cookie)).text());
-    const res = await post('/ui/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'n', value: 'v' });
+    const csrf = csrfOf(await (await get('/p/vault', cookie)).text());
+    const res = await post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'n', value: 'v' });
     const to = res.headers.get('location')!;
-    expect(to).toMatch(/^\/ui\/mind\?category=user&_flash=/);
+    expect(to).toMatch(/^\/mind\?category=user&_flash=/);
     expect(await (await get(to, cookie)).text()).toContain('<strong>vault</strong> · Stored.');
   });
 
   it('a piece leaves nothing running after it answers', async () => {
     const pidFile = join(bin, 'left.pid');
     await piece(bin, 'leaver', `sleep 30 & echo $! > '${pidFile}'; echo '${manifest}'`);
-    await fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
     const pid = Number((await readFile(pidFile, 'utf-8')).trim());
     await new Promise((r) => setTimeout(r, 100));
     expect(() => process.kill(pid, 0)).toThrow();
@@ -488,9 +532,9 @@ describe('loom UI over HTTP', () => {
   "ui page") cat > /dev/null; echo "+ $(date +%s%N)" >> '${log}'; sleep 0.3; echo "- $(date +%s%N)" >> '${log}'; echo '{"title":"B","sections":[]}' ;;
 esac`);
     const cookie = await login();
-    await get('/ui/p/busy', cookie);
+    await get('/p/busy', cookie);
     await writeFile(log, '');
-    await Promise.all(Array.from({ length: 18 }, () => get('/ui/p/busy', cookie).then((r) => r.text())));
+    await Promise.all(Array.from({ length: 18 }, () => get('/p/busy', cookie).then((r) => r.text())));
     const events = (await readFile(log, 'utf-8')).trim().split('\n').map((l) => ({ d: l[0] === '+' ? 1 : -1, t: BigInt(l.slice(2)) }))
       .sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.d - b.d));
     let now = 0; let peak = 0;
@@ -500,9 +544,9 @@ esac`);
   }, 20000);
 
   it('the login page names no agent, and an oversized login is cut off', async () => {
-    const page = await (await fetch(`${base}/ui/login`)).text();
+    const page = await (await fetch(`${base}/login`)).text();
     expect(page).not.toContain('Test Agent');
-    const res = await fetch(`${base}/ui/login`, {
+    const res = await fetch(`${base}/login`, {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'token=' + 'x'.repeat(100_000),
     }).catch(() => undefined);
     if (res) expect([401, 413]).toContain(res.status);
@@ -512,14 +556,14 @@ esac`);
     const count = join(bin, 'count');
     await piece(bin, 'counted', `echo x >> '${count}'; echo '${manifest}'`);
     await Promise.all(Array.from({ length: 10 }, () =>
-      fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } }).then((r) => r.text())));
+      fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } }).then((r) => r.text())));
     expect((await readFile(count, 'utf-8')).trim().split('\n')).toHaveLength(1);
   });
 
   it('a piece that leaves a helper holding stdout still answers in time', async () => {
     await piece(bin, 'helper', `(sleep 20 &); echo '${manifest}'`);
     const t0 = Date.now();
-    const body = await (await fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
+    const body = await (await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
       pieces: Array<{ piece: string }>;
     };
     expect(Date.now() - t0).toBeLessThan(2500);
@@ -529,7 +573,7 @@ esac`);
   it('a timeout kills the piece\'s whole process group', async () => {
     const pidFile = join(bin, 'child.pid');
     await piece(bin, 'hangs', `sleep 30 & echo $! > '${pidFile}'; wait`);
-    await fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } });
     const pid = Number((await readFile(pidFile, 'utf-8')).trim());
     await new Promise((r) => setTimeout(r, 100));
     expect(() => process.kill(pid, 0)).toThrow();
@@ -541,7 +585,7 @@ esac`);
     await piece(bin, 'loom', `echo '${manifest}'`);
     process.env.LOOM_BEARER_TOKEN = TOKEN;
     try {
-      const body = await (await fetch(`${base}/ui/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
+      const body = await (await fetch(`${base}/pieces.json`, { headers: { authorization: `Bearer ${TOKEN}` } })).json() as {
         pieces: Array<{ piece: string }>;
       };
       expect(body.pieces.map((p) => p.piece)).toEqual(['peek']);
@@ -556,8 +600,8 @@ esac`);
     process.env.TZ = ':/etc/localtime';
     try {
       const cookie = await login();
-      expect((await get('/ui', cookie)).status).toBe(200);
-      expect((await get('/ui/mind', cookie)).status).toBe(200);
+      expect((await get('/', cookie)).status).toBe(200);
+      expect((await get('/mind', cookie)).status).toBe(200);
     } finally {
       if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
     }
@@ -572,7 +616,7 @@ describe('loom UI: open and scoped daemons', () => {
   it('a daemon with no token serves no page (an open page is DNS-rebindable; same rule as /cli)', async () => {
     const h = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0 });
     try {
-      for (const path of ['/ui', '/ui/pieces.json', '/ui/login', '/ui/mind']) {
+      for (const path of ['/', '/pieces.json', '/login', '/mind']) {
         const res = await fetch(`http://127.0.0.1:${h.port}${path}`, { redirect: 'manual' });
         expect(res.status).toBe(403);
       }
@@ -584,7 +628,7 @@ describe('loom UI: open and scoped daemons', () => {
       contextDir: stack, host: '127.0.0.1', port: 0, tokens: { art: TOKEN }, createServer: () => { throw new Error('not reached'); },
     });
     try {
-      expect((await fetch(`http://127.0.0.1:${h.port}/ui`)).status).toBe(404);
+      expect((await fetch(`http://127.0.0.1:${h.port}/mind`)).status).toBe(404);
     } finally { await h.close(); }
   });
 });

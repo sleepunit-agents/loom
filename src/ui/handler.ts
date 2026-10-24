@@ -1,12 +1,17 @@
 /**
  * loom's web UI on the HTTP daemon (full scope only).
  *
- *   GET  /ui                       Home: the tape, tiles, "Your call"
- *   GET  /ui/mind, /ui/people[/<slug>], /ui/memory/<ref>   loom's own pages
- *   GET  /ui/p/<piece>[/<path>]    a piece's page
- *   GET  /ui/pieces.json           the installed pieces' manifests, for scripts
- *   POST /ui/act/<source>          an action (source = loom or a piece)
- *   GET/POST /ui/login, POST /ui/logout
+ *   GET  /                         Home: the tape, tiles, "Your call"
+ *   GET  /mind, /people[/<slug>], /memory/<ref>   loom's own pages
+ *   GET  /p/<piece>[/<path>]       a piece's page
+ *   GET  /pieces.json              the installed pieces' manifests, for scripts
+ *   POST /act/<source>             an action (source = loom or a piece)
+ *   GET/POST /login, POST /logout
+ *   /ui/…                          the old address: redirects to the same page at the root
+ *
+ * The page shares the daemon with MCP, which answers on any other path. `/`
+ * is the page only for a plain browser GET: a POST, a request with an MCP
+ * session, or one asking for an event stream is MCP's.
  *
  * Auth follows the daemon's bearer token, and the UI needs one: a daemon with
  * no token serves no /ui (like /cli), because an open page would be readable
@@ -58,8 +63,17 @@ export interface UiOptions {
   env: NodeJS.ProcessEnv;
 }
 
-export function isUiPath(pathname: string): boolean {
-  return pathname === '/ui' || pathname.startsWith('/ui/');
+const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/mind', '/people', '/memory', '/p', '/act'];
+
+/** Whether a request is for the page (see the header for how `/` is shared with MCP). */
+export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
+  if (pathname === '/ui' || pathname.startsWith('/ui/')) return true;
+  if (pathname === '/') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+    if (req.headers['mcp-session-id'] !== undefined) return false;
+    return !/text\/event-stream/i.test(req.headers.accept ?? '');
+  }
+  return PAGE_ROOTS.some((r) => pathname === r || pathname.startsWith(`${r}/`));
 }
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
@@ -223,14 +237,14 @@ function hasPages(p: PieceInfo): boolean {
 
 function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(hasPages)
-    .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/ui/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
+    .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
     .sort((a, b) => a.label.localeCompare(b.label));
   return {
     agent: agentName(opts.contextDir),
     nav: [
-      { label: 'Home', href: '/ui', current: current === '', piece: false },
-      { label: 'Mind', href: '/ui/mind', current: current === 'mind', piece: false },
-      { label: 'People', href: '/ui/people', current: current === 'people', piece: false },
+      { label: 'Home', href: '/', current: current === '', piece: false },
+      { label: 'Mind', href: '/mind', current: current === 'mind', piece: false },
+      { label: 'People', href: '/people', current: current === 'people', piece: false },
       ...tabs,
     ],
     clock: clock(),
@@ -246,7 +260,7 @@ function landing(source: Source, result: ActResult, back: string): string {
   const core = s?.core || source.id === 'loom';
   const path = s?.path ?? '';
   const q = s ? new URLSearchParams(s.query).toString() : '';
-  const base = core ? `/ui${path ? `/${path}` : ''}` : `/ui/p/${source.id}${path ? `/${path}` : ''}`;
+  const base = core ? `/${path}` : `/p/${source.id}${path ? `/${path}` : ''}`;
   return q ? `${base}?${q}` : base;
 }
 
@@ -261,16 +275,25 @@ function decode(s: string): string | null {
   try { return decodeURIComponent(s); } catch { return null; }
 }
 
-/** Handle a /ui request. The caller has already matched isUiPath. */
+/** Handle a request for the page. The caller has already matched isUiRequest. */
 export async function handleUi(req: IncomingMessage, res: ServerResponse, pathname: string, opts: UiOptions): Promise<void> {
   // No token, no page: an open /ui would be readable by any site that
   // DNS-rebinds a name to the loopback address (the same rule as /cli).
   if (opts.secrets.length === 0) {
     return send(res, 403, 'text/plain', 'forbidden: loom\'s page requires LOOM_BEARER_TOKEN');
   }
+  // The page used to live under /ui. Old links and bookmarks land on the same page.
+  if (pathname === '/ui' || pathname.startsWith('/ui/')) {
+    const to = new URL(req.url ?? pathname, 'http://loom.invalid');
+    // One leading slash, never two: `/ui//evil.example` must not become a
+    // protocol-relative `//evil.example`.
+    const rest = '/' + pathname.slice(3).replace(/^[/\\]+/, '');
+    res.writeHead(308, { location: rest + to.search, ...SECURITY_HEADERS });
+    return void res.end();
+  }
   const secure = req.headers['x-forwarded-proto'] === 'https';
 
-  if (pathname === '/ui/login') {
+  if (pathname === '/login') {
     // Unauthenticated: the login page names no agent.
     if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLogin());
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
@@ -280,35 +303,35 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const token = form.get('token')?.trim() ?? '';
     const match = opts.secrets.find((s) => safeEq(token, s));
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.'));
-    return redirect(res, '/ui', {
-      'set-cookie': `${COOKIE}=${newSession(match)}; Path=/ui; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+    return redirect(res, '/', {
+      'set-cookie': `${COOKIE}=${newSession(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
   const who = whoIs(req, opts);
   const csrf = who?.kind === 'session' ? csrfFor(who.cookie) : '';
 
-  if (pathname === '/ui/logout') {
+  if (pathname === '/logout') {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
     if (c) sessions.delete(c);
-    return redirect(res, '/ui/login', { 'set-cookie': `${COOKIE}=; Path=/ui; HttpOnly; SameSite=Strict; Max-Age=0` });
+    return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` });
   }
 
   if (!who) {
     if (pathname.endsWith('.json')) return send(res, 401, 'application/json', JSON.stringify({ error: 'unauthorized' }));
-    if (req.method === 'GET') return redirect(res, '/ui/login');
+    if (req.method === 'GET') return redirect(res, '/login');
     return send(res, 401, 'text/plain', 'unauthorized');
   }
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
-  if (pathname.startsWith('/ui/act/')) {
+  if (pathname.startsWith('/act/')) {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
-    const sourceId = pathname.slice('/ui/act/'.length);
+    const sourceId = pathname.slice('/act/'.length);
     if (sourceId !== 'loom' && !ID.test(sourceId)) return send(res, 404, 'text/plain', 'not found');
     const form = await readForm(req, ACT_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
@@ -351,7 +374,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
   if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
-  if (pathname === '/ui/pieces.json') {
+  if (pathname === '/pieces.json') {
     const m = await pieceManifests(opts.env);
     return send(res, 200, 'application/json', JSON.stringify({
       agent: agentName(opts.contextDir),
@@ -365,7 +388,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
 
-  if (pathname === '/ui' || pathname === '/ui/') {
+  if (pathname === '/') {
     const home = homePage(opts.contextDir, query);
     const tiles: HomeTile[] = [
       { ...home.tile, source: CORE },
@@ -375,8 +398,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     return html(renderHome(home.page, { source: CORE, path: '', query, csrf }, chrome(opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
   }
 
-  if (pathname.startsWith('/ui/p/')) {
-    const rest = pathname.slice('/ui/p/'.length);
+  if (pathname.startsWith('/p/')) {
+    const rest = pathname.slice('/p/'.length);
     const slash = rest.indexOf('/');
     const piece = slash === -1 ? rest : rest.slice(0, slash);
     const path = slash === -1 ? '' : decode(rest.slice(slash + 1));
@@ -391,7 +414,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     return html(renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
   }
 
-  const path = decode(pathname.slice('/ui/'.length)) ?? '\0';
+  const path = decode(pathname.slice(1)) ?? '\0';
   const top = path.split('/')[0];
   const ch = chrome(opts, pieces, skippedNames, top, csrf, flash);
   const page = validPath(path) ? corePage(opts.contextDir, path, query) : null;
