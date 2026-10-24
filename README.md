@@ -402,11 +402,12 @@ piece and it shows up, uninstall it and it's gone. loom never names a piece
 **The page needs `LOOM_BEARER_TOKEN`.** A daemon with no token serves none
 (403), the same rule as `/cli`, because any site that DNS-rebinds a name to
 the loopback address could read an open page. Log in once with the token. The
-browser keeps a cookie under a key the daemon made at start: it's not the
+browser gets a session: a random id the daemon keeps in memory. It's not the
 token, it can't be replayed against `/mcp` or `/cli`, and it can't be used to
-guess the token. It lasts 30 days, or until the daemon restarts. Every form
-carries an anti-forgery token bound to that cookie, and a cross-site post is
-refused. A form's fields go to the piece on stdin, and loom never logs, keeps
+guess the token. It lasts 30 days, until you sign out (which revokes it), or
+until the daemon restarts. Every form carries an anti-forgery token bound to
+that session, a cross-site post is refused, and another site can link to the
+page but not embed or fetch it. A form's fields go to the piece on stdin, and loom never logs, keeps
 or puts them in a URL. Scripts can send the bearer header instead (for
 example `/ui/pieces.json` for the pieces' manifests). The page runs no script
 and is served under a CSP that forbids script and framing. Pieces never

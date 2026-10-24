@@ -11,12 +11,14 @@
  * Auth follows the daemon's bearer token, and the UI needs one: a daemon with
  * no token serves no /ui (like /cli), because an open page would be readable
  * by any site that DNS-rebinds a name to the loopback address. A browser logs
- * in once by pasting the token. The cookie is `<issued-at>.<mac>`, a MAC under
- * a key this process made at start, over the issued-at time and a digest of
- * the token. It isn't the token and isn't derivable from it, so it can't be
- * replayed as a bearer or used to guess the token offline. It lasts 30 days,
- * or until the daemon restarts (log in again). Scripts can send the bearer
- * header instead.
+ * in once by pasting the token and gets a session: a random id held in this
+ * process's memory. It isn't the token and isn't derivable from it, so it
+ * can't be replayed as a bearer or used to guess the token. It lasts 30 days,
+ * until logout (which revokes it), until the token changes, or until the
+ * daemon restarts. Scripts can send the bearer header instead.
+ *
+ * A GET from another site or another port is served only as a top-level
+ * navigation, never to an <img> or a fetch (fetch metadata).
  *
  * Every POST from a browser carries an anti-forgery token derived from its
  * cookie, and a cross-site POST is refused outright (Sec-Fetch-Site / Origin),
@@ -62,17 +64,27 @@ export function isUiPath(pathname: string): boolean {
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
 
-function mac(issuedAt: number, secret: string): string {
-  return createHmac('sha256', COOKIE_KEY).update(`loom-ui-v2|${issuedAt}|`).update(digest(secret)).digest('hex');
+/**
+ * Browser sessions, in memory only. The cookie is a random id, not the token
+ * and not derivable from it. Logout deletes the id, so a copied cookie stops
+ * working (cookies can't be kept from other ports on the same host, so
+ * revocation matters). A restart forgets every session.
+ */
+interface Session { issuedAt: number; secret: Buffer }
+const sessions = new Map<string, Session>();
+const MAX_SESSIONS = 50;
+
+function newSession(secret: string): string {
+  const id = randomBytes(32).toString('hex');
+  sessions.set(id, { issuedAt: Math.floor(Date.now() / 1000), secret: digest(secret) });
+  // Oldest first in a Map: drop the oldest past the cap.
+  while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value as string);
+  return id;
 }
 
-function cookieValue(secret: string, issuedAt = Math.floor(Date.now() / 1000)): string {
-  return `${issuedAt}.${mac(issuedAt, secret)}`;
-}
-
-/** The anti-forgery token for a session: bound to its cookie, useless without it. */
-function csrfFor(cookie: string): string {
-  return createHmac('sha256', COOKIE_KEY).update(`loom-ui-csrf|${cookie}`).digest('hex');
+/** The anti-forgery token for a session: bound to its id, useless without it. */
+function csrfFor(id: string): string {
+  return createHmac('sha256', COOKIE_KEY).update(`loom-ui-csrf|${id}`).digest('hex');
 }
 
 /** Equal-length digests, so neither the content nor the length of a guess leaks. */
@@ -80,12 +92,13 @@ function safeEq(a: string, b: string): boolean {
   return timingSafeEqual(digest(a), digest(b));
 }
 
-function validCookie(value: string, secrets: string[], nowS = Math.floor(Date.now() / 1000)): boolean {
-  const m = /^(\d{1,12})\.([0-9a-f]{64})$/.exec(value);
-  if (!m) return false;
-  const issuedAt = Number(m[1]);
-  if (issuedAt > nowS + 60 || nowS - issuedAt > COOKIE_MAX_AGE_S) return false;
-  return secrets.some((s) => safeEq(m[2], mac(issuedAt, s)));
+function validSession(id: string, secrets: string[], nowS = Math.floor(Date.now() / 1000)): boolean {
+  if (!/^[0-9a-f]{64}$/.test(id)) return false;
+  const s = sessions.get(id);
+  if (!s) return false;
+  if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { sessions.delete(id); return false; }
+  // A session dies with its token: rotate the token and old sessions stop.
+  return secrets.some((t) => timingSafeEqual(digest(t), s.secret));
 }
 
 function readCookie(req: IncomingMessage, name: string): string | undefined {
@@ -102,10 +115,22 @@ type Who = { kind: 'session'; cookie: string } | { kind: 'bearer' } | null;
 function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   if (opts.secrets.length === 0) return null;
   const c = readCookie(req, COOKIE);
-  if (c && validCookie(c, opts.secrets)) return { kind: 'session', cookie: c };
+  if (c && validSession(c, opts.secrets)) return { kind: 'session', cookie: c };
   const header = req.headers['authorization'];
   if (header !== undefined && opts.secrets.some((s) => checkBearer(s, header).ok)) return { kind: 'bearer' };
   return null;
+}
+
+/**
+ * A GET from somewhere else is fine as a top-level navigation (a link in a
+ * chat) and refused otherwise: an <img> or fetch from another site, or from
+ * another port on this host (same-site, so the cookie rides along), must not
+ * make loom run a piece.
+ */
+function allowedGet(req: IncomingMessage): boolean {
+  const site = req.headers['sec-fetch-site'];
+  if (site === undefined || site === 'same-origin' || site === 'none') return true;
+  return req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
 }
 
 /**
@@ -156,10 +181,10 @@ function readForm(req: IncomingMessage, max: number): Promise<URLSearchParams | 
 
 /** The page's own query: valid keys only, loom's `_` keys and oversize values dropped. */
 function pageQuery(url: URL): Record<string, string> {
-  const q: Record<string, string> = {};
+  const q: Record<string, string> = Object.create(null);
   let n = 0;
   for (const [k, v] of url.searchParams) {
-    if (!QUERY_KEY.test(k) || v.length > LIMITS.queryValue || k in q) continue;
+    if (!QUERY_KEY.test(k) || v.length > LIMITS.queryValue || Object.hasOwn(q, k)) continue;
     if (++n > LIMITS.query) break;
     q[k] = v;
   }
@@ -168,21 +193,22 @@ function pageQuery(url: URL): Record<string, string> {
 
 // ─── One-time result messages ────────────────────────────────────────────────
 
-const flashes = new Map<string, { at: number; result: ActResult }>();
+interface Flash { ok: boolean; message: string; from?: string }
+const flashes = new Map<string, { at: number; flash: Flash }>();
 
-function putFlash(result: ActResult): string {
+function putFlash(flash: Flash): string {
   const now = Date.now();
   for (const [k, v] of flashes) if (now - v.at > FLASH_TTL_MS || flashes.size > FLASH_MAX) flashes.delete(k);
   const id = randomBytes(12).toString('hex');
-  flashes.set(id, { at: now, result });
+  flashes.set(id, { at: now, flash });
   return id;
 }
 
-function takeFlash(id: string | null): ActResult | undefined {
+function takeFlash(id: string | null): Flash | undefined {
   if (!id) return undefined;
   const f = flashes.get(id);
   flashes.delete(id);
-  return f && Date.now() - f.at <= FLASH_TTL_MS ? f.result : undefined;
+  return f && Date.now() - f.at <= FLASH_TTL_MS ? f.flash : undefined;
 }
 
 // ─── Assembling a page ───────────────────────────────────────────────────────
@@ -195,7 +221,7 @@ function hasPages(p: PieceInfo): boolean {
   return Boolean(p.manifest.tab || p.manifest.legacy?.length);
 }
 
-function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: ActResult): Chrome {
+function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(hasPages)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/ui/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -209,21 +235,18 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
     ],
     clock: clock(),
     csrf,
-    flash: flash ? { ok: flash.ok, message: flash.message } : undefined,
+    flash,
     skipped,
   };
 }
 
 /** Where to land after an action: the page the piece names, or back where the form was. */
 function landing(source: Source, result: ActResult, back: string): string {
-  if (result.page !== undefined) {
-    const s = splitPage(result.page);
-    if (s) return result.page.startsWith('loom:') ? `/ui${s.path ? `/${s.path}` : ''}` : (source.id === 'loom' ? `/ui${s.path ? `/${s.path}` : ''}` : `/ui/p/${source.id}${s.path ? `/${s.path}` : ''}`);
-  }
-  const s = splitPage(back);
+  const s = (result.page !== undefined ? splitPage(result.page) : null) ?? splitPage(back);
+  const core = s?.core || source.id === 'loom';
   const path = s?.path ?? '';
   const q = s ? new URLSearchParams(s.query).toString() : '';
-  const base = source.id === 'loom' ? `/ui${path ? `/${path}` : ''}` : `/ui/p/${source.id}${path ? `/${path}` : ''}`;
+  const base = core ? `/ui${path ? `/${path}` : ''}` : `/ui/p/${source.id}${path ? `/${path}` : ''}`;
   return q ? `${base}?${q}` : base;
 }
 
@@ -232,6 +255,11 @@ function withFlash(to: string, id: string): string {
 }
 
 const notFound: Page = { title: 'Not found', sections: [] };
+
+/** decodeURIComponent, or null for a malformed escape (a 404, never a 500). */
+function decode(s: string): string | null {
+  try { return decodeURIComponent(s); } catch { return null; }
+}
 
 /** Handle a /ui request. The caller has already matched isUiPath. */
 export async function handleUi(req: IncomingMessage, res: ServerResponse, pathname: string, opts: UiOptions): Promise<void> {
@@ -253,7 +281,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const match = opts.secrets.find((s) => safeEq(token, s));
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.'));
     return redirect(res, '/ui', {
-      'set-cookie': `${COOKIE}=${cookieValue(match)}; Path=/ui; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${newSession(match)}; Path=/ui; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -263,6 +291,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (pathname === '/ui/logout') {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
+    // Revoke it server-side, so a copy of the cookie stops working too.
+    const c = readCookie(req, COOKIE);
+    if (c) sessions.delete(c);
     return redirect(res, '/ui/login', { 'set-cookie': `${COOKIE}=; Path=/ui; HttpOnly; SameSite=Strict; Max-Age=0` });
   }
 
@@ -290,13 +321,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const back = form.get('_path') ?? '';
     if (!/^[a-z][a-z0-9_-]{0,39}$/.test(action)) return send(res, 400, 'text/plain', 'bad action');
     const backLink = splitPage(back) ? back : '';
-    const fields: Record<string, string> = {};
-    let n = 0;
+    // A form has up to LIMITS.fields fields plus LIMITS.hidden hidden values.
+    // More than that is refused whole, never cut short: a truncated form
+    // could drop the very field (a secret) the piece needs.
+    const fields: Record<string, string> = Object.create(null);
     for (const [k, v] of form) {
-      if (k.startsWith('_') || !/^[a-z][a-z0-9_-]{0,39}$/.test(k) || k in fields) continue;
-      if (++n > LIMITS.fields) break;
+      if (k.startsWith('_') || !/^[a-z][a-z0-9_-]{0,39}$/.test(k) || Object.hasOwn(fields, k)) continue;
       fields[k] = v;
     }
+    if (Object.keys(fields).length > LIMITS.fields + LIMITS.hidden) return send(res, 400, 'text/plain', 'too many fields');
     let source: Source;
     let result: ActResult;
     if (sourceId === 'loom') {
@@ -311,10 +344,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = await pieceAct(info, { action, path, fields }, opts.env);
     }
     const to = landing(source, result, backLink);
-    return redirect(res, withFlash(to, putFlash(result)));
+    // A piece's message is labeled with the piece, so it can't pass as loom's.
+    const from = source.id === 'loom' ? undefined : source.id;
+    return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from })));
   }
 
   if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+  if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
   if (pathname === '/ui/pieces.json') {
     const m = await pieceManifests(opts.env);
     return send(res, 200, 'application/json', JSON.stringify({
@@ -343,10 +379,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const rest = pathname.slice('/ui/p/'.length);
     const slash = rest.indexOf('/');
     const piece = slash === -1 ? rest : rest.slice(0, slash);
-    const path = slash === -1 ? '' : decodeURIComponent(rest.slice(slash + 1));
+    const path = slash === -1 ? '' : decode(rest.slice(slash + 1));
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
-    if (!info || !validPath(path)) return html(renderPage(notFound, { source: pieceSource(piece), path: '', query: {}, csrf }, ch), 404);
+    if (!info || path === null || !validPath(path)) return html(renderPage(notFound, { source: pieceSource(piece), path: '', query: {}, csrf }, ch), 404);
     const page = await piecePage(info, path, query, opts.env);
     const ctx = { source: pieceSource(piece), path, query, csrf };
     if (typeof page === 'string') {
@@ -355,7 +391,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     return html(renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
   }
 
-  const path = decodeURIComponent(pathname.slice('/ui/'.length));
+  const path = decode(pathname.slice('/ui/'.length)) ?? '\0';
   const top = path.split('/')[0];
   const ch = chrome(opts, pieces, skippedNames, top, csrf, flash);
   const page = validPath(path) ? corePage(opts.contextDir, path, query) : null;

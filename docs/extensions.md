@@ -132,7 +132,9 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
 ### Pages
 
 `ui page --json` reads `{"path": "task/t-1482", "query": {"tag": "pond"}}`
-on stdin. `""` is the piece's main page. It answers:
+on stdin. `""` is the piece's main page. **A page must not change
+anything:** only an action may. (loom refuses to load a page for an embed or
+a fetch from another site, but a link can still open one.) It answers:
 
 ```json
 { "title": "Work", "intro": "One line under the title.",
@@ -154,9 +156,9 @@ characters. A path the piece doesn't know should answer with
 ### Blocks
 
 Every section is a list of blocks. A link inside a block is either `page`
-(a page of the same piece, or `loom:<path>` for one of loom's pages, such as
-`loom:people/gage-taylor`, either with an optional `?key=value` query, such as
-`?replace=sentry-dsn`) or `href` (an absolute `http(s)` URL that opens
+(a page of the same piece, or `loom:<path>` for one of loom's own pages:
+Home, `mind`, `people`, `people/<slug>` or `memory/<ref>`; either with an
+optional `?key=value` query, such as `?replace=sentry-dsn`) or `href` (an absolute `http(s)` URL that opens
 outside the page).
 
 | Block | Fields |
@@ -177,7 +179,9 @@ Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind
 `text`, `textarea`, `choice` (with `options`: `value`, `label`, optional
 `detail`) or `secret`. A `secret` field never carries a `value` and is drawn
-as a masked input.
+as a masked input that asks the browser and password managers not to save or
+fill it. Browsers don't promise to honour that, so a secret typed on the page
+may still be offered for saving.
 
 ### Actions
 
@@ -191,24 +195,35 @@ on stdin. The piece answers:
 { "ok": true, "message": "sentry-dsn is encrypted and stored.", "page": "" }
 ```
 
-loom shows the message once at the top of `page` (or the page the form was
-on). `ok: false` shows it as an error. Field values travel only on stdin.
-loom never logs them, stores them, or puts them in a URL, so a secret typed
-into a form goes straight to the piece holding the authority. The piece
-validates every field itself: loom passes on whatever was posted (up to 30
-fields and 64 KB).
+loom shows the message once, labeled with the piece's name, at the top of
+`page` (with its query, if it has one) or of the page the form was on.
+`ok: false` shows it as an error. Field values travel only on stdin. loom
+never logs them, stores them, or puts them in a URL, so a secret typed into a
+form goes straight to the piece holding the authority. The piece validates
+every field itself: loom passes on whatever was posted, up to 50 names (30
+fields and 20 hidden values) and 64 KB. More than that is refused, never cut
+short.
 
 ### Rules for all three
 
 - **Data, never markup.** loom renders every block and escapes every string,
   and the page runs no script. A piece can't put HTML or JS on loom's page.
-  An answer that doesn't validate is dropped whole and the piece is listed in
-  the footer as "no page".
+  A manifest that doesn't validate is dropped whole and the piece is listed
+  in the footer as "no page"; a page that doesn't validate shows an error in
+  its place.
 - **Limits:** 10 sections a page, 20 blocks a section, 200 items or rows, 12
   columns, 2000 characters a string. 512 KB per answer. 3 seconds for the
-  manifest and a page, 15 for an action. On a timeout, the piece's whole
-  process group is killed. The manifest is cached for 45 seconds, concurrent
-  page loads share one run, and an action clears its piece's cache.
+  manifest and a page, 15 for an action. After every run, the piece's whole
+  process group is killed, so nothing it started outlives its answer (a piece
+  that calls `setsid` on purpose escapes that). At most 6 pieces run at
+  once; more wait their turn. The manifest is cached for 45 seconds,
+  concurrent page loads share one run, and an action clears its piece's
+  cache.
+- **A piece is trusted code.** It runs as the daemon's user. loom leaves its
+  own bearer tokens out of the piece's environment, but that's hygiene, not a
+  boundary: a same-user process can read the daemon's environment, and every
+  piece sees the other pieces' variables in it. Install only pieces you'd
+  trust with the daemon itself.
 - **No configuration.** Installing a piece is what makes it appear. A piece
   with no `ui` verb, or one that times out or fails, simply isn't there.
 - **loom-http's environment is the piece's environment**, minus loom's own

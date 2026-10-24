@@ -8,9 +8,14 @@
  * Bounded on every axis: one manifest run per piece per cache window however
  * many pages load at once (the in-flight promise is what's cached), a time
  * limit and 512KB per answer, and on a timeout the piece's whole process group
- * is killed, not just its first process. A piece gets the daemon's env minus
- * loom's own bearer tokens. Requests travel on stdin, never argv, so an
- * action's field values (a secret typed into a form) stay out of `ps`.
+ * is killed (after every run, not just a timeout), and at most MAX_RUNNING
+ * pieces run at once. Requests travel on stdin, never argv, so an action's
+ * field values (a secret typed into a form) stay out of `ps`.
+ *
+ * A piece is trusted code running as the same user as the daemon. It gets the
+ * daemon's env minus loom's own bearer tokens, but that's hygiene, not a
+ * boundary: a same-user process can read the daemon's environment from /proc.
+ * Install only pieces you'd trust with the daemon itself.
  */
 import { spawn } from 'node:child_process';
 import { listPieces } from '../cli/pieces.js';
@@ -59,7 +64,29 @@ function killGroup(pid: number | undefined): void {
   try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
 }
 
+/**
+ * At most this many piece processes at once, across every page load: a burst
+ * of requests queues instead of forking a process each. The time limit starts
+ * when a piece actually runs.
+ */
+export const MAX_RUNNING = 6;
+let running = 0;
+const waiting: Array<() => void> = [];
+
+async function slot<T>(f: () => Promise<T>): Promise<T> {
+  if (running >= MAX_RUNNING) await new Promise<void>((r) => waiting.push(r));
+  running++;
+  try { return await f(); } finally {
+    running--;
+    waiting.shift()?.();
+  }
+}
+
 function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number } = {}): Promise<Answer> {
+  return slot(() => run(path, args, env, opts));
+}
+
+function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number }): Promise<Answer> {
   return new Promise((resolve) => {
     // Its own process group, so a timeout takes the piece's children with it.
     const child = spawn(path, args, {
@@ -77,6 +104,9 @@ function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
       clearTimeout(timer);
       if (drain) clearTimeout(drain);
       child.stdout?.destroy();
+      // Every time, not only on a timeout: whatever the piece left running in
+      // its group goes with it. (A piece that calls setsid on purpose escapes.)
+      killGroup(child.pid);
       resolve(r);
     };
     const timer = setTimeout(() => { killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
@@ -106,7 +136,7 @@ function json(stdout: string): unknown {
   try { return JSON.parse(stdout); } catch { return undefined; }
 }
 
-async function runManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
+async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv): Promise<ManifestResult> {
   const r = await ask(path, ['ui', '--json'], env);
   if (!r.ok) return { piece, reason: r.reason };
   const parsed = json(r.stdout);
@@ -119,7 +149,7 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const hit = cache.get(path);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
   // Cache the promise itself: concurrent page loads share one run.
-  const result = runManifest(piece, path, env);
+  const result = fetchManifest(piece, path, env);
   cache.set(path, { at: nowMs, result });
   return result;
 }

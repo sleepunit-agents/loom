@@ -90,6 +90,9 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 
 class Invalid extends Error {}
 
+/** loom's own pages a link may name with `loom:`. */
+const CORE_PAGES = /^(|mind|people|people\/[a-z0-9][a-z0-9-]*|memory\/.+)$/;
+
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
   if (p.length > LIMITS.path || !PATH_CHARS.test(p)) return false;
@@ -146,6 +149,9 @@ export function splitPage(s: string): { core: boolean; path: string; query: Reco
   const q = rest.indexOf('?');
   const path = q === -1 ? rest : rest.slice(0, q);
   if (!validPath(path)) return null;
+  // Into loom, only loom's own pages: not another piece's, and not login,
+  // logout, actions or the JSON endpoints.
+  if (core && !CORE_PAGES.test(path)) return null;
   const query: Record<string, string> = {};
   if (q !== -1) {
     const params = new URLSearchParams(rest.slice(q + 1));

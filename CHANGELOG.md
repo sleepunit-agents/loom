@@ -14,6 +14,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **loom's page, v2.** Home is now the tape: the last day's episodes grouped
+  by hour and filterable by where they happened, with tiles across the top
+  and top of mind and the people who need a look beside it. **Mind** lists
+  every memory by heat, marks exactly what the boot digest carries, and says
+  why each one has its heat. Pending proposals moved there, with ratify and
+  reject. One memory and People (each card, with what's newer than it) are
+  their own pages.
+- **The page contract, v2 (docs/extensions.md, "The page").** A piece answers
+  `ui --json` with a manifest (a tab, a Home tile, "Your call" asks),
+  `ui page --json` with pages, and `ui act --json` to run actions. New blocks:
+  `kv`, `callout`, `filters`, `details`, `form`, `buttons`. Links can stay in
+  the piece, go to loom's pages, or carry a query. A first-version
+  `{sections}` answer still renders, as the piece's page.
+  - **Actions:** a form posts to `/ui/act/<source>` with an anti-forgery token
+    bound to the session cookie. Cross-site posts are refused. Fields go to
+    the piece on stdin only, and the result shows once without touching the
+    URL. A `secret` field never carries a value.
+  - **Sessions:** the cookie is now a random session id held in memory, and
+    signing out revokes it. Another site (or another port on the host) can
+    link to the page but not embed or fetch it. At most 6 pieces run at
+    once, and nothing a piece starts outlives its answer.
+  - **`/ui/sections.json` is gone;** `/ui/pieces.json` lists the installed
+    pieces' manifests, for scripts.
+- **Top of mind reads heat live.** The boot digest and the page compute each
+  memory's heat from its timestamps when read, instead of trusting the stored
+  field the consolidation lane refreshes. Between passes the stored field went
+  stale, and Top of Mind fell back to write order.
 - **Recall adds heat by rank instead of resetting every result to full heat.**
   One vague query used to put ten unrelated memories at the top of mind. Now
   the top result gets 0.5, the next 0.3 and 0.2, and the rest 0.1, decaying

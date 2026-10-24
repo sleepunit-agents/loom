@@ -365,7 +365,18 @@ function peoplePage(contextDir: string): Page {
 function personPageFor(contextDir: string, slug: string, tz: string, nowMs: number): Page {
   let read;
   try { read = readPerson(contextDir, slug); } catch { return { title: 'Not found', sections: [] }; }
-  if (!read.found || !('card' in read)) return { title: 'Not found', sections: [] };
+  // A piece can link to someone loom has no card for (it can't know which
+  // cards exist): say so, and show what memory has about them anyway.
+  if (!read.found || !('card' in read)) {
+    const about = memoriesAbout(contextDir, slug, { limit: 8, nowMs });
+    return {
+      title: slug,
+      sections: [
+        { id: 'none', blocks: [{ type: 'callout', text: `There's no person card for ${slug} yet.` }] },
+        ...(about.length ? [{ id: 'memories', title: 'What I remember about them', blocks: [{ type: 'list' as const, items: about.map((m) => ({ text: m.title, meta: ago(m.created, tz, nowMs), page: memoryPage(m.ref) })) }] }] : []),
+      ],
+    };
+  }
   const card = read.card;
   const newer = memoriesAbout(contextDir, slug, { since: read.synthesized_at, nowMs });
   const recent = memoriesAbout(contextDir, slug, { limit: 8, nowMs });

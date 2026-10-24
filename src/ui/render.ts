@@ -75,8 +75,10 @@ function renderField(f: Field): string {
     case 'text':
       return `<div class="field"><label for="${id}">${esc(f.label)}</label><input id="${id}" name="${esc(f.name)}" type="text" value="${esc(f.value ?? '')}" autocomplete="off" spellcheck="false"${req}${desc}>${hint}</div>`;
     case 'secret':
-      // Never prefilled, never remembered by the browser.
-      return `<div class="field"><label for="${id}">${esc(f.label)}</label><input id="${id}" name="${esc(f.name)}" type="password" autocomplete="new-password" spellcheck="false"${req}${desc}>${hint}</div>`;
+      // Never prefilled. Asks the browser and the common password managers
+      // not to offer to save it (or to fill it with loom's own token); no
+      // browser promises to honour that, which the contract says.
+      return `<div class="field"><label for="${id}">${esc(f.label)}</label><input id="${id}" name="${esc(f.name)}" type="password" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other" spellcheck="false"${req}${desc}>${hint}</div>`;
     case 'textarea':
       return `<div class="field"><label for="${id}">${esc(f.label)}</label><textarea id="${id}" name="${esc(f.name)}" rows="4"${req}${desc}>${esc(f.value ?? '')}</textarea>${hint}</div>`;
     case 'choice':
@@ -162,7 +164,8 @@ export interface Chrome {
   nav: Array<{ label: string; href: string; current: boolean; piece: boolean }>;
   clock: string;
   csrf: string;
-  flash?: { ok: boolean; message: string };
+  /** The one-time result of an action; `from` names the piece that sent it. */
+  flash?: { ok: boolean; message: string; from?: string };
   skipped: string[];
 }
 
@@ -246,7 +249,9 @@ function chromeFoot(c: Chrome, refresh: boolean): string {
 }
 
 function flash(c: Chrome): string {
-  return c.flash ? `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status">${esc(c.flash.message)}</div>` : '';
+  if (!c.flash) return '';
+  const from = c.flash.from ? `<strong>${esc(c.flash.from)}</strong> · ` : '';
+  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status">${from}${esc(c.flash.message)}</div>`;
 }
 
 /** One page, loom's or a piece's. */
