@@ -51,7 +51,10 @@ const COOKIE_KEY = randomBytes(32);
 const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
-  'referrer-policy': 'no-referrer',
+  // same-origin, not no-referrer: under no-referrer, browsers send `Origin:
+  // null` on the page's own form posts, which the cross-site guard has to
+  // refuse. same-origin still sends nothing to links that leave the page.
+  'referrer-policy': 'same-origin',
   'cache-control': 'no-store',
 };
 

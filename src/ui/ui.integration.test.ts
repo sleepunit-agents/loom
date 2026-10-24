@@ -427,6 +427,20 @@ describe('loom UI over HTTP', () => {
     }
   });
 
+  it('the page is served with Referrer-Policy same-origin, so its own form posts carry a real Origin', async () => {
+    // Under no-referrer, Chrome sends `Origin: null` on the page's own form
+    // posts and the cross-site guard refuses them: nobody could log in
+    // (0.9.1, found in a real browser). fetch() here can't show that, so pin
+    // the header, and refuse a null Origin as before.
+    for (const p of ['/login', '/']) {
+      expect((await fetch(`${base}${p}`, { redirect: 'manual' })).headers.get('referrer-policy')).toBe('same-origin');
+    }
+    const res = await fetch(`${base}/login`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'null' }, body: `token=${TOKEN}`, redirect: 'manual',
+    });
+    expect(res.status).toBe(403);
+  });
+
   it('the session cookie is scoped to the whole site now', async () => {
     const res = await fetch(`${base}/login`, {
       method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${TOKEN}`, redirect: 'manual',
