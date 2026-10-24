@@ -42,6 +42,7 @@ import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, type UiAuth } from '../ui/handler.js';
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
+import { hasUnsplitPeople } from '../backends/people-household.js';
 import { agentDir, assertRealAgentDir, commonsProblem, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
@@ -206,6 +207,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     for (const a of household.agents) assertRealAgentDir(household, a);
     const problem = commonsProblem(household);
     if (problem) throw new Error(`startHttpServer: ${problem}`);
+    for (const a of household.agents) {
+      if (hasUnsplitPeople(agentDir(household, a))) {
+        throw new Error(`startHttpServer: agents/${a}'s person cards haven't been split into the commons; with every loom daemon stopped, run: loom household commons`);
+      }
+    }
   }
   const resolver = household ? new TokenResolver(household) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;

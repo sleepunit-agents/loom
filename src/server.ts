@@ -979,11 +979,15 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       inputSchema: z.object({
         slug: slugParam,
         revision_id: z.number().int().positive().describe('Revision id from person_history.'),
+        store: z.enum(['directory', 'relationship']).optional().describe(
+          'In a household, which half the revision is from (person_history says): the shared directory ' +
+          'entry, or this agent\'s relationship (the default). Ignored outside a household.',
+        ),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
-    async ({ slug, revision_id }) => {
-      const result = await personRevisionRestore(contextDir, { slug, revision_id });
+    async ({ slug, revision_id, store }) => {
+      const result = await personRevisionRestore(contextDir, { slug, revision_id, store });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

@@ -220,6 +220,7 @@ have fallen behind.
 | `src/backends/episodes.ts` | The episode tape |
 | `src/backends/proposals.ts` | Capture-propose queue |
 | `src/backends/people.ts` | Person cards: validation, render, store, the identity room block |
+| `src/backends/people-household.ts` | Person cards in a household: the commons directory (name, handles, facts) plus each agent's relationship (summary, how it talks to them, may), merged on read, split on write, and the one-time split of an existing agent's cards |
 | `src/backends/dedup.ts` | Write-time exact-restatement key |
 | `src/backends/scope.ts` | Project vs global visibility |
 | `src/backends/ttl.ts` | TTL parsing and expiry |

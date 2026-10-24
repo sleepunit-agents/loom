@@ -14,6 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The household, phase 2b: one directory entry per person, a relationship
+  per agent.** In a household a person card is kept in two places:
+  - **The directory** (`commons/people.db`): name, handles (`where`), and
+    the facts in `how` (`tz`, `timezone`, `pronouns`, `languages`), shared
+    by every agent.
+  - **Each agent's relationship** (its own `memories.db`): the summary, the
+    rest of `how` (how *this* agent talks to them) and `may`.
+
+  How it behaves:
+  - A read merges the two halves into one card, rendered exactly as before.
+  - A write splits by field. Both halves are rehearsed in memory first, so
+    a write either half would refuse changes neither.
+  - Revisions record the agent that made them (`person_revisions.actor`),
+    and `person_history` says which half each revision came from.
+  - "Memories newer than the card" counts each agent's own memories.
+
+  Moving in:
+  - `loom household commons` and `init` split an existing agent's cards,
+    checking first that every card still renders the same text. Running it
+    again is safe.
+  - A household daemon refuses to start with cards that haven't been split.
 - **The household, phase 2a: knowledge is the commons.**
   - In a household, every agent reads and writes `commons/knowledge.db`.
   - `loom household init` moves the first agent's knowledge there.

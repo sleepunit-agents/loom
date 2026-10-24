@@ -4,9 +4,10 @@
  * write $LOOM_HOME (default ~/.config/loom) directly.
  */
 import {
-  addAgent, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
+  addAgent, agentDir, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
   parseRole, revokeToken, type Household,
 } from '../household.js';
+import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import type { IOStreams } from './io.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
@@ -16,8 +17,10 @@ const HOUSEHOLD_USAGE = `Usage: loom household <command>
                            Make $LOOM_HOME/<agent> (a context dir) the first agent of a new
                            household: it moves to agents/<agent>, and a symlink stays behind
   add <agent>              Add an agent whose directory already exists under agents/
-  commons                  Move the default agent's knowledge.db to commons/knowledge.db
-                           (once, with every loom daemon on this household stopped)
+  commons                  Move the default agent's knowledge.db to commons/knowledge.db and
+                           split its person cards (handles and facts to the commons
+                           directory, the rest stays as its relationships). Once, with
+                           every loom daemon on this household stopped
 
 $LOOM_HOME defaults to ~/.config/loom.
 `;
@@ -58,14 +61,17 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       const agent = rest[0];
       if (!agent || agent.startsWith('-')) { io.stderr(HOUSEHOLD_USAGE); return 2; }
       const h = initHousehold(householdHome(io.env), agent, { owner: flag(rest, '--owner') });
-      io.stdout(`Household at ${h.home}: ${agent} moved to agents/${agent}; ${h.home}/${agent} is now a symlink to it.\n`);
+      const cards = splitPeopleIntoCommons(h, agent, agentDir(h, agent));
+      io.stdout(`Household at ${h.home}: ${agent} moved to agents/${agent}; ${h.home}/${agent} is now a symlink to it. ${cards} person card${cards === 1 ? '' : 's'} split into the commons directory.\n`);
       return 0;
     }
     if (sub === 'commons') {
       const h = need(io);
       if (!h) return 1;
       const moved = moveKnowledgeToCommons(h, h.default);
-      io.stdout(moved ? `Knowledge moved to ${moved}; every agent shares it now.\n` : `agents/${h.default} has no knowledge.db; nothing to move.\n`);
+      io.stdout(moved ? `Knowledge moved to ${moved}; every agent shares it now.\n` : `agents/${h.default} has no knowledge.db to move.\n`);
+      const cards = splitPeopleIntoCommons(h, h.default, agentDir(h, h.default));
+      io.stdout(`${cards} person card${cards === 1 ? '' : 's'} split: handles and facts in the commons directory, the rest as ${h.default}'s relationships.\n`);
       return 0;
     }
     if (sub === 'add') {

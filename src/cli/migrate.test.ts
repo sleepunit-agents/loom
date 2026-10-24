@@ -103,7 +103,7 @@ function buildCurrentDb(dir: string): string {
   db.prepare(`CREATE TABLE people (slug TEXT PRIMARY KEY, name TEXT NOT NULL, card_json TEXT NOT NULL,
     archived_at TEXT, archived_by TEXT, archive_reason TEXT, updated TEXT NOT NULL, synthesized_at TEXT)`).run();
   db.prepare(`CREATE TABLE person_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL)`).run();
+    snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL, actor TEXT)`).run();
   db.prepare(`
     CREATE TABLE memory_supersessions (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

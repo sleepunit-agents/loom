@@ -135,9 +135,13 @@ export interface PersonRevisionMeta {
   id: number;
   op: RevisionOp;
   replaced_at: string;
+  /** The agent whose change this revision records (null before households). */
+  actor?: string | null;
+  /** In a household: which half of the card this revision is from. */
+  store?: 'directory' | 'relationship';
 }
 
-export type RevisionOp = 'write' | 'verify' | 'archive' | 'restore' | 'revision_restore';
+export type RevisionOp = 'write' | 'verify' | 'archive' | 'restore' | 'revision_restore' | 'split';
 
 /** Every rejection the people surface makes. The message names the path. */
 export class PersonCardError extends Error {
@@ -388,7 +392,7 @@ function canonical(v: unknown): string {
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
-const PEOPLE_MIGRATION = 'people_cards';
+const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor'];
 
 function hasTable(db: Database, table: string): boolean {
   return db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined;
@@ -415,6 +419,8 @@ export interface PeopleStoreConfig {
   busyTimeoutMs?: number;
   /** Clock, for tests. */
   now?: () => number;
+  /** Who is writing (an agent's name), recorded on every revision it makes. */
+  actor?: string;
 }
 
 /** Thrown when a stored row cannot be turned back into a card. */
@@ -439,19 +445,23 @@ function parseRow(raw: RawRow): PersonRow {
 export class PeopleStore {
   private db: Database;
   private readonly now: () => number;
+  private readonly actor: string | null;
   /** False on a read-only store whose tables do not exist yet. */
   readonly migrated: boolean;
 
   constructor(config: PeopleStoreConfig) {
     this.now = config.now ?? Date.now;
+    this.actor = config.actor ?? null;
     this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
     this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
     if (!config.readonly) {
       this.db.pragma('journal_mode = WAL');
       // Only this feature's migration: the people tables do not depend on the
       // memories schema, and a raw store must not half-run the others.
-      const m = MIGRATIONS.find((x) => x.id === PEOPLE_MIGRATION)!;
-      if (m.pending(this.db)) m.run(this.db);
+      for (const id of PEOPLE_MIGRATIONS) {
+        const m = MIGRATIONS.find((x) => x.id === id)!;
+        if (m.pending(this.db)) m.run(this.db);
+      }
     }
     this.migrated = hasTable(this.db, 'people') && hasTable(this.db, 'person_revisions');
   }
@@ -473,8 +483,8 @@ export class PeopleStore {
     delete (snap as Partial<RawRow>).card_json;
     const id = Number(
       this.db
-        .prepare('INSERT INTO person_revisions (slug, snapshot_json, op, replaced_at) VALUES (?, ?, ?, ?)')
-        .run(prev.slug, JSON.stringify(snap), op, at).lastInsertRowid,
+        .prepare('INSERT INTO person_revisions (slug, snapshot_json, op, replaced_at, actor) VALUES (?, ?, ?, ?, ?)')
+        .run(prev.slug, JSON.stringify(snap), op, at, this.actor).lastInsertRowid,
     );
     this.db
       .prepare(
@@ -765,9 +775,42 @@ export class PeopleStore {
     const slugErr = personSlugError(slug);
     if (slugErr) fail(`slug: ${slugErr}`);
     if (!this.migrated) return [];
+    const hasActor = (this.db.pragma('table_info(person_revisions)') as { name: string }[]).some((c) => c.name === 'actor');
     return this.db
-      .prepare('SELECT id, op, replaced_at FROM person_revisions WHERE slug = ? ORDER BY id DESC')
+      .prepare(`SELECT id, op, replaced_at${hasActor ? ', actor' : ''} FROM person_revisions WHERE slug = ? ORDER BY id DESC`)
       .all(slug) as PersonRevisionMeta[];
+  }
+
+  /**
+   * Put a card in place as is, keeping the row's timestamps and archive state
+   * (a migration, not an edit). Recorded as a 'split' revision when a row is
+   * replaced.
+   */
+  replaceCard(slug: string, card: PersonCard, keep: Pick<RawRow, 'updated' | 'synthesized_at' | 'archived_at' | 'archived_by' | 'archive_reason'>): void {
+    validateCard(card, null);
+    this.mutate(() => {
+      const existing = this.readRow(slug);
+      if (existing) this.snapshot(existing, 'split', this.nowIso());
+      this.store({ slug, name: card.name, card_json: JSON.stringify(card), ...keep });
+    });
+  }
+
+  /** The raw stored rows (timestamps and archive state included), for a migration. */
+  rows(): Array<{ slug: string; card: PersonCard; updated: string; synthesized_at: string | null; archived_at: string | null; archived_by: string | null; archive_reason: string | null }> {
+    if (!this.migrated) return [];
+    return (this.db.prepare('SELECT slug, name, card_json, archived_at, archived_by, archive_reason, updated, synthesized_at FROM people ORDER BY slug').all() as RawRow[])
+      .map((r) => ({ slug: r.slug, card: JSON.parse(r.card_json) as PersonCard, updated: r.updated, synthesized_at: r.synthesized_at, archived_at: r.archived_at, archived_by: r.archived_by, archive_reason: r.archive_reason }));
+  }
+
+  /** This database's `user` memories about a person, newer than `since` (all of them when null). */
+  memoriesSince(slug: string, since: string | null): number {
+    if (!hasTable(this.db, 'memories')) return 0;
+    const nowIso = new Date(this.now()).toISOString();
+    return (this.db.prepare(
+      `SELECT COUNT(*) AS n FROM memories
+       WHERE category = 'user' AND archived = 0 AND json_extract(metadata, '$.person') = ?
+         AND (expires_at IS NULL OR expires_at > ?) AND (? IS NULL OR created > ?)`,
+    ).get(slug, nowIso, since, since) as { n: number }).n;
   }
 
   /** A revision's snapshot (the whole previous row), for tests and inspection. */
