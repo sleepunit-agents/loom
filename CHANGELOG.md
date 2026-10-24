@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The household page** (docs/specs/household.md, phase 4). In a
+  household, the page is the owner's view of all of it:
+  - **Home:** every agent (what it's doing, from its tape), the tape across
+    all of them, and the commons.
+  - **Knowledge:** the commons' pages, by domain.
+  - **People:** the directory, with every agent's relationship to each
+    person, and who changed the shared entry.
+  - **`/a/<agent>`:** that agent's view, plus **Setup**: its identity
+    (read-only), its tokens (make one, shown once; revoke) and health.
+  - **Add an agent:** creates its stack and its first token.
+
+  A daemon now re-reads household.json as it changes, so a new agent is
+  served at once. The old single-agent addresses (`/mind`, `/memory/…`)
+  land on the default agent's view. A plain context dir keeps the
+  single-agent page.
+
 ## [0.12.0] - 2026-10-24
 
 ### Added

@@ -59,7 +59,7 @@ export function when(iso: string | null, tz: string): string {
 }
 
 /** "today 12:09 pm", "yesterday", "Oct 19" */
-function ago(iso: string | null, tz: string, nowMs: number): string {
+export function ago(iso: string | null, tz: string, nowMs: number): string {
   if (!iso || Number.isNaN(Date.parse(iso))) return 'never';
   const p = parts(iso, tz);
   const today = parts(new Date(nowMs).toISOString(), tz).day;

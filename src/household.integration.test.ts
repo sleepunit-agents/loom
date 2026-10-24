@@ -613,3 +613,113 @@ describe('the commons: people', () => {
     expect(await personRevisionRestore(art(), { slug: loren.slug, revision_id: pre.id })).toMatch(/archived/);
   });
 });
+
+// Phase 4: the household page (owner only).
+describe('the household page', () => {
+  let h: Household;
+  let handle: HttpServeHandle;
+  let base: string;
+  let owner: string;
+  beforeEach(async () => {
+    h = makeHousehold();
+    owner = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did a thing', content: 'x', metadata: { where: 'discord:#pond' } });
+    await remember(join(h.home, 'agents', 'mark'), { category: 'episode', title: 'mark did a thing', content: 'x', metadata: { where: 'letters' } });
+    await personWrite(join(h.home, 'agents', 'art'), { slug: 'loren', name: 'Loren', where: { slack: { value: 'U0LOREN' } }, how: { mode: 'caveman' } });
+    await personWrite(join(h.home, 'agents', 'mark'), { slug: 'loren', how: { mode: 'shakespearean' } });
+    await closeAllBackends();
+    handle = await startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
+    base = `http://127.0.0.1:${handle.port}`;
+  });
+  afterEach(async () => {
+    await handle.close();
+    await closeAllBackends();
+    rmSync(h.home, { recursive: true, force: true });
+  });
+
+  const login = async () => {
+    const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
+    return (r.headers.get('set-cookie') ?? '').split(';')[0];
+  };
+  const page = async (cookie: string, path: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' });
+  const csrfOf = (html: string) => /name="_csrf" value="([0-9a-f]{64})"/.exec(html)?.[1] ?? '';
+  const post = (cookie: string, path: string, fields: Record<string, string>) => fetch(`${base}${path}`, {
+    method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields).toString(),
+  });
+
+  it('Home is every agent and the tape across all of them', async () => {
+    const cookie = await login();
+    const html = await (await page(cookie, '/')).text();
+    for (const s of ['Art E Fish', 'Visual Mark', 'art did a thing', 'mark did a thing', 'The commons', 'href="/a/mark"', 'href="/knowledge"']) expect(html).toContain(s);
+  });
+
+  it('a person shows the shared entry and every agent\'s relationship', async () => {
+    const cookie = await login();
+    const html = await (await page(cookie, '/people/loren')).text();
+    for (const s of ['U0LOREN', 'caveman', 'shakespearean', 'Art E Fish', 'Visual Mark']) expect(html).toContain(s);
+  });
+
+  it('an agent\'s view is its own tape, Mind and Setup', async () => {
+    const cookie = await login();
+    const mark = await (await page(cookie, '/a/mark')).text();
+    expect(mark).toContain('mark did a thing');
+    expect(mark).not.toContain('art did a thing');
+    expect((await page(cookie, '/a/mark/mind')).status).toBe(200);
+    expect((await page(cookie, '/a/ghost')).status).toBe(404);
+    const setup = await (await page(cookie, '/a/art/setup')).text();
+    expect(setup).toContain('Art E Fish · Setup');
+    expect(setup).toContain('action="/act/loom"');
+    // The single-agent addresses land on the default agent.
+    const r = await page(cookie, '/mind?category=user');
+    expect(r.status).toBe(302);
+    expect(r.headers.get('location')).toBe('/a/art/mind?category=user');
+  });
+
+  it('a token is made on the page, shown once, works, and is revoked on the page', async () => {
+    const cookie = await login();
+    const csrf = csrfOf(await (await page(cookie, '/a/mark/setup')).text());
+    const made = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'create-token', _path: 'a/mark/setup', agent: 'mark', label: 'Mark · laptop' });
+    const to = made.headers.get('location')!;
+    expect(to).toMatch(/^\/a\/mark\/setup\?_flash=/);
+    const shown = await (await page(cookie, to)).text();
+    const token = /shown this once: (loom_[A-Za-z0-9_-]+)/.exec(shown)?.[1];
+    expect(token).toBeTruthy();
+    expect(await (await page(cookie, to)).text()).not.toContain(token!);
+    const c = await connect(handle.port, token!);
+    expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Visual Mark');
+    await c.close();
+    const rev = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'revoke-token', _path: 'a/mark/setup', label: 'Mark · laptop' });
+    expect(rev.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
+    await expect(connect(handle.port, token!)).rejects.toThrow();
+  });
+
+  it('an agent added on the page is served at once, without a restart', async () => {
+    const cookie = await login();
+    const csrf = csrfOf(await (await page(cookie, '/new-agent')).text());
+    const r = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'quixote', name: 'Don Quixote', purpose: 'Tilting at windmills.', voice: 'Grandiloquent.' });
+    const shown = await (await page(cookie, r.headers.get('location')!)).text();
+    const token = /shown this once: (loom_[A-Za-z0-9_-]+)/.exec(shown)?.[1];
+    expect(token).toBeTruthy();
+    expect(loadHousehold(h.home)!.agents).toEqual(['art', 'mark', 'quixote']);
+    const c = await connect(handle.port, token!);
+    expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Don Quixote');
+    await c.close();
+    expect(await (await page(cookie, '/')).text()).toContain('Don Quixote');
+    const dup = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'quixote', name: 'x', purpose: 'x', voice: 'x' });
+    expect(await (await page(cookie, dup.headers.get('location')!)).text()).toContain('already in the household');
+  });
+
+  it('an action on an agent\'s view acts on that agent\'s stack', async () => {
+    const markDir = join(h.home, 'agents', 'mark');
+    const ref = (await remember(markDir, { category: 'project', title: 'to archive', content: 'x' })) as unknown as { ref?: string } | string;
+    await closeAllBackends();
+    const r = typeof ref === 'string' ? ref : ref.ref!;
+    const cookie = await login();
+    const csrf = csrfOf(await (await page(cookie, '/a/mark/mind')).text());
+    const res = await post(cookie, '/a/mark/act/loom', { _csrf: csrf, _action: 'archive', _path: 'mind', ref: r });
+    expect(res.headers.get('location')).toMatch(/^\/a\/mark\/mind\?_flash=/);
+    const db = new BetterSqlite3(join(markDir, 'memories.db'), { readonly: true });
+    expect((db.prepare('SELECT archived FROM memories WHERE ref = ?').get(r) as { archived: number }).archived).toBe(1);
+    db.close();
+  });
+});
