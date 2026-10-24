@@ -27,6 +27,7 @@ import { createLoomServer } from './server.js';
 import { resolveContextDir } from './config.js';
 import { SUBCOMMANDS } from './cli/subcommands.js';
 import { firstNonGlobalIndex } from './cli/args.js';
+import { findPiece } from './cli/pieces.js';
 
 const CLI_KEYWORDS: ReadonlySet<string> = new Set(SUBCOMMANDS);
 
@@ -36,7 +37,10 @@ function isCliInvocation(argv: string[]): boolean {
   if (first === undefined) return false;
   if (first === '--help' || first === '-h') return true;
   if (first === '--version' || first === '-V') return true;
-  return CLI_KEYWORDS.has(first);
+  if (CLI_KEYWORDS.has(first)) return true;
+  // An installed piece (loom-<first> on PATH) is a CLI call too. Anything else
+  // still falls through to the stdio server, exactly as before.
+  return findPiece(first, process.env) !== undefined;
 }
 
 export { isCliInvocation };

@@ -593,6 +593,24 @@ loom migrate --dry-run   # check without applying
 loom migrate --json      # machine-readable output
 ```
 
+### Pieces — `loom tasks`, `loom secrets`, … as separate programs
+
+loom stays identity and memory. Everything else an agent leans on (tasks,
+secrets, a wake clock, an approval page) is a **piece**: its own program,
+reached through loom's command namespace the way `git` reaches `git-<cmd>`.
+`loom tasks list` runs the first `loom-tasks` on `PATH` with `list`, and
+passes back its exit code. Core commands can't be shadowed. Pieces never
+write loom's stores, work alone, and compose when others are installed. Each
+piece role has a contract, so an implementation can be swapped for another.
+
+```bash
+loom pieces            # what's installed (name → path)
+loom tasks ready       # → loom-tasks ready
+```
+
+The rules, the dispatch details and how pieces compose:
+[`docs/extensions.md`](docs/extensions.md).
+
 ### Harness manifests and self-describe
 
 A **harness** is the MCP-capable runtime the agent runs in (Claude Code,

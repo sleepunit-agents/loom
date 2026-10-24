@@ -10,6 +10,7 @@ import { realStreams } from './io.js';
 import { SUBCOMMANDS } from './subcommands.js';
 import { extractGlobalFlags, firstNonGlobalIndex } from './args.js';
 import { REMOTE_VERBS, runRemote } from './remote.js';
+import { findPiece, isPieceName, runPiece } from './pieces.js';
 
 const TOP_HELP = `Usage: loom <command> [options]
 
@@ -32,6 +33,10 @@ Commands:
   install           Write loom-setup skill into a harness's skills dir
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
+  pieces            List installed pieces (loom-<name> on PATH)
+
+Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> on PATH
+(e.g. loom tasks list). Core commands always win. See docs/extensions.md.
 
 Global flags:
   --context-dir <path>   Agent context dir (default: $LOOM_CONTEXT_DIR or ~/.config/loom/default)
@@ -54,6 +59,20 @@ async function readVersion(): Promise<string> {
 }
 
 export async function runCli(argv: string[], io: IOStreams = realStreams()): Promise<number> {
+  // A piece (docs/extensions.md): not a core command, and loom-<name> is on PATH.
+  const pieceIdx = firstNonGlobalIndex(argv);
+  const pieceName = argv[pieceIdx];
+  if (isPieceName(pieceName)) {
+    const path = findPiece(pieceName, io.env);
+    if (path) {
+      if (pieceIdx > 0) {
+        io.stderr(`loom: global flags (${argv.slice(0, pieceIdx).join(' ')}) don't apply to pieces; put the piece's own flags after its name.\n`);
+        return 2;
+      }
+      return runPiece(path, argv.slice(pieceIdx + 1), io);
+    }
+  }
+
   const resolved = await resolveSubcommand(argv, io);
   if (typeof resolved === 'number') return resolved;
   const { sub, rest } = resolved;
@@ -108,6 +127,7 @@ async function resolveSubcommand(
   }
   if (!(SUBCOMMANDS as readonly string[]).includes(first)) {
     io.stderr(`Unknown subcommand: ${first}\n`);
+    if (isPieceName(first)) io.stderr(`(no piece installed either: nothing named loom-${first} on PATH; \`loom pieces\` lists what is)\n`);
     io.stderr(TOP_HELP);
     return 2;
   }
@@ -182,6 +202,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'migrate': {
       const { run } = await import('./migrate.js');
       return run(rest, io);
+    }
+    case 'pieces': {
+      const { runPiecesCommand } = await import('./pieces.js');
+      return runPiecesCommand(rest, io);
     }
     default:
       io.stderr(`Subcommand not implemented yet: ${sub}\n`);

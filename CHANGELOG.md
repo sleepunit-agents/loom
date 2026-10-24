@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Pieces: `loom <piece>` dispatches to `loom-<piece>` on PATH, and `loom
+  pieces` lists them.** loom's command namespace now reaches separate,
+  swappable extensions (tasks, secrets, a wake clock, …) the way `git` reaches
+  `git-<cmd>`. loom never links them, and they never write loom's stores. Core
+  commands always win, piece names are validated before PATH is searched,
+  loom's env passes through unchanged, and the piece's exit code comes back.
+  The tiers, the rules (alone, composes without requiring, a contract per
+  role, no secrets in argv) and how pieces meet through named seams are in
+  `docs/extensions.md`.
+
 ## [0.6.0] - 2026-10-24
 
 ### Added
