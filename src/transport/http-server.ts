@@ -367,6 +367,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
       const target = scoped?.[1];
       const path = scoped ? (scoped[2] ?? '/') : fullPath;
+      // In a household the only routes past the page are MCP and /cli: any
+      // other path (/AGENTS/mark/mcp, /x/agents/mark/mcp) is a 404, not the
+      // default agent.
+      if (household && path !== '/' && path !== '/mcp' && path !== '/cli') {
+        return sendError(res, 404, 'not-found: in a household, use /, /mcp or /cli, optionally under /agents/<name>/');
+      }
 
       // Auth gate (ac-lt-auth-gate): reject unauthenticated when a token (or
       // token map) is configured. Multi-token mode additionally resolves

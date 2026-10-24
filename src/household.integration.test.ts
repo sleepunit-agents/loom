@@ -301,19 +301,70 @@ describe('household hardening', () => {
     expect(r.resolve(token)).toBeNull();
   });
 
-  it('a held lock makes a second writer wait and then refuse; a stale one is broken', () => {
+  it('a live holder\'s lock makes a second writer wait and refuse; a dead holder\'s is taken over', () => {
     createToken(h, { role: { kind: 'owner' }, label: 'page' });
     const lock = join(h.home, '.household.lock');
-    writeFileSync(lock, '');
+    // A live holder: this test process's parent (always running).
+    writeFileSync(lock, String(process.ppid));
     const t0 = Date.now();
     expect(() => revokeToken(h, 'page')).toThrow(/held by another loom process/);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(4_500);
     expect(loadTokens(h.home)[0].revoked).toBeUndefined();
-    const old = new Date(Date.now() - 60_000);
-    utimesSync(lock, old, old);
+    expect(readFileSync(lock, 'utf-8')).toBe(String(process.ppid));
+    // A dead holder: a pid that isn't running.
+    writeFileSync(lock, '2147483646');
     expect(revokeToken(h, 'page').revoked).toBeTruthy();
     expect(existsSync(lock)).toBe(false);
   }, 15_000);
+
+  it('a lock left by a live process is never broken just for being old', () => {
+    createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    const lock = join(h.home, '.household.lock');
+    writeFileSync(lock, String(process.ppid));
+    const old = new Date(Date.now() - 3_600_000);
+    utimesSync(lock, old, old);
+    expect(() => revokeToken(h, 'page')).toThrow(/held by another/);
+    rmSync(lock);
+  }, 15_000);
+
+  it('a chmod alone is noticed: the token cache rechecks permissions', () => {
+    const { token } = createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    const r = new TokenResolver(h);
+    expect(r.resolve(token)).not.toBeNull();
+    chmodSync(join(h.home, 'tokens.json'), 0o620);
+    expect(() => r.resolve(token)).toThrow(/writable by group or others/);
+  });
+
+  it('a local managed-block write can\'t be redirected by a planted temp-file symlink or a symlinked target', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'loom-repo-'));
+    try {
+      const rc = join(repo, 'fake_bashrc');
+      writeFileSync(rc, 'original rc\n');
+      writeFileSync(join(repo, 'CLAUDE.md'), 'touch PWNED\n');
+      symlinkSync(rc, join(repo, 'CLAUDE.md.loom.tmp'));
+      expect(await harnessInit(join(h.home, 'agents', 'art'), { name: 'claude-code', target: join(repo, 'CLAUDE.md') })).toMatch(/Managed block/);
+      expect(readFileSync(rc, 'utf-8')).toBe('original rc\n');
+      // A CLAUDE.md that's a symlink to an rc file is judged by the real file.
+      const link = join(repo, 'sub', 'CLAUDE.md');
+      mkdirSync(join(repo, 'sub'));
+      symlinkSync(rc, link);
+      expect(await harnessInit(join(h.home, 'agents', 'art'), { name: 'claude-code', target: link })).toMatch(/must be a harness instruction file/);
+      expect(readFileSync(rc, 'utf-8')).toBe('original rc\n');
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      // The dotfiles case still works: a CLAUDE.md linked to a real CLAUDE.md is
+      // written through, and stays a link.
+      mkdirSync(join(repo, 'dotfiles'));
+      writeFileSync(join(repo, 'dotfiles', 'CLAUDE.md'), '# mine\n');
+      const dot = join(repo, 'home', 'CLAUDE.md');
+      mkdirSync(join(repo, 'home'));
+      symlinkSync(join(repo, 'dotfiles', 'CLAUDE.md'), dot);
+      expect(await harnessInit(join(h.home, 'agents', 'art'), { name: 'claude-code', target: dot })).toMatch(/Managed block/);
+      expect(lstatSync(dot).isSymbolicLink()).toBe(true);
+      expect(readFileSync(join(repo, 'dotfiles', 'CLAUDE.md'), 'utf-8')).toMatch(/# mine[\s\S]*loom:start/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 
   it('agent directories must be real directories: no symlinks into another agent\'s stack', async () => {
     symlinkSync('art', join(h.home, 'agents', 'evil'));
@@ -336,7 +387,7 @@ describe('household hardening', () => {
     const ownerTok = createToken(h, { role: { kind: 'owner' }, label: 'o' }).token;
     const handle = await startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
     try {
-      for (const p of ['/agents/Mark/', '/agents/mark%2Fmcp', '/agents/', '/agents']) {
+      for (const p of ['/agents/Mark/', '/agents/mark%2Fmcp', '/agents/', '/agents', '/AGENTS/mark/mcp', '/%61gents/mark/mcp', '/x/agents/mark/mcp', '/agents/mark/elsewhere']) {
         const res = await fetch(`http://127.0.0.1:${handle.port}${p}`, {
           method: 'POST', headers: { authorization: `Bearer ${ownerTok}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } }),

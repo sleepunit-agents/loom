@@ -14,7 +14,7 @@
  * argument, so a body can only ever be the agent its token names.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -134,31 +134,49 @@ function loadUsed(home: string): Record<string, string> {
 
 /** Every token record, with when it was last used merged in. */
 const LOCK_FILE = '.household.lock';
-const LOCK_STALE_MS = 30_000;
+
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; }
+}
 
 /**
  * Serialize every read-modify-write of household.json and tokens.json, so
  * two `loom token` runs can't interleave and drop each other's change (a
- * create racing a revoke must not bring the revoked token back).
+ * create racing a revoke must not bring the revoked token back). The lock
+ * holds its owner's pid and is only ever broken when that process is gone;
+ * release removes it only if it's still ours.
  */
 function withLock<T>(home: string, f: () => T): T {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const lock = join(home, LOCK_FILE);
+  const mine = String(process.pid);
   const deadline = Date.now() + 5_000;
   for (;;) {
     try {
-      closeSync(openSync(lock, 'wx', 0o600));
+      writeFileSync(lock, mine, { flag: 'wx', mode: 0o600 });
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) { rmSync(lock, { force: true }); continue; }
-      } catch { continue; }
-      if (Date.now() > deadline) throw new HouseholdError(`${lock} is held by another loom process; try again`);
+      let holder = NaN;
+      try { holder = Number.parseInt(readFileSync(lock, 'utf-8'), 10); } catch { /* just released */ }
+      if (Number.isSafeInteger(holder) && holder > 0 && !alive(holder)) {
+        // Take over a dead holder's lock by renaming a claim over it, so two
+        // waiters can't both break it and both get in.
+        const claim = `${lock}.${process.pid}`;
+        writeFileSync(claim, mine, { mode: 0o600 });
+        try {
+          if (Number.parseInt(readFileSync(lock, 'utf-8'), 10) === holder) { renameSync(claim, lock); break; }
+        } catch { /* gone meanwhile: retry */ }
+        rmSync(claim, { force: true });
+        continue;
+      }
+      if (Date.now() > deadline) throw new HouseholdError(`${lock} is held by another loom process (pid ${Number.isNaN(holder) ? '?' : holder}); try again`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
   }
-  try { return f(); } finally { rmSync(lock, { force: true }); }
+  try { return f(); } finally {
+    try { if (readFileSync(lock, 'utf-8') === mine) rmSync(lock, { force: true }); } catch { /* already gone */ }
+  }
 }
 
 const SHA_HEX = /^[0-9a-f]{64}$/;
@@ -252,7 +270,7 @@ export class TokenResolver {
     const path = join(this.h.home, TOKENS_FILE);
     let key: string;
     // Every write is a rename, so the inode changes even where mtimes are coarse.
-    try { const st = statSync(path); key = `${st.ino}:${st.size}:${st.mtimeMs}`; } catch { return []; }
+    try { const st = statSync(path); key = `${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.mode}`; } catch { return []; }
     if (!this.cache || this.cache.key !== key) this.cache = { key, tokens: loadTokens(this.h.home) };
     return this.cache.tokens;
   }
