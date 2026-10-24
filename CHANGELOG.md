@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-24
+
 ### Added
 
 - **loom's page: `/ui` on the HTTP daemon.** A read-only web page with loom's
@@ -605,7 +607,8 @@ Initial public release.
   stack and all added external-service dependencies or operational
   overhead.
 
-[Unreleased]: https://github.com/sleepunit-agents/loom/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/sleepunit-agents/loom/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/sleepunit-agents/loom/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/sleepunit-agents/loom/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/sleepunit-agents/loom/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sleepunit-agents/loom/compare/v0.4.1...v0.5.0
