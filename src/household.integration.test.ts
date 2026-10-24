@@ -20,6 +20,10 @@ import {
 } from './household.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveKnowledgeDbPath } from './config.js';
+import { commonsPeoplePath, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
+import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
+import { personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
+import { remember } from './tools/remember.js';
 import { closeAllBackends } from './backends/index.js';
 import { harnessInit } from './tools/harness.js';
 
@@ -482,5 +486,127 @@ describe('the commons: shared knowledge', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+// Phase 2b: people are one directory entry plus a relationship per agent.
+describe('the commons: people', () => {
+  let h: Household;
+  const art = () => join(h.home, 'agents', 'art');
+  const mark = () => join(h.home, 'agents', 'mark');
+  beforeEach(() => { h = makeHousehold(); });
+  afterEach(async () => {
+    await closeAllBackends();
+    rmSync(h.home, { recursive: true, force: true });
+  });
+
+  const loren: PersonCard = {
+    slug: 'loren-clawitter', name: 'Loren Clawitter',
+    summary: 'CTEH data manager on et-livonia.',
+    where: { slack: { value: 'U0LOREN', verified_at: '2026-10-20T11:00:00Z', source: 'people.json' }, email: { value: 'loren@example.com' } },
+    how: { tz: 'America/Chicago', pronouns: 'she/her', mode: 'caveman', loop_in: ['phil-baker'] },
+    may: [{ text: 'field scope on pond/et-livonia', source: 'Jonathan, 2026-10-14' }],
+  };
+
+  it('splitting a card and merging it back renders the same text', () => {
+    const now = Date.parse('2026-10-24T12:00:00Z');
+    const { directory, relationship } = splitCard(loren);
+    expect(directory.how).toEqual({ tz: 'America/Chicago', pronouns: 'she/her' });
+    expect(directory.where).toEqual(loren.where);
+    expect(relationship.how).toEqual({ mode: 'caveman', loop_in: ['phil-baker'] });
+    expect(relationship.where).toEqual({});
+    expect(renderCard(mergeCard(directory, relationship), now)).toBe(renderCard(loren, now));
+  });
+
+  it('one Loren: shared handles and facts, and each agent its own way of talking to her', async () => {
+    expect(await personWrite(art(), { slug: loren.slug, name: loren.name, summary: loren.summary, where: loren.where, how: loren.how, may: loren.may })).not.toMatch(/^Error/);
+    expect(await personWrite(mark(), { slug: loren.slug, how: { mode: 'shakespearean' }, summary: 'Loren, who prefers verse.' })).not.toMatch(/^Error/);
+    const a = readPerson(art(), loren.slug);
+    const m = readPerson(mark(), loren.slug);
+    if (!('card' in a) || !('card' in m)) throw new Error('both should find Loren');
+    expect(a.card.how.mode).toBe('caveman');
+    expect(m.card.how.mode).toBe('shakespearean');
+    expect(a.card.summary).toBe(loren.summary);
+    expect(m.card.summary).toBe('Loren, who prefers verse.');
+    for (const c of [a.card, m.card]) {
+      expect(c.where.slack.value).toBe('U0LOREN');
+      expect(c.how.tz).toBe('America/Chicago');
+    }
+    expect(m.card.may).toEqual([]);
+    // Mark fixes her Slack id: Art sees it, and the directory knows who changed it.
+    expect(await personWrite(mark(), { slug: loren.slug, where: { slack: { value: 'U0LOREN2' } } })).not.toMatch(/^Error/);
+    const a2 = readPerson(art(), loren.slug);
+    if (!('card' in a2)) throw new Error('found');
+    expect(a2.card.where.slack.value).toBe('U0LOREN2');
+    expect(a2.card.how.mode).toBe('caveman');
+    const hist = JSON.parse(await personHistory(art(), { slug: loren.slug })) as Array<{ store: string; actor: string }>;
+    expect(hist.find((r) => r.store === 'directory')).toMatchObject({ actor: 'mark' });
+    // Art puts the directory entry back to before Mark's change.
+    const rev = (hist as Array<{ store: string; actor: string; id: number }>).find((r) => r.store === 'directory' && r.actor === 'mark')!;
+    expect(await personRevisionRestore(art(), { slug: loren.slug, revision_id: rev.id, store: 'directory' })).not.toMatch(/^Error/);
+    const a3 = readPerson(art(), loren.slug);
+    if (!('card' in a3)) throw new Error('found');
+    expect(a3.card.where.slack.value).toBe('U0LOREN');
+    expect(a3.card.how.mode).toBe('caveman');
+    // Nothing of Mark's relationship is in Art's store, or the commons.
+    for (const path of [join(art(), 'memories.db'), commonsPeoplePath(h)]) {
+      const db = new BetterSqlite3(path, { readonly: true });
+      expect(JSON.stringify(db.prepare('SELECT card_json FROM people').all())).not.toContain('shakespearean');
+      db.close();
+    }
+  });
+
+  it('a write either half would refuse changes neither', async () => {
+    await personWrite(art(), { slug: loren.slug, name: loren.name, where: loren.where, how: loren.how, may: loren.may });
+    const before = readPerson(art(), loren.slug);
+    // A valid relationship field alongside an invalid directory field.
+    const r = await personWrite(art(), { slug: loren.slug, how: { mode: 'formal' }, where: { slack: { value: 'x', verified_at: 'not a date' } } });
+    expect(r).toMatch(/^Error/);
+    expect(readPerson(art(), loren.slug)).toEqual(before);
+  });
+
+  it('"newer than the card" counts each agent\'s own memories about the person', async () => {
+    await personWrite(art(), { slug: loren.slug, name: loren.name, summary: 's' });
+    await remember(mark(), { category: 'user', title: 'Loren likes iambs', content: 'verse', metadata: { person: loren.slug } });
+    expect(listPeople(art()).find((p) => p.slug === loren.slug)?.memories_since_synthesis).toBe(0);
+    expect(listPeople(mark()).find((p) => p.slug === loren.slug)?.memories_since_synthesis).toBe(1);
+  });
+
+  it('moving an existing agent\'s cards in renders every one the same, keeps timestamps, and is safe to re-run', async () => {
+    // Cards written the old way, straight into Art's memories.db.
+    const old = new PeopleStore({ dbPath: join(art(), 'memories.db') });
+    old.write({ slug: loren.slug, name: loren.name, summary: loren.summary, where: loren.where, how: loren.how, may: loren.may });
+    old.write({ slug: 'pat', name: 'Pat', how: { mode: 'terse' } });
+    const updatedBefore = old.getRow(loren.slug)!.updated;
+    old.close();
+    const now = Date.now();
+    const renderedBefore = new Map([loren.slug, 'pat'].map((slug) => {
+      const st = new PeopleStore({ dbPath: join(art(), 'memories.db'), readonly: true });
+      const row = st.getRow(slug)!; st.close();
+      return [slug, renderCard(row.card, now)];
+    }));
+    await expect(startHttpServer({ contextDir: art(), host: '127.0.0.1', port: 0, household: h })).rejects.toThrow(/haven't been split/);
+    expect(splitPeopleIntoCommons(h, 'art', art(), now)).toBe(2);
+    for (const [slug, text] of renderedBefore) {
+      const got = readPerson(art(), slug);
+      if (!('rendered' in got)) throw new Error(`${slug} missing`);
+      expect(got.rendered).toBe(text);
+    }
+    const rel = new PeopleStore({ dbPath: join(art(), 'memories.db'), readonly: true });
+    expect(rel.getRow(loren.slug)!.updated).toBe(updatedBefore);
+    expect(rel.getRow(loren.slug)!.card.where).toEqual({});
+    rel.close();
+    expect(splitPeopleIntoCommons(h, 'art', art(), now)).toBe(0);
+    // Restoring the relationship to its pre-split revision brings back only
+    // the relationship half: the store stays split, and the daemon still starts.
+    const hist = JSON.parse(await personHistory(art(), { slug: loren.slug })) as Array<{ id: number; op: string; store: string }>;
+    const pre = hist.find((r) => r.store === 'relationship' && r.op === 'split')!;
+    expect(await personRevisionRestore(art(), { slug: loren.slug, revision_id: pre.id })).not.toMatch(/^Error/);
+    const st = new PeopleStore({ dbPath: join(art(), 'memories.db'), readonly: true });
+    expect(st.getRow(loren.slug)!.card.where).toEqual({});
+    expect(st.getRow(loren.slug)!.card.how).toEqual({ mode: 'caveman', loop_in: ['phil-baker'] });
+    st.close();
+    const handle = await startHttpServer({ contextDir: art(), host: '127.0.0.1', port: 0, household: h });
+    await handle.close();
   });
 });

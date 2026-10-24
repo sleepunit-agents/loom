@@ -9,12 +9,14 @@
  * loom tool. The CLI (`loom person`) calls the read functions here too.
  */
 import { resolveIdentityName } from '../config.js';
+import { householdOf } from '../household.js';
+import { openHouseholdPeople, type HouseholdPeople } from '../backends/people-household.js';
 import {
   openPeopleStore,
+  PeopleStore,
   personSlugError,
   PersonCardError,
   UnreadableCardError,
-  type PeopleStore,
   type PersonWriteInput,
   type PersonReadResult,
   type PersonListEntry,
@@ -33,9 +35,20 @@ function errorText(e: unknown): string {
   return `Error: ${(e as Error).message ?? String(e)}`;
 }
 
-function withWritable(contextDir: string, fn: (store: PeopleStore) => unknown): string {
+/**
+ * The people a context dir sees. In a household: the commons directory plus
+ * this agent's relationships (backends/people-household.ts). Otherwise the
+ * one store in the agent's memories.db, as before.
+ */
+function openPeople(contextDir: string, opts: { readonly?: boolean } = {}): PeopleStore | HouseholdPeople | null {
+  const hh = householdOf(contextDir);
+  if (hh) return openHouseholdPeople(hh.household, hh.agent, contextDir, opts);
+  return openPeopleStore(contextDir, opts);
+}
+
+function withWritable(contextDir: string, fn: (store: PeopleStore | HouseholdPeople) => unknown): string {
   try {
-    const store = openPeopleStore(contextDir)!;
+    const store = openPeople(contextDir)!;
     try {
       return json(fn(store));
     } finally {
@@ -68,15 +81,15 @@ export async function personRestore(contextDir: string, input: { slug: string })
 
 export async function personRevisionRestore(
   contextDir: string,
-  input: { slug: string; revision_id: number },
+  input: { slug: string; revision_id: number; store?: 'directory' | 'relationship' },
 ): Promise<string> {
-  return withWritable(contextDir, (s) => s.revisionRestore(input));
+  return withWritable(contextDir, (s) => (s instanceof PeopleStore ? s.revisionRestore({ slug: input.slug, revision_id: input.revision_id }) : s.revisionRestore(input)));
 }
 
 /** The `person` read. Throws on an invalid slug or an unreadable row; the MCP wrapper turns that into text. */
 export function readPerson(contextDir: string, slug: string, includeArchived = false): PersonReadResult {
   assertSlug(slug);
-  const store = openPeopleStore(contextDir, { readonly: true });
+  const store = openPeople(contextDir, { readonly: true });
   if (!store) return { found: false };
   try {
     return store.read(slug, includeArchived);
@@ -86,7 +99,7 @@ export function readPerson(contextDir: string, slug: string, includeArchived = f
 }
 
 export function listPeople(contextDir: string, includeArchived = false): PersonListEntry[] {
-  const store = openPeopleStore(contextDir, { readonly: true });
+  const store = openPeople(contextDir, { readonly: true });
   if (!store) return [];
   try {
     return store.list(includeArchived);
@@ -114,7 +127,7 @@ export async function personList(contextDir: string, input: { include_archived?:
 export async function personHistory(contextDir: string, input: { slug: string }): Promise<string> {
   try {
     assertSlug(input.slug);
-    const store = openPeopleStore(contextDir, { readonly: true });
+    const store = openPeople(contextDir, { readonly: true });
     if (!store) return json([]);
     try {
       return json(store.history(input.slug));

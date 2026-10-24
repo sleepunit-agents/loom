@@ -406,6 +406,16 @@ export const MIGRATIONS: readonly Migration[] = [
       }).immediate();
     },
   },
+  {
+    id: 'person_revisions_actor',
+    description:
+      'Add person_revisions.actor: which agent made the change a revision records, so a ' +
+      'shared directory entry shows who changed what (docs/specs/household.md)',
+    pending: (db) => hasTable(db, 'person_revisions') && !hasColumn(db, 'person_revisions', 'actor'),
+    run: (db) => {
+      db.prepare('ALTER TABLE person_revisions ADD COLUMN actor TEXT').run();
+    },
+  },
 ];
 
 /**
