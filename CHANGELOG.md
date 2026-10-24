@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Logging in to the page (and every form on it) failed in a browser with
+  "forbidden: cross-site request".** The page was served with
+  `Referrer-Policy: no-referrer`, under which browsers send `Origin: null` on
+  the page's own form posts, and the cross-site guard refuses that. It's
+  `same-origin` now, which still sends nothing to links that leave the page.
+
 ## [0.9.1] - 2026-10-24
 
 ### Changed
