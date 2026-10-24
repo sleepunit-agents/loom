@@ -54,9 +54,19 @@ function loomVersion(): string {
   try { return (JSON.parse(readFileSync(join(resolveRepoRoot(), 'package.json'), 'utf-8')) as { version: string }).version; } catch { return 'unknown'; }
 }
 
+/**
+ * The `age` or `tar` program: LOOM_AGE / LOOM_TAR when set (an absolute path
+ * to a file), else the first on PATH. Always run without a shell, with
+ * absolute paths as arguments (so nothing can be read as an option).
+ */
 function findProgram(name: string, env: NodeJS.ProcessEnv): string {
   const override = env[`LOOM_${name.toUpperCase()}`];
-  if (override) return override;
+  if (override) {
+    if (!override.startsWith('/') || !existsSync(override) || !statSync(override).isFile()) {
+      throw new BundleError(`LOOM_${name.toUpperCase()} must be the absolute path of the ${name} program`);
+    }
+    return override;
+  }
   for (const dir of (env.PATH ?? '').split(delimiter)) {
     if (dir && existsSync(join(dir, name))) return join(dir, name);
   }
@@ -185,7 +195,10 @@ export async function exportBundle(opts: {
 }
 
 /** Decrypt and unpack a bundle into `dir` (must be empty). Returns its manifest. */
-function unpack(file: string, identity: string, dir: string, env: NodeJS.ProcessEnv): Manifest {
+function unpack(fileIn: string, identityIn: string, dir: string, env: NodeJS.ProcessEnv): Manifest {
+  // Absolute paths: a file named like an option can't be taken for one.
+  const file = resolve(fileIn);
+  const identity = resolve(identityIn);
   const age = findProgram('age', env);
   const tar = findProgram('tar', env);
   if (!existsSync(identity)) throw new BundleError(`${identity}: no such identity file`);
