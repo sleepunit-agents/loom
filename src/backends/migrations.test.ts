@@ -182,7 +182,7 @@ describe('pendingMigrations', () => {
       'add_memory_deletions',
       'add_scope',
       'add_times_seen', 'add_uniq', 'rekey_uniq_unicode', 'uniq_active_unique', 'rekey_uniq_exact',
-      'people_cards',
+      'people_cards', 'add_recall_heat',
     ]);
   });
 
@@ -437,7 +437,7 @@ describe('rekey_uniq_exact migration (PR120 review, round 2)', () => {
     insert(db, 'project/p1', 'foo-bar', 'same', 'folded-project');
     insert(db, 'project/p2', 'foobar', 'same', null);
 
-    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact', 'people_cards']);
+    expect(pendingMigrations(db).map((m) => m.id)).toEqual(['rekey_uniq_exact', 'people_cards', 'add_recall_heat']);
     runMigrations(db, { strict: true });
 
     const rows = db.prepare('SELECT ref, uniq FROM memories ORDER BY id').all() as

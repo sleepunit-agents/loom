@@ -387,6 +387,25 @@ export const MIGRATIONS: readonly Migration[] = [
       }).immediate();
     },
   },
+  {
+    id: 'add_recall_heat',
+    description:
+      'Add recall_heat + recall_heat_at: heat that recall adds by rank and that decays, ' +
+      'so one incidental hit no longer makes a memory hot (t-1489)',
+    pending: (db) => !hasColumn(db, 'memories', 'recall_heat') || !hasColumn(db, 'memories', 'recall_heat_at'),
+    run: (db) => {
+      db.transaction(() => {
+        // Starts at 0 for every row: no recall history counts until recall
+        // adds to it. Heat falls back to when each memory was written or edited.
+        if (!hasColumn(db, 'memories', 'recall_heat')) {
+          db.prepare('ALTER TABLE memories ADD COLUMN recall_heat REAL NOT NULL DEFAULT 0').run();
+        }
+        if (!hasColumn(db, 'memories', 'recall_heat_at')) {
+          db.prepare('ALTER TABLE memories ADD COLUMN recall_heat_at TEXT').run();
+        }
+      }).immediate();
+    },
+  },
 ];
 
 /**

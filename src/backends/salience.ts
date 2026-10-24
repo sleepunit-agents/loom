@@ -1,10 +1,10 @@
 /**
  * Salience temperature + the assembled boot digest (c-loom-memory: it-loom-salience).
  *
- * A memory's temperature is a stored scalar that DECAYS by a per-category
- * half-life and REHEATS on access (recall stamps last_accessed; write/update
- * stamps updated) — so a frequently-touched fact stays warm and an untouched one
- * cools. The consolidation lane recomputes the stored field; the digest assembler
+ * A memory's temperature DECAYS by a per-category half-life and REHEATS when
+ * it's written or edited (full heat) or recalled (heat added by rank, see
+ * recallWeight) — so a frequently-used fact stays warm and an untouched one
+ * cools. It's computed when read (heatOf); the stored scalar is a cache. The consolidation lane recomputes the stored field; the digest assembler
  * fills a token budget HOTTEST-FIRST from existing authored atoms, labeled into
  * tiers. It ASSEMBLES a view over authored memories — it never generates new
  * prose (the integrity line: loom holds the pen, unlike Anthropic's native digest
@@ -105,17 +105,53 @@ export function decayedConfidence(
   return FEEDBACK_CONFIDENCE_DEFAULT + (rawConfidence - FEEDBACK_CONFIDENCE_DEFAULT) * temp;
 }
 
-interface SalienceRow {
-  id: number;
+/**
+ * How much one recall adds to a memory's recall heat, by its rank in the
+ * results: the top hit counts most, an incidental hit near the bottom barely
+ * at all. Recall used to reset every result to full heat, so one vague query
+ * put ten unrelated memories at the top of mind (t-1489).
+ */
+export const RECALL_WEIGHTS: readonly number[] = [0.5, 0.3, 0.2];
+export const RECALL_TAIL_WEIGHT = 0.1;
+
+export function recallWeight(rank: number): number {
+  return RECALL_WEIGHTS[rank] ?? RECALL_TAIL_WEIGHT;
+}
+
+/** A stored recall heat, decayed by the category's half-life since it was last added to. */
+export function decayedRecallHeat(value: number | null | undefined, atIso: string | null | undefined, category: string, nowMs: number): number {
+  if (!value || !atIso) return 0;
+  return Math.min(1, value * temperature(atIso, category, nowMs));
+}
+
+/** The recall heat after one more hit at `rank`: decay what's there, add the weight, cap at 1. */
+export function bumpedRecallHeat(value: number | null | undefined, atIso: string | null | undefined, category: string, rank: number, nowMs: number): number {
+  return Math.min(1, decayedRecallHeat(value, atIso, category, nowMs) + recallWeight(rank));
+}
+
+export interface HeatInput {
   category: string;
   created: string;
   updated: string | null;
-  last_accessed: string | null;
+  recall_heat?: number | null;
+  recall_heat_at?: string | null;
 }
 
-/** Most-recent-touch timestamp for a row (recall/write reheat through these). */
-function lastTouch(r: { created: string; updated: string | null; last_accessed: string | null }): string {
-  return r.last_accessed ?? r.updated ?? r.created;
+/**
+ * A memory's heat right now. Writing or editing it (including a repeat
+ * remember) makes it fully hot, decaying from then; recall adds to it by rank
+ * (recallWeight), so a memory stays hot by being used again and again, not by
+ * turning up once at the bottom of someone's results.
+ */
+export function heatOf(r: HeatInput, nowMs: number): number {
+  const written = temperature(r.updated ?? r.created, r.category, nowMs);
+  return Math.max(written, decayedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, nowMs));
+}
+
+/** Columns heatOf reads; older stores without the recall columns read them as null. */
+export function heatColumns(db: Database): string {
+  const have = hasColumn(db, 'memories', 'recall_heat');
+  return have ? 'created, updated, recall_heat, recall_heat_at' : 'created, updated, NULL AS recall_heat, NULL AS recall_heat_at';
 }
 
 /**
@@ -126,11 +162,11 @@ function lastTouch(r: { created: string; updated: string | null; last_accessed: 
  */
 export function recomputeSalience(db: Database, nowMs: number): number {
   const rows = db
-    .prepare('SELECT id, category, created, updated, last_accessed FROM memories WHERE archived = 0')
-    .all() as SalienceRow[];
+    .prepare(`SELECT id, category, ${heatColumns(db)} FROM memories WHERE archived = 0`)
+    .all() as Array<HeatInput & { id: number }>;
   const upd = db.prepare('UPDATE memories SET salience = ? WHERE id = ?');
   const tx = db.transaction(() => {
-    for (const r of rows) upd.run(temperature(lastTouch(r), r.category, nowMs), r.id);
+    for (const r of rows) upd.run(heatOf(r, nowMs), r.id);
   });
   // The nightly full-table recompute is the heaviest write in loom; wrap it so
   // a concurrent remember() call during the recompute retries instead of throwing.
@@ -250,13 +286,13 @@ export interface DigestAtom {
 function liveRows(db: Database, nowMs: number): Array<DigestRow & { stored: number }> {
   const rows = db
     .prepare(
-      'SELECT title, category, content, salience AS stored, sourcing, created, updated, last_accessed FROM memories WHERE archived = 0 AND category != ?',
+      `SELECT title, category, content, salience AS stored, sourcing, ${heatColumns(db)} FROM memories WHERE archived = 0 AND category != ?`,
     )
-    .all(EPISODE_CATEGORY) as Array<Omit<DigestRow, 'salience'> & { stored: number; created: string; updated: string | null; last_accessed: string | null }>;
+    .all(EPISODE_CATEGORY) as Array<Omit<DigestRow, 'salience'> & HeatInput & { stored: number }>;
   return rows
-    .map(({ created, updated, last_accessed, ...r }) => ({
+    .map(({ created, updated, recall_heat, recall_heat_at, ...r }) => ({
       ...r,
-      salience: temperature(lastTouch({ created, updated, last_accessed }), r.category, nowMs),
+      salience: heatOf({ category: r.category, created, updated, recall_heat, recall_heat_at }, nowMs),
     }))
     .sort((a, b) => b.salience - a.salience);
 }

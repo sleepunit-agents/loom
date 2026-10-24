@@ -496,8 +496,11 @@ wakes knowing what's top-of-mind without having to fish via `recall`.
 Each memory carries a stored salience "temperature" that **decays by a
 per-category half-life** (pursuit coolest-fastest at 7 days, through
 project, self/feedback, reference, up to user at 90 days) and **reheats
-on access** — a `recall` hit, a write, or an update bumps it back toward
-hot. Heat is computed from those timestamps when the digest is read, so
+with use**. A write, an update or a repeat `remember` makes it fully hot.
+A `recall` adds heat by rank: the top result gets 0.5, the next 0.3 and
+0.2, and everything below 0.1, capped at 1. So a memory is hot when it
+keeps being the answer, not because it once turned up near the bottom of
+someone's results. Heat is computed from those timestamps when the digest is read, so
 it can't go stale if the consolidation lane skips a night. The digest fills a token budget **hottest-first** and groups the
 selected memories into tiers (Hot / Warm / Cool, labeled *Top of mind* /
 *Recent* / *Background*).

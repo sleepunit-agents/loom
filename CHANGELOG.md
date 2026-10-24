@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Recall adds heat by rank instead of resetting every result to full heat.**
+  One vague query used to put ten unrelated memories at the top of mind. Now
+  the top result gets 0.5, the next 0.3 and 0.2, and the rest 0.1, decaying
+  on the memory's half-life and capped at 1. A write, an update or a repeat
+  remember still makes a memory fully hot. `last_accessed` still records
+  every look, for pruning. New columns `recall_heat` and `recall_heat_at`
+  (migration `add_recall_heat`) start at 0.
+
 ## [0.8.0] - 2026-10-24
 
 ### Added

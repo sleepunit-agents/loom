@@ -14,6 +14,8 @@ import {
   recomputeSalienceForContext,
   digestForContext,
   digestData,
+  heatOf,
+  recallWeight,
   clampConfidence,
   applyObservation,
   decayedConfidence,
@@ -23,6 +25,8 @@ import {
   type DigestRow,
 } from './salience.js';
 import { remember } from '../tools/remember.js';
+import { recall } from '../tools/recall.js';
+import { closeAllBackends } from './index.js';
 import { resolveSqliteDbPath } from '../config.js';
 
 const NOW = Date.parse('2026-06-15T00:00:00Z');
@@ -204,13 +208,72 @@ describe('recompute + digest through the real store', () => {
     expect(text).toMatch(/## Background\n- \*\*Old thread\*\*/);
   });
 
-  it('a recall reheats a memory in the digest without a recompute', async () => {
-    await remember(tmpDir, { category: 'project', title: 'Touched', content: 'x' });
+  it('recall heat reheats a memory in the digest without a recompute; last_accessed alone does not', async () => {
     await remember(tmpDir, { category: 'project', title: 'Untouched', content: 'y' });
+    await remember(tmpDir, { category: 'project', title: 'Recalled', content: 'x' });
+    await remember(tmpDir, { category: 'project', title: 'Only looked at', content: 'z' });
     const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
     db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL').run(daysAgo(30));
-    db.prepare('UPDATE memories SET last_accessed = ? WHERE title = ?').run(daysAgo(0), 'Touched');
+    db.prepare('UPDATE memories SET recall_heat = 0.8, recall_heat_at = ? WHERE title = ?').run(daysAgo(0), 'Recalled');
+    db.prepare('UPDATE memories SET last_accessed = ? WHERE title = ?').run(daysAgo(0), 'Only looked at');
     db.close();
-    expect(digestData(tmpDir, 10, NOW)!.atoms.map((a) => a.title)).toEqual(['Touched', 'Untouched']);
+    const atoms = digestData(tmpDir, 10, NOW)!.atoms;
+    expect(atoms[0].title).toBe('Recalled');
+    expect(atoms[0].salience).toBeCloseTo(0.8, 5);
+    expect(atoms.find((a) => a.title === 'Only looked at')!.salience).toBeLessThan(0.2);
+  });
+});
+
+// t-1489: one recall used to reset every result to full heat, so a vague query
+// put ten unrelated memories at the top of mind. Recall adds heat by rank now.
+describe('recall heat', () => {
+  let tmpDir: string;
+  const titles = ['Kiln temps for stoneware', 'Kiln shelf cracked', 'Kiln wiring permit', 'Glaze recipe notes', 'Clay supplier list'];
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'loom-recallheat-'));
+    for (const t of titles) await remember(tmpDir, { category: 'project', title: t, content: `${t}: details about the kiln and pottery studio` });
+    // Old memories: written heat alone would be cold.
+    const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
+    db.prepare('UPDATE memories SET created = ?, updated = NULL').run(new Date(Date.now() - 60 * 86_400_000).toISOString());
+    db.close();
+  });
+  afterEach(async () => {
+    await closeAllBackends();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const heats = () => {
+    const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir), { readonly: true });
+    const rows = db.prepare('SELECT title, category, created, updated, recall_heat, recall_heat_at, last_accessed FROM memories').all() as Array<{
+      title: string; category: string; created: string; updated: string | null; recall_heat: number; recall_heat_at: string | null; last_accessed: string | null;
+    }>;
+    db.close();
+    return rows.map((r) => ({ ...r, heat: heatOf(r, Date.now()) })).sort((a, b) => b.heat - a.heat);
+  };
+
+  it('weights are steepest at the top', () => {
+    expect([0, 1, 2, 3, 9].map(recallWeight)).toEqual([0.5, 0.3, 0.2, 0.1, 0.1]);
+  });
+
+  it('one recall adds heat by rank, and still stamps last_accessed on every result', async () => {
+    await recall(tmpDir, { query: 'kiln', limit: 10 });
+    const h = heats();
+    expect(h.map((r) => Number(r.recall_heat.toFixed(2)))).toEqual([0.5, 0.3, 0.2, 0.1, 0.1]);
+    expect(h.every((r) => r.last_accessed !== null)).toBe(true);
+    // An incidental hit stays cool; the top hit is warm, not hot.
+    expect(h[4].heat).toBeLessThan(0.2);
+    expect(h[0].heat).toBeLessThan(0.6);
+  });
+
+  it('being the top hit again and again makes a memory hot, and only that one', async () => {
+    for (let i = 0; i < 3; i++) await recall(tmpDir, { query: 'kiln', limit: 10 });
+    const h = heats();
+    expect(h[0].heat).toBeGreaterThanOrEqual(0.99);
+    expect(h[0].heat).toBeLessThanOrEqual(1);
+    expect(h[4].heat).toBeLessThan(0.35);
+    const data = digestData(tmpDir, 10)!;
+    expect(data.atoms[0].title).toBe(h[0].title);
+    expect(data.atoms[0].tier).toBe('Hot');
+    expect(data.atoms.at(-1)!.tier).not.toBe('Hot');
   });
 });

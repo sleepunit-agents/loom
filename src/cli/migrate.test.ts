@@ -67,7 +67,9 @@ function buildCurrentDb(dir: string): string {
       observed_at TEXT,
       scope TEXT,
       times_seen INTEGER NOT NULL DEFAULT 1,
-      uniq TEXT
+      uniq TEXT,
+      recall_heat REAL NOT NULL DEFAULT 0,
+      recall_heat_at TEXT
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memories_archived ON memories(archived)`).run();
