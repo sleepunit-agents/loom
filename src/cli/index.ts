@@ -36,6 +36,8 @@ Commands:
   pieces            List installed pieces (loom-<name> on PATH)
   household         The household: agents and the default (docs/specs/household.md)
   token             Mint, list and revoke the household's tokens
+  export            Write the whole household to one encrypted bundle
+  restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> on PATH
 (e.g. loom tasks list). Core commands always win. See docs/extensions.md.
@@ -216,6 +218,14 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'token': {
       const { runToken } = await import('./household.js');
       return runToken(rest, io);
+    }
+    case 'export': {
+      const { runExport } = await import('./bundle.js');
+      return runExport(rest, io);
+    }
+    case 'restore': {
+      const { runRestore } = await import('./bundle.js');
+      return runRestore(rest, io);
     }
     default:
       io.stderr(`Subcommand not implemented yet: ${sub}\n`);

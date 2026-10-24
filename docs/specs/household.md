@@ -169,9 +169,9 @@ out of a fire.
   `tokens.json`, the commons, every agent's directory (SQLite through the
   backup API, not a file copy), and **each installed piece's own part**.
 - **Pieces add their own part** with a new optional verb,
-  `loom-<piece> export`. It writes the piece's store to stdout, already
-  encrypted however the piece encrypts it: the secrets piece hands over its
-  sops store as is, and core never sees inside it. `loom-<piece> import`
+  `loom-<piece> bundle export` (namespaced so it can't collide with a piece's own `export`). It writes the piece's store to stdout, already
+  encrypted by the piece to the bundle's recipient: the secrets piece re-encrypts its
+  store to the owner's key, and core never sees inside it. `loom-<piece> bundle import`
   reads the same bytes back. A piece without the verb is listed in the bundle
   as not included.
 - **The bundle is encrypted to an age recipient the owner holds** (a YubiKey,

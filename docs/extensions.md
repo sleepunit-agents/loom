@@ -232,6 +232,28 @@ short.
   to be in the daemon's environment. A piece can't be named `loom`, because
   that name is loom's own.
 
+## The bundle: a piece's part
+
+`loom export` asks each installed piece for its part, and `loom restore`
+hands it back (docs/specs/household.md, "Export and restore"). Both verbs are
+optional, and they sit under `bundle` so they can't collide with a piece's
+own `export`/`import` commands. A piece without them is listed in the bundle
+as not included.
+
+```bash
+LOOM_EXPORT_RECIPIENTS=age1…,age1… loom-<piece> bundle export   > part   # stdout: the part, encrypted by the piece
+LOOM_IMPORT_IDENTITY=/path/owner.key loom-<piece> bundle import < part   # stdin: the same bytes
+```
+
+- **The piece encrypts its own part** to the recipients it's given. loom
+  never decrypts it, so a piece holding authority (secrets) keeps it.
+- **On import, the piece re-keys for this machine.** It decrypts with the
+  owner's identity and stores the result under its own local key, because
+  the machine the bundle came from (and its keys) may be gone.
+- **Import refuses to overwrite** an existing store unless asked to: a
+  restore goes into a fresh place.
+- 120 seconds and 256 MB per part.
+
 ## Pieces today
 
 | Role | `loom <piece>` | Implementation | Contract |

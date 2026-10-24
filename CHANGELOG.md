@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The bundle: the household on a USB stick** (docs/specs/household.md,
+  phase 3).
+  - **`loom export --to <file> --recipient <age1…>`** writes the whole
+    household into one file, encrypted with age to the owner's key: its
+    files and tokens, the commons, every agent's directory (SQLite through
+    the backup API), and each piece's own part (`loom-<piece> bundle export`,
+    encrypted by the piece).
+  - **`loom restore <file> --identity <key>`** lays it down in an empty
+    LOOM_HOME and hands each piece its part (`bundle import`). A piece that isn't
+    installed keeps its part in `pieces-pending/`.
+  - **`--drill`** restores into a throwaway directory and compares it with
+    the live household, touching nothing live.
+  - **A plain context dir** exports as a household of one, and restores as
+    one with its cards split.
+
 ## [0.11.0] - 2026-10-24
 
 ### Changed
