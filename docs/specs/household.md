@@ -1,4 +1,4 @@
-# The household — one loom, many agents, a shared commons
+# The household — central loom, distributed workers
 
 *2026-10-24. Status: **proposed**. Design doc in the `docs/specs/` sense: it
 says what loom will build and what the implementation's tests must pin. It
@@ -6,217 +6,270 @@ precedes those tests; it doesn't replace them.*
 
 ## Why
 
-Today one loom install serves exactly one agent. Everything an agent knows
-lives in its context dir (`~/.config/loom/<agent>/`) and the daemon serving
-it is pinned to that dir. A second agent means a second, completely separate
-loom.
-
-That's how it already is in practice:
+The promise has always been one Art, everywhere: many bodies ("sleeves"), one
+stack. Today that holds only because every sleeve happens to run on one LXC
+next to the stack. Everything an agent is lives in a context dir on that box,
+one loom process serves one agent, and a second agent is a second, separate
+loom:
 
 - **Mark** runs on his own box (CT 113, Codex harness) with his own loom at
-  `~/.config/loom/mark/` on that box. **Art** runs on the art LXC with his.
-  They meet through the letters channel and GitHub. Nothing in loom is shared.
+  `~/.config/loom/mark/` there. **Art** runs on the art LXC with his. They
+  meet through the letters channel and GitHub. Nothing in loom is shared.
 - **People are per agent.** Art's 22 person cards live in Art's
-  `memories.db`. If Mark talks to Loren, he starts a card from zero: her
-  handles re-learned, her pronouns re-asked, no shared ground.
-- **"Shared knowledge" is a guest pass, not a commons.** The knowledge-only
-  daemon lets other identities read and write knowledge with their own
-  tokens, but it serves *Art's* `knowledge.db`. Every recorded reader is
-  `art`. Mark has never used it.
-- **loom runs on Art's box.** The daemon, the page, the backups and the
-  pieces all live on the art LXC, so the memory service and one of its
-  agents share a fate.
+  `memories.db`. If Mark talks to Loren, he starts from zero.
+- **"Shared knowledge" is a guest pass into Art's store.** Every recorded
+  reader is `art`.
+- **loom, its page, its backups and its pieces all run on Art's box.** The
+  memory service and one of its agents share a fate, and every new agent box
+  is another place holding a little of everything.
 
-What Jonathan wants (terminal, 2026-10-24):
+What Jonathan wants (terminal, 2026-10-24), in his words:
+
+> "loom is a fully external dependency. … if I installed claude code on some
+> new thing, pointed it at the loom mcp and told it boot me up Art, you'd be
+> there more or less, regardless of where it was."
+
+> "we're authing loom. we're a new vat o bodies that can be needlecast to.
+> whether that's you or mark or we get an older version of haiku and convince
+> it that it's actually don quixote … these things call home and say hey,
+> I'm a worker node, what up. loom proper says yes, you're allowed in … and
+> also says anything like... art can run here but mark can't"
+
+> "you need to do a task where you need the 5090. you should be able to go, I
+> need to fire up on one for this"
 
 > "we don't want to have to track where loren exists on other platforms in 5
 > places, but she might tell you to talk like a caveman and mark to talk like
 > a shakespearian actor."
 
-> "loom lives outside of either of your lxcs. could be on the moon for all we
-> care. and the boxes are just where shit actually happens. theoretically,
-> mark gets a mobile home like you with the new container setup and all of
-> that too"
+And on the cost, which is the point: "every agent we spin up adds a new
+target. if we've got to protect something, having to protect one thing is
+better than N things."
 
-## The shape
+## The model
 
 ```
-loom host (its own box; reachable as loom.one.sleepunit.com)
-├── commons/                 shared by every agent in the household
-│   ├── knowledge.db         facts about the world
-│   └── people.db            the directory: one entry per human
-├── agents/
-│   ├── art/                 one stack per agent, private to it
-│   │   ├── IDENTITY.md …    identity, preferences, self-model, harnesses
-│   │   └── memories.db      memories, episodes, proposals, relationships
-│   └── mark/
-└── loom.json                the household: agents, tokens (hashed), owner
+loom (one host, always up: loom.one.sleepunit.com)
+├── commons            knowledge; the people directory
+├── agents/<name>      identity, memory, tape, top of mind, relationships
+├── services           household services with their own stores: secrets, tasks
+├── nodes              enrolled workers and what each one has
+└── the page
 
-agent boxes (anywhere): where the bodies run
-├── art LXC                  bodies + Art's pieces (shuttle, tasks, secrets)
-└── mark LXC                 bodies + Mark's pieces, same container setup as Art's
+nodes (any machine with git + a container runtime): where work happens
+├── art LXC, mark LXC, the 5090 box, a laptop, Phil's Thor …
+└── each one: a node credential, and sleeves loom placed there
 ```
 
-Three layers, and the rule for which layer a thing belongs in:
+Three piles, and where each lives:
 
-| Layer | Holds | Rule |
+| Pile | What's in it | Where |
 |---|---|---|
-| **Commons** | knowledge; the people directory | A fact about the world, true no matter which agent asks |
-| **Agent** | identity, memory, the tape, top of mind, proposals, relationships | What one agent knows, remembers or decided. Private to it |
-| **Host** | the agent list, tokens, installed pieces, health | Running the household. Only the owner touches it |
+| **Who an agent is and what it knows** | identity, memory, the tape, knowledge, people, tasks | loom |
+| **How an agent is set up** | routines, hooks, bridge config, its container | the agent's repo (`~/Art` for Art), cloned onto a node when a sleeve needs it |
+| **What's running** | bodies, bridges, a GPU job | a node. Disposable |
+
+**The rule: a node holds nothing that can't be rebuilt from loom plus the
+agent's repo.** Losing a node costs uptime, never any part of an agent.
+
+### Nodes, not agents, are what enrolls
+
+A machine joins the household as a **node**: a vat that can host bodies. It
+knows nothing about any agent until loom places one there.
+
+1. **Enrollment.** A node starts `loom node`, calls home, and shows a short
+   code. The owner approves it on loom's page. This is the approval pattern
+   (t-1468): a request, a person saying yes. The node gets a **node
+   credential**: long-lived, revocable, and only able to say "I'm node N,
+   here's what I have, anything for me?" It can't read memory or secrets.
+2. **What a node has.** It advertises facts loom can match on: `gpu:5090`,
+   `arch:arm64`, `runtime:podman`, `net:lan-192.168.4.0/22`, `site:home`, a
+   free label like `jonathan-rig`. Measured where possible (it reports the GPU
+   it finds), declared where not.
+3. **Nodes pull.** A node holds a connection open (or polls) and asks for
+   work. loom never reaches into a node, so a node behind NAT, on a laptop or
+   on a VPS works the same.
+
+### Placement: which agent may run where
+
+Each agent declares what it needs and any hard rules; loom answers yes or no.
+
+- **Needs:** "a GPU with 24 GB", "podman", "the pond LAN".
+- **Rules:** "Mark never on the work box", "this agent only on the sandbox
+  node".
+- **A placement request** names an agent, optional extra needs, and why. loom
+  picks an enrolled, healthy node that has the needs and is allowed to host
+  that agent, or says why not.
+
+For this household the answer is almost always "anyone, anywhere". The rules
+exist for the general case: Phil's house (a G14, a Mac Studio, a Thor, each
+with its own agent), an agent that needs one particular machine, a guest
+agent kept on one node.
+
+**Who asks:**
+- whatever already starts bodies (the bridges when a conversation lands, the
+  wake clock when a routine fires): "where can Art run right now?"
+- **the agent itself.** A tool, roughly
+  `sleeve({needs: ["gpu:5090"], task: "…"})`. Art decides a job needs the
+  5090; loom places a sleeve of Art on a node that has one, hands it the
+  task, and the sleeve's work lands on the tape like any other body's.
+
+**Not Kubernetes.** The first version is nodes, their facts, the agents'
+needs and rules, and a yes or no. No bin-packing, no autoscaling, no
+rescheduling. If we ever need more, that's its own decision.
+
+### Credentials
+
+| Credential | Held by | Can | Lifetime |
+|---|---|---|---|
+| **Owner** | Jonathan (the page) | everything: every agent, the commons, nodes, services | a session, from a real login (t-1487) |
+| **Node** | one node | enroll facts, pull work, report status | until revoked |
+| **Sleeve** | one body | MCP and the CLI as one agent: its stack + the commons | minted per placement, dies with the sleeve |
+| **Peer** | another household's agent | commons knowledge only (today's `--scope knowledge`) | until revoked |
+
+- A sleeve token is scoped to one agent and one node. A compromised node can
+  reach only the agents sleeved on it, and only while they're there.
+- **No tool gains an agent parameter.** A body can't ask for another agent's
+  stack; it can only be one. Today's isolation property ("an absence of API
+  surface, not a policy") holds, with the boundary moved from the process to
+  the token.
+- **The body never holds secrets it didn't need, and can't fetch more.** A
+  sleeve token can't read the secrets service. When loom places a sleeve, it
+  hands the *node* the secrets that sleeve needs (a podman secret, a file
+  only the container sees), and the node's runtime injects them. A
+  prompt-injected body can't ask for the Discord token, because nothing it
+  holds can.
+- Attribution (who wrote this page, who changed that handle) comes from the
+  token, never from the caller.
 
 ### People: one directory, one relationship per agent
 
 A person card (docs/specs/person-cards.md) splits in two.
 
-**Directory entry**: commons, one per human:
-- `slug`, `name`
-- `where`: handles on every platform, each with `verified_at` and `source`
-  (Slack ids, Discord, email, pond role). Learned once, kept fresh once.
-- `facts`: things about the person that don't depend on who's asking. That
-  means time zone, pronouns and languages, in envelopes like `where` so
-  they can go stale and be re-verified.
+- **Directory entry**, in the commons, one per human: `slug`, `name`, `where`
+  (handles on every platform, each with `verified_at` and `source`), and
+  `facts` (time zone, pronouns, languages), in envelopes so they can go stale.
+  Learned once, kept fresh once.
+- **Relationship**, in each agent's stack: `summary` (this agent's view),
+  `how` (how *this agent* talks to them: caveman for Art, Shakespeare for
+  Mark), `may` (what they're cleared for *with this agent*; descriptive,
+  never a grant). The agent's `user` memories tagged `metadata.person` stay
+  its own memories.
 
-**Relationship**: per agent, in that agent's `memories.db`:
-- `summary`: this agent's condensed view of the person
-- `how`: how *this agent* talks to them (mode, tone, "talk like a caveman"),
-  `loop_in`
-- `may`: what they're cleared for *with this agent* (descriptive, never a
-  grant, as today)
-- the agent's own `user` memories tagged `metadata.person=<slug>` stay where
-  they are. They're the agent's memories.
+Reading a person gives one card: the directory entry plus the reader's own
+relationship. No agent reads another's relationship; the owner can. Directory
+writes are per field, last writer wins, and each one is a revision naming the
+agent that made it, so "Mark changed Loren's Slack id" is visible and
+revertible.
 
-When an agent reads a person, it gets one card: directory fields plus its own
-relationship, rendered as today. No agent can read another's relationship.
-The owner can.
+### Services and pieces
 
-**Two agents writing one directory entry.** Fields are envelopes, so writes
-are per field, last writer wins, and every write is a revision naming the
-agent that made it (`person_revisions` gains `agent`). A changed handle shows
-on the page as "Mark changed Loren's Slack id", so a bad write is visible and
-revertible, not silent.
+Stateful household services (secrets, tasks, the page itself) run on the
+loom host, each as its own program with its own store, the pieces model
+(docs/extensions.md) unchanged. **Secrets in particular stay their own
+service:** their own process, their own key, their own store, never inside
+memory and never reachable through the memory tools. Next to loom is fine.
+Being part of loom's memory isn't (the 10-21 test).
 
-### Who's asking: tokens bind to a role
-
-`loom.json` lists tokens by their sha256, each bound to one role:
-
-| Role | Sees | Typical holder |
-|---|---|---|
-| `agent:<name>` | that agent's stack + the commons | that agent's bodies |
-| `owner` | every agent + the commons + the host | Jonathan (the page) |
-| `peer:<name>` | the commons' knowledge only (today's `--scope knowledge`) | another household's agent |
-
-The daemon resolves the token on every request and threads the resulting
-context into every tool, the way `contextDir` is threaded today. **No tool
-gains an agent parameter**, so a body still can't ask for another agent's
-stack. It can only be one. That keeps today's isolation property ("an
-absence of API surface, not a policy") with the boundary moved from the
-process to the token.
-
-`resolveIdentityName` (attribution on knowledge writes) comes from the token,
-never from the caller, as today.
-
-### Pieces when loom isn't on the box
-
-Today the daemon spawns `loom-<piece>` from its own `PATH`. Once loom lives
-elsewhere, that breaks: shuttle, Art's task store and the secrets key all
-live on the art LXC, and they must stay there, because authority stays at the
-piece holding it (docs/extensions.md, the 10-21 test).
-
-So a piece can be **remote**. Each agent box runs `loom pieces serve`, a small
-listener that answers the same three verbs (`ui`, `ui page`, `ui act`) for
-the pieces installed on *that box*, over HTTP, to the loom host only, with
-the agent's token. The loom host keeps a list of registered boxes per agent.
-
-- The contract doesn't change. A piece still answers `ui --json` and friends
-  on its own box; `loom pieces serve` is just the transport.
-- A remote piece belongs to an agent. Art's shuttle shows up in Art's view
-  (and in the household view as "Art · Bridges"), Mark's in Mark's.
-- Secrets never leave the box that holds the key. A secret typed into the
-  page goes loom host → Art's box on stdin of `loom-secrets ui act`, never
-  stored on the loom host.
-- Host-level pieces (ones that serve the whole household, if any appear) can
-  still be local to the loom host.
+Things that really run on a node (a chat bridge, a GPU job) **push** status
+to loom instead of loom reaching in: the status board's push model. A node
+that stops reporting shows as dark. Its tab or tile stays on the page with
+the last report and its age.
 
 ### The page
 
-- **Home is the household:** a card per agent (alive, last active, what it's
-  doing now, from its tape), "Your call" across every agent and piece, the
-  commons' knowledge, and the people directory.
-- **An agent's view** is what `/` is today (its tape, Mind, its people as it
-  sees them, its pieces' tabs) plus **Setup**:
+- **Home is the household:**
+  - every agent, with its sleeves (where each one is running and what it's
+    doing, from its tape);
+  - every node, with its facts and health;
+  - "Your call" across all of them;
+  - the commons' knowledge and the people directory.
+- **An agent's view** is what `/` is today (tape, Mind, people as it sees
+  them, its services' tabs) plus **Setup**:
   - identity: the creed and harnesses, read-only on the page
-  - model, bodies, last wake
-  - tokens: listed, rotated or revoked, never shown again
-  - registered boxes and their pieces
-  - health: stack version, backups, digest size
-- **Add an agent:**
-  - create its stack (bootstrap, as `mcp__loom__bootstrap` does today);
-  - issue its token, shown once;
-  - give the snippet a box needs: `LOOM_URL`, `LOOM_TOKEN_FILE`, the MCP
-    config for its harness.
-- **People:** the directory, with every agent's relationship to each person
-  (the owner's view), and the revision trail on shared fields.
-
-The owner's token sees all of it. An agent's token never gets the page. Bodies
-use MCP and the CLI.
+  - needs and placement rules
+  - sleeves now, and recent ones
+  - its repo
+  - health
+- **Nodes:**
+  - enrollment requests to approve, with the code the node shows;
+  - each node's facts, its sleeves, revoke.
+- **Add an agent:** create its stack, point it at its repo, set its needs.
+  Its first sleeve can go anywhere it's allowed.
 
 ## Moving there
 
 Each phase ships on its own and leaves everything working.
 
-1. **This spec**, reviewed by Jonathan and by Mark (letters). Nothing moves
-   until both have read it.
-2. **Multi-agent daemon, on the art LXC first.** `loom.json`, token roles,
-   per-request context resolution. Art's stack moves to `agents/art/` in
-   place (a symlink keeps old paths working for a release). Tests pin that an
-   `agent:art` token can't reach `agents/mark/` by any tool.
-3. **The commons.**
-   - Art's `knowledge.db` becomes `commons/knowledge.db`: it already holds
-     world facts.
-   - Art's 22 cards split into directory entries and Art's relationships, by
-     a migration that's checked against today's rendered cards (the same
-     text out, before and after).
-4. **Remote pieces:** `loom pieces serve` on the art LXC. Art's pieces keep
-   working from a loom that no longer spawns them itself.
-5. **loom gets its own box:**
-   - a loom LXC on wunder, with traefik's `loom.one.sleepunit.com` repointed
-     to it;
-   - the backups (`art-vault-backup`, `art-loom-backup`) move with it and
-     become the household's;
-   - Art's local stdio MCP config moves to HTTP, as the house tank already
-     uses.
-6. **Mark moves in.** His stack comes over to `agents/mark/`, his knowledge
-   merges into the commons (conflicts by slug listed for him, never
-   overwritten), and his people become relationships on directory entries.
-   That's his memory, so he runs this step or signs off on it. His box gets
-   the house container setup and `loom pieces serve`.
-7. **The household page:** Home, agent views with Setup, add an agent.
+1. **This spec**, reviewed by Jonathan, then Mark (letters). Phil is the test
+   household: several machines, several agents, nothing pre-wired.
+2. **Multi-agent loom, still on the art LXC:**
+   - a household file: agents, token roles, owner;
+   - per-request context;
+   - Art's stack moves to `agents/art/` in place, with old paths still
+     working for a release.
+
+   Tests pin that an `agent:art` token can't reach another agent by any
+   tool.
+3. **The commons:**
+   - Art's `knowledge.db` becomes the commons' knowledge.
+   - Art's 22 cards split into directory entries plus Art's relationships.
+     Every card must render the same text before and after the migration.
+4. **Nodes:**
+   - `loom node`: enroll, report facts, pull work, run a sleeve from the
+     agent's repo and container.
+   - Approve-on-the-page.
+   - Sleeve tokens.
+   - The art LXC becomes the first node.
+5. **Placement and the `sleeve` tool.** Bridges and the wake clock ask loom
+   where to start a body. Art can ask for a node with what a job needs. The
+   5090 box is the second node.
+6. **loom gets its own host:**
+   - secrets and tasks move there as services;
+   - backups become the household's;
+   - `loom.one.sleepunit.com` points at it.
+7. **Mark moves in:**
+   - his stack comes over;
+   - his knowledge merges into the commons, with conflicts by slug listed
+     for him and never overwritten;
+   - his people become relationships on directory entries;
+   - his box enrolls as a node.
+
+   It's his memory, so he runs this step or signs off on it.
+8. **The household page:** agents, nodes and enrollment, Setup, add an agent.
+
+Through all of it, `*.one` stays LAN plus tailnet. Being reachable from
+anywhere ("hacking the gibson at the library") waits on real auth: per-node
+and per-sleeve credentials (above) and a real owner login (t-1487). The
+design shouldn't need to change for it.
 
 ## What the tests must pin
 
-- An `agent:<a>` token reads and writes only `agents/<a>/` and the commons,
-  through every tool and every CLI verb. A `peer:<p>` token sees only
-  knowledge tools. A missing or unknown token gets nothing.
-- A person read through `agent:art` returns the directory entry plus Art's
-  relationship, and never another agent's relationship.
-- A directory write records which agent made it, and the page shows it.
-- The people migration renders every existing card identically before and
-  after.
-- A remote piece's answer goes through the same validation as a local one.
-  A secret posted to a remote piece's action reaches the box only on stdin
-  and is never written on the loom host.
-- Removing an agent's box (a piece host down) leaves the page and every other
-  agent working; that agent's pieces just aren't there.
+- A sleeve token reads and writes only its agent's stack and the commons,
+  through every tool and CLI verb. A node credential reaches no memory and no
+  secret. A peer token sees only knowledge tools. An unknown token gets
+  nothing.
+- A revoked node gets nothing on its next call, and its sleeves' tokens stop
+  working.
+- Placement never puts an agent on a node its rules forbid, or one missing a
+  stated need. A request that can't be met says which need or rule stopped
+  it.
+- A sleeve token can't read the secrets service. Secrets handed to a node for
+  a sleeve are only that sleeve's.
+- A person read as agent A returns the directory entry plus A's relationship,
+  never B's. A directory write records its agent. The people migration
+  renders every existing card identically.
+- A node going away leaves loom, the page and every other agent working.
 
 ## Open questions
 
-- **Tasks:** per agent (Art's queue, Mark's queue) or a household queue with
-  assignees? Today taskstore lives in `~/Art`. A household queue might be a
-  host-level piece.
+- **Tasks:** one household queue with assignees, or a queue per agent?
+- **What a sleeve gets from the repo:** the whole repo cloned per node, or a
+  cached checkout per node that sleeves share?
+- **Long-running node work** (Art's bridges today): a sleeve that lives for
+  days, or a node-level service the agent owns?
+- **loom's own resilience:** one host is one target, which is the point, and
+  also one thing to lose. Offsite replica, and how often?
 - **Mark's knowledge:** what's in it, and how much overlaps Art's.
-- **Where loom's own box runs:** a new LXC on wunder is the obvious start. If
-  loom really should survive wunder, it needs an offsite replica, and that's
-  its own decision.
 - **The owner as a person:** Jonathan is in the directory like anyone else.
-  Does the owner role hang off his directory entry, or stay a separate token?
+  Does the owner role hang off his directory entry?
