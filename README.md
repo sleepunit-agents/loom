@@ -677,6 +677,41 @@ dir is `<home>/agents/<name>` next to a `household.json` serves the whole
 household. A process with `LOOM_HOME` set and no context dir uses
 `LOOM_AGENT`, or the household's default.
 
+### The bundle — the household on a USB stick
+
+```bash
+loom export --to household.bundle --recipient age1…        # your key, never the box's
+loom restore household.bundle --identity ~/owner.key --drill  # does it really come back?
+loom restore household.bundle --identity ~/owner.key --to ~/.config/loom   # on a new machine
+```
+
+**`loom export`** writes the whole household into one file, encrypted with
+[age](https://age-encryption.org) to a recipient the owner holds (a YubiKey,
+or a key kept in a password manager). The file contains:
+- the household's files and tokens;
+- the commons;
+- every agent's directory. Databases go through SQLite's backup API, never
+  as a raw copy of a live file. Old `*.bak` files and `backup-*` folders
+  are left out.
+- each installed piece's own part (`loom-<piece> bundle export`), which the piece
+  encrypts itself to the same recipient. Core never sees inside it.
+
+A plain context dir exports as a household of one.
+
+**`loom restore`** lays a bundle down in an empty `LOOM_HOME` (never over a
+live one). It then hands each installed piece its part (`loom-<piece>
+import`, with `LOOM_IMPORT_IDENTITY` naming the key so the piece can
+re-encrypt for the new machine). A piece that isn't installed yet keeps its
+part in `pieces-pending/`.
+
+**`--drill`** restores into a throwaway directory instead and compares the
+result with the live household: identities, memory counts, every card,
+knowledge, tokens. Nothing live is touched.
+
+A restore trusts what's in the bundle. age encrypts, but it doesn't prove who
+made the file, so only restore bundles you made. Needs the `age` and `tar`
+programs.
+
 ### Harness manifests and self-describe
 
 A **harness** is the MCP-capable runtime the agent runs in (Claude Code,
