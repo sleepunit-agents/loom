@@ -155,7 +155,8 @@ characters. A path the piece doesn't know should answer with
 
 Every section is a list of blocks. A link inside a block is either `page`
 (a page of the same piece, or `loom:<path>` for one of loom's pages, such as
-`loom:people/gage-taylor`) or `href` (an absolute `http(s)` URL that opens
+`loom:people/gage-taylor`, either with an optional `?key=value` query, such as
+`?replace=sentry-dsn`) or `href` (an absolute `http(s)` URL that opens
 outside the page).
 
 | Block | Fields |
