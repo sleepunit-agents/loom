@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **CLI remote mode: `--url` / `LOOM_URL`, and `POST /cli` on loom-http.**
+  The store verbs (`wake`, `recall`, `remember`, `update`, `forget`, `memory`,
+  `knowledge`, `person`) can run against a daemon instead of a local stack,
+  for hooks and scripts on a host or in a container where loom lives
+  elsewhere. The CLI ships argv and stdin to `POST /cli`; the daemon runs the
+  same CLI on its own stack and returns stdout, stderr and the exit code, so
+  output and `--json` match a local run by construction. The bearer token
+  comes from `LOOM_TOKEN_FILE`. The endpoint is full-scope only, behind the
+  same bearer gate and payload cap as MCP, takes only those verbs, refuses
+  `--context-dir` and `--url`, and passes only `LOOM_CLIENT`/`LOOM_MODEL`
+  through from the caller's env.
+
 - **Person cards: `people` + `person_revisions`, eight `person_*` tools,
   `loom person show|list`, and identity's `people` param.** A card is the
   condensed current state of one human the agent works with: `where` fields

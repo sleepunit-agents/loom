@@ -8,7 +8,8 @@ import { resolveRepoRoot } from '../config.js';
 import type { IOStreams } from './io.js';
 import { realStreams } from './io.js';
 import { SUBCOMMANDS } from './subcommands.js';
-import { firstNonGlobalIndex } from './args.js';
+import { extractGlobalFlags, firstNonGlobalIndex } from './args.js';
+import { REMOTE_VERBS, runRemote } from './remote.js';
 
 const TOP_HELP = `Usage: loom <command> [options]
 
@@ -36,6 +37,10 @@ Global flags:
   --context-dir <path>   Agent context dir (default: $LOOM_CONTEXT_DIR or ~/.config/loom/default)
   --client <name>        Harness adapter hint (default: $LOOM_CLIENT)
   --model <name>         Model manifest hint (default: $LOOM_MODEL)
+  --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
+                         http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
+                         Applies to wake, recall, remember, update, forget,
+                         memory, knowledge, person; other commands stay local.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -74,6 +79,17 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   // Drop only the subcommand token; the globals that preceded it stay in
   // argv so each command's own extractGlobalFlags still sees them.
   const rest = [...argv.slice(0, subIdx), ...argv.slice(subIdx + 1)];
+
+  // Remote mode: the store verbs go to loom-http when a URL is set.
+  const url = extractGlobalFlags(rest).flags.url;
+  if (REMOTE_VERBS.has(sub)) {
+    const target = url ?? io.env.LOOM_URL;
+    if (target) return runRemote(sub, rest, target, io);
+  } else if (url !== undefined) {
+    io.stderr(`--url only applies to ${[...REMOTE_VERBS].join(', ')}; ${sub} runs locally.\n`);
+    return 2;
+  }
+
   switch (sub) {
     case 'wake': {
       const { run } = await import('./wake.js');
