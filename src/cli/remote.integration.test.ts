@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { cliEndpoint } from './remote.js';
+import { runCliLocal } from './index.js';
+import { Readable } from 'node:stream';
 import { runCliCaptured } from './test-helpers.js';
 import { remember } from '../tools/remember.js';
 
@@ -135,6 +137,29 @@ describe('loom CLI remote mode', () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(`127.0.0.1:${port}/cli`);
     handle = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0, token: TOKEN });
+  });
+});
+
+describe('runCliLocal (what POST /cli runs)', () => {
+  it('never goes remote: LOOM_URL is ignored and the local stack answers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'loom-cli-local-'));
+    try {
+      await writeFile(join(dir, 'IDENTITY.md'), '# Creed');
+      await remember(dir, { category: 'reference', title: 'local only', content: 'answered locally' });
+      let stdout = '';
+      const code = await runCliLocal(['recall', 'answered locally'], {
+        stdout: (t) => { stdout += t; },
+        stderr: () => {},
+        stdin: Readable.from(['']),
+        stdinIsTTY: false,
+        // A dead port: any attempt to go remote would fail the call.
+        env: { LOOM_CONTEXT_DIR: dir, LOOM_URL: 'http://127.0.0.1:9/mcp' },
+      });
+      expect(code).toBe(0);
+      expect(stdout).toMatch(/local only/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

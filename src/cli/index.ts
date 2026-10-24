@@ -54,6 +54,43 @@ async function readVersion(): Promise<string> {
 }
 
 export async function runCli(argv: string[], io: IOStreams = realStreams()): Promise<number> {
+  const resolved = await resolveSubcommand(argv, io);
+  if (typeof resolved === 'number') return resolved;
+  const { sub, rest } = resolved;
+
+  // Remote mode: the store verbs go to loom-http when a URL is set.
+  const url = extractGlobalFlags(rest).flags.url;
+  if (rest.includes('--url') && !url) {
+    io.stderr(`--url needs a value (a loom-http URL, e.g. http://host:8787/mcp).\n`);
+    return 2;
+  }
+  if (REMOTE_VERBS.has(sub)) {
+    const target = url ?? io.env.LOOM_URL;
+    if (target) return runRemote(sub, rest, target, io);
+  } else if (url !== undefined) {
+    io.stderr(`--url only applies to ${[...REMOTE_VERBS].join(', ')}; ${sub} runs locally.\n`);
+    return 2;
+  }
+  return dispatch(sub, rest, io);
+}
+
+/**
+ * The CLI with no remote mode on its path at all: what POST /cli runs
+ * (transport/cli-endpoint.ts). A request arriving over HTTP must never be
+ * able to send the server on to another URL, and that holds by structure
+ * here, not only because the endpoint refuses --url.
+ */
+export async function runCliLocal(argv: string[], io: IOStreams): Promise<number> {
+  const resolved = await resolveSubcommand(argv, io);
+  if (typeof resolved === 'number') return resolved;
+  return dispatch(resolved.sub, resolved.rest, io);
+}
+
+/** The subcommand and the argv it gets, or the exit code when there's nothing to dispatch. */
+async function resolveSubcommand(
+  argv: string[],
+  io: IOStreams,
+): Promise<{ sub: string; rest: string[] } | number> {
   // The subcommand is the first token that is not a leading global flag,
   // so the flags the help text calls global work in front of it too. When
   // it is already at argv[0] — the overwhelmingly common form — subIdx is
@@ -75,25 +112,12 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
     return 2;
   }
 
-  const sub = first;
   // Drop only the subcommand token; the globals that preceded it stay in
   // argv so each command's own extractGlobalFlags still sees them.
-  const rest = [...argv.slice(0, subIdx), ...argv.slice(subIdx + 1)];
+  return { sub: first, rest: [...argv.slice(0, subIdx), ...argv.slice(subIdx + 1)] };
+}
 
-  // Remote mode: the store verbs go to loom-http when a URL is set.
-  const url = extractGlobalFlags(rest).flags.url;
-  if (rest.includes('--url') && !url) {
-    io.stderr(`--url needs a value (a loom-http URL, e.g. http://host:8787/mcp).\n`);
-    return 2;
-  }
-  if (REMOTE_VERBS.has(sub)) {
-    const target = url ?? io.env.LOOM_URL;
-    if (target) return runRemote(sub, rest, target, io);
-  } else if (url !== undefined) {
-    io.stderr(`--url only applies to ${[...REMOTE_VERBS].join(', ')}; ${sub} runs locally.\n`);
-    return 2;
-  }
-
+async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<number> {
   switch (sub) {
     case 'wake': {
       const { run } = await import('./wake.js');

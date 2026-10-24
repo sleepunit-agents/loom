@@ -2,7 +2,8 @@
  * POST /cli — the server half of the CLI's remote mode (src/cli/remote.ts,
  * t-1472).
  *
- * Runs the real CLI in-process against THIS server's stack, with captured
+ * Runs the real CLI in-process (runCliLocal: remote mode isn't on its path)
+ * against THIS server's stack, with captured
  * streams, and returns what it printed and its exit code. It sits behind the
  * same bearer gate and payload cap as /mcp, and grants nothing /mcp doesn't:
  *
@@ -14,7 +15,7 @@
  *   - stdin is never a TTY here, so no verb can reach $EDITOR server-side
  */
 import { Readable } from 'node:stream';
-import { runCli } from '../cli/index.js';
+import { runCliLocal } from '../cli/index.js';
 import { extractGlobalFlags, firstNonGlobalIndex } from '../cli/args.js';
 import { LOCAL_MEMORY_SUBCOMMANDS, REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
 import type { IOStreams } from '../cli/io.js';
@@ -82,7 +83,7 @@ export async function runCliRequest(contextDir: string, request: CliRequest): Pr
   };
   let exitCode: number;
   try {
-    exitCode = await runCli(request.argv, io);
+    exitCode = await runCliLocal(request.argv, io);
   } catch (err) {
     // The local CLI would crash with a stack trace; a remote one gets the message and exit 1.
     stderr += `${(err as Error).message}\n`;
