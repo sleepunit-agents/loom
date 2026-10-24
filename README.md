@@ -385,23 +385,33 @@ local, and `--url` on one of them is an error.
 
 ### loom's page — `/ui`
 
-The full-scope daemon serves a read-only web page at `/ui`. It shows top of
-mind, the last 24h of episodes from every body, proposals waiting for
-ratification, and person cards with their freshness. Below that, it shows a
-group for each installed **piece** that answers `ui --json`: a chat bridge's
-live conversations, the task queue, and so on. Nothing to configure: install
-a piece and it shows up ([`docs/extensions.md`](docs/extensions.md), "UI
-sections").
+The full-scope daemon serves a web page at `/ui`. **Home** is the tape:
+what every body did in the last day, by hour and by where it happened, with
+top of mind and the people cards that need a look beside it. **Mind** lists
+every memory by heat and says why each one has it, which is how you find a
+memory that shouldn't be in what the agent wakes up holding. One memory and
+**People** (each card, with what's newer than it) are a click away.
+
+Everything else comes from installed **pieces**. A piece that answers
+`ui --json` gets a tab, a tile on Home and items under "Your call", and its
+own pages and forms: the task queue, the secrets store (write-only: add and
+replace, never read back), the chat bridges. Nothing to configure: install a
+piece and it shows up, uninstall it and it's gone. loom never names a piece
+([`docs/extensions.md`](docs/extensions.md), "The page").
 
 **The page needs `LOOM_BEARER_TOKEN`.** A daemon with no token serves none
 (403), the same rule as `/cli`, because any site that DNS-rebinds a name to
 the loopback address could read an open page. Log in once with the token. The
-browser keeps a cookie under a key the daemon made at start: it's not the
+browser gets a session: a random id the daemon keeps in memory. It's not the
 token, it can't be replayed against `/mcp` or `/cli`, and it can't be used to
-guess the token. It lasts 30 days, or until the daemon restarts. Scripts can
-send the bearer header to `/ui/sections.json` for the same data. The page has
-no script and is served under a CSP that forbids script and framing. Pieces
-never receive loom's bearer tokens.
+guess the token. It lasts 30 days, until you sign out (which revokes it), or
+until the daemon restarts. Every form carries an anti-forgery token bound to
+that session, a cross-site post is refused, and another site can link to the
+page but not embed or fetch it. A form's fields go to the piece on stdin, and loom never logs, keeps
+or puts them in a URL. Scripts can send the bearer header instead (for
+example `/ui/pieces.json` for the pieces' manifests). The page runs no script
+and is served under a CSP that forbids script and framing. Pieces never
+receive loom's bearer tokens.
 
 ### Behind a reverse proxy
 

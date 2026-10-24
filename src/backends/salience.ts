@@ -211,18 +211,23 @@ function atomLine(r: DigestRow): string {
  * selection + ordering of authored content — no generated prose, no persisted
  * glue. Returns null when there is nothing to show.
  */
-export function assembleDigest(rows: DigestRow[], opts: DigestOptions = {}): string | null {
+/** The rows the digest includes: hottest first, until the token budget is spent. */
+export function pickForDigest<T extends DigestRow>(rows: T[], opts: DigestOptions = {}): T[] {
   const budgetChars = (opts.tokenBudget ?? DEFAULT_TOKEN_BUDGET) * (opts.charsPerToken ?? DEFAULT_CHARS_PER_TOKEN);
   const ordered = [...rows].sort((a, b) => b.salience - a.salience);
-
-  const picked: { tier: Tier; line: string }[] = [];
+  const picked: T[] = [];
   let used = 0;
   for (const r of ordered) {
-    const line = atomLine(r);
-    if (used + line.length > budgetChars && picked.length > 0) break; // hottest-first to the cap
-    picked.push({ tier: tierOf(r.salience), line });
-    used += line.length + 1;
+    const len = atomLine(r).length;
+    if (used + len > budgetChars && picked.length > 0) break; // hottest-first to the cap
+    picked.push(r);
+    used += len + 1;
   }
+  return picked;
+}
+
+export function assembleDigest(rows: DigestRow[], opts: DigestOptions = {}): string | null {
+  const picked = pickForDigest(rows, opts).map((r) => ({ tier: tierOf(r.salience), line: atomLine(r) }));
   if (picked.length === 0) return null;
 
   const tierOrder: Tier[] = ['Hot', 'Warm', 'Cool'];
