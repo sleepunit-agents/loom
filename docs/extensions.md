@@ -97,8 +97,7 @@ rules exist so that day doesn't need a redesign.
 | Role | `loom <piece>` | Implementation | Contract |
 |---|---|---|---|
 | tasks | `loom tasks` | [taskstore](https://github.com/sleepunit-agents/taskstore) | `spec/taskstore-core` |
+| secrets | `loom secrets` | [loom-secrets](https://github.com/sleepunit-agents/loom-secrets) (sops + age) | `ac-sec-*` in its README |
 
-Roles under consideration: `secrets` (an encrypted store whose values are
-injected into a runtime, never printed by default), `wake` (a clock that
-starts the agent), and an approval page. Each one gets its contract when it
-gets built.
+Roles under consideration: `wake` (a clock that starts the agent) and an
+approval page. Each one gets its contract when it gets built.
