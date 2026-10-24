@@ -271,7 +271,17 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // can't offer the memory verbs, so it has no /cli at all.
       if (new URL(req.url ?? '/', 'http://localhost').pathname === '/cli') {
         if (opts.createServer) return sendError(res, 404, 'not-found: this server has no CLI endpoint');
+        // Unlike /mcp (initialize handshake + mcp-session-id header), a bare
+        // POST could be a browser's "simple" cross-site request. So /cli needs
+        // a configured token, a JSON content type (forces a CORS preflight,
+        // which this server never grants), and no Origin header at all: the
+        // CLI never sends one, and a browser always does.
+        if (!opts.token && !opts.tokens) return sendError(res, 403, 'forbidden: /cli requires LOOM_BEARER_TOKEN');
+        if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /cli refuses browser requests');
         if (req.method !== 'POST') return sendError(res, 405, 'method-not-allowed: POST /cli');
+        if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+          return sendError(res, 415, 'unsupported-media-type: POST /cli takes application/json');
+        }
         const body = await collectBody(req, maxBytes);
         if (body === OVERSIZED) return sendError(res, 413, `oversized: body exceeds cap ${maxBytes}`);
         let parsed: unknown;

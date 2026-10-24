@@ -21,10 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   elsewhere. The CLI ships argv and stdin to `POST /cli`; the daemon runs the
   same CLI on its own stack and returns stdout, stderr and the exit code, so
   output and `--json` match a local run by construction. The bearer token
-  comes from `LOOM_TOKEN_FILE`. The endpoint is full-scope only, behind the
-  same bearer gate and payload cap as MCP, takes only those verbs, refuses
-  `--context-dir` and `--url`, and passes only `LOOM_CLIENT`/`LOOM_MODEL`
-  through from the caller's env.
+  comes from `LOOM_TOKEN_FILE`. The endpoint is full-scope only, needs
+  `LOOM_BEARER_TOKEN` set, refuses browser requests (an `Origin` header or a
+  non-JSON body), and sits behind the same bearer gate and payload cap as
+  MCP. It takes only those verbs (minus `memory recompute-salience` and
+  `memory recall-stats`, which have no MCP tool), refuses `--context-dir` and
+  `--url`, and passes only `LOOM_CLIENT`/`LOOM_MODEL` through from the
+  caller's env.
 
 - **Person cards: `people` + `person_revisions`, eight `person_*` tools,
   `loom person show|list`, and identity's `people` param.** A card is the

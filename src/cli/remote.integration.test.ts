@@ -7,7 +7,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
+import { cliEndpoint } from './remote.js';
 import { runCliCaptured } from './test-helpers.js';
 import { remember } from '../tools/remember.js';
 
@@ -111,6 +113,21 @@ describe('loom CLI remote mode', () => {
     expect(r.stderr).toMatch(/runs locally/);
   });
 
+  it('update --confirm reads no body: no stdin, no $EDITOR, even on a TTY', async () => {
+    const r0 = await remote(['remember', 'pref', '--category', 'feedback', '--json'], 'likes short replies');
+    const { ref } = JSON.parse(r0.stdout) as { ref: string };
+    // No stdin given = a TTY in the test helper. A wrongly-read body would run VISUAL and fail.
+    const r = await runCliCaptured(['update', ref, '--confirm'], { env: { ...remoteEnv(), VISUAL: 'false' } });
+    expect(r.stderr).not.toMatch(/editor/);
+    expect(r.code).toBe(0);
+  });
+
+  it('--url with no value is an error, not a silent local run', async () => {
+    const r = await runCliCaptured(['recall', 'x', '--url'], { contextDir: stack });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/--url needs a value/);
+  });
+
   it('an unreachable server is exit 1 with the endpoint named', async () => {
     const port = handle.port;
     await handle.close();
@@ -118,6 +135,38 @@ describe('loom CLI remote mode', () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(`127.0.0.1:${port}/cli`);
     handle = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0, token: TOKEN });
+  });
+});
+
+describe('cliEndpoint', () => {
+  it.each([
+    ['http://h:8787/mcp', 'http://h:8787/cli'],
+    ['http://h:8787/mcp/', 'http://h:8787/cli'],
+    ['http://h:8787', 'http://h:8787/cli'],
+    ['http://h:8787/', 'http://h:8787/cli'],
+    ['https://h/loom/mcp', 'https://h/loom/cli'],
+    ['https://h/loom/', 'https://h/loom/cli'],
+  ])('%s → %s', (url, expected) => {
+    expect(cliEndpoint(url).href).toBe(expected);
+  });
+});
+
+describe('the client never takes a malformed answer for success', () => {
+  it.each([
+    ['{}'],
+    ['{"exitCode":null,"stdout":"","stderr":""}'],
+    ['{"exitCode":0,"stdout":1,"stderr":""}'],
+    ['not json'],
+  ])('%s → exit 1', async (answer) => {
+    const fake = createServer((_req, res) => { res.writeHead(200); res.end(answer); });
+    await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+    const port = (fake.address() as { port: number }).port;
+    try {
+      const r = await runCliCaptured(['recall', 'x'], { env: { LOOM_URL: `http://127.0.0.1:${port}/mcp` } });
+      expect(r.code).toBe(1);
+    } finally {
+      await new Promise<void>((r) => fake.close(() => r()));
+    }
   });
 });
 
@@ -144,6 +193,9 @@ describe('POST /cli refusals (the server half)', () => {
   it.each([
     [{ argv: ['doctor'] }, /doesn't run remotely/],
     [{ argv: ['inject', '--all'] }, /doesn't run remotely/],
+    [{ argv: ['memory', 'recompute-salience'] }, /no MCP tool/],
+    [{ argv: ['--json', 'memory', 'recall-stats'] }, /no MCP tool/],
+    [{ argv: ['memory', '--json', 'recall-stats'] }, /no MCP tool/],
     [{ argv: ['recall', 'x', '--context-dir', '/etc'] }, /only serves its own/],
     [{ argv: ['recall', 'x', '--context-dir=/etc'] }, /only serves its own/],
     [{ argv: ['recall', 'x'], env: { HOME: '/tmp' } }, /only carry LOOM_CLIENT and LOOM_MODEL/],
@@ -158,6 +210,34 @@ describe('POST /cli refusals (the server half)', () => {
   it('sits behind the bearer gate', async () => {
     const res = await post({ argv: ['recall', 'x'] }, 'wrong');
     expect(res.status).toBe(401);
+  });
+
+  it('refuses what a browser could send cross-site: a simple text/plain POST, or any Origin', async () => {
+    const url = `http://127.0.0.1:${handle.port}/cli`;
+    const body = JSON.stringify({ argv: ['recall', 'x'] });
+    const plain = await fetch(url, { method: 'POST', headers: { 'content-type': 'text/plain', authorization: `Bearer ${TOKEN}` }, body });
+    expect(plain.status).toBe(415);
+    const withOrigin = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'https://evil.example', authorization: `Bearer ${TOKEN}` },
+      body,
+    });
+    expect(withOrigin.status).toBe(403);
+  });
+
+  it('a daemon with no bearer token has no /cli, though its /mcp still serves', async () => {
+    const open = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0 });
+    try {
+      const res = await fetch(`http://127.0.0.1:${open.port}/cli`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ argv: ['recall', 'x'] }),
+      });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toMatch(/LOOM_BEARER_TOKEN/);
+    } finally {
+      await open.close();
+    }
   });
 
   it('a scoped (knowledge-only) server has no /cli', async () => {

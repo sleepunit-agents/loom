@@ -82,6 +82,10 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
 
   // Remote mode: the store verbs go to loom-http when a URL is set.
   const url = extractGlobalFlags(rest).flags.url;
+  if (rest.includes('--url') && !url) {
+    io.stderr(`--url needs a value (a loom-http URL, e.g. http://host:8787/mcp).\n`);
+    return 2;
+  }
   if (REMOTE_VERBS.has(sub)) {
     const target = url ?? io.env.LOOM_URL;
     if (target) return runRemote(sub, rest, target, io);

@@ -6,7 +6,8 @@
  * streams, and returns what it printed and its exit code. It sits behind the
  * same bearer gate and payload cap as /mcp, and grants nothing /mcp doesn't:
  *
- *   - only REMOTE_VERBS (the store verbs, all of which have MCP tools)
+ *   - only REMOTE_VERBS (the store verbs, all of which have MCP tools),
+ *     minus the memory subcommands that have none
  *   - never --context-dir or --url: the stack is the server's, full stop
  *   - a fixed env: the server's HOME and stack, plus the caller's
  *     LOOM_CLIENT / LOOM_MODEL hints and nothing else
@@ -14,8 +15,8 @@
  */
 import { Readable } from 'node:stream';
 import { runCli } from '../cli/index.js';
-import { firstNonGlobalIndex } from '../cli/args.js';
-import { REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
+import { extractGlobalFlags, firstNonGlobalIndex } from '../cli/args.js';
+import { LOCAL_MEMORY_SUBCOMMANDS, REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
 import type { IOStreams } from '../cli/io.js';
 
 const MAX_ARGV = 256;
@@ -50,9 +51,18 @@ export function parseCliRequest(body: unknown): CliRequest | string {
   if (args.some((a) => a === '--context-dir' || a.startsWith('--context-dir=') || a === '--url' || a.startsWith('--url='))) {
     return 'refused: --context-dir and --url name a stack; this server only serves its own';
   }
-  const verb = args[firstNonGlobalIndex(args)];
+  const verbIdx = firstNonGlobalIndex(args);
+  const verb = args[verbIdx];
   if (verb === undefined || !REMOTE_VERBS.has(verb)) {
     return `refused: ${verb ?? '(no verb)'} doesn't run remotely; remote verbs are ${[...REMOTE_VERBS].join(', ')}`;
+  }
+  if (verb === 'memory') {
+    // memory.ts dispatches on its first token after the globals are pulled out.
+    const after = [...args.slice(0, verbIdx), ...args.slice(verbIdx + 1)];
+    const sub = extractGlobalFlags(after).rest[0];
+    if (sub !== undefined && LOCAL_MEMORY_SUBCOMMANDS.has(sub)) {
+      return `refused: memory ${sub} has no MCP tool, so it doesn't run remotely`;
+    }
   }
   return { argv: args, stdin: stdin as string | undefined, env: hints };
 }

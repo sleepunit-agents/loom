@@ -13,7 +13,8 @@
  * The server's half is src/transport/cli-endpoint.ts. Only REMOTE_VERBS
  * travel: the ones that read or write the stores, every one of which the
  * MCP tools already expose under the same bearer token, so /cli grants
- * nothing /mcp doesn't. Verbs about the local machine (inject, install,
+ * nothing /mcp doesn't. Two `memory` subcommands have no MCP tool and stay
+ * local too (LOCAL_MEMORY_SUBCOMMANDS). Verbs about the local machine (inject, install,
  * doctor, serve, bootstrap, migrate, harness, update-identity) always run
  * locally.
  *
@@ -27,6 +28,13 @@ import type { IOStreams } from './io.js';
 export const REMOTE_VERBS: ReadonlySet<string> = new Set([
   'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person',
 ]);
+
+/**
+ * `memory` subcommands with no MCP equivalent: recompute-salience rewrites
+ * every row's salience, and recall-stats returns other callers' query text.
+ * The consolidation lane runs them where the stack is.
+ */
+export const LOCAL_MEMORY_SUBCOMMANDS: ReadonlySet<string> = new Set(['recompute-salience', 'recall-stats']);
 
 /** POST /cli request body. */
 export interface CliRequest {
@@ -58,20 +66,35 @@ function withoutUrl(argv: string[]): string[] {
 
 /**
  * Whether the local CLI would read a body for this call. Mirrors the verbs'
- * own rules (remember always; update unless --observation; neither under
- * --help). Reading stdin for any other verb would hang a caller whose stdin
+ * own rules (remember always; update unless it's a pure --confirm or
+ * --contradict observation; neither under --help). Reading stdin for any other verb would hang a caller whose stdin
  * is an open pipe it never writes to.
  */
 function readsBody(sub: string, argv: string[]): boolean {
   if (argv.includes('--help') || argv.includes('-h')) return false;
   if (sub === 'remember') return true;
-  if (sub === 'update') return !argv.some((a) => a === '--observation' || a.startsWith('--observation='));
+  if (sub === 'update') return !argv.some((a) => /^--(confirm|contradict)(=|$)/.test(a));
   return false;
 }
 
-/** The /cli endpoint next to the MCP URL: http://h:8787/mcp → http://h:8787/cli. */
+/**
+ * The /cli endpoint beside the MCP URL: http://h:8787/mcp → http://h:8787/cli,
+ * and a proxy prefix is kept (https://h/loom/mcp → https://h/loom/cli). A URL
+ * without /mcp is taken as the server's base (http://h:8787 → /cli).
+ */
 export function cliEndpoint(url: string): URL {
-  return new URL('cli', url);
+  const u = new URL(url);
+  const base = u.pathname.replace(/\/+$/, '').replace(/\/mcp$/, '');
+  u.pathname = `${base}/cli`;
+  u.search = '';
+  u.hash = '';
+  return u;
+}
+
+function isCliResponse(v: unknown): v is CliResponse {
+  const r = v as Partial<CliResponse> | null;
+  return typeof r === 'object' && r !== null &&
+    Number.isInteger(r.exitCode) && typeof r.stdout === 'string' && typeof r.stderr === 'string';
 }
 
 /**
@@ -140,9 +163,11 @@ export async function runRemote(
     return res.status === 400 ? 2 : 1;
   }
 
-  let out: CliResponse;
-  try { out = JSON.parse(text) as CliResponse; }
+  let out: unknown;
+  try { out = JSON.parse(text); }
   catch { io.stderr(`loom: ${endpoint} sent a response that isn't JSON\n`); return 1; }
+  // A malformed answer must never read as success (a missing exitCode would exit 0).
+  if (!isCliResponse(out)) { io.stderr(`loom: ${endpoint} sent a malformed CLI response\n`); return 1; }
   io.stdout(out.stdout);
   io.stderr(out.stderr);
   return out.exitCode;

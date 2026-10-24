@@ -374,8 +374,12 @@ your local `$EDITOR`) to `POST /cli` next to the MCP URL. The daemon runs
 the same CLI against its own stack and sends back stdout, stderr and the
 exit code, so output, `--json` and exit codes match a local run. The
 endpoint sits behind the same bearer gate and payload cap as MCP, takes
-only those verbs (each one already has an MCP tool), and refuses
-`--context-dir`: it only serves its own stack. The knowledge-only daemon
+only those verbs (each one already has an MCP tool; `memory
+recompute-salience` and `memory recall-stats` have none, so they stay
+local), and refuses
+`--context-dir`: it only serves its own stack. It only exists when
+`LOOM_BEARER_TOKEN` is set, and it refuses browser requests (any `Origin`
+header, or a body that isn't `application/json`). The knowledge-only daemon
 has no `/cli`. Every other command (`doctor`, `inject`, `serve`, …) stays
 local, and `--url` on one of them is an error.
 
