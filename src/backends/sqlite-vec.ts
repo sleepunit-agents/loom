@@ -58,6 +58,7 @@ import { FEEDBACK_CATEGORY } from '../categories.js';
 import {
   FEEDBACK_CONFIDENCE_DEFAULT,
   applyObservation,
+  bumpedRecallHeat,
   decayedConfidence,
 } from './salience.js';
 
@@ -292,12 +293,21 @@ export class SqliteVecBackend implements MemoryBackend {
     const hitIds = hits.map((h) => h.mem.id);
 
     if (hitIds.length > 0) {
-      const now = new Date().toISOString();
+      // last_accessed still records that someone looked (prune's staleness
+      // reads it). Heat is separate: each hit adds to recall_heat by its rank,
+      // so the top result warms a lot and an incidental one barely (t-1489).
+      const nowMs = Date.now();
+      const now = new Date(nowMs).toISOString();
+      const read = this.db.prepare('SELECT category, recall_heat, recall_heat_at FROM memories WHERE id = ?');
       const stamp = this.db.prepare(
-        'UPDATE memories SET last_accessed = ? WHERE id = ?',
+        'UPDATE memories SET last_accessed = ?, recall_heat = ?, recall_heat_at = ? WHERE id = ?',
       );
       const tx = this.db.transaction((ids: number[]) => {
-        for (const id of ids) stamp.run(now, id);
+        ids.forEach((id, rank) => {
+          const r = read.get(id) as { category: string; recall_heat: number | null; recall_heat_at: string | null } | undefined;
+          if (!r) return;
+          stamp.run(now, bumpedRecallHeat(r.recall_heat, r.recall_heat_at, r.category, rank, nowMs), now, id);
+        });
       });
       retryWrite(() => tx(hitIds));
     }

@@ -230,7 +230,9 @@ reports those untouched beyond a stale threshold (default 30 days).
 **Salience.** Each memory carries a stored salience temperature in
 `(0, 1]` that decays by a per-category half-life (pursuit 7d, project
 10d, self/feedback 30d, reference 45d, user 90d; default 30d) and
-reheats on touch (recall / write / update). The boot digest
+reheats with use: a write, update or repeat remember makes it fully hot,
+and a recall adds heat by the result's rank (0.5, 0.3, 0.2, then 0.1,
+decaying on the same half-life and capped at 1). The boot digest
 (`loom memory digest`) computes each memory's heat from its timestamps
 when it is read, so a missed consolidation run can't freeze it. The
 consolidation lane still refreshes the stored value
