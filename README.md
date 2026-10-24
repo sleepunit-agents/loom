@@ -660,6 +660,7 @@ exactly as before.
 ```bash
 loom household init art             # ~/.config/loom/art → agents/art (a symlink stays)
 loom household add mark             # an agent whose dir already exists under agents/
+loom household commons              # once, daemons stopped: knowledge.db → commons/ (shared by every agent)
 loom token create --agent art --label "Art · house on wunder"   # printed once
 loom token create --owner --label "Jonathan · page"
 loom token list

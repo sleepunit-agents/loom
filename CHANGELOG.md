@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The household, phase 2a: knowledge is the commons.**
+  - In a household, every agent reads and writes `commons/knowledge.db`.
+  - `loom household init` moves the first agent's knowledge there.
+  - `loom household commons` moves it for a household made before this
+    release. It checkpoints the WAL first, and must run with every daemon
+    stopped.
+  - A household daemon refuses to start while an agent still has its own
+    `knowledge.db`, so the knowledge base can't quietly fork.
+  - A plain context dir keeps its own knowledge, as before.
+
 ## [0.10.0] - 2026-10-24
 
 ### Security

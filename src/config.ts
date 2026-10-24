@@ -18,7 +18,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'node:fs';
-import { contextFromHome } from './household.js';
+import { commonsKnowledgePath, contextFromHome, householdOf } from './household.js';
 
 /**
  * The single canonical helper for the default context path. Every call
@@ -84,8 +84,16 @@ export function resolveSqliteDbPath(contextDir: string): string {
   return process.env.LOOM_SQLITE_DB_PATH ?? resolve(contextDir, 'memories.db');
 }
 
+/**
+ * Knowledge is facts about the world. In a household it's the commons, shared
+ * by every agent (docs/specs/household.md); otherwise it lives in the
+ * agent's own context dir, as it always has.
+ */
 export function resolveKnowledgeDbPath(contextDir: string): string {
-  return process.env.LOOM_KNOWLEDGE_DB_PATH ?? resolve(contextDir, 'knowledge.db');
+  if (process.env.LOOM_KNOWLEDGE_DB_PATH) return process.env.LOOM_KNOWLEDGE_DB_PATH;
+  const hh = householdOf(contextDir);
+  if (hh) return commonsKnowledgePath(hh.household);
+  return resolve(contextDir, 'knowledge.db');
 }
 
 /**
