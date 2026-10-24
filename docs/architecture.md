@@ -75,6 +75,8 @@ flowchart LR
   G --> HTTPK --> KONLY
   CLI -- "wake · recall · remember · memory · knowledge · person<br/>call the same tool functions" --> wings
   CLI -- "inject · install" --> DOT
+  CLI -. "--url / LOOM_URL: the store verbs<br/>ship argv to POST /cli" .-> G
+  HTTPF -- "POST /cli · cli-endpoint.ts<br/>the same CLI, the server's stack" --> CLI
 
   FULL --> wings & APPS
   KONLY --> KW
@@ -196,9 +198,11 @@ have fallen behind.
 | `src/transport/knowledge-server.ts` | Knowledge-only MCP server |
 | `src/transport/http-server.ts` | StreamableHTTP front, one server per MCP session |
 | `src/transport/guards.ts` | Safe bind, bearer check, payload cap |
+| `src/transport/cli-endpoint.ts` | `POST /cli`: runs a store verb's argv through `runCliLocal` (no remote mode on its path) on the server's stack (full scope only) |
 | `src/transport/mcp-app-hello.ts` | Env-gated MCP-App widget probes |
 | `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |
 | `src/cli/*` | One file per subcommand |
+| `src/cli/remote.ts` | Remote mode: with `--url`/`LOOM_URL`, the store verbs run on a loom-http via `POST /cli` |
 | `src/blocks/*` | Harness and model manifest blocks for the identity payload |
 | `src/injection/*` | `loom inject`: managed `loom:start`/`loom:end` block in harness dotfiles |
 | `src/install/*` | `loom install`: copies the setup skill into the harness skills dir |

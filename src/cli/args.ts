@@ -18,6 +18,8 @@ export interface RawGlobalFlags {
   client?: string;
   model?: string;
   json?: boolean;
+  /** Remote loom-http to run against instead of a local stack (src/cli/remote.ts). */
+  url?: string;
 }
 
 export function resolveEnv(
@@ -44,7 +46,7 @@ export function resolveEnv(
  * invocation of `recall`.
  */
 const VALUED_GLOBAL_FLAGS: ReadonlySet<string> = new Set([
-  '--context-dir', '--client', '--model',
+  '--context-dir', '--client', '--model', '--url',
 ]);
 
 /** Global flags that stand alone. */
@@ -75,7 +77,7 @@ export function firstNonGlobalIndex(argv: string[]): number {
 
 /**
  * Extracts global flags from an argv slice, returning the remaining argv.
- * Recognizes: --context-dir, --client, --model, --json — in any position.
+ * Recognizes: --context-dir, --client, --model, --url, --json — in any position.
  */
 export function extractGlobalFlags(argv: string[]): {
   flags: RawGlobalFlags;
@@ -88,6 +90,7 @@ export function extractGlobalFlags(argv: string[]): {
     if (a === '--context-dir') { flags.contextDir = argv[++i]; continue; }
     if (a === '--client')      { flags.client     = argv[++i]; continue; }
     if (a === '--model')       { flags.model      = argv[++i]; continue; }
+    if (a === '--url')         { flags.url        = argv[++i]; continue; }
     if (a === '--json')        { flags.json = true;            continue; }
     rest.push(a);
   }

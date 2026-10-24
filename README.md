@@ -355,6 +355,34 @@ The connecting client picks its own harness from the MCP handshake
 `clientInfo.name` (see [harness self-describe](#harness-manifests-and-self-describe)),
 so a single daemon serves multiple harnesses correctly.
 
+### The CLI against a remote loom
+
+The store verbs (`wake`, `recall`, `remember`, `update`, `forget`,
+`memory`, `knowledge`, `person`) can run against a daemon instead of a
+local stack, so hooks and scripts that shell out to `loom` keep working
+when loom lives on another host or the agent runs in a container:
+
+```bash
+export LOOM_URL=http://100.94.0.12:8787/mcp      # or --url per call
+export LOOM_TOKEN_FILE=/run/secrets/loom-token   # the bearer token, read from a file
+loom recall "meeting preferences"
+echo "Prefers async updates" | loom remember "working style" --category user --json
+```
+
+The CLI posts the argv (and a `remember`/`update` body from stdin, or from
+your local `$EDITOR`) to `POST /cli` next to the MCP URL. The daemon runs
+the same CLI against its own stack and sends back stdout, stderr and the
+exit code, so output, `--json` and exit codes match a local run. The
+endpoint sits behind the same bearer gate and payload cap as MCP, takes
+only those verbs (each one already has an MCP tool; `memory
+recompute-salience` and `memory recall-stats` have none, so they stay
+local), and refuses
+`--context-dir`: it only serves its own stack. It only exists when
+`LOOM_BEARER_TOKEN` is set, and it refuses browser requests (any `Origin`
+header, or a body that isn't `application/json`). The knowledge-only daemon
+has no `/cli`. Every other command (`doctor`, `inject`, `serve`, …) stays
+local, and `--url` on one of them is an error.
+
 ### Behind a reverse proxy
 
 Terminate TLS at a reverse proxy in front of the daemon and point the
@@ -626,6 +654,8 @@ All configuration is through environment variables:
 | `LOOM_HTTP_HOST` | `127.0.0.1` | Bind host for `loom serve --http` (bind-safety enforced) |
 | `LOOM_HTTP_PORT` | `8787` | Bind port for `loom serve --http` |
 | `LOOM_BEARER_TOKEN` | *(unset)* | Bearer token required on every HTTP request when set |
+| `LOOM_URL` | *(unset)* | Run the CLI's store verbs against this loom-http (its MCP URL) instead of a local stack |
+| `LOOM_TOKEN_FILE` | *(unset)* | File holding the bearer token for `LOOM_URL` (never passed in argv) |
 | `LOOM_KNOWLEDGE_HTTP_PORT` | `8788` | Bind port for `loom serve --http --scope knowledge` |
 | `LOOM_KNOWLEDGE_BEARER_TOKENS` | *(unset)* | `"identity:token,identity:token"` — required for `--scope knowledge` |
 
