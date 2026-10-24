@@ -18,6 +18,7 @@ import { resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, statSync, realpathSync } from 'node:fs';
+import { contextFromHome } from './household.js';
 
 /**
  * The single canonical helper for the default context path. Every call
@@ -37,6 +38,10 @@ export function resolveContextDir(): string {
   if (argIdx !== -1 && process.argv[argIdx + 1]) {
     return resolve(process.argv[argIdx + 1]);
   }
+
+  // LOOM_HOME with a household.json: the agent LOOM_AGENT names, or its default.
+  const fromHome = contextFromHome();
+  if (fromHome) return fromHome;
 
   return resolveDefaultContextPath();
 }

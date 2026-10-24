@@ -5,6 +5,7 @@
  */
 import { resolve } from 'node:path';
 import { resolveDefaultContextPath } from '../config.js';
+import { contextFromHome } from '../household.js';
 
 export interface ResolvedEnv {
   contextDir: string;
@@ -29,6 +30,7 @@ export function resolveEnv(
   const contextDir =
     flags.contextDir ??
     processEnv.LOOM_CONTEXT_DIR ??
+    contextFromHome(processEnv) ??
     resolveDefaultContextPath(processEnv.HOME);
   return {
     contextDir: resolve(contextDir),

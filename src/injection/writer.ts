@@ -12,6 +12,7 @@
  */
 import { readFile, writeFile, rename, mkdir, stat, chmod } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 export type WriteAction = 'created' | 'appended' | 'updated' | 'no-change';
 
@@ -90,9 +91,11 @@ export async function atomicWrite(
   preserveModeFrom: string | null,
 ): Promise<number> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.loom.tmp`;
+  // A fresh, random temp name opened exclusively ('wx'): a fixed name could be
+  // a symlink someone left there, and writing through it would land anywhere.
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.loom.tmp`;
   const buf = Buffer.from(content, 'utf-8');
-  await writeFile(tmp, buf);
+  await writeFile(tmp, buf, { flag: 'wx' });
   if (preserveModeFrom) {
     try {
       const s = await stat(preserveModeFrom);

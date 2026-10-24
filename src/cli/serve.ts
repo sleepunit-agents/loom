@@ -17,6 +17,7 @@ import { parseArgs } from 'node:util';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createLoomServer } from '../server.js';
 import { createKnowledgeOnlyServer } from '../transport/knowledge-server.js';
+import { householdOf } from '../household.js';
 import { startHttpServer } from '../transport/http-server.js';
 import { resolveContextDir } from '../config.js';
 import type { IOStreams } from './io.js';
@@ -151,10 +152,16 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const host = values.host ?? process.env.LOOM_HTTP_HOST ?? '127.0.0.1';
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     const token = process.env.LOOM_BEARER_TOKEN || undefined;
-    const handle = await startHttpServer({ contextDir, host, port, token, gapsDir });
+    // A context dir at <home>/agents/<name> next to a household.json serves
+    // the whole household (docs/specs/household.md); anything else is a
+    // household of one, exactly as before.
+    const found = householdOf(contextDir);
+    const handle = await startHttpServer({ contextDir, host, port, token, gapsDir, household: found?.household });
     io.stderr(
       `loom: HTTP MCP daemon on http://${handle.host}:${handle.port} ` +
-        `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`,
+        (found
+          ? `(household of ${found.household.agents.join(', ')}; tokens in ${found.household.home}/tokens.json)\n`
+          : `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`),
     );
     // Hold open until the process is signalled.
     await new Promise<void>(() => {});

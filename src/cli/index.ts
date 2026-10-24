@@ -34,6 +34,8 @@ Commands:
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
   pieces            List installed pieces (loom-<name> on PATH)
+  household         The household: agents and the default (docs/specs/household.md)
+  token             Mint, list and revoke the household's tokens
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> on PATH
 (e.g. loom tasks list). Core commands always win. See docs/extensions.md.
@@ -206,6 +208,14 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'pieces': {
       const { runPiecesCommand } = await import('./pieces.js');
       return runPiecesCommand(rest, io);
+    }
+    case 'household': {
+      const { runHousehold } = await import('./household.js');
+      return runHousehold(rest, io);
+    }
+    case 'token': {
+      const { runToken } = await import('./household.js');
+      return runToken(rest, io);
     }
     default:
       io.stderr(`Subcommand not implemented yet: ${sub}\n`);

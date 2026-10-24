@@ -63,6 +63,13 @@ export interface LoomServerConfig {
    * signal channel. Set via LOOM_GAPS_DIR env var in production.
    */
   gapsDir?: string;
+  /**
+   * Served over the network (the HTTP daemon), not as a local stdio server.
+   * Tools that would touch the server's own filesystem outside the stack
+   * (harness_init's `target`) refuse then: the path would name a file on the
+   * daemon's machine, not the caller's.
+   */
+  remote?: boolean;
 }
 
 export interface LoomServerInstance {
@@ -72,7 +79,7 @@ export interface LoomServerInstance {
 // ─── Server Factory ───────────────────────────────────────────────────────────
 
 export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
-  const { contextDir, gapsDir } = config;
+  const { contextDir, gapsDir, remote = false } = config;
 
   // Refuse to boot against a stack this loom build doesn't understand.
   assertStackVersionCompatible(contextDir);
@@ -720,7 +727,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     async ({ name, overwrite, target }) => {
-      const text = await harnessInit(contextDir, { name, overwrite, target });
+      const text = await harnessInit(contextDir, { name, overwrite, target }, { remote });
       return { content: [{ type: 'text' as const, text }] };
     },
   );

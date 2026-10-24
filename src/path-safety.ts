@@ -19,7 +19,7 @@ import { atomicWrite } from './injection/writer.js';
 /**
  * Returns a human-readable error string when `value` cannot be used as a
  * single path segment, or null when it is safe. Rejects empty strings,
- * '.', '..', path separators (both / and \), and null bytes.
+ * '.', '..', path separators (both / and \), and control characters.
  */
 export function pathSegmentError(value: string, paramName: string): string | null {
   if (
@@ -28,11 +28,13 @@ export function pathSegmentError(value: string, paramName: string): string | nul
     value === '..' ||
     value.includes('/') ||
     value.includes('\\') ||
-    value.includes('\0')
+    // Control characters (NUL, newlines, …): a name that ends up inside a
+    // file must not be able to start a new line there.
+    /[\x00-\x1f\x7f]/.test(value)
   ) {
     return (
       `Invalid ${paramName} ${JSON.stringify(value)}: ` +
-      'must be a non-empty name with no path separators.'
+      'must be a non-empty name with no path separators or control characters.'
     );
   }
   return null;

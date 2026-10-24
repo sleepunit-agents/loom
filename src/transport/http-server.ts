@@ -23,6 +23,13 @@
  *     bound to the session at open time (a later request on the same
  *     session presenting a DIFFERENT identity's token is refused, not
  *     silently re-attributed).
+ *   - `household` (docs/specs/household.md) — one daemon for many agents.
+ *     Each token in $LOOM_HOME/tokens.json has a role: `agent:<name>` gets a
+ *     full server over that agent's context dir; `owner` gets the default
+ *     agent's (or another's under `/agents/<name>/…`) and the page; `peer`
+ *     gets the knowledge-only server. LOOM_BEARER_TOKEN, when set, is an
+ *     owner token too. The role is resolved on every request and a session
+ *     is pinned to the role and agent it opened with.
  */
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -33,7 +40,10 @@ import { EmptyResultSchema } from '@modelcontextprotocol/core';
 import { createLoomServer } from '../server.js';
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
-import { handleUi, isUiRequest } from '../ui/handler.js';
+import { handleUi, isUiRequest, legacyUiAuth, type UiAuth } from '../ui/handler.js';
+import { createKnowledgeOnlyServer } from './knowledge-server.js';
+import { agentDir, assertRealAgentDir, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
   assertSafeBind,
   checkBearer,
@@ -83,6 +93,22 @@ export interface HttpServeOptions {
    * `tokens` per connection; always 'art' in single-token/no-auth mode.
    */
   createServer?: (ctx: { contextDir: string; gapsDir?: string; identity: string }) => { server: McpServer };
+  /**
+   * Household mode: tokens resolve to roles from household.home/tokens.json
+   * (plus `token`, if set, as an owner token). Mutually exclusive with
+   * `tokens` and `createServer`; `contextDir` should be the default agent's.
+   */
+  household?: Household;
+}
+
+/** Who a request is, in household mode, and which stack it gets. */
+interface Caller {
+  role: Role;
+  /** The agent whose context dir serves it (the default agent's, for a peer). */
+  agent: string;
+  contextDir: string;
+  /** What a session is pinned to: role and agent. */
+  key: string;
 }
 
 export interface HttpServeHandle {
@@ -167,6 +193,51 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   if (opts.token && opts.tokens) {
     throw new Error('startHttpServer: pass either token or tokens, not both');
   }
+  if (opts.household && (opts.tokens || opts.createServer)) {
+    throw new Error('startHttpServer: household mode resolves roles itself; pass neither tokens nor createServer');
+  }
+  const household = opts.household;
+  if (household) {
+    // Each of these points every agent at one store or one name, which would
+    // quietly merge the household. Refuse rather than serve it that way.
+    for (const v of ['LOOM_SQLITE_DB_PATH', 'LOOM_KNOWLEDGE_DB_PATH', 'LOOM_IDENTITY']) {
+      if (process.env[v]) throw new Error(`startHttpServer: ${v} is set; a household gives each agent its own store and name, so unset it`);
+    }
+    for (const a of household.agents) assertRealAgentDir(household, a);
+  }
+  const resolver = household ? new TokenResolver(household) : undefined;
+  const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
+
+  /** Resolve a household caller: 401 (no/unknown token), 403 (not allowed there) or 404 (no such agent). */
+  function callerFor(header: string | undefined, target: string | undefined): Caller | { status: number; error: string } {
+    const presented = (header ?? '').replace(/^Bearer\s+/i, '').trim();
+    if (!presented) return { status: 401, error: 'unauthorized: missing bearer token' };
+    // The env owner token first: a broken tokens.json must not lock it out.
+    let role: Role | null = null;
+    if (ownerDigest && cryptoTimingSafeEqual(createHash('sha256').update(presented).digest(), ownerDigest)) role = { kind: 'owner' };
+    if (!role) {
+      try {
+        role = resolver!.resolve(presented);
+      } catch (err) {
+        // Fail closed, and keep the details (paths) out of the response.
+        process.stderr.write(`loom: household tokens unreadable: ${(err as Error).message}\n`);
+        return { status: 503, error: 'unavailable: the household token file is unreadable; see the daemon log' };
+      }
+    }
+    if (!role) return { status: 401, error: 'unauthorized: bearer token not recognized' };
+    const h = household!;
+    if (role.kind === 'peer') {
+      if (target) return { status: 403, error: 'forbidden: a peer token reaches the commons only' };
+      return { role, agent: h.default, contextDir: agentDir(h, h.default), key: `${roleString(role)}>${h.default}` };
+    }
+    if (role.kind === 'agent') {
+      if (target && target !== role.agent) return { status: 403, error: `forbidden: this token is ${role.agent}'s` };
+      return { role, agent: role.agent, contextDir: agentDir(h, role.agent), key: `${roleString(role)}>${role.agent}` };
+    }
+    const agent = target ?? h.default;
+    if (!h.agents.includes(agent)) return { status: 404, error: `not-found: no agent named ${agent}` };
+    return { role, agent, contextDir: agentDir(h, agent), key: `owner>${agent}` };
+  }
   // A scoped server factory (e.g. the knowledge-only service) always needs
   // to know WHO is calling for attribution — refuse to boot it open or on a
   // single shared secret with no identity behind it.
@@ -191,17 +262,39 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // a session three hops later. Scoped to the default server only — a scoped
   // createServer (e.g. the knowledge-only service) never touches this
   // backend, so forcing it there would just pay for an unused embedder load.
-  if (!opts.createServer) createBackend(opts.contextDir);
+  if (household) for (const a of household.agents) createBackend(agentDir(household, a));
+  else if (!opts.createServer) createBackend(opts.contextDir);
 
-  const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer(ctx));
+  // The page is the owner's: in a household, only owner tokens log in to it.
+  const uiAuth: UiAuth = household
+    ? {
+        enabled: true,
+        check: (t) => {
+          const d = createHash('sha256').update(t).digest();
+          if (ownerDigest && cryptoTimingSafeEqual(d, ownerDigest)) return d;
+          try { return resolver!.resolve(t)?.kind === 'owner' ? d : null; } catch { return null; }
+        },
+        live: (d) => {
+          if (ownerDigest !== undefined && cryptoTimingSafeEqual(d, ownerDigest)) return true;
+          try { return resolver!.ownerDigestLive(d.toString('hex')); } catch { return false; }
+        },
+      }
+    : legacyUiAuth(opts.token ? [opts.token] : Object.values(opts.tokens ?? {}));
+
+  const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer({ ...ctx, remote: true }));
+  const serverFor = (c: Caller | undefined, identity: string) => {
+    if (!c) return makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
+    if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
+    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true });
+  };
 
   // One transport (+ its connected server) per live MCP session, plus the
   // identity it was opened for — a multi-token session is pinned to that
   // identity for its lifetime (see the mismatch check in the request handler).
   const sessions = new Map<string, { transport: WebStandardStreamableHTTPServerTransport; identity: string }>();
 
-  async function openSession(identity: string): Promise<WebStandardStreamableHTTPServerTransport> {
-    const { server } = makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
+  async function openSession(identity: string, caller?: Caller): Promise<WebStandardStreamableHTTPServerTransport> {
+    const { server } = serverFor(caller, identity);
     // Fires AFTER the initialize handshake completes — getClientVersion() is
     // populated here (it is not yet at onsessioninitialized). Logging the peer
     // makes the resolved harness observable and reveals an unmapped client's
@@ -254,25 +347,51 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // loom's web page (src/ui), at the root. Its own auth (a session from
       // the bearer, or the bearer header), so it comes before the bearer gate.
       // Full scope only: a scoped server has no memory to show.
-      const uiPath = new URL(req.url ?? '/', 'http://localhost').pathname;
-      if (isUiRequest(req, uiPath)) {
+      const fullPath = new URL(req.url ?? '/', 'http://localhost').pathname;
+      if (isUiRequest(req, fullPath)) {
         if (opts.createServer) return sendError(res, 404, 'not-found: this server has no UI');
-        return handleUi(req, res, uiPath, {
+        return handleUi(req, res, fullPath, {
           contextDir: opts.contextDir,
-          secrets: opts.token ? [opts.token] : Object.values(opts.tokens ?? {}),
+          auth: uiAuth,
           env: process.env,
         });
+      }
+
+      // Household: `/agents/<name>/…` names the agent (the owner's way to
+      // reach a non-default one; an agent's own token may use its own name).
+      const scoped = household ? /^\/agents\/([a-z][a-z0-9-]{0,39})(\/.*)?$/.exec(fullPath) : null;
+      // A path under /agents/ that doesn't name an agent cleanly is a mistake,
+      // not a request for the default agent.
+      if (household && !scoped && (fullPath === '/agents' || fullPath.startsWith('/agents/'))) {
+        return sendError(res, 404, 'not-found: /agents/<name>/ takes a lowercase agent name');
+      }
+      const target = scoped?.[1];
+      const path = scoped ? (scoped[2] ?? '/') : fullPath;
+      // In a household the only routes past the page are MCP and /cli: any
+      // other path (/AGENTS/mark/mcp, /x/agents/mark/mcp) is a 404, not the
+      // default agent.
+      if (household && path !== '/' && path !== '/mcp' && path !== '/cli') {
+        return sendError(res, 404, 'not-found: in a household, use /, /mcp or /cli, optionally under /agents/<name>/');
       }
 
       // Auth gate (ac-lt-auth-gate): reject unauthenticated when a token (or
       // token map) is configured. Multi-token mode additionally resolves
       // WHICH identity made this call — the bearer itself is the identity
       // claim (t-677); there is no separate login step.
-      const auth: { ok: boolean; error?: string; identity?: string } = opts.tokens
-        ? checkBearerMulti(opts.tokens, req.headers['authorization'])
-        : checkBearer(opts.token, req.headers['authorization']);
-      if (!auth.ok) return sendError(res, 401, auth.error!);
-      const identity = auth.identity ?? 'art';
+      let caller: Caller | undefined;
+      let identity: string;
+      if (household) {
+        const c = callerFor(req.headers['authorization'], target);
+        if ('status' in c) return sendError(res, c.status, c.error);
+        caller = c;
+        identity = c.key;
+      } else {
+        const auth: { ok: boolean; error?: string; identity?: string } = opts.tokens
+          ? checkBearerMulti(opts.tokens, req.headers['authorization'])
+          : checkBearer(opts.token, req.headers['authorization']);
+        if (!auth.ok) return sendError(res, 401, auth.error!);
+        identity = auth.identity ?? 'art';
+      }
 
       // Oversized guard (ac-lt-oversized-guard): fast path on declared length.
       const declared = Number(req.headers['content-length'] ?? 0);
@@ -283,14 +402,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // POST /cli: the CLI's remote mode (cli-endpoint.ts). Same gate and cap
       // as /mcp above. Full server only: a scoped server (knowledge-only)
       // can't offer the memory verbs, so it has no /cli at all.
-      if (new URL(req.url ?? '/', 'http://localhost').pathname === '/cli') {
-        if (opts.createServer) return sendError(res, 404, 'not-found: this server has no CLI endpoint');
+      if (path === '/cli') {
+        if (opts.createServer || caller?.role.kind === 'peer') return sendError(res, 404, 'not-found: this server has no CLI endpoint');
         // Unlike /mcp (initialize handshake + mcp-session-id header), a bare
         // POST could be a browser's "simple" cross-site request. So /cli needs
         // a configured token, a JSON content type (forces a CORS preflight,
         // which this server never grants), and no Origin header at all: the
         // CLI never sends one, and a browser always does.
-        if (!opts.token && !opts.tokens) return sendError(res, 403, 'forbidden: /cli requires LOOM_BEARER_TOKEN');
+        if (!opts.token && !opts.tokens && !household) return sendError(res, 403, 'forbidden: /cli requires LOOM_BEARER_TOKEN');
         if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /cli refuses browser requests');
         if (req.method !== 'POST') return sendError(res, 405, 'method-not-allowed: POST /cli');
         if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
@@ -304,7 +423,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         } catch (e) {
           return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`);
         }
-        const outcome = await handleCliBody(opts.contextDir, parsed);
+        const outcome = await handleCliBody(caller?.contextDir ?? opts.contextDir, parsed);
         if (!outcome.ok) return sendError(res, 400, outcome.error);
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify(outcome.response));
@@ -370,7 +489,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         if (!isInitializeRequest(parsed)) {
           return sendError(res, 400, 'bad-input: no valid session; expected an initialize request');
         }
-        transport = await openSession(identity);
+        transport = await openSession(identity, caller);
       }
 
       // Dispatch totality + typed envelopes (unknown tool / bad args -> JSON-RPC
