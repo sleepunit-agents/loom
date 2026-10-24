@@ -202,6 +202,7 @@ have fallen behind.
 | `src/transport/mcp-app-hello.ts` | Env-gated MCP-App widget probes |
 | `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |
 | `src/cli/*` | One file per subcommand |
+| `src/cli/pieces.ts` | `loom <piece>`: git-style dispatch to `loom-<piece>` on PATH; `loom pieces` lists them |
 | `src/cli/remote.ts` | Remote mode: with `--url`/`LOOM_URL`, the store verbs run on a loom-http via `POST /cli` |
 | `src/blocks/*` | Harness and model manifest blocks for the identity payload |
 | `src/injection/*` | `loom inject`: managed `loom:start`/`loom:end` block in harness dotfiles |
@@ -228,4 +229,5 @@ have fallen behind.
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `migrate`.
+`harness`, `install`, `doctor`, `migrate`, `pieces`. Any other name runs an
+installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).
