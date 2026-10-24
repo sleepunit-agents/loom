@@ -218,8 +218,14 @@ export class HouseholdPeople {
       this.relationship.revisionRestore(input);
       return this.mutation(input.slug);
     }
+    // The same gate the plain restore path has: no restoring onto an archived card.
     const current = this.relationship.getRow(input.slug);
     if (!current) throw new PersonCardError(`no card for ${input.slug}`);
+    const dirRow = this.directory.getRow(input.slug);
+    if (!dirRow) throw new PersonCardError(`no card for ${input.slug}`);
+    if (current.archived_at !== null || dirRow.archived_at !== null) {
+      throw new PersonCardError(`card for ${input.slug} is archived; person_restore it before restoring a revision`);
+    }
     this.relationship.replaceCard(input.slug, splitCard(snap.card).relationship, {
       updated: new Date(this.now()).toISOString(), synthesized_at: snap.synthesized_at ?? null,
       archived_at: current.archived_at, archived_by: current.archived_by, archive_reason: current.archive_reason,
