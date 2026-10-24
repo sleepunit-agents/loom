@@ -92,45 +92,129 @@ The seam vocabulary (`ask`, `notify`, …) and how pieces register offers isn't
 built yet. It gets defined the first time two real pieces need it. These
 rules exist so that day doesn't need a redesign.
 
-## UI sections: how a piece shows up on loom's page
+## The page: how a piece shows up on loom's page
 
-loom-http serves a page at `/ui`. It has loom's own sections (top of mind,
-the last 24h of episodes, proposals waiting, people), followed by a group for
-each installed piece that has something to show. A piece takes part by
-answering one command:
+loom-http serves a page at `/ui`. loom draws the frame (navigation, sign-in,
+styles, the guard on every button) and its own pages: **Home** (the tape,
+plus what needs you), **Mind** (top of mind and why), one memory, and
+**People**. Everything else comes from the pieces that are installed. loom's
+code never names a piece. Uninstall one and its tab, its tile on Home and its
+items under "Your call" are gone.
+
+A piece takes part by answering up to three commands. Each one is optional.
 
 ```bash
-loom-<piece> ui --json
+loom-<piece> ui --json                # the manifest: tab, Home tile, asks
+loom-<piece> ui page --json           # stdin {"path": "...", "query": {...}} → one page
+loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "fields": {...}} → a result
 ```
+
+### The manifest
 
 ```json
-{ "sections": [
-  { "id": "bridges", "title": "Bridges", "blocks": [
-    { "type": "stats", "items": [ { "label": "chat", "value": "1/5 bodies", "tone": "ok" } ] },
-    { "type": "list",  "items": [ { "text": "#general: Pat", "meta": "chat · active 2m", "tone": "warn" } ] }
-  ] }
-] }
+{ "v": 2,
+  "tab":  { "label": "Tasks" },
+  "tile": { "label": "Work", "value": "20 in progress", "detail": "15 ready at p0–p1", "tone": "warn", "page": "" },
+  "asks": [ { "text": "Pick how the key gets recovered", "meta": "t-1482 · p3", "page": "task/t-1482", "label": "Decide" } ] }
 ```
 
-- **Blocks:** `stats` (label, value), `list` (text, meta),
-  `table` (columns, rows), `text`, and `link` (text, href, which must be
-  `http(s)`). Tones are `ok`, `warn`, `bad` and `muted`.
+- **`tab`** puts the piece in the navigation. Its pages are served under
+  `/ui/p/<piece>/`. Without a tab the piece has no pages.
+- **`tile`** is one summary on Home: a label, a value, an optional detail line
+  and tone, and the page it opens.
+- **`asks`** are things only the owner can decide. They're listed under
+  "Your call" on Home (at most 10 a piece). An ask is a decision, not news:
+  what happened belongs on the tape.
+- An answer with only `"sections"` (the first version of this contract) is
+  still accepted. Its sections become the piece's page, under a tab named
+  after the piece.
+
+### Pages
+
+`ui page --json` reads `{"path": "task/t-1482", "query": {"tag": "pond"}}`
+on stdin. `""` is the piece's main page. It answers:
+
+```json
+{ "title": "Work", "intro": "One line under the title.",
+  "sections": [
+    { "id": "yours", "title": "Your call", "tone": "warn", "blocks": [ ... ] },
+    { "id": "facts", "side": true, "blocks": [ ... ] }
+  ] }
+```
+
+A section with `"side": true` goes in the side column. `tone` gives the whole
+section that tone's look, such as amber for "needs you".
+
+Paths are lowercase letters, digits and `. _ ~ / -`, at most 200 characters,
+with no `..` segment. Query keys are lowercase letters, digits, `_` and `-`
+(at most 10, and keys starting with `_` are loom's). Values are at most 200
+characters. A path the piece doesn't know should answer with
+`{"title": "Not found", "sections": []}`.
+
+### Blocks
+
+Every section is a list of blocks. A link inside a block is either `page`
+(a page of the same piece, or `loom:<path>` for one of loom's pages, such as
+`loom:people/gage-taylor`) or `href` (an absolute `http(s)` URL that opens
+outside the page).
+
+| Block | Fields |
+|---|---|
+| `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page` |
+| `list` | `items`: `text`, optional `meta`, `badge`, `tone`, `page` or `href` |
+| `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
+| `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
+| `text` | `text`, optional `tone` |
+| `callout` | `text`, optional `title`, `tone`. A boxed note |
+| `link` | `text`, and `page` or `href` |
+| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all |
+| `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
+| `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value) |
+| `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `fields` (name → value) |
+
+Tones are `ok`, `warn`, `bad` and `muted`. A form field is
+`{name, label, kind, hint?, value?, required?, options?}` with kind
+`text`, `textarea`, `choice` (with `options`: `value`, `label`, optional
+`detail`) or `secret`. A `secret` field never carries a `value` and is drawn
+as a masked input.
+
+### Actions
+
+A form or a button posts to loom, never to the piece directly. loom checks
+the sign-in and an anti-forgery token tied to it, refuses cross-site requests,
+and then runs `ui act --json` with
+`{"action": "add", "path": "", "fields": {"name": "sentry-dsn", "value": "..."}}`
+on stdin. The piece answers:
+
+```json
+{ "ok": true, "message": "sentry-dsn is encrypted and stored.", "page": "" }
+```
+
+loom shows the message once at the top of `page` (or the page the form was
+on). `ok: false` shows it as an error. Field values travel only on stdin.
+loom never logs them, stores them, or puts them in a URL, so a secret typed
+into a form goes straight to the piece holding the authority. The piece
+validates every field itself: loom passes on whatever was posted (up to 30
+fields and 64 KB).
+
+### Rules for all three
+
 - **Data, never markup.** loom renders every block and escapes every string,
-  and the page carries no script. A piece can't put HTML or JS on loom's page.
-  An answer that doesn't validate is dropped whole.
-- **Limits:** 10 sections, 20 blocks a section, 200 items or rows, 12
-  columns, 2000 characters a string. 3 seconds and 512 KB per answer. On a
-  timeout, the piece's whole process group is killed. Answers are cached for
-  45 seconds, and concurrent page loads share one run per piece.
-- **No configuration.** Installing a piece is what makes it appear. A
-  piece with no `ui` verb (or one that times out or fails) simply isn't on the
-  page, and the footer lists it as "no page". The page is read-only. Actions,
-  such as an approval button, come with the first piece that needs them.
+  and the page runs no script. A piece can't put HTML or JS on loom's page.
+  An answer that doesn't validate is dropped whole and the piece is listed in
+  the footer as "no page".
+- **Limits:** 10 sections a page, 20 blocks a section, 200 items or rows, 12
+  columns, 2000 characters a string. 512 KB per answer. 3 seconds for the
+  manifest and a page, 15 for an action. On a timeout, the piece's whole
+  process group is killed. The manifest is cached for 45 seconds, concurrent
+  page loads share one run, and an action clears its piece's cache.
+- **No configuration.** Installing a piece is what makes it appear. A piece
+  with no `ui` verb, or one that times out or fails, simply isn't there.
 - **loom-http's environment is the piece's environment**, minus loom's own
   bearer tokens. `PATH` decides which pieces exist for the page, and the
   piece's own variables (for example `TASKSTORE_DB`, `SHUTTLE_INSTANCE`) have
   to be in the daemon's environment. A piece can't be named `loom`, because
-  that's the page's own group.
+  that name is loom's own.
 
 ## Pieces today
 
@@ -138,7 +222,7 @@ loom-<piece> ui --json
 |---|---|---|---|
 | tasks | `loom tasks` | [taskstore](https://github.com/sleepunit-agents/taskstore) | `spec/taskstore-core` |
 | secrets | `loom secrets` | [loom-secrets](https://github.com/sleepunit-agents/loom-secrets) (sops + age) | `ac-sec-*` in its README |
-| shuttle | `loom shuttle` | [shuttle](https://github.com/sleepunit-agents/shuttle) (`tools/loom-shuttle`) | its README; today it's a UI section only |
+| shuttle | `loom shuttle` | [shuttle](https://github.com/sleepunit-agents/shuttle) (`tools/loom-shuttle`) | its README; today it's the Bridges page only |
 
 Roles under consideration: `wake` (a clock that starts the agent) and an
 approval page. Each one gets its contract when it gets built.
