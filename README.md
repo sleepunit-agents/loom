@@ -383,6 +383,22 @@ header, or a body that isn't `application/json`). The knowledge-only daemon
 has no `/cli`. Every other command (`doctor`, `inject`, `serve`, …) stays
 local, and `--url` on one of them is an error.
 
+### loom's page — `/ui`
+
+The full-scope daemon serves a read-only web page at `/ui`. It shows top of
+mind, the last 24h of episodes from every body, proposals waiting for
+ratification, and person cards with their freshness. Below that, it shows a
+group for each installed **piece** that answers `ui --json`: a chat bridge's
+live conversations, the task queue, and so on. Nothing to configure: install
+a piece and it shows up ([`docs/extensions.md`](docs/extensions.md), "UI
+sections").
+
+Log in once with the bearer token. The browser keeps a cookie that is an HMAC
+of the token, never the token itself, so it can't be replayed against `/mcp` or
+`/cli`. Scripts can send the bearer header to `/ui/sections.json` for the same
+data. The page has no script and is served under a CSP that forbids script and
+framing. With no token set (a loopback daemon), it's open, like `/mcp`.
+
 ### Behind a reverse proxy
 
 Terminate TLS at a reverse proxy in front of the daemon and point the

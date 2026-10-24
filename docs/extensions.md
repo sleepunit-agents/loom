@@ -92,12 +92,50 @@ The seam vocabulary (`ask`, `notify`, …) and how pieces register offers isn't
 built yet. It gets defined the first time two real pieces need it. These
 rules exist so that day doesn't need a redesign.
 
+## UI sections: how a piece shows up on loom's page
+
+loom-http serves a page at `/ui`. It has loom's own sections (top of mind,
+the last 24h of episodes, proposals waiting, people), followed by a group for
+each installed piece that has something to show. A piece takes part by
+answering one command:
+
+```bash
+loom-<piece> ui --json
+```
+
+```json
+{ "sections": [
+  { "id": "bridges", "title": "Bridges", "blocks": [
+    { "type": "stats", "items": [ { "label": "chat", "value": "1/5 bodies", "tone": "ok" } ] },
+    { "type": "list",  "items": [ { "text": "#general: Pat", "meta": "chat · active 2m", "tone": "warn" } ] }
+  ] }
+] }
+```
+
+- **Blocks:** `stats` (label, value), `list` (text, meta),
+  `table` (columns, rows), `text`, and `link` (text, href, which must be
+  `http(s)`). Tones are `ok`, `warn`, `bad` and `muted`.
+- **Data, never markup.** loom renders every block and escapes every string,
+  and the page carries no script. A piece can't put HTML or JS on loom's page.
+  An answer that doesn't validate is dropped whole.
+- **Limits:** 10 sections, 20 blocks a section, 200 items or rows, 12
+  columns, 2000 characters a string. 3 seconds and 512 KB per answer.
+  Answers are cached for 30 seconds.
+- **No configuration.** Installing a piece is what makes it appear. A
+  piece with no `ui` verb (or one that times out or fails) simply isn't on the
+  page, and the footer lists it as "no page". The page is read-only. Actions,
+  such as an approval button, come with the first piece that needs them.
+- **loom-http's environment is the piece's environment.** `PATH` decides which
+  pieces exist for the page, and the piece's own variables (for example
+  `TASKSTORE_DB`, `SHUTTLE_INSTANCE`) have to be in the daemon's environment.
+
 ## Pieces today
 
 | Role | `loom <piece>` | Implementation | Contract |
 |---|---|---|---|
 | tasks | `loom tasks` | [taskstore](https://github.com/sleepunit-agents/taskstore) | `spec/taskstore-core` |
 | secrets | `loom secrets` | [loom-secrets](https://github.com/sleepunit-agents/loom-secrets) (sops + age) | `ac-sec-*` in its README |
+| shuttle | `loom shuttle` | [shuttle](https://github.com/sleepunit-agents/shuttle) (`tools/loom-shuttle`) | its README; today it's a UI section only |
 
 Roles under consideration: `wake` (a clock that starts the agent) and an
 approval page. Each one gets its contract when it gets built.

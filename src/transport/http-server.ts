@@ -33,6 +33,7 @@ import { EmptyResultSchema } from '@modelcontextprotocol/core';
 import { createLoomServer } from '../server.js';
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
+import { handleUi, isUiPath } from '../ui/handler.js';
 import {
   assertSafeBind,
   checkBearer,
@@ -250,6 +251,19 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
 
   const http = createServer((req, res) => {
     void (async () => {
+      // /ui: loom's web page (src/ui). Its own auth (a cookie from the bearer,
+      // or the bearer header), so it comes before the bearer gate. Full scope
+      // only: a scoped server has no memory to show.
+      const uiPath = new URL(req.url ?? '/', 'http://localhost').pathname;
+      if (isUiPath(uiPath)) {
+        if (opts.createServer) return sendError(res, 404, 'not-found: this server has no UI');
+        return handleUi(req, res, uiPath, {
+          contextDir: opts.contextDir,
+          secrets: opts.token ? [opts.token] : Object.values(opts.tokens ?? {}),
+          env: process.env,
+        });
+      }
+
       // Auth gate (ac-lt-auth-gate): reject unauthenticated when a token (or
       // token map) is configured. Multi-token mode additionally resolves
       // WHICH identity made this call — the bearer itself is the identity
