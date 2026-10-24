@@ -15,9 +15,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import {
-  addAgent, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens, parseRole,
-  revokeToken, TokenResolver, type Household,
+  addAgent, commonsKnowledgePath, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
+  moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
 } from './household.js';
+import BetterSqlite3 from 'better-sqlite3';
+import { resolveKnowledgeDbPath } from './config.js';
 import { closeAllBackends } from './backends/index.js';
 import { harnessInit } from './tools/harness.js';
 
@@ -400,6 +402,85 @@ describe('household hardening', () => {
       }
     } finally {
       await handle.close();
+    }
+  });
+});
+
+// Phase 2a: knowledge is the commons.
+describe('the commons: shared knowledge', () => {
+  let h: Household;
+  beforeEach(() => { h = makeHousehold(); });
+  afterEach(async () => {
+    await closeAllBackends();
+    rmSync(h.home, { recursive: true, force: true });
+  });
+
+  it('every agent in a household reads and writes one knowledge store; a plain dir keeps its own', async () => {
+    expect(resolveKnowledgeDbPath(join(h.home, 'agents', 'art'))).toBe(commonsKnowledgePath(h));
+    expect(resolveKnowledgeDbPath(join(h.home, 'agents', 'mark'))).toBe(commonsKnowledgePath(h));
+    const plain = mkdtempSync(join(tmpdir(), 'loom-plain-k-'));
+    try { expect(resolveKnowledgeDbPath(plain)).toBe(join(plain, 'knowledge.db')); } finally { rmSync(plain, { recursive: true, force: true }); }
+
+    const artTok = createToken(h, { role: { kind: 'agent', agent: 'art' }, label: 'a' }).token;
+    const markTok = createToken(h, { role: { kind: 'agent', agent: 'mark' }, label: 'm' }).token;
+    const handle = await startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
+    try {
+      const art = await connect(handle.port, artTok);
+      const w = await art.callTool({ name: 'knowledge_write', arguments: { slug: 'kiln-cone-6', title: 'Cone 6 is about 1222 °C', domain: 'ceramics', body: 'Cone 6 firings reach roughly 1222 °C.', citations: [{ claim: 'Cone 6 is about 1222 °C', source_kind: 'web', source_locator: 'https://example.com/cones', excerpt: 'Cone 6: 1222 °C' }] } });
+      expect(w.isError, textOf(w)).toBeFalsy();
+      await art.close();
+      const mark = await connect(handle.port, markTok);
+      expect(textOf(await mark.callTool({ name: 'knowledge_recall', arguments: { query: 'cone 6' } }))).toContain('1222');
+      await mark.close();
+      expect(existsSync(commonsKnowledgePath(h))).toBe(true);
+      expect(existsSync(join(h.home, 'agents', 'art', 'knowledge.db'))).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('a daemon refuses an agent\'s own knowledge.db that hasn\'t moved, or one beside the commons', async () => {
+    const own = join(h.home, 'agents', 'art', 'knowledge.db');
+    new BetterSqlite3(own).close();
+    await expect(startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h })).rejects.toThrow(/loom household commons/);
+    mkdirSync(join(h.home, 'commons'), { recursive: true });
+    new BetterSqlite3(commonsKnowledgePath(h)).close();
+    await expect(startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h })).rejects.toThrow(/beside commons/);
+  });
+
+  it('moving knowledge to the commons keeps what was still in the WAL, and refuses to overwrite a commons', () => {
+    const own = join(h.home, 'agents', 'art', 'knowledge.db');
+    const db = new BetterSqlite3(own);
+    db.pragma('journal_mode = WAL');
+    db.prepare('CREATE TABLE t (v TEXT)').run();
+    db.prepare("INSERT INTO t VALUES ('still in the wal')").run();
+    // Leave it open: the row sits in the WAL, not the main file, until a checkpoint.
+    expect(moveKnowledgeToCommons(h, 'art')).toBe(commonsKnowledgePath(h));
+    db.close();
+    const moved = new BetterSqlite3(commonsKnowledgePath(h), { readonly: true });
+    expect(moved.prepare('SELECT v FROM t').get()).toEqual({ v: 'still in the wal' });
+    moved.close();
+    expect(existsSync(own)).toBe(false);
+    new BetterSqlite3(join(h.home, 'agents', 'mark', 'knowledge.db')).close();
+    expect(() => moveKnowledgeToCommons(h, 'mark')).toThrow(/already exists/);
+  });
+
+  it('init makes the first agent\'s knowledge the commons', () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-init-k-'));
+    try {
+      mkdirSync(join(home, 'solo'));
+      writeFileSync(join(home, 'solo', 'IDENTITY.md'), '# Solo\n');
+      const k = new BetterSqlite3(join(home, 'solo', 'knowledge.db'));
+      k.prepare('CREATE TABLE t (v TEXT)').run();
+      k.prepare("INSERT INTO t VALUES ('mine')").run();
+      k.close();
+      const made = initHousehold(home, 'solo');
+      expect(existsSync(join(home, 'agents', 'solo', 'knowledge.db'))).toBe(false);
+      const c = new BetterSqlite3(commonsKnowledgePath(made), { readonly: true });
+      expect(c.prepare('SELECT v FROM t').get()).toEqual({ v: 'mine' });
+      c.close();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

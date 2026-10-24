@@ -16,6 +16,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import BetterSqlite3 from 'better-sqlite3';
 import { basename, dirname, join, resolve } from 'node:path';
 
 export const AGENT_NAME = /^[a-z][a-z0-9-]{0,39}$/;
@@ -324,6 +325,15 @@ export function initHousehold(home: string, agent: string, opts: { owner?: strin
   renameSync(from, to);
   symlinkSync(join('agents', agent), from);
   const h: Household = { home, agents: [agent], default: agent, owner: opts.owner };
+  // The first agent's knowledge becomes the household's commons.
+  if (existsSync(join(to, 'knowledge.db')) && !existsSync(join(home, 'commons', 'knowledge.db'))) {
+    const kdb = new BetterSqlite3(join(to, 'knowledge.db'));
+    try { kdb.pragma('wal_checkpoint(TRUNCATE)'); } finally { kdb.close(); }
+    mkdirSync(join(home, 'commons'), { recursive: true, mode: 0o700 });
+    for (const ext of SQLITE_SIDECARS) {
+      if (existsSync(join(to, 'knowledge.db') + ext)) renameSync(join(to, 'knowledge.db') + ext, join(home, 'commons', 'knowledge.db') + ext);
+    }
+  }
   withLock(home, () => writePrivate(join(home, HOUSEHOLD_FILE), JSON.stringify({ v: 1, agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, null, 2) + '\n'));
   return h;
 }
@@ -368,4 +378,55 @@ export function contextFromHome(env: NodeJS.ProcessEnv = process.env): string | 
   const agent = env.LOOM_AGENT || h.default;
   if (!h.agents.includes(agent)) throw new HouseholdError(`LOOM_AGENT=${agent} isn't in the household at ${h.home} (${h.agents.join(', ')})`);
   return agentDir(h, agent);
+}
+
+// ─── The commons ─────────────────────────────────────────────────────────────
+
+export function commonsDir(h: Household): string {
+  return join(h.home, 'commons');
+}
+
+/** The household's shared knowledge store. */
+export function commonsKnowledgePath(h: Household): string {
+  return join(commonsDir(h), 'knowledge.db');
+}
+
+const SQLITE_SIDECARS = ['', '-wal', '-shm'];
+
+/**
+ * Why this household can't serve yet, or null. An agent's own knowledge.db
+ * beside the commons would quietly fork the knowledge base, so both "only the
+ * agent's" (not moved yet) and "both" (needs a merge) are refusals.
+ */
+export function commonsProblem(h: Household): string | null {
+  const commons = existsSync(commonsKnowledgePath(h));
+  for (const a of h.agents) {
+    if (!existsSync(join(agentDir(h, a), 'knowledge.db'))) continue;
+    return commons
+      ? `agents/${a}/knowledge.db exists beside commons/knowledge.db; merging an agent's knowledge into the commons isn't automatic yet, so move one aside`
+      : `agents/${a}/knowledge.db hasn't moved to the commons; with every loom daemon stopped, run: loom household commons`;
+  }
+  return null;
+}
+
+/**
+ * Move one agent's knowledge.db to the commons: checkpoint its WAL into the
+ * main file, then rename it (and any sidecars). Refuses when the commons
+ * already has a knowledge store. Run with every daemon on this household
+ * stopped.
+ */
+export function moveKnowledgeToCommons(h: Household, agent: string): string | null {
+  const from = join(agentDir(h, agent), 'knowledge.db');
+  if (!existsSync(from)) return null;
+  const to = commonsKnowledgePath(h);
+  if (existsSync(to)) throw new HouseholdError(`${to} already exists; merging another agent's knowledge into it isn't automatic yet`);
+  return withLock(h.home, () => {
+    const db = new BetterSqlite3(from);
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } finally { db.close(); }
+    mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
+    for (const ext of SQLITE_SIDECARS) {
+      if (existsSync(from + ext)) renameSync(from + ext, to + ext);
+    }
+    return to;
+  });
 }
