@@ -60,8 +60,8 @@ const SECURITY_HEADERS = {
 
 export interface UiOptions {
   contextDir: string;
-  /** Configured bearer secrets (the single token, or the token map's values). Empty = open. */
-  secrets: string[];
+  /** Who may log in to the page. */
+  auth: UiAuth;
   /** Env for piece discovery and piece processes (PATH decides which pieces exist). */
   env: NodeJS.ProcessEnv;
 }
@@ -91,9 +91,34 @@ interface Session { issuedAt: number; secret: Buffer }
 const sessions = new Map<string, Session>();
 const MAX_SESSIONS = 50;
 
-function newSession(secret: string): string {
+/**
+ * Who may log in. `check` answers a presented token with its digest when the
+ * token may use the page, `live` says whether a digest still may (so revoking
+ * or rotating the token ends its sessions). `enabled` false means no token is
+ * configured, and the page refuses to serve.
+ */
+export interface UiAuth {
+  enabled: boolean;
+  check(token: string): Buffer | null;
+  live(digest: Buffer): boolean;
+}
+
+/** A fixed list of tokens (a single bearer, or a token map's values). */
+export function legacyUiAuth(secrets: string[]): UiAuth {
+  const digests = secrets.map((t) => digest(t));
+  return {
+    enabled: secrets.length > 0,
+    check: (t) => {
+      const d = digest(t);
+      return digests.some((x) => timingSafeEqual(x, d)) ? d : null;
+    },
+    live: (d) => digests.some((x) => timingSafeEqual(x, d)),
+  };
+}
+
+function newSession(tokenDigest: Buffer): string {
   const id = randomBytes(32).toString('hex');
-  sessions.set(id, { issuedAt: Math.floor(Date.now() / 1000), secret: digest(secret) });
+  sessions.set(id, { issuedAt: Math.floor(Date.now() / 1000), secret: tokenDigest });
   // Oldest first in a Map: drop the oldest past the cap.
   while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value as string);
   return id;
@@ -109,13 +134,13 @@ function safeEq(a: string, b: string): boolean {
   return timingSafeEqual(digest(a), digest(b));
 }
 
-function validSession(id: string, secrets: string[], nowS = Math.floor(Date.now() / 1000)): boolean {
+function validSession(id: string, auth: UiAuth, nowS = Math.floor(Date.now() / 1000)): boolean {
   if (!/^[0-9a-f]{64}$/.test(id)) return false;
   const s = sessions.get(id);
   if (!s) return false;
   if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { sessions.delete(id); return false; }
   // A session dies with its token: rotate the token and old sessions stop.
-  return secrets.some((t) => timingSafeEqual(digest(t), s.secret));
+  return auth.live(s.secret);
 }
 
 function readCookie(req: IncomingMessage, name: string): string | undefined {
@@ -130,11 +155,12 @@ function readCookie(req: IncomingMessage, name: string): string | undefined {
 type Who = { kind: 'session'; cookie: string } | { kind: 'bearer' } | null;
 
 function whoIs(req: IncomingMessage, opts: UiOptions): Who {
-  if (opts.secrets.length === 0) return null;
+  if (!opts.auth.enabled) return null;
   const c = readCookie(req, COOKIE);
-  if (c && validSession(c, opts.secrets)) return { kind: 'session', cookie: c };
+  if (c && validSession(c, opts.auth)) return { kind: 'session', cookie: c };
   const header = req.headers['authorization'];
-  if (header !== undefined && opts.secrets.some((s) => checkBearer(s, header).ok)) return { kind: 'bearer' };
+  const presented = header?.replace(/^Bearer\s+/i, '').trim();
+  if (presented && opts.auth.check(presented)) return { kind: 'bearer' };
   return null;
 }
 
@@ -282,7 +308,7 @@ function decode(s: string): string | null {
 export async function handleUi(req: IncomingMessage, res: ServerResponse, pathname: string, opts: UiOptions): Promise<void> {
   // No token, no page: an open /ui would be readable by any site that
   // DNS-rebinds a name to the loopback address (the same rule as /cli).
-  if (opts.secrets.length === 0) {
+  if (!opts.auth.enabled) {
     return send(res, 403, 'text/plain', 'forbidden: loom\'s page requires LOOM_BEARER_TOKEN');
   }
   // The page used to live under /ui. Old links and bookmarks land on the same page.
@@ -304,7 +330,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const form = await readForm(req, LOGIN_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
     const token = form.get('token')?.trim() ?? '';
-    const match = opts.secrets.find((s) => safeEq(token, s));
+    const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.'));
     return redirect(res, '/', {
       'set-cookie': `${COOKIE}=${newSession(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,

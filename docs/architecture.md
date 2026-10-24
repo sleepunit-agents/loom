@@ -204,6 +204,7 @@ have fallen behind.
 | `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |
 | `src/cli/*` | One file per subcommand |
 | `src/cli/pieces.ts` | `loom <piece>`: git-style dispatch to `loom-<piece>` on PATH; `loom pieces` lists them |
+| `src/household.ts`, `src/cli/household.ts` | The household (docs/specs/household.md): `household.json`, `tokens.json` (roles `agent:`, `owner`, `peer:`; only sha256 stored), the resolver the daemon uses per request, `loom household` and `loom token` |
 | `src/cli/remote.ts` | Remote mode: with `--url`/`LOOM_URL`, the store verbs run on a loom-http via `POST /cli` |
 | `src/blocks/*` | Harness and model manifest blocks for the identity payload |
 | `src/injection/*` | `loom inject`: managed `loom:start`/`loom:end` block in harness dotfiles |
@@ -230,5 +231,5 @@ have fallen behind.
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `migrate`, `pieces`. Any other name runs an
+`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).

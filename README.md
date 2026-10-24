@@ -648,6 +648,34 @@ loom tasks ready       # → loom-tasks ready
 The rules, the dispatch details and how pieces compose:
 [`docs/extensions.md`](docs/extensions.md).
 
+### The household — several agents on one loom
+
+One loom can serve several agents, with a shared commons
+([`docs/specs/household.md`](docs/specs/household.md)). A household is a
+directory (`$LOOM_HOME`, default `~/.config/loom`) with a `household.json`,
+a `tokens.json`, and one context dir per agent under `agents/`. A plain
+context dir with no household around it is a household of one and works
+exactly as before.
+
+```bash
+loom household init art             # ~/.config/loom/art → agents/art (a symlink stays)
+loom household add mark             # an agent whose dir already exists under agents/
+loom token create --agent art --label "Art · house on wunder"   # printed once
+loom token create --owner --label "Jonathan · page"
+loom token list
+loom token revoke "Art · house on wunder"
+```
+
+Every token has a role. **`agent:<name>`** is MCP and `/cli` as that agent:
+its own stack only. **`owner`** gets the default agent, or another at
+`/agents/<name>/` on the daemon, and the page. **`peer:<name>`** gets
+knowledge tools only. The daemon resolves the role on every request; no tool
+takes an agent argument, so a body can only be the agent its token names.
+`LOOM_BEARER_TOKEN`, when set, is an owner token too. A daemon whose context
+dir is `<home>/agents/<name>` next to a `household.json` serves the whole
+household. A process with `LOOM_HOME` set and no context dir uses
+`LOOM_AGENT`, or the household's default.
+
 ### Harness manifests and self-describe
 
 A **harness** is the MCP-capable runtime the agent runs in (Claude Code,

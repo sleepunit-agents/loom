@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **The household, phase 1: one loom, several agents**
+  (docs/specs/household.md).
+  - `$LOOM_HOME/household.json` lists the agents and the default, and
+    `tokens.json` holds every token by sha256 with a label and a role.
+  - **Roles:** `agent:<name>` is MCP and `/cli` as that agent's stack only.
+    `owner` gets the default agent, another at `/agents/<name>/`, and the
+    page. `peer:<name>` gets knowledge tools only.
+  - **On every request** the daemon resolves the role and builds the
+    session's server over that agent's context dir. A session stays pinned
+    to the role and agent it opened with, and a revoke takes effect on the
+    next request.
+  - **New commands:** `loom household init|add|show` and
+    `loom token create|list|revoke`.
+  - **Nothing changes for one agent:** a plain context dir is a household of
+    one and behaves exactly as before.
+
 ## [0.9.2] - 2026-10-24
 
 ### Fixed
