@@ -23,12 +23,12 @@ const INSTRUCTION_FILES: ReadonlySet<string> = new Set(['CLAUDE.md', 'AGENTS.md'
  * write into another agent's stack or a shell rc file. Locally it must be an
  * instruction file a harness reads, by name.
  */
-export function harnessTargetError(target: string, opts: { remote: boolean }): string | null {
+export function harnessTargetError(target: string, opts: { remote: boolean }, real = realTarget(target)): string | null {
   if (opts.remote) {
     return 'Error: harness_init can\'t write a target file over the network: the path would be on the loom server, not your machine. Run `loom inject --harness <name> --to <file>` on your own machine instead.';
   }
   if (/[\x00-\x1f\x7f]/.test(target)) return 'Error: target contains control characters.';
-  for (const p of [target, realTarget(target)]) {
+  for (const p of [target, real]) {
     const base = p.split(/[\\/]/).pop() ?? '';
     if (!INSTRUCTION_FILES.has(base)) {
       return `Error: target must be a harness instruction file (${[...INSTRUCTION_FILES].join(', ')}), not ${JSON.stringify(base)}.`;
@@ -42,7 +42,7 @@ export function harnessTargetError(target: string, opts: { remote: boolean }): s
  * so the rule above applies to the file actually written, and the write goes
  * there instead of replacing the link.
  */
-function realTarget(target: string): string {
+export function realTarget(target: string): string {
   try { return realpathSync(target); } catch { return target; }
 }
 
@@ -51,8 +51,10 @@ export async function harnessInit(
   input: { name: string; overwrite?: boolean; target?: string },
   opts: { remote?: boolean } = {},
 ): Promise<string> {
+  // Resolve the target once; the path checked is the path written.
+  const real = input.target !== undefined ? realTarget(input.target) : undefined;
   if (input.target !== undefined) {
-    const err = harnessTargetError(input.target, { remote: opts.remote ?? false });
+    const err = harnessTargetError(input.target, { remote: opts.remote ?? false }, real);
     if (err) return err;
   }
   const manifestResult = await initHarness(contextDir, input.name, {
@@ -65,7 +67,7 @@ export async function harnessInit(
       ? HARNESSES[input.name]
       : { key: input.name, display: input.name, defaultPath: input.target, toolPrefix: 'mcp__loom__' as const };
     const block = renderBlock(preset, contextDir);
-    const blockResult = await writeManagedBlock(realTarget(input.target), block);
+    const blockResult = await writeManagedBlock(real!, block);
     lines.push(`Managed block: ${blockResult.path} (${blockResult.action})`);
   }
 

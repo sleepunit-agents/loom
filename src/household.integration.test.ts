@@ -301,7 +301,7 @@ describe('household hardening', () => {
     expect(r.resolve(token)).toBeNull();
   });
 
-  it('a live holder\'s lock makes a second writer wait and refuse; a dead holder\'s is taken over', () => {
+  it('a live holder\'s lock makes a second writer wait and refuse; a dead holder\'s is reported, not broken', () => {
     createToken(h, { role: { kind: 'owner' }, label: 'page' });
     const lock = join(h.home, '.household.lock');
     // A live holder: this test process's parent (always running).
@@ -311,8 +311,12 @@ describe('household hardening', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(4_500);
     expect(loadTokens(h.home)[0].revoked).toBeUndefined();
     expect(readFileSync(lock, 'utf-8')).toBe(String(process.ppid));
-    // A dead holder: a pid that isn't running.
+    // A dead holder's lock is reported, never broken automatically (breaking
+    // one races another waiter doing the same).
     writeFileSync(lock, '2147483646');
+    expect(() => revokeToken(h, 'page')).toThrow(/isn't running; if no loom command is running, remove that file/);
+    expect(existsSync(lock)).toBe(true);
+    rmSync(lock);
     expect(revokeToken(h, 'page').revoked).toBeTruthy();
     expect(existsSync(lock)).toBe(false);
   }, 15_000);

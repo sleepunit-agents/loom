@@ -143,8 +143,10 @@ function alive(pid: number): boolean {
  * Serialize every read-modify-write of household.json and tokens.json, so
  * two `loom token` runs can't interleave and drop each other's change (a
  * create racing a revoke must not bring the revoked token back). The lock
- * holds its owner's pid and is only ever broken when that process is gone;
- * release removes it only if it's still ours.
+ * holds its owner's pid. It is never broken automatically: every way of
+ * breaking a stale lock races another waiter doing the same, and these locks
+ * are only taken by the owner's own occasional commands, so a lock left by a
+ * dead process is reported with what to do instead.
  */
 function withLock<T>(home: string, f: () => T): T {
   mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -158,17 +160,9 @@ function withLock<T>(home: string, f: () => T): T {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       let holder = NaN;
-      try { holder = Number.parseInt(readFileSync(lock, 'utf-8'), 10); } catch { /* just released */ }
+      try { holder = Number.parseInt(readFileSync(lock, 'utf-8'), 10); } catch { continue; /* just released */ }
       if (Number.isSafeInteger(holder) && holder > 0 && !alive(holder)) {
-        // Take over a dead holder's lock by renaming a claim over it, so two
-        // waiters can't both break it and both get in.
-        const claim = `${lock}.${process.pid}`;
-        writeFileSync(claim, mine, { mode: 0o600 });
-        try {
-          if (Number.parseInt(readFileSync(lock, 'utf-8'), 10) === holder) { renameSync(claim, lock); break; }
-        } catch { /* gone meanwhile: retry */ }
-        rmSync(claim, { force: true });
-        continue;
+        throw new HouseholdError(`${lock} was left by pid ${holder}, which isn't running; if no loom command is running, remove that file and try again`);
       }
       if (Date.now() > deadline) throw new HouseholdError(`${lock} is held by another loom process (pid ${Number.isNaN(holder) ? '?' : holder}); try again`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
