@@ -42,7 +42,7 @@ import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, type UiAuth } from '../ui/handler.js';
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
-import { agentDir, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
   assertSafeBind,
@@ -197,6 +197,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     throw new Error('startHttpServer: household mode resolves roles itself; pass neither tokens nor createServer');
   }
   const household = opts.household;
+  if (household) {
+    // Each of these points every agent at one store or one name, which would
+    // quietly merge the household. Refuse rather than serve it that way.
+    for (const v of ['LOOM_SQLITE_DB_PATH', 'LOOM_KNOWLEDGE_DB_PATH', 'LOOM_IDENTITY']) {
+      if (process.env[v]) throw new Error(`startHttpServer: ${v} is set; a household gives each agent its own store and name, so unset it`);
+    }
+    for (const a of household.agents) assertRealAgentDir(household, a);
+  }
   const resolver = household ? new TokenResolver(household) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
 
@@ -204,8 +212,18 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   function callerFor(header: string | undefined, target: string | undefined): Caller | { status: number; error: string } {
     const presented = (header ?? '').replace(/^Bearer\s+/i, '').trim();
     if (!presented) return { status: 401, error: 'unauthorized: missing bearer token' };
-    let role = resolver!.resolve(presented);
-    if (!role && ownerDigest && cryptoTimingSafeEqual(createHash('sha256').update(presented).digest(), ownerDigest)) role = { kind: 'owner' };
+    // The env owner token first: a broken tokens.json must not lock it out.
+    let role: Role | null = null;
+    if (ownerDigest && cryptoTimingSafeEqual(createHash('sha256').update(presented).digest(), ownerDigest)) role = { kind: 'owner' };
+    if (!role) {
+      try {
+        role = resolver!.resolve(presented);
+      } catch (err) {
+        // Fail closed, and keep the details (paths) out of the response.
+        process.stderr.write(`loom: household tokens unreadable: ${(err as Error).message}\n`);
+        return { status: 503, error: 'unavailable: the household token file is unreadable; see the daemon log' };
+      }
+    }
     if (!role) return { status: 401, error: 'unauthorized: bearer token not recognized' };
     const h = household!;
     if (role.kind === 'peer') {
@@ -254,17 +272,20 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         check: (t) => {
           const d = createHash('sha256').update(t).digest();
           if (ownerDigest && cryptoTimingSafeEqual(d, ownerDigest)) return d;
-          return resolver!.resolve(t)?.kind === 'owner' ? d : null;
+          try { return resolver!.resolve(t)?.kind === 'owner' ? d : null; } catch { return null; }
         },
-        live: (d) => (ownerDigest !== undefined && cryptoTimingSafeEqual(d, ownerDigest)) || resolver!.ownerDigestLive(d.toString('hex')),
+        live: (d) => {
+          if (ownerDigest !== undefined && cryptoTimingSafeEqual(d, ownerDigest)) return true;
+          try { return resolver!.ownerDigestLive(d.toString('hex')); } catch { return false; }
+        },
       }
     : legacyUiAuth(opts.token ? [opts.token] : Object.values(opts.tokens ?? {}));
 
-  const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer(ctx));
+  const makeServer = opts.createServer ?? ((ctx: { contextDir: string; gapsDir?: string }) => createLoomServer({ ...ctx, remote: true }));
   const serverFor = (c: Caller | undefined, identity: string) => {
     if (!c) return makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
     if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
-    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir });
+    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true });
   };
 
   // One transport (+ its connected server) per live MCP session, plus the
@@ -339,6 +360,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       // Household: `/agents/<name>/…` names the agent (the owner's way to
       // reach a non-default one; an agent's own token may use its own name).
       const scoped = household ? /^\/agents\/([a-z][a-z0-9-]{0,39})(\/.*)?$/.exec(fullPath) : null;
+      // A path under /agents/ that doesn't name an agent cleanly is a mistake,
+      // not a request for the default agent.
+      if (household && !scoped && (fullPath === '/agents' || fullPath.startsWith('/agents/'))) {
+        return sendError(res, 404, 'not-found: /agents/<name>/ takes a lowercase agent name');
+      }
       const target = scoped?.[1];
       const path = scoped ? (scoped[2] ?? '/') : fullPath;
 

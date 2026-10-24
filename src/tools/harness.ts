@@ -13,10 +13,36 @@ import { renderBlock } from '../injection/render.js';
 import { writeManagedBlock } from '../injection/writer.js';
 import { HARNESSES, isHarnessKey } from '../injection/harnesses.js';
 
+/** The instruction files a managed block may be written into: what harnesses read. */
+const INSTRUCTION_FILES: ReadonlySet<string> = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', 'CODEX.md', 'QWEN.md', 'CLAUDE.local.md']);
+
+/**
+ * Why `target` may not be written, or null. Over the network it never may:
+ * the path is on the daemon's machine, and a caller who could name it could
+ * write into another agent's stack or a shell rc file. Locally it must be an
+ * instruction file a harness reads, by name.
+ */
+export function harnessTargetError(target: string, opts: { remote: boolean }): string | null {
+  if (opts.remote) {
+    return 'Error: harness_init can\'t write a target file over the network: the path would be on the loom server, not your machine. Run `loom inject --harness <name> --to <file>` on your own machine instead.';
+  }
+  if (/[\x00-\x1f\x7f]/.test(target)) return 'Error: target contains control characters.';
+  const base = target.split(/[\\/]/).pop() ?? '';
+  if (!INSTRUCTION_FILES.has(base)) {
+    return `Error: target must be a harness instruction file (${[...INSTRUCTION_FILES].join(', ')}), not ${JSON.stringify(base)}.`;
+  }
+  return null;
+}
+
 export async function harnessInit(
   contextDir: string,
   input: { name: string; overwrite?: boolean; target?: string },
+  opts: { remote?: boolean } = {},
 ): Promise<string> {
+  if (input.target !== undefined) {
+    const err = harnessTargetError(input.target, { remote: opts.remote ?? false });
+    if (err) return err;
+  }
   const manifestResult = await initHarness(contextDir, input.name, {
     overwrite: input.overwrite,
   });

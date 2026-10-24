@@ -8,7 +8,7 @@
  *  - tokens.json never holds a token, and a plain context dir is untouched.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -19,6 +19,7 @@ import {
   revokeToken, TokenResolver, type Household,
 } from './household.js';
 import { closeAllBackends } from './backends/index.js';
+import { harnessInit } from './tools/harness.js';
 
 function textOf(result: unknown): string {
   const content = (result as { content?: Array<{ type: string; text?: string }> }).content ?? [];
@@ -166,6 +167,16 @@ describe('one daemon, several agents', () => {
     await expect(connect(handle.port, tok.owner, '/agents/ghost/')).rejects.toThrow();
   });
 
+  it('over MCP, an agent token can\'t make harness_init write a file outside its stack', async () => {
+    const art = await connect(handle.port, tok.art);
+    const victim = join(h.home, 'agents', 'mark', 'IDENTITY.md');
+    const before = readFileSync(victim, 'utf-8');
+    const r = await art.callTool({ name: 'harness_init', arguments: { name: 'x', target: victim } });
+    expect(textOf(r)).toMatch(/over the network/);
+    expect(readFileSync(victim, 'utf-8')).toBe(before);
+    await art.close();
+  });
+
   it('a peer sees only knowledge tools; unknown and revoked tokens get nothing', async () => {
     const peer = await connect(handle.port, tok.peer);
     const names = (await peer.listTools()).tools.map((t) => t.name);
@@ -223,5 +234,117 @@ describe('one daemon, several agents', () => {
     const c = await connect(handle.port, 'legacy-owner', '/agents/mark/');
     expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Visual Mark');
     await c.close();
+  });
+});
+
+// Fixes from the security review of PR #164, each pinned so the old code fails.
+describe('household hardening', () => {
+  let h: Household;
+  beforeEach(() => { h = makeHousehold(); });
+  afterEach(async () => {
+    await closeAllBackends();
+    rmSync(h.home, { recursive: true, force: true });
+  });
+
+  it('harness_init never writes a target over the network, and only instruction files locally', async () => {
+    const victim = join(h.home, 'agents', 'mark', 'IDENTITY.md');
+    const before = readFileSync(victim, 'utf-8');
+    expect(await harnessInit(join(h.home, 'agents', 'art'), { name: 'x', target: victim }, { remote: true })).toMatch(/over the network/);
+    expect(await harnessInit(join(h.home, 'agents', 'art'), { name: 'x', target: victim })).toMatch(/must be a harness instruction file/);
+    expect(await harnessInit(join(h.home, 'agents', 'art'), { name: 'x', target: join(h.home, '.bashrc') })).toMatch(/must be a harness instruction file/);
+    expect(readFileSync(victim, 'utf-8')).toBe(before);
+    await expect(harnessInit(join(h.home, 'agents', 'art'), { name: 'z\ntouch /tmp/pwn\n#' })).rejects.toThrow(/control characters/);
+  });
+
+  it('the household daemon refuses env that would merge every agent into one store or name', async () => {
+    for (const v of ['LOOM_SQLITE_DB_PATH', 'LOOM_KNOWLEDGE_DB_PATH', 'LOOM_IDENTITY']) {
+      process.env[v] = join(h.home, 'shared');
+      try {
+        await expect(startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h })).rejects.toThrow(new RegExp(v));
+      } finally {
+        delete process.env[v];
+      }
+    }
+  });
+
+  it('a broken tokens.json fails closed (503, no path) without locking out the env owner token', async () => {
+    const agentTok = createToken(h, { role: { kind: 'agent', agent: 'art' }, label: 'a' }).token;
+    const handle = await startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h, token: 'env-owner' });
+    try {
+      writeFileSync(join(h.home, 'tokens.json'), JSON.stringify({ v: 1, tokens: [{ label: 'x', role: 'owner', sha256: 'z'.repeat(64), created: 'now' }] }), { mode: 0o600 });
+      const res = await fetch(`http://127.0.0.1:${handle.port}/cli`, {
+        method: 'POST', headers: { authorization: `Bearer ${agentTok}`, 'content-type': 'application/json' }, body: JSON.stringify({ argv: ['wake'] }),
+      });
+      expect(res.status).toBe(503);
+      expect(await res.text()).not.toContain(h.home);
+      const owner = await connect(handle.port, 'env-owner');
+      expect(textOf(await owner.callTool({ name: 'identity', arguments: {} }))).toContain('Art E Fish');
+      await owner.close();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('a group- or world-writable tokens.json is not trusted', () => {
+    createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    chmodSync(join(h.home, 'tokens.json'), 0o664);
+    expect(() => loadTokens(h.home)).toThrow(/writable by group or others/);
+  });
+
+  it('a revoke is seen even when the mtime doesn\'t change (the file is replaced, so its inode does)', () => {
+    const { token } = createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    const r = new TokenResolver(h);
+    expect(r.resolve(token)).not.toBeNull();
+    const st = statSync(join(h.home, 'tokens.json'));
+    revokeToken(h, 'page');
+    utimesSync(join(h.home, 'tokens.json'), st.atime, st.mtime);
+    expect(r.resolve(token)).toBeNull();
+  });
+
+  it('a held lock makes a second writer wait and then refuse; a stale one is broken', () => {
+    createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    const lock = join(h.home, '.household.lock');
+    writeFileSync(lock, '');
+    const t0 = Date.now();
+    expect(() => revokeToken(h, 'page')).toThrow(/held by another loom process/);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(4_500);
+    expect(loadTokens(h.home)[0].revoked).toBeUndefined();
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    expect(revokeToken(h, 'page').revoked).toBeTruthy();
+    expect(existsSync(lock)).toBe(false);
+  }, 15_000);
+
+  it('agent directories must be real directories: no symlinks into another agent\'s stack', async () => {
+    symlinkSync('art', join(h.home, 'agents', 'evil'));
+    expect(() => addAgent(h, 'evil')).toThrow(/real directory/);
+    rmSync(join(h.home, 'agents', 'mark'), { recursive: true });
+    symlinkSync('art', join(h.home, 'agents', 'mark'));
+    await expect(startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h })).rejects.toThrow(/real directory/);
+    const home2 = mkdtempSync(join(tmpdir(), 'loom-init-link-'));
+    try {
+      mkdirSync(join(home2, 'data', 'solo'), { recursive: true });
+      writeFileSync(join(home2, 'data', 'solo', 'IDENTITY.md'), '# Solo\n');
+      symlinkSync(join(home2, 'data', 'solo'), join(home2, 'solo'));
+      expect(() => initHousehold(home2, 'solo')).toThrow(/is a symlink/);
+    } finally {
+      rmSync(home2, { recursive: true, force: true });
+    }
+  });
+
+  it('a mistyped /agents/ path is a 404, never the default agent', async () => {
+    const ownerTok = createToken(h, { role: { kind: 'owner' }, label: 'o' }).token;
+    const handle = await startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
+    try {
+      for (const p of ['/agents/Mark/', '/agents/mark%2Fmcp', '/agents/', '/agents']) {
+        const res = await fetch(`http://127.0.0.1:${handle.port}${p}`, {
+          method: 'POST', headers: { authorization: `Bearer ${ownerTok}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } }),
+        });
+        expect(res.status).toBe(404);
+      }
+    } finally {
+      await handle.close();
+    }
   });
 });

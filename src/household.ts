@@ -14,7 +14,7 @@
  * argument, so a body can only ever be the agent its token names.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -118,7 +118,7 @@ export function roleString(r: Role): string {
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
 function writePrivate(path: string, body: string): void {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, body, { mode: 0o600 });
   chmodSync(tmp, 0o600);
@@ -133,11 +133,65 @@ function loadUsed(home: string): Record<string, string> {
 }
 
 /** Every token record, with when it was last used merged in. */
+const LOCK_FILE = '.household.lock';
+const LOCK_STALE_MS = 30_000;
+
+/**
+ * Serialize every read-modify-write of household.json and tokens.json, so
+ * two `loom token` runs can't interleave and drop each other's change (a
+ * create racing a revoke must not bring the revoked token back).
+ */
+function withLock<T>(home: string, f: () => T): T {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const lock = join(home, LOCK_FILE);
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    try {
+      closeSync(openSync(lock, 'wx', 0o600));
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) { rmSync(lock, { force: true }); continue; }
+      } catch { continue; }
+      if (Date.now() > deadline) throw new HouseholdError(`${lock} is held by another loom process; try again`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+  try { return f(); } finally { rmSync(lock, { force: true }); }
+}
+
+const SHA_HEX = /^[0-9a-f]{64}$/;
+
+function validRecord(t: unknown): t is TokenRecord {
+  if (typeof t !== 'object' || t === null) return false;
+  const r = t as Record<string, unknown>;
+  return typeof r.label === 'string' && typeof r.role === 'string' && typeof r.sha256 === 'string' && SHA_HEX.test(r.sha256)
+    && typeof r.created === 'string' && (r.revoked === undefined || typeof r.revoked === 'string');
+}
+
+/**
+ * The token file has to be private: owned by this user, not writable by
+ * group or world, in a directory that isn't either. Anyone who can write it
+ * can mint themselves an owner token.
+ */
+function assertPrivate(path: string): void {
+  if (typeof process.getuid !== 'function') return;
+  const uid = process.getuid();
+  for (const p of [path, dirname(path)]) {
+    const st = statSync(p);
+    if (st.uid !== uid) throw new HouseholdError(`${p} is owned by another user; refusing to trust it`);
+    if (st.mode & 0o022) throw new HouseholdError(`${p} is writable by group or others; run chmod go-w on it`);
+  }
+}
+
 export function loadTokens(home: string): TokenRecord[] {
   const path = join(home, TOKENS_FILE);
   if (!existsSync(path)) return [];
+  assertPrivate(path);
   const raw = readJson(path) as { v?: number; tokens?: unknown };
   if (raw?.v !== 1 || !Array.isArray(raw.tokens)) throw new HouseholdError(`${path}: expected {"v": 1, "tokens": [...]}`);
+  if (!raw.tokens.every(validRecord)) throw new HouseholdError(`${path}: a token record is malformed (label, role, a 64-hex sha256 and created are required)`);
   const used = loadUsed(home);
   return (raw.tokens as TokenRecord[]).map((t) => {
     const { last_used: _ignored, ...rest } = t;
@@ -161,22 +215,26 @@ function checkRole(h: Household, role: Role): void {
 export function createToken(h: Household, input: { role: Role; label: string }, now = new Date()): { token: string; record: TokenRecord } {
   checkRole(h, input.role);
   const label = input.label.trim();
-  if (!label || label.length > 120) throw new HouseholdError('a token needs a label (120 characters at most)');
-  const tokens = loadTokens(h.home);
-  if (tokens.some((t) => t.label === label && !t.revoked)) throw new HouseholdError(`a live token is already labeled ${JSON.stringify(label)}`);
-  const token = `loom_${randomBytes(32).toString('base64url')}`;
-  const record: TokenRecord = { label, role: roleString(input.role), sha256: sha(token), created: now.toISOString() };
-  saveTokens(h.home, [...tokens, record]);
-  return { token, record };
+  if (!label || label.length > 120 || /[\x00-\x1f\x7f]/.test(label)) throw new HouseholdError('a token needs a label (120 printable characters at most)');
+  return withLock(h.home, () => {
+    const tokens = loadTokens(h.home);
+    if (tokens.some((t) => t.label === label && !t.revoked)) throw new HouseholdError(`a live token is already labeled ${JSON.stringify(label)}`);
+    const token = `loom_${randomBytes(32).toString('base64url')}`;
+    const record: TokenRecord = { label, role: roleString(input.role), sha256: sha(token), created: now.toISOString() };
+    saveTokens(h.home, [...tokens, record]);
+    return { token, record };
+  });
 }
 
 export function revokeToken(h: Household, label: string, now = new Date()): TokenRecord {
-  const tokens = loadTokens(h.home);
-  const t = tokens.find((x) => x.label === label && !x.revoked);
-  if (!t) throw new HouseholdError(`no live token labeled ${JSON.stringify(label)}`);
-  t.revoked = now.toISOString();
-  saveTokens(h.home, tokens);
-  return t;
+  return withLock(h.home, () => {
+    const tokens = loadTokens(h.home);
+    const t = tokens.find((x) => x.label === label && !x.revoked);
+    if (!t) throw new HouseholdError(`no live token labeled ${JSON.stringify(label)}`);
+    t.revoked = now.toISOString();
+    saveTokens(h.home, tokens);
+    return t;
+  });
 }
 
 /**
@@ -185,20 +243,25 @@ export function revokeToken(h: Household, label: string, now = new Date()): Toke
  * time, and records when a token was last used, at most once a minute.
  */
 export class TokenResolver {
-  private cache: { mtimeMs: number; tokens: TokenRecord[] } | null = null;
+  private cache: { key: string; tokens: TokenRecord[] } | null = null;
   private lastTouch = new Map<string, number>();
 
   constructor(private readonly h: Household) {}
 
   private current(): TokenRecord[] {
     const path = join(this.h.home, TOKENS_FILE);
-    let mtimeMs = -1;
-    try { mtimeMs = statSync(path).mtimeMs; } catch { return []; }
-    if (!this.cache || this.cache.mtimeMs !== mtimeMs) this.cache = { mtimeMs, tokens: loadTokens(this.h.home) };
+    let key: string;
+    // Every write is a rename, so the inode changes even where mtimes are coarse.
+    try { const st = statSync(path); key = `${st.ino}:${st.size}:${st.mtimeMs}`; } catch { return []; }
+    if (!this.cache || this.cache.key !== key) this.cache = { key, tokens: loadTokens(this.h.home) };
     return this.cache.tokens;
   }
 
-  /** The role for a presented token, or null. Revoked tokens and roles naming a missing agent resolve to null. */
+  /**
+   * The role for a presented token, or null. Revoked tokens and roles naming a
+   * missing agent resolve to null. Throws HouseholdError when tokens.json is
+   * unreadable or untrusted: the caller fails closed.
+   */
   resolve(presented: string): Role | null {
     const d = Buffer.from(sha(presented), 'hex');
     const hit = this.current().find((t) => !t.revoked && t.sha256.length === 64 && timingSafeEqual(Buffer.from(t.sha256, 'hex'), d));
@@ -239,32 +302,52 @@ export function initHousehold(home: string, agent: string, opts: { owner?: strin
   const from = join(home, agent);
   const to = join(home, 'agents', agent);
   if (existsSync(to)) throw new HouseholdError(`${to} already exists`);
+  if (existsSync(from) && lstatSync(from).isSymbolicLink()) {
+    throw new HouseholdError(`${from} is a symlink; move the real directory to ${to} yourself, or point LOOM_HOME at where it lives`);
+  }
   if (!existsSync(join(from, 'IDENTITY.md')) && !existsSync(join(from, 'memories.db'))) {
     throw new HouseholdError(`${from} doesn't look like a context dir (no IDENTITY.md or memories.db)`);
   }
-  mkdirSync(join(home, 'agents'), { recursive: true });
+  mkdirSync(join(home, 'agents'), { recursive: true, mode: 0o700 });
   renameSync(from, to);
   symlinkSync(join('agents', agent), from);
   const h: Household = { home, agents: [agent], default: agent, owner: opts.owner };
-  writePrivate(join(home, HOUSEHOLD_FILE), JSON.stringify({ v: 1, agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, null, 2) + '\n');
+  withLock(home, () => writePrivate(join(home, HOUSEHOLD_FILE), JSON.stringify({ v: 1, agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, null, 2) + '\n'));
   return h;
+}
+
+/**
+ * An agent's directory must be a real directory, not a symlink: `agents/mark
+ * -> art` would make two agents share one stack.
+ */
+export function assertRealAgentDir(h: Household, agent: string): void {
+  const dir = agentDir(h, agent);
+  let st;
+  try { st = lstatSync(dir); } catch { throw new HouseholdError(`${dir} doesn't exist; bootstrap the agent first`); }
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new HouseholdError(`${dir} must be a real directory, not a symlink or a file`);
 }
 
 /** Add an agent to a household (its directory must already exist under agents/). */
 export function addAgent(h: Household, agent: string): Household {
   if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
   if (h.agents.includes(agent)) return h;
-  if (!existsSync(agentDir(h, agent))) throw new HouseholdError(`${agentDir(h, agent)} doesn't exist; bootstrap the agent first`);
-  const next = { ...h, agents: [...h.agents, agent] };
-  writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ v: 1, agents: next.agents, default: next.default, ...(next.owner ? { owner: next.owner } : {}) }, null, 2) + '\n');
-  return next;
+  assertRealAgentDir(h, agent);
+  return withLock(h.home, () => {
+    const current = loadHousehold(h.home) ?? h;
+    if (current.agents.includes(agent)) return current;
+    const next = { ...current, agents: [...current.agents, agent] };
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ v: 1, agents: next.agents, default: next.default, ...(next.owner ? { owner: next.owner } : {}) }, null, 2) + '\n');
+    return next;
+  });
 }
 
 /**
  * The context dir a household names when nothing else does: with LOOM_HOME
  * set and a household.json there, `agents/<LOOM_AGENT or the default>`.
- * Undefined otherwise (only an explicit LOOM_HOME is consulted, so a stray
- * household.json never changes where an unconfigured process looks).
+ * Undefined otherwise. Only an explicit LOOM_HOME is consulted here, so a
+ * stray household.json never changes where an unconfigured process looks.
+ * (A daemon is different: one whose context dir already is
+ * `<home>/agents/<name>` serves that household; see householdOf.)
  */
 export function contextFromHome(env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (!env.LOOM_HOME) return undefined;
