@@ -120,7 +120,8 @@ function lastTouch(r: { created: string; updated: string | null; last_accessed: 
 
 /**
  * Recompute and STORE the salience scalar for every non-archived memory. Called
- * by the consolidation lane (stored + lane-refresh, not computed-on-read).
+ * by the consolidation lane. The digest no longer depends on it (it reads heat
+ * live, see liveRows); the stored field is for anything that sorts in SQL.
  * Returns the number of memories recomputed.
  */
 export function recomputeSalience(db: Database, nowMs: number): number {
@@ -151,6 +152,8 @@ export interface DigestOptions {
   tokenBudget?: number;
   /** Rough chars-per-token for the budget estimate. */
   charsPerToken?: number;
+  /** The moment heat is read at (tests pin it). */
+  nowMs?: number;
 }
 
 const DEFAULT_TOKEN_BUDGET = 1200;
@@ -167,7 +170,7 @@ function atomLine(r: DigestRow): string {
 }
 
 /**
- * Assemble the boot digest from already-recomputed salience: order hottest-first,
+ * Assemble the boot digest from rows with heat already set: order hottest-first,
  * fill the token budget, group the included atoms under their tier headers. Pure
  * selection + ordering of authored content — no generated prose, no persisted
  * glue. Returns null when there is nothing to show.
@@ -236,6 +239,29 @@ export interface DigestAtom {
 }
 
 /**
+ * Every live authored memory (not episodes) with its heat computed NOW from
+ * its timestamps, hottest first. The digest reads heat this way instead of
+ * trusting the stored field: the stored field only moves when the
+ * consolidation lane runs, and when the lane missed days (t-1488, and once
+ * before for two months) Top of Mind froze, with ties at 1.0 falling back to
+ * write order. The stored field stays, refreshed by the lane, for anything
+ * that sorts in SQL.
+ */
+function liveRows(db: Database, nowMs: number): Array<DigestRow & { stored: number }> {
+  const rows = db
+    .prepare(
+      'SELECT title, category, content, salience AS stored, sourcing, created, updated, last_accessed FROM memories WHERE archived = 0 AND category != ?',
+    )
+    .all(EPISODE_CATEGORY) as Array<Omit<DigestRow, 'salience'> & { stored: number; created: string; updated: string | null; last_accessed: string | null }>;
+  return rows
+    .map(({ created, updated, last_accessed, ...r }) => ({
+      ...r,
+      salience: temperature(lastTouch({ created, updated, last_accessed }), r.category, nowMs),
+    }))
+    .sort((a, b) => b.salience - a.salience);
+}
+
+/**
  * Structured salience digest for a UI widget: the hottest authored atoms,
  * tier-labeled, ordered hot→cold, plus the total memory count. Same
  * assemble-not-generate view as the text digest — just shaped for rendering.
@@ -243,25 +269,23 @@ export interface DigestAtom {
 export function digestData(
   contextDir: string,
   limit = 40,
+  nowMs = Date.now(),
 ): { atoms: DigestAtom[]; total: number } | null {
   const db = openMemoriesDb(contextDir, true);
   if (!db) return null;
   try {
     if (!hasColumn(db, 'memories', 'salience')) return { atoms: [], total: 0 };
     const total = (db.prepare('SELECT COUNT(*) AS n FROM memories WHERE archived = 0').get() as { n: number }).n;
-    const rows = db
-      .prepare(
-        'SELECT title, category, content, salience, sourcing FROM memories WHERE archived = 0 AND category != ? ORDER BY salience DESC LIMIT ?',
-      )
-      .all(EPISODE_CATEGORY, limit) as Omit<DigestAtom, 'tier'>[];
-    const atoms = rows.map((r) => ({ ...r, tier: tierOf(r.salience) }));
+    const atoms = liveRows(db, nowMs)
+      .slice(0, limit)
+      .map(({ stored: _stored, ...r }) => ({ ...r, tier: tierOf(r.salience) }));
     return { atoms, total };
   } finally {
     db.close();
   }
 }
 
-/** Assemble the boot digest for a context from stored salience. Returns null if no store / nothing hot. */
+/** Assemble the boot digest for a context, with heat read live. Returns null if no store / nothing hot. */
 export function digestForContext(contextDir: string, opts: DigestOptions = {}): string | null {
   const db = openMemoriesDb(contextDir, true);
   if (!db) return null;
@@ -269,15 +293,9 @@ export function digestForContext(contextDir: string, opts: DigestOptions = {}): 
     // A store not yet migrated to salience simply has no digest yet (read-only
     // path can't migrate; the lane / normal backend connect will add the column).
     if (!hasColumn(db, 'memories', 'salience')) return null;
-    const rows = db
-      .prepare(
-        // Episodes are the tape, not the digest: a fresh episode is always
-        // salience 1.0 and would crowd Top of Mind with what just happened.
-        // sourcing: LEFT JOIN-style null-safe select — old stores without the
-        // column return NULL which DigestRow.sourcing accepts.
-        'SELECT title, category, content, salience, sourcing FROM memories WHERE archived = 0 AND category != ? ORDER BY salience DESC LIMIT 100',
-      )
-      .all(EPISODE_CATEGORY) as DigestRow[];
+    // Episodes are the tape, not the digest: a fresh episode is always hot
+    // and would crowd Top of Mind with what just happened.
+    const rows = liveRows(db, opts.nowMs ?? Date.now()).slice(0, 100);
     return assembleDigest(rows, opts);
   } finally {
     db.close();

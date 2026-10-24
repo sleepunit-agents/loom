@@ -13,6 +13,7 @@ import {
   assembleDigest,
   recomputeSalienceForContext,
   digestForContext,
+  digestData,
   clampConfidence,
   applyObservation,
   decayedConfidence,
@@ -180,5 +181,36 @@ describe('recompute + digest through the real store', () => {
     check.close();
     expect(rows[0].title).toBe('New thread'); // fresh outranks aged
     expect(rows[1].salience).toBeLessThan(rows[0].salience);
+  });
+
+  // t-1488: the lane missed five days and Top of Mind froze in write order,
+  // because the digest trusted the stored field. Heat is read live now.
+  it('the digest cools an aged memory even when no recompute has run', async () => {
+    await remember(tmpDir, { category: 'project', title: 'Old thread', content: 'last month' });
+    await remember(tmpDir, { category: 'project', title: 'New thread', content: 'today' });
+    const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
+    // Stored salience still says 1.0 for both, as if the lane never ran.
+    db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL, salience = 1 WHERE title = ?')
+      .run(daysAgo(60), 'Old thread');
+    db.close();
+
+    const data = digestData(tmpDir, 10, NOW)!;
+    expect(data.atoms.map((a) => a.title)).toEqual(['New thread', 'Old thread']);
+    expect(data.atoms[1].salience).toBeLessThan(0.2);
+    expect(data.atoms[1].tier).toBe('Cool');
+
+    const text = digestForContext(tmpDir, { nowMs: NOW })!;
+    expect(text.indexOf('New thread')).toBeLessThan(text.indexOf('Old thread'));
+    expect(text).toMatch(/## Background\n- \*\*Old thread\*\*/);
+  });
+
+  it('a recall reheats a memory in the digest without a recompute', async () => {
+    await remember(tmpDir, { category: 'project', title: 'Touched', content: 'x' });
+    await remember(tmpDir, { category: 'project', title: 'Untouched', content: 'y' });
+    const db = new BetterSqlite3(resolveSqliteDbPath(tmpDir));
+    db.prepare('UPDATE memories SET created = ?, updated = NULL, last_accessed = NULL').run(daysAgo(30));
+    db.prepare('UPDATE memories SET last_accessed = ? WHERE title = ?').run(daysAgo(0), 'Touched');
+    db.close();
+    expect(digestData(tmpDir, 10, NOW)!.atoms.map((a) => a.title)).toEqual(['Touched', 'Untouched']);
   });
 });

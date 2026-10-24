@@ -497,7 +497,8 @@ Each memory carries a stored salience "temperature" that **decays by a
 per-category half-life** (pursuit coolest-fastest at 7 days, through
 project, self/feedback, reference, up to user at 90 days) and **reheats
 on access** — a `recall` hit, a write, or an update bumps it back toward
-hot. The digest fills a token budget **hottest-first** and groups the
+hot. Heat is computed from those timestamps when the digest is read, so
+it can't go stale if the consolidation lane skips a night. The digest fills a token budget **hottest-first** and groups the
 selected memories into tiers (Hot / Warm / Cool, labeled *Top of mind* /
 *Recent* / *Background*).
 
