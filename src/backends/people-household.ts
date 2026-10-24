@@ -200,9 +200,30 @@ export class HouseholdPeople {
     ].sort((a, b) => (a.replaced_at < b.replaced_at ? 1 : a.replaced_at > b.replaced_at ? -1 : 0));
   }
 
-  /** Restore one half to a revision: `store` says which (the relationship, unless named). */
+  /**
+   * Restore one half to a revision: `store` says which (the relationship,
+   * unless named). A relationship revision from before the split holds the
+   * whole old card; only its relationship half comes back, so handles and
+   * facts never return to the agent's own store.
+   */
   revisionRestore(input: { slug: string; revision_id: number; store?: 'directory' | 'relationship' }): MutationResult {
-    (input.store === 'directory' ? this.directory : this.relationship).revisionRestore(input);
+    if (input.store === 'directory') {
+      this.directory.revisionRestore(input);
+      return this.mutation(input.slug);
+    }
+    const snap = this.relationship.revisionSnapshot(input.revision_id);
+    if (!snap) throw new PersonCardError(`revision ${input.revision_id} not found`);
+    if (snap.slug !== input.slug) throw new PersonCardError(`revision ${input.revision_id} belongs to another card, not ${input.slug}`);
+    if (!holdsDirectoryFields(snap.card)) {
+      this.relationship.revisionRestore(input);
+      return this.mutation(input.slug);
+    }
+    const current = this.relationship.getRow(input.slug);
+    if (!current) throw new PersonCardError(`no card for ${input.slug}`);
+    this.relationship.replaceCard(input.slug, splitCard(snap.card).relationship, {
+      updated: new Date(this.now()).toISOString(), synthesized_at: snap.synthesized_at ?? null,
+      archived_at: current.archived_at, archived_by: current.archived_by, archive_reason: current.archive_reason,
+    });
     return this.mutation(input.slug);
   }
 

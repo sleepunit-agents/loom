@@ -18,7 +18,7 @@ const HOUSEHOLD_USAGE = `Usage: loom household <command>
                            household: it moves to agents/<agent>, and a symlink stays behind
   add <agent>              Add an agent whose directory already exists under agents/
   commons                  Move the default agent's knowledge.db to commons/knowledge.db and
-                           split its person cards (handles and facts to the commons
+                           split every agent's person cards (handles and facts to the commons
                            directory, the rest stays as its relationships). Once, with
                            every loom daemon on this household stopped
 
@@ -70,8 +70,12 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       if (!h) return 1;
       const moved = moveKnowledgeToCommons(h, h.default);
       io.stdout(moved ? `Knowledge moved to ${moved}; every agent shares it now.\n` : `agents/${h.default} has no knowledge.db to move.\n`);
-      const cards = splitPeopleIntoCommons(h, h.default, agentDir(h, h.default));
-      io.stdout(`${cards} person card${cards === 1 ? '' : 's'} split: handles and facts in the commons directory, the rest as ${h.default}'s relationships.\n`);
+      // Every agent's cards, so the daemon's "haven't been split" refusal can
+      // always be cleared here.
+      for (const a of h.agents) {
+        const cards = splitPeopleIntoCommons(h, a, agentDir(h, a));
+        io.stdout(`${a}: ${cards} person card${cards === 1 ? '' : 's'} split (handles and facts in the commons directory, the rest as ${a}'s relationships).\n`);
+      }
       return 0;
     }
     if (sub === 'add') {

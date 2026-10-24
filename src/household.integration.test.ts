@@ -597,5 +597,16 @@ describe('the commons: people', () => {
     expect(rel.getRow(loren.slug)!.card.where).toEqual({});
     rel.close();
     expect(splitPeopleIntoCommons(h, 'art', art(), now)).toBe(0);
+    // Restoring the relationship to its pre-split revision brings back only
+    // the relationship half: the store stays split, and the daemon still starts.
+    const hist = JSON.parse(await personHistory(art(), { slug: loren.slug })) as Array<{ id: number; op: string; store: string }>;
+    const pre = hist.find((r) => r.store === 'relationship' && r.op === 'split')!;
+    expect(await personRevisionRestore(art(), { slug: loren.slug, revision_id: pre.id })).not.toMatch(/^Error/);
+    const st = new PeopleStore({ dbPath: join(art(), 'memories.db'), readonly: true });
+    expect(st.getRow(loren.slug)!.card.where).toEqual({});
+    expect(st.getRow(loren.slug)!.card.how).toEqual({ mode: 'caveman', loop_in: ['phil-baker'] });
+    st.close();
+    const handle = await startHttpServer({ contextDir: art(), host: '127.0.0.1', port: 0, household: h });
+    await handle.close();
   });
 });
