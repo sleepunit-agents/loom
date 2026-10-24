@@ -413,6 +413,18 @@ describe('loom UI over HTTP', () => {
       expect(res.status).toBe(308);
       expect(res.headers.get('location')).toBe(to);
     }
+    // Never off-site: extra slashes or backslashes can't make a protocol-relative URL.
+    const raw = (path: string) => new Promise<string>((resolve, reject) => {
+      const r = httpRequest({ host: '127.0.0.1', port: handle.port, path }, (res) => { res.resume(); resolve(res.headers.location ?? ''); });
+      r.on('error', reject);
+      r.end();
+    });
+    for (const p of ['/ui//evil.example', '/ui///evil.example/x', '/ui/\\evil.example', '/ui/%2F%2Fevil.example']) {
+      const loc = await raw(p);
+      expect(loc.startsWith('/')).toBe(true);
+      expect(loc.startsWith('//')).toBe(false);
+      expect(loc.startsWith('/\\')).toBe(false);
+    }
   });
 
   it('the session cookie is scoped to the whole site now', async () => {

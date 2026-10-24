@@ -285,7 +285,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // The page used to live under /ui. Old links and bookmarks land on the same page.
   if (pathname === '/ui' || pathname.startsWith('/ui/')) {
     const to = new URL(req.url ?? pathname, 'http://loom.invalid');
-    res.writeHead(308, { location: (pathname.slice(3) || '/') + to.search, ...SECURITY_HEADERS });
+    // One leading slash, never two: `/ui//evil.example` must not become a
+    // protocol-relative `//evil.example`.
+    const rest = '/' + pathname.slice(3).replace(/^[/\\]+/, '');
+    res.writeHead(308, { location: rest + to.search, ...SECURITY_HEADERS });
     return void res.end();
   }
   const secure = req.headers['x-forwarded-proto'] === 'https';
