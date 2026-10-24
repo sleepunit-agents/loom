@@ -402,6 +402,19 @@ replace, never read back), the chat bridges. Nothing to configure: install a
 piece and it shows up, uninstall it and it's gone. loom never names a piece
 ([`docs/extensions.md`](docs/extensions.md), "The page").
 
+**In a household** ([`docs/specs/household.md`](docs/specs/household.md))
+the page is the owner's view of all of it:
+- **Home** shows every agent (what it's doing, from its tape), the tape
+  across all of them, and the commons at a glance.
+- **Knowledge** is the commons' pages.
+- **People** is the directory, and each person's page shows every agent's
+  relationship with them.
+- **`/a/<agent>`** is one agent's own view (its tape, Mind and people) plus
+  **Setup**: its identity (read-only), its tokens (make one, shown once;
+  revoke), and health.
+- **Add an agent** creates its stack and hands over its first token. It's
+  served at once, without a restart.
+
 **The page needs `LOOM_BEARER_TOKEN`.** A daemon with no token serves none
 (403), the same rule as `/cli`, because any site that DNS-rebinds a name to
 the loopback address could read an open page. Log in once with the token. The

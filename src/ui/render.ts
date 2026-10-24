@@ -16,11 +16,17 @@ export function esc(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** Whose page this is: loom's own (`loom`) or a piece's. */
-export interface Source { id: string; base: string }
+/**
+ * Whose page this is: loom's own (`loom`) or a piece's. `base` is where its
+ * page links resolve; `act` is where its forms post (one agent's view in a
+ * household posts to that agent).
+ */
+export interface Source { id: string; base: string; act?: string }
 
 export const CORE: Source = { id: 'loom', base: '/' };
 export const pieceSource = (piece: string): Source => ({ id: piece, base: `/p/${piece}/` });
+/** One agent's view in a household. */
+export const agentSource = (agent: string): Source => ({ id: 'loom', base: `/a/${agent}/`, act: `/a/${agent}/act/loom` });
 
 export interface RenderContext {
   source: Source;
@@ -61,7 +67,7 @@ function hiddenInputs(fields: Record<string, string>): string {
 
 function actionForm(ctx: RenderContext, action: string, inner: string, cls: string): string {
   const back = ctx.path + qs(ctx.query);
-  return `<form class="${cls}" method="post" action="/act/${esc(ctx.source.id)}">${hiddenInputs({ _csrf: ctx.csrf, _action: action, _path: back })}${inner}</form>`;
+  return `<form class="${cls}" method="post" action="${esc(ctx.source.act ?? `/act/${ctx.source.id}`)}">${hiddenInputs({ _csrf: ctx.csrf, _action: action, _path: back })}${inner}</form>`;
 }
 
 let fieldSeq = 0;

@@ -36,8 +36,10 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
+import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
+import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
-import { CORE, pieceSource, renderHome, renderLogin, renderPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -64,9 +66,14 @@ export interface UiOptions {
   auth: UiAuth;
   /** Env for piece discovery and piece processes (PATH decides which pieces exist). */
   env: NodeJS.ProcessEnv;
+  /**
+   * The household, read fresh (an agent added from the page shows up on the
+   * next request). Absent for a plain context dir: the single-agent page.
+   */
+  household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/mind', '/people', '/memory', '/p', '/act'];
+const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -268,6 +275,23 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
   const tabs = pieces.filter(hasPages)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
     .sort((a, b) => a.label.localeCompare(b.label));
+  const h = opts.household?.();
+  if (h) {
+    return {
+      agent: h.owner ? `${h.owner}'s household` : 'household',
+      nav: [
+        { label: 'Home', href: '/', current: current === '', piece: false },
+        { label: 'Knowledge', href: '/knowledge', current: current === 'knowledge', piece: false },
+        { label: 'People', href: '/people', current: current === 'people', piece: false },
+        ...h.agents.map((a) => ({ label: agentName(agentDir(h, a)), href: `/a/${a}`, current: current === `a/${a}`, piece: true })),
+        ...tabs,
+      ],
+      clock: clock(),
+      csrf,
+      flash,
+      skipped,
+    };
+  }
   return {
     agent: agentName(opts.contextDir),
     nav: [
@@ -285,12 +309,8 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
 
 /** Where to land after an action: the page the piece names, or back where the form was. */
 function landing(source: Source, result: ActResult, back: string): string {
-  const s = (result.page !== undefined ? splitPage(result.page) : null) ?? splitPage(back);
-  const core = s?.core || source.id === 'loom';
-  const path = s?.path ?? '';
-  const q = s ? new URLSearchParams(s.query).toString() : '';
-  const base = core ? `/${path}` : `/p/${source.id}${path ? `/${path}` : ''}`;
-  return q ? `${base}?${q}` : base;
+  const link = result.page !== undefined && splitPage(result.page) ? result.page : splitPage(back) ? back : '';
+  return pageHref(link, source);
 }
 
 function withFlash(to: string, id: string): string {
@@ -357,10 +377,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
-  if (pathname.startsWith('/act/')) {
+  const hh = opts.household?.();
+  const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/loom$/.exec(pathname) : null;
+  if (pathname.startsWith('/act/') || agentAct) {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
-    const sourceId = pathname.slice('/act/'.length);
+    if (agentAct && !hh!.agents.includes(agentAct[1])) return send(res, 404, 'text/plain', 'not found');
+    const sourceId = agentAct ? 'loom' : pathname.slice('/act/'.length);
     if (sourceId !== 'loom' && !ID.test(sourceId)) return send(res, 404, 'text/plain', 'not found');
     const form = await readForm(req, ACT_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
@@ -384,7 +407,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (Object.keys(fields).length > LIMITS.fields + LIMITS.hidden) return send(res, 400, 'text/plain', 'too many fields');
     let source: Source;
     let result: ActResult;
-    if (sourceId === 'loom') {
+    if (agentAct) {
+      // One agent's own actions (archive, ratify, reject), on its stack.
+      source = agentSource(agentAct[1]);
+      result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
+    } else if (sourceId === 'loom' && hh) {
+      // The household's: tokens and agents.
+      source = CORE;
+      result = await householdAct(hh, action, fields);
+    } else if (sourceId === 'loom') {
       source = CORE;
       result = await coreAct(opts.contextDir, action, fields);
     } else {
@@ -416,6 +447,58 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const { pieces, skipped } = await pieceManifests(opts.env);
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
+
+  if (hh) {
+    const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf });
+    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>) =>
+      html(renderPage(page, ctx, chrome(opts, pieces, skippedNames, current, csrf, flash)), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+    if (pathname === '/') {
+      const home = householdHome(hh);
+      const tiles: HomeTile[] = [
+        ...home.tiles.map((t) => ({ ...t, source: CORE })),
+        ...pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
+      ];
+      const asks: HomeAsk[] = pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) })));
+      return html(renderHome(home.page, ctxOf(''), chrome(opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
+    }
+    if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
+    if (pathname.startsWith('/knowledge/')) {
+      const slug = decode(pathname.slice('/knowledge/'.length));
+      return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
+    }
+    if (pathname === '/people') return send200(householdPeople(hh), 'people', ctxOf('people'));
+    if (pathname.startsWith('/people/')) {
+      const slug = decode(pathname.slice('/people/'.length));
+      return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
+    }
+    if (pathname === '/new-agent') return send200(newAgentPage(), '', ctxOf('new-agent'));
+    const a = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(pathname);
+    if (a) {
+      const agent = a[1];
+      if (!hh.agents.includes(agent)) return send200(notFound, '', ctxOf(''));
+      const rest = decode(a[2] ?? '') ?? '\0';
+      const dir = agentDir(hh, agent);
+      const src = agentSource(agent);
+      if (rest === '' ) {
+        const home = homePage(dir, query);
+        home.page.sections.unshift({ id: 'agent-nav', side: true, blocks: [{ type: 'list', items: [
+          { text: 'Mind', meta: 'what it wakes up holding, and why', page: 'mind' },
+          { text: 'People', meta: 'as it sees them', page: 'people' },
+          { text: 'Setup', meta: 'identity, tokens, health', page: `loom:a/${agent}/setup` },
+        ] }] });
+        const tiles: HomeTile[] = [{ ...home.tile, source: src }];
+        return html(renderHome(home.page, ctxOf('', src), chrome(opts, pieces, skippedNames, `a/${agent}`, csrf, flash), tiles, []));
+      }
+      if (rest === 'setup') return send200(agentSetup(hh, agent), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE));
+      const page = validPath(rest) ? corePage(dir, rest, query) : null;
+      return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src));
+    }
+    // loom's own single-agent addresses land on the default agent's view.
+    if (pathname === '/mind' || pathname.startsWith('/memory/')) {
+      res.writeHead(302, { location: `/a/${hh.default}${pathname}${url.search}`, ...SECURITY_HEADERS });
+      return void res.end();
+    }
+  }
 
   if (pathname === '/') {
     const home = homePage(opts.contextDir, query);

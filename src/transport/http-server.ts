@@ -43,7 +43,7 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, type UiAuth } from '../ui/handler.js';
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
 import { hasUnsplitPeople } from '../backends/people-household.js';
-import { agentDir, assertRealAgentDir, commonsProblem, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, commonsProblem, liveHousehold, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
   assertSafeBind,
@@ -213,7 +213,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
     }
   }
-  const resolver = household ? new TokenResolver(household) : undefined;
+  // Read fresh on each use: an agent added from the page is served at once.
+  const live = household ? liveHousehold(household) : undefined;
+  const resolver = live ? new TokenResolver(live) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
 
   /** Resolve a household caller: 401 (no/unknown token), 403 (not allowed there) or 404 (no such agent). */
@@ -233,7 +235,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
     }
     if (!role) return { status: 401, error: 'unauthorized: bearer token not recognized' };
-    const h = household!;
+    const h = live!();
     if (role.kind === 'peer') {
       if (target) return { status: 403, error: 'forbidden: a peer token reaches the commons only' };
       return { role, agent: h.default, contextDir: agentDir(h, h.default), key: `${roleString(role)}>${h.default}` };
@@ -362,6 +364,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           contextDir: opts.contextDir,
           auth: uiAuth,
           env: process.env,
+          household: live,
         });
       }
 

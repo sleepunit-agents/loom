@@ -259,7 +259,14 @@ export class TokenResolver {
   private cache: { key: string; tokens: TokenRecord[] } | null = null;
   private lastTouch = new Map<string, number>();
 
-  constructor(private readonly h: Household) {}
+  private readonly get: () => Household;
+
+  /** A household, or a function returning the current one (re-read as household.json changes). */
+  constructor(h: Household | (() => Household)) {
+    this.get = typeof h === 'function' ? h : () => h;
+  }
+
+  private get h(): Household { return this.get(); }
 
   private current(): TokenRecord[] {
     const path = join(this.h.home, TOKENS_FILE);
@@ -429,4 +436,25 @@ export function moveKnowledgeToCommons(h: Household, agent: string): string | nu
     }
     return to;
   });
+}
+
+/**
+ * The household at `home`, re-read whenever household.json changes, so an
+ * agent added while a daemon runs is served without a restart. Keeps the
+ * last good copy if the file is briefly unreadable mid-write.
+ */
+export function liveHousehold(initial: Household): () => Household {
+  let current = initial;
+  let key = '';
+  return () => {
+    try {
+      const st = statSync(join(initial.home, HOUSEHOLD_FILE));
+      const k = `${st.ino}:${st.size}:${st.mtimeMs}`;
+      if (k !== key) {
+        const next = loadHousehold(initial.home);
+        if (next) { current = next; key = k; }
+      }
+    } catch { /* keep the last good one */ }
+    return current;
+  };
 }

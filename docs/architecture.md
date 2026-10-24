@@ -204,6 +204,7 @@ have fallen behind.
 | `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |
 | `src/cli/*` | One file per subcommand |
 | `src/cli/pieces.ts` | `loom <piece>`: git-style dispatch to `loom-<piece>` on PATH; `loom pieces` lists them |
+| `src/ui/household-pages.ts` | The owner's household page: Home across every agent, the commons' knowledge, People with every agent's relationship, each agent's Setup (identity, tokens, health), adding an agent |
 | `src/bundle.ts`, `src/cli/bundle.ts` | The bundle (docs/specs/household.md, "Export and restore"): `loom export` / `loom restore` / `--drill`, age-encrypted, with each piece's own part from `loom-<piece> bundle export` / `bundle import` |
 | `src/household.ts`, `src/cli/household.ts` | The household (docs/specs/household.md): `household.json`, `tokens.json` (roles `agent:`, `owner`, `peer:`; only sha256 stored), the resolver the daemon uses per request, `loom household` and `loom token` |
 | `src/cli/remote.ts` | Remote mode: with `--url`/`LOOM_URL`, the store verbs run on a loom-http via `POST /cli` |

@@ -91,7 +91,7 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|mind|people|people\/[a-z0-9][a-z0-9-]*|memory\/.+)$/;
+const CORE_PAGES = /^(|mind|people|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
