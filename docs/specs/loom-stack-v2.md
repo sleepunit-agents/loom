@@ -230,9 +230,11 @@ reports those untouched beyond a stale threshold (default 30 days).
 **Salience.** Each memory carries a stored salience temperature in
 `(0, 1]` that decays by a per-category half-life (pursuit 7d, project
 10d, self/feedback 30d, reference 45d, user 90d; default 30d) and
-reheats on touch (recall / write / update). The consolidation lane
-recomputes the stored value (`loom memory recompute-salience`); the boot
-digest is assembled from it (`loom memory digest`).
+reheats on touch (recall / write / update). The boot digest
+(`loom memory digest`) computes each memory's heat from its timestamps
+when it is read, so a missed consolidation run can't freeze it. The
+consolidation lane still refreshes the stored value
+(`loom memory recompute-salience`) for anything that sorts in SQL.
 
 **Propose / ratify.** The capture-propose queue stages *draft* memory
 writes in a separate `proposals` table — invisible to recall,
