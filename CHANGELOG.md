@@ -12,6 +12,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-25
+
+### Added
+
+- **The piece API** (docs/extensions.md, "The API"). In a household,
+  `POST /api/<piece>/<path>` runs `loom-<piece> api --json` with
+  `{caller, path, body}` and passes the piece's `{status, body}` back. It's for
+  callers that aren't a browser: a box calling home to the runtime piece, a
+  body asking for a house. POST, JSON and no Origin, like `/cli`. It has its
+  own pool (four running, eight waiting, then 503), so a flood can't starve
+  the page.
+- **Piece credentials:** a token role `piece:<piece>/<subject>`
+  (`loom token create --piece box/thor`). It reaches only its own piece's
+  API, as its subject: no MCP, no `/cli`, no page, no other piece.
+
+### Security
+
+- The household daemon's caller resolution now handles every role kind by
+  name, and refuses anything that isn't one of them. Before this, a role
+  kind it didn't know would have been served as the owner.
+
 ## [0.13.1] - 2026-10-24
 
 ### Changed
@@ -779,7 +800,8 @@ Initial public release.
   stack and all added external-service dependencies or operational
   overhead.
 
-[Unreleased]: https://github.com/sleepunit-agents/loom/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/sleepunit-agents/loom/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/sleepunit-agents/loom/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/sleepunit-agents/loom/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/sleepunit-agents/loom/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/sleepunit-agents/loom/compare/v0.11.0...v0.12.0
