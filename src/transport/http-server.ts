@@ -41,6 +41,8 @@ import { createLoomServer } from '../server.js';
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, type UiAuth } from '../ui/handler.js';
+import { pieceApi, type ApiCaller } from '../ui/pieces.js';
+import { findPiece } from '../cli/pieces.js';
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
 import { hasUnsplitPeople } from '../backends/people-household.js';
 import { agentDir, assertRealAgentDir, commonsProblem, liveHousehold, roleString, TokenResolver, type Household, type Role } from '../household.js';
@@ -218,8 +220,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const resolver = live ? new TokenResolver(live) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
 
-  /** Resolve a household caller: 401 (no/unknown token), 403 (not allowed there) or 404 (no such agent). */
-  function callerFor(header: string | undefined, target: string | undefined): Caller | { status: number; error: string } {
+  /** The role a presented bearer has: 401 (none/unknown) or 503 (tokens.json unreadable). */
+  function roleFor(header: string | undefined): Role | { status: number; error: string } {
     const presented = (header ?? '').replace(/^Bearer\s+/i, '').trim();
     if (!presented) return { status: 401, error: 'unauthorized: missing bearer token' };
     // The env owner token first: a broken tokens.json must not lock it out.
@@ -235,6 +237,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
     }
     if (!role) return { status: 401, error: 'unauthorized: bearer token not recognized' };
+    return role;
+  }
+
+  /** Resolve a household caller: 401 (no/unknown token), 403 (not allowed there) or 404 (no such agent). */
+  function callerFor(header: string | undefined, target: string | undefined): Caller | { status: number; error: string } {
+    const role = roleFor(header);
+    if ('status' in role) return role;
+    // Every kind is handled by name: an unlisted one must never fall through to the owner's branch.
+    if (role.kind === 'piece') return { status: 403, error: `forbidden: a piece credential reaches only /api/${role.piece}/` };
     const h = live!();
     if (role.kind === 'peer') {
       if (target) return { status: 403, error: 'forbidden: a peer token reaches the commons only' };
@@ -244,6 +255,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (target && target !== role.agent) return { status: 403, error: `forbidden: this token is ${role.agent}'s` };
       return { role, agent: role.agent, contextDir: agentDir(h, role.agent), key: `${roleString(role)}>${role.agent}` };
     }
+    if (role.kind !== 'owner') return { status: 403, error: 'forbidden' };
     const agent = target ?? h.default;
     if (!h.agents.includes(agent)) return { status: 404, error: `not-found: no agent named ${agent}` };
     return { role, agent, contextDir: agentDir(h, agent), key: `owner>${agent}` };
@@ -352,6 +364,46 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     return transport;
   }
 
+  /**
+   * POST /api/<piece>/<path>. Like /cli: JSON only, no Origin (a browser
+   * always sends one, and this route grants no CORS), within the body cap.
+   * An owner or agent token calls as itself; a piece credential only its own
+   * piece, as its subject; a peer never.
+   */
+  async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
+    if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);
+    const role = roleFor(req.headers['authorization']);
+    if ('status' in role) return sendError(res, role.status, role.error);
+    let caller: ApiCaller;
+    switch (role.kind) {
+      case 'owner': caller = { kind: 'owner' }; break;
+      case 'agent': caller = { kind: 'agent', agent: role.agent }; break;
+      case 'piece':
+        if (role.piece !== piece) return sendError(res, 403, `forbidden: this credential is ${role.piece}'s`);
+        caller = { kind: 'piece', subject: role.subject };
+        break;
+      case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
+    }
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+      return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    }
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > 0 && !checkPayloadSize(declared, maxBytes).ok) {
+      return sendError(res, 413, `oversized: declared ${declared} bytes exceeds cap ${maxBytes}`);
+    }
+    const raw = await collectBody(req, maxBytes);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: body exceeds cap ${maxBytes}`);
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch (e) { return sendError(res, 400, `bad-input: malformed JSON (${(e as Error).message})`); }
+    // "loom" is core's own name; a piece can't take it.
+    const path = piece === 'loom' ? null : findPiece(piece, process.env);
+    if (!path) return sendError(res, 404, `not-found: no piece named ${piece}`);
+    const out = await pieceApi(path, { caller, path: subpath, body }, process.env);
+    res.writeHead(out.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(out.body));
+  }
+
   const http = createServer((req, res) => {
     void (async () => {
       // loom's web page (src/ui), at the root. Its own auth (a session from
@@ -366,6 +418,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           env: process.env,
           household: live,
         });
+      }
+
+      // POST /api/<piece>/…: a piece's API (docs/extensions.md, "The API"),
+      // for callers that aren't a browser: a box calling home, a body asking
+      // for a house. Household only, bearer only, JSON only.
+      if (household && (fullPath === '/api' || fullPath.startsWith('/api/'))) {
+        const api = /^\/api\/([a-z][a-z0-9-]{0,39})((?:\/[A-Za-z0-9._~-]+)*)\/?$/.exec(fullPath);
+        if (!api || api[2].split('/').some((s) => s === '.' || s === '..')) return sendError(res, 404, 'not-found: /api/<piece>/<path>');
+        return handlePieceApi(req, res, api[1], api[2].replace(/^\//, ''));
       }
 
       // Household: `/agents/<name>/…` names the agent (the owner's way to

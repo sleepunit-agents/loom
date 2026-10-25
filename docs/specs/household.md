@@ -95,6 +95,7 @@ one has a **label** ("Art · house on wunder", "Jonathan · page") and a
 | `agent:<name>` | that agent | its own stack + the commons | that agent's bodies |
 | `owner` | the default agent, or `/agents/<name>/mcp` for another | everything, including every agent's relationships, and the page | Jonathan |
 | `peer:<name>` | nobody's stack | commons knowledge only (today's `--scope knowledge`) | another household's agent |
+| `piece:<piece>/<subject>` | nobody | only `POST /api/<piece>/…`, as `<subject>` (docs/extensions.md, "The API") | a box, enrolled by the runtime piece |
 
 - **The daemon resolves the token on every request** and builds the session's
   server for that agent's directory: the same `contextDir` threading as

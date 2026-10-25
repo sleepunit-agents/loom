@@ -202,3 +202,33 @@ export async function pieceAct(
   const result = parsed === undefined ? 'not JSON' : parseActResult(parsed);
   return typeof result === 'string' ? { ok: false, message: `${info.piece} sent an answer loom couldn't read (${result}).` } : result;
 }
+
+/** A piece's API answer is its own JSON; these bound how long one call may take. */
+export const API_TIMEOUT_MS = 15_000;
+
+/** Who is calling a piece's API, as core resolved the bearer. */
+export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string } | { kind: 'piece'; subject: string };
+
+/**
+ * Call a piece's API (docs/extensions.md, "The API"): `loom-<piece> api --json`
+ * with {caller, path, body} on stdin. The piece answers {status?, body}; a
+ * status outside 200-499, or anything that isn't that shape, is the piece's
+ * failure, which the caller sees as a 502.
+ */
+export async function pieceApi(
+  path: string,
+  request: { caller: ApiCaller; path: string; body: unknown },
+  env: NodeJS.ProcessEnv,
+): Promise<{ status: number; body: unknown }> {
+  const r = await ask(path, ['api', '--json'], env, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS });
+  if (!r.ok) return { status: 502, body: { error: `the piece didn't answer (${r.reason})` } };
+  const parsed = json(r.stdout) as { status?: unknown; body?: unknown } | undefined;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !('body' in parsed)) {
+    return { status: 502, body: { error: 'the piece answered with something other than {status?, body}' } };
+  }
+  const status = parsed.status === undefined ? 200 : parsed.status;
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 200 || status > 499) {
+    return { status: 502, body: { error: 'the piece answered with a status outside 200-499' } };
+  }
+  return { status, body: parsed.body };
+}
