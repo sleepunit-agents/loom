@@ -9,6 +9,7 @@ import {
 } from '../household.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import type { IOStreams } from './io.js';
+import { sessionStore } from '../ui/sessions.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -31,6 +32,9 @@ const TOKEN_USAGE = `Usage: loom token <command>
                            Mint a token. It's printed once; only its sha256 is kept
   list                     Every token: label, role, created, last used, revoked
   revoke <label>           Revoke the live token with that label (takes effect on the next request)
+  link [--minutes 10] [--url <loom's URL>]
+                           A one-time link that signs a browser in to the page (no token to paste).
+                           Its sessions are the owner token "page sign-in links": revoke that to end them
 
 Roles: agent:<name> is MCP and the CLI as that agent; owner sees everything and
 the page; peer:<name> reaches commons knowledge only; piece:<piece>/<subject> is
@@ -96,6 +100,9 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
   }
 }
 
+/** The owner token behind every session a sign-in link opens. */
+const LINK_TOKEN = 'page sign-in links';
+
 export async function runToken(argv: string[], io: IOStreams): Promise<number> {
   const [sub, ...rest] = argv;
   try {
@@ -120,6 +127,20 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       for (const t of tokens) {
         io.stdout(`${t.revoked ? 'revoked' : 'live   '}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''})\n`);
       }
+      return 0;
+    }
+    if (sub === 'link') {
+      const h = need(io);
+      if (!h) return 1;
+      const minutes = Number(flag(rest, '--minutes') ?? 10);
+      if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) { io.stderr('--minutes is 1 to 1440\n'); return 2; }
+      // The sessions a link opens belong to one owner token: revoking it ends them all.
+      let record = loadTokens(h.home).find((t) => t.label === LINK_TOKEN && !t.revoked);
+      if (!record) record = createToken(h, { role: { kind: 'owner' }, label: LINK_TOKEN }).record;
+      const code = sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), minutes * 60);
+      const base = (flag(rest, '--url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
+      io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --url or set LOOM_PUBLIC_URL.)'}\n`);
+      io.stdout(`${base}/login/${code}\n`);
       return 0;
     }
     if (sub === 'revoke') {

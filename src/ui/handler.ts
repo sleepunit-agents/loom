@@ -34,12 +34,13 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { sessionStore } from './sessions.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
-import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -49,7 +50,6 @@ const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
 const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
-const COOKIE_KEY = randomBytes(32);
 const SECURITY_HEADERS = {
   'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
@@ -89,14 +89,13 @@ export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
 const digest = (s: string) => createHash('sha256').update(s).digest();
 
 /**
- * Browser sessions, in memory only. The cookie is a random id, not the token
- * and not derivable from it. Logout deletes the id, so a copied cookie stops
- * working (cookies can't be kept from other ports on the same host, so
- * revocation matters). A restart forgets every session.
+ * Browser sessions: on disk (src/ui/sessions.ts), so a restart signs nobody
+ * out, shared by every loom-http process on the machine. The cookie is a
+ * random id, not the token and not derivable from it; the file keeps only
+ * its hash. Logout deletes it, so a copied cookie stops working (cookies
+ * can't be kept from other ports on the same host, so revocation matters).
  */
-interface Session { issuedAt: number; secret: Buffer }
-const sessions = new Map<string, Session>();
-const MAX_SESSIONS = 50;
+const storeFor = (opts: UiOptions) => sessionStore(opts.household?.().home ?? opts.contextDir);
 
 /**
  * Who may log in. `check` answers a presented token with its digest when the
@@ -123,17 +122,9 @@ export function legacyUiAuth(secrets: string[]): UiAuth {
   };
 }
 
-function newSession(tokenDigest: Buffer): string {
-  const id = randomBytes(32).toString('hex');
-  sessions.set(id, { issuedAt: Math.floor(Date.now() / 1000), secret: tokenDigest });
-  // Oldest first in a Map: drop the oldest past the cap.
-  while (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value as string);
-  return id;
-}
-
 /** The anti-forgery token for a session: bound to its id, useless without it. */
-function csrfFor(id: string): string {
-  return createHmac('sha256', COOKIE_KEY).update(`loom-ui-csrf|${id}`).digest('hex');
+function csrfFor(id: string, key: Buffer): string {
+  return createHmac('sha256', key).update(`loom-ui-csrf|${id}`).digest('hex');
 }
 
 /** Equal-length digests, so neither the content nor the length of a guess leaks. */
@@ -141,11 +132,13 @@ function safeEq(a: string, b: string): boolean {
   return timingSafeEqual(digest(a), digest(b));
 }
 
-function validSession(id: string, auth: UiAuth, nowS = Math.floor(Date.now() / 1000)): boolean {
+function validSession(id: string, opts: UiOptions, nowS = Math.floor(Date.now() / 1000)): boolean {
   if (!/^[0-9a-f]{64}$/.test(id)) return false;
-  const s = sessions.get(id);
+  const auth = opts.auth;
+  const store = storeFor(opts);
+  const s = store.get(id);
   if (!s) return false;
-  if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { sessions.delete(id); return false; }
+  if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { store.delete(id); return false; }
   // A session dies with its token: rotate the token and old sessions stop.
   return auth.live(s.secret);
 }
@@ -164,7 +157,7 @@ type Who = { kind: 'session'; cookie: string } | { kind: 'bearer' } | null;
 function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   if (!opts.auth.enabled) return null;
   const c = readCookie(req, COOKIE);
-  if (c && validSession(c, opts.auth)) return { kind: 'session', cookie: c };
+  if (c && validSession(c, opts)) return { kind: 'session', cookie: c };
   const header = req.headers['authorization'];
   const presented = header?.replace(/^Bearer\s+/i, '').trim();
   if (presented && opts.auth.check(presented)) return { kind: 'bearer' };
@@ -342,6 +335,23 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   const secure = req.headers['x-forwarded-proto'] === 'https';
 
+  // A one-time sign-in link (`loom token link`). GET only shows a button: a
+  // chat's link preview fetches the URL, and mustn't spend it.
+  const linkMatch = /^\/login\/([0-9a-f]{64})$/.exec(pathname);
+  if (linkMatch) {
+    const code = linkMatch[1];
+    if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLoginLink(code));
+    if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
+    if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
+    const secret = storeFor(opts).useLink(code);
+    if (!secret || !opts.auth.live(secret)) {
+      return send(res, 401, 'text/html; charset=utf-8', renderLoginLink(code, 'That link is used up, expired, or its token was revoked.'));
+    }
+    return redirect(res, '/', {
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+    });
+  }
+
   if (pathname === '/login') {
     // Unauthenticated: the login page names no agent.
     if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLogin());
@@ -353,19 +363,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.'));
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${newSession(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
   const who = whoIs(req, opts);
-  const csrf = who?.kind === 'session' ? csrfFor(who.cookie) : '';
+  const csrf = who?.kind === 'session' ? csrfFor(who.cookie, storeFor(opts).key) : '';
 
   if (pathname === '/logout') {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
-    if (c) sessions.delete(c);
+    if (c && /^[0-9a-f]{64}$/.test(c)) storeFor(opts).delete(c);
     return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` });
   }
 

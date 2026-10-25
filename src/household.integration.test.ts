@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
+import { runToken } from './cli/household.js';
 import {
   addAgent, commonsKnowledgePath, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
   moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
@@ -232,6 +233,28 @@ describe('one daemon, several agents', () => {
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).status).toBe(200);
     revokeToken(h, 'jonathan');
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
+  });
+
+  it('loom token link: a one-time link signs the owner in, and revoking its token ends those sessions', async () => {
+    let out = '';
+    let err = '';
+    const io = { stdout: (x: string) => { out += x; }, stderr: (x: string) => { err += x; }, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
+    expect(await runToken(['link', '--url', base], io)).toBe(0);
+    expect(err).toContain('within 10 minutes');
+    const url = out.trim();
+    expect(url).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
+    const signed = await fetch(url, { method: 'POST', redirect: 'manual' });
+    expect(signed.status).toBe(303);
+    const cookie = (signed.headers.get('set-cookie') ?? '').split(';')[0];
+    expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).status).toBe(200);
+    // A second link reuses the one token; revoking it ends every session links opened.
+    out = '';
+    expect(await runToken(['link', '--minutes', '5', '--url', base], io)).toBe(0);
+    expect(loadTokens(h.home).filter((t) => t.label === 'page sign-in links').length).toBe(1);
+    revokeToken(h, 'page sign-in links');
+    expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
+    expect((await fetch(out.trim(), { method: 'POST', redirect: 'manual' })).status).toBe(401);
+    expect(await runToken(['link', '--minutes', '0'], io)).toBe(2);
   });
 
   it('LOOM_BEARER_TOKEN, when set, is an owner token too', async () => {
