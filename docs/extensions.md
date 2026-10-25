@@ -290,6 +290,7 @@ LOOM_IMPORT_IDENTITY=/path/owner.key loom-<piece> bundle import < part   # stdin
 | tasks | `loom tasks` | [taskstore](https://github.com/sleepunit-agents/taskstore) | `spec/taskstore-core` |
 | secrets | `loom secrets` | [loom-secrets](https://github.com/sleepunit-agents/loom-secrets) (sops + age) | `ac-sec-*` in its README |
 | shuttle | `loom shuttle` | [shuttle](https://github.com/sleepunit-agents/shuttle) (`tools/loom-shuttle`) | its README; today it's the Bridges page only |
+| runtime | `loom box` | [loom-box](https://github.com/sleepunit-agents/loom-box) (boxes and houses) | [specs/runtime.md](specs/runtime.md) and its README; the first piece on the piece API |
 
 Roles under consideration: `wake` (a clock that starts the agent) and an
 approval page. Each one gets its contract when it gets built.
