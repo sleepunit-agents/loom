@@ -70,20 +70,46 @@ function killGroup(pid: number | undefined): void {
  * when a piece actually runs.
  */
 export const MAX_RUNNING = 6;
-let running = 0;
-const waiting: Array<() => void> = [];
 
-async function slot<T>(f: () => Promise<T>): Promise<T> {
-  if (running >= MAX_RUNNING) await new Promise<void>((r) => waiting.push(r));
-  running++;
-  try { return await f(); } finally {
-    running--;
-    waiting.shift()?.();
+/**
+ * A pool of piece processes. The page's and the API's are separate, so callers
+ * of /api (a box, which may be compromised) can never starve the owner's page.
+ * The API's queue is bounded too: past it, a call is refused, not parked.
+ */
+class Pool {
+  private running = 0;
+  private readonly waiting: Array<() => void> = [];
+  constructor(private readonly max: number, private readonly maxWaiting = Infinity) {}
+
+  /** null when the queue is full, or when `gone` fired before a slot came up. */
+  async run<T>(f: () => Promise<T>, gone?: AbortSignal): Promise<T | null> {
+    if (this.running >= this.max) {
+      if (this.waiting.length >= this.maxWaiting) return null;
+      const got = await new Promise<boolean>((resolve) => {
+        const go = () => { gone?.removeEventListener('abort', drop); resolve(true); };
+        const drop = () => { const i = this.waiting.indexOf(go); if (i >= 0) this.waiting.splice(i, 1); resolve(false); };
+        this.waiting.push(go);
+        gone?.addEventListener('abort', drop, { once: true });
+      });
+      if (!got) return null;
+    }
+    if (gone?.aborted) { this.waiting.shift()?.(); return null; }
+    this.running++;
+    try { return await f(); } finally {
+      this.running--;
+      this.waiting.shift()?.();
+    }
   }
 }
 
-function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number } = {}): Promise<Answer> {
-  return slot(() => run(path, args, env, opts));
+const pagePool = new Pool(MAX_RUNNING);
+/** /api: at most four at once, eight more waiting. */
+export const MAX_API_RUNNING = 4;
+export const MAX_API_WAITING = 8;
+const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
+
+async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number } = {}): Promise<Answer> {
+  return (await pagePool.run(() => run(path, args, env, opts)))!;
 }
 
 function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number }): Promise<Answer> {
@@ -201,4 +227,36 @@ export async function pieceAct(
   const parsed = json(r.stdout);
   const result = parsed === undefined ? 'not JSON' : parseActResult(parsed);
   return typeof result === 'string' ? { ok: false, message: `${info.piece} sent an answer loom couldn't read (${result}).` } : result;
+}
+
+/** A piece's API answer is its own JSON; these bound how long one call may take. */
+export const API_TIMEOUT_MS = 15_000;
+
+/** Who is calling a piece's API, as core resolved the bearer. */
+export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string } | { kind: 'piece'; subject: string };
+
+/**
+ * Call a piece's API (docs/extensions.md, "The API"): `loom-<piece> api --json`
+ * with {caller, path, body} on stdin. The piece answers {status?, body}; a
+ * status outside 200-499, or anything that isn't that shape, is the piece's
+ * failure, which the caller sees as a 502.
+ */
+export async function pieceApi(
+  path: string,
+  request: { caller: ApiCaller; path: string; body: unknown },
+  env: NodeJS.ProcessEnv,
+  gone?: AbortSignal,
+): Promise<{ status: number; body: unknown }> {
+  const r = await apiPool.run(() => run(path, ['api', '--json'], env, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS }), gone);
+  if (r === null) return { status: 503, body: { error: 'busy: too many piece API calls at once; try again shortly' } };
+  if (!r.ok) return { status: 502, body: { error: `the piece didn't answer (${r.reason})` } };
+  const parsed = json(r.stdout) as { status?: unknown; body?: unknown } | undefined;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !('body' in parsed)) {
+    return { status: 502, body: { error: 'the piece answered with something other than {status?, body}' } };
+  }
+  const status = parsed.status === undefined ? 200 : parsed.status;
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 200 || status > 499) {
+    return { status: 502, body: { error: 'the piece answered with a status outside 200-499' } };
+  }
+  return { status, body: parsed.body };
 }

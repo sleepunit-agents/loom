@@ -232,6 +232,35 @@ short.
   to be in the daemon's environment. A piece can't be named `loom`, because
   that name is loom's own.
 
+## The API: a piece that's called from elsewhere
+
+Some pieces are called by things that aren't a browser: a box calling home
+to the runtime piece, a body asking for a house. In a household, loom-http
+forwards `POST /api/<piece>/<path>` to the piece:
+
+```bash
+echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --json
+# stdout: {"status": 200, "body": {...}}    (status optional, 200-499)
+```
+
+- **loom authenticates, the piece authorizes.** The caller is what the bearer
+  resolved to: `{"kind": "owner"}`, `{"kind": "agent", "agent": "art"}`, or
+  `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
+  with the role `piece:<piece>/<subject>` (`loom token create --piece
+  box/thor`). A piece credential reaches its own piece's API and nothing
+  else: no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
+  get nothing. The piece decides what each caller may do.
+- **Like `/cli`:** POST only, `application/json`, no `Origin` header (a browser
+  always sends one, and the route grants no CORS), within the daemon's body
+  cap. The piece's own status passes through; an answer that isn't
+  `{status?, body}`, or a status outside 200-499, is a 502.
+- Bounded: 15 seconds and 512 KB per answer, at most four API calls running
+  and eight waiting (past that, a 503), in a pool of its own, so a flood from
+  a box can never starve the page's pieces. A caller that hangs up while
+  waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
+  no `.` or `..`.
+- A piece without an `api` verb answers nothing, and the caller gets a 502.
+
 ## The bundle: a piece's part
 
 `loom export` asks each installed piece for its part, and `loom restore`

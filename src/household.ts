@@ -41,11 +41,16 @@ export interface Household {
 export type Role =
   | { kind: 'agent'; agent: string }
   | { kind: 'owner' }
-  | { kind: 'peer'; name: string };
+  | { kind: 'peer'; name: string }
+  /**
+   * A piece's credential (docs/extensions.md, "The API"): reaches only
+   * POST /api/<piece>/…, as `subject`. No MCP, no /cli, no page, no store.
+   */
+  | { kind: 'piece'; piece: string; subject: string };
 
 export interface TokenRecord {
   label: string;
-  /** `agent:<name>`, `owner` or `peer:<name>`. */
+  /** `agent:<name>`, `owner`, `peer:<name>` or `piece:<piece>/<subject>`. */
   role: string;
   /** sha256 of the token, hex. The token itself is never stored. */
   sha256: string;
@@ -107,13 +112,20 @@ export function householdOf(contextDir: string): { household: Household; agent: 
 
 export function parseRole(s: string): Role | null {
   if (s === 'owner') return { kind: 'owner' };
+  const p = /^piece:([a-z][a-z0-9-]{0,39})\/([a-z0-9][a-z0-9._-]{0,63})$/.exec(s);
+  if (p) return p[1] === 'loom' ? null : { kind: 'piece', piece: p[1], subject: p[2] };
   const m = /^(agent|peer):([a-z][a-z0-9-]{0,39})$/.exec(s);
   if (!m) return null;
   return m[1] === 'agent' ? { kind: 'agent', agent: m[2] } : { kind: 'peer', name: m[2] };
 }
 
 export function roleString(r: Role): string {
-  return r.kind === 'owner' ? 'owner' : r.kind === 'agent' ? `agent:${r.agent}` : `peer:${r.name}`;
+  switch (r.kind) {
+    case 'owner': return 'owner';
+    case 'agent': return `agent:${r.agent}`;
+    case 'peer': return `peer:${r.name}`;
+    case 'piece': return `piece:${r.piece}/${r.subject}`;
+  }
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
