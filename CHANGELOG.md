@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-25
+
+### Changed
+
+- **A piece's API answer may be up to 8 MB** (was the page's 512 KB).
+  An API answer is data for a program, not a page for a person: a work
+  store's whole export (taskstore's is 2.7 MB gzipped) has to fit. Pages keep
+  512 KB.
+
 ## [0.14.0] - 2026-10-25
 
 ### Added

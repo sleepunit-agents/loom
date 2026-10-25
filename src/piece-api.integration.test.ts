@@ -43,6 +43,7 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   if (r.path === 'garbage') return console.log('not json');
   if (r.path === 'five-hundred') return console.log(JSON.stringify({ status: 500, body: {} }));
   if (r.path === 'slow') return setTimeout(() => console.log(JSON.stringify({ body: 'slow' })), 1500);
+  if (r.path === 'big') return process.stdout.write(JSON.stringify({ body: 'x'.repeat(r.body.n) }));
   console.log(JSON.stringify({ body: r }));
 });
 `);
@@ -127,6 +128,13 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     expect(big.status).toBe(413);
     const bad = await fetch(`${base}/api/thing/poll`, { method: 'POST', headers: { authorization: `Bearer ${tok.owner}`, 'content-type': 'application/json' }, body: '{nope' });
     expect(bad.status).toBe(400);
+  });
+
+  it('an API answer may be bigger than a page (8 MB), and no bigger', async () => {
+    const two = await call('/api/thing/big', tok.owner, { n: 2 * 1024 * 1024 });
+    expect(two.status).toBe(200);
+    expect(((await two.json()) as string).length).toBe(2 * 1024 * 1024);
+    expect((await call('/api/thing/big', tok.owner, { n: 9 * 1024 * 1024 })).status).toBe(502);
   });
 
   it('passes the piece\'s own status through, and a broken answer is a 502', async () => {
