@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCliCaptured } from './test-helpers.js';
 import { openPeopleStore } from '../backends/people.js';
+import { remember } from '../tools/remember.js';
 
 describe('loom person', () => {
   let dir: string;
@@ -79,5 +80,22 @@ describe('loom person', () => {
 
   it('unknown subcommand exits 2', async () => {
     expect((await runCliCaptured(['person', 'bogus', '--context-dir', dir])).code).toBe(2);
+  });
+  it('evidence prints the memories a card condenses: tagged user and feedback, active, oldest first', async () => {
+    seed();
+    await remember(dir, { category: 'user', title: 'pk tz', content: 'Eastern', metadata: { person: 'patrick-kells' } });
+    await remember(dir, { category: 'feedback', title: 'pk terse', content: 'Concise, please', metadata: { person: 'patrick-kells' } });
+    await remember(dir, { category: 'project', title: 'not evidence', content: 'x', metadata: { person: 'patrick-kells' } });
+    await remember(dir, { category: 'user', title: 'someone else', content: 'y', metadata: { person: 'other' } });
+    const { stdout, code } = await runCliCaptured(['person', 'evidence', 'patrick-kells', '--json', '--context-dir', dir]);
+    expect(code).toBe(0);
+    const rows = JSON.parse(stdout) as { title: string; category: string; content: string }[];
+    expect(rows.map((r) => r.title)).toEqual(['pk tz', 'pk terse']);
+    expect(rows[1]).toMatchObject({ category: 'feedback', content: 'Concise, please' });
+    const later = await runCliCaptured(['person', 'evidence', 'patrick-kells', '--since', '2999-01-01T00:00:00Z', '--json', '--context-dir', dir]);
+    expect(JSON.parse(later.stdout)).toEqual([]);
+    const text = await runCliCaptured(['person', 'evidence', 'patrick-kells', '--context-dir', dir]);
+    expect(text.stdout).toContain('## pk tz\n*user — ');
+    expect((await runCliCaptured(['person', 'evidence', 'patrick-kells', '--since', 'nope', '--context-dir', dir])).code).toBe(2);
   });
 });

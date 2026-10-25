@@ -17,6 +17,8 @@ Subcommands:
   write     Upsert an entity page (create or append/revise body in place)
   recall    Search knowledge pages (LIKE over title+body+domain)
   maintain  Read-only health report (expansion candidates, cold pages, misfile audit, person-page check)
+  list      Every active page's freshness fields (slug, domain, created, verified_at,
+            freshness_anchor, sla_class): what a verification sweep picks from. No bodies
 
 Options (write):
   --slug <slug>              Entity key for upsert (default: derived from title)
@@ -41,7 +43,7 @@ Options (maintain):
 Global: --context-dir, --help/-h
 `;
 
-const SUBCOMMANDS = new Set(['write', 'recall', 'maintain']);
+const SUBCOMMANDS = new Set(['write', 'recall', 'maintain', 'list']);
 
 export async function run(argv: string[], io: IOStreams): Promise<number> {
   const { flags: global, rest } = extractGlobalFlags(argv);
@@ -145,6 +147,31 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     });
     io.stdout(text.endsWith('\n') ? text : text + '\n');
     return text.startsWith('Error') ? 1 : 0;
+  }
+
+  if (sub === 'list') {
+    let parsed;
+    try {
+      parsed = parseArgs({ args: subRest, options: { domain: { type: 'string' } }, strict: true, allowPositionals: false });
+    } catch (err) {
+      io.stderr(`${(err as Error).message}\n${USAGE}`);
+      return 2;
+    }
+    const backend = createKnowledgeBackend(env.contextDir);
+    try {
+      // A listing, not a read: it doesn't count as an access (no hit_count).
+      const pages = (await backend.listPages({ domain: parsed.values.domain, limit: 1_000_000 }))
+        .filter((p) => p.status === 'active')
+        .map((p) => ({
+          slug: p.slug, title: p.title, domain: p.domain, created: p.created,
+          verified_at: p.verified_at ?? null, freshness_anchor: p.freshness_anchor ?? null, sla_class: p.sla_class,
+        }));
+      if (env.json) { renderJson(io, pages); return 0; }
+      io.stdout(pages.map((p) => `${p.slug}\t${p.domain}\t${p.sla_class}\tverified ${p.verified_at ?? 'never'}`).join('\n') + (pages.length ? '\n' : ''));
+      return 0;
+    } finally {
+      backend.close();
+    }
   }
 
   if (sub === 'recall') {

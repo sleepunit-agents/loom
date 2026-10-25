@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-25
+
+### Added
+
+- **`loom person evidence <slug> [--since <iso>]`**: the memories a person
+  card condenses (active, unexpired `user` and `feedback` memories tagged
+  `metadata.person`, oldest first), with `--json`. It runs over the network
+  like the other store verbs, so a synthesis lane no longer has to open the
+  memory database file itself.
+- **`loom knowledge list [--domain d]`**: every active page's freshness
+  fields (slug, title, domain, created, `verified_at`, `freshness_anchor`,
+  `sla_class`), no bodies, with `--json`. A listing, not a read: it doesn't
+  count as an access. What a verification sweep picks from, over the network.
+
 ## [0.14.1] - 2026-10-25
 
 ### Changed

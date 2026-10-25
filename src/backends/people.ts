@@ -120,6 +120,14 @@ export type PersonReadResult =
       synthesized_at: string | null;
     };
 
+/** One memory a person card condenses (PeopleStore.evidence). */
+export interface PersonEvidence {
+  created: string;
+  category: string;
+  title: string;
+  content: string;
+}
+
 export interface PersonListEntry {
   slug: string;
   name: string;
@@ -800,6 +808,22 @@ export class PeopleStore {
     if (!this.migrated) return [];
     return (this.db.prepare('SELECT slug, name, card_json, archived_at, archived_by, archive_reason, updated, synthesized_at FROM people ORDER BY slug').all() as RawRow[])
       .map((r) => ({ slug: r.slug, card: JSON.parse(r.card_json) as PersonCard, updated: r.updated, synthesized_at: r.synthesized_at, archived_at: r.archived_at, archived_by: r.archived_by, archive_reason: r.archive_reason }));
+  }
+
+  /**
+   * The memories a card condenses: active, unexpired `user` and `feedback`
+   * memories tagged metadata.person = slug, oldest first, newer than `since`
+   * when given. What a synthesis re-reads before it rewrites a card's summary.
+   */
+  evidence(slug: string, since: string | null): PersonEvidence[] {
+    if (!hasTable(this.db, 'memories')) return [];
+    const nowIso = new Date(this.now()).toISOString();
+    return this.db.prepare(
+      `SELECT created, category, title, content FROM memories
+       WHERE json_extract(metadata, '$.person') = ? AND category IN ('user', 'feedback') AND archived = 0
+         AND (expires_at IS NULL OR expires_at > ?) AND (? IS NULL OR created > ?)
+       ORDER BY created`,
+    ).all(slug, nowIso, since, since) as PersonEvidence[];
   }
 
   /** This database's `user` memories about a person, newer than `since` (all of them when null). */

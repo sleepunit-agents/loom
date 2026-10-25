@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import {
   PeopleStore, PersonCardError, renderCard,
-  type MutationResult, type PersonCard, type PersonListEntry, type PersonReadResult, type PersonRevisionMeta,
+  type MutationResult, type PersonCard, type PersonEvidence, type PersonListEntry, type PersonReadResult, type PersonRevisionMeta,
   type PersonRow, type PersonWriteInput,
 } from './people.js';
 import { resolveSqliteDbPath } from '../config.js';
@@ -124,6 +124,11 @@ export class HouseholdPeople {
       updated: row.updated,
       synthesized_at: row.synthesized_at,
     };
+  }
+
+  /** The memories are this agent's own, so they're in its relationship store's database. */
+  evidence(slug: string, since: string | null): PersonEvidence[] {
+    return this.relationship.evidence(slug, since);
   }
 
   list(includeArchived = false): PersonListEntry[] {
