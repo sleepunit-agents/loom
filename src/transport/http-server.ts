@@ -399,7 +399,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // "loom" is core's own name; a piece can't take it.
     const path = piece === 'loom' ? null : findPiece(piece, process.env);
     if (!path) return sendError(res, 404, `not-found: no piece named ${piece}`);
-    const out = await pieceApi(path, { caller, path: subpath, body }, process.env);
+    // A caller that hangs up while queued gives its place back.
+    const gone = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) gone.abort(); });
+    const out = await pieceApi(path, { caller, path: subpath, body }, process.env, gone.signal);
+    if (gone.signal.aborted) return;
     res.writeHead(out.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(out.body));
   }
