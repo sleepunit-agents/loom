@@ -15,6 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { runToken } from './cli/household.js';
+import { runCliCaptured } from './cli/test-helpers.js';
 import {
   addAgent, commonsKnowledgePath, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
   moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
@@ -239,7 +240,7 @@ describe('one daemon, several agents', () => {
     let out = '';
     let err = '';
     const io = { stdout: (x: string) => { out += x; }, stderr: (x: string) => { err += x; }, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
-    expect(await runToken(['link', '--url', base], io)).toBe(0);
+    expect(await runToken(['link', '--page-url', base], io)).toBe(0);
     expect(err).toContain('within 10 minutes');
     const url = out.trim();
     expect(url).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
@@ -249,12 +250,16 @@ describe('one daemon, several agents', () => {
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).status).toBe(200);
     // A second link reuses the one token; revoking it ends every session links opened.
     out = '';
-    expect(await runToken(['link', '--minutes', '5', '--url', base], io)).toBe(0);
+    expect(await runToken(['link', '--minutes', '5', '--page-url', base], io)).toBe(0);
     expect(loadTokens(h.home).filter((t) => t.label === 'page sign-in links').length).toBe(1);
     revokeToken(h, 'page sign-in links');
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
     expect((await fetch(out.trim(), { method: 'POST', redirect: 'manual' })).status).toBe(401);
     expect(await runToken(['link', '--minutes', '0'], io)).toBe(2);
+    // Through the whole CLI, as documented: --url is loom's global remote flag, so the link's is --page-url.
+    const cli = await runCliCaptured(['token', 'link', '--page-url', base], { env: { LOOM_HOME: h.home } });
+    expect(cli.code).toBe(0);
+    expect(cli.stdout.trim()).toMatch(new RegExp(`^${base}/login/[0-9a-f]{64}$`));
   });
 
   it('LOOM_BEARER_TOKEN, when set, is an owner token too', async () => {

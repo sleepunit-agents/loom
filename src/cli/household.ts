@@ -32,7 +32,7 @@ const TOKEN_USAGE = `Usage: loom token <command>
                            Mint a token. It's printed once; only its sha256 is kept
   list                     Every token: label, role, created, last used, revoked
   revoke <label>           Revoke the live token with that label (takes effect on the next request)
-  link [--minutes 10] [--url <loom's URL>]
+  link [--minutes 10] [--page-url <loom's page address>]
                            A one-time link that signs a browser in to the page (no token to paste).
                            Its sessions are the owner token "page sign-in links": revoke that to end them
 
@@ -138,8 +138,8 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       let record = loadTokens(h.home).find((t) => t.label === LINK_TOKEN && !t.revoked);
       if (!record) record = createToken(h, { role: { kind: 'owner' }, label: LINK_TOKEN }).record;
       const code = sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), minutes * 60);
-      const base = (flag(rest, '--url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
-      io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --url or set LOOM_PUBLIC_URL.)'}\n`);
+      const base = (flag(rest, '--page-url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
+      io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --page-url or set LOOM_PUBLIC_URL.)'}\n`);
       io.stdout(`${base}/login/${code}\n`);
       return 0;
     }

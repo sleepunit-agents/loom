@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-25
+
+### Fixed
+
+- **`loom token link --page-url <url>`** (was `--url`, which is loom's own
+  global flag for remote mode, so the documented command refused to run).
+
 ## [0.16.0] - 2026-10-25
 
 ### Added
