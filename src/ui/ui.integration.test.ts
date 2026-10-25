@@ -5,6 +5,8 @@ import { join, delimiter } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
+import { sessionStore } from './sessions.js';
+import { createHash } from 'node:crypto';
 import { remember } from '../tools/remember.js';
 import { listProposals, propose } from '../backends/proposals.js';
 import { resolveSqliteDbPath } from '../config.js';
@@ -188,6 +190,40 @@ describe('loom UI over HTTP', () => {
       redirect: 'manual',
     });
   }
+
+  it('a restart signs nobody out: the session and its form token survive a new server', async () => {
+    const cookie = await login();
+    const before = await (await get('/', cookie)).text();
+    const csrf = csrfOf(before);
+    expect(csrf).not.toBe('');
+    await handle.close();
+    handle = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0, token: TOKEN });
+    base = `http://127.0.0.1:${handle.port}`;
+    const after = await get('/', cookie);
+    expect(after.status).toBe(200);
+    expect(csrfOf(await after.text())).toBe(csrf);
+    // And logging out still ends it, after the restart too.
+    expect((await post('/logout', cookie, { _csrf: csrf })).status).toBe(303);
+    expect((await get('/', cookie)).status).toBe(303);
+  });
+
+  it('a one-time link signs in from its button, once; a preview\'s GET doesn\'t spend it', async () => {
+    const code = sessionStore(stack).createLink(createHash('sha256').update(TOKEN).digest(), 600);
+    for (let i = 0; i < 2; i++) {
+      const page = await fetch(`${base}/login/${code}`, { redirect: 'manual' });
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain(`action="/login/${code}"`);
+    }
+    expect((await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { 'sec-fetch-site': 'cross-site' } })).status).toBe(403);
+    const signed = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
+    expect(signed.status).toBe(303);
+    const cookie = (signed.headers.get('set-cookie') ?? '').split(';')[0];
+    expect((await get('/', cookie)).status).toBe(200);
+    expect((await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' })).status).toBe(401);
+    // A link for a token that no longer logs in opens nothing.
+    const dead = sessionStore(stack).createLink(createHash('sha256').update('not-a-token').digest(), 600);
+    expect((await fetch(`${base}/login/${dead}`, { method: 'POST', redirect: 'manual' })).status).toBe(401);
+  });
 
   it('sends a browser without a cookie to the login page', async () => {
     const res = await fetch(`${base}/`, { redirect: 'manual' });

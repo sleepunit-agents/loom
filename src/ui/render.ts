@@ -305,10 +305,21 @@ export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles
   return document(chrome.agent, body, true);
 }
 
+/** A one-time sign-in link's page: a button, so a link preview can't spend it. */
+export function renderLoginLink(code: string, error?: string): string {
+  return document(
+    'loom',
+    error
+      ? `<div class="login"><h1>loom</h1><p class="err">${esc(error)}</p><p class="sub">Ask for a new link (<code>loom token link</code>), or <a href="/login">sign in with a token</a>.</p></div>`
+      : `<form class="login" method="post" action="/login/${esc(code)}"><h1>loom</h1><p class="sub">This link signs this browser in, once. It keeps a cookie for 30 days.</p><button type="submit">Sign in</button></form>`,
+    false,
+  );
+}
+
 export function renderLogin(error?: string): string {
   return document(
     'loom',
-    `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Paste the bearer token once. This browser keeps a cookie (until the daemon restarts, or 30 days).</p>${
+    `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Paste the bearer token once, or open a sign-in link from <code>loom token link</code>. This browser keeps a cookie for 30 days.</p>${
       error ? `<p class="err">${esc(error)}</p>` : ''}<input type="password" name="token" autocomplete="current-password" autofocus aria-label="token"><button type="submit">Open</button></form>`,
     false,
   );

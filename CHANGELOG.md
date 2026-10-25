@@ -12,6 +12,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-25
+
+### Added
+
+- **One-time sign-in links for the page: `loom token link`.** The CLI on
+  loom's machine prints a link that signs a browser in once, within 10
+  minutes (`--minutes`, up to a day), with no token to paste. Opening it shows
+  a button; only the button's POST signs in, so a chat's link preview can't
+  spend it. Its sessions belong to one owner token, "page sign-in links":
+  revoke that and they all end.
+
+### Fixed
+
+- **A restart no longer signs everyone out of the page.** Browser sessions
+  were kept in memory, so every daemon restart (a deploy, a reboot) ended
+  them. They're on disk now (`ui-sessions.json`, 0600, beside
+  household.json, ids kept only as hashes) and shared by every loom-http
+  process on the machine, and the anti-forgery key is persisted too, so a
+  form opened before a restart still posts after it.
+
 ## [0.15.0] - 2026-10-25
 
 ### Added
