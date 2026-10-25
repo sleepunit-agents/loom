@@ -8,7 +8,7 @@
  *   loom restore <file> --identity <key> --drill   restore into a throwaway dir and
  *                                                  compare with the live household
  *
- * Inside (a tar, then age-encrypted): manifest.json, household.json, the token
+ * Inside (a gzipped tar, then age-encrypted): manifest.json, household.json, the token
  * files, the commons, every agent's directory (SQLite through the backup API,
  * never a raw copy of a live file), and each installed piece's own part, which
  * the piece encrypts itself (`loom-<piece> bundle export`): core never sees inside
@@ -20,7 +20,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync,
+  chmodSync, closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, readSync,
   renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -180,9 +180,9 @@ export async function exportBundle(opts: {
       household: { agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, pieces,
     };
     writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
-    // tar, then encrypt; only the encrypted file leaves the temp dir.
-    const plain = join(work, 'household.tar');
-    run(tar, ['-C', stage, '-cf', plain, '.'], 'tar');
+    // tar and gzip, then encrypt; only the encrypted file leaves the temp dir.
+    const plain = join(work, 'household.tar.gz');
+    run(tar, ['-C', stage, '-czf', plain, '.'], 'tar');
     const out = resolve(opts.to);
     const tmpOut = `${out}.${process.pid}.tmp`;
     run(age, ['-e', ...opts.recipients.flatMap((r) => ['-r', r]), '-o', tmpOut, plain], 'age');
@@ -209,7 +209,12 @@ function unpack(fileIn: string, identityIn: string, dir: string, env: NodeJS.Pro
     run(age, ['-d', '-i', identity, '-o', plain, file], 'age (decrypt: is this the right key?)');
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     // Members are ours (we wrote them), but never let one land outside dir.
-    run(tar, ['-C', dir, '--no-same-owner', '-xf', plain], 'tar');
+    // Bundles from 0.12 and 0.13 are a plain tar; later ones are gzipped.
+    const head = Buffer.alloc(2);
+    const fd = openSync(plain, 'r');
+    try { readSync(fd, head, 0, 2, 0); } finally { closeSync(fd); }
+    const gz = head[0] === 0x1f && head[1] === 0x8b;
+    run(tar, ['-C', dir, '--no-same-owner', gz ? '-xzf' : '-xf', plain], 'tar');
     const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf-8')) as Manifest;
     if (m.v !== 1) throw new BundleError(`this bundle is format v${String(m.v)}; this loom reads v1`);
     rmSync(join(dir, 'manifest.json'));
