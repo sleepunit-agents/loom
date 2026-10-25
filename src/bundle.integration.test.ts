@@ -123,6 +123,20 @@ esac
     expect(existsSync(join(to, 'commons', 'knowledge.db'))).toBe(true);
   });
 
+  it('a bundle from before compression (a plain tar) still restores', async () => {
+    const file = join(work, 'new.bundle');
+    await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
+    // Rebuild it the way 0.12 and 0.13 wrote bundles: the same tar, uncompressed.
+    const gz = join(work, 'b.tar.gz');
+    expect(spawnSync(AGE, ['-d', '-i', owner.identity, '-o', gz, file]).status).toBe(0);
+    expect(spawnSync('gzip', ['-d', gz]).status).toBe(0);
+    const old = join(work, 'old.bundle');
+    expect(spawnSync(AGE, ['-e', '-r', owner.recipient, '-o', old, join(work, 'b.tar')]).status).toBe(0);
+    const to = join(work, 'restored');
+    await restoreBundle({ file: old, identity: owner.identity, home: to, env });
+    expect(await recall(join(to, 'agents', 'art'), { query: 'zebra kiln' })).toContain('zebra kiln secret');
+  });
+
   it('refuses a non-empty target, the wrong key, and no recipient', async () => {
     const file = join(work, 'b');
     await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });

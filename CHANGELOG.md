@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Bundles are gzipped** before they're encrypted, which makes a real
+  household about a third of the size (40 MB down to about 13 MB). `loom restore`
+  still reads the uncompressed bundles that 0.12 and 0.13 wrote.
+
 ## [0.13.0] - 2026-10-24
 
 ### Added
