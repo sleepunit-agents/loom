@@ -249,4 +249,20 @@ describe('loom knowledge', () => {
       expect(stdout).toMatch(/Usage: loom knowledge/);
     });
   });
+  describe('list', () => {
+    it('lists every active page with its freshness fields and no bodies', async () => {
+      for (const [title, domain] of [['Alpha', 'music/gear'], ['Beta', 'homelab']]) {
+        const cite = JSON.stringify({ claim: `${title} exists`, source_kind: 'web', source_locator: 'https://example.com', excerpt: title });
+        const w = await runCliCaptured(['knowledge', 'write', '--title', title, '--domain', domain, '--body', `${title} body text`, '--citation', cite, '--context-dir', tempDir]);
+        expect(w.code).toBe(0);
+      }
+      const { stdout, code } = await runCliCaptured(['knowledge', 'list', '--json', '--context-dir', tempDir]);
+      expect(code).toBe(0);
+      const pages = JSON.parse(stdout) as Record<string, unknown>[];
+      expect(pages.map((p) => p.title).sort()).toEqual(['Alpha', 'Beta']);
+      expect(Object.keys(pages[0]).sort()).toEqual(['created', 'domain', 'freshness_anchor', 'sla_class', 'slug', 'title', 'verified_at']);
+      const music = await runCliCaptured(['knowledge', 'list', '--domain', 'music', '--json', '--context-dir', tempDir]);
+      expect((JSON.parse(music.stdout) as { title: string }[]).map((p) => p.title)).toEqual(['Alpha']);
+    });
+  });
 });

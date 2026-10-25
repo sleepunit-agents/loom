@@ -10,7 +10,7 @@
  * exit as "no card".
  */
 import { parseArgs } from 'node:util';
-import { readPerson, listPeople } from '../tools/person.js';
+import { readPerson, listPeople, personEvidence } from '../tools/person.js';
 import { assertStackVersionCompatible } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import { renderJson } from './io.js';
@@ -21,6 +21,9 @@ const USAGE = `Usage: loom person <subcommand> [options]
 Subcommands:
   show <slug>   Print the rendered card (or the person result with --json)
   list          List cards: slug, name, freshness counts, memories since synthesis
+  evidence <slug> [--since <iso>]
+                The memories the card condenses: active, unexpired user and
+                feedback memories tagged to the person, oldest first
 
 Options:
   --include-archived   Show/list archived cards too
@@ -36,7 +39,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     io.stdout(USAGE);
     return sub ? 0 : 2;
   }
-  if (sub !== 'show' && sub !== 'list') {
+  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence') {
     io.stderr(`Unknown person subcommand: ${sub}\n${USAGE}`);
     return 2;
   }
@@ -44,7 +47,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   try {
     parsed = parseArgs({
       args: rest.slice(1),
-      options: { 'include-archived': { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
+      options: { 'include-archived': { type: 'boolean' }, since: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
       allowPositionals: true,
     });
   } catch (err) {
@@ -74,6 +77,18 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
             )
             .join('\n') + '\n',
     );
+    return 0;
+  }
+
+  if (sub === 'evidence') {
+    const slug = parsed.positionals[0];
+    if (!slug || parsed.positionals.length > 1) { io.stderr(`person evidence takes one slug.\n${USAGE}`); return 2; }
+    const since = parsed.values.since ?? null;
+    if (since !== null && Number.isNaN(Date.parse(since))) { io.stderr(`--since takes an ISO time.\n`); return 2; }
+    const rows = personEvidence(env.contextDir, slug, since);
+    if (env.json) { renderJson(io, rows); return 0; }
+    io.stdout(rows.map((r) => `## ${r.title}\n*${r.category} — ${r.created.slice(0, 10)}*\n\n${r.content}\n`).join('\n'));
+    io.stderr(`(${rows.length} memories tagged ${slug})\n`);
     return 0;
   }
 

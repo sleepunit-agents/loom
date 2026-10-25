@@ -20,6 +20,7 @@ import {
   type PersonWriteInput,
   type PersonReadResult,
   type PersonListEntry,
+  type PersonEvidence,
 } from '../backends/people.js';
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
@@ -103,6 +104,17 @@ export function listPeople(contextDir: string, includeArchived = false): PersonL
   if (!store) return [];
   try {
     return store.list(includeArchived);
+  } finally {
+    store.close();
+  }
+}
+
+/** The memories a person's card condenses, oldest first (newer than `since` when given). */
+export function personEvidence(contextDir: string, slug: string, since: string | null = null): PersonEvidence[] {
+  const store = openPeople(contextDir, { readonly: true });
+  if (!store) return [];
+  try {
+    return store.evidence(slug, since);
   } finally {
     store.close();
   }
