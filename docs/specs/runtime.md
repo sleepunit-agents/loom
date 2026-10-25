@@ -1,9 +1,26 @@
 # The runtime piece — boxes and houses
 
-*2026-10-24. Status: **accepted**, with [household.md](household.md). This is
-a **piece**, not core (the test is in household.md, "Where core ends"). It
-lives here until it has its own repo, the same way taskstore's contract
-lives with taskstore.*
+*2026-10-24. Status: **accepted**, with [household.md](household.md); **v1
+built** 2026-10-25 as [loom-box](https://github.com/sleepunit-agents/loom-box)
+(`loom box`), on loom 0.14's piece API. This is a **piece**, not core (the
+test is in household.md, "Where core ends").*
+
+## What v1 is, and where it differs
+
+- **Enrollment starts on the page, not on the box.** The owner adds a box by
+  name ("Add a box", or `loom box add thor`) and gets its credential once; on
+  the box, `loom box join <url> --name thor` takes it on stdin. That's the
+  same yes from a person as the request-and-code flow below, without an
+  unauthenticated endpoint for a box to knock on. The request-and-code flow
+  can come with the approval piece (t-1468).
+- **Houses are task houses:** started for one task, ended when it's done.
+  Long-lived houses (a bridge on an alternate primary) are next.
+- **The box credential** is a core token with the role `piece:box/<name>`,
+  reaching only `POST /api/box/…` (docs/extensions.md, "The API").
+- **Known gap (t-1492):** a house command runs as the box's user, so it can
+  read what that user can. Until each house has its own user, the boundary
+  is the container the house command starts, plus the owner being the only
+  one who sets an agent's house config. The loom-box README spells this out.
 
 ## What it's for
 
