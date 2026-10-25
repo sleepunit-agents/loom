@@ -112,7 +112,7 @@ async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
 }
 
-function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number }): Promise<Answer> {
+function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number }): Promise<Answer> {
   return new Promise((resolve) => {
     // Its own process group, so a timeout takes the piece's children with it.
     const child = spawn(path, args, {
@@ -138,7 +138,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     const timer = setTimeout(() => { killGroup(child.pid); finish({ ok: false, reason: 'timed out' }); }, opts.timeoutMs ?? PIECE_TIMEOUT_MS);
     child.stdout?.on('data', (d: Buffer) => {
       bytes += d.length;
-      if (bytes > PIECE_MAX_BYTES) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
+      if (bytes > (opts.maxBytes ?? PIECE_MAX_BYTES)) { killGroup(child.pid); finish({ ok: false, reason: 'answer too large' }); return; }
       out += d.toString('utf-8');
     });
     child.on('error', (e) => finish({ ok: false, reason: e.message }));
@@ -231,6 +231,11 @@ export async function pieceAct(
 
 /** A piece's API answer is its own JSON; these bound how long one call may take. */
 export const API_TIMEOUT_MS = 15_000;
+/**
+ * An API answer is data for a program, not a page for a person, so it may be
+ * bigger than a page's 512 KB: a work store's whole export, a state's part.
+ */
+export const API_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Who is calling a piece's API, as core resolved the bearer. */
 export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string } | { kind: 'piece'; subject: string };
@@ -247,7 +252,7 @@ export async function pieceApi(
   env: NodeJS.ProcessEnv,
   gone?: AbortSignal,
 ): Promise<{ status: number; body: unknown }> {
-  const r = await apiPool.run(() => run(path, ['api', '--json'], env, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS }), gone);
+  const r = await apiPool.run(() => run(path, ['api', '--json'], env, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES }), gone);
   if (r === null) return { status: 503, body: { error: 'busy: too many piece API calls at once; try again shortly' } };
   if (!r.ok) return { status: 502, body: { error: `the piece didn't answer (${r.reason})` } };
   const parsed = json(r.stdout) as { status?: unknown; body?: unknown } | undefined;

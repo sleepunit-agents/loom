@@ -254,7 +254,7 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   always sends one, and the route grants no CORS), within the daemon's body
   cap. The piece's own status passes through; an answer that isn't
   `{status?, body}`, or a status outside 200-499, is a 502.
-- Bounded: 15 seconds and 512 KB per answer, at most four API calls running
+- Bounded: 15 seconds and 8 MB per answer (an API answer is data for a program, so it may be bigger than a page), at most four API calls running
   and eight waiting (past that, a 503), in a pool of its own, so a flood from
   a box can never starve the page's pieces. A caller that hangs up while
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
