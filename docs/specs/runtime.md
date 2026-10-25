@@ -17,10 +17,33 @@ test is in household.md, "Where core ends").*
   Long-lived houses (a bridge on an alternate primary) are next.
 - **The box credential** is a core token with the role `piece:box/<name>`,
   reaching only `POST /api/box/…` (docs/extensions.md, "The API").
-- **Known gap (t-1492):** a house command runs as the box's user, so it can
-  read what that user can. Until each house has its own user, the boundary
-  is the container the house command starts, plus the owner being the only
-  one who sets an agent's house config. The loom-box README spells this out.
+- **Known gap (t-1492), being closed:** in v1 a house command runs as the
+  box's user, so it can read what that user can. Decided below: a box only
+  ever runs containers.
+
+## Decided 2026-10-25
+
+**A box only ever runs containers.** An agent's repo describes its house:
+the image (a Containerfile in the repo), the command, which of its secrets go
+where (a file or an env var), static env, and where the box's per-house dirs
+mount. The box builds and runs it with podman itself, so no agent code runs
+on a box outside a container. The control plane still decides which secrets
+an agent's houses get; the repo only says where each one lands. Nested
+containers (the capabilities Art's tank needs) are the owner's to allow, per
+agent. Running each agent as its own Linux user stays the fallback for an
+agent that truly needs the host, which needs root on the box once.
+
+**Long-lived houses move by hand-off, then by lease.** A bridge runs in exactly
+one place, or two copies answer every message. For now, moving one (a
+per-bridge primary) is a hand-off: the runtime stops it on the old box, waits
+until that box confirms it's down, then starts it on the new one, with a short
+gap and no bridge. Later, a renewable lease from loom that a bridge must hold
+to process messages, so a box that dies loses it and another can take over.
+A bridge's read position and history live with loom, so a move doesn't lose
+its place. Each bridge can have its own primary.
+
+**The wake clock follows the primary.** The clock stays on loom's machine; a
+wake runs as a house on the agent's primary.
 
 ## What it's for
 
@@ -126,7 +149,7 @@ and the runtime runs it on a box with a house token and the secrets it needs.
 ## Open questions
 
 - **Several houses of one agent:** which one runs which bridge is shuttle's
-  setting (above). What about the wake clock?
+  setting (above); the wake clock follows the primary (decided above).
 - **The repo on a box:** one checkout per house, or one per box shared by its
   houses?
 - **The piece's name and repo.**
