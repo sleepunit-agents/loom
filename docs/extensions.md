@@ -141,8 +141,9 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
   household.
 - **`asks`** are things only the owner can decide. They're listed under
   "Your call" on Home (at most 10 a piece). Optional on each: `tone` (tints
-  its card), `at` (an ISO date-time, shown as its age) and `agent` (an agent's
-  id, whose mark it carries). An ask is a decision, not news:
+  its card), `at` (an ISO date-time, shown as its age), `agent` (an agent's
+  id, whose mark it carries) and `actions` (up to two `buttons` items, drawn on
+  its card in place of the link: Ratify and Reject, Renew and Later). An ask is a decision, not news:
   what happened belongs on the tape.
 - An answer with only `"sections"` (the first version of this contract) is
   still accepted. Its sections become the piece's page, under a tab named

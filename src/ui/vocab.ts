@@ -65,7 +65,7 @@ export interface Page {
 
 export interface Tile { label: string; value: string; detail?: string; tone?: Tone; page?: string }
 /** A decision only the owner can make. `tone` tints its card; `at` (ISO time) gives its age; `agent` puts that agent's mark on it. */
-export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string }
+export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; /** Up to two buttons on its card (Ratify and Reject): posted to the piece, like a buttons block's. */ actions?: Button[] }
 
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
@@ -459,6 +459,7 @@ export function parseManifest(value: unknown): Manifest | string {
         return {
           text: str(a.text, 'ask.text'), meta: optStr(a.meta, 'ask.meta'), page: page(a.page, 'ask.page'), label: optStr(a.label, 'ask.label'),
           tone: tone(a.tone), at: when(a.at, 'ask.at'), agent: agentId(a.agent, 'ask.agent'),
+          ...(a.actions !== undefined ? { actions: arr(a.actions, 'ask.actions', 2).map(button) } : {}),
         };
       });
     }

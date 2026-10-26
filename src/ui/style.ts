@@ -275,6 +275,7 @@ main.dash{gap:24px}
 .ask[class*=tone-]{border-color:color-mix(in srgb,var(--tone) 45%,var(--line))}
 .ask .go{margin-top:6px;height:48px;padding:0 20px}
 .ask .text{font-size:18px;font-weight:600;letter-spacing:-.01em;line-height:1.3;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.ask-acts{display:flex;gap:8px;margin-top:6px}.ask-acts .button-form{flex:1;display:flex;margin:0}.ask-acts .btn{flex:1;height:48px}.ask-acts .btn.quiet{background:var(--raised);color:var(--ink);border:0}.ask .text a{color:inherit}
 .more-asks{margin-top:10px}.more-asks>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:center;min-height:44px;border-radius:var(--r-button);border:1px solid var(--line);color:var(--ink-2);font-weight:600}.more-asks>summary::-webkit-details-marker{display:none}.more-asks[open]>summary{margin-bottom:10px}
 .dash-cols{display:flex;flex-direction:column;gap:24px}.dash-main,.dash-side{display:flex;flex-direction:column;gap:24px;min-width:0}
 .dash-side .glance{display:none}

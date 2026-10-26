@@ -600,13 +600,16 @@ function buttonInner(i: Button, cls: string): string {
     i.tone === 'danger' ? ` data-confirm="${esc(i.confirm ?? 'This can\'t be undone from here.')}"` : ''}>${esc(i.label)}</button>`;
 }
 
-function askCard(a: HomeAsk, agents: RenderContext['agents'], nowMs: number): string {
-  const who = a.agent ? agents?.[a.agent] : undefined;
+function askCard(a: HomeAsk, ctx: RenderContext, nowMs: number): string {
+  const who = a.agent ? ctx.agents?.[a.agent] : undefined;
   const src = `${who ? mark(who, 20) : glyph(a.tone)}<span>${esc(a.sourceLabel ?? a.source.id)}</span>`;
-  const go = a.page !== undefined ? `<a class="go" href="${esc(pageHref(a.page, a.source))}">${esc(a.label ?? 'Open')}</a>` : '';
+  // The board's card: its own buttons (Ratify and Reject) when it has them, posted to its source; else a way to it.
+  const go = a.actions?.length
+    ? `<div class="ask-acts">${a.actions.map((b) => actionForm({ ...ctx, source: a.source, path: '', query: {} }, b.action, buttonInner(b, `btn${b.tone ? '' : ' quiet'}`), 'button-form')).join('')}</div>`
+    : a.page !== undefined ? `<a class="go" href="${esc(pageHref(a.page, a.source))}">${esc(a.label ?? 'Open')}</a>` : '';
   // Its id is the push key: a notification's tap opens Home at #ask-<key>.
   return `<li class="ask${a.tone && a.tone !== 'ok' && a.tone !== 'muted' ? tone(a.tone) : ''}" id="ask-${askKey(a)}" tabindex="-1"><span class="src"><span class="who">${src}</span>${a.at ? `<span class="mono">${esc(age(a.at, nowMs))}</span>` : ''}</span>` +
-    `<span class="text">${esc(a.text)}</span>${a.meta ? `<span class="sentence">${esc(a.meta)}</span>` : ''}${go}</li>`;
+    `<span class="text">${a.actions?.length && a.page !== undefined ? `<a href="${esc(pageHref(a.page, a.source))}">${esc(a.text)}</a>` : esc(a.text)}</span>${a.meta ? `<span class="sentence">${esc(a.meta)}</span>` : ''}${go}</li>`;
 }
 
 export type AgentHead = NonNullable<Dashboard['agent']>;
@@ -629,7 +632,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
         `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
           actionForm({ ...ctx, source: CORE, path: '', query: {} }, 'piece-install', `${hiddenInputs({ name: s.name })}<button class="btn small" type="submit">Install</button>`, 'button-form')}</div>`).join('')}</div></section>` : '';
   // The first three, as the boards show them; the rest a tap away, so Home stays a glance.
-  const cards = d.asks.map((a) => askCard(a, ctx.agents, nowMs));
+  const cards = d.asks.map((a) => askCard(a, ctx, nowMs));
   const rest = cards.length > CARDS_SHOWN + 1 ? cards.splice(CARDS_SHOWN) : [];
   const yours = need
     ? `<section class="your-call" id="your-call"><h2 class="label">Your call <span class="n">${need}</span></h2><ul class="ask-list">${cards.join('')}</ul>${

@@ -28,6 +28,7 @@ import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
 import { personArchive, personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
 import { remember } from './tools/remember.js';
 import { closeAllBackends } from './backends/index.js';
+import { listProposals, propose } from './backends/proposals.js';
 import { harnessInit } from './tools/harness.js';
 
 function textOf(result: unknown): string {
@@ -810,6 +811,22 @@ describe('the household page', () => {
     const r = await page(cookie, '/mind?category=user');
     expect(r.status).toBe(302);
     expect(r.headers.get('location')).toBe('/a/art/mind?category=user');
+  });
+
+  it('one memory waiting: the Home card quotes it, with Ratify and Reject that act on that agent', async () => {
+    const art = join(h.home, 'agents', 'art');
+    propose(art, { category: 'user', title: 'Jonathan builds DnB on the Push 3 first', content: 'c', source: 'test' });
+    const cookie = await login();
+    const home = await (await page(cookie, '/')).text();
+    expect(home).toContain('Art E Fish wants to remember something');
+    expect(home).toContain('“Jonathan builds DnB on the Push 3 first”');
+    const card = /<div class="ask-acts">[\s\S]*?<\/div>/.exec(home)![0];
+    expect(card).toContain('action="/a/art/act/loom"');
+    expect(card).toMatch(/value="ratify">[\s\S]*?>Ratify<\/button>[\s\S]*?value="reject">[\s\S]*?>Reject<\/button>/);
+    const id = /name="id" value="(\d+)"/.exec(card)![1];
+    const r = await post(cookie, '/a/art/act/loom', { _csrf: csrfOf(home), _action: 'ratify', _path: '', id });
+    expect(r.status).toBe(303);
+    expect(listProposals(art).filter((p) => p.status === 'pending')).toHaveLength(0);
   });
 
   it('Passkeys makes a one-time sign-in link for another device, good once', async () => {
