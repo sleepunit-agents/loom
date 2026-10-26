@@ -315,6 +315,13 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string }> {
   }));
 }
 
+/** Each agent's name and mark, for drawing marks on rows that name an agent. */
+function agentsOf(h: Household | undefined): Record<string, { label: string; bg: string; fg: string }> | undefined {
+  if (!h) return undefined;
+  const marks = agentMarks(h);
+  return Object.fromEntries(h.agents.map((a) => [a, { label: agentName(agentDir(h, a)), ...marks[a] }]));
+}
+
 const SCOPE_COOKIE = 'loom_scope';
 
 /** The scope the owner chose (a cookie), if it still names an agent in the household. */
@@ -503,6 +510,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const who = whoIs(req, opts);
+  // The agent the owner is looking at (an agent's own pages, else the chosen scope); pieces get it as LOOM_SCOPE.
+  const hhScope = opts.household?.();
+  const scope = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/|$)/.exec(pathname)?.[1] ?? scopeOf(req, hhScope);
+  const scopedEnv: NodeJS.ProcessEnv = hhScope && scope !== 'household' && hhScope.agents.includes(scope) ? { ...opts.env, LOOM_SCOPE: scope } : opts.env;
   const csrf = who?.kind === 'session' ? csrfFor(who.cookie, storeFor(opts).key) : '';
 
   if (pathname === '/logout') {
@@ -612,12 +623,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = CORE;
       result = await coreAct(opts.contextDir, action, fields);
     } else {
-      const { pieces } = await pieceManifests(opts.env);
+      const { pieces } = await pieceManifests(scopedEnv);
       const info = pieces.find((p) => p.piece === sourceId);
       if (!info) return send(res, 404, 'text/plain', 'not found');
       source = pieceSource(info.piece);
       const path = splitPage(backLink)?.path ?? '';
-      result = await pieceAct(info, { action, path, fields }, opts.env);
+      result = await pieceAct(info, { action, path, fields }, scopedEnv);
     }
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
@@ -628,7 +639,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
   if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
   if (pathname === '/pieces.json') {
-    const m = await pieceManifests(opts.env);
+    const m = await pieceManifests(scopedEnv);
     return send(res, 200, 'application/json', JSON.stringify({
       agent: agentName(opts.contextDir),
       pieces: m.pieces.map((p) => ({ piece: p.piece, manifest: p.manifest })),
@@ -637,7 +648,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   const query = pageQuery(url);
   const flash = takeFlash(url.searchParams.get('_flash'));
-  const { pieces, skipped } = await pieceManifests(opts.env);
+  const { pieces, skipped } = await pieceManifests(scopedEnv);
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
 
@@ -754,12 +765,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
     if (!info || path === null || !validPath(path)) return html(renderPage(notFound, { source: pieceSource(piece), path: '', query: {}, csrf }, ch), 404);
-    const page = await piecePage(info, path, query, opts.env);
-    const ctx = { source: pieceSource(piece), path, query, csrf };
+    const page = await piecePage(info, path, query, scopedEnv);
+    const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
       return html(renderPage({ title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${piece} couldn't show this page (${page}).` }] }] }, ctx, ch), 502);
     }
-    return html(renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+    // A piece that can't narrow to the selected agent says so, once, at the top.
+    const unscoped = scopedEnv.LOOM_SCOPE && !info.manifest.scope ? agentName(agentDir(hhScope!, scopedEnv.LOOM_SCOPE)) : undefined;
+    return html(renderPage(page, ctx, ch, unscoped), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
   }
 
   if (pathname === '/pieces') {

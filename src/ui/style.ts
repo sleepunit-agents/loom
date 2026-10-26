@@ -207,4 +207,6 @@ form.small button{background:transparent}
 .place-rows{margin-top:10px;padding:0 16px}
 main.sheet-page{max-width:560px}.sheet-page h1{margin-bottom:8px}
 .find-form input{width:100%;height:52px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r-button);background:var(--surface);color:var(--ink);font:inherit;font-size:16px}
+.unscoped{display:flex;align-items:center;gap:12px;margin:0;padding:12px 14px;border-radius:var(--r-card);background:var(--raised);color:var(--ink);font-size:14px;line-height:1.4}
+.list li>.mark{align-self:flex-start;margin-top:2px}
 `;

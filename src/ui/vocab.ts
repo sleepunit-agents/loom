@@ -29,7 +29,7 @@ export interface Field {
 
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
-  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone } & Target> }
+  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][] }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -60,9 +60,12 @@ export interface Page {
 }
 
 export interface Tile { label: string; value: string; detail?: string; tone?: Tone; page?: string }
-export interface Ask { text: string; meta?: string; page?: string; label?: string }
+/** A decision only the owner can make. `tone` tints its card; `at` (ISO time) gives its age; `agent` puts that agent's mark on it. */
+export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string }
 
 export interface Manifest {
+  /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
+  scope?: boolean;
   tab?: { label: string };
   tile?: Tile;
   asks: Ask[];
@@ -115,6 +118,20 @@ function str(v: unknown, what: string): string {
 
 function optStr(v: unknown, what: string): string | undefined {
   return v === undefined || v === null ? undefined : str(v, what);
+}
+
+/** An agent's id (household.json's names): lowercase, starts with a letter. */
+function agentId(v: unknown, what: string): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(v)) throw new Invalid(`${what} must be an agent's id`);
+  return v;
+}
+
+/** A moment, as an ISO 8601 date-time. */
+function when(v: unknown, what: string): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || v.length > 40 || !/^\d{4}-\d\d-\d\dT/.test(v) || Number.isNaN(Date.parse(v))) throw new Invalid(`${what} must be an ISO date-time`);
+  return v;
 }
 
 function bool(v: unknown): boolean | undefined {
@@ -249,7 +266,7 @@ function block(v: unknown, depth = 0): Block {
           const o = obj(i, 'list item');
           return {
             text: str(o.text, 'list.text'), meta: optStr(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
-            tone: tone(o.tone), ...target(o, 'list item'),
+            tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...target(o, 'list item'),
           };
         }),
       };
@@ -390,6 +407,10 @@ export function parseManifest(value: unknown): Manifest | string {
     }
     if (top.v !== 2) throw new Invalid('v must be 2');
     const m: Manifest = { asks: [] };
+    if (top.scope !== undefined) {
+      if (typeof top.scope !== 'boolean') throw new Invalid('scope must be true or false');
+      if (top.scope) m.scope = true;
+    }
     if (top.tab !== undefined) m.tab = { label: str(obj(top.tab, 'tab').label, 'tab.label') };
     if (top.tile !== undefined) {
       const t = obj(top.tile, 'tile');
@@ -401,7 +422,10 @@ export function parseManifest(value: unknown): Manifest | string {
     if (top.asks !== undefined) {
       m.asks = arr(top.asks, 'asks', LIMITS.asks).map((x) => {
         const a = obj(x, 'ask');
-        return { text: str(a.text, 'ask.text'), meta: optStr(a.meta, 'ask.meta'), page: page(a.page, 'ask.page'), label: optStr(a.label, 'ask.label') };
+        return {
+          text: str(a.text, 'ask.text'), meta: optStr(a.meta, 'ask.meta'), page: page(a.page, 'ask.page'), label: optStr(a.label, 'ask.label'),
+          tone: tone(a.tone), at: when(a.at, 'ask.at'), agent: agentId(a.agent, 'ask.agent'),
+        };
       });
     }
     return m;
