@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import {
-  addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, parseRole, revokeToken,
+  addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, revokeToken, setMark,
   type Household,
 } from '../household.js';
 import { commonsPeoplePath } from '../backends/people-household.js';
@@ -461,20 +461,35 @@ function firstWritten(db: string): string | undefined {
 
 // ─── Adding an agent ─────────────────────────────────────────────────────────
 
-export function newAgentPage(): Page {
+/** How a new agent talks, as the board offers it: a word, and the line its creed gets. */
+const VOICES: Record<string, string> = {
+  dry: 'Dry: few words, deadpan, says the useful thing and stops.',
+  warm: 'Warm: friendly and encouraging, explains a little more than it has to.',
+  terse: 'Terse: the shortest answer that\'s right. No preamble.',
+};
+
+export function newAgentPage(h?: Household): Page {
+  const next = h ? h.agents.length % MARKS.length : 0;
   return {
-    title: 'Add an agent',
-    intro: 'A new stack in this household: its own identity, memory and relationships, sharing the commons. You get its first token on the next page.',
+    title: 'New agent',
     sections: [{ id: 'form', blocks: [{
-      type: 'form', action: 'add-agent', submit: 'Create the agent',
+      type: 'form', action: 'add-agent', submit: 'Create agent',
+      note: 'Its own identity, memory and relationships, sharing the household\'s knowledge and people. Its first token is shown once, next.',
       fields: [
-        { name: 'agent', label: 'Short name', kind: 'text', hint: 'Lowercase letters, digits and dashes, e.g. "mark". It names the directory and the token role.', required: true },
-        { name: 'name', label: 'Name', kind: 'text', hint: 'What it\'s called, e.g. "Visual Mark".', required: true },
+        { name: 'name', label: 'Name', kind: 'text', hint: 'What it\'s called, e.g. "Gabe".', required: true },
+        { name: 'mark', label: 'Color', kind: 'choice', value: String(next), options: MARKS.map((m, i) => ({ value: String(i), label: m.name, swatch: m.bg })) },
         { name: 'purpose', label: 'What it\'s for', kind: 'textarea', required: true },
-        { name: 'voice', label: 'How it talks', kind: 'textarea', hint: 'A line or two. It can change this itself later.', required: true },
+        { name: 'voice', label: 'Voice', kind: 'choice', value: 'dry', required: true, options: [{ value: 'dry', label: 'Dry' }, { value: 'warm', label: 'Warm' }, { value: 'terse', label: 'Terse' }] },
+        { name: 'voice_more', label: 'More about how it talks', kind: 'textarea', hint: 'Optional. It can change this itself later.' },
+        { name: 'agent', label: 'Short name', kind: 'text', hint: 'Optional: from its name. Lowercase letters, digits and dashes; it names the directory and the token role.' },
       ],
     }] }],
   };
+}
+
+/** An agent's short name from what it's called: "Visual Mark" → "visual-mark". */
+export function slugOf(name: string): string {
+  return name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace(/^[^a-z]+/, '').slice(0, 40);
 }
 
 /** The owner's household actions: tokens and agents. */
@@ -499,15 +514,19 @@ export async function householdAct(h: Household, action: string, fields: Record<
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'add-agent') {
-      const agent = (fields.agent ?? '').trim();
+      const agent = (fields.agent ?? '').trim() || slugOf(fields.name ?? '');
       if (!AGENT_NAME.test(agent)) return { ok: false, message: 'The short name must be lowercase letters, digits and dashes, starting with a letter.' };
       if (h.agents.includes(agent)) return { ok: false, message: `${agent} is already in the household.` };
-      if (!fields.name?.trim() || !fields.purpose?.trim() || !fields.voice?.trim()) return { ok: false, message: 'A name, what it\'s for, and how it talks are all needed.' };
+      // The board's voice is a word (Dry, Warm, Terse); an older form posts the line itself.
+      const voice = [VOICES[fields.voice ?? ''] ?? fields.voice?.trim(), fields.voice_more?.trim()].filter(Boolean).join('\n\n');
+      if (!fields.name?.trim() || !fields.purpose?.trim() || !voice) return { ok: false, message: 'A name, what it\'s for, and how it talks are all needed.' };
+      const mark = MARKS[Number(fields.mark)];
       const dir = agentDir(h, agent);
       if (existsSync(dir)) return { ok: false, message: `agents/${agent} already exists on disk; add it with loom household add.` };
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      await bootstrap(dir, { name: fields.name.trim(), purpose: fields.purpose.trim(), voice: fields.voice.trim(), user: h.owner });
+      await bootstrap(dir, { name: fields.name.trim(), purpose: fields.purpose.trim(), voice, user: h.owner });
       const next = addAgent(h, agent);
+      if (mark && /^\d$/.test(fields.mark ?? '')) setMark(next, agent, mark);
       const { token } = createToken(next, { role: { kind: 'agent', agent }, label: `${fields.name.trim()} · first token` });
       return { ok: true, message: `${fields.name.trim()} is in the household. Its first token, shown this once: ${token}`, page: `loom:a/${agent}/setup`, keep: true };
     }

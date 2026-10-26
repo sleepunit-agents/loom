@@ -377,8 +377,32 @@ export function addAgent(h: Household, agent: string): Household {
     const current = loadHousehold(h.home) ?? h;
     if (current.agents.includes(agent)) return current;
     const next = { ...current, agents: [...current.agents, agent] };
-    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ v: 1, agents: next.agents, default: next.default, ...(next.owner ? { owner: next.owner } : {}) }, null, 2) + '\n');
+    // Keys this function doesn't own (marks, relay, …) stay as they were.
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...rawHousehold(h.home), v: 1, agents: next.agents, default: next.default, ...(next.owner ? { owner: next.owner } : {}) }, null, 2) + '\n');
     return next;
+  });
+}
+
+/** Agent marks: the palette an agent's mark takes its colors from, in order, unless household.json's `marks` says otherwise. */
+export const MARKS: ReadonlyArray<{ bg: string; fg: string; name: string }> = [
+  { bg: '#B8A6FF', fg: '#1D1240', name: 'Lilac' }, { bg: '#7A2E4F', fg: '#FFE3EE', name: 'Plum' }, { bg: '#2F6B5A', fg: '#E2F5EE', name: 'Pine' },
+  { bg: '#E3B341', fg: '#2B1D00', name: 'Mustard' }, { bg: '#3D5A99', fg: '#E6ECFF', name: 'Denim' }, { bg: '#F09A7A', fg: '#3A140A', name: 'Coral' },
+];
+
+function rawHousehold(home: string): Record<string, unknown> {
+  try {
+    const raw = JSON.parse(readFileSync(join(home, HOUSEHOLD_FILE), 'utf-8')) as unknown;
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+  } catch { return {}; }
+}
+
+/** Set an agent's mark colors in household.json's `marks`. */
+export function setMark(h: Household, agent: string, mark: { bg: string; fg: string }): void {
+  if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
+  withLock(h.home, () => {
+    const raw = rawHousehold(h.home);
+    const marks = raw.marks && typeof raw.marks === 'object' && !Array.isArray(raw.marks) ? raw.marks as Record<string, unknown> : {};
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, marks: { ...marks, [agent]: { bg: mark.bg, fg: mark.fg } } }, null, 2) + '\n');
   });
 }
 

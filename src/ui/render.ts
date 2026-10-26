@@ -109,6 +109,11 @@ function renderField(f: Field): string {
     case 'textarea':
       return `<div class="field"><label for="${id}">${esc(f.label)}</label><textarea id="${id}" name="${esc(f.name)}" rows="4"${req}${desc}>${esc(f.value ?? '')}</textarea>${hint}</div>`;
     case 'choice':
+      // Every option a color: a row of swatches, the label read aloud.
+      if ((f.options ?? []).length && (f.options ?? []).every((o) => o.swatch)) {
+        return `<fieldset class="field"><legend>${esc(f.label)}</legend><div class="swatches">${(f.options ?? []).map((o, i) =>
+          `<label title="${esc(o.label)}"><input type="radio" name="${esc(f.name)}" value="${esc(o.value)}"${f.value === o.value || (!f.value && i === 0) ? ' checked' : ''}><span class="swatch" style="background:${esc(o.swatch!)}"></span><span class="vh">${esc(o.label)}</span></label>`).join('')}</div>${hint}</fieldset>`;
+      }
       // Four options or fewer, none with a detail line: a segmented control.
       if ((f.options ?? []).length <= 4 && !(f.options ?? []).some((o) => o.detail)) {
         return `<fieldset class="field"><legend>${esc(f.label)}</legend><div class="segmented">${(f.options ?? []).map((o, i) =>
@@ -660,15 +665,20 @@ export function renderLoginLink(code: string, error?: string): string {
   );
 }
 
+const PASSKEY_ICON = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="7" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M2.5 17c.6-3 2.8-4.6 5.5-4.6 1.2 0 2.3.3 3.2.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="15" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15 12v5l1.2-1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** Sign in, per its board: loom's mark in the middle; at the bottom a passkey (where they work), "or", a token and Go. */
 export function renderLogin(error?: string, passkey: { rp?: string; here: boolean } = { here: false }): string {
   // A passkey button only where passkeys work (LOOM_PUBLIC_URL's origin); the script is loom's one (/login/passkey.js).
   const pk = passkey.here
-    ? `<button type="button" id="passkey-signin">Sign in with a passkey</button><p class="sub" id="passkey-msg"></p><p class="sub">or paste the token:</p>`
+    ? `<button type="button" id="passkey-signin" class="pk">${PASSKEY_ICON}<span>Sign in with passkey</span></button><p class="sub" id="passkey-msg" role="status"></p><div class="or" aria-hidden="true"><span>or</span></div>`
     : passkey.rp ? `<p class="sub">Passkeys work at <a href="${esc(passkey.rp)}/login">${esc(passkey.rp)}</a>.</p>` : '';
   return document(
     'loom',
-    `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Sign in with a passkey, paste the bearer token once, or open a sign-in link from <code>loom token link</code>. This browser keeps a cookie for 30 days.</p>${
-      error ? `<p class="err">${esc(error)}</p>` : ''}${pk}<input type="password" name="token" autocomplete="current-password" ${passkey.here ? '' : 'autofocus '}aria-label="token"><button type="submit"${passkey.here ? ' class="secondary"' : ''}>Open</button></form>${
+    `<div class="signin"><div class="signin-mark">${LOGO.replace('width="20" height="20"', 'width="64" height="64"')}<span>loom</span></div>` +
+    `<form class="signin-bottom" method="post" action="/login">${error ? `<p class="err">${esc(error)}</p>` : ''}${pk}` +
+    `<div class="token-row"><input type="password" name="token" placeholder="Token" autocomplete="current-password" ${passkey.here ? '' : 'autofocus '}aria-label="token"><button type="submit">Go</button></div>` +
+    `<p class="sub hint">Or open a sign-in link (<code>loom token link</code>). This browser stays signed in for 30 days.</p></form></div>${
       passkey.here ? '<script src="/login/passkey.js" defer></script>' : ''}`,
     false,
   );
@@ -680,17 +690,20 @@ export function renderLogin(error?: string, passkey: { rp?: string; here: boolea
  */
 export function renderPasskeys(page: Page, ctx: RenderContext, chrome: Chrome, add: { csrf: string } | { note: string }): string {
   const control = 'csrf' in add
-    ? `<section class="card"><h2>Add a passkey</h2><form class="login" style="margin:0;padding:0;max-width:420px" action="/passkeys" method="get"><p class="sub">Name it so you'll know it later, like "Jonathan's phone".</p><input id="passkey-label" maxlength="60" placeholder="Name" aria-label="name"><button type="button" id="passkey-add" data-csrf="${esc(add.csrf)}">Add a passkey</button><p class="sub" id="passkey-msg"></p></form></section>`
-    : `<section class="card"><h2>Add a passkey</h2><p class="sub">${esc(add.note)}</p></section>`;
+    ? `<form class="passkey-add" action="/passkeys" method="get"><input id="passkey-label" maxlength="60" placeholder="Name it, like Jonathan's phone" aria-label="name"><button type="button" id="passkey-add" data-csrf="${esc(add.csrf)}">Add a passkey</button><p class="sub" id="passkey-msg"></p></form>`
+    : `<p class="sub passkey-note">${esc(add.note)}</p>`;
   // Push for Your call: shown by /app.js only where the browser can (https, a service worker, PushManager).
   const notify = `<section class="card"><h2>Notifications</h2><p class="sub">Your call, on this device: a notification when something new needs you, and a tap opens it on Home.</p>` +
     `<p class="sub" data-push-status>Needs loom over https; on an iPhone, loom added to the Home Screen first.</p><button class="btn" type="button" data-push data-csrf="${esc(ctx.csrf)}" hidden>Turn on for this device</button></section>`;
-  return renderPage(page, ctx, chrome)
+  const html = renderPage(page, ctx, chrome);
+  const at = /<section[^>]*id="s-loom--another"/.test(html) ? /(<section[^>]*id="s-loom--another")/ : /(<\/main>)/;
+  return html
     // No minute refresh here: it would cut off a passkey being made.
     .replace('<noscript><meta http-equiv="refresh" content="60"></noscript>', '')
     .replace(` data-live="${LIVE_S}"`, '')
     .replace('<span data-live-status>Refreshes every minute.</span>', '')
-    // The control goes first, under the title: on a phone it's what the page is for.
-    .replace(/(<main>[\s\S]*?<h1>[\s\S]*?<\/div>)/, `$1${control}${notify}`)
+    // Adding one goes right under your passkeys, as the board has it; notifications last.
+    .replace(at, `${control}$1`)
+    .replace(/<\/main>/, `${notify}</main>`)
     .replace('</body>', `${'csrf' in add ? '<script src="/login/passkey.js" defer></script>' : ''}</body>`);
 }

@@ -24,7 +24,7 @@ export interface Field {
   hint?: string;
   value?: string;
   required?: boolean;
-  options?: Array<{ value: string; label: string; detail?: string }>;
+  options?: Array<{ value: string; label: string; detail?: string; swatch?: string }>;
 }
 
 /** A button: posts its action (with fields) to the piece; danger asks first, with confirm. */
@@ -269,7 +269,9 @@ function field(v: unknown): Field {
   if (kind === 'choice') {
     f.options = arr(o.options, 'field.options', LIMITS.options).map((x) => {
       const opt = obj(x, 'option');
-      return { value: str(opt.value, 'option.value'), label: str(opt.label, 'option.label'), detail: optStr(opt.detail, 'option.detail') };
+      const swatch = optStr(opt.swatch, 'option.swatch');
+      if (swatch !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(swatch)) throw new Invalid('option.swatch is a color like #B8A6FF');
+      return { value: str(opt.value, 'option.value'), label: str(opt.label, 'option.label'), detail: optStr(opt.detail, 'option.detail'), ...(swatch ? { swatch } : {}) };
     });
   }
   return f;

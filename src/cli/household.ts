@@ -9,7 +9,7 @@ import {
 } from '../household.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import type { IOStreams } from './io.js';
-import { sessionStore } from '../ui/sessions.js';
+import { signinLink } from '../ui/sessions.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -101,7 +101,6 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
 }
 
 /** The owner token behind every session a sign-in link opens. */
-const LINK_TOKEN = 'page sign-in links';
 
 export async function runToken(argv: string[], io: IOStreams): Promise<number> {
   const [sub, ...rest] = argv;
@@ -134,10 +133,7 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!h) return 1;
       const minutes = Number(flag(rest, '--minutes') ?? 10);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) { io.stderr('--minutes is 1 to 1440\n'); return 2; }
-      // The sessions a link opens belong to one owner token: revoking it ends them all.
-      let record = loadTokens(h.home).find((t) => t.label === LINK_TOKEN && !t.revoked);
-      if (!record) record = createToken(h, { role: { kind: 'owner' }, label: LINK_TOKEN }).record;
-      const code = sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), minutes * 60);
+      const code = signinLink(h, minutes * 60);
       const base = (flag(rest, '--page-url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
       io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --page-url or set LOOM_PUBLIC_URL.)'}\n`);
       io.stdout(`${base}/login/${code}\n`);

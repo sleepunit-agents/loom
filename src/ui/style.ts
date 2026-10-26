@@ -65,6 +65,8 @@ a.stat-link{position:absolute;inset:0;border-radius:inherit}a.stat-link:hover{ba
 .list .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.list .text{font-size:15px;overflow-wrap:anywhere}.list .meta{font-size:11px;color:var(--ink-2)}
 .list li a.row-link{color:inherit}.list li a.row-link::after{content:"";position:absolute;inset:0}.list li:has(a.row-link){position:relative}.list li:has(a.row-link):hover{background:rgba(127,127,127,.05)}
 .list li[class*=tone-] .text{color:var(--ink)}
+.swatches{display:flex;gap:12px;flex-wrap:wrap}.swatches label{position:relative;cursor:pointer}.swatches input{position:absolute;opacity:0;inset:0;margin:0}.swatches .swatch{display:block;width:40px;height:40px;border-radius:12px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}.swatches input:checked+.swatch{outline:3px solid var(--ink);outline-offset:3px}.swatches input:focus-visible+.swatch{outline:3px solid var(--thread);outline-offset:3px}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .row-act-form{margin:0;position:relative;z-index:1;flex:none}.row-act{background:none;border:0;font:inherit;font-size:15px;font-weight:600;color:var(--ink);min-height:44px;padding:0 4px;cursor:pointer}.row-act.danger{color:var(--bad)}.row-act:hover{text-decoration:underline}
 .badge{font-size:12px;color:var(--ink-2);background:var(--raised);border-radius:6px;padding:2px 8px;white-space:nowrap;flex:none}
 .empty{color:var(--ink-2);font-size:14px;margin:0}
@@ -160,6 +162,14 @@ footer{max-width:1100px;margin:0 auto;padding:0 16px 32px;color:var(--ink-2);fon
 .login input{width:100%;height:56px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-button);background:var(--surface);color:var(--ink);font:inherit;font-size:16px}
 .login button{height:56px;border:0;border-radius:var(--r-button);background:var(--thread);color:#161614;font:inherit;font-size:16px;font-weight:600;cursor:pointer}
 .login button.secondary{background:var(--raised);color:var(--ink)}
+.signin{min-height:100vh;min-height:100dvh;max-width:400px;margin:0 auto;padding:24px 20px calc(24px + env(safe-area-inset-bottom));box-sizing:border-box;display:flex;flex-direction:column}
+.signin-mark{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}.signin-mark span{font-size:44px;font-weight:600;letter-spacing:-.04em}
+.signin-bottom{display:flex;flex-direction:column;gap:12px;margin:0}.signin-bottom .pk{height:56px;border:0;border-radius:var(--r-button);background:var(--thread);color:#161614;font:inherit;font-size:17px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:10px;cursor:pointer}
+.signin-bottom #passkey-msg:empty{display:none}.signin .or{display:flex;align-items:center;gap:12px;color:var(--ink-2);font-size:13px}.signin .or::before,.signin .or::after{content:"";flex:1;border-top:1px solid var(--line)}
+.token-row{display:flex;gap:8px}.token-row input{flex:1;min-width:0;height:52px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-button);background:var(--surface);color:var(--ink);font:inherit;font-size:16px}
+.token-row button{height:52px;padding:0 18px;border:0;border-radius:var(--r-button);background:var(--ink);color:var(--surface);font:inherit;font-weight:600;cursor:pointer}.signin .hint{text-align:center;font-size:13px}
+.passkey-add{display:flex;flex-direction:column;gap:10px;margin:0 0 20px}.passkey-add input{height:48px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-button);background:var(--surface);color:var(--ink);font:inherit;font-size:16px}
+.passkey-add button{height:52px;border:0;border-radius:var(--r-button);background:var(--thread);color:#161614;font:inherit;font-size:16px;font-weight:600;cursor:pointer}.passkey-note{margin:0 0 20px}
 .err{color:var(--bad)}.sub{color:var(--ink-2);margin:0}
 
 .app{display:flex;min-height:100vh}.content{flex:1;min-width:0;display:flex;flex-direction:column}.content>main{min-width:0;width:100%}
