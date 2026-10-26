@@ -239,6 +239,14 @@ export class SessionStore {
     });
   }
 
+  /** lookedAt's answer without moving it: a live refresh of an open page isn't a new look. */
+  seenSince(nowS = Math.floor(Date.now() / 1000)): number {
+    return this.withLock((f) => {
+      const was = f.seen;
+      return !was ? nowS : nowS - was.at >= SEEN_GAP_S ? was.at : was.since;
+    });
+  }
+
   delete(id: string): void {
     if (!existsSync(this.file)) return;
     this.withLock((f) => { delete f.sessions[hashId(id)]; });

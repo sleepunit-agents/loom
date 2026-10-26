@@ -256,7 +256,7 @@ function mindPage(contextDir: string, query: Record<string, string>, tz: string,
             { type: 'text', text: p.content ?? '' },
             { type: 'buttons', items: [
               { action: 'ratify', label: 'Ratify', tone: 'primary', fields: { id: String(p.id) } },
-              { action: 'reject', label: 'Reject', tone: 'danger', fields: { id: String(p.id) } },
+              { action: 'reject', label: 'Reject', tone: 'danger', confirm: 'It won\'t become a memory. The agent can propose it again later.', fields: { id: String(p.id) } },
             ] },
           ],
         })),
@@ -299,7 +299,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
   const main: Block[] = [
     { type: 'text', text: m.content },
     ...(m.person ? [{ type: 'kv' as const, items: [{ label: 'about', value: names.get(m.person) ?? m.person, page: personPage(m.person) }] }] : []),
-    { type: 'buttons', items: [{ action: 'archive', label: 'Archive', tone: 'danger', fields: { ref: m.ref } }] },
+    { type: 'buttons', items: [{ action: 'archive', label: 'Archive', tone: 'danger', confirm: 'It leaves recall. It stays in the archive, and it can be restored from there.', fields: { ref: m.ref } }] },
   ];
   const record: Block = {
     type: 'kv',

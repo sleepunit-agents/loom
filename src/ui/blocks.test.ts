@@ -50,6 +50,7 @@ describe('meter, code and status blocks', () => {
   it('a page may ask to be refreshed, every 2 to 300 seconds, forms or not', () => {
     const p = page([{ type: 'form', action: 'a', submit: 'Go', fields: [{ name: 'n', label: 'N', kind: 'text' }] }], { refresh: 3 });
     expect(renderPage(p as Exclude<typeof p, string>, ctx, chrome)).toContain('<meta http-equiv="refresh" content="3">');
+    expect(renderPage(p as Exclude<typeof p, string>, ctx, chrome)).toContain('data-live="3"');
     expect(page([], { refresh: 1 })).toMatch(/refresh/);
     expect(page([], { refresh: 301 })).toMatch(/refresh/);
     // Without it, a page with a form still doesn't refresh.

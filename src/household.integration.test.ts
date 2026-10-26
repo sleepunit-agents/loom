@@ -727,6 +727,41 @@ describe('the household page', () => {
     await expect(connect(handle.port, token!)).rejects.toThrow();
   });
 
+  it('an action from the page\'s script answers in JSON and stays put; a token in it is kept', async () => {
+    const cookie = await login();
+    const setup = await (await page(cookie, '/a/mark/setup')).text();
+    const csrf = csrfOf(setup);
+    const fetchPost = (fields: Record<string, string>) => fetch(`${base}/act/loom`, {
+      method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' }, body: new URLSearchParams(fields).toString(),
+    });
+    const made = await fetchPost({ _csrf: csrf, _action: 'create-token', _path: 'a/mark/setup', agent: 'mark', label: 'Mark · phone' });
+    expect(made.status).toBe(200);
+    const body = await made.json() as { ok: boolean; message: string; keep?: boolean; go?: string };
+    expect(body).toMatchObject({ ok: true, keep: true });
+    expect(body.message).toMatch(/shown this once: loom_/);
+    expect(body.go).toBeUndefined();
+    // Landing elsewhere: the reply says where, with the message waiting there.
+    const added = await (await fetchPost({ _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'sancho', name: 'Sancho', purpose: 'Squire.', voice: 'Plain.' })).json() as { go?: string };
+    expect(added.go).toMatch(/^\/a\/sancho\/setup\?_flash=/);
+    // Revoking asks first: the button carries what happens.
+    expect(await (await page(cookie, '/a/mark/setup')).text()).toMatch(/Revoke &quot;Mark · phone&quot;|data-confirm="Anything still using it/);
+  });
+
+  it('a live refresh of Home doesn\'t count as a new look', async () => {
+    const cookie = await login();
+    const first = await (await page(cookie, '/')).text();
+    expect(first).toContain('data-live="');
+    expect(first).toContain('<noscript><meta http-equiv="refresh" content="60"></noscript>');
+    const sub = (html: string) => Number(/<p class="sub">(\d+) new since/.exec(html)?.[1]);
+    const n = sub(first);
+    await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did another thing', content: 'x' });
+    const live = await (await fetch(`${base}/`, { headers: { cookie, 'x-loom-live': '1' } })).text();
+    expect(sub(live)).toBe(n + 1);
+    expect(live).toMatch(/<li data-key="art\|[^"]*\|art did another thing">/);
+    // And again: still one, since the live check didn't move the line.
+    expect(sub(await (await fetch(`${base}/`, { headers: { cookie, 'x-loom-live': '1' } })).text())).toBe(n + 1);
+  });
+
   it('an agent added on the page is served at once, without a restart', async () => {
     const cookie = await login();
     const csrf = csrfOf(await (await page(cookie, '/new-agent')).text());
