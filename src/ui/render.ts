@@ -517,7 +517,8 @@ export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unsco
   // A piece that can't narrow to the selected agent: one quiet line, the household's mark.
   const unscoped = unscopedFor && chrome.shell
     ? `<p class="unscoped">${householdMark(chrome.shell.agents, 24)}<span>Showing the whole household — this piece can't narrow to ${esc(unscopedFor)}.</span></p>` : '';
-  const body = `${shellOpen(chrome)}<main${head ? ' class="agent-page"' : ''}>${flash(chrome)}${head ? agentHead(head) : `<div><h1>${esc(page.title)}</h1>${
+  const body = `${shellOpen(chrome)}<main${head ? ' class="agent-page"' : ''}>${flash(chrome)}${head ? agentHead(head) : `<div><h1>${esc(page.title)}${
+    page.add ? `<a class="head-add" href="${esc(pageHref(page.add.page, ctx.source))}" aria-label="${esc(page.add.label)}" title="${esc(page.add.label)}">${ICON.plus}</a>` : ''}</h1>${
     // A piece's page says how fresh it is, under its title (the boards' "updated 6s ago"); the script keeps it counting.
     ctx.source.base.startsWith('/p/') && page.title !== 'Not found' ? '<p class="stamp" data-stamp>updated just now</p>' : ''}`}${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}${head ? '' : '</div>'}${unscoped}${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
   // A page that asks for its own refresh (an install running) gets it, forms or not.

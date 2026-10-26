@@ -225,6 +225,7 @@ form.small button{background:transparent}
 .place{display:flex;flex-direction:column;min-height:92px;padding:12px;border-radius:var(--r-card);background:var(--raised);color:var(--ink)}.place:hover{text-decoration:none;outline:1px solid var(--line)}
 .place.on{outline:2px solid var(--ink)}.pl-top{height:12px}.pl-label{margin-top:auto;font-weight:600;font-size:14px}.pl-stat{font-size:12px;color:var(--ink-2)}.place[class*=tone-]:not(.tone-ok) .pl-stat{color:var(--tone)}
 .place-rows{margin-top:10px;padding:0 16px}
+.head-add{float:right;width:44px;height:44px;margin:-2px -6px 0 8px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:var(--raised);color:var(--ink)}.head-add:hover{text-decoration:none;outline:1px solid var(--line)}.head-add svg{width:20px;height:20px}
 .stamp{margin:2px 0 0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-2)}.stamp.off{color:var(--warn)}
 .filter-search{position:relative}.filter-search .search-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--ink-2);pointer-events:none}.filter-search input{padding-left:42px!important}
 main.sheet-page{max-width:560px}.sheet-page h1{margin-bottom:8px}
