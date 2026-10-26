@@ -743,6 +743,13 @@ describe('the household page', () => {
     const cookie = await login();
     const html = await (await page(cookie, '/people/loren')).text();
     for (const s of ['U0LOREN', 'caveman', 'shakespearean', 'Art E Fish', 'Visual Mark']) expect(html).toContain(s);
+    // The board's order: how each agent knows them, then Reach (a value per channel), the sources a tap away.
+    expect(html.indexOf('How each agent knows them')).toBeLessThan(html.indexOf('<h2>Reach</h2>'));
+    expect(html).toContain('mode: caveman');
+    expect(html).toContain('Where this came from');
+    expect(html).toContain('href="/a/mark/people/loren"');
+    // Each agent's row carries its mark.
+    expect(html).toMatch(/<span class="mark"[^>]*>V<\/span>/);
   });
 
   it('an agent\'s view is its own tape, Mind and Setup', async () => {

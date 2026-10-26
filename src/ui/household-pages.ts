@@ -303,33 +303,42 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
     const facts = Object.entries(d.card.how ?? {});
     const history = dir.history(slug).slice(0, 12);
     const sections: Section[] = [];
+    // The board's order: how each agent knows them (every agent, met or not), then how to reach them.
+    const rels = new Map(relationships(h, slug).map((r) => [r.agent, r]));
+    sections.push({ id: 'agents', title: 'How each agent knows them', blocks: [{
+      type: 'list',
+      items: h.agents.map((a) => {
+        const r = rels.get(a);
+        if (!r) return { agent: a, text: 'Hasn\'t met them' };
+        const how = Object.entries(r.row.card.how ?? {}).map(([k, v]) => `${k}: ${value(v)}`).join(' · ');
+        const known = r.row.card.summary || how || 'Knows of them; nothing more yet.';
+        const newer = r.memories ? `${r.memories} newer memor${r.memories === 1 ? 'y' : 'ies'} · ` : '';
+        return { agent: a, text: known, meta: `${newer}updated ${ago(r.row.updated, tz, nowMs)}`, tone: r.memories ? 'warn' as const : undefined, page: agentLink(a, `people/${slug}`) };
+      }),
+    }] });
     if (where.length) {
-      sections.push({ id: 'where', title: 'Where to reach them', blocks: [{
-        type: 'table', columns: ['where', 'value', 'from', 'checked'],
-        rows: where.map(([k, env]) => {
-          const s = fieldState(env, nowMs);
-          return [k, value(env.value), env.source ?? '', s.kind === 'ok' ? `ok, ${ago(env.verified_at ?? null, tz, nowMs)}` : s.kind === 'stale' ? `stale ${s.days}d` : 'unverified'];
-        }),
-      }] });
-    }
-    for (const r of relationships(h, slug)) {
-      const how = Object.entries(r.row.card.how ?? {});
-      const blocks: Block[] = [];
-      if (r.row.card.summary) blocks.push({ type: 'text', text: r.row.card.summary });
-      if (how.length) blocks.push({ type: 'kv', items: how.map(([k, v]) => ({ label: k, value: value(v) })) });
-      if (r.row.card.may?.length) blocks.push({ type: 'list', items: r.row.card.may.map((m) => ({ text: m.text, meta: `said by ${m.source}` })) });
-      blocks.push({ type: 'text', text: `${r.memories} memor${r.memories === 1 ? 'y' : 'ies'} newer than this view · updated ${ago(r.row.updated, tz, nowMs)}`, tone: r.memories ? 'warn' : 'muted' });
-      if (!r.row.card.summary && !how.length && !r.row.card.may?.length) blocks.unshift({ type: 'text', text: 'Knows of them; nothing more yet.', tone: 'muted' });
-      blocks.push({ type: 'link', text: `${r.name}'s view`, page: agentLink(r.agent, `people/${slug}`) });
-      sections.push({ id: `rel-${r.agent}`, title: `${r.name}`, blocks });
+      sections.push({ id: 'reach', title: 'Reach', blocks: [
+        { type: 'kv', items: where.map(([k, env]) => {
+          const st = fieldState(env, nowMs);
+          return { label: k, value: `${value(env.value)}${st.kind === 'stale' ? ` · stale ${st.days}d` : st.kind === 'ok' ? '' : ' · unverified'}` };
+        }) },
+        { type: 'details', summary: 'Where this came from', blocks: [{
+          type: 'table', columns: ['where', 'from', 'checked'],
+          rows: where.map(([k, env]) => {
+            const st = fieldState(env, nowMs);
+            return [k, env.source ?? '', st.kind === 'ok' ? `ok, ${ago(env.verified_at ?? null, tz, nowMs)}` : st.kind === 'stale' ? `stale ${st.days}d` : 'unverified'];
+          }),
+        }] },
+      ] });
     }
     if (facts.length) sections.push({ id: 'facts', title: 'Facts', side: true, blocks: [{ type: 'kv', items: facts.map(([k, v]) => ({ label: k, value: value(v) })) }] });
     if (history.length) {
-      sections.push({ id: 'changes', title: 'Changes to the shared entry', side: true, blocks: [{
+      sections.push({ id: 'changes', side: true, blocks: [{ type: 'details', summary: 'Changes to the shared entry', meta: `${history.length}`, blocks: [{
         type: 'list', items: history.map((r) => ({ text: `${r.actor ?? 'someone'} ${r.op === 'write' ? 'changed it' : r.op}`, meta: ago(r.replaced_at, tz, nowMs) })),
-      }] });
+      }] }] });
     }
-    return { title: d.card.name, intro: 'The shared entry, then how each agent sees them.', sections };
+    const role = d.card.how?.role;
+    return { title: d.card.name, intro: d.card.summary || (role ? value(role) : undefined), sections };
   } finally {
     dir.close();
   }
