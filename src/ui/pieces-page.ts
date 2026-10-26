@@ -114,20 +114,25 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
   const installed = listPieces(env).filter((p) => p.name !== 'loom');
   const jobs = readJobs(env);
 
-  const installedBlocks: Block[] = installed.length ? installed.map((p): Block => {
+  const installedBlocks: Block[] = installed.length ? installed.flatMap((p): Block[] => {
+    const owner = [...managed.values()].find((x) => x.bins.includes(`loom-${p.name}`));
+    // A bin that's part of another managed piece is shown with it, not on its own.
+    if (owner && owner.name !== p.name && bin && p.path.startsWith(bin + '/')) return [];
     const r = managed.get(p.name);
     if (r && bin && p.path.startsWith(bin + '/')) {
       const c = catalog.find((x) => x.name === r.name && x.repo === r.source.repo);
       const update = c && c.commit !== r.source.commit ? c.commit : undefined;
       const missing = missingSettings(env, r);
-      return { type: 'details', summary: r.loom.label ?? c?.label ?? r.name,
-        meta: [r.version, update ? 'update available' : '', missing.length ? 'needs setup' : ''].filter(Boolean).join(' · '),
-        blocks: managedBlocks(env, r, update) };
+      const also = r.bins.filter((b) => b.startsWith('loom-') && b !== `loom-${r.name}`).map((b) => b.slice('loom-'.length));
+      return [{ type: 'details', summary: r.loom.label ?? c?.label ?? r.name,
+        meta: [r.version, also.length ? `also ${also.join(', ')}` : '', update ? 'update available' : '', missing.length ? 'needs setup' : ''].filter(Boolean).join(' · '),
+        blocks: managedBlocks(env, r, update) }];
     }
-    return { type: 'callout', title: p.name, text: `${p.path} — on PATH, not installed by loom, so it's managed by hand.`, tone: 'muted' };
+    return [{ type: 'callout', title: p.name, text: `${p.path} — on PATH, not installed by loom, so it's managed by hand.`, tone: 'muted' }];
   }) : [{ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' }];
 
   const available = catalog.filter((c) => !managed.has(c.name) && !installed.some((p) => p.name === c.name));
+  if (!installedBlocks.length) installedBlocks.push({ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' });
   const sections: Page['sections'] = [];
   if (jobs.length) {
     sections.push({ id: 'jobs', title: 'Installs', tone: jobs[0].state === 'running' ? 'warn' : undefined, blocks: [{ type: 'list', items: jobs.map((j) => ({

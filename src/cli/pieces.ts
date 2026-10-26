@@ -126,11 +126,13 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
   try {
     switch (verb) {
       case undefined: {
-        const managed = new Map(m.managedPieces(io.env).map((r) => [r.name, r]));
+        const managed = m.managedPieces(io.env);
         const catalog = new Map(m.readCatalog().map((c) => [c.name, c]));
         const pieces = listPieces(io.env).map((p) => {
-          const r = managed.get(p.name);
-          if (!r || !r.bins.includes(`loom-${p.name}`) || !p.path.startsWith(m.managedBinDir(io.env) + '/')) return p;
+          // A managed piece, or a bin that's part of one (a package with several loom-<name> bins).
+          const r = managed.find((x) => x.bins.includes(`loom-${p.name}`));
+          if (!r || !p.path.startsWith(m.managedBinDir(io.env) + '/')) return p;
+          if (r.name !== p.name) return { ...p, managed: { partOf: r.name, version: r.version, commit: r.source.commit, repo: r.source.repo } };
           const c = catalog.get(p.name);
           const missing = m.missingSettings(io.env, r);
           return { ...p, managed: { version: r.version, commit: r.source.commit, repo: r.source.repo,
@@ -142,7 +144,7 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
           ? 'no pieces installed (loom pieces catalog lists what loom can install)\n'
           : pieces.map((p) => {
             const g = 'managed' in p ? p.managed : undefined;
-            const note = g ? `\tmanaged ${g.version || g.commit.slice(0, 12)}${g.update ? ', update available' : ''}${g.needsSetup ? `, needs ${g.needsSetup.join(', ')}` : ''}` : '';
+            const note = !g ? '' : 'partOf' in g ? `\tpart of ${g.partOf}` : `\tmanaged ${g.version || g.commit.slice(0, 12)}${g.update ? ', update available' : ''}${g.needsSetup ? `, needs ${g.needsSetup.join(', ')}` : ''}`;
             return `${p.name}\t${p.path}${note}`;
           }).join('\n') + '\n');
         return 0;
