@@ -363,7 +363,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions = {}):
               ? { type: 'text', text: `${t.label} (${t.role}) · revoked ${when(t.revoked, tz)}`, tone: 'muted' }
               : { type: 'callout', title: `${t.label} · ${t.role}`, text: `created ${when(t.created, tz)} · ${t.last_used ? `last used ${when(t.last_used, tz)}` : 'never used'}` })) }
           : { type: 'text', text: 'No tokens yet.', tone: 'muted' },
-        ...tokens.filter((t) => !t.revoked).map((t): Block => ({ type: 'buttons', items: [{ action: 'revoke-token', label: `Revoke "${t.label}"`, tone: 'danger', fields: { label: t.label } }] })),
+        ...tokens.filter((t) => !t.revoked).map((t): Block => ({ type: 'buttons', items: [{ action: 'revoke-token', label: `Revoke "${t.label}"`, tone: 'danger', confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } }] })),
         { type: 'form', action: 'create-token', title: 'New token', submit: 'Create token', hidden: { agent },
           note: 'Shown once, on the next page. Give it to the harness or house that will be this agent; loom keeps only its fingerprint.',
           fields: [{ name: 'label', label: 'Label', kind: 'text', hint: 'Where it goes, e.g. "Art · laptop".', required: true }] },
@@ -405,7 +405,7 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const role = agent === '' ? null : parseRole(`agent:${agent}`);
       if (!role) return { ok: false, message: 'Name an agent for the token.' };
       const { token } = createToken(h, { role, label: fields.label ?? '' });
-      return { ok: true, message: `Token for ${agent}, shown this once: ${token}`, page: `loom:a/${agent}/setup` };
+      return { ok: true, message: `Token for ${agent}, shown this once: ${token}`, page: `loom:a/${agent}/setup`, keep: true };
     }
     if (action === 'revoke-token') {
       const t = revokeToken(h, fields.label ?? '');
@@ -423,7 +423,7 @@ export async function householdAct(h: Household, action: string, fields: Record<
       await bootstrap(dir, { name: fields.name.trim(), purpose: fields.purpose.trim(), voice: fields.voice.trim(), user: h.owner });
       const next = addAgent(h, agent);
       const { token } = createToken(next, { role: { kind: 'agent', agent }, label: `${fields.name.trim()} · first token` });
-      return { ok: true, message: `${fields.name.trim()} is in the household. Its first token, shown this once: ${token}`, page: `loom:a/${agent}/setup` };
+      return { ok: true, message: `${fields.name.trim()} is in the household. Its first token, shown this once: ${token}`, page: `loom:a/${agent}/setup`, keep: true };
     }
     return { ok: false, message: `loom has no action "${action}".` };
   } catch (err) {

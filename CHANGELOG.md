@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The page acts in place.** With script, a form or button posts with
+  `fetch` and the answer is a toast above the bottom bar (labeled with its
+  piece; `"keep": true` on an action result holds it, for a token shown
+  once), the page refreshing under it without moving. A `danger` button asks
+  first in a sheet that names it and says what happens (a new optional
+  `confirm` sentence on a button). Live pages re-fetch themselves every 20s
+  instead of reloading: new asks go in at once, new Thread rows wait behind
+  an "↑ N new" pill, and the footer says "live · checked 4s ago". A live
+  check doesn't count as a new look. Without script, it's the old full-page
+  post and meta refresh.
+
 - **Home, redesigned.** The household Home leads with "N need you" and the
   count new since you last looked (a look within 15 minutes of the last one
   doesn't move the line). Your call cards, At a glance tiles (a swipeable

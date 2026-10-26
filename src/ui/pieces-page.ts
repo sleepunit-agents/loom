@@ -78,10 +78,10 @@ const fieldOf = (setting: string) => `s_${setting.toLowerCase()}`.slice(0, 40);
 function managedBlocks(env: NodeJS.ProcessEnv, r: PieceRecord, update?: string): Block[] {
   const missing = missingSettings(env, r);
   const values = readSettings(env, r.name);
-  const buttons: { action: string; label: string; tone?: 'primary' | 'danger'; fields: Record<string, string> }[] = [];
+  const buttons: { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields: Record<string, string> }[] = [];
   if (update) buttons.push({ action: 'piece-update', label: `Update to ${update.slice(0, 12)}`, tone: 'primary', fields: { name: r.name } });
   if (r.previous) buttons.push({ action: 'piece-rollback', label: `Roll back to ${r.previous.version || r.previous.commit.slice(0, 12)}`, fields: { name: r.name } });
-  buttons.push({ action: 'piece-remove', label: 'Remove', tone: 'danger', fields: { name: r.name } });
+  buttons.push({ action: 'piece-remove', label: `Remove ${r.name}`, tone: 'danger', confirm: 'Its program and service go. Its settings and data stay, for a reinstall.', fields: { name: r.name } });
   const blocks: Block[] = [
     { type: 'kv', items: [
       { label: 'version', value: r.version || '—' },
@@ -169,7 +169,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
         { type: 'callout', tone: 'warn', title: `${repo} @ ${commit.slice(0, 12)} isn't in loom's catalog`,
           text: 'A piece runs as loom\'s own user, with what loom can reach, and npm runs its build scripts while it installs: installing it is running it. Only go on if you trust whoever wrote it with this machine.' },
         { type: 'link', text: 'Read it on GitHub first', href: `https://github.com/${repo}/tree/${commit}` },
-        { type: 'buttons', items: [{ action: 'piece-install', label: 'Install anyway', tone: 'danger', fields: { repo, commit, confirm: 'yes' } }] },
+        { type: 'buttons', items: [{ action: 'piece-install', label: 'Install anyway', tone: 'danger', confirm: 'It runs as you, with your files. Only install code you trust.', fields: { repo, commit, confirm: 'yes' } }] },
       );
     }
   }

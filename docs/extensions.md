@@ -192,7 +192,7 @@ outside the page).
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value) |
-| `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `fields` (name → value) |
+| `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `confirm` (what happens, one sentence: a `danger` button asks first in a sheet that says it), `fields` (name → value) |
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |
 | `code` | `text`, optional `label`. Monospace, with a Copy button: a command, a link to hand someone |
 | `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
@@ -217,9 +217,12 @@ on stdin. The piece answers:
 { "ok": true, "message": "sentry-dsn is encrypted and stored.", "page": "" }
 ```
 
-loom shows the message once, labeled with the piece's name, at the top of
-`page` (with its query, if it has one) or of the page the form was on.
-`ok: false` shows it as an error. Field values travel only on stdin. loom
+loom shows the message once, labeled with the piece's name, as a toast on
+`page` (with its query, if it has one) or on the page the form was on, which
+refreshes in place. `ok: false` shows it as an error. A toast fades after a
+few seconds; `"keep": true` holds it until it's closed, for a message that
+carries something to copy. A `danger` button with a `confirm` sentence asks
+first, in a sheet that says it. Field values travel only on stdin. loom
 never logs them, stores them, or puts them in a URL, so a secret typed into a
 form goes straight to the piece holding the authority. The piece validates
 every field itself: loom passes on whatever was posted, up to 50 names (30

@@ -38,7 +38,7 @@ export type Block =
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }> }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
-  | { type: 'buttons'; items: Array<{ action: string; label: string; tone?: 'primary' | 'danger'; fields?: Record<string, string> }> }
+  | { type: 'buttons'; items: Array<{ action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }> }
   | { type: 'meter'; items: Array<{ label: string; value: number; detail?: string; tone?: Tone }> }
   | { type: 'code'; text: string; label?: string }
   | { type: 'status'; items: Array<{ label: string; tone?: Tone; text?: string; meta?: string; page?: string }> };
@@ -73,7 +73,8 @@ export interface Manifest {
   legacy?: Section[];
 }
 
-export interface ActResult { ok: boolean; message: string; page?: string }
+/** keep: the message is something to copy (a token shown once), so it stays until it's closed. */
+export interface ActResult { ok: boolean; message: string; page?: string; keep?: boolean }
 
 export const LIMITS = {
   sections: 10,
@@ -341,6 +342,7 @@ function block(v: unknown, depth = 0): Block {
             action: name(o.action, 'button.action'),
             label: str(o.label, 'button.label'),
             tone: t as 'primary' | 'danger' | undefined,
+            confirm: optStr(o.confirm, 'button.confirm'),
             fields: strMap(o.fields, 'button.fields', LIMITS.hidden),
           };
         }),
@@ -447,6 +449,7 @@ export function parseActResult(value: unknown): ActResult | string {
   return attempt(() => {
     const top = obj(value, 'result');
     if (typeof top.ok !== 'boolean') throw new Invalid('ok must be true or false');
-    return { ok: top.ok, message: str(top.message, 'message'), page: page(top.page, 'page') };
+    if (top.keep !== undefined && typeof top.keep !== 'boolean') throw new Invalid('keep must be true or false');
+    return { ok: top.ok, message: str(top.message, 'message'), page: page(top.page, 'page'), ...(top.keep ? { keep: true } : {}) };
   });
 }

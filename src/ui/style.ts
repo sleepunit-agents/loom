@@ -233,7 +233,23 @@ main.dash{gap:24px}
 .more-link{margin-top:12px;font-size:15px}
 .dash.today .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;overflow:visible;margin:0;padding:0}.dash.today .tile{min-width:0}
 .shared .rows{padding:0 16px}.shared .domain{font-family:inherit;font-size:12px}
+.toasts{position:fixed;left:16px;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:40;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+.toasts:not(:has(.toast)){display:none}
+.toast{pointer-events:auto;width:100%;max-width:520px;border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.18);animation:toast-in .18s ease-out}.toast.out{opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s}
+.toast-close{border:0;background:transparent;color:inherit;font-size:20px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}.toast.keep .tm{word-break:break-all;user-select:all}
+.toast .tg{font-size:11px}.toast.ok .tg{color:var(--thread)}.toast .tm{flex:1}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}}
+.btn.busy{position:relative;color:transparent!important}.btn.busy::after{content:"";position:absolute;inset:0;margin:auto;width:16px;height:16px;border-radius:50%;border:2px solid var(--ink-2);border-right-color:transparent;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ask.fold{opacity:.45;transition:opacity .2s}
+dialog.confirm .sub{margin:4px 0 0;font-size:15px;color:var(--ink-2)}
+.confirm-actions{display:flex;flex-direction:column;gap:8px;margin-top:20px}.confirm-actions .btn{width:100%;height:52px}
+.confirm-actions .btn.danger{background:var(--bad);color:var(--surface);border:0}
+.new-pill{align-self:center;margin:0 0 10px;height:36px;padding:0 16px;border:0;border-radius:999px;background:var(--ink);color:var(--ground);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+[data-live-status].off{color:var(--bad)}
+@media (prefers-reduced-motion:reduce){.toast,.toast.out,.btn.busy::after{animation:none;transition:none}}
 @media (min-width:960px){
+.toasts{left:auto;right:24px;bottom:24px;width:400px;align-items:stretch}
 .your-call .ask-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .dash-cols{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:start;gap:28px}
 .glance-phone{display:none}.dash-side .glance{display:block}

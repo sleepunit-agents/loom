@@ -269,7 +269,7 @@ function pageQuery(url: URL): Record<string, string> {
 
 // ─── One-time result messages ────────────────────────────────────────────────
 
-interface Flash { ok: boolean; message: string; from?: string }
+interface Flash { ok: boolean; message: string; from?: string; keep?: boolean }
 const flashes = new Map<string, { at: number; flash: Flash }>();
 
 function putFlash(flash: Flash): string {
@@ -659,7 +659,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
     const from = source.id === 'loom' ? undefined : source.id;
-    return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from })));
+    // The page's own script posts with fetch: it gets the one line back as
+    // JSON and stays where it is, unless the action lands somewhere else.
+    if (req.headers['x-loom-fetch'] === '1') {
+      const stay = to === pageHref(backLink, source);
+      return sendJson(res, 200, { ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}),
+        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep })) }) });
+    }
+    return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep })));
   }
 
   if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
@@ -702,7 +709,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       sections: [{ id: 'passkeys', title: keys.length ? `${keys.length} passkey${keys.length === 1 ? '' : 's'}` : 'None yet', blocks: keys.length
         ? keys.flatMap((k): import('./vocab.js').Block[] => [
           { type: 'callout', title: k.label, text: `added ${when(k.created)} · last used ${when(k.lastUsed)}${opts.auth.live(Buffer.from(k.secret, 'hex')) ? '' : ' · its token was revoked, so it no longer works'}` },
-          { type: 'buttons', items: [{ action: 'passkey-remove', label: `Remove "${k.label}"`, tone: 'danger', fields: { id: k.id } }] },
+          { type: 'buttons', items: [{ action: 'passkey-remove', label: `Remove "${k.label}"`, tone: 'danger', confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } }] },
         ]).slice(0, 20)
         : [{ type: 'text', text: 'Add one below, from the device you want to sign in with.', tone: 'muted' }] }],
     };
@@ -720,7 +727,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash)), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
     if (pathname === '/') {
       const nowMs = Date.now();
-      const sinceMs = storeFor(opts).lookedAt(Math.floor(nowMs / 1000)) * 1000;
+      const store = storeFor(opts);
+      const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000)) : store.lookedAt(Math.floor(nowMs / 1000))) * 1000;
       const t = householdThread(hh, 24, nowMs);
       const byAgent = query.who && hh.agents.includes(query.who) ? query.who : '';
       const agents = agentsOf(hh)!;

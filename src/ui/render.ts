@@ -197,7 +197,8 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       return `<div class="buttons${b.items.length >= 3 ? ' wide' : ''}">${b.items.map((i) => actionForm(
         ctx,
         i.action,
-        `${hiddenInputs(i.fields ?? {})}<button class="btn${i.tone ? ` ${i.tone}` : ''}" type="submit">${esc(i.label)}</button>`,
+        `${hiddenInputs(i.fields ?? {})}<button class="btn${i.tone ? ` ${i.tone}` : ''}" type="submit"${
+          i.tone === 'danger' ? ` data-confirm="${esc(i.confirm ?? 'This can\'t be undone from here.')}"` : ''}>${esc(i.label)}</button>`,
         'button-form',
       )).join('')}</div>`;
     case 'meter':
@@ -245,7 +246,7 @@ export interface Chrome {
   clock: string;
   csrf: string;
   /** The one-time result of an action; `from` names the piece that sent it. */
-  flash?: { ok: boolean; message: string; from?: string };
+  flash?: { ok: boolean; message: string; from?: string; keep?: boolean };
   skipped: string[];
   /** The app shell (bottom bar, rail, scope and Places sheets); absent for the bare pages. */
   shell?: Shell;
@@ -273,10 +274,15 @@ export interface Shell {
 }
 
 
+/**
+ * A page that stays fresh says how often (data-live, seconds): the page's
+ * script re-fetches it in place. Without script, the old meta refresh.
+ */
 function document(title: string, body: string, refresh: boolean | number): string {
-  const every = refresh === true ? 60 : refresh || 0;
+  const every = refresh === true ? LIVE_S : refresh || 0;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${
-    every ? `<meta http-equiv="refresh" content="${every}">` : ''}<title>${esc(title)}</title><style>${STYLE}</style><script src="/app.js" defer></script></head><body>${body}</body></html>`;
+    every ? `<noscript><meta http-equiv="refresh" content="${refresh === true ? 60 : every}"></noscript>` : ''}<title>${esc(title)}</title><style>${STYLE}</style><script src="/app.js" defer></script></head><body${
+    every ? ` data-live="${every}"` : ''}>${body}<div class="toasts" role="status" aria-live="polite"></div></body></html>`;
 }
 
 function chromeTop(c: Chrome): string {
@@ -405,14 +411,17 @@ export function renderSheetPage(which: 'scope' | 'places' | 'find', c: Chrome, q
   return document(which === 'scope' ? 'Show me' : which === 'places' ? 'Places' : 'Find', `${shellOpen(c)}<main class="sheet-page">${inner}</main>${shellClose(c, '')}`, false);
 }
 
+/** How often a live page checks in, with script. */
+export const LIVE_S = 20;
+
 function chromeFoot(c: Chrome, refresh: boolean): string {
-  return `<footer>${refresh ? '<span>Refreshes every minute.</span>' : ''}${c.skipped.length ? `<span>Pieces with no page: ${c.skipped.map(esc).join(', ')}</span>` : ''}</footer>`;
+  return `<footer>${refresh ? '<span data-live-status>Refreshes every minute.</span>' : ''}${c.skipped.length ? `<span>Pieces with no page: ${c.skipped.map(esc).join(', ')}</span>` : ''}</footer>`;
 }
 
 function flash(c: Chrome): string {
   if (!c.flash) return '';
   const from = c.flash.from ? `<span class="from">${esc(c.flash.from)}</span>` : '';
-  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status">${c.flash.ok ? glyph('ok') : glyph('bad')}<span>${esc(c.flash.message)}</span>${from}</div>`;
+  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status"${c.flash.keep ? ' data-keep' : ''}>${c.flash.ok ? glyph('ok') : glyph('bad')}<span>${esc(c.flash.message)}</span>${from}</div>`;
 }
 
 /** One page, loom's or a piece's. */
@@ -525,7 +534,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
     if (!isNew && !divided && d.sinceMs !== undefined && fresh > 0) { divided = true; line = `<li class="seen"><span>seen up to ${esc(d.sinceLabel ?? '')}</span></li>`; }
     const who = r.agent ? ctx.agents?.[r.agent] : undefined;
     const text = `<span class="text">${esc(r.text)}</span>`;
-    return `${line}<li>${who ? mark(who, 24) : ''}<span class="body">${link(text, r, ctx, 'row-link')}<span class="meta">${esc(r.meta)}</span></span>${isNew ? '<span class="new" aria-label="new"></span>' : ''}</li>`;
+    return `${line}<li data-key="${esc(`${r.agent ?? ''}|${r.at}|${r.text}`)}">${who ? mark(who, 24) : ''}<span class="body">${link(text, r, ctx, 'row-link')}<span class="meta">${esc(r.meta)}</span></span>${isNew ? '<span class="new" aria-label="new"></span>' : ''}</li>`;
   }).join('');
   const filters = d.filters ? renderBlock({ type: 'filters', param: d.filters.param, options: d.filters.options }, ctx) : '';
   const thread = `<section class="thread"><h2 class="label">Thread</h2>${filters}<ul class="list thread-list">${rows || '<li><span class="empty">Nothing in the last day.</span></li>'}</ul>${
@@ -533,7 +542,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   const shared = d.shared
     ? `<section class="shared"><h2 class="label">Shared</h2><div class="card rows"><a class="link-row" href="/knowledge"><span><span>Knowledge</span><span class="domain">${d.shared.pages.toLocaleString('en-US')} facts</span></span>${CHEVRON}</a>` +
       `<a class="link-row" href="/people"><span><span>People</span><span class="domain">${d.shared.people} cards</span></span>${CHEVRON}</a></div></section>` : '';
-  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '')}`;
+  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
   return document(d.label, body, true);
 }
 
@@ -572,8 +581,9 @@ export function renderPasskeys(page: Page, ctx: RenderContext, chrome: Chrome, a
     : `<section class="card"><h2>Add a passkey</h2><p class="sub">${esc(add.note)}</p></section>`;
   return renderPage(page, ctx, chrome)
     // No minute refresh here: it would cut off a passkey being made.
-    .replace('<meta http-equiv="refresh" content="60">', '')
-    .replace('<span>Refreshes every minute.</span>', '')
+    .replace('<noscript><meta http-equiv="refresh" content="60"></noscript>', '')
+    .replace(` data-live="${LIVE_S}"`, '')
+    .replace('<span data-live-status>Refreshes every minute.</span>', '')
     // The control goes first, under the title: on a phone it's what the page is for.
     .replace(/(<main>[\s\S]*?<h1>[\s\S]*?<\/div>)/, `$1${control}`)
     .replace('</body>', `${'csrf' in add ? '<script src="/login/passkey.js" defer></script>' : ''}</body>`);
