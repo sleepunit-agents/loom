@@ -60,6 +60,6 @@ describe('meter, code and status blocks', () => {
     const p = page([]);
     const html = renderPage(p as Exclude<typeof p, string>, ctx, chrome);
     expect(html).toContain('<script src="/app.js" defer></script>');
-    expect(html.match(/<script/g)?.length).toBe(1);
+    expect(html.match(/<script\b/gi)?.length).toBe(1);
   });
 });

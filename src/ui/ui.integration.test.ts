@@ -260,7 +260,7 @@ describe('loom UI over HTTP', () => {
     expect(html).toContain('a hot memory');
     expect(html).toContain('href="/mind"');
     // Script only by src, from loom: no inline script, and the CSP allows neither inline nor eval.
-    expect(html.match(/<script[^>]*>/g)).toEqual(['<script src="/app.js" defer>']);
+    expect(html.match(/<script\b[^>]*>/gi)).toEqual(['<script src="/app.js" defer>']);
     expect(res.headers.get('content-security-policy')).toMatch(/script-src 'self';/);
     expect((await get('/app.js', cookie)).headers.get('content-type')).toMatch(/javascript/);
   });
