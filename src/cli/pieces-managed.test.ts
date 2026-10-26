@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, isAbsolute, join } from 'node:path';
 import { runCliCaptured } from './test-helpers.js';
 import { findPiece, listPieces } from './pieces.js';
 import { installPiece, parseLoomBlock, parseSource, pieceEnvFor, readCatalog } from './pieces-managed.js';
@@ -283,6 +283,13 @@ describe('managed pieces', () => {
     // Run later by a daemon whose PATH has no such node: it's put first.
     const run = await runCliCaptured(['native'], { env: { ...env, PATH: [onPath, '/usr/bin', '/bin'].join(delimiter) } });
     expect(run.stdout.trim()).toBe(`PATH=${[nodeDir, onPath, '/usr/bin', '/bin'].join(delimiter)}`);
+    // Only an absolute PATH entry is taken as the node, and a recorded one is used only while it's absolute and there.
+    rec.node = 'relative/node';
+    await writeFile(join(loomHome, 'pieces', 'native', 'piece.json'), JSON.stringify(rec));
+    expect((await runCliCaptured(['native'], { env: { ...env, PATH: '/usr/bin:/bin' } })).stdout.trim()).toBe('PATH=/usr/bin:/bin');
+    await runCliCaptured(['pieces', 'install', '--from', `github:x/native#${SHA1}`, '--yes'], { env: { ...installEnv, PATH: ['.', join(tmp, 'npmbin'), '/usr/bin', '/bin'].join(delimiter) } });
+    const again = JSON.parse(await readFile(join(loomHome, 'pieces', 'native', 'piece.json'), 'utf-8'));
+    expect(again.node === undefined || isAbsolute(again.node)).toBe(true);
   });
 
   it('with no LOOM_HOME and no HOME, there is no managed dir and PATH is all there is', () => {
