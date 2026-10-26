@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **An ask may carry its own buttons** (`actions`, up to two `buttons` items),
+  drawn on its Home card in place of the link, as the board's Ratify and
+  Reject. When one memory waits on an agent, Home's card quotes it and ratifies
+  or rejects it right there.
 - **Thread rows on a wide screen put where and when at the right edge** (the
   row's link, not its text, takes the room).
 - **Catalog: shuttle at 21c35b6.** The Subscriptions tile on Home is the

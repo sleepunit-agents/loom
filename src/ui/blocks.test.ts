@@ -4,7 +4,7 @@
  * rendered as data: every string escaped.
  */
 import { describe, it, expect } from 'vitest';
-import { parsePage } from './vocab.js';
+import { parseManifest, parsePage } from './vocab.js';
 import { renderDashboard, renderPage, CORE, type Chrome } from './render.js';
 import { whereLabel } from './data.js';
 import { identityFacts } from './household-pages.js';
@@ -40,6 +40,14 @@ describe('meter, code and status blocks', () => {
   it('a filters search field carries a magnifier', () => {
     const p = page([{ type: 'filters', param: 'd', search: 'Search 3 facts', options: [{ value: '', label: 'All' }] }]);
     expect(renderPage(p as Exclude<typeof p, string>, ctx, chrome)).toMatch(/<svg class="search-icon"[^>]*>[\s\S]*?<\/svg><input type="search"/);
+  });
+
+  it('an ask may carry up to two actions, drawn on its card and posted to its source', () => {
+    const m = parseManifest({ v: 2, asks: [{ text: 'Renew the login', page: '', actions: [{ action: 'renew', label: 'Renew', tone: 'primary' }, { action: 'later', label: 'Later' }] }] });
+    expect(typeof m === 'string' ? m : m.asks[0].actions?.map((b) => b.label)).toEqual(['Renew', 'Later']);
+    expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', actions: [1, 2, 3].map((n) => ({ action: `a${n}`, label: 'x' })) }] })).toBe('string');
+    const html = renderDashboard({ label: 'Household', thread: [], tiles: [], asks: [{ text: 'Renew the login', source: { id: 'subs', base: '/p/subs/' }, actions: [{ action: 'renew', label: 'Renew', tone: 'primary' }, { action: 'later', label: 'Later' }] }] }, ctx, chrome);
+    expect(html).toMatch(/<div class="ask-acts"><form class="button-form" method="post" action="\/act\/subs">[\s\S]*?>Renew<\/button>[\s\S]*?>Later<\/button>/);
   });
 
   it('a where reads the way a person says it', () => {
