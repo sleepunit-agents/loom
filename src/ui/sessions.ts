@@ -24,7 +24,27 @@ export interface Session { issuedAt: number; secret: Buffer }
 
 interface Stored { issuedAt: number; secret: string }
 interface Link { expires: number; secret: string }
-interface File { v: 1; sessions: Record<string, Stored>; links?: Record<string, Link> }
+/** A WebAuthn credential (docs/specs/passkeys.md): signs in as the token digest that added it. */
+export interface Passkey {
+  id: string;
+  publicKey: string;
+  alg: number;
+  counter: number;
+  label: string;
+  created: number;
+  lastUsed?: number;
+  secret: string;
+}
+interface Challenge { expires: number; purpose: 'register' | 'login'; secret?: string }
+interface File {
+  v: 1;
+  sessions: Record<string, Stored>;
+  links?: Record<string, Link>;
+  passkeys?: Record<string, Passkey>;
+  challenges?: Record<string, Challenge>;
+}
+
+export const MAX_PASSKEYS = 20;
 
 export const MAX_SESSIONS = 50;
 const LOCK_WAIT_MS = 2000;
@@ -129,6 +149,74 @@ export class SessionStore {
       if (!l) return null;
       delete f.links![hashId(code)];
       return l.expires > nowS ? Buffer.from(l.secret, 'hex') : null;
+    });
+  }
+
+  /**
+   * A one-time WebAuthn challenge (base64url), good for `ttlS` seconds; one
+   * for registering also carries the token digest of the session asking.
+   */
+  createChallenge(purpose: Challenge['purpose'], secret: Buffer | null, ttlS = 300, nowS = Math.floor(Date.now() / 1000)): string {
+    const challenge = randomBytes(32).toString('base64url');
+    this.withLock((f) => {
+      f.challenges ??= {};
+      for (const [k, c] of Object.entries(f.challenges)) if (c.expires <= nowS) delete f.challenges[k];
+      // A flood of unauthenticated sign-in attempts can't grow the file without bound.
+      const keys = Object.keys(f.challenges).sort((a, b) => f.challenges![a].expires - f.challenges![b].expires);
+      for (const k of keys.slice(0, Math.max(0, keys.length - 99))) delete f.challenges[k];
+      f.challenges[hashId(challenge)] = { expires: nowS + ttlS, purpose, ...(secret ? { secret: secret.toString('hex') } : {}) };
+    });
+    return challenge;
+  }
+
+  /** Spend a challenge: it's gone either way; null unless it was this purpose and unexpired. */
+  useChallenge(challenge: string, purpose: Challenge['purpose'], nowS = Math.floor(Date.now() / 1000)): { secret: Buffer | null } | null {
+    if (!existsSync(this.file)) return null;
+    return this.withLock((f) => {
+      const c = f.challenges?.[hashId(challenge)];
+      if (!c) return null;
+      delete f.challenges![hashId(challenge)];
+      if (c.expires <= nowS || c.purpose !== purpose) return null;
+      return { secret: c.secret ? Buffer.from(c.secret, 'hex') : null };
+    });
+  }
+
+  passkeys(): Passkey[] {
+    return Object.values(this.read().passkeys ?? {}).sort((a, b) => a.created - b.created);
+  }
+
+  passkey(id: string): Passkey | null {
+    return this.read().passkeys?.[id] ?? null;
+  }
+
+  addPasskey(p: Passkey): void {
+    this.withLock((f) => {
+      f.passkeys ??= {};
+      if (f.passkeys[p.id]) throw new Error('that passkey is already added');
+      if (Object.keys(f.passkeys).length >= MAX_PASSKEYS) throw new Error(`at most ${MAX_PASSKEYS} passkeys; remove one first`);
+      f.passkeys[p.id] = p;
+    });
+  }
+
+  /** Record a sign-in: the new counter (refusing one that didn't go up) and when. */
+  usePasskey(id: string, counter: number, nowS = Math.floor(Date.now() / 1000)): Passkey | null {
+    return this.withLock((f) => {
+      const p = f.passkeys?.[id];
+      if (!p) return null;
+      // A counter that didn't go up, when either side has one, means the key was copied.
+      if ((counter !== 0 || p.counter !== 0) && counter <= p.counter) return null;
+      p.counter = counter;
+      p.lastUsed = nowS;
+      return { ...p };
+    });
+  }
+
+  removePasskey(id: string): boolean {
+    if (!existsSync(this.file)) return false;
+    return this.withLock((f) => {
+      if (!f.passkeys?.[id]) return false;
+      delete f.passkeys[id];
+      return true;
     });
   }
 

@@ -12,6 +12,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Passkeys for loom's page** (docs/specs/passkeys.md). Sign in once with a
+  token or a link, add a passkey on the new Passkeys page, and after that
+  *Sign in with a passkey* is one tap and Face ID, a fingerprint or a PIN.
+  Discoverable credentials with user verification, ES256/EdDSA/RS256,
+  verified with node:crypto (no new dependencies). A passkey signs in as the
+  token whose session added it, only while that token is live; its counter
+  must go up; it can be removed from the page. Passkeys work at
+  `LOOM_PUBLIC_URL` (https, or http://localhost). Only the sign-in and
+  Passkeys pages allow a script, loom's own `/login/passkey.js`.
+
+### Fixed
+
+- The page's integration tests no longer see the host's own managed pieces
+  (they run under their own `LOOM_HOME` and `XDG_CONFIG_HOME`).
+
 ### Changed
 
 - **The catalog's shuttle is d8f5a8a** (shuttle#2, #3): its subscriptions broker

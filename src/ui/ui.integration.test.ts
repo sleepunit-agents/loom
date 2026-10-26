@@ -142,6 +142,7 @@ describe('loom UI over HTTP', () => {
   let handle: HttpServeHandle;
   let base: string;
   let savedPath: string | undefined;
+  let savedHome: Record<string, string | undefined> = {};
 
   beforeEach(async () => {
     clearPieceCache();
@@ -152,14 +153,22 @@ describe('loom UI over HTTP', () => {
     await remember(stack, { category: 'episode', title: 'talked on discord', content: 'body', metadata: { where: 'discord:#pond' } });
     await remember(stack, { category: 'project', title: 'a hot memory', content: 'body' });
     savedPath = process.env.PATH;
-    // Only this test's pieces: not whatever loom-* the host has installed.
+    savedHome = { LOOM_HOME: process.env.LOOM_HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+    // Only this test's pieces: not whatever loom-* the host has installed, on
+    // PATH or managed under its LOOM_HOME (or its systemd units).
     process.env.PATH = [bin, '/usr/bin', '/bin'].join(delimiter);
+    process.env.LOOM_HOME = join(stack, 'loom-home');
+    process.env.XDG_CONFIG_HOME = join(stack, 'xdg');
     handle = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0, token: TOKEN });
     base = `http://127.0.0.1:${handle.port}`;
   });
   afterEach(async () => {
     await handle.close();
     process.env.PATH = savedPath;
+    for (const [k, v] of Object.entries(savedHome)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
     await rm(stack, { recursive: true, force: true });
     await rm(bin, { recursive: true, force: true });
   });

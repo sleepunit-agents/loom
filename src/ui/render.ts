@@ -247,7 +247,7 @@ function chromeTop(c: Chrome): string {
   const tab = (n: Chrome['nav'][number]) => `<a href="${esc(n.href)}"${n.current ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`;
   return `<header class="top"><div class="top-in"><a class="brand" href="/"><svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h16M3 11h16M3 17h16"></path><path d="M7 2v18M15 2v18" opacity=".55"></path></svg>loom <span class="who">· ${esc(c.agent)}</span></a>` +
     `<nav class="tabs" aria-label="Sections">${core.map(tab).join('')}${pieces.length ? `<span class="sep" aria-hidden="true"></span>${pieces.map(tab).join('')}` : ''}</nav>` +
-    `<div class="top-right"><span class="mono">${esc(c.clock)}</span><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
+    `<div class="top-right"><span class="mono">${esc(c.clock)}</span><a class="mono" href="/passkeys">Passkeys</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
 }
 
 function chromeFoot(c: Chrome, refresh: boolean): string {
@@ -316,11 +316,33 @@ export function renderLoginLink(code: string, error?: string): string {
   );
 }
 
-export function renderLogin(error?: string): string {
+export function renderLogin(error?: string, passkey: { rp?: string; here: boolean } = { here: false }): string {
+  // A passkey button only where passkeys work (LOOM_PUBLIC_URL's origin); the script is loom's one (/login/passkey.js).
+  const pk = passkey.here
+    ? `<button type="button" id="passkey-signin">Sign in with a passkey</button><p class="sub" id="passkey-msg"></p><p class="sub">or paste the token:</p>`
+    : passkey.rp ? `<p class="sub">Passkeys work at <a href="${esc(passkey.rp)}/login">${esc(passkey.rp)}</a>.</p>` : '';
   return document(
     'loom',
-    `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Paste the bearer token once, or open a sign-in link from <code>loom token link</code>. This browser keeps a cookie for 30 days.</p>${
-      error ? `<p class="err">${esc(error)}</p>` : ''}<input type="password" name="token" autocomplete="current-password" autofocus aria-label="token"><button type="submit">Open</button></form>`,
+    `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Sign in with a passkey, paste the bearer token once, or open a sign-in link from <code>loom token link</code>. This browser keeps a cookie for 30 days.</p>${
+      error ? `<p class="err">${esc(error)}</p>` : ''}${pk}<input type="password" name="token" autocomplete="current-password" ${passkey.here ? '' : 'autofocus '}aria-label="token"><button type="submit">Open</button></form>${
+      passkey.here ? '<script src="/login/passkey.js" defer></script>' : ''}`,
     false,
   );
+}
+
+/**
+ * The Passkeys page: an ordinary page, plus loom's own "add a passkey" control
+ * and its script (/login/passkey.js) where passkeys work, or a note where they don't.
+ */
+export function renderPasskeys(page: Page, ctx: RenderContext, chrome: Chrome, add: { csrf: string } | { note: string }): string {
+  const control = 'csrf' in add
+    ? `<section class="card"><h2>Add a passkey</h2><form class="login" style="margin:0;padding:0;max-width:420px" action="/passkeys" method="get"><p class="sub">Name it so you'll know it later, like "Jonathan's phone".</p><input id="passkey-label" maxlength="60" placeholder="Name" aria-label="name"><button type="button" id="passkey-add" data-csrf="${esc(add.csrf)}">Add a passkey</button><p class="sub" id="passkey-msg"></p></form></section>`
+    : `<section class="card"><h2>Add a passkey</h2><p class="sub">${esc(add.note)}</p></section>`;
+  return renderPage(page, ctx, chrome)
+    // No minute refresh here: it would cut off a passkey being made.
+    .replace('<meta http-equiv="refresh" content="60">', '')
+    .replace('<span>Refreshes every minute.</span>', '')
+    // The control goes first, under the title: on a phone it's what the page is for.
+    .replace(/(<main>[\s\S]*?<h1>[\s\S]*?<\/div>)/, `$1${control}`)
+    .replace('</body>', `${'csrf' in add ? '<script src="/login/passkey.js" defer></script>' : ''}</body>`);
 }
