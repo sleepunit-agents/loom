@@ -162,13 +162,13 @@ footer{max-width:1100px;margin:0 auto;padding:0 16px 32px;color:var(--ink-2);fon
 .hmark{flex:none}
 .wordmark{display:inline-flex;align-items:center;gap:8px;font-size:20px;font-weight:600;color:var(--ink);letter-spacing:-.01em}.wordmark:hover{text-decoration:none}
 .rail{display:none}
-.phone-top{display:flex;align-items:center;min-height:52px;padding:8px 16px 0}
+.phone-top{position:sticky;top:0;z-index:15;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:56px;padding:calc(6px + env(safe-area-inset-top)) 16px 6px;background:var(--ground)}
+.scope-pill{flex:none;display:inline-flex;align-items:center;gap:8px;max-width:60%;height:40px;padding:0 12px 0 6px;border-radius:999px;background:var(--surface);border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:14px}.scope-pill:hover{text-decoration:none}
+.scope-pill span:not(.caret){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.scope-pill .caret{color:var(--ink-2)}
 .back{width:44px;height:44px;margin-left:-10px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;color:var(--ink)}.back:hover{background:var(--raised)}
 .bottom{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;gap:6px;align-items:center;padding:8px 12px calc(8px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--line)}
 .bottom .tab{flex:1;height:48px;display:flex;align-items:center;justify-content:center;border-radius:14px;color:var(--ink-2)}.bottom .tab:hover{text-decoration:none;color:var(--ink)}
 .bottom .tab.on{background:var(--tab-on);color:var(--thread)}
-.scope-chip{position:relative;flex:none;width:56px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:14px;background:var(--raised);border:1px solid var(--line)}.scope-chip:hover{text-decoration:none}
-.scope-chip .caret{position:absolute;top:1px;right:5px;font-size:11px;color:var(--ink-2)}
 .content{padding-bottom:84px}
 @media (min-width:960px){
 .rail{display:flex;flex-direction:column;gap:14px;flex:0 0 248px;padding:24px 16px;background:var(--rail);min-height:100vh}

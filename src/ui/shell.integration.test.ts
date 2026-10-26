@@ -49,6 +49,9 @@ describe('the app shell', () => {
     const html = await (await get('/', cookie)).text();
     expect(html).toContain('<aside class="rail"');
     expect(html).toContain('<nav class="bottom" aria-label="Main">');
+    // The scope lives in the pinned phone header (right), not the bottom bar.
+    expect(html).toMatch(/<div class="phone-top"><a class="wordmark"[\s\S]*?<a class="scope-pill" href="\/scope" data-sheet="scope"/);
+    expect(/<nav class="bottom"[\s\S]*?<\/nav>/.exec(html)![0]).not.toContain('scope');
     expect(html).toContain('aria-label="Home" aria-current="page"');
     expect(html).toContain('href="/places" aria-label="Places" data-sheet="places"');
     expect(html).toContain('<dialog class="sheet" id="sheet-scope"');
