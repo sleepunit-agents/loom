@@ -809,7 +809,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   if (hh) {
-    const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf });
+    const hhAgents = agentsOf(hh);
+    const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf, agents: hhAgents });
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead) =>
       html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash), undefined, head), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
     if (pathname === '/') {

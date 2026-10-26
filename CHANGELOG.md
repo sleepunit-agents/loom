@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A person's page, per the Person board.** Under their name, their summary
+  (or role); then how each agent knows them, one row per agent with its mark
+  (every agent, "Hasn't met them" included); then Reach, a value per channel,
+  with where each came from a tap away. Household pages now hand their agents
+  to the renderer, so marks show wherever a row names one.
+
 - **A memory's page, per the Memory board.** Under the memory: where it was
   learned, when it was first written, how often it's been recalled, and who
   it's about. Then its history, newest first: what it says now and each
