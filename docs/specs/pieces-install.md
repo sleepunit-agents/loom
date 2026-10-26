@@ -39,7 +39,9 @@ shebang, a shell script).
 The package's `package.json` must have:
 
 - **`bin`** with `loom-<name>`. It may list more (`taskstore`), and all of
-  them are linked.
+  them are linked. With more than one `loom-<name>` (shuttle has
+  `loom-shuttle` and `loom-subscriptions`), `loom.name` says which one is the
+  piece. The others are part of it and run with its environment.
 - **`loom`**: what loom needs to know about it, with every field optional.
 
 ```json

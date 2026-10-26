@@ -168,7 +168,7 @@ describe('managed pieces', () => {
 
     await fixture('x/two', SHA1, { name: 'two' }, { 'loom-a': 'true', 'loom-b': 'true' });
     expect((await runCliCaptured(['pieces', 'install', '--from', `github:x/two#${SHA1}`, '--yes'], { env })).stderr)
-      .toContain('exactly one loom-<name> bin; two has 2');
+      .toContain('two has 2 loom-<name> bins (loom-a, loom-b): its loom block names which one is the piece (loom.name)');
     await install(SHA1);
     await fixture('x/thief', SHA1, { name: 'thief' }, { 'loom-thief': 'true', taskstore: 'echo stolen' });
     expect((await runCliCaptured(['pieces', 'install', '--from', `github:x/thief#${SHA1}`, '--yes'], { env })).stderr)
@@ -178,6 +178,20 @@ describe('managed pieces', () => {
     expect(parseLoomBlock({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'x' }] }, 'box')).toMatchObject({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL' }] });
     expect(parseLoomBlock({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'x' }] }, 'tasks')).toMatch(/isn't loom's own/);
     expect(parseLoomBlock({ settings: [{ name: 'PATH', label: 'x' }] })).toMatch(/PATH/);
+  });
+
+  it('a package with several loom-<name> bins names its piece; the others are part of it', async () => {
+    await fixture('x/multi', SHA1, { name: 'multi', loom: { name: 'shuttle', settings: [{ name: 'SHUTTLE_INSTANCE', label: 'Instance' }] } },
+      { 'loom-shuttle': 'echo "shuttle $LOOM_PIECE_NAME $SHUTTLE_INSTANCE"', 'loom-subscriptions': 'echo "subs $LOOM_PIECE_NAME $SHUTTLE_INSTANCE"' });
+    const r = await runCliCaptured(['pieces', 'install', '--from', `github:x/multi#${SHA1}`, '--yes'], { env });
+    expect(r.stdout).toContain('installed shuttle');
+    await runCliCaptured(['pieces', 'set', 'shuttle', 'SHUTTLE_INSTANCE=/srv/shuttle.json'], { env });
+    expect((await runCliCaptured(['subscriptions'], { env })).stdout).toBe('subs shuttle /srv/shuttle.json\n');
+    const listed = JSON.parse((await runCliCaptured(['pieces', '--json'], { env })).stdout);
+    expect(listed.map((p: { name: string; managed?: { partOf?: string } }) => [p.name, p.managed?.partOf])).toEqual([['shuttle', undefined], ['subscriptions', 'shuttle']]);
+    await fixture('x/multi', SHA2, { name: 'multi', loom: { name: 'nope' } }, { 'loom-a': 'true', 'loom-b': 'true' });
+    expect((await runCliCaptured(['pieces', 'install', '--from', `github:x/multi#${SHA2}`, '--yes'], { env })).stderr)
+      .toContain('loom.name is nope, which isn\'t one of its bins (loom-a, loom-b)');
   });
 
   it('remove keeps settings and data unless --purge, and never takes another piece\'s links', async () => {

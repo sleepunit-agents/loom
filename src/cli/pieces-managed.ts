@@ -47,6 +47,8 @@ export interface Service {
 }
 
 export interface LoomBlock {
+  /** Which loom-<name> bin is the piece, when the package has several. */
+  name?: string;
   role?: string;
   label?: string;
   description?: string;
@@ -201,6 +203,10 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'the loom block is not an object';
   const b = raw as Record<string, unknown>;
   const out: LoomBlock = { settings: [], services: [] };
+  if (b.name !== undefined) {
+    if (typeof b.name !== 'string' || !PIECE.test(b.name)) return 'loom.name is not a piece name';
+    out.name = b.name;
+  }
   for (const k of ['role', 'label'] as const) {
     if (b[k] !== undefined) {
       if (!str(b[k], 40)) return `loom.${k} is not a short string`;
@@ -320,9 +326,18 @@ export async function installPiece(
     }
     const { name: pkgName, pkg } = installedPackage(staging);
     const bins = binsOf(pkg, pkgName);
+    // The piece is its one loom-<name> bin, or, with several, the one loom.name names;
+    // the others are part of it (they run with its environment).
     const loomBins = bins.filter((b) => b.startsWith('loom-'));
-    if (loomBins.length !== 1) throw new PieceError(`a piece has exactly one loom-<name> bin; ${pkgName} has ${loomBins.length}`);
-    const pieceName = loomBins[0].slice('loom-'.length);
+    const declared = (pkg.loom as { name?: unknown } | undefined)?.name;
+    if (!loomBins.length) throw new PieceError(`${pkgName} has no loom-<name> bin, so it isn't a piece`);
+    if (loomBins.length > 1 && declared === undefined) {
+      throw new PieceError(`${pkgName} has ${loomBins.length} loom-<name> bins (${loomBins.join(', ')}): its loom block names which one is the piece (loom.name)`);
+    }
+    if (declared !== undefined && !loomBins.includes(`loom-${declared}`)) {
+      throw new PieceError(`${pkgName}'s loom.name is ${String(declared)}, which isn't one of its bins (${loomBins.join(', ')})`);
+    }
+    const pieceName = declared !== undefined ? String(declared) : loomBins[0].slice('loom-'.length);
     if (!PIECE.test(pieceName) || pieceName === 'loom') throw new PieceError(`loom-${pieceName} isn't a piece name`);
     if (name && pieceName !== name) throw new PieceError(`the catalog's ${name} installs loom-${pieceName}, not loom-${name}`);
     const bad = bins.find((b) => !BIN.test(b));

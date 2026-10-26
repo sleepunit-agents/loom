@@ -4,10 +4,26 @@
     {
       "name": "box",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "1b06a8252f8d27bd39df1a624ab91e3a87d3b483",
+      "commit": "ef9a9b3d156f91aaaae4e1d96e9455c1fd5ef5a0",
       "version": "0.1.0",
       "label": "Boxes",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
+    },
+    {
+      "name": "shuttle",
+      "repo": "sleepunit-agents/shuttle",
+      "commit": "86ad5db7a9d354811c607116ed50ee2ce13ea270",
+      "version": "0.1.0",
+      "label": "Shuttle",
+      "description": "Chat bridges (Discord, Slack) and the household's model subscriptions: accounts, sign-ins, usage."
+    },
+    {
+      "name": "tasks",
+      "repo": "sleepunit-agents/taskstore",
+      "commit": "e6f58972d9aec80b17855560bb563bcb5b82b1fc",
+      "version": "0.4.0",
+      "label": "Tasks",
+      "description": "A work store: tasks, links, comments and the ready queue."
     }
   ]
 }

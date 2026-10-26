@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The pieces catalog has box, shuttle and tasks**, each pinned to its
+  merged commit, so a fresh loom installs all three from the Pieces page.
+- **A package with several `loom-<name>` bins** (shuttle's `loom-shuttle` and
+  `loom-subscriptions`) names its piece with `loom.name`; the other bins are
+  part of it and run with its environment.
+
+### Added
+
 - **Managed pieces: `loom pieces install | update | rollback | remove | set | catalog`**
   (docs/specs/pieces-install.md). loom installs a piece itself, from its
   catalog (`assets/pieces.json`, each pinned to a commit) or with
