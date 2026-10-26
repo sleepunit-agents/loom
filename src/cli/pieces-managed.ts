@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 import {
   accessSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { basename, delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { syncServices, type ServicesResult } from './pieces-services.js';
 
@@ -166,7 +166,7 @@ export function pieceEnvFor(path: string, env: NodeJS.ProcessEnv): NodeJS.Proces
   const out: NodeJS.ProcessEnv = { ...env, LOOM_PIECE_NAME: owner.name, LOOM_PIECE_HOME: home };
   // The node it was installed with goes first: whatever node the daemon's PATH finds may not
   // load the native modules npm built for that one (taskstore's better-sqlite3).
-  if (owner.node) out.PATH = [dirname(owner.node), ...(env.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter);
+  if (owner.node && isAbsolute(owner.node) && existsSync(owner.node)) out.PATH = [dirname(owner.node), ...(env.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter);
   const values = readSettings(env, owner.name);
   for (const s of owner.loom.settings) {
     if (values[s.name] !== undefined) out[s.name] = values[s.name];
@@ -266,9 +266,10 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
 }
 
 /** npm from PATH (a test puts a stand-in first on it). */
-/** The first executable `node` on PATH: the one npm (a node program) runs on. */
+/** The first executable `node` in an absolute PATH dir: the one npm (a node program) runs on. */
 function nodeOnPath(env: NodeJS.ProcessEnv): string | undefined {
-  for (const dir of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
+  // A relative entry (`.`) would make the piece's PATH depend on where it's run from.
+  for (const dir of (env.PATH ?? '').split(delimiter).filter((d) => isAbsolute(d))) {
     const p = join(dir, 'node');
     try { accessSync(p, fsConstants.X_OK); return p; } catch { /* next */ }
   }
