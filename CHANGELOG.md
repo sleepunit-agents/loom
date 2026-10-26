@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Mind, a memory, a person and a knowledge entry per their boards.** Mind
+  leads with Your call (each drafted memory quoted, with Ratify and Reject),
+  then Top of mind as a ranked list and "All N memories"; the filters and the
+  heat detail are on that page. A memory shows its facts card first (with
+  "Top of mind #N" when it's there), then what it says, History and Forget. A
+  person's rows give each agent's summary in a line or two. A knowledge entry
+  says when it was verified under its title, and Still true comes after its
+  sources.
+- **A list may be numbered** (`numbered: true`): a rank before each row.
 - **Sign in, Passkeys and New agent per their boards.** Sign in: loom's mark
   in the middle, and at the bottom a passkey button, "or", a token and Go.
   Passkeys: each a row with an inline Remove, then Add a passkey, then Another

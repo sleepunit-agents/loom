@@ -32,7 +32,7 @@ export interface Button { action: string; label: string; tone?: 'primary' | 'dan
 
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
-  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
+  | { type: 'list'; numbered?: boolean; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][] }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -294,6 +294,7 @@ function block(v: unknown, depth = 0): Block {
     case 'list':
       return {
         type: 'list',
+        ...(b.numbered === true ? { numbered: true } : {}),
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');
           return {
