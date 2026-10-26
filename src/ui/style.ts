@@ -229,6 +229,7 @@ main.dash{gap:24px}
 .seg-tabs a{flex:1;display:flex;align-items:center;justify-content:center;height:42px;border-radius:var(--r-control);color:var(--ink-2);font-size:14px}.seg-tabs a:hover{text-decoration:none;color:var(--ink)}
 .seg-tabs a.on{background:var(--surface);color:var(--ink);font-weight:600}
 .your-call .label .n{float:right;color:var(--ink-2)}
+.list .avatar{flex:none;width:36px;height:36px;border-radius:50%;background:var(--raised);color:var(--ink);display:inline-flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;letter-spacing:.02em}
 .link-row .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.link-row .body .meta{font-size:12px;color:var(--ink-2);font-family:inherit}.link-row .glyph{margin-right:6px}#sheet-setup .card.rows+.card.rows{margin-top:10px}
 [id$="--history"] .list li{position:relative;padding-left:22px}[id$="--history"] .list li::before{content:"";position:absolute;left:4px;top:18px;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--ink-2);background:var(--surface)}
 [id$="--history"] .list li:not(:first-child) .text{color:var(--ink-2)}[id$="--history"] .list li:first-child::before{background:var(--ink);border-color:var(--ink)}[id$="--history"] .list li:not(:last-child)::after{content:"";position:absolute;left:8.5px;top:29px;bottom:-10px;width:1.5px;background:var(--line)}

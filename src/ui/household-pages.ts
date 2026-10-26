@@ -24,6 +24,7 @@ import { commonsPeoplePath } from '../backends/people-household.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { bootstrap } from '../tools/bootstrap.js';
+import { knowledgeVerify } from '../tools/knowledge-verify.js';
 import { ago, agentName, uiTimeZone, when, type CoreOptions } from './core.js';
 import { tapeRows } from './data.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile } from './vocab.js';
@@ -226,7 +227,11 @@ export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {
     return {
       title: r.title,
       sections: [
-        { id: 'body', blocks: [{ type: 'prose' as const, text: body.slice(0, 20000) }] },
+        { id: 'body', blocks: [
+          { type: 'prose' as const, text: body.slice(0, 20000) },
+          // The board's "Still true": a verification (the clock the nightly freshness pass reads), as the owner.
+          { type: 'buttons' as const, items: [{ action: 'knowledge-verify', label: 'Still true', tone: 'primary' as const, fields: { slug: r.slug } }] },
+        ] },
         ...(cites.length ? [{ id: 'citations', title: 'Sources', blocks: [{ type: 'list' as const, items: cites.map((c) => ({ text: c.claim, meta: `${c.source_kind}${c.source_locator ? ` · ${c.source_locator}` : ''}`, ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) })) }] }] : []),
         { id: 'record', side: true, blocks: [{ type: 'kv', items: [
           { label: 'domain', value: r.domain },
@@ -263,6 +268,13 @@ function relationships(h: Household, slug: string) {
   });
 }
 
+/** "Robby Wilson" → "RW", "Daniel" → "D": letters only, at most two. */
+function initials(name: string): string | undefined {
+  const parts = name.split(/\s+/).map((w) => [...w].find((c) => /\p{L}/u.test(c))).filter(Boolean) as string[];
+  const out = (parts.length > 1 ? parts[0] + parts[parts.length - 1] : parts[0] ?? '').toUpperCase();
+  return out || undefined;
+}
+
 export function householdPeople(h: Household): Page {
   const dir = directory(h);
   if (!dir) return { title: 'People', intro: 'Nobody in the directory yet.', sections: [] };
@@ -278,6 +290,7 @@ export function householdPeople(h: Household): Page {
           const flag = [p.stale ? `${p.stale} stale` : '', p.unverified ? `${p.unverified} unverified` : ''].filter(Boolean).join(' · ');
           return {
             text: p.name,
+            avatar: initials(p.name),
             meta: rel.length ? `known to ${rel.join(', ')}` : 'no agent has a relationship yet',
             badge: flag || undefined,
             tone: flag ? 'warn' as const : undefined,
@@ -429,6 +442,12 @@ export function newAgentPage(): Page {
 /** The owner's household actions: tokens and agents. */
 export async function householdAct(h: Household, action: string, fields: Record<string, string>): Promise<ActResult> {
   try {
+    if (action === 'knowledge-verify') {
+      const slug = fields.slug ?? '';
+      if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
+      const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'confirmed', note: 'confirmed from loom\'s page' }, h.owner ?? 'owner');
+      return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge/${slug}` } : { ok: false, message: out };
+    }
     if (action === 'create-token') {
       const agent = fields.agent ?? '';
       const role = agent === '' ? null : parseRole(`agent:${agent}`);

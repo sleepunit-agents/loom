@@ -187,7 +187,7 @@ outside the page).
 | Block | Fields |
 |---|---|
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page` |
-| `list` | `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `page` or `href` |
+| `list` | `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `page` or `href` |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |

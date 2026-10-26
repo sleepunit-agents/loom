@@ -59,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **"Still true" on a knowledge page.** One tap verifies it (knowledge_verify,
+  outcome confirmed, as the owner): the verified date moves, which is the
+  clock the nightly freshness pass reads.
+- **Initials on the People list.** A list item may carry `avatar` (one or two
+  letters), drawn in a plain circle; the household's People list gives each
+  person theirs.
+
 - **Setup, apart from Places.** A piece's tab can say `"kind": "setting"`
   (rarely visited: adding a box, a subscription, a secret); it goes under a
   new Setup tab in the bottom bar (a sheet, with Manage pieces and Passkeys)

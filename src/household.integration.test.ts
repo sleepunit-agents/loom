@@ -21,6 +21,7 @@ import {
   moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
 } from './household.js';
 import BetterSqlite3 from 'better-sqlite3';
+import { parsePage } from './ui/vocab.js';
 import { resolveKnowledgeDbPath } from './config.js';
 import { commonsPeoplePath, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
@@ -737,6 +738,33 @@ describe('the household page', () => {
     // An agent's tabs carry the way around; a memory under them goes back to Mind.
     expect(await (await page(cookie, '/a/mark/mind')).text()).not.toContain('class="back named"');
     expect(await (await page(cookie, '/a/mark/memory/x')).text()).toContain('<a class="back named" href="/a/mark/mind">');
+  });
+
+  it('the People list gives each person their initials', async () => {
+    const cookie = await login();
+    expect(await (await page(cookie, '/people')).text()).toMatch(/<span class="avatar" aria-hidden="true">L<\/span>[\s\S]*?Loren/);
+    expect(parsePage({ title: 't', sections: [{ id: 's', blocks: [{ type: 'list', items: [{ text: 'x', avatar: '<b>' }] }] }] })).toMatch(/avatar/);
+  });
+
+  it('"Still true" on a knowledge page verifies it as the owner, and moves its verified date', async () => {
+    const c = await connect(handle.port, owner);
+    await c.callTool({ name: 'knowledge_write', arguments: { slug: 'kiln-cone-6', title: 'Cone 6 is about 1222 °C', domain: 'ceramics', body: 'Cone 6.', citations: [{ claim: 'Cone 6', source_kind: 'web', source_locator: 'https://example.com/x', excerpt: 'x' }] } });
+    await c.close();
+    const db = () => new BetterSqlite3(commonsKnowledgePath(h), { readonly: true });
+    const before = (() => { const d = db(); try { return (d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string | null }).verified_at; } finally { d.close(); } })();
+    const cookie = await login();
+    const html = await (await page(cookie, '/knowledge/kiln-cone-6')).text();
+    expect(html).toContain('<input type="hidden" name="_action" value="knowledge-verify">');
+    await new Promise((r) => setTimeout(r, 20));
+    const r = await post(cookie, '/act/loom', { _csrf: csrfOf(html), _action: 'knowledge-verify', _path: 'knowledge/kiln-cone-6', slug: 'kiln-cone-6' });
+    expect(r.headers.get('location')).toMatch(/^\/knowledge\/kiln-cone-6\?_flash=/);
+    const d = db();
+    try {
+      const row = d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string };
+      expect(row.verified_at > (before ?? '')).toBe(true);
+      const v = d.prepare("SELECT v.verifier, v.outcome FROM verifications v JOIN pages p ON p.id = v.page_id WHERE p.slug = 'kiln-cone-6' ORDER BY v.id DESC LIMIT 1").get() as { verifier: string; outcome: string };
+      expect(v).toMatchObject({ verifier: 'jonathan', outcome: 'confirmed' });
+    } finally { d.close(); }
   });
 
   it('a person shows the shared entry and every agent\'s relationship', async () => {
