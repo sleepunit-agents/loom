@@ -209,29 +209,6 @@ export function knowledgePage(h: Household, query: Record<string, string>, opts:
   }
 }
 
-/**
- * A long body as text blocks of at most `max` characters, broken between
- * paragraphs (a paragraph too long on its own breaks at a space), never
- * mid-word.
- */
-export function paragraphs(body: string, max: number): string[] {
-  const out: string[] = [];
-  let cur = '';
-  const push = (s: string) => { if (s.trim()) out.push(s.trim()); };
-  for (let para of body.split(/\n{2,}/)) {
-    while (para.length > max) {
-      const cut = para.lastIndexOf(' ', max) > max / 2 ? para.lastIndexOf(' ', max) : max;
-      push(cur); cur = '';
-      push(para.slice(0, cut));
-      para = para.slice(cut);
-    }
-    if (cur && cur.length + 2 + para.length > max) { push(cur); cur = ''; }
-    cur = cur ? `${cur}\n\n${para}` : para;
-  }
-  push(cur);
-  return out.length ? out : [''];
-}
-
 export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const path = commonsKnowledgePath(h);
@@ -246,11 +223,10 @@ export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {
       } catch { return []; }
     })();
     const body = r.body ?? '';
-    const chunks = paragraphs(body, 1900);
     return {
       title: r.title,
       sections: [
-        { id: 'body', blocks: chunks.slice(0, 18).map((c) => ({ type: 'text' as const, text: c })) },
+        { id: 'body', blocks: [{ type: 'prose' as const, text: body.slice(0, 20000) }] },
         ...(cites.length ? [{ id: 'citations', title: 'Sources', blocks: [{ type: 'list' as const, items: cites.map((c) => ({ text: c.claim, meta: `${c.source_kind}${c.source_locator ? ` · ${c.source_locator}` : ''}`, ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) })) }] }] : []),
         { id: 'record', side: true, blocks: [{ type: 'kv', items: [
           { label: 'domain', value: r.domain },

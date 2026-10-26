@@ -6,6 +6,7 @@
  * The look is Claude Design's (style.ts); tone is a shape and a word as well
  * as a color (glyph()).
  */
+import { prose } from './prose.js';
 import type { Ask, Block, Cell, Field, Page, Section, Tile, Tone } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
@@ -161,6 +162,8 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       const body = `<span class="${long ? 'clamp' : ''}" ${long ? 'data-clamp' : ''}>${esc(b.text)}</span>`;
       return `<p class="text-block${tone(b.tone)}">${b.tone && b.tone !== 'muted' ? glyph(b.tone) : ''}${body}</p>${long ? '<button class="more" type="button" data-more hidden>More</button>' : ''}`;
     }
+    case 'prose':
+      return `<div class="prose">${prose(b.text)}</div>`;
     case 'callout':
       return `<div class="callout${tone(b.tone)}">${b.tone && b.tone !== 'muted' ? glyph(b.tone) : ''}<div>${b.title ? `<strong>${esc(b.title)}</strong>` : ''}<p>${esc(b.text)}</p></div></div>`;
     case 'link': {
