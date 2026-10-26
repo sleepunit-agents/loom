@@ -10,6 +10,11 @@
  * place instead of reloading. Every one of these is the page without script
  * made smoother: the forms still post and redirect, the meta refresh still
  * runs under noscript.
+ *
+ * Offline: the service worker (src/ui/pwa.ts) hands back the last copy of a
+ * page with body data-offline-from; a live check that can't reach loom does
+ * the same. Either way the page says how old it is, statuses go hollow, and
+ * actions wait for a connection.
  */
 export const APP_JS = `'use strict';
 document.addEventListener('click', (e) => {
@@ -148,6 +153,7 @@ function patchDash(cur, next) {
   pill.textContent = '\\u2191 ' + fresh + ' new';
 }
 let pendingThread = null;
+document.addEventListener('click', (e) => { if (e.target instanceof Element && e.target.closest('a.needs-net')) e.preventDefault(); });
 document.addEventListener('click', (e) => {
   const p = e.target instanceof Element ? e.target.closest('.new-pill') : null;
   if (!p || !pendingThread) return;
@@ -161,8 +167,9 @@ async function refresh(force) {
     const res = await fetch(location.href, { headers: { 'X-Loom-Live': '1' }, credentials: 'same-origin' });
     if (!res.ok || res.redirected) { reachable = res.ok; status(); return; }
     text = await res.text();
-  } catch { reachable = false; status(); return; }
+  } catch { reachable = false; status(); offline(checked); return; }
   checked = Date.now(); reachable = true;
+  onlineAgain();
   const doc = new DOMParser().parseFromString(text, 'text/html');
   const cur = document.querySelector('main'), next = doc.querySelector('main');
   if (!cur || !next) return;
@@ -183,6 +190,42 @@ function status() {
   }
 }
 
+// "Offline · from 7:42 AM": what's on screen is old, says how old, and its actions wait.
+const clock = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function howOld(ms) {
+  const m = Math.round(ms / 60000);
+  return m < 1 ? 'from just now' : m < 60 ? m + (m === 1 ? ' minute' : ' minutes') + ' old' : Math.round(m / 60) + (Math.round(m / 60) === 1 ? ' hour' : ' hours') + ' old';
+}
+function offline(from) {
+  const at = new Date(from);
+  if (Number.isNaN(at.getTime())) return;
+  document.documentElement.classList.add('offline');
+  checked = Math.min(checked, at.getTime()); reachable = false; status();
+  let b = document.querySelector('.offline-banner');
+  if (!b) {
+    b = el('div', 'offline-banner'); b.setAttribute('role', 'status');
+    const main = document.querySelector('main');
+    if (main) main.prepend(b); else document.body.prepend(b);
+  }
+  const words = el('span', 'ob-words');
+  words.append(el('strong', '', 'Offline \u00B7 from ' + clock(at)), el('span', '', 'What you see is ' + howOld(Date.now() - at.getTime()) + '. Actions wait for a connection.'));
+  const g = el('span', 'ob-clock'); g.setAttribute('aria-hidden', 'true');
+  b.replaceChildren(g, words);
+  for (const btn of document.querySelectorAll('form[action*="/act/"] button, .ask a.go')) {
+    if (btn.dataset.label === undefined) btn.dataset.label = btn.textContent;
+    btn.disabled = true; btn.classList.add('needs-net'); btn.setAttribute('aria-disabled', 'true');
+    btn.textContent = btn.dataset.label + ' \u00B7 needs connection';
+  }
+}
+function onlineAgain() {
+  if (!document.documentElement.classList.contains('offline')) return;
+  // A kept copy is replaced by the real page; one that only lost the network for a while just lifts.
+  if (document.body.dataset.offlineFrom) { location.reload(); return; }
+  document.documentElement.classList.remove('offline');
+  const b = document.querySelector('.offline-banner'); if (b) b.remove();
+  for (const btn of document.querySelectorAll('.needs-net')) { btn.disabled = false; btn.classList.remove('needs-net'); btn.removeAttribute('aria-disabled'); btn.textContent = btn.dataset.label; }
+}
+
 function init(root) {
   if (!(navigator.clipboard && window.isSecureContext)) for (const b of root.querySelectorAll('[data-copy]')) b.textContent = 'Select';
   // A text block clamped at six lines gets More, only when it really overflows.
@@ -195,6 +238,15 @@ function init(root) {
 }
 document.addEventListener('DOMContentLoaded', () => {
   init(document);
+  // The app: a service worker where the browser allows one (https, or localhost). The sign-in page drops what it kept.
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    if (location.pathname.startsWith('/login')) {
+      if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('forget');
+      if (window.caches) caches.keys().then((ks) => ks.forEach((k) => { if (k.endsWith('-pages')) caches.delete(k); }));
+    } else navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+  if (document.body.dataset.offlineFrom) offline(document.body.dataset.offlineFrom);
+  window.addEventListener('online', () => { if (document.body.dataset.offlineFrom) location.reload(); else if (live) refresh(true); });
   // The one-time message from a full-page post becomes a toast, and leaves the address.
   for (const f of document.querySelectorAll('main .flash')) {
     const box = document.querySelector('.toasts');

@@ -278,10 +278,13 @@ export interface Shell {
  * A page that stays fresh says how often (data-live, seconds): the page's
  * script re-fetches it in place. Without script, the old meta refresh.
  */
+const HEAD_APP = '<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/loom.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icons/loom-180.png">' +
+  '<meta name="theme-color" content="#F4F3EE" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0E0E0D" media="(prefers-color-scheme: dark)"><meta name="apple-mobile-web-app-capable" content="yes">';
+
 function document(title: string, body: string, refresh: boolean | number): string {
   const every = refresh === true ? LIVE_S : refresh || 0;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${
-    every ? `<noscript><meta http-equiv="refresh" content="${refresh === true ? 60 : every}"></noscript>` : ''}<title>${esc(title)}</title><style>${STYLE}</style><script src="/app.js" defer></script></head><body${
+    every ? `<noscript><meta http-equiv="refresh" content="${refresh === true ? 60 : every}"></noscript>` : ''}<title>${esc(title)}</title>${HEAD_APP}<style>${STYLE}</style><script src="/app.js" defer></script></head><body${
     every ? ` data-live="${every}"` : ''}>${body}<div class="toasts" role="status" aria-live="polite"></div></body></html>`;
 }
 

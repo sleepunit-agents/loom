@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **loom's page installs as an app.** A manifest, icons and a service worker
+  (on https, or localhost). Each page loom shows is kept; when loom can't be
+  reached the last copy opens under "Offline · from 7:42 AM — what you see
+  is 2 hours old", statuses go hollow, and actions read "needs connection"
+  until it's back. A live page that loses the network says the same. A page
+  that was never opened here says so, and never shows another page in its
+  place. Nothing is kept from the sign-in pages or a page carrying a
+  one-time message (a token), and signing out — or the session ending —
+  drops every copy (`Clear-Site-Data` too).
+
 - **The page acts in place.** With script, a form or button posts with
   `fetch` and the answer is a toast above the bottom bar (labeled with its
   piece; `"keep": true` on an action result holds it, for a token shown

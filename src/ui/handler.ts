@@ -40,6 +40,7 @@ import { join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { sessionStore } from './sessions.js';
 import { APP_JS } from './app.js';
+import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
@@ -56,7 +57,7 @@ const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
 const PASSKEY_MAX_BYTES = 16 * 1024;
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
-const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
+const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
 const ACT_MAX_BYTES = 64 * 1024;
 const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
 const FLASH_TTL_MS = 60_000;
@@ -64,7 +65,7 @@ const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
 const SECURITY_HEADERS = {
   // Script only from loom itself (/app.js, /login/passkey.js), never inline: a piece's page is data.
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
   // same-origin, not no-referrer: under no-referrer, browsers send `Origin:
   // null` on the page's own form posts, which the cross-site guard has to
@@ -86,7 +87,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/app.js', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
+const PAGE_ROOTS = ['/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -486,6 +487,21 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'font/woff2', 'cache-control': 'public, max-age=31536000, immutable' });
     return void res.end(readFileSync(join(resolveRepoRoot(), 'assets', 'fonts', `${font[1]}.woff2`)));
   }
+  // The app: its manifest, icons and service worker (src/ui/pwa.ts). Public, like the fonts: none of it says anything about you.
+  const icon = /^\/icons\/(loom\.svg|loom-(?:180|192|512)\.png)$/.exec(pathname);
+  if (icon) {
+    if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': icon[1].endsWith('.svg') ? 'image/svg+xml' : 'image/png', 'cache-control': 'public, max-age=86400' });
+    return void res.end(readFileSync(join(resolveRepoRoot(), 'assets', 'icons', icon[1])));
+  }
+  if (pathname === '/manifest.webmanifest') {
+    if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    return send(res, 200, 'application/manifest+json', MANIFEST, { 'cache-control': 'no-cache' });
+  }
+  if (pathname === '/sw.js') {
+    if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    return send(res, 200, 'text/javascript; charset=utf-8', SW_JS, { 'cache-control': 'no-cache' });
+  }
   if (pathname === '/app.js') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
     return send(res, 200, 'text/javascript; charset=utf-8', APP_JS, { 'cache-control': 'no-cache' });
@@ -548,7 +564,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
     if (c && /^[0-9a-f]{64}$/.test(c)) storeFor(opts).delete(c);
-    return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` });
+    // And the copies of pages this browser kept for offline (https only; /app.js also asks the worker).
+    return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, 'clear-site-data': '"cache", "storage"' });
   }
 
   if (!who) {
