@@ -2,7 +2,7 @@
  * loom's web UI on the HTTP daemon (full scope only).
  *
  *   GET  /                         Home: the tape, tiles, "Your call"
- *   GET  /mind, /people[/<slug>], /memory/<ref>   loom's own pages
+ *   GET  /mind, /people[/<slug>], /memory/<ref>, /pieces   loom's own pages
  *   GET  /p/<piece>[/<path>]       a piece's page
  *   GET  /pieces.json              the installed pieces' manifests, for scripts
  *   POST /act/<source>             an action (source = loom or a piece)
@@ -37,6 +37,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sessionStore } from './sessions.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
+import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
@@ -73,7 +74,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
+const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/pieces', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -276,6 +277,7 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
         { label: 'Home', href: '/', current: current === '', piece: false },
         { label: 'Knowledge', href: '/knowledge', current: current === 'knowledge', piece: false },
         { label: 'People', href: '/people', current: current === 'people', piece: false },
+        { label: 'Pieces', href: '/pieces', current: current === 'pieces', piece: false },
         ...h.agents.map((a) => ({ label: agentName(agentDir(h, a)), href: `/a/${a}`, current: current === `a/${a}`, piece: true })),
         ...tabs,
       ],
@@ -291,6 +293,7 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
       { label: 'Home', href: '/', current: current === '', piece: false },
       { label: 'Mind', href: '/mind', current: current === 'mind', piece: false },
       { label: 'People', href: '/people', current: current === 'people', piece: false },
+      { label: 'Pieces', href: '/pieces', current: current === 'pieces', piece: false },
       ...tabs,
     ],
     clock: clock(),
@@ -421,6 +424,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
+    } else if (sourceId === 'loom' && action.startsWith('piece-')) {
+      // The Pieces page's: install, update, roll back, remove, settings.
+      source = CORE;
+      result = await piecesAct(opts.env, action, fields);
     } else if (sourceId === 'loom' && hh) {
       // The household's: tokens and agents.
       source = CORE;
@@ -468,7 +475,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ...home.tiles.map((t) => ({ ...t, source: CORE })),
         ...pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
       ];
-      const asks: HomeAsk[] = pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) })));
+      const asks: HomeAsk[] = [
+        ...piecesAsks(opts.env).map((a) => ({ ...a, source: CORE })),
+        ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
+      ];
       return html(renderHome(home.page, ctxOf(''), chrome(opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
@@ -477,6 +487,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
     }
     if (pathname === '/people') return send200(householdPeople(hh), 'people', ctxOf('people'));
+    if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));
       return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
@@ -516,7 +527,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       { ...home.tile, source: CORE },
       ...pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
     ];
-    const asks: HomeAsk[] = pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) })));
+    const asks: HomeAsk[] = [
+      ...piecesAsks(opts.env).map((a) => ({ ...a, source: CORE })),
+      ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
+    ];
     return html(renderHome(home.page, { source: CORE, path: '', query, csrf }, chrome(opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
   }
 
@@ -534,6 +548,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return html(renderPage({ title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${piece} couldn't show this page (${page}).` }] }] }, ctx, ch), 502);
     }
     return html(renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+  }
+
+  if (pathname === '/pieces') {
+    const page = piecesPage(opts.env, query);
+    return html(renderPage(page, { source: CORE, path: 'pieces', query, csrf }, chrome(opts, pieces, skippedNames, 'pieces', csrf, flash)));
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';

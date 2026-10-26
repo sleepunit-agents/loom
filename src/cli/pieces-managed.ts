@@ -187,8 +187,13 @@ export function parseSource(spec: string): { repo: string; commit: string } {
 
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 
-/** The package's `loom` block, checked; a string says what's wrong. */
-export function parseLoomBlock(raw: unknown): LoomBlock | string {
+/**
+ * The package's `loom` block, checked; a string says what's wrong. A setting
+ * may not be one of loom's own variables (LOOM_*), except under the piece's
+ * own prefix: the box piece may have LOOM_BOX_PUBLIC_URL.
+ */
+export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string {
+  const own = piece ? `LOOM_${piece.toUpperCase().replace(/-/g, '_')}_` : undefined;
   if (raw === undefined) return { settings: [], services: [] };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'the loom block is not an object';
   const b = raw as Record<string, unknown>;
@@ -207,8 +212,8 @@ export function parseLoomBlock(raw: unknown): LoomBlock | string {
   if (!Array.isArray(settings) || settings.length > 20) return 'loom.settings is not a list of at most 20';
   for (const s of settings as Record<string, unknown>[]) {
     const name = s?.name;
-    if (typeof name !== 'string' || !SETTING.test(name) || name.startsWith('LOOM_') || RESERVED_SETTINGS.has(name)) {
-      return `a setting's name must be an UPPERCASE variable that isn't LOOM_* or ${[...RESERVED_SETTINGS].join('/')}: ${JSON.stringify(name)}`;
+    if (typeof name !== 'string' || !SETTING.test(name) || (name.startsWith('LOOM_') && !(own && name.startsWith(own))) || RESERVED_SETTINGS.has(name)) {
+      return `a setting's name must be an UPPERCASE variable that isn't loom's own (LOOM_*${own ? `, apart from ${own}*` : ''}) or ${[...RESERVED_SETTINGS].join('/')}: ${JSON.stringify(name)}`;
     }
     if (out.settings.some((x) => x.name === name)) return `setting ${name} is declared twice`;
     if (!str(s.label, 100)) return `setting ${name} has no label`;
@@ -317,7 +322,7 @@ export async function installPiece(
     if (name && pieceName !== name) throw new PieceError(`the catalog's ${name} installs loom-${pieceName}, not loom-${name}`);
     const bad = bins.find((b) => !BIN.test(b));
     if (bad) throw new PieceError(`bin name ${JSON.stringify(bad)} isn't allowed`);
-    const loom = parseLoomBlock(pkg.loom);
+    const loom = parseLoomBlock(pkg.loom, pieceName);
     if (typeof loom === 'string') throw new PieceError(`${pkgName}: ${loom}`);
     for (const other of managedPieces(env)) {
       if (other.name === pieceName) continue;
@@ -377,7 +382,7 @@ export function rollbackPiece(env: NodeJS.ProcessEnv, name: string): PieceRecord
   // The previous version's own bins are read from its package.json.
   const { name: pkgName, pkg } = installedPackage(join(root, name, 'versions', back.source.commit));
   back.bins = binsOf(pkg, pkgName);
-  const loom = parseLoomBlock(pkg.loom);
+  const loom = parseLoomBlock(pkg.loom, name);
   if (typeof loom !== 'string') back.loom = loom;
   swapLink(join('versions', back.source.commit), join(root, name, 'current'));
   relink(root, back, rec);

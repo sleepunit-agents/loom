@@ -58,7 +58,9 @@ The package's `package.json` must have:
 ```
 
 A setting's `name` is the environment variable it becomes (uppercase letters,
-digits and `_`; never `LOOM_*`, `PATH` or `HOME`). `kind` is `text` (the
+digits and `_`). It can't be one of loom's own (`LOOM_*`), apart from the
+piece's own prefix (the box piece may have `LOOM_BOX_PUBLIC_URL`), or `PATH`,
+`HOME`, `USER`, `SHELL` or `NODE_OPTIONS`. `kind` is `text` (the
 default) or `choice` (with `options`). **There's no secret kind.** A piece that
 needs a secret asks for it on its own page and keeps it itself, as the
 authority rule says. A setting's value never holds one.

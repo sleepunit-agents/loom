@@ -174,7 +174,9 @@ describe('managed pieces', () => {
     expect((await runCliCaptured(['pieces', 'install', '--from', `github:x/thief#${SHA1}`, '--yes'], { env })).stderr)
       .toContain("taskstore is already the tasks piece's");
     expect(parseLoomBlock({ settings: [{ name: 'API_KEY', label: 'Key', kind: 'secret' }] })).toMatch(/no secret kind/);
-    expect(parseLoomBlock({ settings: [{ name: 'LOOM_URL', label: 'x' }] })).toMatch(/isn't LOOM_\*/);
+    expect(parseLoomBlock({ settings: [{ name: 'LOOM_URL', label: 'x' }] }, 'box')).toMatch(/isn't loom's own \(LOOM_\*, apart from LOOM_BOX_\*\)/);
+    expect(parseLoomBlock({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'x' }] }, 'box')).toMatchObject({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL' }] });
+    expect(parseLoomBlock({ settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'x' }] }, 'tasks')).toMatch(/isn't loom's own/);
     expect(parseLoomBlock({ settings: [{ name: 'PATH', label: 'x' }] })).toMatch(/PATH/);
   });
 

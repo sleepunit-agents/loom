@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   their own `LOOM_PIECE_NAME`, `LOOM_PIECE_HOME` and declared settings, keep the
   version before for `rollback`, and leave what was current untouched when an
   install fails. Unmanaged pieces on `PATH` work as before.
+- **The Pieces page** (`/pieces`, in the nav): installed pieces with their
+  settings form, *Update*, *Roll back* and *Remove*; the catalog with
+  *Install*; and *From GitHub*, a repo and a commit behind a preview and a
+  plain warning. Installs run in the background. A managed piece missing a
+  required setting is listed under "Your call" on Home.
 
 ## [0.16.1] - 2026-10-25
 
