@@ -12,6 +12,13 @@ const ctx = { source: CORE, path: '', query: {}, csrf: 'c'.repeat(64) };
 const page = (blocks: unknown[], extra: Record<string, unknown> = {}) => parsePage({ title: 'T', sections: [{ id: 's', blocks }], ...extra });
 
 describe('meter, code and status blocks', () => {
+  it('a page with nothing on it says whose it is, under its intro', () => {
+    const html = renderPage({ title: 'Tasks', intro: 'A work store.', sections: [] }, ctx, chrome);
+    expect(html).toContain('<p class="intro">A work store.</p>');
+    expect(html).toContain('<p class="empty-state">Tasks has nothing yet.</p>');
+    expect(renderPage({ title: 'Not found', sections: [] }, ctx, chrome)).toContain('There&#39;s nothing here.');
+  });
+
   it('a meter is a fraction, drawn as a bar with its percent', () => {
     const p = page([{ type: 'meter', items: [{ label: '5h window', value: 0.42, detail: 'resets 13:00', tone: 'warn' }, { label: '7d', value: 1 }] }]);
     expect(typeof p).not.toBe('string');

@@ -45,6 +45,7 @@ import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRe
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
+import { readCatalog } from '../cli/pieces-managed.js';
 import { householdFind, householdThread } from './household-pages.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
@@ -370,6 +371,23 @@ function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: Piece
 
 function pendingProposals(h: Household, agent: string): number {
   try { return listProposals(agentDir(h, agent)).filter((p) => p.status === 'pending').length; } catch { return 0; }
+}
+
+/** Which catalog pieces a fresh loom suggests first: talk in chat, then a work store. */
+const STARTERS = ['shuttle', 'tasks', 'box', 'secrets'];
+
+/** A loom with no pieces yet: who's listening, and two pieces to give them hands. */
+function firstRun(names: string[]): NonNullable<Dashboard['firstRun']> {
+  const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const line = names.length === 1 ? `${who} is here and listening. Add pieces to give ${who} hands.` : `${who} are here and listening. Add pieces to give them hands.`;
+  const catalog = readCatalog();
+  const rank = (n: string) => (STARTERS.includes(n) ? STARTERS.indexOf(n) : STARTERS.length);
+  const starters = [...catalog].sort((a, b) => rank(a.name) - rank(b.name)).slice(0, 2).map((c) => ({
+    name: c.name, label: c.label ?? c.name,
+    // The catalog's first clause is the short "what it does".
+    what: (c.description ?? '').split(/(?<=\w)[.:](\s|$)/)[0],
+  }));
+  return { line, starters };
 }
 
 /** "7:42 AM", in the page's time zone. */
@@ -787,6 +805,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         sinceMs, sinceLabel: clockAt(sinceMs),
         filters: hh.agents.length > 1 ? { param: 'who', current: byAgent, options: [{ value: '', label: 'All' }, ...hh.agents.map((a) => ({ value: a, label: agents[a].label }))] } : undefined,
         shared: { pages: t.pages, people: t.people },
+        firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
       return html(renderDashboard(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash), nowMs));
     }

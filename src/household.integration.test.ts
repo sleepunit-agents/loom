@@ -701,6 +701,22 @@ describe('the household page', () => {
     expect(await (await page(cookie, '/find?q=%25')).text()).not.toContain('<h2 class="label">Memories</h2>');
   });
 
+  it('a household with no pieces yet says who is listening and offers two to install', async () => {
+    const cookie = await login();
+    // No pieces: none on PATH, none managed (this machine's own would otherwise show up).
+    const was = { PATH: process.env.PATH, LOOM_HOME: process.env.LOOM_HOME };
+    process.env.PATH = '/usr/bin:/bin';
+    process.env.LOOM_HOME = h.home;
+    let html: string;
+    try { html = await (await page(cookie, '/')).text(); } finally {
+      for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+    expect(html).toContain('Art E Fish and Visual Mark are here and listening. Add pieces to give them hands.');
+    expect(html).toContain('<h2 class="label">Start with these</h2>');
+    expect(html.match(/<input type="hidden" name="_action" value="piece-install">/g)?.length).toBe(2);
+    expect(html).toMatch(/<span class="text">Shuttle<\/span>|<span class="text">shuttle<\/span>/i);
+  });
+
   it('a person shows the shared entry and every agent\'s relationship', async () => {
     const cookie = await login();
     const html = await (await page(cookie, '/people/loren')).text();
