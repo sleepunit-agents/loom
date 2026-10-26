@@ -7,6 +7,7 @@
  *   GET  /pieces.json              the installed pieces' manifests, for scripts
  *   POST /act/<source>             an action (source = loom or a piece)
  *   GET/POST /login, POST /logout
+ *   /login/passkey…, /passkeys        passkeys (docs/specs/passkeys.md)
  *   /ui/…                          the old address: redirects to the same page at the root
  *
  * The page shares the daemon with MCP, which answers on any other path. `/`
@@ -35,17 +36,21 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sessionStore } from './sessions.js';
+import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
-import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
+const PASSKEY_MAX_BYTES = 16 * 1024;
+/** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
+const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
 const ACT_MAX_BYTES = 64 * 1024;
 const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
 const FLASH_TTL_MS = 60_000;
@@ -74,7 +79,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/pieces', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
+const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -205,23 +210,43 @@ function redirect(res: ServerResponse, to: string, extra: Record<string, string 
   res.end();
 }
 
-function readForm(req: IncomingMessage, max: number): Promise<URLSearchParams | null> {
+function readBody(req: IncomingMessage, max: number): Promise<string | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
     let done = false;
-    const finish = (v: URLSearchParams | null) => { if (!done) { done = true; resolve(v); } };
+    const finish = (v: string | null) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (d: Buffer) => {
       if (done) return;
       bytes += d.length;
       if (bytes > max) { finish(null); req.destroy(); return; }
       chunks.push(d);
     });
-    req.on('end', () => finish(new URLSearchParams(Buffer.concat(chunks).toString('utf-8'))));
+    req.on('end', () => finish(Buffer.concat(chunks).toString('utf-8')));
     req.on('error', () => finish(null));
     req.on('close', () => finish(null));
   });
 }
+
+async function readForm(req: IncomingMessage, max: number): Promise<URLSearchParams | null> {
+  const body = await readBody(req, max);
+  return body === null ? null : new URLSearchParams(body);
+}
+
+/** A JSON object body (the passkey routes'), or null. */
+async function readJson(req: IncomingMessage, max: number): Promise<Record<string, unknown> | null> {
+  const body = await readBody(req, max);
+  if (body === null) return null;
+  try {
+    const v = JSON.parse(body);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+const sendJson = (res: ServerResponse, status: number, body: unknown, extra: Record<string, string | string[]> = {}) =>
+  send(res, status, 'application/json', JSON.stringify(body), extra);
 
 /** The page's own query: valid keys only, loom's `_` keys and oversize values dropped. */
 function pageQuery(url: URL): Record<string, string> {
@@ -355,16 +380,52 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     });
   }
 
+  const rp = relyingParty(opts.env);
+  // Passkeys work only on the page at LOOM_PUBLIC_URL (their origin): offer one there.
+  const onRp = !!rp && req.headers.host === new URL(rp.origin).host;
+  const sessionCookie = (secret: Buffer) =>
+    `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
+
+  if (pathname === '/login/passkey.js') {
+    if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    return send(res, 200, 'text/javascript; charset=utf-8', PASSKEY_JS, { 'cache-control': 'no-cache' });
+  }
+  if (pathname === '/login/passkey/options' || pathname === '/login/passkey') {
+    if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
+    if (!rp) return sendJson(res, 404, { error: 'passkeys aren\'t set up here (LOOM_PUBLIC_URL)' });
+    const body = await readJson(req, PASSKEY_MAX_BYTES);
+    if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
+    if (pathname === '/login/passkey/options') {
+      return sendJson(res, 200, { challenge: storeFor(opts).createChallenge('login', null), rpId: rp.rpId, timeout: 300_000 });
+    }
+    const store = storeFor(opts);
+    const stored = typeof body.id === 'string' ? store.passkey(body.id) : null;
+    if (!stored) return sendJson(res, 401, { error: 'loom doesn\'t know that passkey (it may have been removed)' });
+    try {
+      const a = verifyAssertion(body, stored, rp);
+      if (!store.useChallenge(a.challenge, 'login')) return sendJson(res, 401, { error: 'that sign-in expired or was already used; try again' });
+      const used = store.usePasskey(stored.id, a.counter);
+      if (!used) return sendJson(res, 401, { error: 'that passkey\'s counter went backwards: it may have been copied, so it was refused' });
+      const secret = Buffer.from(used.secret, 'hex');
+      if (!opts.auth.live(secret)) return sendJson(res, 401, { error: 'the token that added this passkey was revoked; sign in with a link and add it again' });
+      return sendJson(res, 200, { ok: true, to: '/' }, { 'set-cookie': sessionCookie(secret) });
+    } catch (err) {
+      if (err instanceof PasskeyError) return sendJson(res, 401, { error: err.message });
+      throw err;
+    }
+  }
+
   if (pathname === '/login') {
     // Unauthenticated: the login page names no agent.
-    if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLogin());
+    if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLogin(undefined, { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     const form = await readForm(req, LOGIN_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
     const token = form.get('token')?.trim() ?? '';
     const match = token ? opts.auth.check(token) : null;
-    if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.'));
+    if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
       'set-cookie': `${COOKIE}=${storeFor(opts).create(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
@@ -389,6 +450,45 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
+
+  // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
+  if ((pathname === '/passkeys/options' || pathname === '/passkeys') && req.method === 'POST') {
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
+    if (who.kind !== 'session') return sendJson(res, 403, { error: 'a passkey is added from a signed-in browser' });
+    if (!rp || !onRp) return sendJson(res, 404, { error: rp ? `passkeys work at ${rp.origin}` : 'passkeys aren\'t set up here (LOOM_PUBLIC_URL)' });
+    const body = await readJson(req, PASSKEY_MAX_BYTES);
+    if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
+    if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    const store = storeFor(opts);
+    const session = store.get(who.cookie);
+    if (!session) return sendJson(res, 401, { error: 'signed out' });
+    if (pathname === '/passkeys/options') {
+      return sendJson(res, 200, {
+        challenge: store.createChallenge('register', session.secret),
+        rp: { id: rp.rpId, name: 'loom' },
+        // One user per household: the owner. A discoverable passkey needs some id; this one is stable and says nothing.
+        user: { id: Buffer.from(createHash('sha256').update(`loom-owner|${rp.rpId}`).digest().subarray(0, 16)).toString('base64url'), name: 'owner', displayName: 'loom' },
+        pubKeyCredParams: ALGS.map((alg) => ({ type: 'public-key', alg })),
+        authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
+        excludeCredentials: store.passkeys().map((p) => ({ id: p.id })),
+        timeout: 300_000,
+      });
+    }
+    try {
+      const r = verifyRegistration(body, rp);
+      const c = store.useChallenge(r.challenge, 'register');
+      if (!c?.secret) return sendJson(res, 401, { error: 'that expired or was already used; try again' });
+      // It signs in as the token of the session that asked, and only that one.
+      if (!c.secret.equals(session.secret)) return sendJson(res, 403, { error: 'that was started by another session' });
+      const label = (typeof body.label === 'string' ? body.label.trim() : '').slice(0, 60) || 'A passkey';
+      store.addPasskey({ id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000), secret: session.secret.toString('hex') });
+      return sendJson(res, 200, { ok: true });
+    } catch (err) {
+      if (err instanceof PasskeyError) return sendJson(res, 400, { error: err.message });
+      if (err instanceof Error && /passkey/.test(err.message)) return sendJson(res, 409, { error: err.message });
+      throw err;
+    }
+  }
 
   const hh = opts.household?.();
   const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/loom$/.exec(pathname) : null;
@@ -424,6 +524,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
+    } else if (sourceId === 'loom' && action === 'passkey-remove') {
+      source = CORE;
+      result = storeFor(opts).removePasskey(fields.id ?? '')
+        ? { ok: true, message: 'Removed. That device can\'t sign in with it any more.', page: 'loom:passkeys' }
+        : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
       source = CORE;
@@ -464,6 +569,28 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const { pieces, skipped } = await pieceManifests(opts.env);
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
+
+  if (pathname === '/passkeys') {
+    const tz = uiTimeZone();
+    const when = (s?: number) => (s ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(s * 1000)) : 'never');
+    const keys = storeFor(opts).passkeys();
+    const page: Page = {
+      title: 'Passkeys',
+      intro: 'Sign in to this page with Face ID, a fingerprint or a PIN instead of a token or a link. Each one signs in as the token you\'re signed in with now.',
+      sections: [{ id: 'passkeys', title: keys.length ? `${keys.length} passkey${keys.length === 1 ? '' : 's'}` : 'None yet', blocks: keys.length
+        ? keys.flatMap((k): import('./vocab.js').Block[] => [
+          { type: 'callout', title: k.label, text: `added ${when(k.created)} · last used ${when(k.lastUsed)}${opts.auth.live(Buffer.from(k.secret, 'hex')) ? '' : ' · its token was revoked, so it no longer works'}` },
+          { type: 'buttons', items: [{ action: 'passkey-remove', label: `Remove "${k.label}"`, tone: 'danger', fields: { id: k.id } }] },
+        ]).slice(0, 20)
+        : [{ type: 'text', text: 'Add one below, from the device you want to sign in with.', tone: 'muted' }] }],
+    };
+    const ch = chrome(opts, pieces, skippedNames, 'passkeys', csrf, flash);
+    const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
+      : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
+      : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
+      : { csrf };
+    return send(res, 200, 'text/html; charset=utf-8', renderPasskeys(page, { source: CORE, path: 'passkeys', query, csrf }, ch, add), 'csrf' in add ? PASSKEY_CSP : {});
+  }
 
   if (hh) {
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf });
