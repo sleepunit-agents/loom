@@ -47,7 +47,7 @@ function serviceEnv(env: NodeJS.ProcessEnv, rec: PieceRecord): Record<string, st
   const keys = ['LOOM_PIECE_NAME', 'LOOM_PIECE_HOME', ...rec.loom.settings.map((s) => s.name)];
   const out: Record<string, string> = {};
   for (const k of keys) if (own[k] !== undefined) out[k] = own[k] as string;
-  out.PATH = [bin, ...(env.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter);
+  out.PATH = [bin, ...(own.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter);
   if (env.LOOM_HOME) out.LOOM_HOME = env.LOOM_HOME;
   return out;
 }

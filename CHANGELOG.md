@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A managed piece runs on the node it was installed with.** npm builds a
+  piece's native modules (taskstore's better-sqlite3) for the node it runs on;
+  the daemon's `PATH` may find another (`/usr/bin/node` 20 beside mise's 24).
+  `piece.json` records that node, and loom puts its directory first on the
+  piece's `PATH`, for its services too.
+
 ### Added
 
 - **The pieces catalog has box, secrets, shuttle and tasks**, each pinned to its

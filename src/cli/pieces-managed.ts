@@ -16,9 +16,9 @@
  */
 import { spawn } from 'node:child_process';
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
+  accessSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { syncServices, type ServicesResult } from './pieces-services.js';
 
@@ -66,6 +66,8 @@ export interface PieceRecord {
   previous?: { commit: string; version: string };
   bins: string[];
   loom: LoomBlock;
+  /** The node npm ran on: the piece runs with it first on PATH, since its native modules were built for it. */
+  node?: string;
 }
 
 export interface CatalogEntry {
@@ -162,6 +164,9 @@ export function pieceEnvFor(path: string, env: NodeJS.ProcessEnv): NodeJS.Proces
   const root = rootOrThrow(env);
   const home = join(root, owner.name);
   const out: NodeJS.ProcessEnv = { ...env, LOOM_PIECE_NAME: owner.name, LOOM_PIECE_HOME: home };
+  // The node it was installed with goes first: whatever node the daemon's PATH finds may not
+  // load the native modules npm built for that one (taskstore's better-sqlite3).
+  if (owner.node) out.PATH = [dirname(owner.node), ...(env.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter);
   const values = readSettings(env, owner.name);
   for (const s of owner.loom.settings) {
     if (values[s.name] !== undefined) out[s.name] = values[s.name];
@@ -261,6 +266,15 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
 }
 
 /** npm from PATH (a test puts a stand-in first on it). */
+/** The first executable `node` on PATH: the one npm (a node program) runs on. */
+function nodeOnPath(env: NodeJS.ProcessEnv): string | undefined {
+  for (const dir of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
+    const p = join(dir, 'node');
+    try { accessSync(p, fsConstants.X_OK); return p; } catch { /* next */ }
+  }
+  return undefined;
+}
+
 function runNpm(env: NodeJS.ProcessEnv, args: string[], log: string): Promise<number> {
   const npm = 'npm';
   return new Promise((resolve) => {
@@ -360,7 +374,7 @@ export async function installPiece(
     const old = readRecord(env, pieceName);
     const record: PieceRecord = {
       v: 1, name: pieceName, source, package: pkgName, version: typeof pkg.version === 'string' ? pkg.version : '',
-      installed: new Date().toISOString(), bins, loom,
+      installed: new Date().toISOString(), bins, loom, ...(nodeOnPath(env) ? { node: nodeOnPath(env) } : {}),
       ...(old && old.source.commit !== source.commit ? { previous: { commit: old.source.commit, version: old.version } } : old?.previous ? { previous: old.previous } : {}),
     };
     swapLink(join('versions', source.commit), join(home, 'current'));
