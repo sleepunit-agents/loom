@@ -47,7 +47,7 @@ import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
-import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -84,7 +84,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/app.js', '/fonts', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
+const PAGE_ROOTS = ['/app.js', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -295,12 +295,47 @@ function hasPages(p: PieceInfo): boolean {
   return Boolean(p.manifest.tab || p.manifest.legacy?.length);
 }
 
-function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
+/** Agent marks: an initial on a color; colors differ in lightness, not just hue (the design's rule). */
+const MARKS = [
+  { bg: '#B8A6FF', fg: '#1D1240' }, { bg: '#7A2E4F', fg: '#FFE3EE' }, { bg: '#2F6B5A', fg: '#E2F5EE' },
+  { bg: '#E3B341', fg: '#2B1D00' }, { bg: '#3D5A99', fg: '#E6ECFF' }, { bg: '#F09A7A', fg: '#3A140A' },
+];
+const HEX = /^#[0-9A-Fa-f]{6}$/;
+
+/** Each agent's mark colors: household.json's `marks` when it names valid ones, else the palette in order. */
+function agentMarks(h: Household): Record<string, { bg: string; fg: string }> {
+  let custom: Record<string, { bg?: unknown; fg?: unknown }> = {};
+  try {
+    const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')) as { marks?: unknown };
+    if (raw.marks && typeof raw.marks === 'object') custom = raw.marks as typeof custom;
+  } catch { /* none */ }
+  return Object.fromEntries(h.agents.map((a, i) => {
+    const c = custom[a];
+    return [a, c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : MARKS[i % MARKS.length]];
+  }));
+}
+
+const SCOPE_COOKIE = 'loom_scope';
+
+/** The scope the owner chose (a cookie), if it still names an agent in the household. */
+function scopeOf(req: IncomingMessage, h: Household | undefined): string {
+  const c = readCookie(req, SCOPE_COOKIE);
+  return h && c && h.agents.includes(c) ? c : 'household';
+}
+
+function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(hasPages)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
     .sort((a, b) => a.label.localeCompare(b.label));
+  const places = pieces.filter(hasPages)
+    .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const asks = pieces.reduce((n, p) => n + p.manifest.asks.length, 0) + piecesAsks(opts.env).length;
+  const tab = current === '' || /^a\/[^/]+$/.test(current) ? 'home' : current === 'places' || current === 'scope' || current === 'find' ? current : '';
   const h = opts.household?.();
   if (h) {
+    const marks = agentMarks(h);
+    const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
     return {
       agent: h.owner ? `${h.owner}'s household` : 'household',
       nav: [
@@ -315,10 +350,21 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
       csrf,
       flash,
       skipped,
+      shell: {
+        owner: h.owner ?? 'owner', scope, household: true, asks, tab,
+        home: scope === 'household' ? '/' : `/a/${scope}`,
+        agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/scope/${a}`, current: scope === a })),
+        core: [
+          { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
+          { label: 'People', href: '/people', current: current.startsWith('people') },
+        ],
+        pieces: places,
+      },
     };
   }
+  const name = agentName(opts.contextDir);
   return {
-    agent: agentName(opts.contextDir),
+    agent: name,
     nav: [
       { label: 'Home', href: '/', current: current === '', piece: false },
       { label: 'Mind', href: '/mind', current: current === 'mind', piece: false },
@@ -330,6 +376,15 @@ function chrome(opts: UiOptions, pieces: PieceInfo[], skipped: string[], current
     csrf,
     flash,
     skipped,
+    shell: {
+      owner: 'owner', scope: 'agent', household: false, asks, tab, home: '/',
+      agents: [{ id: 'agent', label: name, ...MARKS[0], href: '/', current: true }],
+      core: [
+        { label: 'Mind', href: '/mind', current: current === 'mind' },
+        { label: 'People', href: '/people', current: current.startsWith('people') },
+      ],
+      pieces: places,
+    },
   };
 }
 
@@ -586,6 +641,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
 
+  // The shell's sheets as pages: they work without script; app.js opens them as sheets.
+  const pick = /^\/scope\/([a-z][a-z0-9-]{0,39}|household)$/.exec(pathname);
+  if (pick) {
+    const hh2 = opts.household?.();
+    const id = pick[1] === 'household' || !hh2?.agents.includes(pick[1]) ? 'household' : pick[1];
+    res.writeHead(303, { location: id === 'household' ? '/' : `/a/${id}`, 'set-cookie': `${SCOPE_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure ? '; Secure' : ''}`, ...SECURITY_HEADERS });
+    return void res.end();
+  }
+  if (pathname === '/scope' || pathname === '/places' || pathname === '/find') {
+    const tab = pathname.slice(1);
+    const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
+    return html(renderSheetPage(tab as 'scope' | 'places' | 'find', ch, url.searchParams.get('q') ?? ''));
+  }
+
   if (pathname === '/passkeys') {
     const tz = uiTimeZone();
     const when = (s?: number) => (s ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(s * 1000)) : 'never');
@@ -600,7 +669,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ]).slice(0, 20)
         : [{ type: 'text', text: 'Add one below, from the device you want to sign in with.', tone: 'muted' }] }],
     };
-    const ch = chrome(opts, pieces, skippedNames, 'passkeys', csrf, flash);
+    const ch = chrome(req, opts, pieces, skippedNames, 'passkeys', csrf, flash);
     const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
       : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
       : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
@@ -611,7 +680,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (hh) {
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf });
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>) =>
-      html(renderPage(page, ctx, chrome(opts, pieces, skippedNames, current, csrf, flash)), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+      html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash)), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
     if (pathname === '/') {
       const home = householdHome(hh);
       const tiles: HomeTile[] = [
@@ -622,7 +691,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ...piecesAsks(opts.env).map((a) => ({ ...a, source: CORE })),
         ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
       ];
-      return html(renderHome(home.page, ctxOf(''), chrome(opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
+      return html(renderHome(home.page, ctxOf(''), chrome(req, opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {
@@ -651,7 +720,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           { text: 'Setup', meta: 'identity, tokens, health', page: `loom:a/${agent}/setup` },
         ] }] });
         const tiles: HomeTile[] = [{ ...home.tile, source: src }];
-        return html(renderHome(home.page, ctxOf('', src), chrome(opts, pieces, skippedNames, `a/${agent}`, csrf, flash), tiles, []));
+        return html(renderHome(home.page, ctxOf('', src), chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash), tiles, []));
       }
       if (rest === 'setup') return send200(agentSetup(hh, agent), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
@@ -674,7 +743,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       ...piecesAsks(opts.env).map((a) => ({ ...a, source: CORE })),
       ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
     ];
-    return html(renderHome(home.page, { source: CORE, path: '', query, csrf }, chrome(opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
+    return html(renderHome(home.page, { source: CORE, path: '', query, csrf }, chrome(req, opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
   }
 
   if (pathname.startsWith('/p/')) {
@@ -683,7 +752,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const piece = slash === -1 ? rest : rest.slice(0, slash);
     const path = slash === -1 ? '' : decode(rest.slice(slash + 1));
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
-    const ch = chrome(opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
+    const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
     if (!info || path === null || !validPath(path)) return html(renderPage(notFound, { source: pieceSource(piece), path: '', query: {}, csrf }, ch), 404);
     const page = await piecePage(info, path, query, opts.env);
     const ctx = { source: pieceSource(piece), path, query, csrf };
@@ -695,12 +764,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   if (pathname === '/pieces') {
     const page = piecesPage(opts.env, query);
-    return html(renderPage(page, { source: CORE, path: 'pieces', query, csrf }, chrome(opts, pieces, skippedNames, 'pieces', csrf, flash)));
+    return html(renderPage(page, { source: CORE, path: 'pieces', query, csrf }, chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash)));
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';
   const top = path.split('/')[0];
-  const ch = chrome(opts, pieces, skippedNames, top, csrf, flash);
+  const ch = chrome(req, opts, pieces, skippedNames, top, csrf, flash);
   const page = validPath(path) ? corePage(opts.contextDir, path, query) : null;
   const ctx = { source: CORE, path: validPath(path) ? path : '', query, csrf };
   if (!page) return html(renderPage(notFound, ctx, ch), 404);

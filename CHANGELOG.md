@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The app shell** (the redesign's phase 2a). On a phone: a bottom bar, the
+  scope chip, Home, Places and Find, with the active tab a pill. On a wide
+  screen: a left rail, with the wordmark, the scope selector, Find (⌘K), Home
+  with its count of asks, Knowledge, People, the Pieces group with a tone
+  glyph beside any piece in trouble, Manage pieces, and the owner, Passkeys and
+  Sign out at its foot.
+- **Scope:** a sheet (`/scope`) lists Household and each agent with its mark,
+  plus New agent. Choosing one sets it (a cookie) and goes to its home; Home
+  follows the scope. **Places** (`/places`): every piece's tab with its tile
+  value or tone, then Knowledge, People and Manage pieces. **Find** (`/find`):
+  go to any place by name. Sheets open in place with script and work as pages
+  without it.
+- **Agent marks:** an initial on a color that differs in lightness, from a
+  palette in order, or from `marks` in household.json. The household's mark is
+  a woven 2x2 of ink and the agents' colors. Account controls moved out of the
+  page header into the scope sheet and the rail's foot.
+
+### Changed
+
 - **The page's new look, phase 1** (Claude Design's handoff, 2026-10-26):
   Instrument Sans and JetBrains Mono, served by loom itself (OFL, `/fonts/`;
   CSP `font-src 'self'`), the warm ground and lime "thread" accent, light and
