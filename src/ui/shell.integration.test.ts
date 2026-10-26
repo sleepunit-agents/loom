@@ -88,6 +88,10 @@ describe('the app shell', () => {
     const page = await get('/', cookie);
     const html = await page.text();
     expect(html).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    // The favicon and the apple-touch-icon aren't in the manifest: each one the head names is served.
+    const heads = [...html.matchAll(/<link rel="(?:icon|apple-touch-icon)" href="([^"]+)"/g)].map((x) => x[1]);
+    expect(heads).toEqual(expect.arrayContaining(['/icons/loom-32.png', '/icons/loom-180.png']));
+    for (const src of heads) expect((await fetch(`${base}${src}`)).headers.get('content-type'), src).toBe('image/png');
     expect(page.headers.get('content-security-policy')).toContain("manifest-src 'self'; worker-src 'self'");
     const csrf = /name="_csrf" value="([0-9a-f]{64})"/.exec(html)![1];
     const out = await fetch(`${base}/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: `_csrf=${csrf}` });
