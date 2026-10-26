@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **First run and empty pages say something.** A household with no pieces
+  yet says who's listening ("Art E Fish and Mark are here and listening. Add
+  pieces to give them hands.") and offers two catalog pieces to install
+  right there. A page with nothing on it says whose it is: "Tasks has nothing
+  yet.", under its intro.
+
 - **Find is a palette.** ⌘K (or the Find tab, or "Find anything") opens it
   over the page; results follow the typing, grouped **Do** (asks that
   match), **Go to** (places, knowledge pages, people) and **Memories** (the

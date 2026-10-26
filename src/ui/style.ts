@@ -229,6 +229,9 @@ main.dash{gap:24px}
 .seg-tabs a{flex:1;display:flex;align-items:center;justify-content:center;height:42px;border-radius:var(--r-control);color:var(--ink-2);font-size:14px}.seg-tabs a:hover{text-decoration:none;color:var(--ink)}
 .seg-tabs a.on{background:var(--surface);color:var(--ink);font-weight:600}
 .your-call .label .n{float:right;color:var(--ink-2)}
+.starters .label{margin:0 0 10px}.starter{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.starter:last-child{border-bottom:0}
+.starter .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.starter .text{font-weight:600}.starter .meta{font-family:inherit;font-size:13px;color:var(--ink-2)}.starter .button-form{margin:0}
+.empty-state{margin:0;padding:20px 16px;border-radius:var(--r-card);background:var(--surface);color:var(--ink-2)}
 .buttons+.piece-form{margin-top:18px}
 .ask .src{align-items:center}.ask .who{display:inline-flex;align-items:center;gap:8px}
 .ask[class*=tone-]{border-color:color-mix(in srgb,var(--tone) 45%,var(--line))}
@@ -269,6 +272,7 @@ dialog.confirm .sub{margin:4px 0 0;font-size:15px;color:var(--ink-2)}
 a.needs-net{pointer-events:auto;text-decoration:none}.btn.needs-net,.needs-net{background:var(--raised)!important;color:var(--ink-2)!important;border:1px dashed var(--line)!important;cursor:not-allowed}
 @media (min-width:960px){
 .seg-tabs{max-width:520px}
+.starters{max-width:640px}
 dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-height:72vh;border-radius:var(--r-sheet);padding:16px 20px 20px}
 .toasts{left:auto;right:24px;bottom:24px;width:400px;align-items:stretch}
 .your-call .ask-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}

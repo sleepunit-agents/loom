@@ -464,7 +464,8 @@ function flash(c: Chrome): string {
 export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unscopedFor?: string, head?: AgentHead): string {
   const main = page.sections.filter((s) => !s.side).map((s) => renderSection(s, ctx)).join('');
   const side = page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
-  const empty = page.sections.length ? '' : '<p class="intro">There\'s nothing here.</p>';
+  // A page with nothing on it says whose it is: "Tasks has nothing yet.", under its intro.
+  const empty = page.sections.length ? '' : `<p class="empty-state">${esc(page.title === 'Not found' ? 'There\'s nothing here.' : `${page.title} has nothing yet.`)}</p>`;
   // Pages with forms don't auto-refresh: a refresh would throw away what's being typed.
   const hasForm = page.sections.some((s) => s.blocks.some((b) => b.type === 'form' || (b.type === 'details' && b.blocks.some((x) => x.type === 'form'))));
   // A piece that can't narrow to the selected agent: one quiet line, the household's mark.
@@ -530,6 +531,8 @@ export interface Dashboard {
   filters?: { param: string; current: string; options: Array<{ value: string; label: string }> };
   shared?: { pages: number; people: number };
   more?: { label: string; href: string };
+  /** First run (no pieces yet): a line under the headline, and a couple of catalog pieces to install. */
+  firstRun?: { line: string; starters: Array<{ name: string; label: string; what: string }> };
 }
 
 /** "40m", "2h", "3d": how long ago, short. */
@@ -562,7 +565,11 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   const head = d.agent
     ? agentHead(d.agent)
     : `<header class="dash-head"><span class="label">${esc(d.label)}</span><h1 class="display">${need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you'}</h1>${
-      d.sinceLabel ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}</header>`;
+      d.sinceLabel && (fresh || !d.firstRun) ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}${d.firstRun ? `<p class="sub">${esc(d.firstRun.line)}</p>` : ''}</header>`;
+  const starters = d.firstRun?.starters.length
+    ? `<section class="starters"><h2 class="label">Start with these</h2><div class="card rows">${d.firstRun.starters.map((s) =>
+        `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
+          actionForm({ ...ctx, source: CORE, path: '', query: {} }, 'piece-install', `${hiddenInputs({ name: s.name })}<button class="btn small" type="submit">Install</button>`, 'button-form')}</div>`).join('')}</div></section>` : '';
   const yours = need
     ? `<section class="your-call" id="your-call"><h2 class="label">Your call <span class="n">${need}</span></h2><ul class="ask-list">${d.asks.map((a) => askCard(a, ctx.agents, nowMs)).join('')}</ul></section>` : '';
   const glance = d.tiles.length
@@ -585,7 +592,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   const shared = d.shared
     ? `<section class="shared"><h2 class="label">Shared</h2><div class="card rows"><a class="link-row" href="/knowledge"><span><span>Knowledge</span><span class="domain">${d.shared.pages.toLocaleString('en-US')} facts</span></span>${CHEVRON}</a>` +
       `<a class="link-row" href="/people"><span><span>People</span><span class="domain">${d.shared.people} cards</span></span>${CHEVRON}</a></div></section>` : '';
-  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
+  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}${starters}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
   return document(d.label, body, true);
 }
 
