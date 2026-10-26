@@ -240,36 +240,44 @@ function mindPage(contextDir: string, query: Record<string, string>, tz: string,
 
   const sections: Section[] = [];
   if (pending.length) {
+    // Your call, as the board has it: what it would remember, where from, Ratify or Reject.
     sections.push({
       id: 'proposals',
-      title: `${pending.length} proposal${pending.length === 1 ? '' : 's'} waiting`,
+      title: 'Your call',
+      blocks: pending.slice(0, 6).flatMap((p): Block[] => [
+        { type: 'text', text: `“${(p.title ?? p.content ?? '(untitled)').slice(0, 300)}”` },
+        { type: 'text', text: [p.source ? `From ${p.source}` : '', p.category ?? '', ago(p.created, tz, nowMs)].filter(Boolean).join(' · '), tone: 'muted' },
+        ...(p.content && p.content !== p.title ? [{ type: 'details' as const, summary: 'What it says', blocks: [{ type: 'text' as const, text: p.content.slice(0, 1900) }] }] : []),
+        { type: 'buttons', items: [
+          { action: 'ratify', label: 'Ratify', tone: 'primary', fields: { id: String(p.id) } },
+          { action: 'reject', label: 'Reject', tone: 'danger', confirm: 'It won\'t become a memory. The agent can propose it again later.', fields: { id: String(p.id) } },
+        ] },
+      ]).slice(0, 20),
+    });
+  }
+  const row = (m: MemoryView) => ({ text: m.title, meta: `${m.category} · ${m.heat.toFixed(2)}`, page: memoryPage(m.ref) });
+  // The board's Mind: top of mind, ranked, and every memory a link away.
+  if (!category && query.all !== '1') {
+    sections.push({
+      id: 'top',
+      title: 'Top of mind',
       blocks: [
-        { type: 'text', text: 'Drafted memories that aren\'t real until they\'re ratified. Recall can\'t see them.', tone: 'muted' },
-        ...pending.map((p): Block => ({
-          type: 'details',
-          summary: p.title ?? '(untitled)',
-          meta: `#${p.id} · ${p.category ?? '?'}${p.source ? ` · from ${p.source}` : ''} · ${ago(p.created, tz, nowMs)}`,
-          blocks: [
-            { type: 'text', text: p.content ?? '' },
-            { type: 'buttons', items: [
-              { action: 'ratify', label: 'Ratify', tone: 'primary', fields: { id: String(p.id) } },
-              { action: 'reject', label: 'Reject', tone: 'danger', confirm: 'It won\'t become a memory. The agent can propose it again later.', fields: { id: String(p.id) } },
-            ] },
-          ],
-        })),
+        atWake.length ? { type: 'list', numbered: true, items: atWake.map(row) } : { type: 'text', text: 'Nothing loads at wake yet.', tone: 'muted' },
+        { type: 'link', text: `All ${list.total.toLocaleString('en-US')} memories`, page: 'mind?all=1' },
       ],
     });
+    return { title: 'On my mind', sections };
   }
   sections.push({
     id: 'filter',
     blocks: [
       { type: 'filters', param: 'category', options: [{ value: '', label: 'Everything' }, ...categories.map((c) => ({ value: c, label: c }))] },
-      { type: 'text', text: `${list.total.toLocaleString('en-US')} memories · ${list.inDigest} load at wake · heat is computed from timestamps when it's read`, tone: 'muted' },
+      { type: 'text', text: `${list.total.toLocaleString('en-US')} memories · ${list.inDigest} load at wake · heat decays by each category's half-life and comes back when a memory is recalled or edited`, tone: 'muted' },
     ],
   });
   sections.push({
     id: 'wake',
-    title: category ? `At wake: ${category}` : 'What I wake up holding',
+    title: category ? `At wake: ${category}` : 'At wake',
     blocks: atWake.length ? atWake.map((m) => memoryDetails(m, tz, nowMs, names)) : [{ type: 'text', text: 'None of these load at wake.', tone: 'muted' }],
   });
   if (below.length) {
@@ -279,32 +287,34 @@ function mindPage(contextDir: string, query: Record<string, string>, tz: string,
       blocks: below.map((m) => memoryDetails(m, tz, nowMs, names)),
     });
   }
-  return {
-    title: 'On my mind',
-    intro: 'What I wake up holding. Each memory\'s heat decays by its category\'s half-life and comes back when it\'s recalled or edited. If something here doesn\'t belong, open it and see why.',
-    sections,
-  };
+  return { title: 'On my mind', sections };
 }
 
 // ─── One memory ──────────────────────────────────────────────────────────────
+
+/** Where a memory stands among what loads at wake (1 is the hottest). */
+function rankOf(contextDir: string, ref: string, nowMs: number): number {
+  const i = heatList(contextDir, { limit: MIND_SHOWN, nowMs }).rows.filter((r) => r.inDigest).findIndex((r) => r.ref === ref);
+  return i < 0 ? 0 : i + 1;
+}
 
 function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: number): Page {
   const m = memoryByRef(contextDir, ref, nowMs);
   if (!m) return { title: 'Not found', sections: [] };
   const names = peopleNames(contextDir);
   const episode = m.category === 'episode';
+  const rank = m.inDigest ? rankOf(contextDir, m.ref, nowMs) : 0;
   // What the board leads with: where it came from, when, how often it's come back, and who it's about.
   const summary: Block = { type: 'kv', items: [
-    { label: 'Learned from', value: m.where ?? (m.sourcing ? `${m.sourcing}` : 'not recorded') },
+    ...(rank ? [{ label: 'Top of mind', value: `#${rank}`, page: 'mind' }] : []),
+    { label: 'Learned from', value: m.where ? whereLabel(m.where) : (m.sourcing ? `${m.sourcing}` : 'not recorded') },
     { label: 'First written', value: ago(m.created, tz, nowMs) },
     { label: 'Recalled', value: m.timesSeen > 0 && m.lastAccessed ? `${m.timesSeen}× · last ${ago(m.lastAccessed, tz, nowMs)}` : 'not yet' },
     ...(m.person ? [{ label: 'About', value: names.get(m.person) ?? m.person, page: personPage(m.person) }] : []),
   ] };
-  const main: Block[] = [
-    { type: 'prose', text: m.content },
-    summary,
-    { type: 'buttons', items: [{ action: 'archive', label: 'Archive', tone: 'danger', confirm: 'It leaves recall. It stays in the archive, and it can be restored from there.', fields: { ref: m.ref } }] },
-  ];
+  // The board's order: the facts card under the title, then what it says.
+  const main: Block[] = [summary, { type: 'prose', text: m.content }];
+  const archive: Block = { type: 'buttons', items: [{ action: 'archive', label: 'Forget', tone: 'danger', confirm: 'It leaves recall. It stays in the archive, and it can be restored from there.', fields: { ref: m.ref } }] };
   // Its history: what it says now, then each earlier body back to the first, newest first.
   const revs = memoryHistory(contextDir, m.ref);
   const gist = (t: string) => { const one = t.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim(); return one.length > 160 ? `${one.slice(0, 159)}…` : one; };
@@ -332,6 +342,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
   };
   const sections: Section[] = [{ id: 'memory', blocks: main }];
   if (history) sections.push({ id: 'history', title: 'History', blocks: [history] });
+  sections.push({ id: 'forget', blocks: [archive] });
   if (!episode) {
     sections.push({
       id: 'heat',

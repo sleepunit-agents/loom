@@ -294,8 +294,13 @@ describe('loom UI over HTTP', () => {
     db.prepare('UPDATE memories SET created = ?, salience = 1 WHERE title = ?').run(new Date(Date.now() - 90 * 86_400_000).toISOString(), 'an old memory');
     db.close();
     const cookie = await login();
-    const html = await (await get('/mind', cookie)).text();
-    expect(html).toContain('What I wake up holding');
+    // The board's Mind: top of mind, ranked, with every memory a link away.
+    const top = await (await get('/mind', cookie)).text();
+    expect(top).toContain('<ol class="list numbered">');
+    expect(top).toMatch(/<span class="rank" aria-hidden="true">1<\/span>/);
+    expect(top).toMatch(/href="\/mind\?all=1"[^>]*>[\s\S]*?All \d+ memories/);
+    const html = await (await get('/mind?all=1', cookie)).text();
+    expect(html).toContain('At wake');
     expect(html.indexOf('a hot memory')).toBeLessThan(html.indexOf('an old memory'));
     expect(html).toMatch(/Project memories cool by half every 10 days/);
   });
@@ -361,7 +366,8 @@ describe('loom UI over HTTP', () => {
     const cookie = await login();
     expect(await (await get('/', cookie)).text()).not.toContain('please ratify me');
     const mind = await (await get('/mind', cookie)).text();
-    expect(mind).toContain('2 proposals waiting');
+    expect(mind).toContain('Your call');
+    expect(mind).toContain('“please ratify me”');
     const csrf = csrfOf(mind);
     const [a, b] = listProposals(stack);
     const r1 = await post('/act/loom', cookie, { _csrf: csrf, _action: 'ratify', _path: 'mind', id: String(a.id) });

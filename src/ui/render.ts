@@ -140,14 +140,14 @@ function renderBlock(b: Block, ctx: RenderContext): string {
           i.page !== undefined ? `<a class="stat-link" href="${esc(pageHref(i.page, ctx.source))}" aria-label="${esc(i.label)}"></a>` : ''}</div>`).join('')}</dl>`;
     case 'list':
       if (!b.items.length) return '<p class="empty">Nothing here.</p>';
-      return `<ul class="list">${b.items.map((i) => {
+      return `<${b.numbered ? 'ol class="list numbered"' : 'ul class="list"'}>${b.items.map((i, n) => {
         const text = `<span class="text">${esc(i.text)}</span>`;
         const who = i.agent ? ctx.agents?.[i.agent] : undefined;
-        const lead = who ? mark(who, 24) : i.avatar ? `<span class="avatar" aria-hidden="true">${esc(i.avatar)}</span>` : glyph(i.tone);
+        const lead = b.numbered ? `<span class="rank" aria-hidden="true">${n + 1}</span>` : who ? mark(who, 24) : i.avatar ? `<span class="avatar" aria-hidden="true">${esc(i.avatar)}</span>` : glyph(i.tone);
         return `<li class="${tone(i.tone).trim()}">${lead}<span class="body">${link(text, i, ctx, 'row-link')}${
           i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}${
           i.act ? actionForm(ctx, i.act.action, buttonInner(i.act, 'row-act'), 'row-act-form') : ''}</li>`;
-      }).join('')}</ul>`;
+      }).join('')}</${b.numbered ? 'ol' : 'ul'}>`;
     case 'table': {
       // A real table on a wide screen. On a phone each row is a compact row (the
       // boards' shape): column 1 its title, column 2 a short value on the right,

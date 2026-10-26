@@ -67,6 +67,7 @@ a.stat-link{position:absolute;inset:0;border-radius:inherit}a.stat-link:hover{ba
 .list li[class*=tone-] .text{color:var(--ink)}
 .swatches{display:flex;gap:12px;flex-wrap:wrap}.swatches label{position:relative;cursor:pointer}.swatches input{position:absolute;opacity:0;inset:0;margin:0}.swatches .swatch{display:block;width:40px;height:40px;border-radius:12px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.15)}.swatches input:checked+.swatch{outline:3px solid var(--ink);outline-offset:3px}.swatches input:focus-visible+.swatch{outline:3px solid var(--thread);outline-offset:3px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.list .rank{flex:none;width:18px;align-self:flex-start;margin-top:1px;font-size:14px;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .row-act-form{margin:0;position:relative;z-index:1;flex:none}.row-act{background:none;border:0;font:inherit;font-size:15px;font-weight:600;color:var(--ink);min-height:44px;padding:0 4px;cursor:pointer}.row-act.danger{color:var(--bad)}.row-act:hover{text-decoration:underline}
 .badge{font-size:12px;color:var(--ink-2);background:var(--raised);border-radius:6px;padding:2px 8px;white-space:nowrap;flex:none}
 .empty{color:var(--ink-2);font-size:14px;margin:0}

@@ -760,6 +760,9 @@ describe('the household page', () => {
     const cookie = await login();
     const html = await (await page(cookie, '/knowledge/kiln-cone-6')).text();
     expect(html).toContain('<input type="hidden" name="_action" value="knowledge-verify">');
+    // The board's order: when it was confirmed under the title, the body, Sources, then Still true.
+    expect(html).toMatch(/<p class="intro">(Verified|Not verified yet)/);
+    expect(html.indexOf('<h2>Sources</h2>')).toBeLessThan(html.indexOf('value="knowledge-verify"'));
     await new Promise((r) => setTimeout(r, 20));
     const r = await post(cookie, '/act/loom', { _csrf: csrfOf(html), _action: 'knowledge-verify', _path: 'knowledge/kiln-cone-6', slug: 'kiln-cone-6' });
     expect(r.headers.get('location')).toMatch(/^\/knowledge\/kiln-cone-6\?_flash=/);

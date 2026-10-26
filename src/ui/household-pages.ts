@@ -224,15 +224,16 @@ export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {
       } catch { return []; }
     })();
     const body = r.body ?? '';
+    const by = r.created_by ?? r.author;
     return {
       title: r.title,
+      // The board's line under the title: when it was last confirmed, and by whom.
+      intro: r.verified_at ? `Verified ${ago(r.verified_at, tz, opts.nowMs ?? Date.now())}${by ? ` · written by ${by}` : ''}` : `Not verified yet${by ? ` · written by ${by}` : ''}`,
       sections: [
-        { id: 'body', blocks: [
-          { type: 'prose' as const, text: body.slice(0, 20000) },
-          // The board's "Still true": a verification (the clock the nightly freshness pass reads), as the owner.
-          { type: 'buttons' as const, items: [{ action: 'knowledge-verify', label: 'Still true', tone: 'primary' as const, fields: { slug: r.slug } }] },
-        ] },
+        { id: 'body', blocks: [{ type: 'prose' as const, text: body.slice(0, 20000) }] },
         ...(cites.length ? [{ id: 'citations', title: 'Sources', blocks: [{ type: 'list' as const, items: cites.map((c) => ({ text: c.claim, meta: `${c.source_kind}${c.source_locator ? ` · ${c.source_locator}` : ''}`, ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) })) }] }] : []),
+        // The board's "Still true", after the sources: a verification (the clock the nightly freshness pass reads), as the owner.
+        { id: 'verify', blocks: [{ type: 'buttons' as const, items: [{ action: 'knowledge-verify', label: 'Still true', tone: 'primary' as const, fields: { slug: r.slug } }] }] },
         { id: 'record', side: true, blocks: [{ type: 'kv', items: [
           { label: 'domain', value: r.domain },
           { label: 'sourcing', value: r.sourcing ?? 'unknown' },
@@ -304,6 +305,15 @@ export function householdPeople(h: Household): Page {
   }
 }
 
+/** The start of a text, cut at a sentence (or a word) near n characters. */
+function gist(text: string, n: number): string {
+  const one = text.replace(/\s+/g, ' ').trim();
+  if (one.length <= n) return one;
+  const cut = one.slice(0, n);
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '));
+  return end > n / 2 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}…`;
+}
+
 export function householdPerson(h: Household, slug: string, opts: CoreOptions = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
@@ -324,7 +334,8 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
         const r = rels.get(a);
         if (!r) return { agent: a, text: 'Hasn\'t met them' };
         const how = Object.entries(r.row.card.how ?? {}).map(([k, v]) => `${k}: ${value(v)}`).join(' · ');
-        const known = r.row.card.summary || how || 'Knows of them; nothing more yet.';
+        // A line or two here, as the board has it; all of it is on that agent's own card.
+        const known = gist(r.row.card.summary || how || 'Knows of them; nothing more yet.', 180);
         const newer = r.memories ? `${r.memories} newer memor${r.memories === 1 ? 'y' : 'ies'} · ` : '';
         return { agent: a, text: known, meta: `${newer}updated ${ago(r.row.updated, tz, nowMs)}`, tone: r.memories ? 'warn' as const : undefined, page: agentLink(a, `people/${slug}`) };
       }),
@@ -351,7 +362,7 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
       }] }] });
     }
     const role = d.card.how?.role;
-    return { title: d.card.name, intro: d.card.summary || (role ? value(role) : undefined), sections };
+    return { title: d.card.name, intro: d.card.summary ? gist(d.card.summary, 220) : (role ? value(role) : undefined), sections };
   } finally {
     dir.close();
   }
