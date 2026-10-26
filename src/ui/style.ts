@@ -229,6 +229,7 @@ main.dash{gap:24px}
 .seg-tabs a{flex:1;display:flex;align-items:center;justify-content:center;height:42px;border-radius:var(--r-control);color:var(--ink-2);font-size:14px}.seg-tabs a:hover{text-decoration:none;color:var(--ink)}
 .seg-tabs a.on{background:var(--surface);color:var(--ink);font-weight:600}
 .your-call .label .n{float:right;color:var(--ink-2)}
+.details-sheet .sub{margin:0 0 12px;font-size:12px;color:var(--ink-2)}.details-sheet .sheet-body{display:flex;flex-direction:column;gap:12px;padding-bottom:4px}
 .starters .label{margin:0 0 10px}.starter{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.starter:last-child{border-bottom:0}
 .starter .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.starter .text{font-weight:600}.starter .meta{font-family:inherit;font-size:13px;color:var(--ink-2)}.starter .button-form{margin:0}
 .empty-state{margin:0;padding:20px 16px;border-radius:var(--r-card);background:var(--surface);color:var(--ink-2)}

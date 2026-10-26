@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Details open as a sheet on a phone.** Tapping a details row brings its
+  blocks up in a bottom sheet (moved there, not copied, and back on close);
+  an action taken in it closes the sheet. A desktop expands it in place.
+
 - **First run and empty pages say something.** A household with no pieces
   yet says who's listening ("Art E Fish and Mark are here and listening. Add
   pieces to give them hands.") and offers two catalog pieces to install
