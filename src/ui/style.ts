@@ -56,6 +56,8 @@ h1{margin:0;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.2
 .card .stat{background:var(--raised)}
 .stat dt{font-size:13px;color:var(--ink-2)}.stat dd{margin:0}.stat .value{font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stat .value.long{font-size:19px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}
 .stat .detail{font-size:12px;color:var(--ink-2)}.stat[class*=tone-] .value{color:var(--tone)}.stat .glyph{position:absolute;top:12px;right:12px}
+.stats.one,.stats.one.strip{display:grid;grid-template-columns:1fr}.stats.one .stat{min-height:0;padding:16px 18px;gap:4px}
+.stats.one .value{font-size:56px;letter-spacing:-.045em;line-height:1}.stats.one .value.long{font-size:34px;letter-spacing:-.03em;line-height:1.1;white-space:normal}.stats.one .detail{font-size:15px}
 a.stat-link{position:absolute;inset:0;border-radius:inherit}a.stat-link:hover{background:rgba(127,127,127,.06)}
 
 .list{list-style:none;margin:0 -16px;padding:0}

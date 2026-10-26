@@ -127,8 +127,9 @@ function cell(c: Cell, ctx: RenderContext): string {
 function renderBlock(b: Block, ctx: RenderContext): string {
   switch (b.type) {
     case 'stats':
-      // Two up; past four they become one swipeable strip on a phone.
-      return `<dl class="stats${b.items.length > 4 ? ' strip' : ''}">${b.items.map((i) =>
+      // Two up; past four they become one swipeable strip on a phone. One alone
+      // is a hero: the number a page leads with, at the boards' top size.
+      return `<dl class="stats${b.items.length > 4 ? ' strip' : b.items.length === 1 ? ' one' : ''}">${b.items.map((i) =>
         `<div class="stat${tone(i.tone)}"><dt>${esc(i.label)}</dt><dd class="value${String(i.value).length > 9 ? ' long' : ''}" title="${esc(i.value)}">${esc(i.value)}</dd>${
           i.detail ? `<dd class="detail">${esc(i.detail)}</dd>` : ''}${glyph(i.tone)}${
           i.page !== undefined ? `<a class="stat-link" href="${esc(pageHref(i.page, ctx.source))}" aria-label="${esc(i.label)}"></a>` : ''}</div>`).join('')}</dl>`;
