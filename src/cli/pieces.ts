@@ -174,7 +174,8 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
         const r = await m.installPiece(io.env, source, name);
         out(r, `${r.updated ? 'updated' : 'installed'} ${r.record.name} ${r.record.version} (${r.record.source.repo}@${r.record.source.commit.slice(0, 12)})\n`
           + (r.missing.length ? `it needs settings: loom pieces set ${r.record.name} ${r.missing.map((x) => `${x}=…`).join(' ')}\n` : '')
-          + (r.record.loom.services.length ? `its services (${r.record.loom.services.map((x) => x.name).join(', ')}) aren't started by loom yet; start them by hand\n` : ''));
+          + (r.services.started.length ? `running: ${r.services.started.join(', ')}\n` : '')
+          + r.services.notes.map((n) => n + '\n').join(''));
         return 0;
       }
       case 'update': {

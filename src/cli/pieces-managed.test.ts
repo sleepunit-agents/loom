@@ -212,6 +212,48 @@ describe('managed pieces', () => {
     expect(readCatalog().length).toBeGreaterThan(0);
   });
 
+  it('services: a unit per declared service, with the piece\'s env, restarted on change, gone with the piece', async () => {
+    const xdg = join(tmp, 'xdg');
+    const calls = join(tmp, 'systemctl.log');
+    await writeFile(join(tmp, 'npmbin', 'systemctl'), `#!/bin/sh\necho "$*" >> '${calls}'\n[ "$2" = show-environment ] && [ -n "$NO_SYSTEMD" ] && exit 1\nexit 0\n`);
+    await chmod(join(tmp, 'npmbin', 'systemctl'), 0o755);
+    const senv = { ...env, XDG_CONFIG_HOME: xdg };
+    await fixture('x/svc', SHA1, { name: 'svc', version: '1.0.0', loom: {
+      settings: [{ name: 'SVC_URL', label: 'URL', default: 'http://default' }],
+      services: [{ name: 'run', argv: ['loom-svc', 'run', '--dir=$HOME/100%'], keepChildren: true }],
+    } }, { 'loom-svc': 'exit 0' });
+    await fixture('x/svc', SHA2, { name: 'svc', version: '2.0.0', loom: { services: [] } }, { 'loom-svc': 'exit 0' });
+    const r = await runCliCaptured(['pieces', 'install', '--from', `github:x/svc#${SHA1}`, '--yes'], { env: senv });
+    expect(r.stdout).toContain('running: loom-piece-svc-run.service');
+    const unit = await readFile(join(xdg, 'systemd', 'user', 'loom-piece-svc-run.service'), 'utf-8');
+    const bin = join(loomHome, 'pieces', 'bin');
+    expect(unit).toContain(`ExecStart="${bin}/loom-svc" "run" "--dir=$$HOME/100%%"`);
+    expect(unit).toContain(`EnvironmentFile=${join(loomHome, 'pieces', 'svc', 'service.env')}`);
+    expect(unit).toContain('KillMode=process');
+    const senvFile = await readFile(join(loomHome, 'pieces', 'svc', 'service.env'), 'utf-8');
+    expect(senvFile).toContain('LOOM_PIECE_NAME="svc"');
+    expect(senvFile).toContain('SVC_URL="http://default"');
+    expect(senvFile).toMatch(new RegExp(`^PATH="${bin}:`, 'm'));
+    expect((await stat(join(loomHome, 'pieces', 'svc', 'service.env'))).mode & 0o777).toBe(0o600);
+    expect(await readFile(calls, 'utf-8')).toContain('--user enable --now loom-piece-svc-run.service');
+    // New settings: the env file is rewritten and the service restarted.
+    await runCliCaptured(['pieces', 'set', 'svc', 'SVC_URL=https://real'], { env: senv });
+    expect(await readFile(join(loomHome, 'pieces', 'svc', 'service.env'), 'utf-8')).toContain('SVC_URL="https://real"');
+    expect(await readFile(calls, 'utf-8')).toContain('--user restart loom-piece-svc-run.service');
+    // A version that drops the service stops and removes its unit; rolling back brings it back.
+    await runCliCaptured(['pieces', 'install', '--from', `github:x/svc#${SHA2}`, '--yes'], { env: senv });
+    expect(await readFile(calls, 'utf-8')).toContain('--user disable --now loom-piece-svc-run.service');
+    expect(existsSync(join(xdg, 'systemd', 'user', 'loom-piece-svc-run.service'))).toBe(false);
+    await runCliCaptured(['pieces', 'rollback', 'svc'], { env: senv });
+    expect(existsSync(join(xdg, 'systemd', 'user', 'loom-piece-svc-run.service'))).toBe(true);
+    await runCliCaptured(['pieces', 'remove', 'svc'], { env: senv });
+    expect(existsSync(join(xdg, 'systemd', 'user', 'loom-piece-svc-run.service'))).toBe(false);
+    // No user systemd: nothing written, and the owner is told how to start it.
+    const none = await runCliCaptured(['pieces', 'install', '--from', `github:x/svc#${SHA1}`, '--yes'], { env: { ...senv, NO_SYSTEMD: '1' } });
+    expect(none.stdout).toContain("There's no user systemd here, so loom can't run svc's services. Start them by hand: loom-svc run --dir=$HOME/100%");
+    expect(existsSync(join(xdg, 'systemd', 'user', 'loom-piece-svc-run.service'))).toBe(false);
+  });
+
   it('with no LOOM_HOME and no HOME, there is no managed dir and PATH is all there is', () => {
     expect(listPieces({ PATH: onPath })).toEqual([]);
     expect(pieceEnvFor('/x/loom-tasks', { PATH: onPath })).toEqual({ PATH: onPath });

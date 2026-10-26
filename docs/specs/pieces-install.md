@@ -52,7 +52,7 @@ The package's `package.json` must have:
     { "name": "TASKSTORE_OWNER", "label": "Whose call a task is", "hint": "a person's slug", "required": true }
   ],
   "services": [
-    { "name": "run", "argv": ["loom-box", "run", "--local"] }
+    { "name": "run", "argv": ["loom-box", "run", "--local"], "keepChildren": true }
   ]
 }
 ```
@@ -116,7 +116,9 @@ the same.
 
 ## Services
 
-Each declared service becomes a systemd user unit,
+`keepChildren: true` means stopping the service stops only its main process
+(`KillMode=process`). That's for a supervisor whose children should outlive
+its restart, like loom-box's houses. Each declared service becomes a systemd user unit,
 `loom-piece-<name>-<service>.service`. It runs the argv with the piece's
 environment, restarts on failure, and is enabled and started on install,
 restarted on update and rollback, and stopped and removed on remove. Its output

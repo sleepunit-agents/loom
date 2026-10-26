@@ -20,6 +20,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
+import { syncServices, type ServicesResult } from './pieces-services.js';
 
 const PIECE = /^[a-z][a-z0-9-]{0,39}$/;
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
@@ -41,6 +42,8 @@ export interface Setting {
 export interface Service {
   name: string;
   argv: string[];
+  /** Stopping it stops only its main process; what it started keeps running (KillMode=process). */
+  keepChildren?: boolean;
 }
 
 export interface LoomBlock {
@@ -245,7 +248,8 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
     if (!Array.isArray(argv) || !argv.length || argv.length > 30 || !argv.every((a) => typeof a === 'string' && a.length <= 500)) {
       return `service ${v.name}: argv is a list of strings`;
     }
-    out.services.push({ name: v.name as string, argv: argv as string[] });
+    if (v.keepChildren !== undefined && typeof v.keepChildren !== 'boolean') return `service ${v.name}: keepChildren is true or false`;
+    out.services.push({ name: v.name as string, argv: argv as string[], ...(v.keepChildren ? { keepChildren: true } : {}) });
   }
   return out;
 }
@@ -288,6 +292,7 @@ export interface InstallResult {
   record: PieceRecord;
   updated: boolean;
   missing: string[];
+  services: ServicesResult;
 }
 
 /**
@@ -347,7 +352,7 @@ export async function installPiece(
     relink(root, record, old);
     writeJson(join(home, 'piece.json'), record);
     prune(home, record);
-    return { record, updated: !!old, missing: missingSettings(env, record) };
+    return { record, updated: !!old, missing: missingSettings(env, record), services: syncServices(env, pieceName, record) };
   } finally {
     rmSync(staging, { recursive: true, force: true });
     rmSync(log, { force: true });
@@ -387,6 +392,7 @@ export function rollbackPiece(env: NodeJS.ProcessEnv, name: string): PieceRecord
   swapLink(join('versions', back.source.commit), join(root, name, 'current'));
   relink(root, back, rec);
   writeJson(join(root, name, 'piece.json'), back);
+  syncServices(env, name, back);
   return back;
 }
 
@@ -400,6 +406,7 @@ export function removePiece(env: NodeJS.ProcessEnv, name: string, purge = false)
       if (lstatSync(link).isSymbolicLink() && readlinkSync(link).startsWith(join('..', name) + '/')) unlinkSync(link);
     } catch { /* already gone */ }
   }
+  syncServices(env, name, undefined);
   const home = join(root, name);
   if (purge) {
     rmSync(home, { recursive: true, force: true });
@@ -424,5 +431,7 @@ export function setSettings(env: NodeJS.ProcessEnv, name: string, values: Record
     else delete now[k];
   }
   writeJson(join(root, name, 'settings.json'), now, 0o600);
+  // A service reads its settings when it starts.
+  syncServices(env, name, rec);
   return now;
 }

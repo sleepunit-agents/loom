@@ -75,10 +75,12 @@ describe('the Pieces page', () => {
     }, { 'loom-box': `case "$1 $2" in "ui --json") echo '${manifest}' ;; *) echo "url=$LOOM_BOX_PUBLIC_URL" ;; esac` });
     await writeFile(join(tmp, 'path', 'loom-handmade'), '#!/bin/sh\nexit 0\n');
     await chmod(join(tmp, 'path', 'loom-handmade'), 0o755);
-    for (const k of ['PATH', 'LOOM_HOME', 'FAKE_NPM_FIXTURES']) saved[k] = process.env[k];
+    // XDG_CONFIG_HOME too: services are systemd units under it, and a test must never see this machine's.
+    for (const k of ['PATH', 'LOOM_HOME', 'FAKE_NPM_FIXTURES', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
     process.env.PATH = [join(tmp, 'npmbin'), join(tmp, 'path'), '/usr/bin', '/bin'].join(delimiter);
     process.env.LOOM_HOME = join(tmp, 'loom-home');
     process.env.FAKE_NPM_FIXTURES = join(tmp, 'fixtures');
+    process.env.XDG_CONFIG_HOME = join(tmp, 'xdg');
     handle = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0, token: TOKEN });
     base = `http://127.0.0.1:${handle.port}`;
   });

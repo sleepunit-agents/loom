@@ -15,6 +15,7 @@ import {
   PieceError, installPiece, managedBinDir, managedPieces, missingSettings, parseSource, piecesRoot, readCatalog, readSettings,
   removePiece, rollbackPiece, setSettings, type PieceRecord,
 } from '../cli/pieces-managed.js';
+import { unitName } from '../cli/pieces-services.js';
 import type { ActResult, Ask, Block, Page } from './vocab.js';
 
 interface Job {
@@ -86,7 +87,7 @@ function managedBlocks(env: NodeJS.ProcessEnv, r: PieceRecord, update?: string):
       { label: 'version', value: r.version || '—' },
       { label: 'source', value: `${r.source.repo} @ ${r.source.commit.slice(0, 12)}` },
       { label: 'installed', value: r.installed.slice(0, 16).replace('T', ' ') + ' UTC' },
-      ...(r.loom.services.length ? [{ label: 'services', value: `${r.loom.services.map((s) => s.name).join(', ')} (started by hand for now)` }] : []),
+      ...(r.loom.services.length ? [{ label: 'services', value: r.loom.services.map((s) => unitName(r.name, s.name)).join(', ') }] : []),
     ] },
   ];
   if (missing.length) blocks.unshift({ type: 'callout', tone: 'warn', title: 'Needs setup', text: `Set ${missing.join(', ')} below.` });
@@ -202,7 +203,7 @@ export async function piecesAct(env: NodeJS.ProcessEnv, action: string, fields: 
         if (!c) return { ok: false, message: `${name} isn't in loom's catalog.`, page: 'loom:pieces' };
         return startJob(env, `Install ${c.label ?? c.name}`, async () => {
           const r = await installPiece(env, { repo: c.repo, commit: c.commit }, c.name);
-          return `installed ${r.record.version}${r.missing.length ? `; it needs ${r.missing.join(', ')}` : ''}`;
+          return [`installed ${r.record.version}`, r.missing.length ? `it needs ${r.missing.join(', ')}` : '', ...r.services.notes].filter(Boolean).join('; ');
         });
       }
       case 'piece-update': {
