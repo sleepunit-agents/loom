@@ -267,7 +267,7 @@ export interface Chrome {
 }
 
 /** An agent as the shell draws it: its mark is its initial on its color. */
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number }
+export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string }
 
 export interface Shell {
   owner: string;
@@ -362,7 +362,7 @@ function scopeSheetBody(c: Chrome, sh: Shell): string {
       count ? `<span class="count">${count}</span>` : ''}</a>`;
   const rows = sh.household
     ? [row('/scope/household', householdMark(sh.agents, 32), 'Household', sh.agents.map((a) => a.label).join(', '), sh.scope === 'household', sh.asks),
-      ...sh.agents.map((a) => row(a.href, mark(a, 32), a.label, '', a.current, a.asks)),
+      ...sh.agents.map((a) => row(a.href, mark(a, 32), a.label, a.sub ?? '', a.current, a.asks)),
       `<a class="scope-row new" href="/new-agent"><span class="plusbox">${ICON.plus}</span><span class="text">New agent</span></a>`]
     : [row('/', mark(sh.agents[0], 32), sh.agents[0].label, '', true, sh.asks)];
   return `<div class="sheet-rows">${rows.join('')}</div><div class="sheet-foot"><span class="owner">${esc(sh.owner)}</span><a class="btn small" href="/passkeys">Passkeys</a>${signOut(c, 'small')}</div>`;

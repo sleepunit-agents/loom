@@ -48,7 +48,7 @@ import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { householdFind, householdThread } from './household-pages.js';
-import { surfaceOf, whereLabel } from './data.js';
+import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, MARKS, type Household } from '../household.js';
@@ -427,6 +427,14 @@ function firstRun(names: string[]): NonNullable<Dashboard['firstRun']> {
 }
 
 /** "7:42 AM", in the page's time zone. */
+/** "active 42m ago" from an agent's latest episode (the Scope sheet's line under each agent), or "quiet for 3 days". */
+function lastActive(dir: string, nowMs = Date.now()): string {
+  const last = tapeRows(dir, 72, nowMs)[0];
+  if (!last) return 'quiet for 3 days';
+  const m = Math.max(0, Math.round((nowMs - Date.parse(last.created)) / 60_000));
+  return `active ${m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`} ago`;
+}
+
 function clockAt(ms: number): string {
   return new Intl.DateTimeFormat('en-US', { timeZone: uiTimeZone(), hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
 }
@@ -473,7 +481,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         owner: h.owner ?? 'owner', scope, household: true, asks, tab, back,
         home: scope === 'household' ? '/' : `/a/${scope}`,
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/scope/${a}`, current: scope === a,
-          asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0) })),
+          asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
+          sub: lastActive(agentDir(h, a)) })),
         core: [
           { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
           { label: 'People', href: '/people', current: current.startsWith('people') },

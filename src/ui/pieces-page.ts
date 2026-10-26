@@ -132,8 +132,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
   }) : [{ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' }];
   // Pieces on PATH that loom didn't install: one quiet list, the path a tap away in its meta.
   const byHand = installed.filter((p) => !(bin && p.path.startsWith(bin + '/')));
-  const shown = installedBlocks.filter((b) => b.type === 'details').length + byHand.length;
-  if (byHand.length) installedBlocks.push({ type: 'list', items: byHand.map((p) => ({ text: p.name, meta: `on PATH, managed by hand · ${env.HOME && p.path.startsWith(`${env.HOME}/`) ? `~${p.path.slice(env.HOME.length)}` : p.path}` })) });
+  const shown = installedBlocks.filter((b) => b.type === 'details').length;
 
   const available = catalog.filter((c) => !managed.has(c.name) && !installed.some((p) => p.name === c.name));
   if (!installedBlocks.length) installedBlocks.push({ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' });
@@ -145,12 +144,19 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
     })) }] });
   }
   sections.push({ id: 'installed', title: shown ? `Installed · ${shown}` : 'Installed', blocks: installedBlocks.slice(0, 20) });
-  sections.push({ id: 'available', title: 'Available', blocks: available.length
-    ? available.slice(0, 19).flatMap((c): Block[] => [
-      { type: 'callout', title: c.label ?? c.name, text: `${c.description ?? ''} (${c.repo} @ ${c.commit.slice(0, 12)})`.trim() },
-      { type: 'buttons', items: [{ action: 'piece-install', label: `Install ${c.label ?? c.name}`, tone: 'primary', fields: { name: c.name } }] },
-    ]).slice(0, 20)
+  // The board's catalog: a row a piece, Install at its right.
+  sections.push({ id: 'available', title: 'Catalog', blocks: available.length
+    ? [{ type: 'list', items: available.slice(0, 200).map((c) => ({
+        text: c.label ?? c.name, meta: c.description ?? `${c.repo} @ ${c.commit.slice(0, 12)}`,
+        act: { action: 'piece-install', label: 'Install', fields: { name: c.name } } })) }]
     : [{ type: 'text', text: 'Everything in loom\'s catalog is installed.', tone: 'muted' }] });
+  // Pieces on PATH that loom didn't install: loom runs them, but doesn't update or remove them.
+  if (byHand.length) {
+    sections.push({ id: 'by-hand', title: `Managed by hand · ${byHand.length}`, side: true, blocks: [
+      { type: 'list', items: byHand.map((p) => ({ text: p.name, meta: env.HOME && p.path.startsWith(`${env.HOME}/`) ? `~${p.path.slice(env.HOME.length)}` : p.path })) },
+      { type: 'text', text: 'On PATH, not installed by loom: it runs them, but updating and removing them is yours.', tone: 'muted' },
+    ] });
+  }
 
   const repo = query.repo ?? '';
   const commit = query.commit ?? '';
