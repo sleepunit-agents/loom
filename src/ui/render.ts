@@ -193,7 +193,7 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       const current = ctx.query[b.param] ?? '';
       // An optional search field over the pills: a plain GET to this page with ?q=, the other choices kept.
       const search = b.search === undefined ? '' : `<form class="filter-search" method="get" action="${esc(pageHref(ctx.path, ctx.source))}" role="search">${
-        hiddenInputs(Object.fromEntries(Object.entries(ctx.query).filter(([k]) => k !== 'q')))}<input type="search" name="q" value="${esc(ctx.query.q ?? '')}" placeholder="${esc(b.search)}" aria-label="${esc(b.search)}"></form>`;
+        hiddenInputs(Object.fromEntries(Object.entries(ctx.query).filter(([k]) => k !== 'q')))}${SEARCH_ICON}<input type="search" name="q" value="${esc(ctx.query.q ?? '')}" placeholder="${esc(b.search)}" aria-label="${esc(b.search)}"></form>`;
       return `${search}<nav class="filters" aria-label="Filter">${b.options.map((o) => {
         const href = pageHref(ctx.path, ctx.source);
         const target = href + qs({ ...ctx.query, [b.param]: o.value });
@@ -329,6 +329,7 @@ const ICON = {
 };
 
 /** loom's wordmark: the woven 2x2. */
+const SEARCH_ICON = '<svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 L20 20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const LOGO = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="2" fill="var(--ink)"/><rect x="11" y="1" width="8" height="8" rx="2" fill="var(--thread)" stroke="var(--ink)" stroke-width="1.2"/><rect x="1" y="11" width="8" height="8" rx="2" fill="var(--thread)" stroke="var(--ink)" stroke-width="1.2"/><rect x="11" y="11" width="8" height="8" rx="2" fill="var(--ink)"/></svg>';
 
 /** An agent's mark: its initial on its color (colors are validated #rrggbb). */
@@ -515,7 +516,9 @@ export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unsco
   // A piece that can't narrow to the selected agent: one quiet line, the household's mark.
   const unscoped = unscopedFor && chrome.shell
     ? `<p class="unscoped">${householdMark(chrome.shell.agents, 24)}<span>Showing the whole household — this piece can't narrow to ${esc(unscopedFor)}.</span></p>` : '';
-  const body = `${shellOpen(chrome)}<main${head ? ' class="agent-page"' : ''}>${flash(chrome)}${head ? agentHead(head) : `<div><h1>${esc(page.title)}</h1>`}${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}${head ? '' : '</div>'}${unscoped}${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
+  const body = `${shellOpen(chrome)}<main${head ? ' class="agent-page"' : ''}>${flash(chrome)}${head ? agentHead(head) : `<div><h1>${esc(page.title)}</h1>${
+    // A piece's page says how fresh it is, under its title (the boards' "updated 6s ago"); the script keeps it counting.
+    ctx.source.base.startsWith('/p/') && page.title !== 'Not found' ? '<p class="stamp" data-stamp>updated just now</p>' : ''}`}${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}${head ? '' : '</div>'}${unscoped}${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
   // A page that asks for its own refresh (an install running) gets it, forms or not.
   return document(`${page.title} · ${chrome.agent}`, body, page.refresh ?? !hasForm);
 }

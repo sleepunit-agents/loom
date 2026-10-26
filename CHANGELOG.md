@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: secrets at 75e6cb4.** Secrets per its board: what's stored
+  first, each name a row to its own page (Replace, and a Remove that asks
+  first), then Add a secret.
+- **Header touches from the boards.** A piece's page says "updated just now"
+  under its title, and the script counts it up ("updated 40s ago", "offline ·
+  updated 3m ago"). Search fields carry a magnifier. Places tiles are filled.
 - **Mind, a memory, a person and a knowledge entry per their boards.** Mind
   leads with Your call (each drafted memory quoted, with Ratify and Reject),
   then Top of mind as a ranked list and "All N memories"; the filters and the

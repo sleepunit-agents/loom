@@ -218,9 +218,11 @@ dialog.sheet[open]{animation:sheet-up .22s ease-out}@keyframes sheet-up{from{tra
 .btn.small,form.small button{height:40px;padding:0 14px;font-size:14px;font-weight:500;border-radius:var(--r-button);background:var(--raised);border:0;color:var(--ink);display:inline-flex;align-items:center}.btn.small:hover{text-decoration:none}
 form.small button{background:transparent}
 .place-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.place{display:flex;flex-direction:column;min-height:92px;padding:12px;border-radius:var(--r-card);background:var(--ground);color:var(--ink)}.place:hover{text-decoration:none;outline:1px solid var(--line)}
+.place{display:flex;flex-direction:column;min-height:92px;padding:12px;border-radius:var(--r-card);background:var(--raised);color:var(--ink)}.place:hover{text-decoration:none;outline:1px solid var(--line)}
 .place.on{outline:2px solid var(--ink)}.pl-top{height:12px}.pl-label{margin-top:auto;font-weight:600;font-size:14px}.pl-stat{font-size:12px;color:var(--ink-2)}.place[class*=tone-]:not(.tone-ok) .pl-stat{color:var(--tone)}
 .place-rows{margin-top:10px;padding:0 16px}
+.stamp{margin:2px 0 0;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--ink-2)}.stamp.off{color:var(--warn)}
+.filter-search{position:relative}.filter-search .search-icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--ink-2);pointer-events:none}.filter-search input{padding-left:42px!important}
 main.sheet-page{max-width:560px}.sheet-page h1{margin-bottom:8px}
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .find-form{display:flex;align-items:center;gap:12px}.find-form input{flex:1;min-width:0}
