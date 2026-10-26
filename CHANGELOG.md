@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: shuttle at 3893774.** Bridges and Subscriptions per their
+  boards: a status row a bridge, Talking now, conversations with initials;
+  usage meters, logins with how long each is good for and Renew when one
+  runs out, accounts as cards with their credentials under Machine details.
+  Also carries shuttle#4: a body that never shows is retried or held and
+  paged, never dropped.
 - **One stat alone is a hero.** A `stats` block with a single item renders
   full width at the boards' top size (the Clock's "Art wakes next 9:30"), with
   its detail line under it. Two or more are the grid, as before.
