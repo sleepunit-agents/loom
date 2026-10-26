@@ -11,6 +11,7 @@ import { listProposals, rejectProposal, ratifyProposal, UnknownProposalError } f
 import { fieldState, type CardValue } from '../backends/people.js';
 import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
+import { restore } from '../tools/restore.js';
 import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, type MemoryView } from './data.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile, type Tone } from './vocab.js';
 
@@ -471,7 +472,15 @@ export async function coreAct(contextDir: string, action: string, fields: Record
     const ref = fields.ref ?? '';
     if (!ref) return { ok: false, message: 'No memory named.' };
     const out = await archive(contextDir, { ref, note: 'archived from loom\'s page' });
-    return out.startsWith('Memory archived') ? { ok: true, message: 'Archived. It can be restored with memory_restore.', page: 'mind' } : { ok: false, message: out };
+    return out.startsWith('Memory archived')
+      ? { ok: true, message: 'Archived.', page: 'mind', undo: { action: 'restore', fields: { ref } } }
+      : { ok: false, message: out };
+  }
+  if (action === 'restore') {
+    const ref = fields.ref ?? '';
+    if (!ref) return { ok: false, message: 'No memory named.' };
+    const out = await restore(contextDir, { ref });
+    return /^Memory restored|^Restored/i.test(out) ? { ok: true, message: 'Restored.', page: memoryPage(ref) ?? 'mind' } : { ok: false, message: out };
   }
   if (action === 'ratify' || action === 'reject') {
     const id = Number.parseInt(fields.id ?? '', 10);

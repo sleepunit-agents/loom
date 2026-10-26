@@ -266,7 +266,7 @@ main.dash{gap:24px}
 .toasts:not(:has(.toast)){display:none}
 .toast{pointer-events:auto;width:100%;max-width:520px;border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.18);animation:toast-in .18s ease-out}.toast.out{opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s}
 .toast-close{border:0;background:transparent;color:inherit;font-size:20px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}.toast.keep .tm{word-break:break-all;user-select:all}
-.toast .tg{font-size:11px}.toast.ok .tg{color:var(--thread)}.toast .tm{flex:1}
+.toast .tg{font-size:11px}.flash form.undo{margin:0 0 0 auto}.undo-btn{border:0;background:transparent;color:var(--thread);font:inherit;font-weight:700;cursor:pointer;padding:4px 6px}.flash.bad .undo-btn{color:inherit}.toast.ok .tg{color:var(--thread)}.toast .tm{flex:1}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px)}}
 .btn.busy{position:relative;color:transparent!important}.btn.busy::after{content:"";position:absolute;inset:0;margin:auto;width:16px;height:16px;border-radius:50%;border:2px solid var(--ink-2);border-right-color:transparent;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}

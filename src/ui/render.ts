@@ -252,7 +252,7 @@ export interface Chrome {
   clock: string;
   csrf: string;
   /** The one-time result of an action; `from` names the piece that sent it. */
-  flash?: { ok: boolean; message: string; from?: string; keep?: boolean };
+  flash?: { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } };
   skipped: string[];
   /** The app shell (bottom bar, rail, scope and Places sheets); absent for the bare pages. */
   shell?: Shell;
@@ -467,7 +467,10 @@ function chromeFoot(c: Chrome, refresh: boolean): string {
 function flash(c: Chrome): string {
   if (!c.flash) return '';
   const from = c.flash.from ? `<span class="from">${esc(c.flash.from)}</span>` : '';
-  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status"${c.flash.keep ? ' data-keep' : ''}>${c.flash.ok ? glyph('ok') : glyph('bad')}<span>${esc(c.flash.message)}</span>${from}</div>`;
+  // Undo is an ordinary action form (the same anti-forgery token): it works without script too.
+  const u = c.flash.undo;
+  const undo = u ? `<form class="undo" method="post" action="${esc(u.act)}">${hiddenInputs({ ...(u.fields ?? {}), _csrf: c.csrf, _action: u.action, _path: u.path })}<button class="undo-btn" type="submit">${esc(u.label ?? 'Undo')}</button></form>` : '';
+  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status"${c.flash.keep ? ' data-keep' : ''}>${c.flash.ok ? glyph('ok') : glyph('bad')}<span>${esc(c.flash.message)}</span>${from}${undo}</div>`;
 }
 
 /** One page, loom's or a piece's. An agent's Mind, People or Setup passes its head: the page's title gives way to the agent's. */

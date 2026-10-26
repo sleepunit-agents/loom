@@ -222,7 +222,7 @@ loom shows the message once, labeled with the piece's name, as a toast on
 `page` (with its query, if it has one) or on the page the form was on, which
 refreshes in place. `ok: false` shows it as an error. A toast fades after a
 few seconds; `"keep": true` holds it until it's closed, for a message that
-carries something to copy. A `danger` button with a `confirm` sentence asks
+carries something to copy. `"undo": {"action", "label"?, "fields"?}` puts an Undo on the message: it posts that action to the piece, like a button. A `danger` button with a `confirm` sentence asks
 first, in a sheet that says it. Field values travel only on stdin. loom
 never logs them, stores them, or puts them in a URL, so a secret typed into a
 form goes straight to the piece holding the authority. The piece validates
