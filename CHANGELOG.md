@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: box at 7fbba5d.** Boxes per its board, with Sessions first: each
+  agent's box session and house session, their claude.ai links (talk to them
+  from the Claude app) and one-tap up/down; a card per box with its houses;
+  services with Restart. The agent form keeps tailnet grants.
+
 - **Catalog: tasks at 0be3242.** The Tasks piece per its boards: Open · Blocked ·
   Done counts and pills, the owner's tasks first ("waiting on you"), agent
   marks, the description as prose, Mark done (with Undo) and a Reply box.
