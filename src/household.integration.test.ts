@@ -810,7 +810,8 @@ describe('the household page', () => {
     const first = await (await page(cookie, '/')).text();
     expect(first).toContain('data-live="');
     expect(first).toContain('<noscript><meta http-equiv="refresh" content="60"></noscript>');
-    const sub = (html: string) => Number(/<p class="sub">(\d+) new since/.exec(html)?.[1]);
+    // No "N new since" line is 0 new: a household with no pieces yet shows its first-run line instead.
+    const sub = (html: string) => Number(/<p class="sub">(\d+) new since/.exec(html)?.[1] ?? 0);
     const n = sub(first);
     await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did another thing', content: 'x' });
     const live = await (await fetch(`${base}/`, { headers: { cookie, 'x-loom-live': '1' } })).text();
