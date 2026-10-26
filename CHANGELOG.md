@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The scope moves to a pinned header.** On a phone the top bar now stays at
+  the top of every page: the wordmark (or the way back) on the left, and on
+  the right a pill with who you're looking at (Household, or an agent), which
+  opens the scope sheet. The bottom bar is Home · Places · Find · Setup.
+
 - **A person's page, per the Person board.** Under their name, their summary
   (or role); then how each agent knows them, one row per agent with its mark
   (every agent, "Hasn't met them" included); then Reach, a value per channel,

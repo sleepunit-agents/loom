@@ -397,19 +397,26 @@ function rail(c: Chrome, sh: Shell): string {
     `<div class="rail-foot"><span>${esc(sh.owner)}</span><a href="/passkeys">Passkeys</a>${signOut(c)}</div></aside>`;
 }
 
+/**
+ * The phone's header, pinned to the top on every page (Jonathan picked it,
+ * 2026-10-26): on the left the wordmark on Home, else a way back; on the
+ * right who you're looking at, the scope, which opens its sheet.
+ */
 function phoneTop(sh: Shell): string {
-  // Home shows the wordmark; anywhere else a way back.
-  return sh.tab === 'home' && !sh.back
-    ? `<div class="phone-top"><a class="wordmark" href="/">${LOGO}<span>loom</span></a></div>`
+  const left = sh.tab === 'home' && !sh.back
+    ? `<a class="wordmark" href="/">${LOGO}<span>loom</span></a>`
     : sh.back
-      ? `<div class="phone-top"><a class="back named" href="${esc(sh.back.href)}">${ICON.back}<span>${esc(sh.back.label)}</span></a></div>`
-      : `<div class="phone-top"><a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a></div>`;
+      ? `<a class="back named" href="${esc(sh.back.href)}">${ICON.back}<span>${esc(sh.back.label)}</span></a>`
+      : `<a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a>`;
+  const who = sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '';
+  const pill = `<a class="scope-pill" href="/scope" data-sheet="scope" aria-label="Showing ${esc(who)}. Change">${scopeMark(sh, 26)}<span>${esc(who)}</span><span class="caret" aria-hidden="true">⌄</span></a>`;
+  return `<div class="phone-top">${left}${pill}</div>`;
 }
 
 function bottomBar(sh: Shell): string {
   const tab = (href: string, label: string, icon: string, on: boolean, attrs = '') =>
     `<a class="tab${on ? ' on' : ''}" href="${esc(href)}" aria-label="${esc(label)}"${on ? ' aria-current="page"' : ''}${attrs}>${icon}</a>`;
-  return `<nav class="bottom" aria-label="Main"><a class="scope-chip" href="/scope" data-sheet="scope" aria-label="Scope: ${esc(sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '')}">${scopeMark(sh, 30)}<span class="caret" aria-hidden="true">⌃</span></a>` +
+  return `<nav class="bottom" aria-label="Main">` +
     tab(sh.home, 'Home', ICON.home, sh.tab === 'home') + tab('/places', 'Places', ICON.places, sh.tab === 'places', ' data-sheet="places"') + tab('/find', 'Find', ICON.find, sh.tab === 'find', ' data-sheet="find"') +
     tab('/setup', 'Setup', ICON.setup, sh.tab === 'setup', ' data-sheet="setup"') + '</nav>';
 }
