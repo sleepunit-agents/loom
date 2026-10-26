@@ -19,7 +19,8 @@ const SHA1 = '1'.repeat(40);
 const SHA2 = '2'.repeat(40);
 const SHA3 = '3'.repeat(40);
 
-const FAKE_NPM = `#!/usr/bin/env node
+// The node running the tests, by path: a test's PATH is minimal, and on CI node isn't in /usr/bin.
+const FAKE_NPM = `#!${process.execPath}
 const fs = require('fs'), path = require('path');
 const args = process.argv.slice(2);
 const prefix = args[args.indexOf('--prefix') + 1];
