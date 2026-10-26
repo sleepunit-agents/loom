@@ -177,6 +177,7 @@ footer{max-width:1100px;margin:0 auto;padding:0 16px 32px;color:var(--ink-2);fon
 .app{display:flex;min-height:100vh}.content{flex:1;min-width:0;display:flex;flex-direction:column}.content>main{min-width:0;width:100%}
 .mark{display:inline-flex;align-items:center;justify-content:center;border-radius:27%;font-weight:700;flex:none;line-height:1}
 .hmark{flex:none}
+.logo{display:block;flex:none;border-radius:22%}.signin-mark .logo{border-radius:22%}
 .wordmark{display:inline-flex;align-items:center;gap:8px;font-size:20px;font-weight:600;color:var(--ink);letter-spacing:-.01em}.wordmark:hover{text-decoration:none}
 .rail{display:none}
 .bar-title{flex:1;min-width:0;font-size:17px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0;transform:translateY(10px);transition:opacity .18s ease,transform .18s ease;pointer-events:none}

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **loom's mark on the page is the v7 icon,** not the four squares: the
+  32px export beside "loom" in the rail and the phone header, the 192px one
+  on the sign-in page.
 - **The boards' "+".** A page may name where adding one goes (`add`: a page
   and a label), and loom draws it as a "+" beside the title. People adds a
   person (name, who they are, where to reach them) and Knowledge adds a fact
