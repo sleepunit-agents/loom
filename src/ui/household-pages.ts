@@ -383,42 +383,80 @@ function identitySections(md: string): Block[] {
   });
 }
 
+/** An identity's bio (the paragraph under its title) and voice (its Voice or Communication section's first paragraph). */
+export function identityFacts(md: string): { bio?: string; voice?: string } {
+  const para = (body: string) => body.trim().split(/\n\s*\n/)[0]?.replace(/\s+/g, ' ').trim() || undefined;
+  const bio = /^#\s+.+\n+([\s\S]*?)(?=\n#{1,2}\s|$)/.exec(md.trim());
+  const voice = /^##\s+(?:Voice|Communication|How you talk)\s*\n([\s\S]*?)(?=\n#{1,2}\s|$)/m.exec(md);
+  return { bio: bio ? para(bio[1]) : undefined, voice: voice ? para(voice[1]) : undefined };
+}
+
+/** "4m ago", "3 days ago": how long since, for a token's last use. */
+function since(iso: string | undefined, nowMs: number): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return 'never';
+  const m = Math.max(0, Math.round((nowMs - t) / 60000));
+  return m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)} days ago`;
+}
+
 export function agentSetup(h: Household, agent: string, opts: CoreOptions = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
+  const nowMs = opts.nowMs ?? Date.now();
   const dir = agentDir(h, agent);
   let identity = '';
   try { identity = readFileSync(join(dir, 'IDENTITY.md'), 'utf-8'); } catch { /* none */ }
   const harnesses = (() => { try { return readdirSync(join(dir, 'harnesses')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)); } catch { return []; } })();
   const tokens = loadTokens(h.home).filter((t) => t.role === `agent:${agent}` || (agent === h.default && t.role === 'owner'));
-  const dbSize = (() => { try { return statSync(resolveSqliteDbPath(dir)).size; } catch { return 0; } })();
-  const memories = count(resolveSqliteDbPath(dir), "SELECT COUNT(*) AS n FROM memories WHERE archived = 0 AND category != 'episode'");
+  const live = tokens.filter((t) => !t.revoked).sort((a, b) => (b.last_used ?? '').localeCompare(a.last_used ?? ''));
+  const db = resolveSqliteDbPath(dir);
+  const dbSize = (() => { try { return statSync(db).size; } catch { return 0; } })();
+  const memories = count(db, "SELECT COUNT(*) AS n FROM memories WHERE archived = 0 AND category != 'episode'");
+  const born = firstWritten(db);
+  const last = tapeRows(dir, 72, nowMs)[0];
+  const lastMs = last ? Date.parse(last.created) : NaN;
+  const facts = identityFacts(identity);
   return {
     title: `${agentName(dir)} · Setup`,
     sections: [
+      { id: 'health', title: 'Health', blocks: [{ type: 'status', items: [
+        { label: 'Memory', tone: memories ? 'ok' : 'warn', text: memories ? 'OK' : 'empty', meta: `${memories.toLocaleString('en-US')} · ${(dbSize / 1048576).toFixed(0)} MB` },
+        { label: 'Last active', tone: Number.isNaN(lastMs) ? 'warn' : nowMs - lastMs < 86_400_000 ? 'ok' : 'warn',
+          text: Number.isNaN(lastMs) ? 'nothing in 3 days' : since(last.created, nowMs), ...(last ? { meta: whereLabel(last.where) } : {}) },
+        { label: 'Tokens', tone: live.length ? 'ok' : 'warn', text: `${live.length} live`, meta: live.length ? `used ${since(live[0].last_used, nowMs)}` : 'none' },
+      ] }] },
       { id: 'identity', title: 'Identity', blocks: [
-        { type: 'text', text: 'Read-only here: an agent\'s creed is changed by the agent (update_identity) or by hand, never from a web page.', tone: 'muted' },
-        ...identitySections(identity),
+        { type: 'kv', items: [
+          ...(facts.voice ? [{ label: 'Voice', value: facts.voice.slice(0, 300) }] : []),
+          ...(born ? [{ label: 'Born', value: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: tz }).format(new Date(born)) }] : []),
+          { label: 'Harnesses', value: harnesses.join(', ') || 'none' },
+        ] },
+        ...(facts.bio ? [{ type: 'text' as const, text: facts.bio.slice(0, 1900) }] : []),
+        identity.trim()
+          ? { type: 'details', summary: 'The whole creed', meta: 'read-only: the agent changes it (update_identity), or it\'s changed by hand', blocks: identitySections(identity) }
+          : { type: 'text', text: '(no IDENTITY.md)', tone: 'muted' },
       ] },
       { id: 'tokens', title: 'Tokens', blocks: [
-        tokens.length
-          ? { type: 'details', summary: `${tokens.filter((t) => !t.revoked).length} live, ${tokens.filter((t) => t.revoked).length} revoked`, blocks: tokens.map((t): Block => (t.revoked
-              ? { type: 'text', text: `${t.label} (${t.role}) · revoked ${when(t.revoked, tz)}`, tone: 'muted' }
-              : { type: 'callout', title: `${t.label} · ${t.role}`, text: `created ${when(t.created, tz)} · ${t.last_used ? `last used ${when(t.last_used, tz)}` : 'never used'}` })) }
+        live.length
+          ? { type: 'list', items: live.slice(0, 50).map((t) => ({
+              text: t.label, meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}`,
+              act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
+            })) }
           : { type: 'text', text: 'No tokens yet.', tone: 'muted' },
-        ...tokens.filter((t) => !t.revoked).map((t): Block => ({ type: 'buttons', items: [{ action: 'revoke-token', label: `Revoke "${t.label}"`, tone: 'danger', confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } }] })),
-        { type: 'form', action: 'create-token', title: 'New token', submit: 'Create token', hidden: { agent },
-          note: 'Shown once, on the next page. Give it to the harness or house that will be this agent; loom keeps only its fingerprint.',
-          fields: [{ name: 'label', label: 'Label', kind: 'text', hint: 'Where it goes, e.g. "Art · laptop".', required: true }] },
+        ...(tokens.length > live.length ? [{ type: 'details' as const, summary: `${tokens.length - live.length} revoked`, blocks: [{ type: 'list' as const, items: tokens.filter((t) => t.revoked).slice(0, 200).map((t) => ({
+          text: t.label, meta: `revoked ${when(t.revoked!, tz)}`, tone: 'muted' as const })) }] }] : []),
+        { type: 'details', summary: 'Create token', blocks: [{ type: 'form', action: 'create-token', submit: 'Create token', hidden: { agent },
+          note: 'Shown once. Give it to the harness or house that will be this agent; loom keeps only its fingerprint.',
+          fields: [{ name: 'label', label: 'Label', kind: 'text', hint: 'Where it goes, e.g. "Art · laptop".', required: true }] }] },
       ] },
-      { id: 'health', side: true, title: 'Health', blocks: [{ type: 'kv', items: [
-        { label: 'memories', value: memories.toLocaleString('en-US') },
-        { label: 'memory store', value: `${(dbSize / 1048576).toFixed(1)} MB` },
-        { label: 'harnesses', value: harnesses.join(', ') || 'none' },
-        { label: 'directory', value: `agents/${agent}` },
-        { label: 'default agent', value: agent === h.default ? 'yes' : 'no' },
-      ] }] },
     ],
   };
+}
+
+/** When the agent's first memory was written (its birthday, as far as loom knows). */
+function firstWritten(db: string): string | undefined {
+  if (!existsSync(db)) return undefined;
+  const d = new BetterSqlite3(db, { readonly: true, fileMustExist: true });
+  try { return (d.prepare('SELECT MIN(created) AS c FROM memories').get() as { c: string | null }).c ?? undefined; } catch { return undefined; } finally { d.close(); }
 }
 
 // ─── Adding an agent ─────────────────────────────────────────────────────────

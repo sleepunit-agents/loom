@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { parsePage } from './vocab.js';
 import { renderDashboard, renderPage, CORE, type Chrome } from './render.js';
 import { whereLabel } from './data.js';
+import { identityFacts } from './household-pages.js';
 
 const chrome: Chrome = { agent: 'Test', nav: [], clock: 'now', csrf: 'c'.repeat(64), skipped: [] };
 const ctx = { source: CORE, path: '', query: {}, csrf: 'c'.repeat(64) };
@@ -22,6 +23,18 @@ describe('meter, code and status blocks', () => {
     // A long second value leads the line instead of crowding the right.
     expect(html).toMatch(/<span class="ttitle">long<\/span><span class="tline"><span class="tpair"><span class="tl">when<\/span> a value much longer/);
     expect(html).not.toContain('+ 1 more field');
+  });
+
+  it('a list row may carry one action, inline, that asks first when it is danger', () => {
+    const p = page([{ type: 'list', items: [{ text: 'laptop', meta: 'used 3 days ago', act: { action: 'revoke', label: 'Revoke', tone: 'danger', confirm: 'Signed out at once.', fields: { label: 'laptop' } } }] }]);
+    const html = renderPage(p as Exclude<typeof p, string>, ctx, chrome);
+    expect(html).toContain('<input type="hidden" name="label" value="laptop"><button class="row-act danger" type="submit" data-confirm="Signed out at once.">Revoke</button>');
+    expect(typeof page([{ type: 'list', items: [{ text: 'x', act: { action: 'bad action!', label: 'x' } }] }])).toBe('string');
+  });
+
+  it('an identity gives its bio and voice', () => {
+    expect(identityFacts('# Gabe\n\nGabe keeps the books.\n\n## Voice\n\nDry, curious.\n\nMore.\n')).toEqual({ bio: 'Gabe keeps the books.', voice: 'Dry, curious.' });
+    expect(identityFacts('# Art\n\nYou are Art.\n\n## Communication\n\nBe direct.\n')).toEqual({ bio: 'You are Art.', voice: 'Be direct.' });
   });
 
   it('a where reads the way a person says it', () => {

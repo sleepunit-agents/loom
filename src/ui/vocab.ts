@@ -27,9 +27,12 @@ export interface Field {
   options?: Array<{ value: string; label: string; detail?: string }>;
 }
 
+/** A button: posts its action (with fields) to the piece; danger asks first, with confirm. */
+export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
+
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
-  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string } & Target> }
+  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][] }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -39,7 +42,7 @@ export type Block =
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
-  | { type: 'buttons'; items: Array<{ action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }> }
+  | { type: 'buttons'; items: Button[] }
   | { type: 'meter'; items: Array<{ label: string; value: number; detail?: string; tone?: Tone }> }
   | { type: 'code'; text: string; label?: string }
   | { type: 'status'; items: Array<{ label: string; tone?: Tone; text?: string; meta?: string; page?: string }> };
@@ -235,6 +238,19 @@ function strMap(v: unknown, what: string, max: number): Record<string, string> |
   return out;
 }
 
+function button(x: unknown): Button {
+  const o = obj(x, 'button');
+  const t = o.tone;
+  if (t !== undefined && t !== 'primary' && t !== 'danger') throw new Invalid('button.tone must be primary or danger');
+  return {
+    action: name(o.action, 'button.action'),
+    label: str(o.label, 'button.label'),
+    tone: t as 'primary' | 'danger' | undefined,
+    confirm: optStr(o.confirm, 'button.confirm'),
+    fields: strMap(o.fields, 'button.fields', LIMITS.hidden),
+  };
+}
+
 function field(v: unknown): Field {
   const o = obj(v, 'field');
   const kind = o.kind;
@@ -281,6 +297,7 @@ function block(v: unknown, depth = 0): Block {
           return {
             text: str(o.text, 'list.text'), meta: optStr(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
             tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), avatar: avatarOf(o.avatar), ...target(o, 'list item'),
+            ...(o.act !== undefined ? { act: button(o.act) } : {}),
           };
         }),
       };
@@ -353,18 +370,7 @@ function block(v: unknown, depth = 0): Block {
     case 'buttons':
       return {
         type: 'buttons',
-        items: arr(b.items, 'buttons.items', LIMITS.fields).map((x) => {
-          const o = obj(x, 'button');
-          const t = o.tone;
-          if (t !== undefined && t !== 'primary' && t !== 'danger') throw new Invalid('button.tone must be primary or danger');
-          return {
-            action: name(o.action, 'button.action'),
-            label: str(o.label, 'button.label'),
-            tone: t as 'primary' | 'danger' | undefined,
-            confirm: optStr(o.confirm, 'button.confirm'),
-            fields: strMap(o.fields, 'button.fields', LIMITS.hidden),
-          };
-        }),
+        items: arr(b.items, 'buttons.items', LIMITS.fields).map(button),
       };
     case 'meter':
       return {

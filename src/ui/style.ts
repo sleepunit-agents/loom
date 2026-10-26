@@ -65,6 +65,7 @@ a.stat-link{position:absolute;inset:0;border-radius:inherit}a.stat-link:hover{ba
 .list .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.list .text{font-size:15px;overflow-wrap:anywhere}.list .meta{font-size:11px;color:var(--ink-2)}
 .list li a.row-link{color:inherit}.list li a.row-link::after{content:"";position:absolute;inset:0}.list li:has(a.row-link){position:relative}.list li:has(a.row-link):hover{background:rgba(127,127,127,.05)}
 .list li[class*=tone-] .text{color:var(--ink)}
+.row-act-form{margin:0;position:relative;z-index:1;flex:none}.row-act{background:none;border:0;font:inherit;font-size:15px;font-weight:600;color:var(--ink);min-height:44px;padding:0 4px;cursor:pointer}.row-act.danger{color:var(--bad)}.row-act:hover{text-decoration:underline}
 .badge{font-size:12px;color:var(--ink-2);background:var(--raised);border-radius:6px;padding:2px 8px;white-space:nowrap;flex:none}
 .empty{color:var(--ink-2);font-size:14px;margin:0}
 
