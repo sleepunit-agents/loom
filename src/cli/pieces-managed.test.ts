@@ -3,7 +3,7 @@
  * commit into $LOOM_HOME/pieces, found before PATH, run with their own
  * environment, updated, rolled back and removed.
  *
- * npm is a stand-in (LOOM_PIECES_NPM): it lays a package from fixtures/ down
+ * npm is a stand-in, first on PATH: it lays a package from fixtures/ down
  * in the prefix the way `npm install --prefix <dir> github:o/r#<sha>` does.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -81,11 +81,12 @@ describe('managed pieces', () => {
     fixtures = join(tmp, 'fixtures');
     onPath = join(tmp, 'path');
     await mkdir(onPath, { recursive: true });
-    await writeFile(join(tmp, 'npm'), FAKE_NPM);
-    await chmod(join(tmp, 'npm'), 0o755);
+    await mkdir(join(tmp, 'npmbin'));
+    await writeFile(join(tmp, 'npmbin', 'npm'), FAKE_NPM);
+    await chmod(join(tmp, 'npmbin', 'npm'), 0o755);
     env = {
-      LOOM_HOME: loomHome, LOOM_PIECES_NPM: join(tmp, 'npm'), FAKE_NPM_FIXTURES: fixtures,
-      PATH: [onPath, '/usr/bin', '/bin'].join(delimiter),
+      LOOM_HOME: loomHome, FAKE_NPM_FIXTURES: fixtures,
+      PATH: [join(tmp, 'npmbin'), onPath, '/usr/bin', '/bin'].join(delimiter),
     };
     await fixture('sleepunit-agents/taskstore', SHA1, tasksPkg('0.4.0'), tasksBins('v1'));
     await fixture('sleepunit-agents/taskstore', SHA2, tasksPkg('0.5.0'), tasksBins('v2'));

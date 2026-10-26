@@ -245,8 +245,9 @@ export function parseLoomBlock(raw: unknown): LoomBlock | string {
   return out;
 }
 
+/** npm from PATH (a test puts a stand-in first on it). */
 function runNpm(env: NodeJS.ProcessEnv, args: string[], log: string): Promise<number> {
-  const npm = env.LOOM_PIECES_NPM || 'npm';
+  const npm = 'npm';
   return new Promise((resolve) => {
     const out: Buffer[] = [];
     const child = spawn(npm, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
