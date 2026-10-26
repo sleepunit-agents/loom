@@ -685,6 +685,22 @@ describe('the household page', () => {
     expect((await (await page(cookie, '/?who=mark')).text())).not.toContain('art did a thing');
   });
 
+  it('Find looks through knowledge, people and memories, in the scope', async () => {
+    const cookie = await login();
+    await remember(join(h.home, 'agents', 'mark'), { category: 'project', title: 'Babylon scenes stay under 200 draw calls', content: 'x' });
+    const html = await (await page(cookie, '/find?q=lor')).text();
+    expect(html).toContain('People › <strong>Lor</strong>en');
+    const mem = await (await page(cookie, '/find?q=babylon')).text();
+    expect(mem).toContain('<h2 class="label">Memories</h2>');
+    expect(mem).toContain('href="/a/mark/memory/');
+    expect(mem).toContain('<strong>Babylon</strong> scenes');
+    // Scoped to Art, Mark's memory isn't Art's to find.
+    const asArt = await fetch(`${base}/find?q=babylon`, { headers: { cookie: `${cookie}; loom_scope=art` } });
+    expect(await asArt.text()).not.toContain('Babylon</strong> scenes');
+    // LIKE's wildcards are only themselves.
+    expect(await (await page(cookie, '/find?q=%25')).text()).not.toContain('<h2 class="label">Memories</h2>');
+  });
+
   it('a person shows the shared entry and every agent\'s relationship', async () => {
     const cookie = await login();
     const html = await (await page(cookie, '/people/loren')).text();

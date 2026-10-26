@@ -45,12 +45,13 @@ import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRe
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
-import { householdThread } from './household-pages.js';
+import { householdFind, householdThread } from './household-pages.js';
+import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
-import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -346,6 +347,29 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
     ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece }))),
     ...piecesAsks(env).map((a) => ({ ...a, source: CORE, sourceLabel: 'Pieces', tone: 'warn' as const })),
   ];
+}
+
+/** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */
+function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[]): Found {
+  const needle = q.toLowerCase();
+  const hh = opts.household?.();
+  const asks = [...(hh ? proposalAsks(hh, Object.fromEntries(hh.agents.map((a) => [a, pendingProposals(hh, a)]))) : []), ...pieceAsks(pieces, opts.env)];
+  const found: Found = {
+    do: asks.filter((a) => `${a.text} ${a.label ?? ''} ${a.sourceLabel ?? ''}`.toLowerCase().includes(needle))
+      .slice(0, 5).map((a) => ({ label: a.text, href: a.page !== undefined ? pageHref(a.page, a.source) : '/' })),
+    knowledge: [], people: [], memories: [],
+  };
+  if (!hh) return found;
+  const scope = scopeOf(req, hh);
+  const f = householdFind(hh, q, scope === 'household' ? hh.agents : [scope]);
+  found.knowledge = f.knowledge.map((k) => ({ label: k.title, href: `/knowledge/${k.slug}` }));
+  found.people = f.people.map((p) => ({ label: p.name, href: `/people/${p.slug}` }));
+  found.memories = f.memories.map((m) => ({ label: m.title, href: pageHref(`memory/${m.ref}`, agentSource(m.agent)), agent: m.agent }));
+  return found;
+}
+
+function pendingProposals(h: Household, agent: string): number {
+  try { return listProposals(agentDir(h, agent)).filter((p) => p.status === 'pending').length; } catch { return 0; }
 }
 
 /** "7:42 AM", in the page's time zone. */
@@ -717,7 +741,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (pathname === '/scope' || pathname === '/places' || pathname === '/find') {
     const tab = pathname.slice(1);
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
-    return html(renderSheetPage(tab as 'scope' | 'places' | 'find', ch, url.searchParams.get('q') ?? ''));
+    const q = (url.searchParams.get('q') ?? '').slice(0, 100);
+    return html(renderSheetPage(tab as 'scope' | 'places' | 'find', ch, q, tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined));
   }
 
   if (pathname === '/passkeys') {
