@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A memory's page, per the Memory board.** Under the memory: where it was
+  learned, when it was first written, how often it's been recalled, and who
+  it's about. Then its history, newest first: what it says now and each
+  earlier body back to the first, as a timeline. The raw record moves behind
+  "Machine details".
+
 - **Knowledge pages and memories read as written.** A new `prose` block
   renders markdown (markdown-it, raw HTML off: HTML in a body is shown as
   text, never run; links only to `http(s)`; no images). A knowledge page's body is one prose
