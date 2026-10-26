@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: shuttle at 21c35b6.** The Subscriptions tile on Home is the
+  fullest usage window ("48%, Jonathan's Claude · 7 days, resets Mon").
+- **Desktop per the Desktop board.** The rail stays put while the page scrolls,
+  so its foot (owner, Passkeys, Sign out) is always there. Thread rows are one
+  line on a wide screen, where and when at the right. Home's head carries a
+  live dot. A long tile value is set smaller and a tile's detail is two lines
+  at most. An agent's Today: its glance tiles two up in the side column, and
+  its Thread says where in words.
 - **Catalog: box at 4ab3b64.** Boxes per its board: the box card first (how long
   it's been up, its disk, its houses, the machine's facts folded), services
   with Restart at the row, sessions with Up/Down at the row.

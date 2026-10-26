@@ -50,6 +50,14 @@ describe('meter, code and status blocks', () => {
     expect(whereLabel('?')).toBe('');
   });
 
+  it('Home carries a live dot in its head, and a long tile value is set smaller', () => {
+    const html = renderDashboard({ label: 'Household', asks: [], thread: [], tiles: [
+      { label: 'Work', value: '19 in progress', source: CORE }, { label: 'Boxes', value: '1 box', source: CORE }] }, ctx, chrome);
+    expect(html).toContain('<span class="head-live" data-live-status></span></header>');
+    expect(html).toContain('<span class="value long">19 in progress</span>');
+    expect(html).toContain('<span class="value">1 box</span>');
+  });
+
   it('Your call shows three cards; past four, the rest fold under N more', () => {
     const ask = (n: number) => ({ text: `ask ${n}`, source: CORE, page: '' });
     const html = (n: number) => renderDashboard({ label: 'Household', asks: Array.from({ length: n }, (_, i) => ask(i)), tiles: [], thread: [] }, ctx, chrome);
