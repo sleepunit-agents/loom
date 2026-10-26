@@ -12,6 +12,17 @@ const ctx = { source: CORE, path: '', query: {}, csrf: 'c'.repeat(64) };
 const page = (blocks: unknown[], extra: Record<string, unknown> = {}) => parsePage({ title: 'T', sections: [{ id: 's', blocks }], ...extra });
 
 describe('meter, code and status blocks', () => {
+  it('a table on a phone is compact rows: title, a short value on the right, two label-value pairs, the rest under more', () => {
+    const p = parsePage({ title: 'Clock', sections: [{ id: 's', blocks: [{ type: 'table', columns: ['name', 'when', 'runs', 'next', 'extra'],
+      rows: [['groom', '17:47 sun', 'groom.md', '11-01 17:47', 'x'], ['long', 'a value much longer than twenty-four characters', 'r', 'n']] }] }] });
+    const html = renderPage(p as Exclude<typeof p, string>, ctx, chrome);
+    expect(html).toContain('<div class="trow"><div class="tmain"><span class="ttitle">groom</span><span class="tline"><span class="tpair"><span class="tl">runs</span> groom.md</span>');
+    expect(html).toContain('<details><summary>more</summary><dl><dt>extra</dt><dd>x</dd></dl></details></div><span class="tside">17:47 sun</span>');
+    // A long second value leads the line instead of crowding the right.
+    expect(html).toMatch(/<span class="ttitle">long<\/span><span class="tline"><span class="tpair"><span class="tl">when<\/span> a value much longer/);
+    expect(html).not.toContain('+ 1 more field');
+  });
+
   it('a page with nothing on it says whose it is, under its intro', () => {
     const html = renderPage({ title: 'Tasks', intro: 'A work store.', sections: [] }, ctx, chrome);
     expect(html).toContain('<p class="intro">A work store.</p>');

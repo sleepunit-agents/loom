@@ -129,7 +129,7 @@ function renderBlock(b: Block, ctx: RenderContext): string {
     case 'stats':
       // Two up; past four they become one swipeable strip on a phone.
       return `<dl class="stats${b.items.length > 4 ? ' strip' : ''}">${b.items.map((i) =>
-        `<div class="stat${tone(i.tone)}"><dt>${esc(i.label)}</dt><dd class="value" title="${esc(i.value)}">${esc(i.value)}</dd>${
+        `<div class="stat${tone(i.tone)}"><dt>${esc(i.label)}</dt><dd class="value${String(i.value).length > 9 ? ' long' : ''}" title="${esc(i.value)}">${esc(i.value)}</dd>${
           i.detail ? `<dd class="detail">${esc(i.detail)}</dd>` : ''}${glyph(i.tone)}${
           i.page !== undefined ? `<a class="stat-link" href="${esc(pageHref(i.page, ctx.source))}" aria-label="${esc(i.label)}"></a>` : ''}</div>`).join('')}</dl>`;
     case 'list':
@@ -142,16 +142,21 @@ function renderBlock(b: Block, ctx: RenderContext): string {
           i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}</li>`;
       }).join('')}</ul>`;
     case 'table': {
-      // A real table on a wide screen; on a phone each row is a card: column 1
-      // its title, the next three label and value, the rest a tap away.
+      // A real table on a wide screen. On a phone each row is a compact row (the
+      // boards' shape): column 1 its title, column 2 a short value on the right,
+      // the next two one "label value · label value" line, the rest a tap away.
       const wide = `<div class="table-wrap"><table><thead><tr>${b.columns.map((c) => `<th scope="col">${esc(c)}</th>`).join('')}</tr></thead><tbody>${
         b.rows.map((r) => `<tr>${r.map((c) => `<td>${cell(c, ctx)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
       const pair = (r: Cell[], k: number) => `<dt>${esc(b.columns[k] ?? '')}</dt><dd>${cell(r[k] ?? '', ctx)}</dd>`;
+      const text = (c: Cell | undefined) => (c === undefined ? '' : typeof c === 'object' ? c.text : String(c));
       const cards = `<div class="table-cards" aria-hidden="true">${b.rows.map((r) => {
-        const shown = [1, 2, 3].filter((k) => k < r.length).map((k) => pair(r, k)).join('');
+        // Column 2 goes on the right when it's short; otherwise it leads the line under the title.
+        const side = r.length > 1 && text(r[1]).length <= 24 && text(r[1]) !== '' ? 1 : -1;
+        const inline = [1, 2, 3].filter((k) => k < r.length && k !== side && text(r[k]) !== '')
+          .map((k) => `<span class="tpair"><span class="tl">${esc(b.columns[k] ?? '')}</span> ${cell(r[k] ?? '', ctx)}</span>`).join('<span class="tdot"> · </span>');
         const rest = r.slice(4).map((_, j) => pair(r, j + 4)).join('');
-        return `<div class="tcard"><span class="ttitle">${cell(r[0] ?? '', ctx)}</span>${shown ? `<dl>${shown}</dl>` : ''}${
-          rest ? `<details><summary>+ ${r.length - 4} more field${r.length - 4 === 1 ? '' : 's'}</summary><dl>${rest}</dl></details>` : ''}</div>`;
+        return `<div class="trow"><div class="tmain"><span class="ttitle">${cell(r[0] ?? '', ctx)}</span>${inline ? `<span class="tline">${inline}</span>` : ''}${
+          rest ? `<details><summary>more</summary><dl>${rest}</dl></details>` : ''}</div>${side === 1 ? `<span class="tside">${cell(r[1], ctx)}</span>` : ''}</div>`;
       }).join('')}</div>`;
       return wide + cards;
     }
