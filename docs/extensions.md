@@ -66,6 +66,13 @@ To install a piece, put an executable named `loom-<name>` on `PATH`. A
 package can ship one as an npm `bin`, as a script, or as a binary. Swapping
 implementations means installing a different `loom-<name>`.
 
+Or let loom install it: `loom pieces install <name>` from loom's catalog, or
+`--from github:<owner>/<repo>#<commit>`. A **managed piece** lives under
+`$LOOM_HOME/pieces/<name>/`, its executables are linked into
+`$LOOM_HOME/pieces/bin`, and that's searched **before** `PATH`. It runs with
+its own environment (`LOOM_PIECE_NAME`, `LOOM_PIECE_HOME`, and the settings it
+declares). See [specs/pieces-install.md](specs/pieces-install.md).
+
 ## Seams: how pieces compose
 
 Two pieces that are both installed should be able to work together. Neither
@@ -224,8 +231,10 @@ short.
   boundary: a same-user process can read the daemon's environment, and every
   piece sees the other pieces' variables in it. Install only pieces you'd
   trust with the daemon itself.
-- **No configuration.** Installing a piece is what makes it appear. A piece
-  with no `ui` verb, or one that times out or fails, simply isn't there.
+- **No configuration on loom's side.** Installing a piece is what makes it
+  appear. A piece with no `ui` verb, or one that times out or fails, simply
+  isn't there. A managed piece may declare settings, which loom asks the owner
+  for and hands to that piece alone (specs/pieces-install.md).
 - **loom-http's environment is the piece's environment**, minus loom's own
   bearer tokens. `PATH` decides which pieces exist for the page, and the
   piece's own variables (for example `TASKSTORE_DB`, `SHUTTLE_INSTANCE`) have

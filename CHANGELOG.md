@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Managed pieces: `loom pieces install | update | rollback | remove | set | catalog`**
+  (docs/specs/pieces-install.md). loom installs a piece itself, from its
+  catalog (`assets/pieces.json`, each pinned to a commit) or with
+  `--from github:<owner>/<repo>#<commit> --yes`, as an npm package into
+  `$LOOM_HOME/pieces/<name>/`. Managed pieces are found before `PATH`, run with
+  their own `LOOM_PIECE_NAME`, `LOOM_PIECE_HOME` and declared settings, keep the
+  version before for `rollback`, and leave what was current untouched when an
+  install fails. Unmanaged pieces on `PATH` work as before.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
