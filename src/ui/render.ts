@@ -309,7 +309,7 @@ function chromeTop(c: Chrome): string {
   const core = c.nav.filter((n) => !n.piece);
   const pieces = c.nav.filter((n) => n.piece);
   const tab = (n: Chrome['nav'][number]) => `<a href="${esc(n.href)}"${n.current ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`;
-  return `<header class="top"><div class="top-in"><a class="brand" href="/"><svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h16M3 11h16M3 17h16"></path><path d="M7 2v18M15 2v18" opacity=".55"></path></svg>loom <span class="who">· ${esc(c.agent)}</span></a>` +
+  return `<header class="top"><div class="top-in"><a class="brand" href="/">${LOGO}loom <span class="who">· ${esc(c.agent)}</span></a>` +
     `<nav class="tabs" aria-label="Sections">${core.map(tab).join('')}${pieces.length ? `<span class="sep" aria-hidden="true"></span>${pieces.map(tab).join('')}` : ''}</nav>` +
     `<div class="top-right"><span class="mono clock">${esc(c.clock)}</span><a class="mono" href="/passkeys">Passkeys</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
 }
@@ -330,7 +330,9 @@ const ICON = {
 
 /** loom's wordmark: the woven 2x2. */
 const SEARCH_ICON = '<svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.5 15.5 L20 20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-const LOGO = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="2" fill="var(--ink)"/><rect x="11" y="1" width="8" height="8" rx="2" fill="var(--thread)" stroke="var(--ink)" stroke-width="1.2"/><rect x="1" y="11" width="8" height="8" rx="2" fill="var(--thread)" stroke="var(--ink)" stroke-width="1.2"/><rect x="11" y="11" width="8" height="8" rx="2" fill="var(--ink)"/></svg>';
+// loom's mark: the v7 icon. Small spots take the 32px export, tuned so the L still reads at that size.
+const LOGO = '<img class="logo" src="/icons/loom-32.png" width="20" height="20" alt="">';
+const LOGO_LARGE = '<img class="logo" src="/icons/loom-192.png" width="64" height="64" alt="">';
 
 /** An agent's mark: its initial on its color (colors are validated #rrggbb). */
 export function mark(a: { label: string; bg: string; fg: string }, size = 28): string {
@@ -683,7 +685,7 @@ export function renderLogin(error?: string, passkey: { rp?: string; here: boolea
     : passkey.rp ? `<p class="sub">Passkeys work at <a href="${esc(passkey.rp)}/login">${esc(passkey.rp)}</a>.</p>` : '';
   return document(
     'loom',
-    `<div class="signin"><div class="signin-mark">${LOGO.replace('width="20" height="20"', 'width="64" height="64"')}<span>loom</span></div>` +
+    `<div class="signin"><div class="signin-mark">${LOGO_LARGE}<span>loom</span></div>` +
     `<form class="signin-bottom" method="post" action="/login">${error ? `<p class="err">${esc(error)}</p>` : ''}${pk}` +
     `<div class="token-row"><input type="password" name="token" placeholder="Token" autocomplete="current-password" ${passkey.here ? '' : 'autofocus '}aria-label="token"><button type="submit">Go</button></div>` +
     `<p class="sub hint">Or open a sign-in link (<code>loom token link</code>). This browser stays signed in for 30 days.</p></form></div>${
