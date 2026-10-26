@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Catalog: box at c0a3751.** A tailnet grant must name a `tailscaled.sock`, with
+  no `.` or `..` in its path.
 - **Catalog: box at cce6357.** A house can use a box's tailnet when the owner
   grants it (`loom box agent … --tailnet fleet=/run/…/tailscaled.sock`).
 - **Catalog: box at a3c7341.** Every house now runs with `--init`, so orphaned
