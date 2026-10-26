@@ -187,6 +187,12 @@ export function readCatalog(path = join(resolveRepoRoot(), 'assets', 'pieces.jso
     !!p && typeof p === 'object' && PIECE.test((p as CatalogEntry).name) && REPO.test((p as CatalogEntry).repo) && COMMIT.test((p as CatalogEntry).commit));
 }
 
+/** A tab's kind for pieces whose manifest doesn't say: the catalog's `kinds` (assets/pieces.json). */
+export function catalogKinds(path = join(resolveRepoRoot(), 'assets', 'pieces.json')): Record<string, 'place' | 'setting'> {
+  const c = readJson(path) as { kinds?: Record<string, unknown> } | undefined;
+  return Object.fromEntries(Object.entries(c?.kinds ?? {}).filter(([k, v]) => PIECE.test(k) && (v === 'place' || v === 'setting'))) as Record<string, 'place' | 'setting'>;
+}
+
 /** `github:owner/repo#<40-char commit>` → its parts; anything that could move is refused. */
 export function parseSource(spec: string): { repo: string; commit: string } {
   const m = /^github:([^#]+)#(.+)$/.exec(spec);

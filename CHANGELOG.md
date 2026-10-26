@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Setup, apart from Places.** A piece's tab can say `"kind": "setting"`
+  (rarely visited: adding a box, a subscription, a secret); it goes under a
+  new Setup tab in the bottom bar (a sheet, with Manage pieces and Passkeys)
+  and a Setup group in the desktop rail. Places keeps the everyday ones beside
+  Knowledge and People. Pieces that don't say get the catalog's default
+  (`kinds` in assets/pieces.json: box, secrets, subscriptions).
+
 - **Push for Your call.** Turn it on per device on the Passkeys page (https;
   on an iPhone, loom added to the Home Screen first). Each minute one of
   loom's listeners checks Your call and announces what's new, once; a tap
