@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The catalog's shuttle is 9314610** (shuttle#2): its subscriptions broker
+  names its client on every call. Cloudflare blocks Python's default
+  User-Agent, so before this, a Claude session login was never refreshed.
+
 ### Fixed
 
 - **A managed piece runs on the node it was installed with.** npm builds a
