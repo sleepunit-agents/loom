@@ -271,8 +271,13 @@ function status() {
   for (const n of document.querySelectorAll('[data-live-status]')) {
     n.textContent = reachable ? 'live \\u00B7 checked ' + ago + ' ago' : 'can\\'t reach loom \\u00B7 last checked ' + ago + ' ago';
     n.classList.toggle('off', !reachable);
+  }  for (const n of document.querySelectorAll('[data-stamp]')) {
+    n.textContent = reachable ? (s < 5 ? 'updated just now' : 'updated ' + ago + ' ago') : 'offline \\u00B7 updated ' + ago + ' ago';
+    n.classList.toggle('off', !reachable);
   }
 }
+// The stamps count up between refreshes.
+setInterval(status, 5000);
 
 // "Offline · from 7:42 AM": what's on screen is old, says how old, and its actions wait.
 const clock = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

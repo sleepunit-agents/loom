@@ -37,6 +37,11 @@ describe('meter, code and status blocks', () => {
     expect(identityFacts('# Art\n\nYou are Art.\n\n## Communication\n\nBe direct.\n')).toEqual({ bio: 'You are Art.', voice: 'Be direct.' });
   });
 
+  it('a filters search field carries a magnifier', () => {
+    const p = page([{ type: 'filters', param: 'd', search: 'Search 3 facts', options: [{ value: '', label: 'All' }] }]);
+    expect(renderPage(p as Exclude<typeof p, string>, ctx, chrome)).toMatch(/<svg class="search-icon"[^>]*>[\s\S]*?<\/svg><input type="search"/);
+  });
+
   it('a where reads the way a person says it', () => {
     expect(whereLabel('slack:dm:patrick-kells')).toBe('Slack DM · Patrick Kells');
     expect(whereLabel('discord:#pond')).toBe('Discord #pond');
