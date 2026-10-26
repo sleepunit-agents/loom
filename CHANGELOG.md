@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Catalog: box at a3c7341.** Every house now runs with `--init`, so orphaned
+  processes are reaped. Without it the bridges' houses filled their 2048-pid
+  limit with zombie `git` and could no longer start a reply (2026-10-26).
+
 ### Added
 
 - **Details open as a sheet on a phone.** Tapping a details row brings its
