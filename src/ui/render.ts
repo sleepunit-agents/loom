@@ -427,8 +427,8 @@ function flash(c: Chrome): string {
   return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status"${c.flash.keep ? ' data-keep' : ''}>${c.flash.ok ? glyph('ok') : glyph('bad')}<span>${esc(c.flash.message)}</span>${from}</div>`;
 }
 
-/** One page, loom's or a piece's. */
-export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unscopedFor?: string): string {
+/** One page, loom's or a piece's. An agent's Mind, People or Setup passes its head: the page's title gives way to the agent's. */
+export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unscopedFor?: string, head?: AgentHead): string {
   const main = page.sections.filter((s) => !s.side).map((s) => renderSection(s, ctx)).join('');
   const side = page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
   const empty = page.sections.length ? '' : '<p class="intro">There\'s nothing here.</p>';
@@ -437,7 +437,7 @@ export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unsco
   // A piece that can't narrow to the selected agent: one quiet line, the household's mark.
   const unscoped = unscopedFor && chrome.shell
     ? `<p class="unscoped">${householdMark(chrome.shell.agents, 24)}<span>Showing the whole household — this piece can't narrow to ${esc(unscopedFor)}.</span></p>` : '';
-  const body = `${shellOpen(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${unscoped}${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
+  const body = `${shellOpen(chrome)}<main${head ? ' class="agent-page"' : ''}>${flash(chrome)}${head ? agentHead(head) : `<div><h1>${esc(page.title)}</h1>`}${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}${head ? '' : '</div>'}${unscoped}${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
   // A page that asks for its own refresh (an install running) gets it, forms or not.
   return document(`${page.title} · ${chrome.agent}`, body, page.refresh ?? !hasForm);
 }
@@ -515,12 +515,19 @@ function askCard(a: HomeAsk, agents: RenderContext['agents'], nowMs: number): st
     `<span class="text">${esc(a.text)}</span>${a.meta ? `<span class="sentence">${esc(a.meta)}</span>` : ''}${go}</li>`;
 }
 
+export type AgentHead = NonNullable<Dashboard['agent']>;
+
+/** An agent's own pages open with its mark and name, then Today · Mind · People · Setup. */
+function agentHead(a: AgentHead): string {
+  return `<header class="dash-head agent">${mark(a, 48)}<div><h1>${esc(a.label)}</h1>${a.sub ? `<p class="sub">${esc(a.sub)}</p>` : ''}</div></header>` +
+    `<nav class="seg-tabs" aria-label="${esc(a.label)}">${a.tabs.map((t) => `<a href="${esc(t.href)}"${t.current ? ' class="on" aria-current="page"' : ''}>${esc(t.label)}</a>`).join('')}</nav>`;
+}
+
 export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome, nowMs = Date.now()): string {
   const need = d.asks.length;
   const fresh = d.sinceMs === undefined ? 0 : d.thread.filter((r) => Date.parse(r.at) > d.sinceMs!).length;
   const head = d.agent
-    ? `<header class="dash-head agent">${mark(d.agent, 48)}<div><h1>${esc(d.agent.label)}</h1>${d.agent.sub ? `<p class="sub">${esc(d.agent.sub)}</p>` : ''}</div></header>` +
-      `<nav class="seg-tabs" aria-label="${esc(d.agent.label)}">${d.agent.tabs.map((t) => `<a href="${esc(t.href)}"${t.current ? ' class="on" aria-current="page"' : ''}>${esc(t.label)}</a>`).join('')}</nav>`
+    ? agentHead(d.agent)
     : `<header class="dash-head"><span class="label">${esc(d.label)}</span><h1 class="display">${need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you'}</h1>${
       d.sinceLabel ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}</header>`;
   const yours = need

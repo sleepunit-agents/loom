@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **An agent's Mind, People and Setup wear its head.** Its mark and name and
+  the Today · Mind · People · Setup tabs, the current one marked, in place of
+  the page title (the tabs cap their width on a desktop).
+
 - **loom's page installs as an app.** A manifest, icons and a service worker
   (on https, or localhost). Each page loom shows is kept; when loom can't be
   reached the last copy opens under "Offline · from 7:42 AM — what you see

@@ -218,6 +218,7 @@ main.dash{gap:24px}
 .seg-tabs a{flex:1;display:flex;align-items:center;justify-content:center;height:42px;border-radius:var(--r-control);color:var(--ink-2);font-size:14px}.seg-tabs a:hover{text-decoration:none;color:var(--ink)}
 .seg-tabs a.on{background:var(--surface);color:var(--ink);font-weight:600}
 .your-call .label .n{float:right;color:var(--ink-2)}
+.buttons+.piece-form{margin-top:18px}
 .ask .src{align-items:center}.ask .who{display:inline-flex;align-items:center;gap:8px}
 .ask[class*=tone-]{border-color:color-mix(in srgb,var(--tone) 45%,var(--line))}
 .ask .go{margin-top:6px;height:48px;padding:0 20px}
@@ -256,6 +257,7 @@ dialog.confirm .sub{margin:4px 0 0;font-size:15px;color:var(--ink-2)}
 .offline .new{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-2)}
 a.needs-net{pointer-events:auto;text-decoration:none}.btn.needs-net,.needs-net{background:var(--raised)!important;color:var(--ink-2)!important;border:1px dashed var(--line)!important;cursor:not-allowed}
 @media (min-width:960px){
+.seg-tabs{max-width:520px}
 .toasts{left:auto;right:24px;bottom:24px;width:400px;align-items:stretch}
 .your-call .ask-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .dash-cols{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:start;gap:28px}
