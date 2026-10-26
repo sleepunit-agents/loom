@@ -534,7 +534,7 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
 export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles: HomeTile[], asks: HomeAsk[]): string {
   const tileHtml = tiles.length
     ? `<section class="tiles" aria-label="Status">${tiles.map((t) => {
-        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone)}`;
+        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value${String(t.value).length > 9 ? ' long' : ''}">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone)}`;
         return t.page !== undefined
           ? `<a class="tile${tone(t.tone)}" href="${esc(pageHref(t.page, t.source))}">${inner}</a>`
           : `<div class="tile${tone(t.tone)}">${inner}</div>`;
@@ -623,7 +623,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   const head = d.agent
     ? agentHead(d.agent)
     : `<header class="dash-head"><span class="label">${esc(d.label)}</span><h1 class="display">${need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you'}</h1>${
-      d.sinceLabel && (fresh || !d.firstRun) ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}${d.firstRun ? `<p class="sub">${esc(d.firstRun.line)}</p>` : ''}</header>`;
+      d.sinceLabel && (fresh || !d.firstRun) ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}${d.firstRun ? `<p class="sub">${esc(d.firstRun.line)}</p>` : ''}<span class="head-live" data-live-status></span></header>`;
   const starters = d.firstRun?.starters.length
     ? `<section class="starters"><h2 class="label">Start with these</h2><div class="card rows">${d.firstRun.starters.map((s) =>
         `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
@@ -636,7 +636,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
       rest.length ? `<details class="more-asks"><summary>${rest.length} more</summary><ul class="ask-list">${rest.join('')}</ul></details>` : ''}</section>` : '';
   const glance = d.tiles.length
     ? `<section class="glance"><h2 class="label">At a glance</h2><div class="tiles">${d.tiles.map((t) => {
-        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone === 'ok' ? undefined : t.tone)}`;
+        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value${String(t.value).length > 9 ? ' long' : ''}">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone === 'ok' ? undefined : t.tone)}`;
         return t.page !== undefined ? `<a class="tile${tone(t.tone)}" href="${esc(pageHref(t.page, t.source))}">${inner}</a>` : `<div class="tile${tone(t.tone)}">${inner}</div>`;
       }).join('')}</div></section>` : '';
   let divided = false;

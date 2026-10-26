@@ -148,6 +148,7 @@ ul.status .text{font-size:13px;color:var(--tone,var(--ink-2))}ul.status .meta{fo
 .tiles{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 -16px;padding:0 16px}.tiles::-webkit-scrollbar{display:none}
 @media (min-width:720px){.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));overflow:visible;margin:0;padding:0}}
 .tile{position:relative;flex:0 0 46%;scroll-snap-align:start;background:var(--surface);border-radius:var(--r-card);padding:14px;min-height:88px;color:var(--ink);display:flex;flex-direction:column;gap:2px}a.tile:hover{text-decoration:none;background:var(--raised)}
+.tile .value.long{font-size:20px;line-height:1.2}.tile .detail{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.dash-head{position:relative}.head-live{position:absolute;right:0;bottom:4px;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;color:var(--ink-2);display:inline-flex;align-items:center;gap:6px}.head-live:empty{display:none}.head-live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--ok)}.head-live.off::before{background:var(--warn)}
 .tile .eyebrow{font-size:13px;color:var(--ink-2)}.tile .value{font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.15}.tile .detail{font-size:12px;color:var(--ink-2)}
 .tile[class*=tone-] .value{color:var(--tone)}.tile .glyph{position:absolute;top:14px;right:14px}
 
@@ -318,5 +319,8 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 .dash-cols{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:start;gap:28px}
 .glance-phone{display:none}.dash-side .glance{display:block}
 .dash-side .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}.dash-side .tile{min-height:96px}
-.thread-list{background:var(--surface);border-radius:var(--r-card);padding:4px 16px}.thread-list li:last-child{border-bottom:0}}
+.thread-list{background:var(--surface);border-radius:var(--r-card);padding:4px 16px}.thread-list li:last-child{border-bottom:0}
+.thread-list li{align-items:center}.thread-list li .body{flex-direction:row;align-items:baseline;gap:16px}.thread-list li .body .text{flex:1;min-width:0}.thread-list li .body .meta{flex:none;white-space:nowrap}
+.rail{position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto;box-sizing:border-box}
+.dash.today .dash-side .tiles{grid-template-columns:1fr 1fr;gap:10px}}
 `;
