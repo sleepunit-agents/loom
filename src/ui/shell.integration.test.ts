@@ -60,6 +60,35 @@ describe('the app shell', () => {
     expect(html.match(/action="\/logout"/g)?.length).toBe(2);
   });
 
+  it('is an installable app: manifest, icons and a service worker, open to anyone; signing out drops what it kept', async () => {
+    const m = await fetch(`${base}/manifest.webmanifest`);
+    expect(m.status).toBe(200);
+    expect(m.headers.get('content-type')).toBe('application/manifest+json');
+    const man = await m.json() as { start_url: string; display: string; icons: Array<{ src: string; purpose?: string }> };
+    expect(man).toMatchObject({ start_url: '/', display: 'standalone' });
+    for (const i of man.icons) {
+      const r = await fetch(`${base}${i.src}`);
+      expect(r.status, i.src).toBe(200);
+      expect((await r.arrayBuffer()).byteLength).toBeGreaterThan(100);
+    }
+    expect(man.icons.some((i) => i.purpose === 'maskable')).toBe(true);
+    expect((await fetch(`${base}/icons/../package.json`)).status).not.toBe(200);
+    const sw = await fetch(`${base}/sw.js`);
+    expect(sw.headers.get('content-type')).toContain('text/javascript');
+    const swText = await sw.text();
+    // It never keeps sign-in pages or a page with a one-time message.
+    expect(swText).toContain("searchParams.has('_flash')");
+    expect(swText).toMatch(/NEVER = .*login\|logout/);
+    const cookie = await login();
+    const page = await get('/', cookie);
+    const html = await page.text();
+    expect(html).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    expect(page.headers.get('content-security-policy')).toContain("manifest-src 'self'; worker-src 'self'");
+    const csrf = /name="_csrf" value="([0-9a-f]{64})"/.exec(html)![1];
+    const out = await fetch(`${base}/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: `_csrf=${csrf}` });
+    expect(out.headers.get('clear-site-data')).toBe('"cache", "storage"');
+  });
+
   it('the sheets are pages too, and Find filters places by name', async () => {
     const cookie = await login();
     for (const [path, title] of [['/scope', 'Show me'], ['/places', 'Places'], ['/find', 'Find']] as const) {

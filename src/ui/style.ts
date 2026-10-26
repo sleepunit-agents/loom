@@ -248,6 +248,13 @@ dialog.confirm .sub{margin:4px 0 0;font-size:15px;color:var(--ink-2)}
 .new-pill{align-self:center;margin:0 0 10px;height:36px;padding:0 16px;border:0;border-radius:999px;background:var(--ink);color:var(--ground);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
 [data-live-status].off{color:var(--bad)}
 @media (prefers-reduced-motion:reduce){.toast,.toast.out,.btn.busy::after{animation:none;transition:none}}
+.offline-banner{border:1px solid var(--line);display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:12px;background:#161614;color:#F4F3EE;font-size:14px;line-height:1.4}
+.offline-banner .ob-words{display:flex;flex-direction:column;gap:2px}.offline-banner strong{font-weight:600}.offline-banner .ob-words span{color:#C9C7BE}
+.ob-clock{flex:none;width:18px;height:18px;margin-top:1px;border:1.6px solid #F5B947;border-radius:50%;position:relative}.ob-clock::after{content:"";position:absolute;left:7px;top:3px;width:4px;height:5px;border-left:1.6px solid #F5B947;border-bottom:1.6px solid #F5B947}
+.offline [class*=tone-]{--tone:var(--muted);--tone-bg:var(--muted-bg)}
+.offline svg.glyph *{fill:none;stroke:currentColor;stroke-width:1.5}
+.offline .new{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-2)}
+a.needs-net{pointer-events:auto;text-decoration:none}.btn.needs-net,.needs-net{background:var(--raised)!important;color:var(--ink-2)!important;border:1px dashed var(--line)!important;cursor:not-allowed}
 @media (min-width:960px){
 .toasts{left:auto;right:24px;bottom:24px;width:400px;align-items:stretch}
 .your-call .ask-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
