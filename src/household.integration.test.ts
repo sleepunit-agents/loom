@@ -717,6 +717,28 @@ describe('the household page', () => {
     expect(html).toMatch(/<span class="text">Shuttle<\/span>|<span class="text">shuttle<\/span>/i);
   });
 
+  it('Knowledge searches as you\'d expect, rows say how fresh they are, and a page below the top goes back by name', async () => {
+    const c = await connect(handle.port, owner);
+    for (const [slug, title, domain] of [['kiln-cone-6', 'Cone 6 is about 1222 °C', 'ceramics'], ['glaze-food-safe', 'Food-safe glazes', 'ceramics/glaze']]) {
+      await c.callTool({ name: 'knowledge_write', arguments: { slug, title, domain, body: `${title}.`, citations: [{ claim: title, source_kind: 'web', source_locator: 'https://example.com/x', excerpt: title }] } });
+    }
+    await c.close();
+    const cookie = await login();
+    const all = await (await page(cookie, '/knowledge')).text();
+    expect(all).toContain('placeholder="Search 2 facts"');
+    expect(all).toMatch(/<span class="meta">(verified|written) [^<]*· ceramics<\/span>/);
+    const hit = await (await page(cookie, '/knowledge?q=cone')).text();
+    expect(hit).toContain('Cone 6 is about 1222 °C');
+    expect(hit).not.toContain('Food-safe glazes');
+    expect(hit).toContain('value="cone"');
+    expect(await (await page(cookie, '/knowledge?q=%25')).text()).not.toContain('Cone 6 is about');
+    const one = await (await page(cookie, '/knowledge/kiln-cone-6')).text();
+    expect(one).toContain('<a class="back named" href="/knowledge">');
+    // An agent's tabs carry the way around; a memory under them goes back to Mind.
+    expect(await (await page(cookie, '/a/mark/mind')).text()).not.toContain('class="back named"');
+    expect(await (await page(cookie, '/a/mark/memory/x')).text()).toContain('<a class="back named" href="/a/mark/mind">');
+  });
+
   it('a person shows the shared entry and every agent\'s relationship', async () => {
     const cookie = await login();
     const html = await (await page(cookie, '/people/loren')).text();

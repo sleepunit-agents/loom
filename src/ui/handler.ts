@@ -369,6 +369,27 @@ function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: Piece
   return found;
 }
 
+/** A page below the top level goes back to its parent, by name; a top-level page goes Home. */
+function backFor(path: string, places: Array<{ label: string; href: string }>, h?: Household): { label: string; href: string } | undefined {
+  const seg = path.split('/').filter(Boolean);
+  if (seg[0] === 'knowledge' && seg.length > 1) return { label: 'Knowledge', href: '/knowledge' };
+  if (seg[0] === 'people' && seg.length > 1) return { label: 'People', href: '/people' };
+  if (seg[0] === 'memory') return { label: 'Mind', href: '/mind' };
+  if (seg[0] === 'p' && seg.length > 2) {
+    const top = places.find((x) => x.href === `/p/${seg[1]}`);
+    if (top) return { label: top.label, href: top.href };
+  }
+  if (seg[0] === 'a' && h && seg.length > 2 && h.agents.includes(seg[1])) {
+    const a = seg[1];
+    if (seg[2] === 'memory') return { label: 'Mind', href: `/a/${a}/mind` };
+    if (seg[2] === 'people' && seg.length > 3) return { label: 'People', href: `/a/${a}/people` };
+    // Its Mind, People and Setup are tabs of its Today, which carry the way around.
+    if (seg.length === 3 && ['mind', 'people', 'setup'].includes(seg[2])) return undefined;
+    return { label: agentName(agentDir(h, a)), href: `/a/${a}` };
+  }
+  return undefined;
+}
+
 function pendingProposals(h: Household, agent: string): number {
   try { return listProposals(agentDir(h, agent)).filter((p) => p.status === 'pending').length; } catch { return 0; }
 }
@@ -413,6 +434,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const asks = pieces.reduce((n, p) => n + p.manifest.asks.length, 0) + piecesAsks(opts.env).length;
   const tab = current === '' || /^a\/[^/]+$/.test(current) ? 'home' : current === 'places' || current === 'scope' || current === 'find' ? current : '';
   const h = opts.household?.();
+  const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
     const marks = agentMarks(h);
     const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
@@ -431,9 +453,10 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       flash,
       skipped,
       shell: {
-        owner: h.owner ?? 'owner', scope, household: true, asks, tab,
+        owner: h.owner ?? 'owner', scope, household: true, asks, tab, back,
         home: scope === 'household' ? '/' : `/a/${scope}`,
-        agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/scope/${a}`, current: scope === a })),
+        agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/scope/${a}`, current: scope === a,
+          asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0) })),
         core: [
           { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
           { label: 'People', href: '/people', current: current.startsWith('people') },
@@ -457,7 +480,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
     flash,
     skipped,
     shell: {
-      owner: 'owner', scope: 'agent', household: false, asks, tab, home: '/',
+      owner: 'owner', scope: 'agent', household: false, asks, tab, home: '/', back,
       agents: [{ id: 'agent', label: name, ...MARKS[0], href: '/', current: true }],
       core: [
         { label: 'Mind', href: '/mind', current: current === 'mind' },

@@ -117,7 +117,9 @@ describe('the Pieces page', () => {
     expect(html).toContain('href="/pieces"');
     expect(html).toContain(`Install ${box.label}`);
     expect(html).toContain('loom-handmade');
-    expect(html).toContain('not installed by loom, so it&#39;s managed by hand');
+    // A hand-made piece is one quiet row, its path in the meta; the section counts it.
+    expect(html).toMatch(/<span class="text">handmade<\/span><span class="meta">on PATH, managed by hand · [^<]*loom-handmade<\/span>/);
+    expect(html).toMatch(/<h2>Installed · 1<\/h2>|Installed · 1/);
     const csrf = csrfOf(html);
 
     const started = await act(cookie, csrf, 'piece-install', { name: box.name });

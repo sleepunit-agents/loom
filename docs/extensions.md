@@ -189,7 +189,7 @@ outside the page).
 | `text` | `text`, optional `tone` |
 | `callout` | `text`, optional `title`, `tone`. A boxed note |
 | `link` | `text`, and `page` or `href` |
-| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all |
+| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value) |
 | `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `confirm` (what happens, one sentence: a `danger` button asks first in a sheet that says it), `fields` (name → value) |
