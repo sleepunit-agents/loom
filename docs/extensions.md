@@ -126,7 +126,11 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
 ```
 
 - **`tab`** puts the piece in the navigation. Its pages are served under
-  `/p/<piece>/`. Without a tab the piece has no pages.
+  `/p/<piece>/`. Without a tab the piece has no pages. Optional `kind`:
+  `"place"` (the default) puts it in Places, beside Knowledge and People;
+  `"setting"` puts it under Setup, for what's visited rarely (adding a box, a
+  subscription, a secret). A piece that doesn't say gets the catalog's default
+  (`kinds` in loom's `assets/pieces.json`), else a place.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
 - **`scope`** (optional, `true`): the piece narrows to one agent. When the

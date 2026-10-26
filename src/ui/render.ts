@@ -277,7 +277,8 @@ export interface Shell {
   /** Loom's own places: Knowledge, People (and Mind for a lone agent). */
   core: Array<{ label: string; href: string; current: boolean }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
-  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string }>;
+  /** kind: a place (Places) or a setting (Setup), from the piece's tab.kind or the catalog. */
+  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting' }>;
   /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope' or ''. */
   tab: string;
 }
@@ -312,6 +313,7 @@ function chromeTop(c: Chrome): string {
 const ICON = {
   home: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
   places: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></g></svg>',
+  setup: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></g></svg>',
   find: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></g></svg>',
   back: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   close: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
@@ -358,16 +360,26 @@ function scopeSheetBody(c: Chrome, sh: Shell): string {
   return `<div class="sheet-rows">${rows.join('')}</div><div class="sheet-foot"><span class="owner">${esc(sh.owner)}</span><a class="btn small" href="/passkeys">Passkeys</a>${signOut(c, 'small')}</div>`;
 }
 
+/** Setup: the pieces that are settings (rows, with their status), then managing pieces and passkeys. */
+function setupSheetBody(sh: Shell): string {
+  const rows = settings(sh).map((p) => `<a class="link-row${p.tone && p.tone !== 'ok' ? tone(p.tone) : ''}" href="${esc(p.href)}"><span class="body"><span class="text">${esc(p.label)}</span>${
+    p.stat ? `<span class="meta">${esc(p.stat)}</span>` : ''}</span>${p.tone && p.tone !== 'ok' ? glyph(p.tone) : ''}${CHEVRON}</a>`).join('');
+  return `${rows ? `<div class="card rows">${rows}</div>` : ''}<div class="card rows"><a class="link-row" href="/pieces"><span>Manage pieces</span>${CHEVRON}</a><a class="link-row" href="/passkeys"><span>Passkeys and notifications</span>${CHEVRON}</a></div>`;
+}
+
 function placesSheetBody(sh: Shell): string {
-  const tiles = sh.pieces.map((p) => `<a class="place${p.current ? ' on' : ''}${tone(p.tone)}" href="${esc(p.href)}"><span class="pl-top">${glyph(p.tone === 'ok' ? undefined : p.tone)}</span><span class="pl-label">${esc(p.label)}</span>${
+  const tiles = places(sh).map((p) => `<a class="place${p.current ? ' on' : ''}${tone(p.tone)}" href="${esc(p.href)}"><span class="pl-top">${glyph(p.tone === 'ok' ? undefined : p.tone)}</span><span class="pl-label">${esc(p.label)}</span>${
     p.stat ? `<span class="pl-stat">${esc(p.stat)}</span>` : ''}</a>`).join('');
   return `${tiles ? `<div class="place-grid">${tiles}</div>` : '<p class="empty">No pieces yet.</p>'}<div class="place-core">${sh.core.map((x) =>
-    `<a class="place-btn${x.current ? ' on' : ''}" href="${esc(x.href)}">${esc(x.label)}</a>`).join('')}</div><a class="manage-link" href="/pieces">Manage pieces</a>`;
+    `<a class="place-btn${x.current ? ' on' : ''}" href="${esc(x.href)}">${esc(x.label)}</a>`).join('')}</div>`;
 }
 
 function sheet(id: string, title: string, body: string): string {
   return `<dialog class="sheet" id="sheet-${id}" aria-label="${esc(title)}"><div class="sheet-grip" aria-hidden="true"></div><div class="sheet-head"><h2>${esc(title)}</h2><button class="sheet-close" type="button" data-close aria-label="Close">${ICON.close}</button></div>${body}</dialog>`;
 }
+
+const places = (sh: Shell) => sh.pieces.filter((p) => p.kind !== 'setting');
+const settings = (sh: Shell) => sh.pieces.filter((p) => p.kind === 'setting');
 
 function rail(c: Chrome, sh: Shell): string {
   const cur = sh.agents.find((a) => a.current);
@@ -378,7 +390,9 @@ function rail(c: Chrome, sh: Shell): string {
     `<a class="scope-btn" href="/scope" data-sheet="scope">${scopeMark(sh, 32)}<span class="body"><span class="text">${esc(scopeLabel)}</span>${scopeSub ? `<span class="sub">${esc(scopeSub)}</span>` : ''}</span>${ICON.updown}</a>` +
     `<a class="find-btn" href="/find" data-sheet="find">${ICON.find}<span>Find anything</span><kbd>⌘K</kbd></a>` +
     `<nav class="rail-nav">${item(sh.home, 'Home', sh.tab === 'home', sh.asks ? `<span class="count">${sh.asks}</span>` : '')}${sh.core.map((x) => item(x.href, x.label, x.current)).join('')}` +
-    (sh.pieces.length ? `<span class="rail-label">Pieces</span>${sh.pieces.map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
+    (places(sh).length ? `<span class="rail-label">Pieces</span>${places(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
+    // Setup: what's visited rarely (pieces that say they're settings), and managing the pieces themselves.
+    `<span class="rail-label">Setup</span>${settings(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` +
     `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
     `<div class="rail-foot"><span>${esc(sh.owner)}</span><a href="/passkeys">Passkeys</a>${signOut(c)}</div></aside>`;
 }
@@ -396,7 +410,8 @@ function bottomBar(sh: Shell): string {
   const tab = (href: string, label: string, icon: string, on: boolean, attrs = '') =>
     `<a class="tab${on ? ' on' : ''}" href="${esc(href)}" aria-label="${esc(label)}"${on ? ' aria-current="page"' : ''}${attrs}>${icon}</a>`;
   return `<nav class="bottom" aria-label="Main"><a class="scope-chip" href="/scope" data-sheet="scope" aria-label="Scope: ${esc(sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '')}">${scopeMark(sh, 30)}<span class="caret" aria-hidden="true">⌃</span></a>` +
-    tab(sh.home, 'Home', ICON.home, sh.tab === 'home') + tab('/places', 'Places', ICON.places, sh.tab === 'places', ' data-sheet="places"') + tab('/find', 'Find', ICON.find, sh.tab === 'find', ' data-sheet="find"') + '</nav>';
+    tab(sh.home, 'Home', ICON.home, sh.tab === 'home') + tab('/places', 'Places', ICON.places, sh.tab === 'places', ' data-sheet="places"') + tab('/find', 'Find', ICON.find, sh.tab === 'find', ' data-sheet="find"') +
+    tab('/setup', 'Setup', ICON.setup, sh.tab === 'setup', ' data-sheet="setup"') + '</nav>';
 }
 
 /** Everything around a page's main: the rail, the phone's top and bottom bars, and the two sheets. */
@@ -406,7 +421,7 @@ function shellOpen(c: Chrome): string {
 }
 function shellClose(c: Chrome, foot: string): string {
   if (!c.shell) return foot;
-  return `${foot}</div></div>${bottomBar(c.shell)}${sheet('scope', 'Show me', scopeSheetBody(c, c.shell))}${sheet('places', 'Places', placesSheetBody(c.shell))}` +
+  return `${foot}</div></div>${bottomBar(c.shell)}${sheet('scope', 'Show me', scopeSheetBody(c, c.shell))}${sheet('places', 'Places', placesSheetBody(c.shell))}${sheet('setup', 'Setup', setupSheetBody(c.shell))}` +
     `<dialog class="sheet find-sheet" id="sheet-find" aria-label="Find">${findBody(c, '')}</dialog>`;
 }
 
@@ -449,13 +464,14 @@ function findBody(c: Chrome, q: string, found?: Found): string {
     `<div class="find-results" aria-live="polite">${results || `<p class="empty">Nothing matches “${esc(term)}”.</p>`}</div>`;
 }
 
-export function renderSheetPage(which: 'scope' | 'places' | 'find', c: Chrome, q = '', found?: Found): string {
+export function renderSheetPage(which: 'scope' | 'places' | 'find' | 'setup', c: Chrome, q = '', found?: Found): string {
   const sh = c.shell!;
   let inner: string;
   if (which === 'scope') inner = `<h1>Show me</h1>${scopeSheetBody(c, sh)}`;
   else if (which === 'places') inner = `<h1>Places</h1>${placesSheetBody(sh)}`;
+  else if (which === 'setup') inner = `<h1>Setup</h1>${setupSheetBody(sh)}`;
   else inner = `<h1 class="visually-hidden">Find</h1>${findBody(c, q, found)}`;
-  return document(which === 'scope' ? 'Show me' : which === 'places' ? 'Places' : 'Find', `${shellOpen(c)}<main class="sheet-page">${inner}</main>${shellClose(c, '')}`, false);
+  return document(which === 'scope' ? 'Show me' : which === 'places' ? 'Places' : which === 'setup' ? 'Setup' : 'Find', `${shellOpen(c)}<main class="sheet-page">${inner}</main>${shellClose(c, '')}`, false);
 }
 
 /** How often a live page checks in, with script. */

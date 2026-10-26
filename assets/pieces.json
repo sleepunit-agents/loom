@@ -33,5 +33,11 @@
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
     }
-  ]
+  ],
+  "kinds": {
+    "_comment": "A piece's tab kind when its manifest doesn't say (tab.kind): first-party pieces that are setup, not daily places.",
+    "box": "setting",
+    "secrets": "setting",
+    "subscriptions": "setting"
+  }
 }

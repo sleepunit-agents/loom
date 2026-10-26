@@ -67,7 +67,8 @@ export interface Ask { text: string; meta?: string; page?: string; label?: strin
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
   scope?: boolean;
-  tab?: { label: string };
+  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. */
+  tab?: { label: string; kind?: 'place' | 'setting' };
   tile?: Tile;
   asks: Ask[];
   /** A first-version answer: these sections become the piece's page. */
@@ -424,7 +425,11 @@ export function parseManifest(value: unknown): Manifest | string {
       if (typeof top.scope !== 'boolean') throw new Invalid('scope must be true or false');
       if (top.scope) m.scope = true;
     }
-    if (top.tab !== undefined) m.tab = { label: str(obj(top.tab, 'tab').label, 'tab.label') };
+    if (top.tab !== undefined) {
+      const t = obj(top.tab, 'tab');
+      if (t.kind !== undefined && t.kind !== 'place' && t.kind !== 'setting') throw new Invalid('tab.kind must be place or setting');
+      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}) };
+    }
     if (top.tile !== undefined) {
       const t = obj(top.tile, 'tile');
       m.tile = {

@@ -419,6 +419,24 @@ describe('loom UI over HTTP', () => {
     expect((await get('/p/old/deeper', cookie)).status).toBe(404);
   });
 
+  it('a piece that says it\'s a setting goes under Setup, not Places; the catalog says for box, secrets, subscriptions', async () => {
+    const m = (label: string, kind?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
+    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting')}'`);
+    await piece(bin, 'secrets', `[ "$1 $2" = "ui --json" ] && echo '${m('Secrets')}'`);   // no kind: the catalog's
+    await piece(bin, 'daily', `[ "$1 $2" = "ui --json" ] && echo '${m('Daily')}'`);
+    const cookie = await login();
+    const html = await (await get('/', cookie)).text();
+    const sheet = (id: string) => new RegExp(`<dialog class="sheet" id="sheet-${id}"[\\s\\S]*?</dialog>`).exec(html)?.[0] ?? '';
+    for (const s of ['Gizmo', 'Secrets', 'Manage pieces', 'Passkeys']) expect(sheet('setup')).toContain(s);
+    expect(sheet('setup')).not.toContain('Daily');
+    expect(sheet('places')).toContain('Daily');
+    for (const s of ['Gizmo', 'Secrets', 'Manage pieces']) expect(sheet('places')).not.toContain(s);
+    expect(html).toContain('aria-label="Setup" data-sheet="setup"');
+    expect((await get('/setup', cookie)).status).toBe(200);
+    // A kind that isn't one is refused with the manifest.
+    expect(parseManifest({ v: 2, tab: { label: 'x', kind: 'drawer' } })).toMatch(/tab.kind/);
+  });
+
   it('a piece page renders its forms and buttons; an action reaches the piece on stdin only', async () => {
     const seen = join(bin, 'seen');
     await piece(bin, 'vault', fullPiece(seen));
