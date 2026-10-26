@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Thread: no "?" pill.** A row with no where is under All only, and its
+  meta is just its age.
 - **Home per its board: Your call and Thread.** Ask cards lead with a bold
   title (up to three lines), and past four the rest fold under "N more", so
   Home stays a glance. Thread rows say where in words ("Slack DM · Patrick

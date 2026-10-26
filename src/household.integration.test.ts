@@ -687,6 +687,7 @@ describe('the household page', () => {
     // ...and a pill per place it happened, rows saying it the way a person would.
     expect(html).toContain('href="/?who=discord"');
     expect(html).toContain('Discord #pond · ');
+    expect(html).not.toContain('href="/?who=%3F"');
     expect((await (await page(cookie, '/?who=letters')).text())).not.toContain('art did a thing');
   });
 

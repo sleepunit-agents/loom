@@ -77,6 +77,7 @@ const SURFACES: Record<string, string> = { slack: 'Slack', discord: 'Discord', w
 
 /** A where as a person says it: "Slack DM · Patrick Kells", "Discord #pond", "Wake". */
 export function whereLabel(where: string): string {
+  if (!where || where === '?') return '';
   const [surface, ...rest] = where.split(':');
   const name = SURFACES[surface] ?? (surface ? surface[0].toUpperCase() + surface.slice(1) : where);
   if (surface === 'wake') return name;
