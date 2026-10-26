@@ -121,10 +121,17 @@ describe('passkeys', () => {
     const device = new Device();
     const added = await addPasskey(cookie, device);
     expect([added.status, added.body]).toEqual([200, '{"ok":true}']);
-    expect((await call('GET', '/passkeys', { cookie })).body).toContain('Test phone');
+    const listed = (await call('GET', '/passkeys', { cookie })).body;
+    // The board's order: each passkey a row with an inline Remove (asking first), then Add a passkey.
+    expect(listed).toMatch(/<span class="text">Test phone<\/span>[\s\S]*?<button class="row-act danger" type="submit" data-confirm="[^"]+">Remove<\/button>/);
+    expect(listed.indexOf('Test phone')).toBeLessThan(listed.indexOf('id="passkey-add"'));
 
     const login = await call('GET', '/login');
     expect(login.body).toContain('id="passkey-signin"');
+    // Sign in per its board: loom's mark, then at the bottom the passkey, "or", and a token with Go.
+    expect(login.body.indexOf('class="signin-mark"')).toBeLessThan(login.body.indexOf('id="passkey-signin"'));
+    expect(login.body.indexOf('id="passkey-signin"')).toBeLessThan(login.body.indexOf('class="token-row"'));
+    expect(login.body).toContain('<button type="submit">Go</button>');
     const r = await passkeySignIn(device);
     expect(r.status).toBe(200);
     const fresh = cookieOf(r);

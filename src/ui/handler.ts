@@ -38,7 +38,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { sessionStore } from './sessions.js';
+import { sessionStore, signinLink } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, watch } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
@@ -51,7 +51,7 @@ import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
-import { agentDir, type Household } from '../household.js';
+import { agentDir, MARKS, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
 import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -304,10 +304,6 @@ function hasPages(p: PieceInfo): boolean {
 }
 
 /** Agent marks: an initial on a color; colors differ in lightness, not just hue (the design's rule). */
-const MARKS = [
-  { bg: '#B8A6FF', fg: '#1D1240' }, { bg: '#7A2E4F', fg: '#FFE3EE' }, { bg: '#2F6B5A', fg: '#E2F5EE' },
-  { bg: '#E3B341', fg: '#2B1D00' }, { bg: '#3D5A99', fg: '#E6ECFF' }, { bg: '#F09A7A', fg: '#3A140A' },
-];
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 
 /** Each agent's mark colors: household.json's `marks` when it names valid ones, else the palette in order. */
@@ -319,7 +315,7 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string }> {
   } catch { /* none */ }
   return Object.fromEntries(h.agents.map((a, i) => {
     const c = custom[a];
-    return [a, c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : MARKS[i % MARKS.length]];
+    return [a, c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : { bg: MARKS[i % MARKS.length].bg, fg: MARKS[i % MARKS.length].fg }];
   }));
 }
 
@@ -502,7 +498,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
     skipped,
     shell: {
       owner: 'owner', scope: 'agent', household: false, asks, tab, home: '/', back,
-      agents: [{ id: 'agent', label: name, ...MARKS[0], href: '/', current: true }],
+      agents: [{ id: 'agent', label: name, bg: MARKS[0].bg, fg: MARKS[0].fg, href: '/', current: true }],
       core: [
         { label: 'Mind', href: '/mind', current: current === 'mind' },
         { label: 'People', href: '/people', current: current.startsWith('people') },
@@ -761,6 +757,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = storeFor(opts).removePasskey(fields.id ?? '')
         ? { ok: true, message: 'Removed. That device can\'t sign in with it any more.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
+      source = CORE;
+      const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
+      result = { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600)}` };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
       source = CORE;
@@ -832,13 +832,21 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const keys = storeFor(opts).passkeys();
     const page: Page = {
       title: 'Passkeys',
-      intro: 'Sign in to this page with Face ID, a fingerprint or a PIN instead of a token or a link. Each one signs in as the token you\'re signed in with now.',
-      sections: [{ id: 'passkeys', title: keys.length ? `${keys.length} passkey${keys.length === 1 ? '' : 's'}` : 'None yet', blocks: keys.length
-        ? keys.flatMap((k): import('./vocab.js').Block[] => [
-          { type: 'callout', title: k.label, text: `added ${when(k.created)} · last used ${when(k.lastUsed)}${opts.auth.live(Buffer.from(k.secret, 'hex')) ? '' : ' · its token was revoked, so it no longer works'}` },
-          { type: 'buttons', items: [{ action: 'passkey-remove', label: `Remove "${k.label}"`, tone: 'danger', confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } }] },
-        ]).slice(0, 20)
-        : [{ type: 'text', text: 'Add one below, from the device you want to sign in with.', tone: 'muted' }] }],
+      sections: [
+        // The board's order: your passkeys, then adding one (loom's control, put in after this), then another device.
+        { id: 'passkeys', blocks: keys.length
+          ? [{ type: 'list', items: keys.slice(0, 200).map((k) => {
+              const works = opts.auth.live(Buffer.from(k.secret, 'hex'));
+              return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}` : 'its token was revoked, so it no longer works',
+                ...(works ? {} : { tone: 'warn' as const }),
+                act: { action: 'passkey-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } } };
+            }) }]
+          : [{ type: 'text', text: 'None yet: add one from the device you want to sign in with.', tone: 'muted' }] },
+        ...(hh ? [{ id: 'another', title: 'Another device', blocks: [
+          { type: 'buttons' as const, items: [{ action: 'signin-link', label: 'Make a one-time sign-in link' }] },
+          { type: 'text' as const, text: 'One sign-in, within 10 minutes, as the household\'s page sign-in links token. Open it on the other device.', tone: 'muted' as const },
+        ] }] : []),
+      ],
     };
     const ch = chrome(req, opts, pieces, skippedNames, 'passkeys', csrf, flash);
     const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
@@ -889,7 +897,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const slug = decode(pathname.slice('/people/'.length));
       return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
     }
-    if (pathname === '/new-agent') return send200(newAgentPage(), '', ctxOf('new-agent'));
+    if (pathname === '/new-agent') return send200(newAgentPage(hh), '', ctxOf('new-agent'));
     const a = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(pathname);
     if (a) {
       const agent = a[1];

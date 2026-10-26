@@ -19,6 +19,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { createToken, loadTokens, type Household } from '../household.js';
 
 export interface Session { issuedAt: number; secret: Buffer }
 
@@ -332,4 +333,14 @@ export function sessionStore(dir: string): SessionStore {
   let s = stores.get(dir);
   if (!s) { s = new SessionStore(dir); stores.set(dir, s); }
   return s;
+}
+
+/** The owner token a page sign-in link's sessions belong to: revoking it ends them all. */
+export const LINK_TOKEN = 'page sign-in links';
+
+/** A one-time sign-in link's code (`loom token link`, and Passkeys' "Make a one-time sign-in link"). */
+export function signinLink(h: Household, ttlS: number): string {
+  let record = loadTokens(h.home).find((t) => t.label === LINK_TOKEN && !t.revoked);
+  if (!record) record = createToken(h, { role: { kind: 'owner' }, label: LINK_TOKEN }).record;
+  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS);
 }

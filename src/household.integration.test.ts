@@ -807,6 +807,19 @@ describe('the household page', () => {
     expect(r.headers.get('location')).toBe('/a/art/mind?category=user');
   });
 
+  it('Passkeys makes a one-time sign-in link for another device, good once', async () => {
+    const cookie = await login();
+    const pk = await (await page(cookie, '/passkeys')).text();
+    expect(pk).toContain('Make a one-time sign-in link');
+    const made = await post(cookie, '/act/loom', { _csrf: csrfOf(pk), _action: 'signin-link', _path: 'passkeys' });
+    const shown = await (await page(cookie, made.headers.get('location')!)).text();
+    const code = /\/login\/([A-Za-z0-9_-]{16,})/.exec(shown)?.[1];
+    expect(code).toBeTruthy();
+    const first = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
+    expect(first.status).toBe(303);
+    expect((await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' })).status).not.toBe(303);
+  });
+
   it('a token is made on the page, shown once, works, and is revoked on the page', async () => {
     const cookie = await login();
     const csrf = csrfOf(await (await page(cookie, '/a/mark/setup')).text());
@@ -879,6 +892,21 @@ describe('the household page', () => {
     expect(await (await page(cookie, '/')).text()).toContain('Don Quixote');
     const dup = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'quixote', name: 'x', purpose: 'x', voice: 'x' });
     expect(await (await page(cookie, dup.headers.get('location')!)).text()).toContain('already in the household');
+  });
+
+  it('the board\'s new agent: a name, a color, a voice word; the short name from its name, the color kept', async () => {
+    const cookie = await login();
+    const form = await (await page(cookie, '/new-agent')).text();
+    expect(form).toContain('<div class="swatches">');
+    expect(form).toMatch(/<div class="segmented">[\s\S]*?>Dry<[\s\S]*?>Warm<[\s\S]*?>Terse</);
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')), marks: { art: { bg: '#111111', fg: '#EEEEEE' } } }));
+    const r = await post(cookie, '/act/loom', { _csrf: csrfOf(form), _action: 'add-agent', _path: 'new-agent', name: 'Gabe Ortiz', mark: '4', purpose: 'Keeps the books.', voice: 'terse' });
+    expect(r.headers.get('location')).toMatch(/^\/a\/gabe-ortiz\/setup\?_flash=/);
+    const saved = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
+    expect(saved.agents).toContain('gabe-ortiz');
+    // Adding an agent keeps what household.json already had (art's mark), and sets the new one's.
+    expect(saved.marks).toEqual({ art: { bg: '#111111', fg: '#EEEEEE' }, 'gabe-ortiz': { bg: '#3D5A99', fg: '#E6ECFF' } });
+    expect(readFileSync(join(h.home, 'agents', 'gabe-ortiz', 'IDENTITY.md'), 'utf-8')).toContain('Terse: the shortest answer');
   });
 
   it('an action on an agent\'s view acts on that agent\'s stack', async () => {
