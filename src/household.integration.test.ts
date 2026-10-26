@@ -698,7 +698,11 @@ describe('the household page', () => {
     // Its Today: Today · Mind · People · Setup.
     expect(mark).toContain('<nav class="seg-tabs" aria-label="Visual Mark"><a href="/a/mark" class="on" aria-current="page">Today</a><a href="/a/mark/mind">Mind</a>');
     expect(mark).not.toContain('art did a thing');
-    expect((await page(cookie, '/a/mark/mind')).status).toBe(200);
+    // Mind and Setup wear the same head and tabs, the current one marked.
+    const mind = await page(cookie, '/a/mark/mind');
+    expect(mind.status).toBe(200);
+    expect(await mind.text()).toContain('<a href="/a/mark/mind" class="on" aria-current="page">Mind</a>');
+    expect(await (await page(cookie, '/a/mark/setup')).text()).toContain('<a href="/a/mark/setup" class="on" aria-current="page">Setup</a>');
     expect((await page(cookie, '/a/ghost')).status).toBe(404);
     const setup = await (await page(cookie, '/a/art/setup')).text();
     expect(setup).toContain('Art E Fish · Setup');

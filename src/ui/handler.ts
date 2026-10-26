@@ -50,7 +50,7 @@ import { agentSetup, householdAct, householdHome, householdPeople, householdPers
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
-import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -326,6 +326,10 @@ function agentsOf(h: Household | undefined): Record<string, { label: string; bg:
 }
 
 const HOME_THREAD = 30;
+
+function agentTabs(agent: string, current: string): AgentHead['tabs'] {
+  return [['Today', ''], ['Mind', 'mind'], ['People', 'people'], ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
+}
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
 function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[] {
@@ -740,8 +744,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   if (hh) {
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf });
-    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>) =>
-      html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash)), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead) =>
+      html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash), undefined, head), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
     if (pathname === '/') {
       const nowMs = Date.now();
       const store = storeFor(opts);
@@ -788,10 +792,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const scoped = pieces.filter((p) => p.manifest.scope);
         const d: Dashboard = {
           label: agents[agent].label,
-          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: [
-            { label: 'Today', href: `/a/${agent}`, current: true }, { label: 'Mind', href: `/a/${agent}/mind`, current: false },
-            { label: 'People', href: `/a/${agent}/people`, current: false }, { label: 'Setup', href: `/a/${agent}/setup`, current: false },
-          ] },
+          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '') },
           asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
@@ -799,9 +800,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         };
         return html(renderDashboard(d, { ...ctxOf('', src), agents }, chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash), nowMs));
       }
-      if (rest === 'setup') return send200(agentSetup(hh, agent), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE));
+      // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
+      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab) });
+      if (rest === 'setup') return send200(agentSetup(hh, agent), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
-      return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src));
+      return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src), page && (rest === 'mind' || rest === 'people') ? head(rest) : undefined);
     }
     // loom's own single-agent addresses land on the default agent's view.
     if (pathname === '/mind' || pathname.startsWith('/memory/')) {
