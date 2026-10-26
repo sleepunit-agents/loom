@@ -129,8 +129,16 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
   `/p/<piece>/`. Without a tab the piece has no pages.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
+- **`scope`** (optional, `true`): the piece narrows to one agent. When the
+  owner has an agent selected (the page's scope selector), loom runs every
+  `loom-<piece>` call with `LOOM_SCOPE=<agent id>` in its environment. A piece
+  that declares `scope: true` should show that agent's data only. One that
+  doesn't is shown as it is, under one line saying it shows the whole
+  household.
 - **`asks`** are things only the owner can decide. They're listed under
-  "Your call" on Home (at most 10 a piece). An ask is a decision, not news:
+  "Your call" on Home (at most 10 a piece). Optional on each: `tone` (tints
+  its card), `at` (an ISO date-time, shown as its age) and `agent` (an agent's
+  id, whose mark it carries). An ask is a decision, not news:
   what happened belongs on the tape.
 - An answer with only `"sections"` (the first version of this contract) is
   still accepted. Its sections become the piece's page, under a tab named
@@ -175,7 +183,7 @@ outside the page).
 | Block | Fields |
 |---|---|
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page` |
-| `list` | `items`: `text`, optional `meta`, `badge`, `tone`, `page` or `href` |
+| `list` | `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `page` or `href` |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |

@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Scope reaches pieces.** With an agent selected, loom runs pieces with
+  `LOOM_SCOPE=<agent>` (manifest, page and action alike, the manifest cached
+  per scope). A manifest may declare `"scope": true`; a piece that doesn't is
+  shown under one line: "Showing the whole household — this piece can't
+  narrow to <agent>."
+- **Agent marks on rows:** a list item may name an `agent`; it carries that
+  agent's mark in place of its tone glyph.
+- **Asks may carry `tone`, `at` and `agent`** (for the redesigned Your call
+  cards).
+
 ### Changed
 
 - **The app shell** (the redesign's phase 2a). On a phone: a bottom bar, the

@@ -37,6 +37,8 @@ export interface RenderContext {
   path: string;
   query: Record<string, string>;
   csrf: string;
+  /** The household's agents, so a row naming one (`agent`) can carry its mark. */
+  agents?: Record<string, { label: string; bg: string; fg: string }>;
 }
 
 function qs(query: Record<string, string>): string {
@@ -132,7 +134,8 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       if (!b.items.length) return '<p class="empty">Nothing here.</p>';
       return `<ul class="list">${b.items.map((i) => {
         const text = `<span class="text">${esc(i.text)}</span>`;
-        return `<li class="${tone(i.tone).trim()}">${glyph(i.tone)}<span class="body">${link(text, i, ctx, 'row-link')}${
+        const who = i.agent ? ctx.agents?.[i.agent] : undefined;
+        return `<li class="${tone(i.tone).trim()}">${who ? mark(who, 24) : glyph(i.tone)}<span class="body">${link(text, i, ctx, 'row-link')}${
           i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}</li>`;
       }).join('')}</ul>`;
     case 'table': {
@@ -413,13 +416,16 @@ function flash(c: Chrome): string {
 }
 
 /** One page, loom's or a piece's. */
-export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome): string {
+export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unscopedFor?: string): string {
   const main = page.sections.filter((s) => !s.side).map((s) => renderSection(s, ctx)).join('');
   const side = page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
   const empty = page.sections.length ? '' : '<p class="intro">There\'s nothing here.</p>';
   // Pages with forms don't auto-refresh: a refresh would throw away what's being typed.
   const hasForm = page.sections.some((s) => s.blocks.some((b) => b.type === 'form' || (b.type === 'details' && b.blocks.some((x) => x.type === 'form'))));
-  const body = `${shellOpen(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
+  // A piece that can't narrow to the selected agent: one quiet line, the household's mark.
+  const unscoped = unscopedFor && chrome.shell
+    ? `<p class="unscoped">${householdMark(chrome.shell.agents, 24)}<span>Showing the whole household — this piece can't narrow to ${esc(unscopedFor)}.</span></p>` : '';
+  const body = `${shellOpen(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${unscoped}${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
   // A page that asks for its own refresh (an install running) gets it, forms or not.
   return document(`${page.title} · ${chrome.agent}`, body, page.refresh ?? !hasForm);
 }

@@ -51,7 +51,8 @@ const cache = new Map<string, CacheEntry>();
 
 export function clearPieceCache(path?: string): void {
   if (path === undefined) cache.clear();
-  else cache.delete(path);
+  // Every scope's answer for that piece.
+  else for (const k of [...cache.keys()]) if (k.startsWith(`${path}\0`)) cache.delete(k);
 }
 
 export function pieceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -173,11 +174,13 @@ async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv
 }
 
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
-  const hit = cache.get(path);
+  // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately.
+  const key = `${path}\0${env.LOOM_SCOPE ?? ''}`;
+  const hit = cache.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
   // Cache the promise itself: concurrent page loads share one run.
   const result = fetchManifest(piece, path, env);
-  cache.set(path, { at: nowMs, result });
+  cache.set(key, { at: nowMs, result });
   return result;
 }
 
