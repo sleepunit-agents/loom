@@ -434,7 +434,7 @@ export async function householdAct(h: Household, action: string, fields: Record<
 
 // ─── Find ────────────────────────────────────────────────────────────────────
 
-export interface Found {
+export interface FindMatches {
   knowledge: Array<{ title: string; slug: string; domain: string }>;
   people: Array<{ name: string; slug: string }>;
   memories: Array<{ agent: string; title: string; ref: string }>;
@@ -443,8 +443,8 @@ export interface Found {
 const FIND_EACH = 5;
 
 /** Plain text matches for Find: knowledge titles, people's names, and each given agent's memories (titles first). */
-export function householdFind(h: Household, q: string, agents: string[] = h.agents): Found {
-  const out: Found = { knowledge: [], people: [], memories: [] };
+export function householdFind(h: Household, q: string, agents: string[] = h.agents): FindMatches {
+  const out: FindMatches = { knowledge: [], people: [], memories: [] };
   const needle = q.trim().toLowerCase();
   if (!needle) return out;
   const like = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
