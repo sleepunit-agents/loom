@@ -54,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Undo on a message.** An action result may carry `"undo": {"action",
+  "label"?, "fields"?}`: the message gets an Undo that posts that action back
+  to the same piece, with the same anti-forgery token (it's an ordinary form,
+  so it works without script too). loom's own: archiving a memory is undone by
+  a new `restore` action.
+
 - **Details open as a sheet on a phone.** Tapping a details row brings its
   blocks up in a bottom sheet (moved there, not copied, and back on close);
   an action taken in it closes the sheet. A desktop expands it in place.
