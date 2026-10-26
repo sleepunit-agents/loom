@@ -131,8 +131,10 @@ describe('passkeys', () => {
     expect(fresh).toMatch(/^loom_ui=[0-9a-f]{64}$/);
     expect(String(r.headers['set-cookie'])).toMatch(/HttpOnly; SameSite=Strict/);
     expect((await call('GET', '/', { cookie: fresh })).status).toBe(200);
-    // Every other page keeps the no-script policy.
-    expect(String((await call('GET', '/', { cookie: fresh })).headers['content-security-policy'])).not.toContain('script-src');
+    // Every page: script only from loom itself, never inline or eval.
+    const csp = String((await call('GET', '/', { cookie: fresh })).headers['content-security-policy']);
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).not.toMatch(/script-src[^;]*unsafe/);
     expect((await call('GET', '/login/passkey.js')).body).toContain('navigator.credentials.get');
   });
 
@@ -187,7 +189,7 @@ describe('passkeys', () => {
     // On another address (the tailnet IP), passkeys aren't offered: their origin is LOOM_PUBLIC_URL's.
     const elsewhere = await call('GET', '/passkeys', { cookie, host: '100.64.0.1:8787' });
     expect(elsewhere.body).toContain('Passkeys work at https://loom.test');
-    expect(elsewhere.body).not.toContain('<script');
+    expect(elsewhere.body).not.toContain('/login/passkey.js');
     expect((await call('GET', '/login', { host: '100.64.0.1:8787' })).body).not.toContain('passkey-signin');
     // A registration whose challenge was never issued.
     const csrf = csrfOf((await call('GET', '/passkeys', { cookie })).body);

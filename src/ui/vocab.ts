@@ -38,7 +38,10 @@ export type Block =
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }> }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
-  | { type: 'buttons'; items: Array<{ action: string; label: string; tone?: 'primary' | 'danger'; fields?: Record<string, string> }> };
+  | { type: 'buttons'; items: Array<{ action: string; label: string; tone?: 'primary' | 'danger'; fields?: Record<string, string> }> }
+  | { type: 'meter'; items: Array<{ label: string; value: number; detail?: string; tone?: Tone }> }
+  | { type: 'code'; text: string; label?: string }
+  | { type: 'status'; items: Array<{ label: string; tone?: Tone; text?: string; meta?: string; page?: string }> };
 
 export interface Section {
   id: string;
@@ -52,6 +55,8 @@ export interface Page {
   title: string;
   intro?: string;
   sections: Section[];
+  /** Seconds between reloads, 2 to 300, while something is changing (an install, a session starting). */
+  refresh?: number;
 }
 
 export interface Tile { label: string; value: string; detail?: string; tone?: Tone; page?: string }
@@ -323,6 +328,30 @@ function block(v: unknown, depth = 0): Block {
           };
         }),
       };
+    case 'meter':
+      return {
+        type: 'meter',
+        items: arr(b.items, 'meter.items', LIMITS.items).map((i) => {
+          const o = obj(i, 'meter item');
+          if (typeof o.value !== 'number' || !Number.isFinite(o.value) || o.value < 0 || o.value > 1) {
+            throw new Invalid('meter.value must be a number from 0 to 1');
+          }
+          return { label: str(o.label, 'meter.label'), value: o.value, detail: optStr(o.detail, 'meter.detail'), tone: tone(o.tone) };
+        }),
+      };
+    case 'code':
+      return { type: 'code', text: str(b.text, 'code.text'), label: optStr(b.label, 'code.label') };
+    case 'status':
+      return {
+        type: 'status',
+        items: arr(b.items, 'status.items', LIMITS.items).map((i) => {
+          const o = obj(i, 'status item');
+          return {
+            label: str(o.label, 'status.label'), tone: tone(o.tone), text: optStr(o.text, 'status.text'),
+            meta: optStr(o.meta, 'status.meta'), page: page(o.page, 'status.page'),
+          };
+        }),
+      };
     default:
       throw new Invalid(`unknown block type ${JSON.stringify(b.type)}`);
   }
@@ -383,7 +412,9 @@ export function parseManifest(value: unknown): Manifest | string {
 export function parsePage(value: unknown): Page | string {
   return attempt(() => {
     const top = obj(value, 'page');
-    return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections) };
+    const r = top.refresh;
+    if (r !== undefined && (typeof r !== 'number' || !Number.isInteger(r) || r < 2 || r > 300)) throw new Invalid('refresh must be whole seconds from 2 to 300');
+    return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections), ...(r !== undefined ? { refresh: r } : {}) };
   });
 }
 

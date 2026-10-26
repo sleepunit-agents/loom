@@ -152,6 +152,22 @@ function renderBlock(b: Block, ctx: RenderContext): string {
         `${hiddenInputs(i.fields ?? {})}<button class="btn${i.tone ? ` ${i.tone}` : ''}" type="submit">${esc(i.label)}</button>`,
         'button-form',
       )).join('')}</div>`;
+    case 'meter':
+      return `<div class="meters">${b.items.map((i) => {
+        const pct = Math.round(i.value * 100);
+        return `<div class="meter${tone(i.tone)}"><div class="meter-head"><span>${esc(i.label)}</span><span class="mono">${pct}%</span></div>` +
+          `<div class="bar" role="meter" aria-label="${esc(i.label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>${
+            i.detail ? `<span class="meta">${esc(i.detail)}</span>` : ''}</div>`;
+      }).join('')}</div>`;
+    case 'code':
+      // The Copy button is loom's own (app.js); without script the text is still there to select.
+      return `<div class="code-block">${b.label ? `<span class="meta">${esc(b.label)}</span>` : ''}<pre><code>${esc(b.text)}</code></pre><button class="btn copy" type="button" data-copy>Copy</button></div>`;
+    case 'status':
+      return `<ul class="status">${b.items.map((i) => {
+        const label = `<span class="label">${esc(i.label)}</span>`;
+        return `<li><span class="dot${tone(i.tone ?? 'muted')}" aria-hidden="true"></span>${i.page !== undefined ? link(label, { page: i.page }, ctx) : label}${
+          i.text ? `<span class="text">${esc(i.text)}</span>` : ''}${i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</li>`;
+      }).join('')}</ul>`;
   }
 }
 
@@ -189,6 +205,16 @@ nav.tabs{display:flex;flex-wrap:wrap;gap:0 18px;flex:1 1 auto;align-items:center
 nav.tabs a{color:var(--muted);padding:12px 2px;border-bottom:2px solid transparent;font-size:14px}nav.tabs a:hover{color:var(--fg);text-decoration:none}
 nav.tabs a[aria-current]{color:var(--fg);border-bottom-color:var(--accent);font-weight:500}
 nav.tabs .sep{width:1px;height:18px;background:var(--line)}
+.meters{display:grid;gap:12px}.meter-head{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+.bar{height:8px;border-radius:4px;background:var(--soft);overflow:hidden;margin:4px 0}.bar span{display:block;height:100%;background:var(--accent)}
+.meter.tone-ok .bar span{background:var(--ok)}.meter.tone-warn .bar span{background:var(--warn)}.meter.tone-bad .bar span{background:var(--bad)}.meter.tone-muted .bar span{background:var(--muted)}
+.code-block{display:grid;gap:6px}.code-block pre{margin:0;padding:10px 12px;border-radius:8px;background:var(--soft);overflow-x:auto;font-size:13px;white-space:pre-wrap;word-break:break-all}.code-block .copy{justify-self:start}
+ul.status{list-style:none;margin:0;padding:0;display:grid;gap:8px}ul.status li{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none;align-self:center}.dot.tone-ok{background:var(--ok)}.dot.tone-warn{background:var(--warn)}.dot.tone-bad{background:var(--bad)}
+ul.status .label{font-weight:500}ul.status .text{color:var(--fg)}ul.status .meta{color:var(--muted);font-size:13px}
+@media (max-width:640px){.top-in{display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand right" "tabs tabs";gap:0 12px}
+.brand{grid-area:brand}.top-right{grid-area:right}.top-right .clock{display:none}
+nav.tabs{grid-area:tabs;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;white-space:nowrap;margin:0 -16px;padding:0 16px}nav.tabs::-webkit-scrollbar{display:none}}
 .top-right{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
 main{max-width:1200px;margin:0 auto;padding:24px 16px 48px;display:flex;flex-direction:column;gap:18px}
 h1{margin:0;font-size:26px;font-weight:600;letter-spacing:-.01em;line-height:1.25}
@@ -236,9 +262,10 @@ form.login{max-width:380px;margin:64px auto;padding:20px;display:flex;flex-direc
 form.login button{min-height:44px;border:0;border-radius:8px;background:var(--accent);color:var(--accent-fg);font:inherit;font-weight:500}.err{color:var(--bad)}.sub{color:var(--muted);margin:0}
 `;
 
-function document(title: string, body: string, refresh: boolean): string {
+function document(title: string, body: string, refresh: boolean | number): string {
+  const every = refresh === true ? 60 : refresh || 0;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${
-    refresh ? '<meta http-equiv="refresh" content="60">' : ''}<title>${esc(title)}</title><style>${STYLE}</style></head><body>${body}</body></html>`;
+    every ? `<meta http-equiv="refresh" content="${every}">` : ''}<title>${esc(title)}</title><style>${STYLE}</style><script src="/app.js" defer></script></head><body>${body}</body></html>`;
 }
 
 function chromeTop(c: Chrome): string {
@@ -247,7 +274,7 @@ function chromeTop(c: Chrome): string {
   const tab = (n: Chrome['nav'][number]) => `<a href="${esc(n.href)}"${n.current ? ' aria-current="page"' : ''}>${esc(n.label)}</a>`;
   return `<header class="top"><div class="top-in"><a class="brand" href="/"><svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h16M3 11h16M3 17h16"></path><path d="M7 2v18M15 2v18" opacity=".55"></path></svg>loom <span class="who">· ${esc(c.agent)}</span></a>` +
     `<nav class="tabs" aria-label="Sections">${core.map(tab).join('')}${pieces.length ? `<span class="sep" aria-hidden="true"></span>${pieces.map(tab).join('')}` : ''}</nav>` +
-    `<div class="top-right"><span class="mono">${esc(c.clock)}</span><a class="mono" href="/passkeys">Passkeys</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
+    `<div class="top-right"><span class="mono clock">${esc(c.clock)}</span><a class="mono" href="/passkeys">Passkeys</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
 }
 
 function chromeFoot(c: Chrome, refresh: boolean): string {
@@ -267,8 +294,9 @@ export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome): stri
   const empty = page.sections.length ? '' : '<p class="intro">There\'s nothing here.</p>';
   // Pages with forms don't auto-refresh: a refresh would throw away what's being typed.
   const hasForm = page.sections.some((s) => s.blocks.some((b) => b.type === 'form' || (b.type === 'details' && b.blocks.some((x) => x.type === 'form'))));
-  const body = `${chromeTop(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${empty}${columns(main, side)}</main>${chromeFoot(chrome, !hasForm)}`;
-  return document(`${page.title} · ${chrome.agent}`, body, !hasForm);
+  const body = `${chromeTop(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${empty}${columns(main, side)}</main>${chromeFoot(chrome, !hasForm && !page.refresh)}`;
+  // A page that asks for its own refresh (an install running) gets it, forms or not.
+  return document(`${page.title} · ${chrome.agent}`, body, page.refresh ?? !hasForm);
 }
 
 /** "Your call" shows this many a piece on Home; the rest are a link away. */

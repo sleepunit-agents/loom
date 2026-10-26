@@ -36,6 +36,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sessionStore } from './sessions.js';
+import { APP_JS } from './app.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
@@ -57,7 +58,8 @@ const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
 const SECURITY_HEADERS = {
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  // Script only from loom itself (/app.js, /login/passkey.js), never inline: a piece's page is data.
+  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
   // same-origin, not no-referrer: under no-referrer, browsers send `Origin:
   // null` on the page's own form posts, which the cross-site guard has to
@@ -79,7 +81,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
+const PAGE_ROOTS = ['/app.js', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -386,6 +388,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const sessionCookie = (secret: Buffer) =>
     `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
 
+  if (pathname === '/app.js') {
+    if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    return send(res, 200, 'text/javascript; charset=utf-8', APP_JS, { 'cache-control': 'no-cache' });
+  }
   if (pathname === '/login/passkey.js') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
     return send(res, 200, 'text/javascript; charset=utf-8', PASSKEY_JS, { 'cache-control': 'no-cache' });

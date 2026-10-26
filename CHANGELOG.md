@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Three blocks: `meter`, `code`, `status`** (docs/extensions.md). A usage
+  bar with its percent; monospace text with a Copy button; a row per thing
+  that's up, down or stale, with a colored dot.
+- **A page's own `refresh`** (2 to 300 seconds), honored even with a form on
+  the page. The Pieces page uses it while an install runs, so it shows the
+  install finish without a manual reload.
+- **loom's own script on every page** (`/app.js`, CSP `script-src 'self'`,
+  never inline). Today it's the Copy button; it's where the page's app
+  behavior goes. Pieces still can't put script on the page: theirs is data.
+
+### Changed
+
+- **The header on a phone:** the brand with Passkeys and Sign out on one row,
+  the tabs in one scrolling row under them, and no clock.
+
+### Added
+
 - **Passkeys for loom's page** (docs/specs/passkeys.md). Sign in once with a
   token or a link, add a passkey on the new Passkeys page, and after that
   *Sign in with a passkey* is one tap and Face ID, a fingerprint or a PIN.
