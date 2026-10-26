@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Sign in, Passkeys and New agent per their boards.** Sign in: loom's mark
+  in the middle, and at the bottom a passkey button, "or", a token and Go.
+  Passkeys: each a row with an inline Remove, then Add a passkey, then Another
+  device (a one-time sign-in link, what `loom token link` makes). New agent:
+  name, a color (swatches from the mark palette), what it's for, a voice word
+  (Dry, Warm, Terse); the short name comes from its name.
+- **A choice field's options may be colors** (`swatch`, a hex): drawn as a
+  row of swatches.
+
+### Fixed
+
+- **Adding an agent kept only `agents`, `default` and `owner`** in
+  household.json, dropping `marks` and anything else. It now keeps them.
 - **An agent's Setup per its board.** Health first (Memory, Last active, Tokens
   as status rows), then Identity (Voice, Born, Harnesses, the bio, and the
   whole creed folded), then Tokens: each live one a row with an inline Revoke
