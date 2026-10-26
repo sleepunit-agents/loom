@@ -1,11 +1,14 @@
 /**
  * Server-side HTML for loom's page. Every string that reaches the page goes
- * through esc(): pieces send data in the page vocabulary, never markup. No
- * client script anywhere; folding is <details>, filters are links, and every
- * action is a plain form post carrying the anti-forgery token.
+ * through esc(): pieces send data in the page vocabulary, never markup. The
+ * only script is loom's own (/app.js); folding is <details>, filters are
+ * links, and every action is a plain form post carrying the anti-forgery token.
+ * The look is Claude Design's (style.ts); tone is a shape and a word as well
+ * as a color (glyph()).
  */
 import type { Ask, Block, Cell, Field, Page, Section, Tile, Tone } from './vocab.js';
 import { splitPage } from './vocab.js';
+import { STYLE } from './style.js';
 
 export function esc(s: string): string {
   return s
@@ -54,6 +57,20 @@ export function pageHref(link: string, source: Source): string {
 
 const tone = (t?: Tone) => (t ? ` tone-${t}` : '');
 
+const TONE_WORD: Record<Tone, string> = { ok: 'ok', warn: 'warning', bad: 'problem', muted: 'inactive' };
+const GLYPH: Record<Tone, string> = {
+  ok: '<circle cx="5" cy="5" r="5" fill="currentColor"/>',
+  warn: '<path d="M5 .6 9.8 9.4H.2z" fill="currentColor"/>',
+  bad: '<path d="M5 0 10 5 5 10 0 5z" fill="currentColor"/>',
+  muted: '<circle cx="5" cy="5" r="4" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+};
+/** A tone's shape (● ▲ ◆ ○), in its color, named for a screen reader. */
+export function glyph(t?: Tone): string {
+  return t ? `<svg class="glyph" viewBox="0 0 10 10" role="img" aria-label="${TONE_WORD[t]}" style="color:var(--tone)">${GLYPH[t]}</svg>` : '';
+}
+const CHEVRON = '<svg class="chev" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+const OUT = '<svg class="arrow" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+
 function link(text: string, t: { page?: string; href?: string }, ctx: RenderContext, cls = ''): string {
   const c = cls ? ` class="${cls}"` : '';
   if (t.href) return `<a${c} href="${esc(t.href)}" rel="noopener noreferrer" target="_blank">${text}</a>`;
@@ -88,6 +105,11 @@ function renderField(f: Field): string {
     case 'textarea':
       return `<div class="field"><label for="${id}">${esc(f.label)}</label><textarea id="${id}" name="${esc(f.name)}" rows="4"${req}${desc}>${esc(f.value ?? '')}</textarea>${hint}</div>`;
     case 'choice':
+      // Four options or fewer, none with a detail line: a segmented control.
+      if ((f.options ?? []).length <= 4 && !(f.options ?? []).some((o) => o.detail)) {
+        return `<fieldset class="field"><legend>${esc(f.label)}</legend><div class="segmented">${(f.options ?? []).map((o, i) =>
+          `<label><input type="radio" name="${esc(f.name)}" value="${esc(o.value)}"${f.value === o.value || (!f.value && i === 0 && f.required) ? ' checked' : ''}${req && i === 0 ? ' required' : ''}><span>${esc(o.label)}</span></label>`).join('')}</div>${hint}</fieldset>`;
+      }
       return `<fieldset class="field choice"><legend>${esc(f.label)}</legend>${(f.options ?? []).map((o, i) =>
         `<label class="option"><input type="radio" name="${esc(f.name)}" value="${esc(o.value)}"${f.value === o.value ? ' checked' : ''}${req && i === 0 ? ' required' : ''}><span><strong>${esc(o.label)}</strong>${o.detail ? `<span class="hint">${esc(o.detail)}</span>` : ''}</span></label>`).join('')}${hint}</fieldset>`;
   }
@@ -101,30 +123,52 @@ function cell(c: Cell, ctx: RenderContext): string {
 function renderBlock(b: Block, ctx: RenderContext): string {
   switch (b.type) {
     case 'stats':
-      return `<dl class="stats">${b.items.map((i) => {
-        const inner = `<dt>${esc(i.label)}</dt><dd>${esc(i.value)}</dd>${i.detail ? `<dd class="detail">${esc(i.detail)}</dd>` : ''}`;
-        return i.page !== undefined
-          ? `<div class="stat${tone(i.tone)}"><a class="stat-link" href="${esc(pageHref(i.page, ctx.source))}">${inner}</a></div>`
-          : `<div class="stat${tone(i.tone)}">${inner}</div>`;
-      }).join('')}</dl>`;
+      // Two up; past four they become one swipeable strip on a phone.
+      return `<dl class="stats${b.items.length > 4 ? ' strip' : ''}">${b.items.map((i) =>
+        `<div class="stat${tone(i.tone)}"><dt>${esc(i.label)}</dt><dd class="value" title="${esc(i.value)}">${esc(i.value)}</dd>${
+          i.detail ? `<dd class="detail">${esc(i.detail)}</dd>` : ''}${glyph(i.tone)}${
+          i.page !== undefined ? `<a class="stat-link" href="${esc(pageHref(i.page, ctx.source))}" aria-label="${esc(i.label)}"></a>` : ''}</div>`).join('')}</dl>`;
     case 'list':
+      if (!b.items.length) return '<p class="empty">Nothing here.</p>';
       return `<ul class="list">${b.items.map((i) => {
         const text = `<span class="text">${esc(i.text)}</span>`;
-        return `<li class="${tone(i.tone).trim()}"><div class="row">${link(text, i, ctx, 'row-link')}${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}</div>${
-          i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</li>`;
+        return `<li class="${tone(i.tone).trim()}">${glyph(i.tone)}<span class="body">${link(text, i, ctx, 'row-link')}${
+          i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}</li>`;
       }).join('')}</ul>`;
-    case 'table':
-      return `<div class="table-wrap"><table><thead><tr>${b.columns.map((c) => `<th scope="col">${esc(c)}</th>`).join('')}</tr></thead><tbody>${
+    case 'table': {
+      // A real table on a wide screen; on a phone each row is a card: column 1
+      // its title, the next three label and value, the rest a tap away.
+      const wide = `<div class="table-wrap"><table><thead><tr>${b.columns.map((c) => `<th scope="col">${esc(c)}</th>`).join('')}</tr></thead><tbody>${
         b.rows.map((r) => `<tr>${r.map((c) => `<td>${cell(c, ctx)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      const pair = (r: Cell[], k: number) => `<dt>${esc(b.columns[k] ?? '')}</dt><dd>${cell(r[k] ?? '', ctx)}</dd>`;
+      const cards = `<div class="table-cards" aria-hidden="true">${b.rows.map((r) => {
+        const shown = [1, 2, 3].filter((k) => k < r.length).map((k) => pair(r, k)).join('');
+        const rest = r.slice(4).map((_, j) => pair(r, j + 4)).join('');
+        return `<div class="tcard"><span class="ttitle">${cell(r[0] ?? '', ctx)}</span>${shown ? `<dl>${shown}</dl>` : ''}${
+          rest ? `<details><summary>+ ${r.length - 4} more field${r.length - 4 === 1 ? '' : 's'}</summary><dl>${rest}</dl></details>` : ''}</div>`;
+      }).join('')}</div>`;
+      return wide + cards;
+    }
     case 'kv':
+      // A value over about 24 characters drops below its label.
       return `<dl class="kv">${b.items.map((i) =>
-        `<div><dt>${esc(i.label)}</dt><dd>${i.page !== undefined ? link(esc(i.value), { page: i.page }, ctx) : esc(i.value)}</dd></div>`).join('')}</dl>`;
-    case 'text':
-      return `<p class="text-block${tone(b.tone)}">${esc(b.text)}</p>`;
+        `<div${i.value.length > 24 ? ' class="long"' : ''}><dt>${esc(i.label)}</dt><dd>${i.page !== undefined ? link(esc(i.value), { page: i.page }, ctx) : esc(i.value)}</dd></div>`).join('')}</dl>`;
+    case 'text': {
+      const long = b.text.length > 360 || b.text.split('\n').length > 6;
+      const body = `<span class="${long ? 'clamp' : ''}" ${long ? 'data-clamp' : ''}>${esc(b.text)}</span>`;
+      return `<p class="text-block${tone(b.tone)}">${b.tone && b.tone !== 'muted' ? glyph(b.tone) : ''}${body}</p>${long ? '<button class="more" type="button" data-more hidden>More</button>' : ''}`;
+    }
     case 'callout':
-      return `<div class="callout${tone(b.tone)}">${b.title ? `<strong>${esc(b.title)}</strong>` : ''}<p>${esc(b.text)}</p></div>`;
-    case 'link':
-      return `<p class="link-block">${link(esc(b.text), b, ctx)}</p>`;
+      return `<div class="callout${tone(b.tone)}">${b.tone && b.tone !== 'muted' ? glyph(b.tone) : ''}<div>${b.title ? `<strong>${esc(b.title)}</strong>` : ''}<p>${esc(b.text)}</p></div></div>`;
+    case 'link': {
+      // Leaving loom: an arrow out and the domain, always shown.
+      if (b.href) {
+        let host = '';
+        try { host = new URL(b.href).host; } catch { /* validated already */ }
+        return link(`<span><span>${esc(b.text)}</span><span class="domain mono">${esc(host)}</span></span>${OUT}`, b, ctx, 'link-row');
+      }
+      return link(`<span>${esc(b.text)}</span>${CHEVRON}`, b, ctx, 'link-row');
+    }
     case 'filters': {
       const current = ctx.query[b.param] ?? '';
       return `<nav class="filters" aria-label="Filter">${b.options.map((o) => {
@@ -135,7 +179,7 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       }).join('')}</nav>`;
     }
     case 'details':
-      return `<details class="details"><summary><span class="text">${esc(b.summary)}</span>${b.meta ? `<span class="meta">${esc(b.meta)}</span>` : ''}</summary><div class="details-body">${
+      return `<details class="details"><summary><span class="body"><span class="text">${esc(b.summary)}</span>${b.meta ? `<span class="meta">${esc(b.meta)}</span>` : ''}</span>${CHEVRON}</summary><div class="details-body">${
         b.blocks.map((x) => renderBlock(x, ctx)).join('')}</div></details>`;
     case 'form':
       return actionForm(
@@ -146,7 +190,8 @@ function renderBlock(b: Block, ctx: RenderContext): string {
         'piece-form',
       );
     case 'buttons':
-      return `<div class="buttons">${b.items.map((i) => actionForm(
+      // Three or more wrap to full-width rows.
+      return `<div class="buttons${b.items.length >= 3 ? ' wide' : ''}">${b.items.map((i) => actionForm(
         ctx,
         i.action,
         `${hiddenInputs(i.fields ?? {})}<button class="btn${i.tone ? ` ${i.tone}` : ''}" type="submit">${esc(i.label)}</button>`,
@@ -155,26 +200,36 @@ function renderBlock(b: Block, ctx: RenderContext): string {
     case 'meter':
       return `<div class="meters">${b.items.map((i) => {
         const pct = Math.round(i.value * 100);
-        return `<div class="meter${tone(i.tone)}"><div class="meter-head"><span>${esc(i.label)}</span><span class="mono">${pct}%</span></div>` +
+        const g = i.tone && i.tone !== 'ok' ? glyph(i.tone) : '';
+        return `<div class="meter${tone(i.tone)}"><div class="meter-head"><span>${esc(i.label)}</span><span class="pct">${g}${pct}%</span></div>` +
           `<div class="bar" role="meter" aria-label="${esc(i.label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></div>${
             i.detail ? `<span class="meta">${esc(i.detail)}</span>` : ''}</div>`;
       }).join('')}</div>`;
     case 'code':
-      // The Copy button is loom's own (app.js); without script the text is still there to select.
-      return `<div class="code-block">${b.label ? `<span class="meta">${esc(b.label)}</span>` : ''}<pre><code>${esc(b.text)}</code></pre><button class="btn copy" type="button" data-copy>Copy</button></div>`;
+      // The Copy button is loom's own (app.js); off https it selects the text instead.
+      return `<div class="code-block${b.label ? '' : ' nolabel'}">${b.label ? `<span class="meta">${esc(b.label)}</span>` : ''}<button class="btn copy" type="button" data-copy>Copy</button><pre><code>${esc(b.text)}</code></pre></div>`;
     case 'status':
       return `<ul class="status">${b.items.map((i) => {
+        const t = i.tone ?? 'muted';
         const label = `<span class="label">${esc(i.label)}</span>`;
-        return `<li><span class="dot${tone(i.tone ?? 'muted')}" aria-hidden="true"></span>${i.page !== undefined ? link(label, { page: i.page }, ctx) : label}${
-          i.text ? `<span class="text">${esc(i.text)}</span>` : ''}${i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</li>`;
+        return `<li class="tone-${t}">${glyph(t)}<span class="body">${i.page !== undefined ? link(label, { page: i.page }, ctx) : label}${
+          i.text ? `<span class="text">${esc(i.text)}</span>` : ''}</span>${i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</li>`;
       }).join('')}</ul>`;
   }
 }
 
 // Ids are namespaced (s-<source>--<id>) so no piece's anchors can land on another's or on loom's.
 function renderSection(s: Section, ctx: RenderContext, headingLevel = 2): string {
+  if (!s.blocks.length && !s.title) return '';
+  const id = `s-${esc(ctx.source.id)}--${esc(s.id)}`;
+  const body = s.blocks.map((b) => renderBlock(b, ctx)).join('');
+  // A tone tints only the header band, with its glyph and word; the body stays plain.
+  if (s.tone && s.tone !== 'muted') {
+    const h = s.title ? `<h${headingLevel}>${esc(s.title)}</h${headingLevel}>` : '<span></span>';
+    return `<section class="card toned${tone(s.tone)}" id="${id}"><div class="band">${h}<span class="tone-word">${glyph(s.tone)}${TONE_WORD[s.tone]}</span></div>${body}</section>`;
+  }
   const h = s.title ? `<h${headingLevel}>${esc(s.title)}</h${headingLevel}>` : '';
-  return `<section class="card${tone(s.tone)}" id="s-${esc(ctx.source.id)}--${esc(s.id)}">${h}${s.blocks.map((b) => renderBlock(b, ctx)).join('')}</section>`;
+  return `<section class="card" id="${id}">${h}${body}</section>`;
 }
 
 function columns(main: string, side: string): string {
@@ -191,76 +246,6 @@ export interface Chrome {
   skipped: string[];
 }
 
-const STYLE = `
-:root{--bg:#f4f5f7;--card:#fff;--fg:#15171c;--muted:#596171;--line:#e1e4ea;--soft:#eef0f3;--accent:#3442c2;--accent-fg:#fff;--ok:#1d6b45;--ok-bg:#e7f4ec;--warn:#8a4b0a;--warn-line:#e9c98f;--warn-bg:#fffbf3;--bad:#b42318;--bad-line:#f1c4bf;--bad-bg:#fff7f6;--pill:#15171c;--pill-fg:#fff;color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121317;--card:#1b1d23;--fg:#e9ebf0;--muted:#a0a7b4;--line:#2c3039;--soft:#23262e;--accent:#9aa6ff;--accent-fg:#121317;--ok:#6fd39b;--ok-bg:#16291f;--warn:#f0b35c;--warn-line:#5a4520;--warn-bg:#231d12;--bad:#ff8f84;--bad-line:#5c2a25;--bad-bg:#2a1714;--pill:#e9ebf0;--pill-fg:#121317;color-scheme:dark}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.mono,.meta,.badge,.eyebrow,.kv dt,.stat dt,code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
-a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-header.top{background:var(--card);border-bottom:1px solid var(--line)}
-.top-in{max-width:1200px;margin:0 auto;padding:0 16px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 24px}
-.brand{display:flex;align-items:center;gap:8px;color:var(--fg);padding:12px 0;font-weight:600}.brand:hover{text-decoration:none}.brand .who{color:var(--muted);font-weight:400}
-nav.tabs{display:flex;flex-wrap:wrap;gap:0 18px;flex:1 1 auto;align-items:center}
-nav.tabs a{color:var(--muted);padding:12px 2px;border-bottom:2px solid transparent;font-size:14px}nav.tabs a:hover{color:var(--fg);text-decoration:none}
-nav.tabs a[aria-current]{color:var(--fg);border-bottom-color:var(--accent);font-weight:500}
-nav.tabs .sep{width:1px;height:18px;background:var(--line)}
-.meters{display:grid;gap:12px}.meter-head{display:flex;justify-content:space-between;gap:8px;font-size:14px}
-.bar{height:8px;border-radius:4px;background:var(--soft);overflow:hidden;margin:4px 0}.bar span{display:block;height:100%;background:var(--accent)}
-.meter.tone-ok .bar span{background:var(--ok)}.meter.tone-warn .bar span{background:var(--warn)}.meter.tone-bad .bar span{background:var(--bad)}.meter.tone-muted .bar span{background:var(--muted)}
-.code-block{display:grid;gap:6px}.code-block pre{margin:0;padding:10px 12px;border-radius:8px;background:var(--soft);overflow-x:auto;font-size:13px;white-space:pre-wrap;word-break:break-all}.code-block .copy{justify-self:start}
-ul.status{list-style:none;margin:0;padding:0;display:grid;gap:8px}ul.status li{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none;align-self:center}.dot.tone-ok{background:var(--ok)}.dot.tone-warn{background:var(--warn)}.dot.tone-bad{background:var(--bad)}
-ul.status .label{font-weight:500}ul.status .text{color:var(--fg)}ul.status .meta{color:var(--muted);font-size:13px}
-@media (max-width:640px){.top-in{display:grid;grid-template-columns:1fr auto;grid-template-areas:"brand right" "tabs tabs";gap:0 12px}
-.brand{grid-area:brand}.top-right{grid-area:right}.top-right .clock{display:none}
-nav.tabs{grid-area:tabs;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;white-space:nowrap;margin:0 -16px;padding:0 16px}nav.tabs::-webkit-scrollbar{display:none}}
-.top-right{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--muted)}
-main{max-width:1200px;margin:0 auto;padding:24px 16px 48px;display:flex;flex-direction:column;gap:18px}
-h1{margin:0;font-size:26px;font-weight:600;letter-spacing:-.01em;line-height:1.25}
-.intro{margin:4px 0 0;color:var(--muted);max-width:720px}
-.flash{padding:12px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card)}.flash.ok{border-color:var(--ok);background:var(--ok-bg);color:var(--ok)}.flash.bad{border-color:var(--bad-line);background:var(--bad-bg);color:var(--bad)}
-.cols{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}.main-col{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:16px}.side-col{flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:16px}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
-.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;color:var(--fg);display:flex;flex-direction:column;gap:2px}a.tile:hover{text-decoration:none;border-color:var(--muted)}
-.tile .eyebrow{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}.tile .value{font-size:20px;font-weight:600}.tile .detail{font-size:13px;color:var(--muted)}
-.tile.tone-ok .detail{color:var(--ok)}.tile.tone-warn .detail{color:var(--warn)}.tile.tone-bad .detail{color:var(--bad)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;min-width:0}
-.card h2{margin:0 0 8px;font-size:16px;font-weight:600}.card h3{margin:0 0 8px;font-size:15px}
-.card.tone-warn{border-color:var(--warn-line);background:var(--warn-bg)}.card.tone-bad{border-color:var(--bad-line);background:var(--bad-bg)}.card.tone-ok{border-color:var(--ok);background:var(--ok-bg)}
-.card>*+*{margin-top:10px}
-.stats{display:flex;flex-wrap:wrap;gap:12px 28px;margin:0}.stat dt{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}.stat dd{margin:0;font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}.stat dd.detail,.stat.tone-ok dd.detail,.stat.tone-warn dd.detail,.stat.tone-bad dd.detail{font-size:13px;font-weight:400;color:var(--muted)}
-.stat-link{color:inherit;display:block}.stat-link:hover{text-decoration:none}.stat-link:hover dd:first-of-type{color:var(--accent)}
-.stat.tone-ok>dd,.stat.tone-ok a>dd,.list li.tone-ok .text{color:var(--ok)}.stat.tone-warn>dd,.stat.tone-warn a>dd,.list li.tone-warn .text{color:var(--warn)}.stat.tone-bad>dd,.stat.tone-bad a>dd,.list li.tone-bad .text{color:var(--bad)}.stat.tone-muted>dd,.stat.tone-muted a>dd,.list li.tone-muted .text{color:var(--muted)}
-.ask .text{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.list{list-style:none;margin:0;padding:0}.list li{padding:9px 0;border-top:1px solid var(--soft);display:flex;flex-direction:column;gap:2px}.list li:first-child{border-top:0}
-.list .row{display:flex;align-items:baseline;gap:10px}.list .row-link{color:inherit;flex:1;min-width:0}.list .row-link:hover{color:var(--accent);text-decoration:none}
-.list .text{overflow-wrap:anywhere}.meta{color:var(--muted);font-size:12px}
-.badge{font-size:11px;color:var(--warn);background:var(--warn-bg);border:1px solid var(--warn-line);border-radius:4px;padding:1px 6px;white-space:nowrap}
-.text-block{margin:0;white-space:pre-line;overflow-wrap:anywhere}.text-block.tone-muted{color:var(--muted);font-size:13px}.text-block.tone-warn{color:var(--warn)}.text-block.tone-bad{color:var(--bad)}.text-block.tone-ok{color:var(--ok)}
-.callout{padding:12px 14px;border-radius:8px;background:var(--soft)}.callout p{margin:2px 0 0}.callout.tone-warn{background:var(--warn-bg);border:1px solid var(--warn-line)}.callout.tone-bad{background:var(--bad-bg);border:1px solid var(--bad-line);color:var(--bad)}.callout.tone-ok{background:var(--ok-bg);color:var(--ok)}
-.link-block{margin:0;font-size:14px}
-.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px 18px;margin:0}.kv dt{color:var(--muted);font-size:12px}.kv dd{margin:2px 0 0;overflow-wrap:anywhere;font-size:14px}
-.side-col .kv{grid-template-columns:1fr 1fr}
-.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:8px 10px 8px 0;border-top:1px solid var(--soft);vertical-align:top}th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.05em;border-top:0}
-.filters{display:flex;flex-wrap:wrap;gap:8px}.pill{font-size:13px;min-height:32px;display:inline-flex;align-items:center;padding:0 12px;border-radius:16px;border:1px solid var(--line);background:var(--card);color:var(--fg)}.pill:hover{text-decoration:none;border-color:var(--muted)}.pill.on{background:var(--pill);border-color:var(--pill);color:var(--pill-fg)}
-details.details{border-top:1px solid var(--soft)}details.details:first-of-type{border-top:0}
-details.details>summary{cursor:pointer;padding:10px 0;display:flex;flex-direction:column;gap:2px;list-style:none}details.details>summary::-webkit-details-marker{display:none}
-details.details>summary .text::before{content:"▸ ";color:var(--muted)}details.details[open]>summary .text::before{content:"▾ "}
-.details-body{margin:0 0 12px 14px;padding:12px 14px;border-radius:8px;background:var(--soft);display:flex;flex-direction:column;gap:10px}
-.btn{font:inherit;font-size:14px;font-weight:500;min-height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}.btn:hover{border-color:var(--muted)}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}.btn.danger{color:var(--bad)}
-.buttons{display:flex;flex-wrap:wrap;gap:8px}.button-form{margin:0}
-.piece-form{display:flex;flex-direction:column;gap:14px;margin:0}.field{display:flex;flex-direction:column;gap:5px;border:0;padding:0;margin:0}.field label,.field legend{font-size:14px;font-weight:500}
-.field input[type=text],.field input[type=password],.field textarea{font:inherit;font-size:15px;min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);width:100%}
-.field input:focus,.field textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
-.hint{font-size:12px;color:var(--muted)}.note{margin:0;font-size:13px;color:var(--muted)}.actions{display:flex;gap:10px}
-.choice .option{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);margin-top:6px;cursor:pointer}.choice .option span{display:flex;flex-direction:column;gap:2px}
-footer{max-width:1200px;margin:0 auto;padding:0 16px 32px;color:var(--muted);font-size:12px;display:flex;flex-wrap:wrap;gap:6px 14px}
-form.inline{display:inline;margin:0}form.inline button{background:none;border:1px solid var(--line);border-radius:6px;padding:4px 10px;color:var(--fg);font:inherit;font-size:13px;cursor:pointer}
-form.login{max-width:380px;margin:64px auto;padding:20px;display:flex;flex-direction:column;gap:10px}form.login input{width:100%;min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);font:inherit}
-form.login button{min-height:44px;border:0;border-radius:8px;background:var(--accent);color:var(--accent-fg);font:inherit;font-weight:500}.err{color:var(--bad)}.sub{color:var(--muted);margin:0}
-`;
 
 function document(title: string, body: string, refresh: boolean | number): string {
   const every = refresh === true ? 60 : refresh || 0;
@@ -283,8 +268,8 @@ function chromeFoot(c: Chrome, refresh: boolean): string {
 
 function flash(c: Chrome): string {
   if (!c.flash) return '';
-  const from = c.flash.from ? `<strong>${esc(c.flash.from)}</strong> · ` : '';
-  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status">${from}${esc(c.flash.message)}</div>`;
+  const from = c.flash.from ? `<span class="from">${esc(c.flash.from)}</span>` : '';
+  return `<div class="flash ${c.flash.ok ? 'ok' : 'bad'}" role="status">${c.flash.ok ? glyph('ok') : glyph('bad')}<span>${esc(c.flash.message)}</span>${from}</div>`;
 }
 
 /** One page, loom's or a piece's. */
@@ -309,7 +294,7 @@ export interface HomeAsk extends Ask { source: Source }
 export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles: HomeTile[], asks: HomeAsk[]): string {
   const tileHtml = tiles.length
     ? `<section class="tiles" aria-label="Status">${tiles.map((t) => {
-        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}`;
+        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone)}`;
         return t.page !== undefined
           ? `<a class="tile${tone(t.tone)}" href="${esc(pageHref(t.page, t.source))}">${inner}</a>`
           : `<div class="tile${tone(t.tone)}">${inner}</div>`;
@@ -319,17 +304,18 @@ export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles
   for (const a of asks) bySource.set(a.source.id, [...(bySource.get(a.source.id) ?? []), a]);
   const askItems = [...bySource.values()].flatMap((list) => {
     const shown = list.slice(0, ASKS_SHOWN).map((a) => {
-      const go = a.page !== undefined ? `<a href="${esc(pageHref(a.page, a.source))}">${esc(a.label ?? 'Open')}</a>` : '';
-      return `<li class="ask"><span class="text">${esc(a.text)}</span><div class="row"><span class="meta" style="flex:1">${esc(a.meta ?? a.source.id)}</span>${go}</div></li>`;
+      const go = a.page !== undefined ? `<a class="go" href="${esc(pageHref(a.page, a.source))}">${esc(a.label ?? 'Open')}</a>` : '';
+      return `<li class="ask"><span class="src"><span>${esc(a.source.id === 'loom' ? 'loom' : a.source.id)}</span></span><span class="text">${esc(a.text)}</span>${a.meta ? `<span class="sentence">${esc(a.meta)}</span>` : ''}${go}</li>`;
     });
     const rest = list.length - ASKS_SHOWN;
     if (rest > 0) shown.push(`<li><a href="${esc(pageHref('', list[0].source))}">${rest} more from ${esc(list[0].source.id)}</a></li>`);
     return shown;
   });
-  const yours = askItems.length ? `<section class="card tone-warn" id="your-call"><h2>Your call</h2><ul class="list">${askItems.join('')}</ul></section>` : '';
+  const yours = askItems.length ? `<section class="your-call" id="your-call"><h2 class="label">Your call</h2><ul class="ask-list">${askItems.join('')}</ul></section>` : '';
   const main = page.sections.filter((s) => !s.side).map((s) => renderSection(s, ctx)).join('');
-  const side = yours + page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
-  const body = `${chromeTop(chrome)}<main>${flash(chrome)}${tileHtml}${columns(main, side)}</main>${chromeFoot(chrome, true)}`;
+  // Your call comes first, in every scope and at every width (the design's rule 9).
+  const sideRest = page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
+  const body = `${chromeTop(chrome)}<main>${flash(chrome)}${yours}${tileHtml}${columns(main, sideRest)}</main>${chromeFoot(chrome, true)}`;
   return document(chrome.agent, body, true);
 }
 
@@ -352,7 +338,7 @@ export function renderLogin(error?: string, passkey: { rp?: string; here: boolea
   return document(
     'loom',
     `<form class="login" method="post" action="/login"><h1>loom</h1><p class="sub">Sign in with a passkey, paste the bearer token once, or open a sign-in link from <code>loom token link</code>. This browser keeps a cookie for 30 days.</p>${
-      error ? `<p class="err">${esc(error)}</p>` : ''}${pk}<input type="password" name="token" autocomplete="current-password" ${passkey.here ? '' : 'autofocus '}aria-label="token"><button type="submit">Open</button></form>${
+      error ? `<p class="err">${esc(error)}</p>` : ''}${pk}<input type="password" name="token" autocomplete="current-password" ${passkey.here ? '' : 'autofocus '}aria-label="token"><button type="submit"${passkey.here ? ' class="secondary"' : ''}>Open</button></form>${
       passkey.here ? '<script src="/login/passkey.js" defer></script>' : ''}`,
     false,
   );

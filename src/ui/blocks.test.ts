@@ -40,9 +40,10 @@ describe('meter, code and status blocks', () => {
       { label: 'mail' },
     ] }]);
     const html = renderPage(p as Exclude<typeof p, string>, ctx, chrome);
-    expect(html).toContain('<span class="dot tone-ok"');
+    // Tone is a shape and a word as well as a color: ● ▲ ◆ ○, named for a screen reader.
+    expect(html).toContain('<li class="tone-ok"><svg class="glyph" viewBox="0 0 10 10" role="img" aria-label="ok"');
     expect(html).toContain('dark since 13:02');
-    expect(html).toContain('<span class="dot tone-muted"');
+    expect(html).toContain('<li class="tone-muted"><svg class="glyph" viewBox="0 0 10 10" role="img" aria-label="inactive"');
     expect(page([{ type: 'status', items: [{ label: 'x', tone: 'purple' }] }])).toMatch(/tone/);
   });
 

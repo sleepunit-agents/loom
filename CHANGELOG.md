@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The page's new look, phase 1** (Claude Design's handoff, 2026-10-26):
+  Instrument Sans and JetBrains Mono, served by loom itself (OFL, `/fonts/`;
+  CSP `font-src 'self'`), the warm ground and lime "thread" accent, light and
+  dark. Tone is a shape and a word as well as a color (● ▲ ◆ ○, named for
+  screen readers). Every block re-rendered to the design: a toned section tints
+  only its header band; stats as tiles; rows, not cards; tables stack into
+  cards on a phone; long kv values drop below their label; long text clamps
+  with More; external links show their domain; choices of four or fewer are a
+  segmented control; buttons lime / raised / danger-outlined; meters, code and
+  status as drawn. Home leads with Your call, before the tiles, at every width.
+
 ### Added
 
 - **Three blocks: `meter`, `code`, `status`** (docs/extensions.md). A usage
