@@ -295,7 +295,7 @@ export interface Shell {
  * A page that stays fresh says how often (data-live, seconds): the page's
  * script re-fetches it in place. Without script, the old meta refresh.
  */
-const HEAD_APP = '<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/loom.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/icons/loom-180.png">' +
+const HEAD_APP = '<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/loom-32.png" sizes="32x32" type="image/png"><link rel="icon" href="/icons/loom-192.png" sizes="192x192" type="image/png"><link rel="apple-touch-icon" href="/icons/loom-180.png">' +
   '<meta name="theme-color" content="#F4F3EE" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0E0E0D" media="(prefers-color-scheme: dark)"><meta name="apple-mobile-web-app-capable" content="yes">';
 
 function document(title: string, body: string, refresh: boolean | number): string {
