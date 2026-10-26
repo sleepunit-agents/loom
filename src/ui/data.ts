@@ -25,6 +25,8 @@ export interface MemoryView {
   timesSeen: number;
   /** The person this memory is about (metadata.person), when tagged. */
   person: string | null;
+  /** Where it was learned (metadata.where: "discord:#studio", "wake:w-…"), when recorded. */
+  where: string | null;
   /** The stored field, refreshed by the consolidation lane. */
   stored: number;
   /** Heat right now (heatOf): what the digest uses. */
@@ -66,6 +68,13 @@ function selectList(db: BetterSqlite3.Database): string {
   return COLUMNS.split(', ').map((c) => (have.has(c) ? c : `NULL AS ${c}`)).join(', ');
 }
 
+function whereOf(metadata: string | null): string | null {
+  try {
+    const m = JSON.parse(metadata || '{}') as Record<string, unknown>;
+    return typeof m.where === 'string' && m.where ? m.where : null;
+  } catch { return null; }
+}
+
 function personOf(metadata: string | null): string | null {
   try {
     const m = JSON.parse(metadata || '{}') as Record<string, unknown>;
@@ -81,7 +90,7 @@ function view(r: Row, nowMs: number, inDigest = false): MemoryView {
     ref: r.ref, title: r.title, category: r.category, project: r.project, content: r.content,
     sourcing: r.sourcing, scope: r.scope, created: r.created, updated: r.updated,
     lastAccessed: r.last_accessed, expiresAt: r.expires_at, timesSeen: r.times_seen ?? 1,
-    person: personOf(r.metadata), stored: r.salience ?? heat, heat, writtenHeat, recallHeat, tier: tierOf(heat),
+    person: personOf(r.metadata), where: whereOf(r.metadata), stored: r.salience ?? heat, heat, writtenHeat, recallHeat, tier: tierOf(heat),
     halfLifeDays: HALF_LIVES[r.category] ?? DEFAULT_HALF_LIFE_DAYS, inDigest,
   };
 }
@@ -116,6 +125,24 @@ export function memoryByRef(contextDir: string, ref: string, nowMs = Date.now())
       m.inDigest = heatList(contextDir, { limit: 400, nowMs }).rows.some((x) => x.ref === ref && x.inDigest);
     }
     return m;
+  } finally {
+    db.close();
+  }
+}
+
+export interface Revision { content: string; op: string; at: string }
+
+/**
+ * A memory's earlier bodies, newest first: each is what it said until `at`,
+ * when an edit (op "update") or a rollback ("revision-restore") replaced it.
+ */
+export function memoryHistory(contextDir: string, ref: string, limit = 10): Revision[] {
+  const db = open(contextDir);
+  if (!db) return [];
+  try {
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memory_revisions'").get();
+    if (!has) return [];
+    return (db.prepare('SELECT content, op, replaced_at AS at FROM memory_revisions WHERE ref = ? ORDER BY replaced_at DESC, id DESC LIMIT ?').all(ref, limit) as Revision[]);
   } finally {
     db.close();
   }

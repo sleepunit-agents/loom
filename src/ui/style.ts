@@ -229,6 +229,8 @@ main.dash{gap:24px}
 .seg-tabs a{flex:1;display:flex;align-items:center;justify-content:center;height:42px;border-radius:var(--r-control);color:var(--ink-2);font-size:14px}.seg-tabs a:hover{text-decoration:none;color:var(--ink)}
 .seg-tabs a.on{background:var(--surface);color:var(--ink);font-weight:600}
 .your-call .label .n{float:right;color:var(--ink-2)}
+[id$="--history"] .list li{position:relative;padding-left:22px}[id$="--history"] .list li::before{content:"";position:absolute;left:4px;top:18px;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--ink-2);background:var(--surface)}
+[id$="--history"] .list li:not(:first-child) .text{color:var(--ink-2)}[id$="--history"] .list li:first-child::before{background:var(--ink);border-color:var(--ink)}[id$="--history"] .list li:not(:last-child)::after{content:"";position:absolute;left:8.5px;top:29px;bottom:-10px;width:1.5px;background:var(--line)}
 .prose{font-size:16px;line-height:1.55;overflow-wrap:anywhere}.prose>*{margin:0 0 12px}.prose>*:last-child{margin-bottom:0}
 .prose h3{font-size:19px;margin-top:20px}.prose h4{font-size:16px;margin-top:16px}.prose h5{font-size:14px;margin-top:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
 .prose table{border-collapse:collapse;width:100%;font-size:14px;display:block;overflow-x:auto}.prose th,.prose td{text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}.prose hr{border:0;border-top:1px solid var(--line)}

@@ -8,6 +8,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { sessionStore } from './sessions.js';
 import { createHash } from 'node:crypto';
 import { remember } from '../tools/remember.js';
+import { update } from '../tools/update.js';
 import { listProposals, propose } from '../backends/proposals.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { parseActResult, parseManifest, parsePage, splitPage, validPath } from './vocab.js';
@@ -307,6 +308,17 @@ describe('loom UI over HTTP', () => {
     const html = await (await get(`/memory/${ref}`, cookie)).text();
     expect(html).toContain('<h1>a hot memory</h1>');
     expect(html).toContain('half-life');
+    // The board's summary, and the record behind Machine details.
+    for (const s of ['Learned from', 'First written', 'Recalled', '<summary>', 'Machine details']) expect(html).toContain(s);
+    expect(html).not.toContain('<h2>History</h2>');   // never edited: no history to show
+    // Edited twice: now, then each earlier body back to the first.
+    await update(stack, { ref, content: 'second take' });
+    await update(stack, { ref, content: 'third take' });
+    const edited = await (await get(`/memory/${ref}`, cookie)).text();
+    const hist = /<h2>History<\/h2>([\s\S]*?)<\/section>/.exec(edited)?.[1] ?? '';
+    expect([...hist.matchAll(/<span class="text">([^<]*)<\/span>/g)].map((m) => m[1])).toEqual(['third take', 'second take', 'body']);
+    expect(hist).toMatch(/Now · edited/);
+    expect(hist).toMatch(/· first written/);
     expect((await get('/memory/nope/none', cookie)).status).toBe(404);
     expect((await get('/people', cookie)).status).toBe(200);
     // A piece may link to someone with no card: a page that says so, not an error.

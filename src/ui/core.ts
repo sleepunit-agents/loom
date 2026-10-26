@@ -11,7 +11,7 @@ import { listProposals, rejectProposal, ratifyProposal, UnknownProposalError } f
 import { fieldState, type CardValue } from '../backends/people.js';
 import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
-import { heatList, memoriesAbout, memoryByRef, tapeRows, type MemoryView } from './data.js';
+import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, type MemoryView } from './data.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile, type Tone } from './vocab.js';
 
 const TAPE_HOURS = 24;
@@ -296,11 +296,28 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
   if (!m) return { title: 'Not found', sections: [] };
   const names = peopleNames(contextDir);
   const episode = m.category === 'episode';
+  // What the board leads with: where it came from, when, how often it's come back, and who it's about.
+  const summary: Block = { type: 'kv', items: [
+    { label: 'Learned from', value: m.where ?? (m.sourcing ? `${m.sourcing}` : 'not recorded') },
+    { label: 'First written', value: ago(m.created, tz, nowMs) },
+    { label: 'Recalled', value: m.timesSeen > 0 && m.lastAccessed ? `${m.timesSeen}× · last ${ago(m.lastAccessed, tz, nowMs)}` : 'not yet' },
+    ...(m.person ? [{ label: 'About', value: names.get(m.person) ?? m.person, page: personPage(m.person) }] : []),
+  ] };
   const main: Block[] = [
     { type: 'prose', text: m.content },
-    ...(m.person ? [{ type: 'kv' as const, items: [{ label: 'about', value: names.get(m.person) ?? m.person, page: personPage(m.person) }] }] : []),
+    summary,
     { type: 'buttons', items: [{ action: 'archive', label: 'Archive', tone: 'danger', confirm: 'It leaves recall. It stays in the archive, and it can be restored from there.', fields: { ref: m.ref } }] },
   ];
+  // Its history: what it says now, then each earlier body back to the first, newest first.
+  const revs = memoryHistory(contextDir, m.ref);
+  const gist = (t: string) => { const one = t.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').trim(); return one.length > 160 ? `${one.slice(0, 159)}…` : one; };
+  const history: Block | null = revs.length ? { type: 'list', items: [
+    { text: gist(m.content), meta: `Now · ${m.updated ? `edited ${ago(m.updated, tz, nowMs)}` : `written ${ago(m.created, tz, nowMs)}`}` },
+    ...revs.map((r, i) => {
+      const from = revs[i + 1]?.at ?? m.created;
+      return { text: gist(r.content), meta: `${ago(from, tz, nowMs)} · ${i === revs.length - 1 ? 'first written' : r.op === 'revision-restore' ? 'rolled back to' : 'revised'}` };
+    }),
+  ] } : null;
   const record: Block = {
     type: 'kv',
     items: [
@@ -317,6 +334,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
     ],
   };
   const sections: Section[] = [{ id: 'memory', blocks: main }];
+  if (history) sections.push({ id: 'history', title: 'History', blocks: [history] });
   if (!episode) {
     sections.push({
       id: 'heat',
@@ -328,7 +346,8 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
       ],
     });
   }
-  sections.push({ id: 'record', title: 'Record', side: true, blocks: [record] });
+  // The rest is machine detail, a tap away (HANDOFF: machine text goes behind a details).
+  sections.push({ id: 'record', side: true, blocks: [{ type: 'details', summary: 'Machine details', meta: m.ref, blocks: [record] }] });
   return { title: m.title, sections };
 }
 
