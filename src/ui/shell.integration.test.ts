@@ -89,6 +89,21 @@ describe('the app shell', () => {
     expect(out.headers.get('clear-site-data')).toBe('"cache", "storage"');
   });
 
+  it('push: the key and the subscription need a signed-in browser and its token; only real push services', async () => {
+    expect((await fetch(`${base}/push/key`, { redirect: 'manual' })).status).toBe(303);   // signed out: to the sign-in page
+    const cookie = await login();
+    const key = await (await get('/push/key', cookie)).json() as { publicKey: string };
+    expect(key.publicKey).toMatch(/^[A-Za-z0-9_-]{80,}$/);
+    const page = await (await get('/passkeys', cookie)).text();
+    expect(page).toContain('data-push');
+    const csrf = /data-push data-csrf="([0-9a-f]{64})"/.exec(page)![1];
+    const post = (body: unknown) => fetch(`${base}/push/subscribe`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const good = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) } };
+    expect((await post({ sub: good })).status).toBe(403);                                   // no token
+    expect((await post({ _csrf: csrf, sub: { ...good, endpoint: 'https://10.0.0.5/x' } })).status).toBe(400);   // not a push service
+    expect((await post({ _csrf: csrf, sub: good })).status).toBe(200);
+  });
+
   it('the sheets are pages too, and Find filters places by name', async () => {
     const cookie = await login();
     for (const [path, title] of [['/scope', 'Show me'], ['/places', 'Places'], ['/find', 'Find']] as const) {

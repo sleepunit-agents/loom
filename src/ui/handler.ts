@@ -40,6 +40,7 @@ import { join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { sessionStore } from './sessions.js';
 import { APP_JS } from './app.js';
+import { askKey, publicKey, pushSub, watch } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
@@ -89,7 +90,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
+const PAGE_ROOTS = ['/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -332,6 +333,22 @@ const HOME_THREAD = 30;
 
 function agentTabs(agent: string, current: string): AgentHead['tabs'] {
   return [['Today', ''], ['Mind', 'mind'], ['People', 'people'], ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
+}
+
+/** Your call, everywhere: the household's proposals and every piece's asks (or a lone agent's). For the push watch. */
+export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
+  const { pieces } = await pieceManifests(opts.env);
+  const hh = opts.household?.();
+  if (hh) return [...proposalAsks(hh, Object.fromEntries(hh.agents.map((a) => [a, pendingProposals(hh, a)]))), ...pieceAsks(pieces, opts.env)];
+  return pieceAsks(pieces, opts.env);
+}
+
+/** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
+export async function pushWatch(opts: UiOptions): Promise<number> {
+  const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
+  return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
+    key: askKey(a), title: `Your call · ${a.sourceLabel ?? a.source.id}`, body: a.text,
+  })), subject);
 }
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
@@ -647,6 +664,23 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
+  // Push for Your call (push.ts): the key to subscribe with, and this browser's subscription.
+  if (pathname === '/push/key' && req.method === 'GET') {
+    if (who.kind !== 'session') return sendJson(res, 403, { error: 'from a signed-in browser' });
+    return sendJson(res, 200, { publicKey: publicKey(storeFor(opts)) });
+  }
+  if ((pathname === '/push/subscribe' || pathname === '/push/unsubscribe') && req.method === 'POST') {
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
+    if (who.kind !== 'session') return sendJson(res, 403, { error: 'from a signed-in browser' });
+    const body = await readJson(req, PASSKEY_MAX_BYTES);
+    if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
+    if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    const sub = pushSub(body.sub);
+    if (!sub) return sendJson(res, 400, { error: 'not a push subscription loom sends to' });
+    if (pathname === '/push/unsubscribe') storeFor(opts).removePushSub(sub.endpoint);
+    else storeFor(opts).addPushSub(who.cookie, sub);
+    return sendJson(res, 200, { ok: true });
+  }
   if ((pathname === '/passkeys/options' || pathname === '/passkeys') && req.method === 'POST') {
     if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
     if (who.kind !== 'session') return sendJson(res, 403, { error: 'a passkey is added from a signed-in browser' });

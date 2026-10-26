@@ -146,7 +146,7 @@ ul.status .text{font-size:13px;color:var(--tone,var(--ink-2))}ul.status .meta{fo
 .ask-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
 .ask{background:var(--surface);border-radius:var(--r-card);padding:14px 16px;display:flex;flex-direction:column;gap:6px;border:1px solid var(--line)}
 .ask .sentence{font-size:14px;color:var(--ink-2)}.ask .src{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2)}.ask .text{font-size:16px;font-weight:500}
-.ask .go{align-self:flex-start;display:inline-flex;align-items:center;height:44px;padding:0 18px;border-radius:var(--r-button);background:var(--thread);color:#161614;font-weight:600}.ask .go:hover{text-decoration:none}
+.ask:target,.ask:focus{outline:2px solid var(--thread);outline-offset:2px}.ask .go{align-self:flex-start;display:inline-flex;align-items:center;height:44px;padding:0 18px;border-radius:var(--r-button);background:var(--thread);color:#161614;font-weight:600}.ask .go:hover{text-decoration:none}
 .your-call .label{color:var(--link)}
 
 footer{max-width:1100px;margin:0 auto;padding:0 16px 32px;color:var(--ink-2);font-size:12px;display:flex;flex-wrap:wrap;gap:6px 14px}

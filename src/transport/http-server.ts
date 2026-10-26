@@ -40,7 +40,8 @@ import { EmptyResultSchema } from '@modelcontextprotocol/core';
 import { createLoomServer } from '../server.js';
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
-import { handleUi, isUiRequest, legacyUiAuth, type UiAuth } from '../ui/handler.js';
+import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
+import { WATCH_S } from '../ui/push.js';
 import { pieceApi, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
@@ -408,6 +409,13 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     res.end(JSON.stringify(out.body));
   }
 
+  // Push for Your call: each listener tries the watch each minute; one of them gets it (push.ts).
+  const pushTimer = opts.createServer ? undefined : setInterval(() => {
+    void pushWatch({ contextDir: opts.contextDir, auth: uiAuth, env: process.env, household: live })
+      .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`));
+  }, WATCH_S * 1000);
+  pushTimer?.unref();
+
   const http = createServer((req, res) => {
     void (async () => {
       // loom's web page (src/ui), at the root. Its own auth (a session from
@@ -586,6 +594,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     port,
     host: opts.host,
     async close() {
+      if (pushTimer) clearInterval(pushTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

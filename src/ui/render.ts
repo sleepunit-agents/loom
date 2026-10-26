@@ -7,6 +7,7 @@
  * as a color (glyph()).
  */
 import { prose } from './prose.js';
+import { askKey } from './push.js';
 import type { Ask, Block, Cell, Field, Page, Section, Tile, Tone } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
@@ -560,7 +561,8 @@ function askCard(a: HomeAsk, agents: RenderContext['agents'], nowMs: number): st
   const who = a.agent ? agents?.[a.agent] : undefined;
   const src = `${who ? mark(who, 20) : glyph(a.tone)}<span>${esc(a.sourceLabel ?? a.source.id)}</span>`;
   const go = a.page !== undefined ? `<a class="go" href="${esc(pageHref(a.page, a.source))}">${esc(a.label ?? 'Open')}</a>` : '';
-  return `<li class="ask${a.tone && a.tone !== 'ok' && a.tone !== 'muted' ? tone(a.tone) : ''}"><span class="src"><span class="who">${src}</span>${a.at ? `<span class="mono">${esc(age(a.at, nowMs))}</span>` : ''}</span>` +
+  // Its id is the push key: a notification's tap opens Home at #ask-<key>.
+  return `<li class="ask${a.tone && a.tone !== 'ok' && a.tone !== 'muted' ? tone(a.tone) : ''}" id="ask-${askKey(a)}" tabindex="-1"><span class="src"><span class="who">${src}</span>${a.at ? `<span class="mono">${esc(age(a.at, nowMs))}</span>` : ''}</span>` +
     `<span class="text">${esc(a.text)}</span>${a.meta ? `<span class="sentence">${esc(a.meta)}</span>` : ''}${go}</li>`;
 }
 
@@ -642,12 +644,15 @@ export function renderPasskeys(page: Page, ctx: RenderContext, chrome: Chrome, a
   const control = 'csrf' in add
     ? `<section class="card"><h2>Add a passkey</h2><form class="login" style="margin:0;padding:0;max-width:420px" action="/passkeys" method="get"><p class="sub">Name it so you'll know it later, like "Jonathan's phone".</p><input id="passkey-label" maxlength="60" placeholder="Name" aria-label="name"><button type="button" id="passkey-add" data-csrf="${esc(add.csrf)}">Add a passkey</button><p class="sub" id="passkey-msg"></p></form></section>`
     : `<section class="card"><h2>Add a passkey</h2><p class="sub">${esc(add.note)}</p></section>`;
+  // Push for Your call: shown by /app.js only where the browser can (https, a service worker, PushManager).
+  const notify = `<section class="card"><h2>Notifications</h2><p class="sub">Your call, on this device: a notification when something new needs you, and a tap opens it on Home.</p>` +
+    `<p class="sub" data-push-status>Needs loom over https; on an iPhone, loom added to the Home Screen first.</p><button class="btn" type="button" data-push data-csrf="${esc(ctx.csrf)}" hidden>Turn on for this device</button></section>`;
   return renderPage(page, ctx, chrome)
     // No minute refresh here: it would cut off a passkey being made.
     .replace('<noscript><meta http-equiv="refresh" content="60"></noscript>', '')
     .replace(` data-live="${LIVE_S}"`, '')
     .replace('<span data-live-status>Refreshes every minute.</span>', '')
     // The control goes first, under the title: on a phone it's what the page is for.
-    .replace(/(<main>[\s\S]*?<h1>[\s\S]*?<\/div>)/, `$1${control}`)
+    .replace(/(<main>[\s\S]*?<h1>[\s\S]*?<\/div>)/, `$1${control}${notify}`)
     .replace('</body>', `${'csrf' in add ? '<script src="/login/passkey.js" defer></script>' : ''}</body>`);
 }
