@@ -68,6 +68,22 @@ function selectList(db: BetterSqlite3.Database): string {
   return COLUMNS.split(', ').map((c) => (have.has(c) ? c : `NULL AS ${c}`)).join(', ');
 }
 
+/** A where's surface: "slack" for "slack:dm:pat", "wake" for "wake:w-1a2b3c". */
+export function surfaceOf(where: string): string {
+  return where.split(/[:/]/)[0] || '?';
+}
+
+const SURFACES: Record<string, string> = { slack: 'Slack', discord: 'Discord', wake: 'Wake', web: 'Web', cli: 'Terminal', mcp: 'MCP' };
+
+/** A where as a person says it: "Slack DM · Patrick Kells", "Discord #pond", "Wake". */
+export function whereLabel(where: string): string {
+  const [surface, ...rest] = where.split(':');
+  const name = SURFACES[surface] ?? (surface ? surface[0].toUpperCase() + surface.slice(1) : where);
+  if (surface === 'wake') return name;
+  if (rest[0] === 'dm' && rest[1]) return `${name} DM · ${rest.slice(1).join(':').split('-').map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ')}`;
+  return rest.length ? `${name} ${rest.join(':')}` : name;
+}
+
 function whereOf(metadata: string | null): string | null {
   try {
     const m = JSON.parse(metadata || '{}') as Record<string, unknown>;

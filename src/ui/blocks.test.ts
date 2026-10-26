@@ -5,7 +5,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parsePage } from './vocab.js';
-import { renderPage, CORE, type Chrome } from './render.js';
+import { renderDashboard, renderPage, CORE, type Chrome } from './render.js';
+import { whereLabel } from './data.js';
 
 const chrome: Chrome = { agent: 'Test', nav: [], clock: 'now', csrf: 'c'.repeat(64), skipped: [] };
 const ctx = { source: CORE, path: '', query: {}, csrf: 'c'.repeat(64) };
@@ -21,6 +22,20 @@ describe('meter, code and status blocks', () => {
     // A long second value leads the line instead of crowding the right.
     expect(html).toMatch(/<span class="ttitle">long<\/span><span class="tline"><span class="tpair"><span class="tl">when<\/span> a value much longer/);
     expect(html).not.toContain('+ 1 more field');
+  });
+
+  it('a where reads the way a person says it', () => {
+    expect(whereLabel('slack:dm:patrick-kells')).toBe('Slack DM · Patrick Kells');
+    expect(whereLabel('discord:#pond')).toBe('Discord #pond');
+    expect(whereLabel('wake:w-1a2b3c')).toBe('Wake');
+    expect(whereLabel('letters')).toBe('Letters');
+  });
+
+  it('Your call shows three cards; past four, the rest fold under N more', () => {
+    const ask = (n: number) => ({ text: `ask ${n}`, source: CORE, page: '' });
+    const html = (n: number) => renderDashboard({ label: 'Household', asks: Array.from({ length: n }, (_, i) => ask(i)), tiles: [], thread: [] }, ctx, chrome);
+    expect(html(4)).not.toContain('<details class="more-asks"');
+    expect(html(10)).toContain('<details class="more-asks"><summary>7 more</summary>');
   });
 
   it('one stat alone is the page\'s hero; two or more are the grid', () => {

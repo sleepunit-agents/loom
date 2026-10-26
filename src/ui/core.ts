@@ -12,7 +12,7 @@ import { fieldState, type CardValue } from '../backends/people.js';
 import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
 import { restore } from '../tools/restore.js';
-import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, type MemoryView } from './data.js';
+import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, surfaceOf, whereLabel, type MemoryView } from './data.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile, type Tone } from './vocab.js';
 
 const TAPE_HOURS = 24;
@@ -133,10 +133,6 @@ export interface Home {
   page: Page;
 }
 
-function surfaceOf(where: string): string {
-  return where.split(/[:/]/)[0] || '?';
-}
-
 /** Home: the tape is the page. Top of mind and people sit beside it. */
 export function homePage(contextDir: string, query: Record<string, string>, opts: CoreOptions = {}): Home {
   const tz = opts.timeZone ?? uiTimeZone();
@@ -159,13 +155,13 @@ export function homePage(contextDir: string, query: Record<string, string>, opts
   }
   const tapeBlocks: Block[] = [];
   if (surfaces.length > 1) {
-    tapeBlocks.push({ type: 'filters', param: 'where', options: [{ value: '', label: 'Everywhere' }, ...surfaces.map((s) => ({ value: s, label: s }))] });
+    tapeBlocks.push({ type: 'filters', param: 'where', options: [{ value: '', label: 'Everywhere' }, ...surfaces.map((s) => ({ value: s, label: whereLabel(s) }))] });
   }
   for (const g of groups) {
     tapeBlocks.push({ type: 'text', text: g.label, tone: 'muted' });
     tapeBlocks.push({
       type: 'list',
-      items: g.items.map((e) => ({ text: e.title, meta: `${parts(e.created, tz).time} · ${e.where}`, page: memoryPage(e.ref) })),
+      items: g.items.map((e) => ({ text: e.title, meta: `${parts(e.created, tz).time} · ${whereLabel(e.where)}`, page: memoryPage(e.ref) })),
     });
   }
   if (!tape.length) tapeBlocks.push({ type: 'text', text: pick ? `Nothing from ${pick} in the last ${hours}h.` : `Nothing in the last ${hours}h.`, tone: 'muted' });

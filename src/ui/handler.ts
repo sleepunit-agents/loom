@@ -48,6 +48,7 @@ import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { householdFind, householdThread } from './household-pages.js';
+import { surfaceOf, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
@@ -857,16 +858,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const store = storeFor(opts);
       const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000)) : store.lookedAt(Math.floor(nowMs / 1000))) * 1000;
       const t = householdThread(hh, 24, nowMs);
-      const byAgent = query.who && hh.agents.includes(query.who) ? query.who : '';
+      // Thread chips: All, each agent (when there's more than one), then each place it happened.
+      const surfaces = [...new Set(t.items.map((r) => surfaceOf(r.where)))].sort();
+      const from = query.who && (hh.agents.includes(query.who) || surfaces.includes(query.who)) ? query.who : '';
       const agents = agentsOf(hh)!;
+      const chips = [...(hh.agents.length > 1 ? hh.agents.map((a) => ({ value: a, label: agents[a].label })) : []),
+        ...(surfaces.length > 1 ? surfaces.filter((s) => !hh.agents.includes(s)).map((s) => ({ value: s, label: whereLabel(s) })) : [])];
       const d: Dashboard = {
         label: 'Household',
         asks: [...proposalAsks(hh, t.proposals), ...pieceAsks(pieces, opts.env)],
         tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
-        thread: t.items.filter((r) => !byAgent || r.agent === byAgent).slice(0, HOME_THREAD)
-          .map((r) => ({ agent: r.agent, text: r.text, meta: `${r.where} · ${age(r.created, nowMs)}`, at: r.created, page: r.page })),
+        thread: t.items.filter((r) => !from || r.agent === from || surfaceOf(r.where) === from).slice(0, HOME_THREAD)
+          .map((r) => ({ agent: r.agent, text: r.text, meta: `${whereLabel(r.where)} · ${age(r.created, nowMs)}`, at: r.created, page: r.page })),
         sinceMs, sinceLabel: clockAt(sinceMs),
-        filters: hh.agents.length > 1 ? { param: 'who', current: byAgent, options: [{ value: '', label: 'All' }, ...hh.agents.map((a) => ({ value: a, label: agents[a].label }))] } : undefined,
+        filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
         shared: { pages: t.pages, people: t.people },
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };

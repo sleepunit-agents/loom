@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Home per its board: Your call and Thread.** Ask cards lead with a bold
+  title (up to three lines), and past four the rest fold under "N more", so
+  Home stays a glance. Thread rows say where in words ("Slack DM · Patrick
+  Kells", "Discord #pond", "Wake", not `slack:dm:patrick-kells`). Its pills
+  are each agent when there's more than one, then each place things happened.
+  The tape and the household pages say where the same way.
 - **Catalog: shuttle at 3893774.** Bridges and Subscriptions per their
   boards: a status row a bridge, Talking now, conversations with initials;
   usage meters, logins with how long each is good for and Renew when one

@@ -587,6 +587,9 @@ export function age(iso: string | undefined, nowMs = Date.now()): string {
   return m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
 }
 
+/** Your call shows this many cards; past one more, the rest fold under "N more". */
+const CARDS_SHOWN = 3;
+
 function askCard(a: HomeAsk, agents: RenderContext['agents'], nowMs: number): string {
   const who = a.agent ? agents?.[a.agent] : undefined;
   const src = `${who ? mark(who, 20) : glyph(a.tone)}<span>${esc(a.sourceLabel ?? a.source.id)}</span>`;
@@ -615,8 +618,12 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
     ? `<section class="starters"><h2 class="label">Start with these</h2><div class="card rows">${d.firstRun.starters.map((s) =>
         `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
           actionForm({ ...ctx, source: CORE, path: '', query: {} }, 'piece-install', `${hiddenInputs({ name: s.name })}<button class="btn small" type="submit">Install</button>`, 'button-form')}</div>`).join('')}</div></section>` : '';
+  // The first three, as the boards show them; the rest a tap away, so Home stays a glance.
+  const cards = d.asks.map((a) => askCard(a, ctx.agents, nowMs));
+  const rest = cards.length > CARDS_SHOWN + 1 ? cards.splice(CARDS_SHOWN) : [];
   const yours = need
-    ? `<section class="your-call" id="your-call"><h2 class="label">Your call <span class="n">${need}</span></h2><ul class="ask-list">${d.asks.map((a) => askCard(a, ctx.agents, nowMs)).join('')}</ul></section>` : '';
+    ? `<section class="your-call" id="your-call"><h2 class="label">Your call <span class="n">${need}</span></h2><ul class="ask-list">${cards.join('')}</ul>${
+      rest.length ? `<details class="more-asks"><summary>${rest.length} more</summary><ul class="ask-list">${rest.join('')}</ul></details>` : ''}</section>` : '';
   const glance = d.tiles.length
     ? `<section class="glance"><h2 class="label">At a glance</h2><div class="tiles">${d.tiles.map((t) => {
         const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone === 'ok' ? undefined : t.tone)}`;
