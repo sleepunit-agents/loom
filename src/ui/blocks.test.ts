@@ -23,6 +23,13 @@ describe('meter, code and status blocks', () => {
     expect(html).not.toContain('+ 1 more field');
   });
 
+  it('one stat alone is the page\'s hero; two or more are the grid', () => {
+    const one = page([{ type: 'stats', items: [{ label: 'Art wakes next', value: '9:30 AM', detail: 'in 14 minutes' }] }]);
+    expect(renderPage(one as Exclude<typeof one, string>, ctx, chrome)).toContain('<dl class="stats one">');
+    const two = page([{ type: 'stats', items: [{ label: 'a', value: '1' }, { label: 'b', value: '2' }] }]);
+    expect(renderPage(two as Exclude<typeof two, string>, ctx, chrome)).toContain('<dl class="stats">');
+  });
+
   it('a page with nothing on it says whose it is, under its intro', () => {
     const html = renderPage({ title: 'Tasks', intro: 'A work store.', sections: [] }, ctx, chrome);
     expect(html).toContain('<p class="intro">A work store.</p>');

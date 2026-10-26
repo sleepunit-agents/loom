@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **One stat alone is a hero.** A `stats` block with a single item renders
+  full width at the boards' top size (the Clock's "Art wakes next 9:30"), with
+  its detail line under it. Two or more are the grid, as before.
 - **Catalog: box at 7fbba5d.** Boxes per its board, with Sessions first: each
   agent's box session and house session, their claude.ai links (talk to them
   from the Claude app) and one-tap up/down; a card per box with its houses;
