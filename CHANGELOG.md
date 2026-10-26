@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Push for Your call.** Turn it on per device on the Passkeys page (https;
+  on an iPhone, loom added to the Home Screen first). Each minute one of
+  loom's listeners checks Your call and announces what's new, once; a tap
+  opens Home at that ask. Subscriptions live with their session and go when
+  it does; loom only sends to https endpoints on known push services, and the
+  payload is encrypted to the browser. New dependency: web-push.
+
 - **Undo on a message.** An action result may carry `"undo": {"action",
   "label"?, "fields"?}`: the message gets an Undo that posts that action back
   to the same piece, with the same anti-forgery token (it's an ordinary form,

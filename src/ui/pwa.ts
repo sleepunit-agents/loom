@@ -87,6 +87,25 @@ async function shell(req) {
   try { const res = await fetch(req); if (res.ok) c.put(req, res.clone()).catch(() => {}); return res; }
   catch { const hit = await c.match(req); if (hit) return hit; throw new Error('offline'); }
 }
+// Push for Your call (push.ts): show it; a tap opens Home at that ask, never a piece's tab.
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch {}
+  e.waitUntil(self.registration.showNotification(d.title || 'loom', {
+    body: d.body || '', tag: d.tag, data: { url: d.url || '/' }, icon: '/icons/loom-192.png', badge: '/icons/loom-192.png',
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/', location.origin);
+  if (url.origin !== location.origin) return;
+  e.waitUntil((async () => {
+    for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+      if ('focus' in c) { if (c.navigate) await c.navigate(url.href).catch(() => {}); return c.focus(); }
+    }
+    return self.clients.openWindow(url.href);
+  })());
+});
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;

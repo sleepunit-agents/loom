@@ -310,6 +310,33 @@ function onlineAgain() {
   for (const btn of document.querySelectorAll('.needs-net')) { btn.disabled = false; btn.classList.remove('needs-net'); btn.removeAttribute('aria-disabled'); btn.textContent = btn.dataset.label; }
 }
 
+// Push for Your call: the Passkeys page's switch for this device (push.ts on the server).
+const b64 = (s) => { const p = '='.repeat((4 - (s.length % 4)) % 4); const r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(r, (c) => c.charCodeAt(0)); };
+async function pushSwitch(b) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !window.isSecureContext) return;
+  const reg = await navigator.serviceWorker.ready;
+  const status = document.querySelector('[data-push-status]');
+  const say = (t) => { if (status) status.textContent = t; };
+  const post = (path, s) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ _csrf: b.dataset.csrf, sub: s }) });
+  let sub = await reg.pushManager.getSubscription();
+  const draw = () => { b.textContent = sub ? 'Turn off on this device' : 'Turn on for this device'; say(sub ? 'On: Your call reaches this device.' : 'Off on this device.'); };
+  b.hidden = false; draw();
+  b.addEventListener('click', async () => {
+    b.disabled = true;
+    try {
+      if (sub) { const s = sub.toJSON(); await sub.unsubscribe(); await post('/push/unsubscribe', s); sub = null; }
+      else {
+        if (await Notification.requestPermission() !== 'granted') { say('Notifications are blocked for this site in the browser settings.'); return; }
+        const { publicKey } = await (await fetch('/push/key', { credentials: 'same-origin' })).json();
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(publicKey) });
+        const r = await post('/push/subscribe', sub.toJSON());
+        if (!r.ok) { const why = (await r.json().catch(() => ({}))).error || 'loom said no'; await sub.unsubscribe(); sub = null; say(why); return; }
+      }
+      draw();
+    } catch (e) { say('That failed: ' + (e && e.message ? e.message : e)); } finally { b.disabled = false; }
+  });
+}
+
 function init(root) {
   if (!(navigator.clipboard && window.isSecureContext)) for (const b of root.querySelectorAll('[data-copy]')) b.textContent = 'Select';
   // A text block clamped at six lines gets More, only when it really overflows.
@@ -330,6 +357,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
   if (document.body.dataset.offlineFrom) offline(document.body.dataset.offlineFrom);
+  for (const b of document.querySelectorAll('[data-push]')) pushSwitch(b).catch(() => {});
+  // Opened from a notification: the ask it was about, focused.
+  if (location.hash.startsWith('#ask-')) { const a = document.getElementById(location.hash.slice(1)); if (a) { a.focus(); a.scrollIntoView({ block: 'center' }); } }
   window.addEventListener('online', () => { if (document.body.dataset.offlineFrom) location.reload(); else if (live) refresh(true); });
   // The one-time message from a full-page post becomes a toast, and leaves the address.
   for (const f of document.querySelectorAll('main .flash')) {

@@ -44,6 +44,19 @@ interface File {
   challenges?: Record<string, Challenge>;
   /** "Since you last looked": when Home was last opened, and the boundary it shows. */
   seen?: { at: number; since: number };
+  /** Push for Your call (push.ts): the server's VAPID keys, each browser's subscription, what's been announced. */
+  push?: PushState;
+}
+
+export interface PushSub { endpoint: string; keys: { p256dh: string; auth: string } }
+interface PushState {
+  vapid?: { publicKey: string; privateKey: string };
+  /** By endpoint; `session` is the session it was made in, and it goes with it. */
+  subs?: Record<string, { session: string; sub: PushSub; at: number }>;
+  /** Ask keys already announced, with when they were last seen; an ask is announced once. */
+  pushed?: Record<string, number>;
+  /** When a process last took the watch: three listeners, one of them checks each minute. */
+  tickAt?: number;
 }
 
 /** Away for at least this long, and the "new since" boundary moves up to when you last looked. */
@@ -247,9 +260,68 @@ export class SessionStore {
     });
   }
 
+  /** The VAPID key pair, made the first time it's asked for (`make` is web-push's generator). */
+  pushKeys(make: () => { publicKey: string; privateKey: string }): { publicKey: string; privateKey: string } {
+    return this.withLock((f) => {
+      f.push ??= {};
+      f.push.vapid ??= make();
+      return f.push.vapid;
+    });
+  }
+
+  /** This browser's subscription, for the session it's signed in with. */
+  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000)): void {
+    const key = hashId(session);
+    this.withLock((f) => {
+      if (!f.sessions[key]) return;
+      f.push ??= {};
+      const subs = (f.push.subs ??= {});
+      subs[sub.endpoint] = { session: key, sub, at: nowS };
+      // A household has a handful of devices; past 20, the oldest go.
+      const all = Object.entries(subs).sort((a, b) => b[1].at - a[1].at);
+      for (const [ep] of all.slice(20)) delete subs[ep];
+    });
+  }
+
+  removePushSub(endpoint: string): void {
+    this.withLock((f) => { if (f.push?.subs) delete f.push.subs[endpoint]; });
+  }
+
+  /**
+   * Take this minute's watch, if no other process has (loom runs as three
+   * listeners). Returns the live subscriptions and what's been announced, or
+   * null when another process has the watch.
+   */
+  takePushWatch(everyS: number, nowS = Math.floor(Date.now() / 1000)): { subs: PushSub[]; pushed: Record<string, number> } | null {
+    return this.withLock((f) => {
+      f.push ??= {};
+      if (f.push.tickAt && nowS - f.push.tickAt < everyS - 5) return null;
+      f.push.tickAt = nowS;
+      // A subscription whose session ended goes with it.
+      const subs = f.push.subs ?? {};
+      for (const [ep, s] of Object.entries(subs)) if (!f.sessions[s.session]) delete subs[ep];
+      return { subs: Object.values(subs).map((s) => s.sub), pushed: { ...(f.push.pushed ?? {}) } };
+    });
+  }
+
+  /** Record the asks there are now: each stays announced while it's present, and a day after it's gone. */
+  markPushed(present: string[], nowS = Math.floor(Date.now() / 1000)): void {
+    this.withLock((f) => {
+      f.push ??= {};
+      const p = (f.push.pushed ??= {});
+      for (const k of present) p[k] = nowS;
+      for (const [k, at] of Object.entries(p)) if (nowS - at > 86_400) delete p[k];
+    });
+  }
+
   delete(id: string): void {
     if (!existsSync(this.file)) return;
-    this.withLock((f) => { delete f.sessions[hashId(id)]; });
+    const key = hashId(id);
+    this.withLock((f) => {
+      delete f.sessions[key];
+      // Signing out stops this browser's notifications too.
+      for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
+    });
   }
 }
 
