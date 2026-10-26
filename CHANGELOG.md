@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **The pieces catalog has box, shuttle and tasks**, each pinned to its
+- **The pieces catalog has box, secrets, shuttle and tasks**, each pinned to its
   merged commit, so a fresh loom installs all three from the Pieces page.
 - **A package with several `loom-<name>` bins** (shuttle's `loom-shuttle` and
   `loom-subscriptions`) names its piece with `loom.name`; the other bins are

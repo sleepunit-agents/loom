@@ -10,6 +10,14 @@
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
     },
     {
+      "name": "secrets",
+      "repo": "sleepunit-agents/loom-secrets",
+      "commit": "9472c78aca8e703d5f81bd8b37d10f2925f014ff",
+      "version": "0.1.0",
+      "label": "Secrets",
+      "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
+    },
+    {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
       "commit": "86ad5db7a9d354811c607116ed50ee2ce13ea270",
