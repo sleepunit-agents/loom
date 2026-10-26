@@ -52,6 +52,8 @@ describe('the app shell', () => {
     // The scope lives in the pinned phone header (right), not the bottom bar.
     expect(html).toMatch(/<div class="phone-top"><a class="wordmark"[\s\S]*?<a class="scope-pill" href="\/scope" data-sheet="scope"/);
     expect(/<nav class="bottom"[\s\S]*?<\/nav>/.exec(html)![0]).not.toContain('scope');
+    // A slot in that header for the page's title, which the script fills and shows once the title scrolls under it.
+    expect(html).toMatch(/<div class="phone-top">[\s\S]*?<span class="bar-title" aria-hidden="true"><\/span><a class="scope-pill"/);
     expect(html).toContain('aria-label="Home" aria-current="page"');
     expect(html).toContain('href="/places" aria-label="Places" data-sheet="places"');
     expect(html).toContain('<dialog class="sheet" id="sheet-scope"');
