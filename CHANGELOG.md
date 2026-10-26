@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A page's title slides into the phone's header** once it scrolls under it,
+  as iOS's large titles do (where the header has a way back; Home keeps its
+  wordmark). A named back link gives up its word to make room.
+- **Catalog: secrets at f6f1ee2.** Secrets per its board: what's stored
+  first, each name a row to its own page (`secret?name=…`: names may have
+  capitals, page paths may not), then Add a secret.
 - **Catalog: secrets at 75e6cb4.** Secrets per its board: what's stored
   first, each name a row to its own page (Replace, and a Remove that asks
   first), then Add a secret.
