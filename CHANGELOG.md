@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A table on a phone is compact rows, like the boards.** Column 1 is the
+  title, a short column 2 sits on the right, the next two make one "label
+  value · label value" line, and the rest is under "more" — instead of a grey
+  card of label/value pairs per row. Every piece's tables (Clock's schedules,
+  Boxes' services, Subscriptions' logins, Bridges' conversations) get it.
+  A long stat value wraps at a smaller size instead of being cut off.
+
 - **The scope moves to a pinned header.** On a phone the top bar now stays at
   the top of every page: the wordmark (or the way back) on the left, and on
   the right a pill with who you're looking at (Household, or an agent), which
