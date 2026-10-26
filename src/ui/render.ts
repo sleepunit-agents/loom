@@ -137,7 +137,8 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       return `<ul class="list">${b.items.map((i) => {
         const text = `<span class="text">${esc(i.text)}</span>`;
         const who = i.agent ? ctx.agents?.[i.agent] : undefined;
-        return `<li class="${tone(i.tone).trim()}">${who ? mark(who, 24) : glyph(i.tone)}<span class="body">${link(text, i, ctx, 'row-link')}${
+        const lead = who ? mark(who, 24) : i.avatar ? `<span class="avatar" aria-hidden="true">${esc(i.avatar)}</span>` : glyph(i.tone);
+        return `<li class="${tone(i.tone).trim()}">${lead}<span class="body">${link(text, i, ctx, 'row-link')}${
           i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}</li>`;
       }).join('')}</ul>`;
     case 'table': {

@@ -29,7 +29,7 @@ export interface Field {
 
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
-  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string } & Target> }
+  | { type: 'list'; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][] }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -218,6 +218,13 @@ function target(o: Record<string, unknown>, what: string): Target {
   return { ...(p !== undefined ? { page: p } : {}), ...(h !== undefined ? { href: h } : {}) };
 }
 
+/** A list item's avatar: one or two letters (a person's initials), drawn in a plain circle. */
+function avatarOf(v: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string' || !/^\p{L}{1,2}$/u.test(v)) throw new Invalid('list.avatar is one or two letters');
+  return v;
+}
+
 function strMap(v: unknown, what: string, max: number): Record<string, string> | undefined {
   if (v === undefined || v === null) return undefined;
   const o = obj(v, what);
@@ -273,7 +280,7 @@ function block(v: unknown, depth = 0): Block {
           const o = obj(i, 'list item');
           return {
             text: str(o.text, 'list.text'), meta: optStr(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
-            tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...target(o, 'list item'),
+            tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), avatar: avatarOf(o.avatar), ...target(o, 'list item'),
           };
         }),
       };
