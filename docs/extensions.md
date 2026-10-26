@@ -145,6 +145,9 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
   id, whose mark it carries) and `actions` (up to two `buttons` items, drawn on
   its card in place of the link: Ratify and Reject, Renew and Later). An ask is a decision, not news:
   what happened belongs on the tape.
+- **`add`** (optional): `{ "page": "new", "label": "New task" }`. loom draws it as
+  a "+" beside the page's title, linking to that page (one of the piece's, or
+  loom's own with `loom:`).
 - An answer with only `"sections"` (the first version of this contract) is
   still accepted. Its sections become the piece's page, under a tab named
   after the piece.

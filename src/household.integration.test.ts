@@ -778,6 +778,31 @@ describe('the household page', () => {
     } finally { d.close(); }
   });
 
+  it('the boards\' +: People and Knowledge each add one, as the owner, and never overwrite', async () => {
+    const cookie = await login();
+    const people = await (await page(cookie, '/people')).text();
+    expect(/<h1>[\s\S]{0,300}/.exec(people)?.[0]).toContain('<a class="head-add" href="/new-person" aria-label="Add a person"');
+    const pform = await (await page(cookie, '/new-person')).text();
+    const added = await post(cookie, '/act/loom', { _csrf: csrfOf(pform), _action: 'person-add', _path: 'new-person', name: 'Gage Taylor', summary: 'Runs the box.', channel: 'slack', handle: 'U0GAGE' });
+    expect(added.headers.get('location')).toMatch(/^\/people\/gage-taylor\?_flash=/);
+    const card = await (await page(cookie, '/people/gage-taylor')).text();
+    for (const x of ['Gage Taylor', 'U0GAGE']) expect(card).toContain(x);
+    const dup = await post(cookie, '/act/loom', { _csrf: csrfOf(pform), _action: 'person-add', _path: 'new-person', name: 'Gage Taylor' });
+    expect(await (await page(cookie, dup.headers.get('location')!)).text()).toContain('already in People');
+
+    expect(await (await page(cookie, '/knowledge')).text()).toContain('<a class="head-add" href="/new-fact" aria-label="Add a fact"');
+    const kform = await (await page(cookie, '/new-fact')).text();
+    const k = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'Ceramics', body: 'Ramp **slowly** past 573 °C.', source: '' });
+    expect(k.headers.get('location')).toMatch(/^\/knowledge\/glaze-firing-is-slower\?_flash=/);
+    const entry = await (await page(cookie, '/knowledge/glaze-firing-is-slower')).text();
+    expect(entry).toContain('<strong>slowly</strong>');
+    const again = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'ceramics', body: 'something else' });
+    expect(await (await page(cookie, again.headers.get('location')!)).text()).toContain('already has a page');
+    expect(await (await page(cookie, '/knowledge/glaze-firing-is-slower')).text()).toContain('<strong>slowly</strong>');
+    const bad = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'x', domain: 'y', body: 'z', source: 'javascript:alert(1)' });
+    expect(await (await page(cookie, bad.headers.get('location')!)).text()).toContain('The source is a link');
+  });
+
   it('a person shows the shared entry and every agent\'s relationship', async () => {
     const cookie = await login();
     const html = await (await page(cookie, '/people/loren')).text();

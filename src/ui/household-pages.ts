@@ -25,6 +25,8 @@ import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { bootstrap } from '../tools/bootstrap.js';
 import { knowledgeVerify } from '../tools/knowledge-verify.js';
+import { knowledgeWrite, slugify } from '../tools/knowledge-write.js';
+import { personWrite } from '../tools/person.js';
 import { ago, agentName, uiTimeZone, when, type CoreOptions } from './core.js';
 import { tapeRows, whereLabel } from './data.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile } from './vocab.js';
@@ -161,7 +163,7 @@ export function knowledgePage(h: Household, query: Record<string, string>, opts:
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
   const path = commonsKnowledgePath(h);
-  if (!existsSync(path)) return { title: 'Knowledge', intro: 'The commons has no knowledge yet.', sections: [] };
+  if (!existsSync(path)) return { title: 'Knowledge', intro: 'The commons has no knowledge yet.', sections: [], add: NEW_FACT };
   const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
   try {
     const domains = (db.prepare("SELECT substr(domain, 1, instr(domain || '/', '/') - 1) AS top, COUNT(*) AS n FROM pages WHERE status = 'active' GROUP BY top ORDER BY n DESC LIMIT 11").all() as Array<{ top: string; n: number }>);
@@ -189,6 +191,7 @@ export function knowledgePage(h: Household, query: Record<string, string>, opts:
     };
     return {
       title: 'Knowledge',
+      add: NEW_FACT,
       intro: 'Facts about the world, shared by every agent in the household. Newest first.',
       sections: [
         { id: 'filter', blocks: [
@@ -278,11 +281,12 @@ function initials(name: string): string | undefined {
 
 export function householdPeople(h: Household): Page {
   const dir = directory(h);
-  if (!dir) return { title: 'People', intro: 'Nobody in the directory yet.', sections: [] };
+  if (!dir) return { title: 'People', intro: 'Nobody in the directory yet.', sections: [], add: NEW_PERSON };
   try {
     const list = dir.list();
     return {
       title: 'People',
+      add: NEW_PERSON,
       intro: 'One entry per person, shared by every agent: who they are and where to reach them. Each agent keeps its own relationship with them.',
       sections: [{ id: 'everyone', blocks: [{
         type: 'list',
@@ -479,6 +483,36 @@ const VOICES: Record<string, string> = {
   terse: 'Terse: the shortest answer that\'s right. No preamble.',
 };
 
+// ─── The boards' "+": a person, a fact ───────────────────────────────────────
+
+const NEW_PERSON = { page: 'loom:new-person', label: 'Add a person' };
+const NEW_FACT = { page: 'loom:new-fact', label: 'Add a fact' };
+const CHANNELS = ['slack', 'discord', 'email', 'phone', 'github'];
+
+export function newPersonPage(): Page {
+  return { title: 'Add a person', intro: 'One entry, shared by every agent: who they are and where to reach them. Each agent keeps its own relationship.', sections: [{ id: 'form', blocks: [{
+    type: 'form', action: 'person-add', submit: 'Add',
+    fields: [
+      { name: 'name', label: 'Name', kind: 'text', required: true },
+      { name: 'summary', label: 'Who they are', kind: 'textarea', hint: 'A line or two, e.g. "Runs the community-center box."' },
+      { name: 'channel', label: 'Reach them on', kind: 'choice', value: '', options: [{ value: '', label: '(not yet)' }, ...CHANNELS.map((c) => ({ value: c, label: c }))] },
+      { name: 'handle', label: 'Their handle or address there', kind: 'text' },
+    ],
+  }] }] };
+}
+
+export function newFactPage(): Page {
+  return { title: 'Add a fact', intro: 'Knowledge is facts about the world, shared by every agent. Every one says where it came from.', sections: [{ id: 'form', blocks: [{
+    type: 'form', action: 'fact-add', submit: 'Add',
+    fields: [
+      { name: 'title', label: 'Title', kind: 'text', required: true, hint: 'The fact in a line, e.g. "Cone 6 is about 1222 °C".' },
+      { name: 'domain', label: 'Topic', kind: 'text', required: true, hint: 'Lowercase, slashes for depth, e.g. ceramics or ours/loom.' },
+      { name: 'body', label: 'What it says', kind: 'textarea', required: true, hint: 'Markdown.' },
+      { name: 'source', label: 'Where it came from', kind: 'text', hint: 'A link. Leave it empty if it\'s from you: it\'s kept as provisional until a source backs it.' },
+    ],
+  }] }] };
+}
+
 export function newAgentPage(h?: Household): Page {
   const next = h ? h.agents.length % MARKS.length : 0;
   return {
@@ -523,6 +557,33 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const t = revokeToken(h, fields.label ?? '');
       const agent = t.role.startsWith('agent:') ? t.role.slice('agent:'.length) : h.default;
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
+    }
+    if (action === 'person-add') {
+      const name = (fields.name ?? '').trim();
+      const slug = slugOf(name);
+      if (!name || !slug) return { ok: false, message: 'A person needs a name.' };
+      const channel = (fields.channel ?? '').trim(), handle = (fields.handle ?? '').trim();
+      if (channel && !CHANNELS.includes(channel)) return { ok: false, message: 'Pick where to reach them from the list.' };
+      if (directory(h)?.getRow(slug)) return { ok: false, message: `${name} is already in People.`, page: `loom:people/${slug}` };
+      const out = await personWrite(agentDir(h, h.default), { slug, name, ...(fields.summary?.trim() ? { summary: fields.summary.trim() } : {}),
+        ...(channel && handle ? { where: { [channel]: { value: handle, source: `${h.owner ?? 'owner'} on loom's page` } } } : {}) });
+      return out.startsWith('Error') ? { ok: false, message: out } : { ok: true, message: `${name} is in People.`, page: `loom:people/${slug}` };
+    }
+    if (action === 'fact-add') {
+      const title = (fields.title ?? '').trim(), domain = (fields.domain ?? '').trim().toLowerCase(), body = (fields.body ?? '').trim(), source = (fields.source ?? '').trim();
+      if (!title || !domain || !body) return { ok: false, message: 'A title, a topic and what it says are all needed.' };
+      if (source && !/^https?:\/\//.test(source)) return { ok: false, message: 'The source is a link (http or https), or empty.' };
+      // An add never replaces: a page by that name already is one to open, not overwrite.
+      const want = slugify(title);
+      if (!want) return { ok: false, message: 'That title has nothing to make an address from.' };
+      if (existsSync(commonsKnowledgePath(h))) {
+        const db = new BetterSqlite3(commonsKnowledgePath(h), { readonly: true, fileMustExist: true });
+        try { if (db.prepare('SELECT 1 FROM pages WHERE slug = ?').get(want)) return { ok: false, message: 'Knowledge already has a page by that title.', page: `loom:knowledge/${want}` }; } finally { db.close(); }
+      }
+      const out = await knowledgeWrite(agentDir(h, h.default), { title, domain, body, slug: want,
+        citations: [source ? { claim: title, source_kind: 'web', source_locator: source, excerpt: title } : { claim: title, source_kind: 'conversation', source_locator: `${h.owner ?? 'owner'} on loom's page`, excerpt: title }] },
+        h.owner ?? 'owner');
+      return out.startsWith('Error') ? { ok: false, message: out } : { ok: true, message: `Added to Knowledge${source ? '' : ' (provisional until a source backs it)'}.`, page: `loom:knowledge/${want}` };
     }
     if (action === 'add-agent') {
       const agent = (fields.agent ?? '').trim() || slugOf(fields.name ?? '');

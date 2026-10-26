@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The boards' "+".** A page may name where adding one goes (`add`: a page
+  and a label), and loom draws it as a "+" beside the title. People adds a
+  person (name, who they are, where to reach them) and Knowledge adds a fact
+  (title, topic, what it says, where it came from: a link, or empty to keep it
+  provisional), both as the owner, and an add never overwrites one that's
+  there. Catalog: tasks at 44da8ae, whose Tasks page adds a task.
 - **Catalog: shuttle at 05c4033.** An expired login's card on Home carries
   Renew login (the ask's own action).
 - **An ask may carry its own buttons** (`actions`, up to two `buttons` items),

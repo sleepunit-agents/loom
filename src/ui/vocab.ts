@@ -61,6 +61,8 @@ export interface Page {
   sections: Section[];
   /** Seconds between reloads, 2 to 300, while something is changing (an install, a session starting). */
   refresh?: number;
+  /** The board's "+" beside the title: where adding one goes (a page of this source, or loom's with `loom:`). */
+  add?: { page: string; label: string };
 }
 
 export interface Tile { label: string; value: string; detail?: string; tone?: Tone; page?: string }
@@ -109,7 +111,7 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|mind|people|pieces|passkeys|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
+const CORE_PAGES = /^(|mind|people|pieces|passkeys|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
@@ -473,7 +475,9 @@ export function parsePage(value: unknown): Page | string {
     const top = obj(value, 'page');
     const r = top.refresh;
     if (r !== undefined && (typeof r !== 'number' || !Number.isInteger(r) || r < 2 || r > 300)) throw new Invalid('refresh must be whole seconds from 2 to 300');
-    return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections), ...(r !== undefined ? { refresh: r } : {}) };
+    const add = top.add === undefined ? undefined : obj(top.add, 'add');
+    return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections), ...(r !== undefined ? { refresh: r } : {}),
+      ...(add ? { add: { page: page(add.page, 'add.page') ?? '', label: str(add.label, 'add.label') } } : {}) };
   });
 }
 
