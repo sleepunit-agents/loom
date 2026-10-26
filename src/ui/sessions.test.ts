@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MAX_SESSIONS, SessionStore } from './sessions.js';
+import { MAX_SESSIONS, SEEN_GAP_S, SessionStore } from './sessions.js';
 
 describe('the page\'s sessions on disk', () => {
   let dir: string;
@@ -55,5 +55,14 @@ describe('the page\'s sessions on disk', () => {
     const late = s.createLink(digest, 600, 1000);
     expect(s.useLink(late, 1601)).toBeNull();
     expect(s.useLink('0'.repeat(64), 1000)).toBeNull();
+  });
+
+  it('"since you last looked" moves up only after 15 minutes away', () => {
+    const store = new SessionStore(dir);
+    const t0 = 1_800_000_000;
+    expect(store.lookedAt(t0)).toBe(t0);                 // first visit: nothing is new
+    expect(store.lookedAt(t0 + 60)).toBe(t0);            // a reload a minute later keeps the boundary
+    expect(store.lookedAt(t0 + 60 + SEEN_GAP_S)).toBe(t0 + 60); // back after a while: new since the last look
+    expect(store.lookedAt(t0 + 120 + SEEN_GAP_S)).toBe(t0 + 60);
   });
 });

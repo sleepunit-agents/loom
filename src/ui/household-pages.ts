@@ -12,6 +12,7 @@
  * page here may show every agent's relationship: an agent's own tools never
  * can.
  */
+import { listProposals } from '../backends/proposals.js';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -118,6 +119,32 @@ export function householdHome(h: Household, opts: CoreOptions = {}): { tiles: Ti
       { label: 'Commons', value: `${pages.toLocaleString('en-US')} pages`, detail: `${people} people`, page: 'knowledge' },
     ],
     page: { title: 'Home', sections },
+  };
+}
+
+/** One row of the Thread: an episode of one agent's. */
+export interface ThreadItem { agent: string; text: string; where: string; created: string; page?: string }
+
+/** Every agent's episodes in the last `hours`, newest first, and the commons' counts. */
+export function householdThread(h: Household, hours = 24, nowMs = Date.now()): { items: ThreadItem[]; pages: number; people: number; memories: Record<string, number>; proposals: Record<string, number> } {
+  const items: ThreadItem[] = [];
+  const memories: Record<string, number> = {};
+  const proposals: Record<string, number> = {};
+  for (const a of h.agents) {
+    const dir = agentDir(h, a);
+    for (const e of tapeRows(dir, hours, nowMs)) {
+      items.push({ agent: a, text: e.title, where: e.where, created: e.created, page: validPath(`a/${a}/memory/${e.ref}`) ? agentLink(a, `memory/${e.ref}`) : undefined });
+    }
+    memories[a] = count(resolveSqliteDbPath(dir), "SELECT COUNT(*) AS n FROM memories WHERE archived = 0 AND category != 'episode'");
+    try { proposals[a] = listProposals(dir).filter((p) => p.status === 'pending').length; } catch { proposals[a] = 0; }
+  }
+  items.sort((x, y) => (x.created < y.created ? 1 : -1));
+  return {
+    items,
+    pages: count(commonsKnowledgePath(h), "SELECT COUNT(*) AS n FROM pages WHERE status = 'active'"),
+    people: count(commonsPeoplePath(h), 'SELECT COUNT(*) AS n FROM people WHERE archived_at IS NULL'),
+    memories,
+    proposals,
   };
 }
 

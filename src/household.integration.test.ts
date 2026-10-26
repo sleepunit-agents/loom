@@ -678,7 +678,11 @@ describe('the household page', () => {
   it('Home is every agent and the tape across all of them', async () => {
     const cookie = await login();
     const html = await (await page(cookie, '/')).text();
-    for (const s of ['Art E Fish', 'Visual Mark', 'art did a thing', 'mark did a thing', 'The commons', 'href="/a/mark"', 'href="/knowledge"']) expect(html).toContain(s);
+    for (const s of ['Art E Fish', 'Visual Mark', 'art did a thing', 'mark did a thing', '<h2 class="label">Shared</h2>', 'href="/scope/mark"', 'href="/knowledge"']) expect(html).toContain(s);
+    // The design's Home: a headline, Thread with a pill per agent, each row with its agent's mark.
+    expect(html).toMatch(/<h1 class="display">(Nothing needs you|\d+ needs? you)<\/h1>/);
+    expect(html).toContain('href="/?who=mark"');
+    expect((await (await page(cookie, '/?who=mark')).text())).not.toContain('art did a thing');
   });
 
   it('a person shows the shared entry and every agent\'s relationship', async () => {
@@ -691,6 +695,8 @@ describe('the household page', () => {
     const cookie = await login();
     const mark = await (await page(cookie, '/a/mark')).text();
     expect(mark).toContain('mark did a thing');
+    // Its Today: Today · Mind · People · Setup.
+    expect(mark).toContain('<nav class="seg-tabs" aria-label="Visual Mark"><a href="/a/mark" class="on" aria-current="page">Today</a><a href="/a/mark/mind">Mind</a>');
     expect(mark).not.toContain('art did a thing');
     expect((await page(cookie, '/a/mark/mind')).status).toBe(200);
     expect((await page(cookie, '/a/ghost')).status).toBe(404);

@@ -42,7 +42,12 @@ interface File {
   links?: Record<string, Link>;
   passkeys?: Record<string, Passkey>;
   challenges?: Record<string, Challenge>;
+  /** "Since you last looked": when Home was last opened, and the boundary it shows. */
+  seen?: { at: number; since: number };
 }
+
+/** Away for at least this long, and the "new since" boundary moves up to when you last looked. */
+export const SEEN_GAP_S = 15 * 60;
 
 export const MAX_PASSKEYS = 20;
 
@@ -217,6 +222,20 @@ export class SessionStore {
       if (!f.passkeys?.[id]) return false;
       delete f.passkeys[id];
       return true;
+    });
+  }
+
+  /**
+   * Home was opened now: the boundary to draw new items against. It moves up
+   * to the last visit only after SEEN_GAP_S away, so a reload or a quick trip
+   * to another page doesn't wipe the new dots. The first visit ever has none.
+   */
+  lookedAt(nowS = Math.floor(Date.now() / 1000)): number {
+    return this.withLock((f) => {
+      const was = f.seen;
+      const since = !was ? nowS : nowS - was.at >= SEEN_GAP_S ? was.at : was.since;
+      f.seen = { at: nowS, since };
+      return since;
     });
   }
 

@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Home, redesigned.** The household Home leads with "N need you" and the
+  count new since you last looked (a look within 15 minutes of the last one
+  doesn't move the line). Your call cards, At a glance tiles (a swipeable
+  strip on a phone, a 2-up grid beside the Thread on a desktop), the Thread
+  of the last day with agent marks, an All/agent filter and a "seen up to"
+  divider, and Shared (knowledge and people). An agent's `/a/<agent>` is now
+  its Today: its mark, Today · Mind · People · Setup tabs, its own asks,
+  tiles and thread.
+
 - **Scope reaches pieces.** With an agent selected, loom runs pieces with
   `LOOM_SCOPE=<agent>` (manifest, page and action alike, the manifest cached
   per scope). A manifest may declare `"scope": true`; a piece that doesn't is

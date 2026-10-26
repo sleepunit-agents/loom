@@ -44,9 +44,11 @@ import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRe
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
+import { householdThread } from './household-pages.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage } from './household-pages.js';
 import { agentDir, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
+import { age, renderDashboard, type Dashboard } from './render.js';
 import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type Chrome, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
@@ -320,6 +322,30 @@ function agentsOf(h: Household | undefined): Record<string, { label: string; bg:
   if (!h) return undefined;
   const marks = agentMarks(h);
   return Object.fromEntries(h.agents.map((a) => [a, { label: agentName(agentDir(h, a)), ...marks[a] }]));
+}
+
+const HOME_THREAD = 30;
+
+/** loom's own asks: an agent's memory proposals waiting to be ratified. */
+function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[] {
+  return h.agents.filter((a) => proposals[a] > 0).map((a) => {
+    const n = proposals[a];
+    return { text: `${agentName(agentDir(h, a))} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.',
+      page: `loom:a/${a}/mind`, label: 'Review', agent: a, source: CORE, sourceLabel: 'Mind' };
+  });
+}
+
+/** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
+function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
+  return [
+    ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece }))),
+    ...piecesAsks(env).map((a) => ({ ...a, source: CORE, sourceLabel: 'Pieces', tone: 'warn' as const })),
+  ];
+}
+
+/** "7:42 AM", in the page's time zone. */
+function clockAt(ms: number): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: uiTimeZone(), hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
 }
 
 const SCOPE_COOKIE = 'loom_scope';
@@ -693,16 +719,22 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>) =>
       html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash)), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
     if (pathname === '/') {
-      const home = householdHome(hh);
-      const tiles: HomeTile[] = [
-        ...home.tiles.map((t) => ({ ...t, source: CORE })),
-        ...pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
-      ];
-      const asks: HomeAsk[] = [
-        ...piecesAsks(opts.env).map((a) => ({ ...a, source: CORE })),
-        ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
-      ];
-      return html(renderHome(home.page, ctxOf(''), chrome(req, opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
+      const nowMs = Date.now();
+      const sinceMs = storeFor(opts).lookedAt(Math.floor(nowMs / 1000)) * 1000;
+      const t = householdThread(hh, 24, nowMs);
+      const byAgent = query.who && hh.agents.includes(query.who) ? query.who : '';
+      const agents = agentsOf(hh)!;
+      const d: Dashboard = {
+        label: 'Household',
+        asks: [...proposalAsks(hh, t.proposals), ...pieceAsks(pieces, opts.env)],
+        tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
+        thread: t.items.filter((r) => !byAgent || r.agent === byAgent).slice(0, HOME_THREAD)
+          .map((r) => ({ agent: r.agent, text: r.text, meta: `${r.where} · ${age(r.created, nowMs)}`, at: r.created, page: r.page })),
+        sinceMs, sinceLabel: clockAt(sinceMs),
+        filters: hh.agents.length > 1 ? { param: 'who', current: byAgent, options: [{ value: '', label: 'All' }, ...hh.agents.map((a) => ({ value: a, label: agents[a].label }))] } : undefined,
+        shared: { pages: t.pages, people: t.people },
+      };
+      return html(renderDashboard(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash), nowMs));
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {
@@ -724,14 +756,23 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const dir = agentDir(hh, agent);
       const src = agentSource(agent);
       if (rest === '' ) {
-        const home = homePage(dir, query);
-        home.page.sections.unshift({ id: 'agent-nav', side: true, blocks: [{ type: 'list', items: [
-          { text: 'Mind', meta: 'what it wakes up holding, and why', page: 'mind' },
-          { text: 'People', meta: 'as it sees them', page: 'people' },
-          { text: 'Setup', meta: 'identity, tokens, health', page: `loom:a/${agent}/setup` },
-        ] }] });
-        const tiles: HomeTile[] = [{ ...home.tile, source: src }];
-        return html(renderHome(home.page, ctxOf('', src), chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash), tiles, []));
+        // The agent's Today: its asks, Memories and its pieces' tiles (scope-aware ones), its own thread.
+        const nowMs = Date.now();
+        const t = householdThread({ ...hh, agents: [agent] }, 24, nowMs);
+        const agents = agentsOf(hh)!;
+        const scoped = pieces.filter((p) => p.manifest.scope);
+        const d: Dashboard = {
+          label: agents[agent].label,
+          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: [
+            { label: 'Today', href: `/a/${agent}`, current: true }, { label: 'Mind', href: `/a/${agent}/mind`, current: false },
+            { label: 'People', href: `/a/${agent}/people`, current: false }, { label: 'Setup', href: `/a/${agent}/setup`, current: false },
+          ] },
+          asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
+          tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
+            ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
+          thread: t.items.slice(0, HOME_THREAD).map((r) => ({ text: r.text, meta: `${r.where} · ${age(r.created, nowMs)}`, at: r.created, page: r.page })),
+        };
+        return html(renderDashboard(d, { ...ctxOf('', src), agents }, chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash), nowMs));
       }
       if (rest === 'setup') return send200(agentSetup(hh, agent), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
