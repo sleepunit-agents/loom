@@ -14,10 +14,21 @@ import { clearPieceCache } from './pieces.js';
 
 const TOKEN = 'scope-owner-token';
 
+/** A stand-in piece: its answers are files, with LOOM_SCOPE put in by sed (no quoting to get wrong). */
 function piece(dir: string, name: string, scoped: boolean) {
-  const manifest = `{"v":2,${scoped ? '"scope":true,' : ''}"tab":{"label":"${name}"},"tile":{"label":"${name}","value":"scope=$LOOM_SCOPE"}}`;
-  const page = `{"title":"${name}","sections":[{"id":"s","blocks":[{"type":"text","text":"scope=$LOOM_SCOPE"},{"type":"list","items":[{"text":"Closed a task","agent":"art"},{"text":"Rendered props","agent":"mark"},{"text":"Nobody's","agent":"nobody"}]}]}]}`;
-  writeFileSync(join(dir, `loom-${name}`), `#!/bin/sh\ncase "$1 $2" in\n"ui --json") echo "${manifest.replace(/"/g, '\\"')}" ;;\n"ui page") cat >/dev/null; echo "${page.replace(/"/g, '\\"')}" ;;\n*) exit 2 ;;\nesac\n`);
+  writeFileSync(join(dir, `${name}.manifest.json`), JSON.stringify({ v: 2, ...(scoped ? { scope: true } : {}), tab: { label: name }, tile: { label: name, value: 'scope=@SCOPE@' } }));
+  writeFileSync(join(dir, `${name}.page.json`), JSON.stringify({ title: name, sections: [{ id: 's', blocks: [
+    { type: 'text', text: 'scope=@SCOPE@' },
+    { type: 'list', items: [{ text: 'Closed a task', agent: 'art' }, { text: 'Rendered props', agent: 'mark' }, { text: "Nobody's", agent: 'nobody' }] },
+  ] }] }));
+  writeFileSync(join(dir, `loom-${name}`), `#!/bin/sh
+d=$(dirname "$0")
+case "$1 $2" in
+"ui --json") sed "s/@SCOPE@/$LOOM_SCOPE/" "$d/${name}.manifest.json" ;;
+"ui page") cat >/dev/null; sed "s/@SCOPE@/$LOOM_SCOPE/" "$d/${name}.page.json" ;;
+*) exit 2 ;;
+esac
+`);
   chmodSync(join(dir, `loom-${name}`), 0o755);
 }
 
