@@ -49,7 +49,7 @@ h1{margin:0;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.2
 .card.toned{padding-top:0}.card .band{margin:0 -16px 12px;padding:12px 16px;background:var(--tone-bg);color:var(--ink);border-radius:var(--r-card) var(--r-card) 0 0;display:flex;justify-content:space-between;align-items:center;gap:12px}
 .card .band h2{margin:0;font-size:16px;font-weight:600}.card .band .tone-word{color:var(--tone);font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:6px}
 
-.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}.stats:has(>.stat:nth-child(3):last-child){grid-template-columns:repeat(3,minmax(0,1fr))}
 .stats.strip{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 -16px;padding:0 16px}.stats.strip::-webkit-scrollbar{display:none}.stats.strip .stat{flex:0 0 46%;scroll-snap-align:start}
 @media (min-width:720px){.stats,.stats.strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));overflow:visible;margin:0;padding:0}}
 .stat{position:relative;background:var(--ground);border-radius:12px;padding:12px 14px;min-height:88px;display:flex;flex-direction:column;gap:2px;min-width:0}

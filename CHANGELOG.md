@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: tasks at 0be3242.** The Tasks piece per its boards: Open · Blocked ·
+  Done counts and pills, the owner's tasks first ("waiting on you"), agent
+  marks, the description as prose, Mark done (with Undo) and a Reply box.
+  Three stats sit in one row on a phone.
+
 - **A table on a phone is compact rows, like the boards.** Column 1 is the
   title, a short column 2 sits on the right, the next two make one "label
   value · label value" line, and the rest is under "more" — instead of a grey
