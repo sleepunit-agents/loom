@@ -320,7 +320,7 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 .glance-phone{display:none}.dash-side .glance{display:block}
 .dash-side .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}.dash-side .tile{min-height:96px}
 .thread-list{background:var(--surface);border-radius:var(--r-card);padding:4px 16px}.thread-list li:last-child{border-bottom:0}
-.thread-list li{align-items:center}.thread-list li .body{flex-direction:row;align-items:baseline;gap:16px}.thread-list li .body .text{flex:1;min-width:0}.thread-list li .body .meta{flex:none;white-space:nowrap}
+.thread-list li{align-items:center}.thread-list li .body{flex-direction:row;align-items:baseline;gap:16px}.thread-list li .body>:first-child{flex:1;min-width:0}.thread-list li .body .meta{flex:none;white-space:nowrap}
 .rail{position:sticky;top:0;height:100vh;height:100dvh;overflow-y:auto;box-sizing:border-box}
 .dash.today .dash-side .tiles{grid-template-columns:1fr 1fr;gap:10px}}
 `;
