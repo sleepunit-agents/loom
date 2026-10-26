@@ -174,7 +174,9 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
     }
   }
   sections.push({ id: 'github', title: 'From GitHub', side: true, blocks: github });
-  return { title: 'Pieces', intro: 'What loom runs beside itself: install, update, roll back and remove them here.', sections };
+  // While an install runs, the page reloads itself to show it finish.
+  return { title: 'Pieces', intro: 'What loom runs beside itself: install, update, roll back and remove them here.', sections,
+    ...(jobs[0]?.state === 'running' ? { refresh: 3 } : {}) };
 }
 
 /** "Your call" items: managed pieces still missing a required setting. */

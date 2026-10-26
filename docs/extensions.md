@@ -151,6 +151,10 @@ a fetch from another site, but a link can still open one.) It answers:
   ] }
 ```
 
+A page may set `"refresh"`: whole seconds from 2 to 300. It then reloads itself
+that often, even with a form on it. Use it only while something is changing
+(an install running, a session starting), and drop it once it's settled.
+
 A section with `"side": true` goes in the side column. `tone` gives the whole
 section that tone's look, such as amber for "needs you".
 
@@ -181,6 +185,9 @@ outside the page).
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value) |
 | `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `fields` (name → value) |
+| `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |
+| `code` | `text`, optional `label`. Monospace, with a Copy button: a command, a link to hand someone |
+| `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
 
 Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind
@@ -214,7 +221,9 @@ short.
 ### Rules for all three
 
 - **Data, never markup.** loom renders every block and escapes every string,
-  and the page runs no script. A piece can't put HTML or JS on loom's page.
+  and the only script on the page is loom's own, loaded from loom (`/app.js`;
+  the CSP allows `script-src 'self'`, never inline). A piece can't put HTML or JS
+  on loom's page.
   A manifest that doesn't validate is dropped whole and the piece is listed
   in the footer as "no page"; a page that doesn't validate shows an error in
   its place.

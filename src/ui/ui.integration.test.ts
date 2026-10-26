@@ -248,7 +248,7 @@ describe('loom UI over HTTP', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
-  it('Home is the tape, with top of mind beside it, under a no-script CSP', async () => {
+  it('Home is the tape, with top of mind beside it, under a CSP that runs only loom\'s own script', async () => {
     const cookie = await login();
     const res = await get('/', cookie);
     expect(res.status).toBe(200);
@@ -259,7 +259,10 @@ describe('loom UI over HTTP', () => {
     expect(html).toContain('shipped the ui');
     expect(html).toContain('a hot memory');
     expect(html).toContain('href="/mind"');
-    expect(html).not.toContain('<script');
+    // Script only by src, from loom: no inline script, and the CSP allows neither inline nor eval.
+    expect(html.match(/<script\b[^>]*>/gi)).toEqual(['<script src="/app.js" defer>']);
+    expect(res.headers.get('content-security-policy')).toMatch(/script-src 'self';/);
+    expect((await get('/app.js', cookie)).headers.get('content-type')).toMatch(/javascript/);
   });
 
   it('the tape filters by where it happened', async () => {
