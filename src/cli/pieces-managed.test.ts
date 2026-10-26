@@ -7,7 +7,7 @@
  * in the prefix the way `npm install --prefix <dir> github:o/r#<sha>` does.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -268,6 +268,21 @@ describe('managed pieces', () => {
     const none = await runCliCaptured(['pieces', 'install', '--from', `github:x/svc#${SHA1}`, '--yes'], { env: { ...senv, NO_SYSTEMD: '1' } });
     expect(none.stdout).toContain("There's no user systemd here, so loom can't run svc's services. Start them by hand: loom-svc run --dir=$HOME/100%");
     expect(existsSync(join(xdg, 'systemd', 'user', 'loom-piece-svc-run.service'))).toBe(false);
+  });
+
+  it('a piece runs on the node it was installed with, first on its PATH (its native modules were built for it)', async () => {
+    // The daemon's PATH may find another node (/usr/bin/node 20 while npm ran on 24).
+    const nodeDir = join(tmp, 'node24');
+    await mkdir(nodeDir);
+    await symlink(process.execPath, join(nodeDir, 'node'));
+    const installEnv = { ...env, PATH: [join(tmp, 'npmbin'), nodeDir, onPath, '/usr/bin', '/bin'].join(delimiter) };
+    await fixture('x/native', SHA1, { name: 'native' }, { 'loom-native': 'echo "PATH=$PATH"' });
+    await runCliCaptured(['pieces', 'install', '--from', `github:x/native#${SHA1}`, '--yes'], { env: installEnv });
+    const rec = JSON.parse(await readFile(join(loomHome, 'pieces', 'native', 'piece.json'), 'utf-8'));
+    expect(rec.node).toBe(join(nodeDir, 'node'));
+    // Run later by a daemon whose PATH has no such node: it's put first.
+    const run = await runCliCaptured(['native'], { env: { ...env, PATH: [onPath, '/usr/bin', '/bin'].join(delimiter) } });
+    expect(run.stdout.trim()).toBe(`PATH=${[nodeDir, onPath, '/usr/bin', '/bin'].join(delimiter)}`);
   });
 
   it('with no LOOM_HOME and no HOME, there is no managed dir and PATH is all there is', () => {

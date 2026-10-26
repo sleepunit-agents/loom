@@ -107,6 +107,8 @@ When loom runs a managed piece (from the CLI, for the page, or for the API), it
 adds:
 
 - `LOOM_PIECE_NAME` and `LOOM_PIECE_HOME`;
+- the node it was installed with, first on `PATH`, since npm built its native
+  modules for that node;
 - each setting from `settings.json`, or its `default` if the owner didn't set
   one, with `${LOOM_PIECE_HOME}` expanded.
 
