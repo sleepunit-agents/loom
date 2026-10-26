@@ -12,6 +12,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Managed pieces: `loom pieces install | update | rollback | remove | set | catalog`**
+  (docs/specs/pieces-install.md). loom installs a piece itself, from its
+  catalog (`assets/pieces.json`, each pinned to a commit) or with
+  `--from github:<owner>/<repo>#<commit> --yes`, as an npm package into
+  `$LOOM_HOME/pieces/<name>/`. Managed pieces are found before `PATH`, run with
+  their own `LOOM_PIECE_NAME`, `LOOM_PIECE_HOME` and declared settings, keep the
+  version before for `rollback`, and leave what was current untouched when an
+  install fails. Unmanaged pieces on `PATH` work as before.
+- **The Pieces page** (`/pieces`, in the nav): installed pieces with their
+  settings form, *Update*, *Roll back* and *Remove*; the catalog with
+  *Install*; and *From GitHub*, a repo and a commit behind a preview and a
+  plain warning. Installs run in the background. A managed piece missing a
+  required setting is listed under "Your call" on Home.
+- **Piece services.** A service a managed piece declares becomes a systemd
+  user unit, `loom-piece-<name>-<service>.service`, run with the piece's own
+  environment (`service.env`), restarted on failure, and on an update, a
+  rollback or new settings, and removed with the piece. `keepChildren: true`
+  is `KillMode=process`. Without a user systemd, install says how to start it
+  by hand.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

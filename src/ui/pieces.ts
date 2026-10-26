@@ -19,6 +19,7 @@
  */
 import { spawn } from 'node:child_process';
 import { listPieces } from '../cli/pieces.js';
+import { pieceEnvFor } from '../cli/pieces-managed.js';
 import { parseActResult, parseManifest, parsePage, type ActResult, type Manifest, type Page } from './vocab.js';
 
 export const PIECE_TIMEOUT_MS = 3_000;
@@ -116,7 +117,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
   return new Promise((resolve) => {
     // Its own process group, so a timeout takes the piece's children with it.
     const child = spawn(path, args, {
-      env: pieceEnv(env),
+      env: pieceEnvFor(path, pieceEnv(env)),
       stdio: [opts.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
       detached: true,
     });

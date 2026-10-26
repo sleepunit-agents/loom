@@ -32,6 +32,7 @@ import {
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
 import { listPieces } from './cli/pieces.js';
+import { pieceEnvFor } from './cli/pieces-managed.js';
 
 export class BundleError extends Error {}
 
@@ -104,7 +105,7 @@ async function copyAgent(from: string, to: string): Promise<void> {
  */
 function pieceRun(path: string, verb: 'export' | 'import', env: NodeJS.ProcessEnv, stdin?: Buffer): Promise<{ ok: true; out: Buffer } | { ok: false; reason: string }> {
   return new Promise((resolveP) => {
-    const child = spawn(path, ['bundle', verb], { env, stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const child = spawn(path, ['bundle', verb], { env: pieceEnvFor(path, env), stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
     let bytes = 0;
     let err = '';

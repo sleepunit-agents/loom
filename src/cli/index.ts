@@ -33,13 +33,13 @@ Commands:
   install           Write loom-setup skill into a harness's skills dir
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
-  pieces            List installed pieces (loom-<name> on PATH)
+  pieces            Installed pieces; install, update, roll back, remove them
   household         The household: agents and the default (docs/specs/household.md)
   token             Mint, list and revoke the household's tokens
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
 
-Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> on PATH
+Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> (managed, then PATH)
 (e.g. loom tasks list). Core commands always win. See docs/extensions.md.
 
 Global flags:
