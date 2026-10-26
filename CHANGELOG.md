@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Thread rows on a wide screen put where and when at the right edge** (the
+  row's link, not its text, takes the room).
 - **Catalog: shuttle at 21c35b6.** The Subscriptions tile on Home is the
   fullest usage window ("48%, Jonathan's Claude · 7 days, resets Mon").
 - **Desktop per the Desktop board.** The rail stays put while the page scrolls,
