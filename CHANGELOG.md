@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: tasks at be57bea.** Its asks carry when they were started (else
+  filed), so Home's task cards show their age.
 - **Home per its board: Your call and Thread.** Ask cards lead with a bold
   title (up to three lines), and past four the rest fold under "N more", so
   Home stays a glance. Thread rows say where in words ("Slack DM · Patrick
