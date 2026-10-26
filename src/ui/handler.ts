@@ -574,10 +574,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     return void res.end(readFileSync(join(resolveRepoRoot(), 'assets', 'fonts', `${font[1]}.woff2`)));
   }
   // The app: its manifest, icons and service worker (src/ui/pwa.ts). Public, like the fonts: none of it says anything about you.
-  const icon = /^\/icons\/(loom\.svg|loom-(?:180|192|512)\.png)$/.exec(pathname);
+  const icon = /^\/icons\/(loom-(?:32|180|192|512|maskable-512)\.png)$/.exec(pathname);
   if (icon) {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
-    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': icon[1].endsWith('.svg') ? 'image/svg+xml' : 'image/png', 'cache-control': 'public, max-age=86400' });
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
     return void res.end(readFileSync(join(resolveRepoRoot(), 'assets', 'icons', icon[1])));
   }
   if (pathname === '/manifest.webmanifest') {

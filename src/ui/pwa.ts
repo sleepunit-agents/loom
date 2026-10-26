@@ -26,10 +26,9 @@ export const MANIFEST = JSON.stringify({
   background_color: '#0E0E0D',
   theme_color: '#0E0E0D',
   icons: [
-    { src: '/icons/loom.svg', sizes: 'any', type: 'image/svg+xml' },
     { src: '/icons/loom-192.png', sizes: '192x192', type: 'image/png' },
     { src: '/icons/loom-512.png', sizes: '512x512', type: 'image/png' },
-    { src: '/icons/loom-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    { src: '/icons/loom-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
   ],
 });
 
@@ -38,7 +37,7 @@ const VERSION = 'loom-1';
 
 export const SW_JS = `'use strict';
 const PAGES = '${VERSION}-pages', STATIC = '${VERSION}-static';
-const SHELL = ['/app.js', '/fonts/instrument-sans-latin-wght-normal.woff2', '/fonts/jetbrains-mono-latin-wght-normal.woff2', '/icons/loom.svg'];
+const SHELL = ['/app.js', '/fonts/instrument-sans-latin-wght-normal.woff2', '/fonts/jetbrains-mono-latin-wght-normal.woff2', '/icons/loom-32.png'];
 const NEVER = /^\\/(login|logout)(\\/|$)/;
 self.addEventListener('install', (e) => {
   self.skipWaiting();
