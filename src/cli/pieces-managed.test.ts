@@ -114,8 +114,10 @@ describe('managed pieces', () => {
     const rec = JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8'));
     expect([rec.name, rec.package, rec.version, rec.source]).toEqual(['tasks', 'taskstore', '0.4.0', { repo: 'sleepunit-agents/taskstore', commit: SHA1 }]);
     const listed = await runCliCaptured(['pieces', '--json'], { env });
+    // The shipped catalog has tasks from the same repo at another commit: that's an update on offer.
+    const offered = readCatalog().find((c) => c.name === 'tasks' && c.repo === 'sleepunit-agents/taskstore')?.commit;
     expect(JSON.parse(listed.stdout)).toEqual([{ name: 'tasks', path: join(loomHome, 'pieces', 'bin', 'loom-tasks'),
-      managed: { version: '0.4.0', commit: SHA1, repo: 'sleepunit-agents/taskstore', needsSetup: ['TASKSTORE_OWNER'] } }]);
+      managed: { version: '0.4.0', commit: SHA1, repo: 'sleepunit-agents/taskstore', needsSetup: ['TASKSTORE_OWNER'], ...(offered ? { update: offered } : {}) } }]);
   });
 
   it('settings: the owner beats the daemon, the daemon beats a default, and only declared names are taken', async () => {
