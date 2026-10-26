@@ -29,6 +29,7 @@ describe('meter, code and status blocks', () => {
     expect(whereLabel('discord:#pond')).toBe('Discord #pond');
     expect(whereLabel('wake:w-1a2b3c')).toBe('Wake');
     expect(whereLabel('letters')).toBe('Letters');
+    expect(whereLabel('?')).toBe('');
   });
 
   it('Your call shows three cards; past four, the rest fold under N more', () => {

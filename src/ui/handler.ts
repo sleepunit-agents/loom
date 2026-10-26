@@ -859,7 +859,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000)) : store.lookedAt(Math.floor(nowMs / 1000))) * 1000;
       const t = householdThread(hh, 24, nowMs);
       // Thread chips: All, each agent (when there's more than one), then each place it happened.
-      const surfaces = [...new Set(t.items.map((r) => surfaceOf(r.where)))].sort();
+      // A row with no where ("?") is under All only: a pill for it says nothing.
+      const surfaces = [...new Set(t.items.map((r) => surfaceOf(r.where)))].filter((w) => w !== '?').sort();
       const from = query.who && (hh.agents.includes(query.who) || surfaces.includes(query.who)) ? query.who : '';
       const agents = agentsOf(hh)!;
       const chips = [...(hh.agents.length > 1 ? hh.agents.map((a) => ({ value: a, label: agents[a].label })) : []),
@@ -869,7 +870,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         asks: [...proposalAsks(hh, t.proposals), ...pieceAsks(pieces, opts.env)],
         tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
         thread: t.items.filter((r) => !from || r.agent === from || surfaceOf(r.where) === from).slice(0, HOME_THREAD)
-          .map((r) => ({ agent: r.agent, text: r.text, meta: `${whereLabel(r.where)} · ${age(r.created, nowMs)}`, at: r.created, page: r.page })),
+          .map((r) => ({ agent: r.agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), at: r.created, page: r.page })),
         sinceMs, sinceLabel: clockAt(sinceMs),
         filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
         shared: { pages: t.pages, people: t.people },
