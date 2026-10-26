@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **An agent's Setup per its board.** Health first (Memory, Last active, Tokens
+  as status rows), then Identity (Voice, Born, Harnesses, the bio, and the
+  whole creed folded), then Tokens: each live one a row with an inline Revoke
+  that asks first, the revoked folded, Create token folded.
+- **A list row may carry one action** (`act`, a `buttons` item), drawn at its
+  right as a text button: Revoke on a token, Remove on a passkey.
 - **Thread: no "?" pill.** A row with no where is under All only, and its
   meta is just its age.
 - **Catalog: tasks at be57bea.** Its asks carry when they were started (else

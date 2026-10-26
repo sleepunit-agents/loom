@@ -8,7 +8,7 @@
  */
 import { prose } from './prose.js';
 import { askKey } from './push.js';
-import type { Ask, Block, Cell, Field, Page, Section, Tile, Tone } from './vocab.js';
+import type { Ask, Block, Button, Cell, Field, Page, Section, Tile, Tone } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
 
@@ -140,7 +140,8 @@ function renderBlock(b: Block, ctx: RenderContext): string {
         const who = i.agent ? ctx.agents?.[i.agent] : undefined;
         const lead = who ? mark(who, 24) : i.avatar ? `<span class="avatar" aria-hidden="true">${esc(i.avatar)}</span>` : glyph(i.tone);
         return `<li class="${tone(i.tone).trim()}">${lead}<span class="body">${link(text, i, ctx, 'row-link')}${
-          i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}</li>`;
+          i.meta ? `<span class="meta">${esc(i.meta)}</span>` : ''}</span>${i.badge ? `<span class="badge">${esc(i.badge)}</span>` : ''}${
+          i.act ? actionForm(ctx, i.act.action, buttonInner(i.act, 'row-act'), 'row-act-form') : ''}</li>`;
       }).join('')}</ul>`;
     case 'table': {
       // A real table on a wide screen. On a phone each row is a compact row (the
@@ -208,13 +209,7 @@ function renderBlock(b: Block, ctx: RenderContext): string {
       );
     case 'buttons':
       // Three or more wrap to full-width rows.
-      return `<div class="buttons${b.items.length >= 3 ? ' wide' : ''}">${b.items.map((i) => actionForm(
-        ctx,
-        i.action,
-        `${hiddenInputs(i.fields ?? {})}<button class="btn${i.tone ? ` ${i.tone}` : ''}" type="submit"${
-          i.tone === 'danger' ? ` data-confirm="${esc(i.confirm ?? 'This can\'t be undone from here.')}"` : ''}>${esc(i.label)}</button>`,
-        'button-form',
-      )).join('')}</div>`;
+      return `<div class="buttons${b.items.length >= 3 ? ' wide' : ''}">${b.items.map((i) => actionForm(ctx, i.action, buttonInner(i, 'btn'), 'button-form')).join('')}</div>`;
     case 'meter':
       return `<div class="meters">${b.items.map((i) => {
         const pct = Math.round(i.value * 100);
@@ -589,6 +584,12 @@ export function age(iso: string | undefined, nowMs = Date.now()): string {
 
 /** Your call shows this many cards; past one more, the rest fold under "N more". */
 const CARDS_SHOWN = 3;
+
+/** A button's hidden fields and the button itself; a danger one asks first (data-confirm). */
+function buttonInner(i: Button, cls: string): string {
+  return `${hiddenInputs(i.fields ?? {})}<button class="${cls}${i.tone ? ` ${i.tone}` : ''}" type="submit"${
+    i.tone === 'danger' ? ` data-confirm="${esc(i.confirm ?? 'This can\'t be undone from here.')}"` : ''}>${esc(i.label)}</button>`;
+}
 
 function askCard(a: HomeAsk, agents: RenderContext['agents'], nowMs: number): string {
   const who = a.agent ? agents?.[a.agent] : undefined;

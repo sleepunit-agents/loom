@@ -820,6 +820,10 @@ describe('the household page', () => {
     const c = await connect(handle.port, token!);
     expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Visual Mark');
     await c.close();
+    // The board's Setup: Health first, then Identity, then each live token a row with an inline Revoke that asks first.
+    const setupHtml = await (await page(cookie, '/a/mark/setup')).text();
+    expect(setupHtml.indexOf('<h2>Health')).toBeLessThan(setupHtml.indexOf('<h2>Identity'));
+    expect(setupHtml).toMatch(/<span class="text">Mark · laptop<\/span>[\s\S]*?<button class="row-act danger" type="submit" data-confirm="[^"]+">Revoke<\/button>/);
     const rev = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'revoke-token', _path: 'a/mark/setup', label: 'Mark · laptop' });
     expect(rev.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
     await expect(connect(handle.port, token!)).rejects.toThrow();
