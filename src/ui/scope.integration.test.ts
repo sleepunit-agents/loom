@@ -78,6 +78,9 @@ describe('scope', () => {
     // Household: no scope, no line.
     expect(await get('/p/narrow', owner)).toContain('scope=</span>');
     expect(await get('/p/wide', owner)).not.toContain('class="unscoped"');
+    // A piece's page says how fresh it is under its title (the script counts it up); loom's own pages don't.
+    expect(await get('/p/wide', owner)).toContain('<p class="stamp" data-stamp>updated just now</p>');
+    expect(await get('/people', owner)).not.toContain('data-stamp>');
     // Mark selected.
     const pick = await fetch(`${base}/scope/mark`, { headers: { cookie: owner }, redirect: 'manual' });
     const both = `${owner}; ${(pick.headers.get('set-cookie') ?? '').split(';')[0]}`;
