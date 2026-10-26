@@ -684,6 +684,10 @@ describe('the household page', () => {
     expect(html).toMatch(/<h1 class="display">(Nothing needs you|\d+ needs? you)<\/h1>/);
     expect(html).toContain('href="/?who=mark"');
     expect((await (await page(cookie, '/?who=mark')).text())).not.toContain('art did a thing');
+    // ...and a pill per place it happened, rows saying it the way a person would.
+    expect(html).toContain('href="/?who=discord"');
+    expect(html).toContain('Discord #pond · ');
+    expect((await (await page(cookie, '/?who=letters')).text())).not.toContain('art did a thing');
   });
 
   it('Find looks through knowledge, people and memories, in the scope', async () => {

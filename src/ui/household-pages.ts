@@ -26,7 +26,7 @@ import { resolveSqliteDbPath } from '../config.js';
 import { bootstrap } from '../tools/bootstrap.js';
 import { knowledgeVerify } from '../tools/knowledge-verify.js';
 import { ago, agentName, uiTimeZone, when, type CoreOptions } from './core.js';
-import { tapeRows } from './data.js';
+import { tapeRows, whereLabel } from './data.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile } from './vocab.js';
 
 const HOME_TAPE = 30;
@@ -77,7 +77,7 @@ export function householdHome(h: Household, opts: CoreOptions = {}): { tiles: Ti
             const last = x.tape[0];
             return {
               text: x.name,
-              meta: last ? `${ago(last.created, tz, nowMs)} · ${last.where} · ${last.title}` : 'quiet for a day',
+              meta: last ? `${ago(last.created, tz, nowMs)} · ${whereLabel(last.where)} · ${last.title}` : 'quiet for a day',
               badge: `${x.tape.length} today`,
               page: agentLink(x.agent),
             };
@@ -94,7 +94,7 @@ export function householdHome(h: Household, opts: CoreOptions = {}): { tiles: Ti
             type: 'list',
             items: tape.slice(0, HOME_TAPE).map((e) => ({
               text: e.title,
-              meta: `${e.name} · ${ago(e.created, tz, nowMs)} · ${e.where}`,
+              meta: `${e.name} · ${ago(e.created, tz, nowMs)} · ${whereLabel(e.where)}`,
               page: validPath(`a/${e.agent}/memory/${e.ref}`) ? agentLink(e.agent, `memory/${e.ref}`) : undefined,
             })),
           },
