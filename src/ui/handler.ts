@@ -272,7 +272,8 @@ function pageQuery(url: URL): Record<string, string> {
 
 // ─── One-time result messages ────────────────────────────────────────────────
 
-interface Flash { ok: boolean; message: string; from?: string; keep?: boolean }
+/** undo: posted to `act` with `path` to land on: where the action came from (render.ts flash). */
+interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
 const flashes = new Map<string, { at: number; flash: Flash }>();
 
 function putFlash(flash: Flash): string {
@@ -745,14 +746,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
     const from = source.id === 'loom' ? undefined : source.id;
+    // Undo goes back to the same source, landing where the action came from.
+    const undo = result.ok && result.undo ? { ...result.undo, act: source.act ?? `/act/${source.id}`, path: backLink } : undefined;
     // The page's own script posts with fetch: it gets the one line back as
     // JSON and stays where it is, unless the action lands somewhere else.
     if (req.headers['x-loom-fetch'] === '1') {
       const stay = to === pageHref(backLink, source);
-      return sendJson(res, 200, { ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}),
-        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep })) }) });
+      return sendJson(res, 200, { ok: result.ok, message: result.message, ...(from ? { from } : {}), ...(result.keep ? { keep: true } : {}), ...(undo ? { undo } : {}),
+        ...(stay ? {} : { go: withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })) }) });
     }
-    return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep })));
+    return redirect(res, withFlash(to, putFlash({ ok: result.ok, message: result.message, from, keep: result.keep, undo })));
   }
 
   if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');

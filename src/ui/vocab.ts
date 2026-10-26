@@ -75,7 +75,9 @@ export interface Manifest {
 }
 
 /** keep: the message is something to copy (a token shown once), so it stays until it's closed. */
-export interface ActResult { ok: boolean; message: string; page?: string; keep?: boolean }
+/** An action that takes this one back, offered as Undo on the message: posted to the same source, like a button. */
+export interface Undo { action: string; label?: string; fields?: Record<string, string> }
+export interface ActResult { ok: boolean; message: string; page?: string; keep?: boolean; undo?: Undo }
 
 export const LIMITS = {
   sections: 10,
@@ -459,6 +461,11 @@ export function parseActResult(value: unknown): ActResult | string {
     const top = obj(value, 'result');
     if (typeof top.ok !== 'boolean') throw new Invalid('ok must be true or false');
     if (top.keep !== undefined && typeof top.keep !== 'boolean') throw new Invalid('keep must be true or false');
-    return { ok: top.ok, message: str(top.message, 'message'), page: page(top.page, 'page'), ...(top.keep ? { keep: true } : {}) };
+    let undo: Undo | undefined;
+    if (top.undo !== undefined && top.undo !== null) {
+      const u = obj(top.undo, 'undo');
+      undo = { action: name(u.action, 'undo.action'), label: optStr(u.label, 'undo.label'), fields: strMap(u.fields, 'undo.fields', LIMITS.hidden) };
+    }
+    return { ok: top.ok, message: str(top.message, 'message'), page: page(top.page, 'page'), ...(top.keep ? { keep: true } : {}), ...(undo && top.ok ? { undo } : {}) };
   });
 }

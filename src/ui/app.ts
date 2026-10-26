@@ -92,13 +92,22 @@ document.addEventListener('submit', (e) => {
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 
 // A toast: the action's one line, labeled with the piece it came from.
-function toast(ok, message, from, keep) {
+function toast(ok, message, from, keep, undo, csrf) {
   const box = document.querySelector('.toasts');
   if (!box) return;
   const t = el('div', 'flash toast ' + (ok ? 'ok' : 'bad'));
   const g = el('span', 'tg', ok ? '\\u25CF' : '\\u25C6'); g.setAttribute('aria-hidden', 'true');
   t.append(g, el('span', 'tm', message || (ok ? 'Done.' : 'That didn\\'t work.')));
   if (from) t.append(el('span', 'from', from));
+  // Undo: the same form the page would render (render.ts flash), posted like any action.
+  if (undo && csrf) {
+    const f = el('form', 'undo'); f.method = 'post'; f.action = undo.act;
+    const hid = (n, v) => { const i = el('input'); i.type = 'hidden'; i.name = n; i.value = v; f.append(i); };
+    for (const [k, v] of Object.entries(undo.fields || {})) hid(k, v);
+    hid('_csrf', csrf); hid('_action', undo.action); hid('_path', undo.path);
+    const b = el('button', 'undo-btn', undo.label || 'Undo'); b.type = 'submit'; f.append(b);
+    t.append(f);
+  }
   box.append(t);
   linger(t, keep);
 }
@@ -109,7 +118,8 @@ function linger(t, keep) {
   t.append(x);
   if (keep) { t.classList.add('keep'); return; }
   const go = () => { if (t.matches(':hover, :focus-within')) return setTimeout(go, 1500); t.classList.add('out'); setTimeout(() => t.remove(), 300); };
-  setTimeout(go, t.classList.contains('bad') ? 9000 : 4000);
+  // One with Undo stays a little longer: there's something to do with it.
+  setTimeout(go, t.classList.contains('bad') ? 9000 : t.querySelector('form.undo') ? 8000 : 4000);
 }
 
 // A danger button asks first: a sheet that names it and says what happens. Keep it sits nearest the thumb.
@@ -156,7 +166,8 @@ document.addEventListener('submit', async (e) => {
     await refresh(true);
   } else btns.forEach((b) => { b.disabled = false; });
   if (btn) btn.classList.remove('busy');
-  toast(r.ok, r.message, r.from, r.keep);
+  const csrf = f.querySelector('input[name=_csrf]');
+  toast(r.ok, r.message, r.from, r.keep, r.undo, csrf && csrf.value);
 });
 
 // Live: the page re-fetches itself and patches what changed.

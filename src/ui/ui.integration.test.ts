@@ -300,6 +300,36 @@ describe('loom UI over HTTP', () => {
     expect(html).toMatch(/Project memories cool by half every 10 days/);
   });
 
+  it('archiving a memory offers Undo, which restores it: on the page and in the script\'s JSON', async () => {
+    const cookie = await login();
+    const db = new BetterSqlite3(resolveSqliteDbPath(stack), { readonly: true });
+    const ref = (db.prepare("SELECT ref FROM memories WHERE title = 'a hot memory'").get() as { ref: string }).ref;
+    db.close();
+    const page = await (await get(`/memory/${ref}`, cookie)).text();
+    const csrf = csrfOf(page);
+    // The script's way: JSON with where to go, and what undoes it.
+    const r = await post('/act/loom', cookie, { _csrf: csrf, _action: 'archive', _path: `memory/${ref}`, ref }, { 'x-loom-fetch': '1' });
+    const body = await r.json() as { ok: boolean; go?: string; undo?: { act: string; path: string; action: string; fields: Record<string, string> } };
+    expect(body).toMatchObject({ ok: true, undo: { act: '/act/loom', path: `memory/${ref}`, action: 'restore', fields: { ref } } });
+    expect((await get(`/memory/${ref}`, cookie)).status).toBe(404);
+    // The page's way: the message it lands on carries an Undo form, the same token.
+    const landed = await (await get(body.go!, cookie)).text();
+    const form = /<form class="undo" method="post" action="\/act\/loom">([\s\S]*?)<\/form>/.exec(landed)?.[1] ?? '';
+    const fields = Object.fromEntries([...form.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&#x2F;|&#47;/g, '/')]));
+    expect(fields).toMatchObject({ _action: 'restore', _csrf: csrf, ref });
+    const undone = await post('/act/loom', cookie, fields);
+    expect(undone.status).toBe(303);
+    expect(undone.headers.get('location')).toMatch(new RegExp(`^/memory/${ref.replace(/[/-]/g, (c) => `\\${c}`)}\\?_flash=`));
+    expect((await get(`/memory/${ref}`, cookie)).status).toBe(200);
+  });
+
+  it('a piece\'s undo is parsed like a button, and dropped when the action failed', () => {
+    expect(parseActResult({ ok: true, message: 'Muted.', undo: { action: 'unmute', fields: { id: '7' } } }))
+      .toEqual({ ok: true, message: 'Muted.', page: undefined, undo: { action: 'unmute', label: undefined, fields: { id: '7' } } });
+    expect(parseActResult({ ok: false, message: 'No.', undo: { action: 'unmute' } })).not.toHaveProperty('undo');
+    expect(parseActResult({ ok: true, message: 'x', undo: { action: 'Bad Name' } })).toMatch(/undo.action/);
+  });
+
   it('one memory and its record; a person card and what is newer than it', async () => {
     const cookie = await login();
     const db = new BetterSqlite3(resolveSqliteDbPath(stack), { readonly: true });
