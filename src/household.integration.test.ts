@@ -683,6 +683,8 @@ describe('the household page', () => {
     // The design's Home: a headline, Thread with a pill per agent, each row with its agent's mark.
     expect(html).toMatch(/<h1 class="display">(Nothing needs you|\d+ needs? you)<\/h1>/);
     expect(html).toContain('href="/?who=mark"');
+    // The Scope sheet: each agent with how long since it was last active, as the board has it.
+    expect(html).toMatch(/href="\/scope\/art"[^>]*>[\s\S]*?<span class="sub">active \d+m ago<\/span>/);
     expect((await (await page(cookie, '/?who=mark')).text())).not.toContain('art did a thing');
     // ...and a pill per place it happened, rows saying it the way a person would.
     expect(html).toContain('href="/?who=discord"');

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Scope sheet and Manage pieces per their boards.** Each agent on the Scope
+  sheet says how long since it was last active ("active 42m ago"), beside
+  what waits on it. On Manage pieces the catalog is a row a piece with Install
+  at its right, and pieces loom didn't install get their own "Managed by
+  hand" section.
 - **A page's title slides into the phone's header** once it scrolls under it,
   as iOS's large titles do (where the header has a way back; Home keeps its
   wordmark). A named back link gives up its word to make room.

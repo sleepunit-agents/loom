@@ -115,11 +115,12 @@ describe('the Pieces page', () => {
     const cookie = await login();
     let html = await page('/pieces', cookie);
     expect(html).toContain('href="/pieces"');
-    expect(html).toContain(`Install ${box.label}`);
+    // The catalog: a row a piece, Install at its right.
+    expect(html).toMatch(new RegExp(`<span class="text">${box.label}<\\/span>[\\s\\S]*?<button class="row-act" type="submit">Install<\\/button>`));
     expect(html).toContain('loom-handmade');
-    // A hand-made piece is one quiet row, its path in the meta; the section counts it.
-    expect(html).toMatch(/<span class="text">handmade<\/span><span class="meta">on PATH, managed by hand · [^<]*loom-handmade<\/span>/);
-    expect(html).toMatch(/<h2>Installed · 1<\/h2>|Installed · 1/);
+    // Pieces loom didn't install get their own section, beside the ones it manages.
+    expect(html).toMatch(/Managed by hand · 1[\s\S]*?<span class="text">handmade<\/span><span class="meta">[^<]*loom-handmade<\/span>/);
+    expect(html).toContain('<h2>Installed</h2>');
     const csrf = csrfOf(html);
 
     const started = await act(cookie, csrf, 'piece-install', { name: box.name });
