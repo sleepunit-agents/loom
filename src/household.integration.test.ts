@@ -815,7 +815,7 @@ describe('the household page', () => {
 
   it('one memory waiting: the Home card quotes it, with Ratify and Reject that act on that agent', async () => {
     const art = join(h.home, 'agents', 'art');
-    propose(art, { category: 'user', title: 'Jonathan builds DnB on the Push 3 first', content: 'c', source: 'test' });
+    propose(art, { category: 'user', title: 'DnB workflow', content: 'Jonathan builds DnB on the Push 3 first', source: 'test' });
     const cookie = await login();
     const home = await (await page(cookie, '/')).text();
     expect(home).toContain('Art E Fish wants to remember something');
@@ -827,6 +827,14 @@ describe('the household page', () => {
     const r = await post(cookie, '/a/art/act/loom', { _csrf: csrfOf(home), _action: 'ratify', _path: '', id });
     expect(r.status).toBe(303);
     expect(listProposals(art).filter((p) => p.status === 'pending')).toHaveLength(0);
+  });
+
+  it('a waiting memory too long for the card is reviewed on Mind, never ratified unseen', async () => {
+    const art = join(h.home, 'agents', 'art');
+    propose(art, { category: 'user', title: 'short title', content: 'x'.repeat(400), source: 'test' });
+    const home = await (await page(await login(), '/')).text();
+    expect(home).toMatch(/Art E Fish wants to remember something[\s\S]*?<a class="go" href="\/a\/art\/mind">Review<\/a>/);
+    expect(home).not.toContain('<div class="ask-acts">');
   });
 
   it('Passkeys makes a one-time sign-in link for another device, good once', async () => {

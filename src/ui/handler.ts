@@ -349,20 +349,24 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
 }
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
+/** The longest drafted memory Home's card quotes whole, and so lets you ratify there. */
+const CARD_QUOTE = 280;
+
 function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[] {
   return h.agents.filter((a) => proposals[a] > 0).map((a): HomeAsk => {
     const n = proposals[a];
     const name = agentName(agentDir(h, a));
-    // One waiting: the board's card, what it would remember quoted, Ratify and Reject right there.
+    // One waiting: the board's card, what it would remember quoted whole, Ratify and Reject right there.
+    // Only when all of it fits on the card: nothing is ratified that wasn't shown. Longer ones go to Mind.
     const one = n === 1 ? listProposals(agentDir(h, a)).find((p) => p.status === 'pending') : undefined;
-    if (one) {
-      const said = (one.title ?? one.content ?? '').replace(/\s+/g, ' ').trim();
-      return { text: `${name} wants to remember something`, meta: `“${said.length > 220 ? `${said.slice(0, 219)}…` : said}”`,
+    const said = (one?.content ?? '').replace(/\s+/g, ' ').trim();
+    if (one && said && said.length <= CARD_QUOTE) {
+      return { text: `${name} wants to remember something`, meta: `“${said}”`,
         page: `loom:a/${a}/mind`, agent: a, source: agentSource(a), sourceLabel: 'Mind', ...(one.created ? { at: one.created } : {}),
         actions: [{ action: 'ratify', label: 'Ratify', tone: 'primary', fields: { id: String(one.id) } },
           { action: 'reject', label: 'Reject', fields: { id: String(one.id) } }] };
     }
-    return { text: `${name} wants to remember ${n} things`, meta: 'Ratify or reject what it proposed.',
+    return { text: `${name} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.',
       page: `loom:a/${a}/mind`, label: 'Review', agent: a, source: CORE, sourceLabel: 'Mind' };
   });
 }
