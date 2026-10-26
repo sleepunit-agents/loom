@@ -128,8 +128,12 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
         meta: [r.version, also.length ? `also ${also.join(', ')}` : '', update ? 'update available' : '', missing.length ? 'needs setup' : ''].filter(Boolean).join(' · '),
         blocks: managedBlocks(env, r, update) }];
     }
-    return [{ type: 'callout', title: p.name, text: `${p.path} — on PATH, not installed by loom, so it's managed by hand.`, tone: 'muted' }];
+    return [];
   }) : [{ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' }];
+  // Pieces on PATH that loom didn't install: one quiet list, the path a tap away in its meta.
+  const byHand = installed.filter((p) => !(bin && p.path.startsWith(bin + '/')));
+  const shown = installedBlocks.filter((b) => b.type === 'details').length + byHand.length;
+  if (byHand.length) installedBlocks.push({ type: 'list', items: byHand.map((p) => ({ text: p.name, meta: `on PATH, managed by hand · ${env.HOME && p.path.startsWith(`${env.HOME}/`) ? `~${p.path.slice(env.HOME.length)}` : p.path}` })) });
 
   const available = catalog.filter((c) => !managed.has(c.name) && !installed.some((p) => p.name === c.name));
   if (!installedBlocks.length) installedBlocks.push({ type: 'text', text: 'No pieces yet. Install one below.', tone: 'muted' });
@@ -140,7 +144,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
       meta: [j.started.slice(0, 16).replace('T', ' ') + ' UTC', j.message].filter(Boolean).join(' · '),
     })) }] });
   }
-  sections.push({ id: 'installed', title: 'Installed', blocks: installedBlocks.slice(0, 20) });
+  sections.push({ id: 'installed', title: shown ? `Installed · ${shown}` : 'Installed', blocks: installedBlocks.slice(0, 20) });
   sections.push({ id: 'available', title: 'Available', blocks: available.length
     ? available.slice(0, 19).flatMap((c): Block[] => [
       { type: 'callout', title: c.label ?? c.name, text: `${c.description ?? ''} (${c.repo} @ ${c.commit.slice(0, 12)})`.trim() },

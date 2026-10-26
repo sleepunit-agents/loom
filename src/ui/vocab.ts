@@ -35,7 +35,7 @@ export type Block =
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'callout'; text: string; title?: string; tone?: Tone }
   | ({ type: 'link'; text: string } & Target)
-  | { type: 'filters'; param: string; options: Array<{ value: string; label: string }> }
+  | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
   | { type: 'buttons'; items: Array<{ action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }> }
@@ -311,6 +311,7 @@ function block(v: unknown, depth = 0): Block {
           if (value.length > LIMITS.queryValue) throw new Invalid('filter.value is too long');
           return { value, label: str(o.label, 'filter.label') };
         }),
+        search: optStr(b.search, 'filters.search'),
       };
     }
     case 'details':

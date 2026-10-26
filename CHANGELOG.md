@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Closer to the design, page by page.** A page below the top says where its
+  back link goes ("‹ Knowledge", "‹ Mind"); an agent's own tabs carry the way
+  around instead. Knowledge has a search field (a new optional `search` on the
+  `filters` block, `?q=`), a "Needs a check · N" pill, and rows that say how
+  fresh they are ("verified today", "unchecked for 41 days" in the warn tone).
+  A knowledge page's body breaks between paragraphs, never mid-word. The
+  Pieces page lists hand-installed pieces as one quiet list and counts what's
+  installed. Places ends in Knowledge and People side by side and a Manage
+  pieces link; the scope sheet counts what waits on each agent. A list row's
+  meta is in the body font (mono is for machine text).
+
 ### Fixed
 
 - **Catalog: box at c0a3751.** A tailnet grant must name a `tailscaled.sock`, with

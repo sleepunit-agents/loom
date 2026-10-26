@@ -152,6 +152,10 @@ export function householdThread(h: Household, hours = 24, nowMs = Date.now()): {
 
 interface PageRow { slug: string; title: string; domain: string; updated: string; sourcing: string | null; body?: string; created_by?: string | null; author?: string | null; verified_at?: string | null }
 
+/** A knowledge page not checked (or, never checked, not written) in this many days needs a check. */
+const CHECK_DAYS = 30;
+const CHECK = 'needs-check';
+
 export function knowledgePage(h: Household, query: Record<string, string>, opts: CoreOptions = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
@@ -159,33 +163,73 @@ export function knowledgePage(h: Household, query: Record<string, string>, opts:
   if (!existsSync(path)) return { title: 'Knowledge', intro: 'The commons has no knowledge yet.', sections: [] };
   const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
   try {
-    const domains = (db.prepare("SELECT substr(domain, 1, instr(domain || '/', '/') - 1) AS top, COUNT(*) AS n FROM pages WHERE status = 'active' GROUP BY top ORDER BY n DESC LIMIT 12").all() as Array<{ top: string; n: number }>);
-    const pick = domains.some((d) => d.top === query.domain) ? query.domain : '';
+    const domains = (db.prepare("SELECT substr(domain, 1, instr(domain || '/', '/') - 1) AS top, COUNT(*) AS n FROM pages WHERE status = 'active' GROUP BY top ORDER BY n DESC LIMIT 11").all() as Array<{ top: string; n: number }>);
+    // "Needs a check": last verified (or, never verified, last written) more than CHECK_DAYS ago.
+    const cutoff = new Date(nowMs - CHECK_DAYS * 86_400_000).toISOString();
+    const STALE = 'COALESCE(verified_at, updated) < ?';
+    const stale = (db.prepare(`SELECT COUNT(*) AS n FROM pages WHERE status = 'active' AND ${STALE}`).get(cutoff) as { n: number }).n;
+    const pick = query.domain === CHECK || domains.some((d) => d.top === query.domain) ? query.domain : '';
+    const q = (query.q ?? '').trim().toLowerCase().slice(0, 100);
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const where = ["status = 'active'"];
+    const args: unknown[] = [];
+    if (pick === CHECK) { where.push(STALE); args.push(cutoff); }
+    else if (pick) { where.push("(domain = ? OR domain LIKE ? || '/%')"); args.push(pick, pick); }
+    if (q) { where.push("(lower(title) LIKE ? ESCAPE '\\' OR lower(domain) LIKE ? ESCAPE '\\')"); args.push(like, like); }
     const rows = db.prepare(
-      `SELECT slug, title, domain, updated, sourcing FROM pages WHERE status = 'active' ${pick ? "AND (domain = ? OR domain LIKE ? || '/%')" : ''} ORDER BY updated DESC LIMIT 60`,
-    ).all(...(pick ? [pick, pick] : [])) as PageRow[];
+      `SELECT slug, title, domain, updated, sourcing, verified_at FROM pages WHERE ${where.join(' AND ')} ORDER BY ${pick === CHECK ? 'COALESCE(verified_at, updated) ASC' : 'updated DESC'} LIMIT 60`,
+    ).all(...args) as PageRow[];
     const total = count(path, "SELECT COUNT(*) AS n FROM pages WHERE status = 'active'");
+    const freshness = (r: PageRow): { meta: string; tone?: 'warn' } => {
+      const at = r.verified_at ?? r.updated;
+      const days = Math.floor((nowMs - Date.parse(at)) / 86_400_000);
+      if (at < cutoff) return { meta: `unchecked for ${days} days`, tone: 'warn' };
+      return { meta: r.verified_at ? `verified ${ago(r.verified_at, tz, nowMs)}` : `written ${ago(r.updated, tz, nowMs)}` };
+    };
     return {
       title: 'Knowledge',
       intro: 'Facts about the world, shared by every agent in the household. Newest first.',
       sections: [
         { id: 'filter', blocks: [
-          { type: 'filters', param: 'domain', options: [{ value: '', label: 'Everything' }, ...domains.map((d) => ({ value: d.top, label: `${d.top} (${d.n})` }))] },
-          { type: 'text', text: `${total.toLocaleString('en-US')} pages${pick ? `, ${rows.length} shown in ${pick}` : ''}`, tone: 'muted' },
+          { type: 'filters', param: 'domain', search: `Search ${total.toLocaleString('en-US')} facts`, options: [{ value: '', label: 'All' },
+            ...(stale ? [{ value: CHECK, label: `Needs a check · ${stale}` }] : []), ...domains.map((d) => ({ value: d.top, label: `${d.top} · ${d.n}` }))] },
+          ...(q || pick ? [{ type: 'text' as const, text: `${rows.length}${rows.length === 60 ? '+' : ''} of ${total.toLocaleString('en-US')} pages${q ? ` matching “${query.q!.trim()}”` : ''}`, tone: 'muted' as const }] : []),
         ] },
         { id: 'pages', blocks: [{
           type: 'list',
-          items: rows.map((r) => ({
-            text: r.title,
-            meta: `${r.domain} · ${ago(r.updated, tz, nowMs)}${r.sourcing ? ` · ${r.sourcing}` : ''}`,
-            page: validPath(`knowledge/${r.slug}`) ? `loom:knowledge/${r.slug}` : undefined,
-          })),
+          items: rows.map((r) => {
+            const f = freshness(r);
+            return { text: r.title, meta: `${f.meta} · ${r.domain}`, tone: f.tone, page: validPath(`knowledge/${r.slug}`) ? `loom:knowledge/${r.slug}` : undefined };
+          }),
         }] },
       ],
     };
   } finally {
     db.close();
   }
+}
+
+/**
+ * A long body as text blocks of at most `max` characters, broken between
+ * paragraphs (a paragraph too long on its own breaks at a space), never
+ * mid-word.
+ */
+export function paragraphs(body: string, max: number): string[] {
+  const out: string[] = [];
+  let cur = '';
+  const push = (s: string) => { if (s.trim()) out.push(s.trim()); };
+  for (let para of body.split(/\n{2,}/)) {
+    while (para.length > max) {
+      const cut = para.lastIndexOf(' ', max) > max / 2 ? para.lastIndexOf(' ', max) : max;
+      push(cur); cur = '';
+      push(para.slice(0, cut));
+      para = para.slice(cut);
+    }
+    if (cur && cur.length + 2 + para.length > max) { push(cur); cur = ''; }
+    cur = cur ? `${cur}\n\n${para}` : para;
+  }
+  push(cur);
+  return out.length ? out : [''];
 }
 
 export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {}): Page {
@@ -202,7 +246,7 @@ export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {
       } catch { return []; }
     })();
     const body = r.body ?? '';
-    const chunks = body.match(/[\s\S]{1,1900}/g) ?? [''];
+    const chunks = paragraphs(body, 1900);
     return {
       title: r.title,
       sections: [

@@ -174,7 +174,10 @@ function renderBlock(b: Block, ctx: RenderContext): string {
     }
     case 'filters': {
       const current = ctx.query[b.param] ?? '';
-      return `<nav class="filters" aria-label="Filter">${b.options.map((o) => {
+      // An optional search field over the pills: a plain GET to this page with ?q=, the other choices kept.
+      const search = b.search === undefined ? '' : `<form class="filter-search" method="get" action="${esc(pageHref(ctx.path, ctx.source))}" role="search">${
+        hiddenInputs(Object.fromEntries(Object.entries(ctx.query).filter(([k]) => k !== 'q')))}<input type="search" name="q" value="${esc(ctx.query.q ?? '')}" placeholder="${esc(b.search)}" aria-label="${esc(b.search)}"></form>`;
+      return `${search}<nav class="filters" aria-label="Filter">${b.options.map((o) => {
         const href = pageHref(ctx.path, ctx.source);
         const target = href + qs({ ...ctx.query, [b.param]: o.value });
         const on = o.value === current;
@@ -253,7 +256,7 @@ export interface Chrome {
 }
 
 /** An agent as the shell draws it: its mark is its initial on its color. */
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean }
+export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number }
 
 export interface Shell {
   owner: string;
@@ -265,6 +268,8 @@ export interface Shell {
   asks: number;
   /** Where the Home tab goes in this scope. */
   home: string;
+  /** A page below the top: where its back link goes, by name ("‹ Knowledge"). */
+  back?: { label: string; href: string };
   /** Loom's own places: Knowledge, People (and Mind for a lone agent). */
   core: Array<{ label: string; href: string; current: boolean }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
@@ -343,7 +348,7 @@ function scopeSheetBody(c: Chrome, sh: Shell): string {
       count ? `<span class="count">${count}</span>` : ''}</a>`;
   const rows = sh.household
     ? [row('/scope/household', householdMark(sh.agents, 32), 'Household', sh.agents.map((a) => a.label).join(', '), sh.scope === 'household', sh.asks),
-      ...sh.agents.map((a) => row(a.href, mark(a, 32), a.label, '', a.current)),
+      ...sh.agents.map((a) => row(a.href, mark(a, 32), a.label, '', a.current, a.asks)),
       `<a class="scope-row new" href="/new-agent"><span class="plusbox">${ICON.plus}</span><span class="text">New agent</span></a>`]
     : [row('/', mark(sh.agents[0], 32), sh.agents[0].label, '', true, sh.asks)];
   return `<div class="sheet-rows">${rows.join('')}</div><div class="sheet-foot"><span class="owner">${esc(sh.owner)}</span><a class="btn small" href="/passkeys">Passkeys</a>${signOut(c, 'small')}</div>`;
@@ -352,8 +357,8 @@ function scopeSheetBody(c: Chrome, sh: Shell): string {
 function placesSheetBody(sh: Shell): string {
   const tiles = sh.pieces.map((p) => `<a class="place${p.current ? ' on' : ''}${tone(p.tone)}" href="${esc(p.href)}"><span class="pl-top">${glyph(p.tone === 'ok' ? undefined : p.tone)}</span><span class="pl-label">${esc(p.label)}</span>${
     p.stat ? `<span class="pl-stat">${esc(p.stat)}</span>` : ''}</a>`).join('');
-  return `${tiles ? `<div class="place-grid">${tiles}</div>` : '<p class="empty">No pieces yet.</p>'}<div class="place-rows">${sh.core.map((x) =>
-    `<a class="link-row" href="${esc(x.href)}"><span>${esc(x.label)}</span>${CHEVRON}</a>`).join('')}<a class="link-row" href="/pieces"><span>Manage pieces</span>${CHEVRON}</a></div>`;
+  return `${tiles ? `<div class="place-grid">${tiles}</div>` : '<p class="empty">No pieces yet.</p>'}<div class="place-core">${sh.core.map((x) =>
+    `<a class="place-btn${x.current ? ' on' : ''}" href="${esc(x.href)}">${esc(x.label)}</a>`).join('')}</div><a class="manage-link" href="/pieces">Manage pieces</a>`;
 }
 
 function sheet(id: string, title: string, body: string): string {
@@ -376,9 +381,11 @@ function rail(c: Chrome, sh: Shell): string {
 
 function phoneTop(sh: Shell): string {
   // Home shows the wordmark; anywhere else a way back.
-  return sh.tab === 'home'
+  return sh.tab === 'home' && !sh.back
     ? `<div class="phone-top"><a class="wordmark" href="/">${LOGO}<span>loom</span></a></div>`
-    : `<div class="phone-top"><a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a></div>`;
+    : sh.back
+      ? `<div class="phone-top"><a class="back named" href="${esc(sh.back.href)}">${ICON.back}<span>${esc(sh.back.label)}</span></a></div>`
+      : `<div class="phone-top"><a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a></div>`;
 }
 
 function bottomBar(sh: Shell): string {
