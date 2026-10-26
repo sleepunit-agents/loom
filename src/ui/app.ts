@@ -264,7 +264,24 @@ async function refresh(force) {
   swap(document.querySelector('nav.bottom'), doc.querySelector('nav.bottom'));
   schedule(Number(doc.body.dataset.live || 0));
   status();
+  barTitle();
 }
+// The page's title slides into the pinned header once it scrolls under it,
+// as iOS's large titles do. Only where the header has a way back (Home keeps its wordmark).
+let titleObs = null;
+function barTitle() {
+  if (titleObs) { titleObs.disconnect(); titleObs = null; }
+  const top = document.querySelector('.phone-top');
+  const slot = top && top.querySelector('.bar-title');
+  const h1 = document.querySelector('main h1');
+  if (!top || !slot || !h1 || !top.querySelector('.back') || !('IntersectionObserver' in window)) return;
+  slot.textContent = h1.textContent;
+  titleObs = new IntersectionObserver((es) => {
+    for (const e of es) top.classList.toggle('titled', !e.isIntersecting && e.boundingClientRect.top < top.offsetHeight);
+  }, { rootMargin: '-' + top.offsetHeight + 'px 0px 0px 0px' });
+  titleObs.observe(h1);
+}
+barTitle();
 function status() {
   const s = Math.max(0, Math.round((Date.now() - checked) / 1000));
   const ago = s < 60 ? s + 's' : Math.round(s / 60) + 'm';

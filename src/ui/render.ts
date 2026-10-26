@@ -418,7 +418,8 @@ function phoneTop(sh: Shell): string {
       : `<a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a>`;
   const who = sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '';
   const pill = `<a class="scope-pill" href="/scope" data-sheet="scope" aria-label="Showing ${esc(who)}. Change">${scopeMark(sh, 26)}<span>${esc(who)}</span><span class="caret" aria-hidden="true">⌄</span></a>`;
-  return `<div class="phone-top">${left}${pill}</div>`;
+  // The page's title slides in here once it scrolls under this bar (app.js fills and shows it).
+  return `<div class="phone-top">${left}<span class="bar-title" aria-hidden="true"></span>${pill}</div>`;
 }
 
 function bottomBar(sh: Shell): string {
