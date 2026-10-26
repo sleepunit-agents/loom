@@ -434,7 +434,7 @@ export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome, unsco
 const ASKS_SHOWN = 5;
 
 export interface HomeTile extends Tile { source: Source }
-export interface HomeAsk extends Ask { source: Source }
+export interface HomeAsk extends Ask { source: Source; /** The piece's tab label, for the card's source line. */ sourceLabel?: string }
 
 /** Home: tiles across the top, the tape as the page, "Your call" leading the side column. */
 export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles: HomeTile[], asks: HomeAsk[]): string {
@@ -463,6 +463,78 @@ export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles
   const sideRest = page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
   const body = `${shellOpen(chrome)}<main>${flash(chrome)}${yours}${tileHtml}${columns(main, sideRest)}</main>${shellClose(chrome, chromeFoot(chrome, true))}`;
   return document(chrome.agent, body, true);
+}
+
+// ─── Home and an agent's Today (Claude Design, 2026-10-26) ───────────────────
+
+export interface ThreadRow { agent?: string; text: string; meta: string; at: string; page?: string }
+
+/** Everything Home (or an agent's Today) shows, in the design's order. */
+export interface Dashboard {
+  /** 'Household', or the agent's name. */
+  label: string;
+  /** An agent's Today: its mark, and Today · Mind · People · Setup. */
+  agent?: { label: string; bg: string; fg: string; sub?: string; tabs: Array<{ label: string; href: string; current: boolean }> };
+  asks: HomeAsk[];
+  tiles: HomeTile[];
+  thread: ThreadRow[];
+  /** "Since you last looked" (epoch ms); rows after it get a new dot, and a line marks it. */
+  sinceMs?: number;
+  sinceLabel?: string;
+  /** Pills over the Thread: All and each agent. */
+  filters?: { param: string; current: string; options: Array<{ value: string; label: string }> };
+  shared?: { pages: number; people: number };
+  more?: { label: string; href: string };
+}
+
+/** "40m", "2h", "3d": how long ago, short. */
+export function age(iso: string | undefined, nowMs = Date.now()): string {
+  const t = iso ? Date.parse(iso) : Number.NaN;
+  if (Number.isNaN(t)) return '';
+  const m = Math.max(0, Math.round((nowMs - t) / 60_000));
+  return m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+}
+
+function askCard(a: HomeAsk, agents: RenderContext['agents'], nowMs: number): string {
+  const who = a.agent ? agents?.[a.agent] : undefined;
+  const src = `${who ? mark(who, 20) : glyph(a.tone)}<span>${esc(a.sourceLabel ?? a.source.id)}</span>`;
+  const go = a.page !== undefined ? `<a class="go" href="${esc(pageHref(a.page, a.source))}">${esc(a.label ?? 'Open')}</a>` : '';
+  return `<li class="ask${a.tone && a.tone !== 'ok' && a.tone !== 'muted' ? tone(a.tone) : ''}"><span class="src"><span class="who">${src}</span>${a.at ? `<span class="mono">${esc(age(a.at, nowMs))}</span>` : ''}</span>` +
+    `<span class="text">${esc(a.text)}</span>${a.meta ? `<span class="sentence">${esc(a.meta)}</span>` : ''}${go}</li>`;
+}
+
+export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome, nowMs = Date.now()): string {
+  const need = d.asks.length;
+  const fresh = d.sinceMs === undefined ? 0 : d.thread.filter((r) => Date.parse(r.at) > d.sinceMs!).length;
+  const head = d.agent
+    ? `<header class="dash-head agent">${mark(d.agent, 48)}<div><h1>${esc(d.agent.label)}</h1>${d.agent.sub ? `<p class="sub">${esc(d.agent.sub)}</p>` : ''}</div></header>` +
+      `<nav class="seg-tabs" aria-label="${esc(d.agent.label)}">${d.agent.tabs.map((t) => `<a href="${esc(t.href)}"${t.current ? ' class="on" aria-current="page"' : ''}>${esc(t.label)}</a>`).join('')}</nav>`
+    : `<header class="dash-head"><span class="label">${esc(d.label)}</span><h1 class="display">${need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you'}</h1>${
+      d.sinceLabel ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}</header>`;
+  const yours = need
+    ? `<section class="your-call" id="your-call"><h2 class="label">Your call <span class="n">${need}</span></h2><ul class="ask-list">${d.asks.map((a) => askCard(a, ctx.agents, nowMs)).join('')}</ul></section>` : '';
+  const glance = d.tiles.length
+    ? `<section class="glance"><h2 class="label">At a glance</h2><div class="tiles">${d.tiles.map((t) => {
+        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${glyph(t.tone === 'ok' ? undefined : t.tone)}`;
+        return t.page !== undefined ? `<a class="tile${tone(t.tone)}" href="${esc(pageHref(t.page, t.source))}">${inner}</a>` : `<div class="tile${tone(t.tone)}">${inner}</div>`;
+      }).join('')}</div></section>` : '';
+  let divided = false;
+  const rows = d.thread.map((r) => {
+    const isNew = d.sinceMs !== undefined && Date.parse(r.at) > d.sinceMs;
+    let line = '';
+    if (!isNew && !divided && d.sinceMs !== undefined && fresh > 0) { divided = true; line = `<li class="seen"><span>seen up to ${esc(d.sinceLabel ?? '')}</span></li>`; }
+    const who = r.agent ? ctx.agents?.[r.agent] : undefined;
+    const text = `<span class="text">${esc(r.text)}</span>`;
+    return `${line}<li>${who ? mark(who, 24) : ''}<span class="body">${link(text, r, ctx, 'row-link')}<span class="meta">${esc(r.meta)}</span></span>${isNew ? '<span class="new" aria-label="new"></span>' : ''}</li>`;
+  }).join('');
+  const filters = d.filters ? renderBlock({ type: 'filters', param: d.filters.param, options: d.filters.options }, ctx) : '';
+  const thread = `<section class="thread"><h2 class="label">Thread</h2>${filters}<ul class="list thread-list">${rows || '<li><span class="empty">Nothing in the last day.</span></li>'}</ul>${
+    d.more ? `<a class="more-link" href="${esc(d.more.href)}">${esc(d.more.label)}</a>` : ''}</section>`;
+  const shared = d.shared
+    ? `<section class="shared"><h2 class="label">Shared</h2><div class="card rows"><a class="link-row" href="/knowledge"><span><span>Knowledge</span><span class="domain">${d.shared.pages.toLocaleString('en-US')} facts</span></span>${CHEVRON}</a>` +
+      `<a class="link-row" href="/people"><span><span>People</span><span class="domain">${d.shared.people} cards</span></span>${CHEVRON}</a></div></section>` : '';
+  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '')}`;
+  return document(d.label, body, true);
 }
 
 /** A one-time sign-in link's page: a button, so a link preview can't spend it. */
