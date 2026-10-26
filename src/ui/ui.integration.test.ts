@@ -361,7 +361,9 @@ describe('loom UI over HTTP', () => {
     expect(body.pieces.map((p) => [p.piece, p.manifest.tab.label])).toEqual([['shuttle', 'Bridges']]);
     const cookie = await login();
     const html = await (await get('/', cookie)).text();
-    expect(html).toContain('<a href="/p/shuttle">Bridges</a>');
+    // Its tab is in the desktop rail's Pieces group and in the Places sheet, by the tab's label.
+    expect(html).toContain('<a class="rail-link" href="/p/shuttle"><span>Bridges</span>');
+    expect(html).toContain('<span class="pl-label">Bridges</span>');
     expect(html).toContain('2 live');
     expect(html).toContain('Your call');
     expect(html).toContain('Slack bridge is dark');

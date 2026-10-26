@@ -244,6 +244,29 @@ export interface Chrome {
   /** The one-time result of an action; `from` names the piece that sent it. */
   flash?: { ok: boolean; message: string; from?: string };
   skipped: string[];
+  /** The app shell (bottom bar, rail, scope and Places sheets); absent for the bare pages. */
+  shell?: Shell;
+}
+
+/** An agent as the shell draws it: its mark is its initial on its color. */
+export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean }
+
+export interface Shell {
+  owner: string;
+  /** 'household', or the selected agent's id. */
+  scope: string;
+  household: boolean;
+  agents: AgentView[];
+  /** Asks waiting, for the scope sheet's count. */
+  asks: number;
+  /** Where the Home tab goes in this scope. */
+  home: string;
+  /** Loom's own places: Knowledge, People (and Mind for a lone agent). */
+  core: Array<{ label: string; href: string; current: boolean }>;
+  /** Installed pieces with a tab, each with its tile's value or tone. */
+  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string }>;
+  /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope' or ''. */
+  tab: string;
 }
 
 
@@ -260,6 +283,123 @@ function chromeTop(c: Chrome): string {
   return `<header class="top"><div class="top-in"><a class="brand" href="/"><svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h16M3 11h16M3 17h16"></path><path d="M7 2v18M15 2v18" opacity=".55"></path></svg>loom <span class="who">· ${esc(c.agent)}</span></a>` +
     `<nav class="tabs" aria-label="Sections">${core.map(tab).join('')}${pieces.length ? `<span class="sep" aria-hidden="true"></span>${pieces.map(tab).join('')}` : ''}</nav>` +
     `<div class="top-right"><span class="mono clock">${esc(c.clock)}</span><a class="mono" href="/passkeys">Passkeys</a><form class="inline" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form></div></div></header>`;
+}
+
+
+// ─── The app shell (Claude Design, 2026-10-26): rail on a wide screen, bottom bar on a phone ───
+
+const ICON = {
+  home: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+  places: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></g></svg>',
+  find: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></g></svg>',
+  back: '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  close: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  updown: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3-3 3 3M5 10l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  plus: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+};
+
+/** loom's wordmark: the woven 2x2. */
+const LOGO = '<svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="2" fill="var(--ink)"/><rect x="11" y="1" width="8" height="8" rx="2" fill="var(--thread)" stroke="var(--ink)" stroke-width="1.2"/><rect x="1" y="11" width="8" height="8" rx="2" fill="var(--thread)" stroke="var(--ink)" stroke-width="1.2"/><rect x="11" y="11" width="8" height="8" rx="2" fill="var(--ink)"/></svg>';
+
+/** An agent's mark: its initial on its color (colors are validated #rrggbb). */
+export function mark(a: { label: string; bg: string; fg: string }, size = 28): string {
+  const initial = (a.label.trim()[0] ?? '?').toUpperCase();
+  return `<span class="mark" style="width:${size}px;height:${size}px;font-size:${Math.round(size * 0.5)}px;background:${a.bg};color:${a.fg}" aria-hidden="true">${esc(initial)}</span>`;
+}
+
+/** The household's mark: a woven 2x2 of ink and each agent's color. */
+function householdMark(agents: AgentView[], size = 28): string {
+  // The ink squares follow the text color, so the mark holds on a selected (inked) row too.
+  const fills = [0, 1, 2, 3].map((i) => (i === 0 || i === 3 ? 'currentColor' : agents[i === 1 ? 0 : 1]?.bg ?? 'var(--ink-2)'));
+  const c = size / 2 - 1.5;
+  return `<svg class="hmark" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${fills.map((f, i) =>
+    `<rect x="${(i % 2) * (c + 3)}" y="${Math.floor(i / 2) * (c + 3)}" width="${c}" height="${c}" rx="${Math.max(2, c * 0.27)}" fill="${f}"/>`).join('')}</svg>`;
+}
+
+function scopeMark(sh: Shell, size = 28): string {
+  const a = sh.agents.find((x) => x.current);
+  return sh.scope === 'household' || !a ? householdMark(sh.agents, size) : mark(a, size);
+}
+
+function signOut(c: Chrome, cls = ''): string {
+  return `<form class="inline${cls ? ` ${cls}` : ''}" method="post" action="/logout"><input type="hidden" name="_csrf" value="${esc(c.csrf)}"><button type="submit">Sign out</button></form>`;
+}
+
+function scopeSheetBody(c: Chrome, sh: Shell): string {
+  const row = (href: string, m: string, label: string, sub: string, current: boolean, count?: number) =>
+    `<a class="scope-row${current ? ' on' : ''}" href="${esc(href)}"${current ? ' aria-current="true"' : ''}>${m}<span class="body"><span class="text">${esc(label)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</span>${
+      count ? `<span class="count">${count}</span>` : ''}</a>`;
+  const rows = sh.household
+    ? [row('/scope/household', householdMark(sh.agents, 32), 'Household', sh.agents.map((a) => a.label).join(', '), sh.scope === 'household', sh.asks),
+      ...sh.agents.map((a) => row(a.href, mark(a, 32), a.label, '', a.current)),
+      `<a class="scope-row new" href="/new-agent"><span class="plusbox">${ICON.plus}</span><span class="text">New agent</span></a>`]
+    : [row('/', mark(sh.agents[0], 32), sh.agents[0].label, '', true, sh.asks)];
+  return `<div class="sheet-rows">${rows.join('')}</div><div class="sheet-foot"><span class="owner">${esc(sh.owner)}</span><a class="btn small" href="/passkeys">Passkeys</a>${signOut(c, 'small')}</div>`;
+}
+
+function placesSheetBody(sh: Shell): string {
+  const tiles = sh.pieces.map((p) => `<a class="place${p.current ? ' on' : ''}${tone(p.tone)}" href="${esc(p.href)}"><span class="pl-top">${glyph(p.tone === 'ok' ? undefined : p.tone)}</span><span class="pl-label">${esc(p.label)}</span>${
+    p.stat ? `<span class="pl-stat">${esc(p.stat)}</span>` : ''}</a>`).join('');
+  return `${tiles ? `<div class="place-grid">${tiles}</div>` : '<p class="empty">No pieces yet.</p>'}<div class="place-rows">${sh.core.map((x) =>
+    `<a class="link-row" href="${esc(x.href)}"><span>${esc(x.label)}</span>${CHEVRON}</a>`).join('')}<a class="link-row" href="/pieces"><span>Manage pieces</span>${CHEVRON}</a></div>`;
+}
+
+function sheet(id: string, title: string, body: string): string {
+  return `<dialog class="sheet" id="sheet-${id}" aria-label="${esc(title)}"><div class="sheet-grip" aria-hidden="true"></div><div class="sheet-head"><h2>${esc(title)}</h2><button class="sheet-close" type="button" data-close aria-label="Close">${ICON.close}</button></div>${body}</dialog>`;
+}
+
+function rail(c: Chrome, sh: Shell): string {
+  const cur = sh.agents.find((a) => a.current);
+  const scopeLabel = sh.scope === 'household' || !cur ? 'Household' : cur.label;
+  const scopeSub = sh.scope === 'household' ? sh.agents.map((a) => a.label).join(', ') : sh.household ? 'one agent' : '';
+  const item = (href: string, label: string, current: boolean, extra = '') => `<a class="rail-link${current ? ' on' : ''}" href="${esc(href)}"${current ? ' aria-current="page"' : ''}><span>${esc(label)}</span>${extra}</a>`;
+  return `<aside class="rail" aria-label="loom"><a class="wordmark" href="/">${LOGO}<span>loom</span></a>` +
+    `<a class="scope-btn" href="/scope" data-sheet="scope">${scopeMark(sh, 32)}<span class="body"><span class="text">${esc(scopeLabel)}</span>${scopeSub ? `<span class="sub">${esc(scopeSub)}</span>` : ''}</span>${ICON.updown}</a>` +
+    `<a class="find-btn" href="/find">${ICON.find}<span>Find anything</span><kbd>⌘K</kbd></a>` +
+    `<nav class="rail-nav">${item(sh.home, 'Home', sh.tab === 'home', sh.asks ? `<span class="count">${sh.asks}</span>` : '')}${sh.core.map((x) => item(x.href, x.label, x.current)).join('')}` +
+    (sh.pieces.length ? `<span class="rail-label">Pieces</span>${sh.pieces.map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
+    `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
+    `<div class="rail-foot"><span>${esc(sh.owner)}</span><a href="/passkeys">Passkeys</a>${signOut(c)}</div></aside>`;
+}
+
+function phoneTop(sh: Shell): string {
+  // Home shows the wordmark; anywhere else a way back.
+  return sh.tab === 'home'
+    ? `<div class="phone-top"><a class="wordmark" href="/">${LOGO}<span>loom</span></a></div>`
+    : `<div class="phone-top"><a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a></div>`;
+}
+
+function bottomBar(sh: Shell): string {
+  const tab = (href: string, label: string, icon: string, on: boolean, attrs = '') =>
+    `<a class="tab${on ? ' on' : ''}" href="${esc(href)}" aria-label="${esc(label)}"${on ? ' aria-current="page"' : ''}${attrs}>${icon}</a>`;
+  return `<nav class="bottom" aria-label="Main"><a class="scope-chip" href="/scope" data-sheet="scope" aria-label="Scope: ${esc(sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '')}">${scopeMark(sh, 30)}<span class="caret" aria-hidden="true">⌃</span></a>` +
+    tab(sh.home, 'Home', ICON.home, sh.tab === 'home') + tab('/places', 'Places', ICON.places, sh.tab === 'places', ' data-sheet="places"') + tab('/find', 'Find', ICON.find, sh.tab === 'find') + '</nav>';
+}
+
+/** Everything around a page's main: the rail, the phone's top and bottom bars, and the two sheets. */
+function shellOpen(c: Chrome): string {
+  if (!c.shell) return chromeTop(c);
+  return `<div class="app">${rail(c, c.shell)}<div class="content">${phoneTop(c.shell)}`;
+}
+function shellClose(c: Chrome, foot: string): string {
+  if (!c.shell) return foot;
+  return `${foot}</div></div>${bottomBar(c.shell)}${sheet('scope', 'Show me', scopeSheetBody(c, c.shell))}${sheet('places', 'Places', placesSheetBody(c.shell))}`;
+}
+
+/** The sheets as pages (no script, or a link straight to them), and Find. */
+export function renderSheetPage(which: 'scope' | 'places' | 'find', c: Chrome, q = ''): string {
+  const sh = c.shell!;
+  let inner: string;
+  if (which === 'scope') inner = `<h1>Show me</h1>${scopeSheetBody(c, sh)}`;
+  else if (which === 'places') inner = `<h1>Places</h1>${placesSheetBody(sh)}`;
+  else {
+    const all = [{ label: 'Home', href: sh.home }, ...sh.core, ...sh.pieces, { label: 'Manage pieces', href: '/pieces' }, { label: 'Passkeys', href: '/passkeys' },
+      ...sh.agents.filter(() => sh.household).map((a) => ({ label: a.label, href: `/scope/${a.id}` }))];
+    const hits = q ? all.filter((x) => x.label.toLowerCase().includes(q.toLowerCase())) : all;
+    inner = `<h1>Find</h1><form class="find-form" method="get" action="/find" role="search"><input name="q" value="${esc(q)}" placeholder="Find a page" aria-label="Find" autofocus></form>` +
+      `<section class="card"><h2 class="label">Go to</h2>${hits.length ? hits.map((x) => `<a class="link-row" href="${esc(x.href)}"><span>${esc(x.label)}</span>${CHEVRON}</a>`).join('') : '<p class="empty">Nothing by that name.</p>'}</section>`;
+  }
+  return document(which === 'scope' ? 'Show me' : which === 'places' ? 'Places' : 'Find', `${shellOpen(c)}<main class="sheet-page">${inner}</main>${shellClose(c, '')}`, false);
 }
 
 function chromeFoot(c: Chrome, refresh: boolean): string {
@@ -279,7 +419,7 @@ export function renderPage(page: Page, ctx: RenderContext, chrome: Chrome): stri
   const empty = page.sections.length ? '' : '<p class="intro">There\'s nothing here.</p>';
   // Pages with forms don't auto-refresh: a refresh would throw away what's being typed.
   const hasForm = page.sections.some((s) => s.blocks.some((b) => b.type === 'form' || (b.type === 'details' && b.blocks.some((x) => x.type === 'form'))));
-  const body = `${chromeTop(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${empty}${columns(main, side)}</main>${chromeFoot(chrome, !hasForm && !page.refresh)}`;
+  const body = `${shellOpen(chrome)}<main>${flash(chrome)}<div><h1>${esc(page.title)}</h1>${page.intro ? `<p class="intro">${esc(page.intro)}</p>` : ''}</div>${empty}${columns(main, side)}</main>${shellClose(chrome, chromeFoot(chrome, !hasForm && !page.refresh))}`;
   // A page that asks for its own refresh (an install running) gets it, forms or not.
   return document(`${page.title} · ${chrome.agent}`, body, page.refresh ?? !hasForm);
 }
@@ -315,7 +455,7 @@ export function renderHome(page: Page, ctx: RenderContext, chrome: Chrome, tiles
   const main = page.sections.filter((s) => !s.side).map((s) => renderSection(s, ctx)).join('');
   // Your call comes first, in every scope and at every width (the design's rule 9).
   const sideRest = page.sections.filter((s) => s.side).map((s) => renderSection(s, ctx)).join('');
-  const body = `${chromeTop(chrome)}<main>${flash(chrome)}${yours}${tileHtml}${columns(main, sideRest)}</main>${chromeFoot(chrome, true)}`;
+  const body = `${shellOpen(chrome)}<main>${flash(chrome)}${yours}${tileHtml}${columns(main, sideRest)}</main>${shellClose(chrome, chromeFoot(chrome, true))}`;
   return document(chrome.agent, body, true);
 }
 
