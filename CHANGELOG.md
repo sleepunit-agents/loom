@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Find is a palette.** ⌘K (or the Find tab, or "Find anything") opens it
+  over the page; results follow the typing, grouped **Do** (asks that
+  match), **Go to** (places, knowledge pages, people) and **Memories** (the
+  scope's agents), the match in bold. Arrows walk them, Enter takes the first.
+  `/find?q=` is the same, as a page.
+
 - **An agent's Mind, People and Setup wear its head.** Its mark and name and
   the Today · Mind · People · Setup tabs, the current one marked, in place of
   the page title (the tabs cap their width on a desktop).

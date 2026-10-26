@@ -32,15 +32,58 @@ document.addEventListener('click', (e) => {
   const open = t && t.closest('[data-sheet]');
   if (open) {
     const d = document.getElementById('sheet-' + open.getAttribute('data-sheet'));
-    if (d && d.showModal) { e.preventDefault(); d.showModal(); }
+    if (d && d.showModal) { e.preventDefault(); d.showModal(); const i = d.querySelector('.find-form input'); if (i) { i.focus(); i.select(); } }
     return;
   }
-  if (t && t.closest('[data-close]')) { const d = t.closest('dialog'); if (d) d.close(); return; }
+  if (t && t.closest('[data-close]')) { const d = t.closest('dialog'); if (d) { e.preventDefault(); d.close(); } return; }
   if (t instanceof HTMLDialogElement && t.classList.contains('sheet')) t.close();
 });
+// Find: Cmd/Ctrl-K opens the palette (or the Find page, without the shell). Results follow the typing; arrows walk them; Enter takes the first.
 document.addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); location.assign('/find'); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    const d = document.getElementById('sheet-find');
+    if (!d || !d.showModal) { location.assign('/find'); return; }
+    if (!d.open) d.showModal();
+    const i = d.querySelector('.find-form input'); if (i) { i.focus(); i.select(); }
+    return;
+  }
+  const t = e.target instanceof Element ? e.target : null;
+  const box = t && t.closest('.find-form, .find-results') ? t.closest('dialog, main') : null;
+  if (!box || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+  const rows = [...box.querySelectorAll('.find-results a.find-row')];
+  if (!rows.length) return;
+  e.preventDefault();
+  const at = rows.indexOf(t);
+  const next = e.key === 'ArrowDown' ? rows[Math.min(at + 1, rows.length - 1)] : at <= 0 ? box.querySelector('.find-form input') : rows[at - 1];
+  if (next) next.focus();
 });
+let finding = null, findTimer = 0;
+document.addEventListener('input', (e) => {
+  const i = e.target;
+  if (!(i instanceof HTMLInputElement) || !i.closest('.find-form')) return;
+  clearTimeout(findTimer);
+  findTimer = setTimeout(async () => {
+    const box = i.closest('dialog, main');
+    const q = i.value.trim();
+    if (finding) finding.abort();
+    finding = new AbortController();
+    try {
+      const res = await fetch('/find?q=' + encodeURIComponent(q), { signal: finding.signal, credentials: 'same-origin' });
+      if (!res.ok) return;
+      const next = new DOMParser().parseFromString(await res.text(), 'text/html').querySelector('main .find-results');
+      const cur = box && box.querySelector('.find-results');
+      if (next && cur) cur.replaceWith(document.importNode(next, true));
+      if (box && box.tagName === 'MAIN') history.replaceState(null, '', q ? '/find?q=' + encodeURIComponent(q) : '/find');
+    } catch {}
+  }, 120);
+});
+document.addEventListener('submit', (e) => {
+  const f = e.target;
+  if (!(f instanceof HTMLFormElement) || !f.classList.contains('find-form')) return;
+  const first = (f.closest('dialog, main') || document).querySelector('.find-results a.find-row');
+  if (first) { e.preventDefault(); location.assign(first.href); }
+}, true);
 
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
 

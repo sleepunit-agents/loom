@@ -94,12 +94,17 @@ describe('the app shell', () => {
     for (const [path, title] of [['/scope', 'Show me'], ['/places', 'Places'], ['/find', 'Find']] as const) {
       const r = await get(path, cookie);
       expect(r.status).toBe(200);
-      expect(await r.text()).toContain(`<h1>${title}</h1>`);
+      expect(await r.text()).toMatch(new RegExp(`<h1( class="visually-hidden")?>${title}</h1>`));
     }
-    const found = /<h2 class="label">Go to<\/h2>([\s\S]*?)<\/section>/.exec(await (await get('/find?q=pass', cookie)).text())?.[1] ?? '';
-    expect(found).toContain('<span>Passkeys</span>');
-    expect(found).not.toContain('<span>Manage pieces</span>');
-    expect(await (await get('/find?q=%3Cscript%3E', cookie)).text()).toContain('value="&lt;script&gt;"');
+    // Find is the palette: the match in bold under Go to; the sheet rides on every page.
+    const page = await (await get('/find?q=pass', cookie)).text();
+    const found = /<main[\s\S]*?<h2 class="label">Go to<\/h2>([\s\S]*?)<\/section>/.exec(page)?.[1] ?? '';
+    expect(found).toContain('<span class="ft"><strong>Pass</strong>keys</span>');
+    expect(found).not.toContain('Manage pieces');
+    expect(page).toContain('<dialog class="sheet find-sheet" id="sheet-find" aria-label="Find">');
+    const odd = await (await get('/find?q=%3Cscript%3E', cookie)).text();
+    expect(odd).toContain('value="&lt;script&gt;"');
+    expect(odd).toContain('Nothing matches “&lt;script&gt;”.');
   });
 
   it('choosing a scope sets it and goes to its home; one that names no agent is the household', async () => {

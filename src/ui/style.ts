@@ -206,6 +206,17 @@ form.small button{background:transparent}
 .place.on{outline:2px solid var(--ink)}.pl-top{height:12px}.pl-label{margin-top:auto;font-weight:600;font-size:14px}.pl-stat{font-size:12px;color:var(--ink-2)}.place[class*=tone-]:not(.tone-ok) .pl-stat{color:var(--tone)}
 .place-rows{margin-top:10px;padding:0 16px}
 main.sheet-page{max-width:560px}.sheet-page h1{margin-bottom:8px}
+.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.find-form{display:flex;align-items:center;gap:12px}.find-form input{flex:1;min-width:0}
+.find-cancel{font-size:15px;font-weight:600;color:var(--ink);white-space:nowrap}
+.find-form input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+.find-results .card.rows{background:var(--raised);padding:0 14px}
+.find-results{display:flex;flex-direction:column;gap:20px;margin-top:18px}.find-group .label{margin:0 0 8px}
+.find-row{display:flex;align-items:center;gap:12px;min-height:52px;padding:6px 0;border-bottom:1px solid var(--line);color:var(--ink);font-size:15px;line-height:1.35}.find-row:last-child{border-bottom:0}
+.find-row:hover,.find-row:focus-visible{text-decoration:none;outline:0}.find-row:focus-visible .ft{text-decoration:underline;text-decoration-color:var(--thread);text-decoration-thickness:2px;text-underline-offset:3px}
+.find-row strong{font-weight:700}.find-row .mark{flex:none}
+.do-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--thread);box-shadow:0 0 0 1px rgba(22,22,20,.25)}
+dialog.find-sheet{inset:0;margin:0;width:100%;max-width:none;height:100%;max-height:none;border-radius:0;padding:14px 16px calc(16px + env(safe-area-inset-bottom))}
 .find-form input{width:100%;height:52px;padding:0 16px;border:1px solid var(--line);border-radius:var(--r-button);background:var(--surface);color:var(--ink);font:inherit;font-size:16px}
 .unscoped{display:flex;align-items:center;gap:12px;margin:0;padding:12px 14px;border-radius:var(--r-card);background:var(--raised);color:var(--ink);font-size:14px;line-height:1.4}
 .list li>.mark{align-self:flex-start;margin-top:2px}
@@ -258,6 +269,7 @@ dialog.confirm .sub{margin:4px 0 0;font-size:15px;color:var(--ink-2)}
 a.needs-net{pointer-events:auto;text-decoration:none}.btn.needs-net,.needs-net{background:var(--raised)!important;color:var(--ink-2)!important;border:1px dashed var(--line)!important;cursor:not-allowed}
 @media (min-width:960px){
 .seg-tabs{max-width:520px}
+dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-height:72vh;border-radius:var(--r-sheet);padding:16px 20px 20px}
 .toasts{left:auto;right:24px;bottom:24px;width:400px;align-items:stretch}
 .your-call .ask-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .dash-cols{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:start;gap:28px}

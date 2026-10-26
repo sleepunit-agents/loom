@@ -431,3 +431,40 @@ export async function householdAct(h: Household, action: string, fields: Record<
     return { ok: false, message: (err as Error).message };
   }
 }
+
+// ─── Find ────────────────────────────────────────────────────────────────────
+
+export interface Found {
+  knowledge: Array<{ title: string; slug: string; domain: string }>;
+  people: Array<{ name: string; slug: string }>;
+  memories: Array<{ agent: string; title: string; ref: string }>;
+}
+
+const FIND_EACH = 5;
+
+/** Plain text matches for Find: knowledge titles, people's names, and each given agent's memories (titles first). */
+export function householdFind(h: Household, q: string, agents: string[] = h.agents): Found {
+  const out: Found = { knowledge: [], people: [], memories: [] };
+  const needle = q.trim().toLowerCase();
+  if (!needle) return out;
+  const like = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const read = <T>(path: string, sql: string, ...args: unknown[]): T[] => {
+    if (!existsSync(path)) return [];
+    const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
+    try { return db.prepare(sql).all(...args) as T[]; } catch { return []; } finally { db.close(); }
+  };
+  out.knowledge = read<{ title: string; slug: string; domain: string }>(commonsKnowledgePath(h),
+    "SELECT title, slug, domain FROM pages WHERE status = 'active' AND (lower(title) LIKE ? ESCAPE '\\' OR lower(domain) LIKE ? ESCAPE '\\') ORDER BY updated DESC LIMIT ?", like, like, FIND_EACH)
+    .filter((r) => validPath(`knowledge/${r.slug}`));
+  const dir = directory(h);
+  if (dir) {
+    try { out.people = dir.list().filter((p) => p.name.toLowerCase().includes(needle)).slice(0, FIND_EACH).map((p) => ({ name: p.name, slug: p.slug })); } finally { dir.close(); }
+  }
+  for (const a of agents) {
+    if (out.memories.length >= FIND_EACH) break;
+    out.memories.push(...read<{ title: string; ref: string }>(resolveSqliteDbPath(agentDir(h, a)),
+      "SELECT title, ref FROM memories WHERE archived = 0 AND category != 'episode' AND (lower(title) LIKE ? ESCAPE '\\' OR lower(content) LIKE ? ESCAPE '\\') ORDER BY (lower(title) LIKE ? ESCAPE '\\') DESC, COALESCE(updated, created) DESC LIMIT ?", like, like, like, FIND_EACH - out.memories.length)
+      .filter((r) => validPath(`memory/${r.ref}`)).map((r) => ({ agent: a, ...r })));
+  }
+  return out;
+}

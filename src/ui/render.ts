@@ -367,7 +367,7 @@ function rail(c: Chrome, sh: Shell): string {
   const item = (href: string, label: string, current: boolean, extra = '') => `<a class="rail-link${current ? ' on' : ''}" href="${esc(href)}"${current ? ' aria-current="page"' : ''}><span>${esc(label)}</span>${extra}</a>`;
   return `<aside class="rail" aria-label="loom"><a class="wordmark" href="/">${LOGO}<span>loom</span></a>` +
     `<a class="scope-btn" href="/scope" data-sheet="scope">${scopeMark(sh, 32)}<span class="body"><span class="text">${esc(scopeLabel)}</span>${scopeSub ? `<span class="sub">${esc(scopeSub)}</span>` : ''}</span>${ICON.updown}</a>` +
-    `<a class="find-btn" href="/find">${ICON.find}<span>Find anything</span><kbd>⌘K</kbd></a>` +
+    `<a class="find-btn" href="/find" data-sheet="find">${ICON.find}<span>Find anything</span><kbd>⌘K</kbd></a>` +
     `<nav class="rail-nav">${item(sh.home, 'Home', sh.tab === 'home', sh.asks ? `<span class="count">${sh.asks}</span>` : '')}${sh.core.map((x) => item(x.href, x.label, x.current)).join('')}` +
     (sh.pieces.length ? `<span class="rail-label">Pieces</span>${sh.pieces.map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
     `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
@@ -385,7 +385,7 @@ function bottomBar(sh: Shell): string {
   const tab = (href: string, label: string, icon: string, on: boolean, attrs = '') =>
     `<a class="tab${on ? ' on' : ''}" href="${esc(href)}" aria-label="${esc(label)}"${on ? ' aria-current="page"' : ''}${attrs}>${icon}</a>`;
   return `<nav class="bottom" aria-label="Main"><a class="scope-chip" href="/scope" data-sheet="scope" aria-label="Scope: ${esc(sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '')}">${scopeMark(sh, 30)}<span class="caret" aria-hidden="true">⌃</span></a>` +
-    tab(sh.home, 'Home', ICON.home, sh.tab === 'home') + tab('/places', 'Places', ICON.places, sh.tab === 'places', ' data-sheet="places"') + tab('/find', 'Find', ICON.find, sh.tab === 'find') + '</nav>';
+    tab(sh.home, 'Home', ICON.home, sh.tab === 'home') + tab('/places', 'Places', ICON.places, sh.tab === 'places', ' data-sheet="places"') + tab('/find', 'Find', ICON.find, sh.tab === 'find', ' data-sheet="find"') + '</nav>';
 }
 
 /** Everything around a page's main: the rail, the phone's top and bottom bars, and the two sheets. */
@@ -395,22 +395,55 @@ function shellOpen(c: Chrome): string {
 }
 function shellClose(c: Chrome, foot: string): string {
   if (!c.shell) return foot;
-  return `${foot}</div></div>${bottomBar(c.shell)}${sheet('scope', 'Show me', scopeSheetBody(c, c.shell))}${sheet('places', 'Places', placesSheetBody(c.shell))}`;
+  return `${foot}</div></div>${bottomBar(c.shell)}${sheet('scope', 'Show me', scopeSheetBody(c, c.shell))}${sheet('places', 'Places', placesSheetBody(c.shell))}` +
+    `<dialog class="sheet find-sheet" id="sheet-find" aria-label="Find">${findBody(c, '')}</dialog>`;
 }
 
 /** The sheets as pages (no script, or a link straight to them), and Find. */
-export function renderSheetPage(which: 'scope' | 'places' | 'find', c: Chrome, q = ''): string {
+/** Find's other groups, from the handler: what needs doing, and the household's knowledge, people and memories. */
+export interface Found {
+  do: Array<{ label: string; href: string }>;
+  knowledge: Array<{ label: string; href: string }>;
+  people: Array<{ label: string; href: string }>;
+  memories: Array<{ label: string; href: string; agent: string }>;
+}
+
+/** The first match in bold: "Sign <strong>Disc</strong>ord bridge back in". */
+function lit(text: string, q: string): string {
+  const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  return i < 0 ? esc(text) : `${esc(text.slice(0, i))}<strong>${esc(text.slice(i, i + q.length))}</strong>${esc(text.slice(i + q.length))}`;
+}
+
+/** Find, as the design's palette: a field and Cancel, then Do · Go to · Memories. A blank field lists the places. */
+function findBody(c: Chrome, q: string, found?: Found): string {
+  const sh = c.shell!;
+  const term = q.trim();
+  const places = [{ label: 'Home', href: sh.home }, ...sh.core, ...sh.pieces, { label: 'Manage pieces', href: '/pieces' }, { label: 'Passkeys', href: '/passkeys' },
+    ...sh.agents.filter(() => sh.household).map((a) => ({ label: a.label, href: `/scope/${a.id}` }))];
+  const go = [
+    ...places.filter((x) => !term || x.label.toLowerCase().includes(term.toLowerCase())).map((x) => ({ html: lit(x.label, term), href: x.href })),
+    ...(found?.knowledge ?? []).map((x) => ({ html: `Knowledge › ${lit(x.label, term)}`, href: x.href })),
+    ...(found?.people ?? []).map((x) => ({ html: `People › ${lit(x.label, term)}`, href: x.href })),
+  ];
+  const row = (href: string, inner: string, lead = '') => `<a class="find-row" href="${esc(href)}">${lead}<span class="ft">${inner}</span></a>`;
+  const group = (title: string, rows: string[]) => rows.length ? `<section class="find-group"><h2 class="label">${title}</h2><div class="card rows">${rows.join('')}</div></section>` : '';
+  const results = group('Do', (found?.do ?? []).map((x) => row(x.href, lit(x.label, term), '<span class="do-dot" aria-hidden="true"></span>'))) +
+    group('Go to', go.map((x) => row(x.href, x.html))) +
+    group('Memories', (found?.memories ?? []).map((x) => {
+      const who = sh.agents.find((a) => a.id === x.agent);
+      return row(x.href, lit(x.label, term), who ? mark(who, 22) : '');
+    }));
+  return `<form class="find-form" method="get" action="/find" role="search"><input type="search" name="q" value="${esc(q)}" placeholder="Find anything" aria-label="Find" autocomplete="off" autofocus>` +
+    `<a class="find-cancel" href="${esc(sh.home)}" data-close>Cancel</a></form>` +
+    `<div class="find-results" aria-live="polite">${results || `<p class="empty">Nothing matches “${esc(term)}”.</p>`}</div>`;
+}
+
+export function renderSheetPage(which: 'scope' | 'places' | 'find', c: Chrome, q = '', found?: Found): string {
   const sh = c.shell!;
   let inner: string;
   if (which === 'scope') inner = `<h1>Show me</h1>${scopeSheetBody(c, sh)}`;
   else if (which === 'places') inner = `<h1>Places</h1>${placesSheetBody(sh)}`;
-  else {
-    const all = [{ label: 'Home', href: sh.home }, ...sh.core, ...sh.pieces, { label: 'Manage pieces', href: '/pieces' }, { label: 'Passkeys', href: '/passkeys' },
-      ...sh.agents.filter(() => sh.household).map((a) => ({ label: a.label, href: `/scope/${a.id}` }))];
-    const hits = q ? all.filter((x) => x.label.toLowerCase().includes(q.toLowerCase())) : all;
-    inner = `<h1>Find</h1><form class="find-form" method="get" action="/find" role="search"><input name="q" value="${esc(q)}" placeholder="Find a page" aria-label="Find" autofocus></form>` +
-      `<section class="card"><h2 class="label">Go to</h2>${hits.length ? hits.map((x) => `<a class="link-row" href="${esc(x.href)}"><span>${esc(x.label)}</span>${CHEVRON}</a>`).join('') : '<p class="empty">Nothing by that name.</p>'}</section>`;
-  }
+  else inner = `<h1 class="visually-hidden">Find</h1>${findBody(c, q, found)}`;
   return document(which === 'scope' ? 'Show me' : which === 'places' ? 'Places' : 'Find', `${shellOpen(c)}<main class="sheet-page">${inner}</main>${shellClose(c, '')}`, false);
 }
 
