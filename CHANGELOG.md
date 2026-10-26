@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: box at 4ab3b64.** Boxes per its board: the box card first (how long
+  it's been up, its disk, its houses, the machine's facts folded), services
+  with Restart at the row, sessions with Up/Down at the row.
 - **Scope sheet and Manage pieces per their boards.** Each agent on the Scope
   sheet says how long since it was last active ("active 42m ago"), beside
   what waits on it. On Manage pieces the catalog is a row a piece with Install
