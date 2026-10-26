@@ -15,6 +15,10 @@
  * page with body data-offline-from; a live check that can't reach loom does
  * the same. Either way the page says how old it is, statuses go hollow, and
  * actions wait for a connection.
+ *
+ * On a phone a details block opens as a bottom sheet: its body moves into
+ * the sheet and back when it closes (moved, not copied, so a form in it
+ * stays the one form). On a desktop it expands in place.
  */
 export const APP_JS = `'use strict';
 document.addEventListener('click', (e) => {
@@ -144,6 +148,9 @@ document.addEventListener('submit', async (e) => {
   } catch { r = { ok: false, message: 'Can\\'t reach loom. Nothing was changed.' }; }
   if (r.go) { location.assign(r.go); return; }
   if (r.ok) {
+    // An action from a details sheet closes it: the page under it is about to change.
+    const sheet = f.closest('#sheet-details');
+    if (sheet && sheet.open) sheet.close();
     const card = f.closest('.ask');
     if (card) card.classList.add('fold');
     await refresh(true);
@@ -195,6 +202,29 @@ function patchDash(cur, next) {
   if (!pill) { pill = el('button', 'new-pill'); pill.type = 'button'; ta.querySelector('.label').after(pill); }
   pill.textContent = '\\u2191 ' + fresh + ' new';
 }
+const phone = () => matchMedia('(max-width: 959px)').matches;
+document.addEventListener('click', (e) => {
+  const s = e.target instanceof Element ? e.target.closest('main details.details > summary') : null;
+  if (!s || !phone()) return;
+  const det = s.parentElement, body = det.querySelector(':scope > .details-body');
+  const d0 = document.createElement('dialog');
+  if (!body || !d0.showModal) return;
+  e.preventDefault();
+  let d = document.getElementById('sheet-details');
+  if (!d) { d = d0; d.id = 'sheet-details'; d.className = 'sheet details-sheet'; document.body.append(d); }
+  const title = (s.querySelector('.text') || s).textContent.trim();
+  const meta = s.querySelector('.meta');
+  const grip = el('div', 'sheet-grip'); grip.setAttribute('aria-hidden', 'true');
+  const head = el('div', 'sheet-head'); head.append(el('h2', '', title));
+  const x = el('button', 'sheet-close', '\u00D7'); x.type = 'button'; x.setAttribute('data-close', ''); x.setAttribute('aria-label', 'Close'); head.append(x);
+  const spot = document.createComment('details-body');
+  body.before(spot);
+  const holder = el('div', 'sheet-body'); holder.append(body);
+  d.replaceChildren(grip, head, ...(meta ? [el('p', 'sub mono', meta.textContent)] : []), holder);
+  d.setAttribute('aria-label', title);
+  d.addEventListener('close', () => { if (spot.isConnected) spot.replaceWith(body); else spot.remove(); }, { once: true });
+  d.showModal();
+});
 let pendingThread = null;
 document.addEventListener('click', (e) => { if (e.target instanceof Element && e.target.closest('a.needs-net')) e.preventDefault(); });
 document.addEventListener('click', (e) => {
