@@ -265,6 +265,20 @@ describe('loom UI over HTTP', () => {
     expect((await get('/app.js', cookie)).headers.get('content-type')).toMatch(/javascript/);
   });
 
+  it('loom serves its own two fonts, and no other file by that route', async () => {
+    const cookie = await login();
+    for (const f of ['instrument-sans-latin-wght-normal', 'jetbrains-mono-latin-wght-normal']) {
+      const r = await get(`/fonts/${f}.woff2`, cookie);
+      expect([r.status, r.headers.get('content-type')]).toEqual([200, 'font/woff2']);
+      expect(r.headers.get('cache-control')).toMatch(/immutable/);
+      expect(Buffer.from(await r.arrayBuffer()).subarray(0, 4).toString()).toBe('wOF2');
+    }
+    for (const bad of ['/fonts/OFL-InstrumentSans.txt', '/fonts/..%2fpackage.json', '/fonts/other.woff2']) {
+      expect((await get(bad, cookie)).headers.get('content-type')).not.toBe('font/woff2');
+    }
+    expect((await get('/', cookie)).headers.get('content-security-policy')).toMatch(/font-src 'self'/);
+  });
+
   it('the tape filters by where it happened', async () => {
     const cookie = await login();
     const html = await (await get('/?where=discord', cookie)).text();
@@ -575,7 +589,7 @@ describe('loom UI over HTTP', () => {
     const res = await post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'n', value: 'v' });
     const to = res.headers.get('location')!;
     expect(to).toMatch(/^\/mind\?category=user&_flash=/);
-    expect(await (await get(to, cookie)).text()).toContain('<strong>vault</strong> · Stored.');
+    expect(await (await get(to, cookie)).text()).toContain('<span>Stored.</span><span class="from">vault</span>');
   });
 
   it('a piece leaves nothing running after it answers', async () => {
