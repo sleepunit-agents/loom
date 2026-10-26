@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: shuttle at 05c4033.** An expired login's card on Home carries
+  Renew login (the ask's own action).
 - **An ask may carry its own buttons** (`actions`, up to two `buttons` items),
   drawn on its Home card in place of the link, as the board's Ratify and
   Reject. When one memory waits on an agent, Home's card quotes it and ratifies
