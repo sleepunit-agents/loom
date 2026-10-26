@@ -297,7 +297,7 @@ function memoryPageFor(contextDir: string, ref: string, tz: string, nowMs: numbe
   const names = peopleNames(contextDir);
   const episode = m.category === 'episode';
   const main: Block[] = [
-    { type: 'text', text: m.content },
+    { type: 'prose', text: m.content },
     ...(m.person ? [{ type: 'kv' as const, items: [{ label: 'about', value: names.get(m.person) ?? m.person, page: personPage(m.person) }] }] : []),
     { type: 'buttons', items: [{ action: 'archive', label: 'Archive', tone: 'danger', confirm: 'It leaves recall. It stays in the archive, and it can be restored from there.', fields: { ref: m.ref } }] },
   ];

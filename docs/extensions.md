@@ -187,6 +187,7 @@ outside the page).
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
+| `prose` | `text`: markdown, up to 20,000 characters. Paragraphs, `#` headings, lists, `>` quotes, fenced code, **bold**, *italic*, `code` and `[links](https://…)`; any HTML in it is shown as text, never run |
 | `callout` | `text`, optional `title`, `tone`. A boxed note |
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |

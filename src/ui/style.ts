@@ -229,6 +229,11 @@ main.dash{gap:24px}
 .seg-tabs a{flex:1;display:flex;align-items:center;justify-content:center;height:42px;border-radius:var(--r-control);color:var(--ink-2);font-size:14px}.seg-tabs a:hover{text-decoration:none;color:var(--ink)}
 .seg-tabs a.on{background:var(--surface);color:var(--ink);font-weight:600}
 .your-call .label .n{float:right;color:var(--ink-2)}
+.prose{font-size:16px;line-height:1.55;overflow-wrap:anywhere}.prose>*{margin:0 0 12px}.prose>*:last-child{margin-bottom:0}
+.prose h3{font-size:19px;margin-top:20px}.prose h4{font-size:16px;margin-top:16px}.prose h5{font-size:14px;margin-top:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.prose ul,.prose ol{padding-left:22px}.prose li{margin:4px 0}.prose blockquote{margin-left:0;padding-left:12px;border-left:3px solid var(--line);color:var(--ink-2)}
+.prose code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:.88em;padding:1px 5px;border-radius:5px;background:var(--raised)}
+.prose pre.prose-code{padding:12px 14px;border-radius:10px;background:var(--code-bg);color:var(--code-ink);overflow-x:auto;font-size:13px}.prose pre.prose-code code{background:none;padding:0;color:inherit}
 .filter-search{margin:0 0 10px}.filter-search input{width:100%;height:48px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-button);background:var(--surface);color:var(--ink);font:inherit;font-size:16px}.filter-search input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
 .back.named{width:auto;height:44px;padding:0 10px 0 4px;margin-left:-8px;display:inline-flex;align-items:center;gap:2px;font-size:15px;font-weight:600;color:var(--ink)}.back.named:hover{text-decoration:none}
 .place-core{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.place-btn{display:flex;align-items:center;height:52px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink);font-weight:600;font-size:15px}.place-btn:hover{text-decoration:none;background:var(--raised)}.place-btn.on{border-color:var(--ink)}

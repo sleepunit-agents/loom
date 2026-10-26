@@ -33,6 +33,7 @@ export type Block =
   | { type: 'table'; columns: string[]; rows: Cell[][] }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
+  | { type: 'prose'; text: string }
   | { type: 'callout'; text: string; title?: string; tone?: Tone }
   | ({ type: 'link'; text: string } & Target)
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
@@ -89,6 +90,8 @@ export const LIMITS = {
   query: 10,
   queryValue: 200,
   path: 200,
+  /** A prose block's markdown: a page's whole body. */
+  prose: 20000,
 } as const;
 
 const TONES: ReadonlySet<string> = new Set(['ok', 'warn', 'bad', 'muted']);
@@ -292,6 +295,11 @@ function block(v: unknown, depth = 0): Block {
       };
     case 'text':
       return { type: 'text', text: str(b.text, 'text'), tone: tone(b.tone) };
+    case 'prose': {
+      if (typeof b.text !== 'string') throw new Invalid('prose.text must be a string');
+      if (b.text.length > LIMITS.prose) throw new Invalid(`prose.text is longer than ${LIMITS.prose}`);
+      return { type: 'prose', text: b.text };
+    }
     case 'callout':
       return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone) };
     case 'link': {
