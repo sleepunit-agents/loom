@@ -1,31 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { prose, inline } from './prose.js';
+import { prose } from './prose.js';
 import { parsePage } from './vocab.js';
 
-describe('prose: a markdown subset, escaped first', () => {
+describe('prose: markdown, with raw HTML off', () => {
   it('never lets HTML through, in text, marks, code or links', () => {
-    const out = prose('<script>alert(1)</script> **<img src=x onerror=y>** `<b>` [<i>x</i>](https://e.com/"onmouseover=z)');
-    expect(out).not.toMatch(/<(script|img|b|i)[\s>]/);
-    expect(out).toContain('&lt;script&gt;');
-    expect(out).toContain('<strong>&lt;img src=x onerror=y&gt;</strong>');
+    const out = prose('<SCRIPT>alert(1)</SCRIPT> **<img src=x onerror=y>** `<b>` [x](https://e.com/"onmouseover=z)\n\n<div onclick=z>hi</div>');
+    expect(out).not.toMatch(/<\s*(script|img|b|div)[\s>]/i);
+    expect(out).toContain('&lt;SCRIPT&gt;');
     expect(out).toContain('<code>&lt;b&gt;</code>');
-    expect(out).not.toContain('"onmouseover');
+    expect(out).not.toMatch(/href="[^"]*"onmouseover/);
   });
 
-  it('links only http(s)', () => {
+  it('links only http(s), opening outside the page; no images', () => {
     expect(prose('[ok](https://example.com/a?b=1&c=2)')).toContain('<a href="https://example.com/a?b=1&amp;c=2" rel="noopener noreferrer" target="_blank">ok</a>');
-    for (const bad of ['[x](javascript:alert(1))', '[x](data:text/html,hi)', '[x](/local)']) expect(prose(bad)).not.toContain('<a ');
+    for (const bad of ['[x](javascript:alert(1))', '[x](JAVASCRIPT:alert(1))', '[x](data:text/html,hi)', '[x](/local)', '[x](vbscript:y)']) {
+      expect(prose(bad)).not.toContain('<a ');
+    }
+    expect(prose('![pic](https://example.com/p.png)')).not.toContain('<img');
   });
 
-  it('marks: bold, italic, code — and code keeps its stars', () => {
-    expect(inline('a **b** *c* _d_ `**e**`')).toBe('a <strong>b</strong> <em>c</em> <em>d</em> <code>**e**</code>');
-    expect(inline('2 * 3 * 4 and snake_case_name')).toBe('2 * 3 * 4 and snake_case_name');
-  });
-
-  it('blocks: headings (under the page\'s own), lists, quotes, code, paragraphs', () => {
-    const out = prose('# Top\n\nOne line\nnext line\n\n- a\n- **b**\n  continued\n\n1. x\n2. y\n\n> said\n\n```\n<raw> & *kept*\n```');
-    expect(out).toBe('<h3>Top</h3><p>One line<br>next line</p><ul><li>a</li><li><strong>b</strong> continued</li></ul>'
-      + '<ol><li>x</li><li>y</li></ol><blockquote>said</blockquote><pre class="prose-code"><code>&lt;raw&gt; &amp; *kept*</code></pre>');
+  it('headings sit under the page\'s own; marks, lists, quotes and code as markdown has them', () => {
+    expect(prose('# Top\n## Sub')).toBe('<h3>Top</h3>\n<h4>Sub</h4>\n');
+    expect(prose('a **b** *c* `**d**` snake_case_name 2 * 3 * 4')).toBe('<p>a <strong>b</strong> <em>c</em> <code>**d**</code> snake_case_name 2 * 3 * 4</p>\n');
+    expect(prose('- a\n- b\n\n1. x\n\n> said')).toBe('<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n<ol>\n<li>x</li>\n</ol>\n<blockquote>\n<p>said</p>\n</blockquote>\n');
+    expect(prose('```\n<raw> & *kept*\n```')).toBe('<pre><code>&lt;raw&gt; &amp; *kept*\n</code></pre>\n');
+    expect(prose('one\ntwo')).toBe('<p>one<br>\ntwo</p>\n');
   });
 
   it('a piece can send one, up to 20,000 characters', () => {

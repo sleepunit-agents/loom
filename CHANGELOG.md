@@ -15,9 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - **Knowledge pages and memories read as written.** A new `prose` block
-  renders a small markdown subset (paragraphs, headings, lists, quotes, code,
-  bold, italic, `http(s)` links); everything is escaped first, so HTML in a
-  body is shown as text, never run. A knowledge page's body is one prose
+  renders markdown (markdown-it, raw HTML off: HTML in a body is shown as
+  text, never run; links only to `http(s)`; no images). A knowledge page's body is one prose
   block, not 1900-character slices.
 
 - **Closer to the design, page by page.** A page below the top says where its

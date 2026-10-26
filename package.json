@@ -53,6 +53,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@modelcontextprotocol/server": "^2.2.0",
     "better-sqlite3": "^13.0.3",
+    "markdown-it": "^14.3.3",
     "onnxruntime-node": "1.21.0",
     "preact": "^11.0.1",
     "sqlite-vec": "^0.1.9",
@@ -61,6 +62,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.4.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
