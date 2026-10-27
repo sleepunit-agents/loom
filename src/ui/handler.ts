@@ -523,7 +523,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
           sub: lastActive(agentDir(h, a)) })),
         core: [
-          { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: needs },
+          // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
+          { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length },
           { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
           { label: 'People', href: '/people', current: current.startsWith('people') },
         ],
