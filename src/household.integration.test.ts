@@ -238,6 +238,17 @@ describe('one daemon, several agents', () => {
     expect((await fetch(`${base}/`, { headers: { cookie }, redirect: 'manual' })).headers.get('location')).toBe('/login');
   });
 
+  it('loom token create --service mints a service house\'s token (agent:<name>/<service>); --service needs --agent', async () => {
+    let out = '';
+    const io = { stdout: (x: string) => { out += x; }, stderr: () => {}, stdin: process.stdin, stdinIsTTY: false, env: { LOOM_HOME: h.home } };
+    expect(await runToken(['create', '--agent', 'art', '--service', 'slack', '--label', 'art · house h-9 on loom'], io)).toBe(0);
+    expect(out.trim()).toMatch(/^loom_/);
+    expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9 on loom')?.role).toBe('agent:art/slack');
+    expect(await runToken(['create', '--owner', '--service', 'slack', '--label', 'x'], io)).toBe(2);
+    expect(await runToken(['create', '--agent', 'art', '--service', 'Bad', '--label', 'y'], io)).toBe(2);
+    revokeToken(h, 'art · house h-9 on loom');
+  });
+
   it('loom token link: a one-time link signs the owner in, and revoking its token ends those sessions', async () => {
     let out = '';
     let err = '';

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Service tokens.** `loom token create --agent art --service slack` mints
+  role `agent:art/slack`: a service house's token. It's the agent in every
+  way, and a piece's API sees `{"kind":"agent","agent":"art","service":"slack"}`,
+  so a piece can tell the agent's bridge from its other bodies (t-1591,
+  shuttle's `relay-take`).
+
 - **`relay`** MCP tool, for a household served over HTTP: ask another agent
   something. It runs the clock piece's `wake relay` as the session's own
   agent, so it wakes a body of theirs in their house, and their answer comes

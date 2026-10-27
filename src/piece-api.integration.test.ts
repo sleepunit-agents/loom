@@ -54,6 +54,7 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     process.env.PATH = [bin, savedPath].join(delimiter);
     tok.owner = createToken(h, { role: { kind: 'owner' }, label: 'owner' }).token;
     tok.art = createToken(h, { role: { kind: 'agent', agent: 'art' }, label: 'art' }).token;
+    tok.slack = createToken(h, { role: { kind: 'agent', agent: 'art', service: 'slack' }, label: 'art · house h-80 on loom' }).token;
     tok.peer = createToken(h, { role: { kind: 'peer', name: 'phil' }, label: 'peer' }).token;
     tok.box = createToken(h, { role: { kind: 'piece', piece: 'thing', subject: 'thor' }, label: 'thing · thor' }).token;
     tok.ghost = createToken(h, { role: { kind: 'piece', piece: 'ghost', subject: 'x' }, label: 'ghost · x' }).token;
@@ -82,6 +83,13 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     expect((await (await call('/api/thing/', tok.art)).json() as { caller: unknown }).caller).toEqual({ kind: 'agent', agent: 'art' });
     const asBox = await call('/api/thing/poll', tok.box, { facts: { gpu: 'none' } });
     expect(await asBox.json()).toEqual({ caller: { kind: 'piece', subject: 'thor' }, path: 'poll', body: { facts: { gpu: 'none' } } });
+  });
+
+  // t-1591: a service house's token says which service it is, so a piece can
+  // tell its bridge from the agent's other bodies (shuttle's relay-take).
+  it('a service house\'s token calls as its agent, with its service', async () => {
+    const r = await call('/api/thing/', tok.slack);
+    expect((await r.json() as { caller: unknown }).caller).toEqual({ kind: 'agent', agent: 'art', service: 'slack' });
   });
 
   it('nobody, a peer, a revoked credential and another piece\'s credential get nothing', async () => {
@@ -161,6 +169,10 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     const r = parseRole('piece:box/thor.local');
     expect(r).toEqual({ kind: 'piece', piece: 'box', subject: 'thor.local' });
     expect(roleString(r!)).toBe('piece:box/thor.local');
+    const svc = parseRole('agent:art/slack');
+    expect(svc).toEqual({ kind: 'agent', agent: 'art', service: 'slack' });
+    expect(roleString(svc!)).toBe('agent:art/slack');
+    for (const bad of ['agent:art/', 'agent:art/Slack', 'agent:art/a/b', 'peer:phil/x']) expect(parseRole(bad), bad).toBeNull();
     for (const bad of ['piece:loom/x', 'piece:box/', 'piece:box/../x', 'piece:Box/x', 'piece:box/x/y', 'piece:box']) expect(parseRole(bad), bad).toBeNull();
   });
 });

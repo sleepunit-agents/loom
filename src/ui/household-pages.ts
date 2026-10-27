@@ -421,7 +421,8 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions = {}):
   let identity = '';
   try { identity = readFileSync(join(dir, 'IDENTITY.md'), 'utf-8'); } catch { /* none */ }
   const harnesses = (() => { try { return readdirSync(join(dir, 'harnesses')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)); } catch { return []; } })();
-  const tokens = loadTokens(h.home).filter((t) => t.role === `agent:${agent}` || (agent === h.default && t.role === 'owner'));
+  const agentOf = (role: string) => { const r = parseRole(role); return r?.kind === 'agent' ? r.agent : null; };
+  const tokens = loadTokens(h.home).filter((t) => agentOf(t.role) === agent || (agent === h.default && t.role === 'owner'));
   const live = tokens.filter((t) => !t.revoked).sort((a, b) => (b.last_used ?? '').localeCompare(a.last_used ?? ''));
   const db = resolveSqliteDbPath(dir);
   const dbSize = (() => { try { return statSync(db).size; } catch { return 0; } })();
@@ -555,7 +556,8 @@ export async function householdAct(h: Household, action: string, fields: Record<
     }
     if (action === 'revoke-token') {
       const t = revokeToken(h, fields.label ?? '');
-      const agent = t.role.startsWith('agent:') ? t.role.slice('agent:'.length) : h.default;
+      const r = parseRole(t.role);
+      const agent = r?.kind === 'agent' ? r.agent : h.default;
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'person-add') {

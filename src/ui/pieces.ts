@@ -242,7 +242,7 @@ export const API_TIMEOUT_MS = 15_000;
 export const API_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Who is calling a piece's API, as core resolved the bearer. */
-export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string } | { kind: 'piece'; subject: string };
+export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string; service?: string } | { kind: 'piece'; subject: string };
 
 /**
  * Call a piece's API (docs/extensions.md, "The API"): `loom-<piece> api --json`
