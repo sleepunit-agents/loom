@@ -21,6 +21,7 @@ import {
 import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { syncServices, type ServicesResult } from './pieces-services.js';
+export { syncServices };
 
 const PIECE = /^[a-z][a-z0-9-]{0,39}$/;
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
@@ -331,6 +332,8 @@ export async function installPiece(
   env: NodeJS.ProcessEnv,
   source: { repo: string; commit: string },
   name?: string,
+  /** `services: false` installs without starting the piece's services (a restore starts them after its part is in). */
+  opts: { services?: boolean } = {},
 ): Promise<InstallResult> {
   const root = rootOrThrow(env);
   mkdirSync(join(root, 'bin'), { recursive: true });
@@ -388,7 +391,8 @@ export async function installPiece(
     relink(root, record, old);
     writeJson(join(home, 'piece.json'), record);
     prune(home, record);
-    return { record, updated: !!old, missing: missingSettings(env, record), services: syncServices(env, pieceName, record) };
+    const services = opts.services === false ? { started: [], notes: ['services not started yet'] } : syncServices(env, pieceName, record);
+    return { record, updated: !!old, missing: missingSettings(env, record), services };
   } finally {
     rmSync(staging, { recursive: true, force: true });
     rmSync(log, { force: true });

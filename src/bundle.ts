@@ -32,7 +32,7 @@ import {
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
 import { listPieces } from './cli/pieces.js';
-import { installPiece, managedPieces, pieceEnvFor, readCatalog, readSettings, type CatalogEntry } from './cli/pieces-managed.js';
+import { installPiece, managedPieces, pieceEnvFor, readCatalog, readRecord, readSettings, syncServices, type CatalogEntry } from './cli/pieces-managed.js';
 
 export class BundleError extends Error {}
 
@@ -61,7 +61,7 @@ function readHouseholdJson(home: string): Record<string, unknown> | undefined {
 /** A managed piece as the bundle records it. */
 interface BundledPiece { name: string; source: { repo: string; commit: string }; settings: Record<string, string> }
 
-export type PieceInstaller = (env: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string) => Promise<unknown>;
+export type PieceInstaller = (env: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string, opts: { services: false }) => Promise<unknown>;
 
 function loomVersion(): string {
   try { return (JSON.parse(readFileSync(join(resolveRepoRoot(), 'package.json'), 'utf-8')) as { version: string }).version; } catch { return 'unknown'; }
@@ -322,6 +322,8 @@ export async function restoreBundle(opts: {
   install?: PieceInstaller | false;
   /** What may be installed: this loom's catalog (assets/pieces.json). */
   catalog?: CatalogEntry[];
+  /** Start an installed piece's services (syncServices), once every part is in. */
+  startServices?: (env: NodeJS.ProcessEnv, name: string) => unknown;
 }): Promise<RestoreReport> {
   const home = resolve(opts.home);
   // The restored household's own pieces: managed ones land in its pieces/, searched before PATH.
@@ -340,7 +342,7 @@ export async function restoreBundle(opts: {
   const installs: RestoreReport['installs'] = [];
   const bundled = readBundledPieces(home);
   if (bundled.length && opts.install !== false) {
-    const install = opts.install ?? ((e, source, name) => installPiece(e, source, name));
+    const install = opts.install ?? ((e, source, name, o) => installPiece(e, source, name, o));
     const catalog = opts.catalog ?? readCatalog();
     for (const p of bundled) {
       const known = catalog.find((c) => c.name === p.name && c.repo === p.source.repo);
@@ -350,7 +352,9 @@ export async function restoreBundle(opts: {
         continue;
       }
       try {
-        await install(env, { repo: known.repo, commit: known.commit }, p.name);
+        // Its services wait until its part is in: a service started first can write a fresh,
+        // empty store the part then refuses to replace (the box, in the rebuild drill t-1607).
+        await install(env, { repo: known.repo, commit: known.commit }, p.name, { services: false });
         const dir = join(home, 'pieces', p.name);
         if (!lstatSync(dir).isDirectory()) throw new BundleError(`${dir} isn't a directory the install made`);
         // The same values setSettings takes: names it knows the shape of, one line, 500 characters at most.
@@ -379,6 +383,9 @@ export async function restoreBundle(opts: {
     const r = await pieceRun(path, 'import', { ...env, LOOM_IMPORT_IDENTITY: resolve(opts.identity) }, readFileSync(blob));
     if (r.ok) { rmSync(blob); pieces.push({ name: part.name, restored: true }); } else { pending(); pieces.push({ name: part.name, restored: false, reason: r.reason }); }
   }
+  // Now the pieces just installed may start their services, over their restored state.
+  const start = opts.startServices ?? ((e, name) => syncServices(e, name, readRecord(e, name)));
+  for (const p of installs.filter((x) => x.installed)) start(env, p.name);
   // Only the parts go: the managed pieces just installed live in pieces/ too.
   for (const part of manifest.pieces) rmSync(join(home, 'pieces', `${part.name}.part`), { force: true });
   return { home, manifest, pieces, installs };
