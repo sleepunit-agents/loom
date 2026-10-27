@@ -130,7 +130,10 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
   `"place"` (the default) puts it in Places, beside Knowledge and People;
   `"setting"` puts it under Setup, for what's visited rarely (adding a box, a
   subscription, a secret). A piece that doesn't say gets the catalog's default
-  (`kinds` in loom's `assets/pieces.json`), else a place.
+  (`kinds` in loom's `assets/pieces.json`), else a place. Optional `level`: `"loom"` (the default) keeps the
+  tab on the household's pages. `"agent"` puts it on each agent's own pages,
+  where the piece is called with `LOOM_SCOPE` set. A page's section may carry
+  the same `level` when it's about one agent within a household page.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
 - **`scope`** (optional, `true`): the piece narrows to one agent. When the
@@ -145,6 +148,33 @@ loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "
   id, whose mark it carries) and `actions` (up to two `buttons` items, drawn on
   its card in place of the link: Ratify and Reject, Renew and Later). An ask is a decision, not news:
   what happened belongs on the tape.
+
+  For the Inbox (each optional):
+  - `kind` files the ask. `"permission"` means something to allow (an approval, a secret, a box
+    asking to join). `"decision"` means a choice, and is the default. `"reply"` means words, not a button.
+  - `expires` (an ISO date-time) is when it stops mattering.
+  - `attention: false` files the ask without counting it as unread. Use it for a memory proposal
+    that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
+- **`notices`** (at most 20) are news the owner may want: a box joined, a bridge
+  restarted. Each needs `text` and `at`, and may carry `meta`, `agent` and `page`.
+  They're filed under FYI and are never unread. Breakage is a state, so a piece
+  reports it on the agent (below), not as a stream of notices.
+- **`answered`** (at most 20) is the piece's recent history. Each has `text`,
+  `outcome` ("Allowed once", "Blocked") and `at`, and may carry `kind`, `agent`
+  and `page`. It fills the Inbox's Answered folder.
+- **`agents`** (optional) is how each agent is, as this piece sees it, for that
+  agent's card on Home. It maps an agent's id to:
+  - `state`: `working`, `available`, `unavailable` or `broken`;
+  - `reason`: one line;
+  - `readings`: up to four `{label, value, detail?, tone?, page?}`.
+
+  ```json
+  "agents": { "art": { "state": "working", "reason": "house h-52 on one",
+                       "readings": [ { "label": "Bridges", "value": "Discord ✓ Slack ✓", "tone": "ok" } ] } }
+  ```
+
+  Loom combines the pieces, taking the worst state: broken, then unavailable, then working, then available.
+  A piece says nothing about an agent it doesn't know.
 - **`add`** (optional): `{ "page": "new", "label": "New task" }`. loom draws it as
   a "+" beside the page's title, linking to that page (one of the piece's, or
   loom's own with `loom:`).
