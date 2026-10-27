@@ -21,7 +21,7 @@ import { INSTALL_TARGETS } from './install/harnesses.js';
 // Canonical tool names — used to generate the prefix-specific list per client
 export const TOOLS = [
   'identity', 'dossier', 'remember', 'recall', 'update', 'forget',
-  'memory_list', 'memory_prune', 'find_similar', 'memory_audit', 'episodes',
+  'memory_list', 'memory_prune', 'find_similar', 'memory_audit', 'memory_recompute_salience', 'episodes',
   'memory_archive', 'memory_restore', 'memory_merge', 'memory_history', 'memory_revision_restore',
   'memory_propose', 'memory_proposals', 'memory_ratify', 'memory_reject',
   'update_identity', 'bootstrap', 'harness_init', 'harness_describe',

@@ -56,6 +56,8 @@ an agent's persistent state:
   free-form text; used for deduplication and memory consolidation.
 - **`memory_audit`** — one-shot health report: stale entries, near-duplicate
   pairs, category breakdown.
+- **`memory_recompute_salience`** — refresh stored salience from timestamps
+  (the consolidation lane's step after the audit); derived and idempotent.
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.

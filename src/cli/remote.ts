@@ -30,11 +30,12 @@ export const REMOTE_VERBS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * `memory` subcommands with no MCP equivalent: recompute-salience rewrites
- * every row's salience, and recall-stats returns other callers' query text.
- * The consolidation lane runs them where the stack is.
+ * `memory` subcommands with no MCP equivalent: recall-stats returns other
+ * callers' query text, so it runs only where the stack is. (recompute-salience
+ * has memory_recompute_salience now, so a consolidation lane in a house can
+ * run it: t-1544.)
  */
-export const LOCAL_MEMORY_SUBCOMMANDS: ReadonlySet<string> = new Set(['recompute-salience', 'recall-stats']);
+export const LOCAL_MEMORY_SUBCOMMANDS: ReadonlySet<string> = new Set(['recall-stats']);
 
 /** POST /cli request body. */
 export interface CliRequest {

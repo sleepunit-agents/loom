@@ -75,6 +75,7 @@ describe('createLoomServer', () => {
     episodes: { readOnlyHint: true, openWorldHint: false },
     find_similar: { readOnlyHint: true, openWorldHint: false },
     memory_audit: { readOnlyHint: true, openWorldHint: false },
+    memory_recompute_salience: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     memory_archive: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     memory_merge: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     memory_restore: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
