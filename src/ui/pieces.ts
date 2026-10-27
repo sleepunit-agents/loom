@@ -242,7 +242,9 @@ export const API_TIMEOUT_MS = 15_000;
 export const API_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Who is calling a piece's API, as core resolved the bearer. */
-export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string; service?: string; house?: string } | { kind: 'piece'; subject: string };
+export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string; service?: string; house?: string } | { kind: 'piece'; subject: string }
+  /** No token, on a path the piece declared open (loom.strangers): a box asking to join. */
+  | { kind: 'stranger'; address: string };
 
 /**
  * Call a piece's API (docs/extensions.md, "The API"): `loom-<piece> api --json`

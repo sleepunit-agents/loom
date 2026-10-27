@@ -55,6 +55,12 @@ export interface LoomBlock {
   description?: string;
   settings: Setting[];
   services: Service[];
+  /**
+   * API paths a caller with no token may reach (POST /api/<piece>/<path>), as
+   * {kind:'stranger', address}: a box asking to join, and nothing else. Fixed at
+   * install, so a piece can't open its door at run time.
+   */
+  strangers?: string[];
 }
 
 export interface PieceRecord {
@@ -268,6 +274,13 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
     }
     if (v.keepChildren !== undefined && typeof v.keepChildren !== 'boolean') return `service ${v.name}: keepChildren is true or false`;
     out.services.push({ name: v.name as string, argv: argv as string[], ...(v.keepChildren ? { keepChildren: true } : {}) });
+  }
+  if (b.strangers !== undefined) {
+    const st = b.strangers;
+    if (!Array.isArray(st) || st.length > 4 || !st.every((x) => typeof x === 'string' && PIECE.test(x))) {
+      return 'loom.strangers is a list of at most 4 API path names (lowercase letters, digits and dashes)';
+    }
+    out.strangers = st as string[];
   }
   return out;
 }

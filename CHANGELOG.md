@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A door for strangers, where a piece opens one.** A tokenless call reaches a
+  managed piece's API only on a path its `loom` block lists in `strangers`, as
+  `{kind:'stranger', address}`, 8 KB at most: so a new box can ask to join and
+  the owner lets it in on the page, with nobody handling a credential (t-1617).
+
 - **House tokens name their house.** Role `agent:<a>[/<service>][@<house>]`
   (`loom token create --agent art --house h-104`), and a piece's API sees
   `"house"` in the caller, so a piece can grant one house something: the
