@@ -52,6 +52,8 @@ export interface Section {
   title?: string;
   side?: boolean;
   tone?: Tone;
+  /** 'agent': this section is about one agent (it belongs on that agent's page); the household's by default. */
+  level?: Level;
   blocks: Block[];
 }
 
@@ -66,16 +68,40 @@ export interface Page {
 }
 
 export interface Tile { label: string; value: string; detail?: string; tone?: Tone; page?: string }
-/** A decision only the owner can make. `tone` tints its card; `at` (ISO time) gives its age; `agent` puts that agent's mark on it. */
-export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; /** Up to two buttons on its card (Ratify and Reject): posted to the piece, like a buttons block's. */ actions?: Button[] }
+/** What an ask is, for the Inbox's folders: something to allow, to choose, or to answer in words. */
+export type AskKind = 'permission' | 'decision' | 'reply';
+export const ASK_KINDS: ReadonlySet<string> = new Set(['permission', 'decision', 'reply']);
+/**
+ * A decision only the owner can make. `tone` tints its card; `at` (ISO time) gives its age; `agent` puts that agent's mark on it.
+ * `kind` files it (a decision by default). `attention: false` files it without counting it as unread (a memory proposal nothing
+ * waits on); otherwise it needs the owner: it counts, and may push. `expires` (ISO) is when it stops mattering.
+ */
+export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; /** Up to two buttons on its card (Ratify and Reject): posted to the piece, like a buttons block's. */ actions?: Button[];
+  kind?: AskKind; attention?: false; expires?: string }
+/** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
+export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }
+/** One the owner already answered (or that expired): the Inbox's history. */
+export interface Answered { text: string; outcome: string; at: string; kind?: AskKind; agent?: string; page?: string }
+/** How an agent is, as one piece sees it. Loom combines the pieces' states, worst first: broken, unavailable, working, available. */
+export type AgentState = 'working' | 'available' | 'unavailable' | 'broken';
+export const AGENT_STATES: ReadonlySet<string> = new Set(['working', 'available', 'unavailable', 'broken']);
+/** One short reading on an agent's card on Home (Fuel: 58% of the week). */
+export interface Reading { label: string; value: string; detail?: string; tone?: Tone; page?: string }
+export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[] }
+/** Where a piece's tab (or one section) belongs: the household's (the default), or each agent's own pages. */
+export type Level = 'loom' | 'agent';
 
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
   scope?: boolean;
-  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. */
-  tab?: { label: string; kind?: 'place' | 'setting' };
+  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages. */
+  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level };
   tile?: Tile;
   asks: Ask[];
+  notices?: Notice[];
+  answered?: Answered[];
+  /** Per agent id: its state as this piece sees it, and up to four readings for its card. */
+  agents?: Record<string, AgentReport>;
   /** A first-version answer: these sections become the piece's page. */
   legacy?: Section[];
 }
@@ -92,6 +118,10 @@ export const LIMITS = {
   columns: 12,
   string: 2000,
   asks: 10,
+  notices: 20,
+  answered: 20,
+  agents: 16,
+  readings: 4,
   fields: 30,
   hidden: 20,
   options: 50,
@@ -143,6 +173,25 @@ function agentId(v: unknown, what: string): string | undefined {
 function when(v: unknown, what: string): string | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== 'string' || v.length > 40 || !/^\d{4}-\d\d-\d\dT/.test(v) || Number.isNaN(Date.parse(v))) throw new Invalid(`${what} must be an ISO date-time`);
+  return v;
+}
+
+function fail(message: string): never { throw new Invalid(message); }
+
+function askKind(v: unknown, what: string): AskKind {
+  if (typeof v !== 'string' || !ASK_KINDS.has(v)) throw new Invalid(`${what} must be one of ${[...ASK_KINDS].join(', ')}`);
+  return v as AskKind;
+}
+
+/** Only `false` says anything: an ask needs the owner unless it says it doesn't. */
+function attention(v: unknown): { attention?: false } {
+  if (typeof v !== 'boolean') throw new Invalid('ask.attention must be true or false');
+  return v ? {} : { attention: false };
+}
+
+function level(v: unknown, what: string): Level | undefined {
+  if (v === undefined) return undefined;
+  if (v !== 'loom' && v !== 'agent') throw new Invalid(`${what} must be loom or agent`);
   return v;
 }
 
@@ -415,6 +464,7 @@ function section(v: unknown): Section {
     title: optStr(o.title, 'section.title'),
     side: bool(o.side),
     tone: tone(o.tone),
+    ...(o.level !== undefined ? { level: level(o.level, 'section.level') } : {}),
     blocks: arr(o.blocks, 'section.blocks', LIMITS.blocks).map((x) => block(x)),
   };
 }
@@ -446,7 +496,8 @@ export function parseManifest(value: unknown): Manifest | string {
     if (top.tab !== undefined) {
       const t = obj(top.tab, 'tab');
       if (t.kind !== undefined && t.kind !== 'place' && t.kind !== 'setting') throw new Invalid('tab.kind must be place or setting');
-      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}) };
+      const lv = level(t.level, 'tab.level');
+      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}) };
     }
     if (top.tile !== undefined) {
       const t = obj(top.tile, 'tile');
@@ -462,8 +513,44 @@ export function parseManifest(value: unknown): Manifest | string {
           text: str(a.text, 'ask.text'), meta: optStr(a.meta, 'ask.meta'), page: page(a.page, 'ask.page'), label: optStr(a.label, 'ask.label'),
           tone: tone(a.tone), at: when(a.at, 'ask.at'), agent: agentId(a.agent, 'ask.agent'),
           ...(a.actions !== undefined ? { actions: arr(a.actions, 'ask.actions', 2).map(button) } : {}),
+          ...(a.kind !== undefined ? { kind: askKind(a.kind, 'ask.kind') } : {}),
+          ...(a.attention !== undefined ? attention(a.attention) : {}),
+          ...(a.expires !== undefined ? { expires: when(a.expires, 'ask.expires') } : {}),
         };
       });
+    }
+    if (top.notices !== undefined) {
+      m.notices = arr(top.notices, 'notices', LIMITS.notices).map((x) => {
+        const n = obj(x, 'notice');
+        return { text: str(n.text, 'notice.text'), meta: optStr(n.meta, 'notice.meta'), page: page(n.page, 'notice.page'),
+          at: when(n.at, 'notice.at') ?? fail('notice.at is required'), agent: agentId(n.agent, 'notice.agent') };
+      });
+    }
+    if (top.answered !== undefined) {
+      m.answered = arr(top.answered, 'answered', LIMITS.answered).map((x) => {
+        const a = obj(x, 'answered');
+        return { text: str(a.text, 'answered.text'), outcome: str(a.outcome, 'answered.outcome'), at: when(a.at, 'answered.at') ?? fail('answered.at is required'),
+          ...(a.kind !== undefined ? { kind: askKind(a.kind, 'answered.kind') } : {}), agent: agentId(a.agent, 'answered.agent'), page: page(a.page, 'answered.page') };
+      });
+    }
+    if (top.agents !== undefined) {
+      const ag = obj(top.agents, 'agents');
+      const ids = Object.keys(ag);
+      if (ids.length > LIMITS.agents) throw new Invalid(`agents holds at most ${LIMITS.agents}`);
+      m.agents = {};
+      for (const id of ids) {
+        agentId(id, 'an agents key');
+        const r = obj(ag[id], `agents.${id}`);
+        if (r.state !== undefined && (typeof r.state !== 'string' || !AGENT_STATES.has(r.state))) throw new Invalid(`agents.${id}.state must be one of ${[...AGENT_STATES].join(', ')}`);
+        m.agents[id] = {
+          ...(r.state !== undefined ? { state: r.state as AgentState } : {}),
+          ...(r.reason !== undefined ? { reason: str(r.reason, `agents.${id}.reason`) } : {}),
+          readings: (r.readings === undefined ? [] : arr(r.readings, `agents.${id}.readings`, LIMITS.readings)).map((x) => {
+            const d = obj(x, 'reading');
+            return { label: str(d.label, 'reading.label'), value: str(d.value, 'reading.value'), detail: optStr(d.detail, 'reading.detail'), tone: tone(d.tone), page: page(d.page, 'reading.page') };
+          }),
+        };
+      }
     }
     return m;
   });

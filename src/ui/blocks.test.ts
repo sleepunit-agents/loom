@@ -140,3 +140,49 @@ describe('meter, code and status blocks', () => {
     expect(html.match(/<script\b/gi)?.length).toBe(1);
   });
 });
+
+describe('the manifest for Home and the Inbox (t-1618)', () => {
+  const ok = (v: unknown) => { const m = parseManifest(v); if (typeof m === 'string') throw new Error(m); return m; };
+
+  it('an ask says what it is, whether it needs the owner, and when it stops mattering', () => {
+    const m = ok({ v: 2, asks: [
+      { text: 'Push the fix to onterris/pond', kind: 'permission', agent: 'art', at: '2026-10-27T18:00:00Z', expires: '2026-10-27T19:00:00Z' },
+      { text: 'Proposed memory', kind: 'decision', attention: false },
+      { text: 'Tonight or tomorrow?', kind: 'reply' },
+      { text: 'An old-style ask' },
+    ] });
+    expect(m.asks.map((a) => [a.kind, a.attention, a.expires])).toEqual([
+      ['permission', undefined, '2026-10-27T19:00:00Z'], ['decision', false, undefined], ['reply', undefined, undefined], [undefined, undefined, undefined]]);
+    expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', kind: 'fyi' }] })).toBe('string');
+    expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', expires: 'soon' }] })).toBe('string');
+  });
+
+  it('notices and answered items are the Inbox\'s FYI and history; each needs its time', () => {
+    const m = ok({ v: 2,
+      notices: [{ text: 'one joined loom', at: '2026-10-27T18:22:44Z', agent: 'art' }],
+      answered: [{ text: 'A box asks to join: evil', outcome: 'Blocked.', at: '2026-10-26T18:00:00Z', kind: 'permission' }] });
+    expect(m.notices?.[0].text).toBe('one joined loom');
+    expect(m.answered?.[0]).toMatchObject({ outcome: 'Blocked.', kind: 'permission' });
+    expect(parseManifest({ v: 2, notices: [{ text: 'no time' }] })).toBe('notice.at is required');
+    expect(typeof parseManifest({ v: 2, notices: Array.from({ length: 21 }, () => ({ text: 'x', at: '2026-10-27T18:00:00Z' })) })).toBe('string');
+  });
+
+  it('a piece reports each agent\'s state and up to four readings for its card', () => {
+    const m = ok({ v: 2, agents: {
+      art: { state: 'working', reason: 'house h-52 on one', readings: [{ label: 'Bridges', value: 'Discord ✓ Slack ✓', tone: 'ok' }] },
+      mark: { readings: [{ label: 'Fuel', value: '81% of the week', detail: 'resets Thu' }] },
+    } });
+    expect(m.agents?.art).toMatchObject({ state: 'working', readings: [{ label: 'Bridges' }] });
+    expect(m.agents?.mark.state).toBeUndefined();
+    expect(typeof parseManifest({ v: 2, agents: { art: { state: 'asleep' } } })).toBe('string');
+    expect(typeof parseManifest({ v: 2, agents: { Art: { readings: [] } } })).toBe('string');
+    expect(typeof parseManifest({ v: 2, agents: { art: { readings: Array.from({ length: 5 }, () => ({ label: 'x', value: 'y' })) } } })).toBe('string');
+  });
+
+  it('a tab or a section says whether it is the household\'s or an agent\'s', () => {
+    expect(ok({ v: 2, tab: { label: 'Clock', level: 'agent' } }).tab).toEqual({ label: 'Clock', level: 'agent' });
+    expect(typeof parseManifest({ v: 2, tab: { label: 'Clock', level: 'everyone' } })).toBe('string');
+    const p = parsePage({ title: 'Clock', sections: [{ id: 'wakes', level: 'agent', blocks: [] }] });
+    expect(typeof p === 'string' ? p : p.sections[0].level).toBe('agent');
+  });
+});
