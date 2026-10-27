@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Service tokens.** `loom token create --agent art --service slack` mints
+  role `agent:art/slack`: a service house's token. It's the agent in every
+  way, and a piece's API sees `{"kind":"agent","agent":"art","service":"slack"}`,
+  so a piece can tell the agent's bridge from its other bodies (t-1591,
+  shuttle's `relay-take`).
+
 - **`knowledge_list`** and **`person_evidence`** MCP tools: the CLI's
   `knowledge list` and `person evidence`, so an agent in a house has them as
   tools (t-1598). `knowledge_list` is on the full server only, not the

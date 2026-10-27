@@ -39,7 +39,12 @@ export interface Household {
 }
 
 export type Role =
-  | { kind: 'agent'; agent: string }
+  /**
+   * `service` is a service house's (loom-box mints its token with it): the
+   * agent's bridge, say, so a piece can tell it from the agent's other
+   * bodies (t-1591). It grants nothing more than the agent has.
+   */
+  | { kind: 'agent'; agent: string; service?: string }
   | { kind: 'owner' }
   | { kind: 'peer'; name: string }
   /**
@@ -50,7 +55,7 @@ export type Role =
 
 export interface TokenRecord {
   label: string;
-  /** `agent:<name>`, `owner`, `peer:<name>` or `piece:<piece>/<subject>`. */
+  /** `agent:<name>[/<service>]`, `owner`, `peer:<name>` or `piece:<piece>/<subject>`. */
   role: string;
   /** sha256 of the token, hex. The token itself is never stored. */
   sha256: string;
@@ -114,6 +119,8 @@ export function parseRole(s: string): Role | null {
   if (s === 'owner') return { kind: 'owner' };
   const p = /^piece:([a-z][a-z0-9-]{0,39})\/([a-z0-9][a-z0-9._-]{0,63})$/.exec(s);
   if (p) return p[1] === 'loom' ? null : { kind: 'piece', piece: p[1], subject: p[2] };
+  const a = /^agent:([a-z][a-z0-9-]{0,39})\/([a-z][a-z0-9-]{0,39})$/.exec(s);
+  if (a) return { kind: 'agent', agent: a[1], service: a[2] };
   const m = /^(agent|peer):([a-z][a-z0-9-]{0,39})$/.exec(s);
   if (!m) return null;
   return m[1] === 'agent' ? { kind: 'agent', agent: m[2] } : { kind: 'peer', name: m[2] };
@@ -122,7 +129,7 @@ export function parseRole(s: string): Role | null {
 export function roleString(r: Role): string {
   switch (r.kind) {
     case 'owner': return 'owner';
-    case 'agent': return `agent:${r.agent}`;
+    case 'agent': return r.service ? `agent:${r.agent}/${r.service}` : `agent:${r.agent}`;
     case 'peer': return `peer:${r.name}`;
     case 'piece': return `piece:${r.piece}/${r.subject}`;
   }

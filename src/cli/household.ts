@@ -28,8 +28,9 @@ $LOOM_HOME defaults to ~/.config/loom.
 
 const TOKEN_USAGE = `Usage: loom token <command>
 
-  create (--agent <name> | --owner | --peer <name> | --piece <piece>/<subject>) --label <text>
-                           Mint a token. It's printed once; only its sha256 is kept
+  create (--agent <name> [--service <name>] | --owner | --peer <name> | --piece <piece>/<subject>) --label <text>
+                           Mint a token. It's printed once; only its sha256 is kept.
+                           --service names a service house's (agent:<name>/<service>): a piece can tell it apart
   list                     Every token: label, role, created, last used, revoked
   revoke <label>           Revoke the live token with that label (takes effect on the next request)
   link [--minutes 10] [--page-url <loom's page address>]
@@ -109,7 +110,9 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       const h = need(io);
       if (!h) return 1;
       const label = flag(rest, '--label');
-      const picked = [flag(rest, '--agent') && `agent:${flag(rest, '--agent')}`, rest.includes('--owner') && 'owner', flag(rest, '--peer') && `peer:${flag(rest, '--peer')}`, flag(rest, '--piece') && `piece:${flag(rest, '--piece')}`].filter(Boolean) as string[];
+      const service = flag(rest, '--service');
+      if (service !== undefined && !flag(rest, '--agent')) { io.stderr(TOKEN_USAGE); return 2; }
+      const picked = [flag(rest, '--agent') && `agent:${flag(rest, '--agent')}${service !== undefined ? `/${service}` : ''}`, rest.includes('--owner') && 'owner', flag(rest, '--peer') && `peer:${flag(rest, '--peer')}`, flag(rest, '--piece') && `piece:${flag(rest, '--piece')}`].filter(Boolean) as string[];
       const role = picked.length === 1 ? parseRole(picked[0]) : null;
       if (!label || !role) { io.stderr(TOKEN_USAGE); return 2; }
       const { token, record } = createToken(h, { role, label });
