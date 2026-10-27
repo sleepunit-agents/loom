@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **Catalog: shuttle at 92b7fa9.** A relay's words are quoted under a one-line
+- **Catalog: shuttle at bb5e92b.** A relay's words are quoted under a one-line
   header that says it carries none of the person's authority.
 - **Catalog: shuttle at df79324.** Relay: a body asks the body that owns
   another conversation to say something (`piece-call shuttle relay --via slack
