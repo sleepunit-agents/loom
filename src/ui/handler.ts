@@ -54,7 +54,7 @@ import { agentSetup, householdAct, householdHome, householdPeople, householdPers
 import { agentDir, MARKS, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
-import { agentSource, CORE, INBOX_FOLDERS, pageHref, pieceSource, renderHome, renderHouseHome, renderInbox, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, renderHome, renderHouseHome, renderInbox, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -996,13 +996,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       for (const it of items) it.unread = it.attention && !opened.has(it.key);
       // The open item's own page (a task's, for a task), drawn in the Inbox: only a piece's ask that links to
       // one of its pages (not its main page) and has no buttons of its own.
-      const shown = open ?? items.find((it) => folder === 'needs' ? it.attention : it.kind === folder);
-      let inline: Section[] | undefined;
+      // The open item as the page draws it: the one asked for when it's in this folder, else the folder's first.
+      const here = items.filter((it) => inFolder(folder, it));
+      const shown = here.find((it) => it.key === open?.key) ?? here[0];
+      let inline: { key: string; sections: Section[] } | undefined;
       const info = shown && !shown.actions?.length && shown.kind !== 'answered' && shown.page ? pieces.find((p) => pieceSource(p.piece).id === shown.source.id && hasPages(p)) : undefined;
       const sp = info ? splitPage(shown!.page!) : null;
       if (info && sp && !sp.core && sp.path !== '') {
         const pg = await piecePage(info, sp.path, sp.query, scopedEnv);
-        if (typeof pg !== 'string') inline = pg.sections;
+        if (typeof pg !== 'string') inline = { key: shown!.key, sections: pg.sections };
       }
       return html(renderInbox(items, folder, open?.key, { ...ctxOf('inbox'), agents: agentsOf(hh)! }, chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash), nowMs, inline));
     }

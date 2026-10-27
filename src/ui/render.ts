@@ -796,7 +796,7 @@ function untilWord(iso: string, nowMs: number): string {
  * The Inbox. `inline` is the open item's own page, from its piece (a task's page for a task): drawn in the
  * open item, its actions posting to the piece and coming back here.
  */
-export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: string | undefined, ctx: RenderContext, chrome: Chrome, nowMs = Date.now(), inline?: Section[]): string {
+export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: string | undefined, ctx: RenderContext, chrome: Chrome, nowMs = Date.now(), inline?: { key: string; sections: Section[] }): string {
   const f = INBOX_FOLDERS.find((x) => x.id === folder) ?? INBOX_FOLDERS[0];
   const here = (q: Record<string, string>) => `/inbox${qs(q)}`;
   const folders = INBOX_FOLDERS.map((x) => {
@@ -832,8 +832,9 @@ export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: st
       `<span class="chip">${esc(KIND_WORD[open.kind])}</span>${until ? `<span class="chip warn">${esc(until)}</span>` : ''}<span class="meta">${open.at ? `${esc(age(open.at, nowMs))} ago` : ''}</span></div>` +
       `<h3>${open.page !== undefined && open.actions?.length ? `<a href="${esc(pageHref(open.page, open.source))}">${esc(open.text)}</a>` : esc(open.text)}</h3>` +
       (open.meta ? `<p class="open-meta">${esc(open.meta)}</p>` : '') +
-      (open.outcome ? `<p class="outcome">${esc(open.outcome)}</p>` : inline?.length
-        ? `<div class="open-page">${inline.map((s) => renderSection(s, back, 4)).join('')}</div>${open.page !== undefined ? `<a class="more-link" href="${esc(pageHref(open.page, open.source))}">Open its page</a>` : ''}`
+      // A page drawn here only for the item it was fetched for: its actions post to that item's piece.
+      (open.outcome ? `<p class="outcome">${esc(open.outcome)}</p>` : inline?.sections.length && inline.key === open.key
+        ? `<div class="open-page">${inline.sections.map((s) => renderSection(s, back, 4)).join('')}</div>${open.page !== undefined ? `<a class="more-link" href="${esc(pageHref(open.page, open.source))}">Open its page</a>` : ''}`
         : acts) + '</section>';
   }
   const body = `${shellOpen(chrome)}<main class="inbox-page">${flash(chrome)}<header class="dash-head"><span class="label">Household</span><h1 class="display">Inbox</h1></header>` +
