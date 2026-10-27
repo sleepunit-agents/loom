@@ -245,6 +245,10 @@ describe('one daemon, several agents', () => {
     expect(out.trim()).toMatch(/^loom_/);
     expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9 on loom')?.role).toBe('agent:art/slack');
     expect(await runToken(['create', '--owner', '--service', 'slack', '--label', 'x'], io)).toBe(2);
+    expect(await runToken(['create', '--agent', 'art', '--service', 'slack', '--house', 'h-9', '--label', 'art · house h-9b'], io)).toBe(0);
+    expect(loadTokens(h.home).find((t) => t.label === 'art · house h-9b')?.role).toBe('agent:art/slack@h-9');
+    revokeToken(h, 'art · house h-9b');
+    expect(await runToken(['create', '--owner', '--house', 'h-9', '--label', 'z'], io)).toBe(2);
     expect(await runToken(['create', '--agent', 'art', '--service', 'Bad', '--label', 'y'], io)).toBe(2);
     revokeToken(h, 'art · house h-9 on loom');
   });

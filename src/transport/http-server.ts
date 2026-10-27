@@ -395,7 +395,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     let caller: ApiCaller;
     switch (role.kind) {
       case 'owner': caller = { kind: 'owner' }; break;
-      case 'agent': caller = role.service ? { kind: 'agent', agent: role.agent, service: role.service } : { kind: 'agent', agent: role.agent }; break;
+      case 'agent': caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) }; break;
       case 'piece':
         if (role.piece !== piece) return sendError(res, 403, `forbidden: this credential is ${role.piece}'s`);
         caller = { kind: 'piece', subject: role.subject };
