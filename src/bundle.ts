@@ -237,6 +237,8 @@ function unpack(fileIn: string, identityIn: string, dir: string, env: NodeJS.Pro
     try { readSync(fd, head, 0, 2, 0); } finally { closeSync(fd); }
     const gz = head[0] === 0x1f && head[1] === 0x8b;
     run(tar, ['-C', dir, '--no-same-owner', gz ? '-xzf' : '-xf', plain], 'tar');
+    // Before anything here reads, chmods or writes what tar made (the drill too).
+    assertNoLinkedWrites(dir);
     const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf-8')) as Manifest;
     if (m.v !== 1) throw new BundleError(`this bundle is format v${String(m.v)}; this loom reads v1`);
     rmSync(join(dir, 'manifest.json'));
@@ -260,6 +262,29 @@ export interface RestoreReport {
 }
 
 const PIECE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+
+/**
+ * Everywhere restore writes after unpacking (the home's own entries, commons/,
+ * each agents/<name>/, pieces/) must be a real file or directory, not a link a
+ * bundle planted to send those writes somewhere else. Links inside an agent's
+ * own directory are its data, copied as they were (copyAgent), and stay.
+ */
+function assertNoLinkedWrites(home: string): void {
+  const check = (p: string) => {
+    if (lstatExists(p)) {
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) throw new BundleError(`the bundle's ${p.slice(home.length + 1)} is a link; refusing to restore through it. Nothing was installed or imported.`);
+      if (!st.isFile() && !st.isDirectory()) throw new BundleError(`the bundle's ${p.slice(home.length + 1)} isn't a file or a directory; refusing it.`);
+    }
+  };
+  for (const e of readdirSync(home)) check(join(home, e));
+  const agents = join(home, 'agents');
+  if (existsSync(agents) && lstatSync(agents).isDirectory()) for (const a of readdirSync(agents)) check(join(agents, a));
+}
+
+function lstatExists(p: string): boolean {
+  try { lstatSync(p); return true; } catch { return false; }
+}
 
 /** pieces/ as unpacked: only the manifest's parts, each a plain file, or the restore stops here. */
 function assertOnlyParts(dir: string, manifest: Manifest): void {
