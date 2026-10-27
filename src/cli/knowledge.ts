@@ -9,6 +9,7 @@ import { createKnowledgeBackend } from '../backends/index.js';
 import { resolveIdentityName } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import { renderJson } from './io.js';
+import { knowledgeFreshness } from '../tools/knowledge-list.js';
 import type { IOStreams } from './io.js';
 
 const USAGE = `Usage: loom knowledge <subcommand> [options]
@@ -157,21 +158,10 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       io.stderr(`${(err as Error).message}\n${USAGE}`);
       return 2;
     }
-    const backend = createKnowledgeBackend(env.contextDir);
-    try {
-      // A listing, not a read: it doesn't count as an access (no hit_count).
-      const pages = (await backend.listPages({ domain: parsed.values.domain, limit: 1_000_000 }))
-        .filter((p) => p.status === 'active')
-        .map((p) => ({
-          slug: p.slug, title: p.title, domain: p.domain, created: p.created,
-          verified_at: p.verified_at ?? null, freshness_anchor: p.freshness_anchor ?? null, sla_class: p.sla_class,
-        }));
-      if (env.json) { renderJson(io, pages); return 0; }
-      io.stdout(pages.map((p) => `${p.slug}\t${p.domain}\t${p.sla_class}\tverified ${p.verified_at ?? 'never'}`).join('\n') + (pages.length ? '\n' : ''));
-      return 0;
-    } finally {
-      backend.close();
-    }
+    const pages = await knowledgeFreshness(env.contextDir, parsed.values.domain);
+    if (env.json) { renderJson(io, pages); return 0; }
+    io.stdout(pages.map((p) => `${p.slug}\t${p.domain}\t${p.sla_class}\tverified ${p.verified_at ?? 'never'}`).join('\n') + (pages.length ? '\n' : ''));
+    return 0;
   }
 
   if (sub === 'recall') {

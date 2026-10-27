@@ -51,7 +51,9 @@ import {
   personList,
   personHistory,
   personRevisionRestore,
+  personEvidence,
 } from './tools/person.js';
+import { knowledgeFreshness } from './tools/knowledge-list.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -1005,6 +1007,41 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const result = await personList(contextDir, { include_archived });
       return { content: [{ type: 'text' as const, text: result }] };
     },
+  );
+
+  server.registerTool(
+    'person_evidence',
+    {
+      description:
+      'The memories a person card condenses: active, unexpired user and feedback memories tagged ' +
+      'to the person (metadata.person), oldest first, as JSON. What a summary is rewritten from.',
+      inputSchema: z.object({
+        slug: z.string().describe('The person\'s slug'),
+        since: z.string().optional().describe('Only memories created after this ISO time'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ slug, since }) => {
+      if (since !== undefined && Number.isNaN(Date.parse(since))) {
+        return { content: [{ type: 'text' as const, text: 'Error: since takes an ISO time' }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(personEvidence(contextDir, slug, since ?? null)) }] };
+    },
+  );
+
+  server.registerTool(
+    'knowledge_list',
+    {
+      description:
+      'Every active knowledge page\'s freshness fields (slug, title, domain, created, verified_at, ' +
+      'freshness_anchor, sla_class) as JSON, no bodies: what a verification sweep picks from. ' +
+      'A listing, not a read: it doesn\'t count as an access.',
+      inputSchema: z.object({
+        domain: z.string().optional().describe('Only pages in this domain'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ domain }) => ({ content: [{ type: 'text' as const, text: JSON.stringify(await knowledgeFreshness(contextDir, domain)) }] }),
   );
 
   server.registerTool(
