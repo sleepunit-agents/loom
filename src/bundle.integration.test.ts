@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { createToken, loadHousehold, TokenResolver, type Household } from './household.js';
@@ -196,18 +196,21 @@ esac
     spawnSync(AGE, ['-d', '-i', owner.identity, '-o', join(work, 'h.tgz'), file]);
     const outside = join(work, 'outside');
     mkdirSync(outside);
-    for (const [i, where] of ['pieces', 'commons', 'agents/mark'].entries()) {
+    // tokens.json is chmod'ed and manifest.json read before anything else: a link there would reach outside too.
+    writeFileSync(join(outside, 'precious'), 'x', { mode: 0o644 });
+    for (const [i, where] of ['pieces', 'commons', 'agents/mark', 'tokens.json', 'manifest.json'].entries()) {
       const x = join(work, `x${i}`);
       mkdirSync(x);
       spawnSync('tar', ['-C', x, '-xzf', join(work, 'h.tgz')]);
       rmSync(join(x, where), { recursive: true, force: true });
-      symlinkSync(outside, join(x, where));
+      symlinkSync(where.endsWith('.json') ? join(outside, 'precious') : outside, join(x, where));
       spawnSync('tar', ['-C', x, '-czf', join(work, `evil${i}.tgz`), '.']);
       spawnSync(AGE, ['-e', '-r', owner.recipient, '-o', join(work, `evil${i}.bundle`), join(work, `evil${i}.tgz`)]);
       await expect(restoreBundle({ file: join(work, `evil${i}.bundle`), identity: owner.identity, home: join(work, `restored${i}`), env: sealed(), install: false }), where)
         .rejects.toThrow(/is a link/);
     }
-    expect(readdirSync(outside)).toEqual([]);
+    expect(readdirSync(outside)).toEqual(['precious']);
+    expect(statSync(join(outside, 'precious')).mode & 0o777).toBe(0o644);
   });
 
   it('a bundle from before compression (a plain tar) still restores', async () => {

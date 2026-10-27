@@ -237,6 +237,8 @@ function unpack(fileIn: string, identityIn: string, dir: string, env: NodeJS.Pro
     try { readSync(fd, head, 0, 2, 0); } finally { closeSync(fd); }
     const gz = head[0] === 0x1f && head[1] === 0x8b;
     run(tar, ['-C', dir, '--no-same-owner', gz ? '-xzf' : '-xf', plain], 'tar');
+    // Before anything here reads, chmods or writes what tar made (the drill too).
+    assertNoLinkedWrites(dir);
     const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf-8')) as Manifest;
     if (m.v !== 1) throw new BundleError(`this bundle is format v${String(m.v)}; this loom reads v1`);
     rmSync(join(dir, 'manifest.json'));
@@ -326,7 +328,6 @@ export async function restoreBundle(opts: {
   const env = { ...(opts.env ?? process.env), LOOM_HOME: home };
   if (!emptyOrMissing(home)) throw new BundleError(`${home} isn't empty; restore into a new LOOM_HOME (--to), never over a live one`);
   const manifest = unpack(opts.file, opts.identity, home, env);
-  assertNoLinkedWrites(home);
   const h = loadHousehold(home);
   if (!h) throw new BundleError('the bundle has no household.json');
   // A bundle made from a plain context dir still holds whole cards: split them now.
