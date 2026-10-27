@@ -404,7 +404,9 @@ function rail(c: Chrome, sh: Shell): string {
     // Setup: what's visited rarely (pieces that say they're settings), and managing the pieces themselves.
     `<span class="rail-label">Setup</span>${settings(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` +
     `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
-    `<div class="rail-foot"><span>${esc(sh.owner)}</span><a href="/passkeys">Passkeys</a>${signOut(c)}</div></aside>`;
+    // The owner's own things (passkeys, notifications, signing out) in a menu at the foot, not always in view (Jonathan, 2026-10-27).
+    `<details class="account"><summary><span class="mark owner-mark" aria-hidden="true">${esc((sh.owner.trim()[0] ?? '?').toUpperCase())}</span><span class="who">${esc(sh.owner)}</span>${ICON.updown}</summary>` +
+    `<div class="account-menu"><a href="/passkeys">Passkeys and notifications</a>${signOut(c, 'menu-out')}</div></details></aside>`;
 }
 
 /**

@@ -30,6 +30,15 @@ document.addEventListener('click', (e) => {
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(code.textContent).then(done, () => {});
   else { const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
 });
+// The account menu (a <details>) closes on a click anywhere else, and on Escape.
+document.addEventListener('click', (e) => {
+  const m = document.querySelector('details.account[open]');
+  if (m && !(e.target instanceof Element && m.contains(e.target))) m.removeAttribute('open');
+});
+document.addEventListener('keydown', (e) => {
+  const m = document.querySelector('details.account[open]');
+  if (m && e.key === 'Escape') { m.removeAttribute('open'); const s = m.querySelector('summary'); if (s) s.focus(); }
+});
 // The shell's sheets: a link marked data-sheet opens its dialog; the link still works without script.
 document.addEventListener('click', (e) => {
   const t = e.target instanceof Element ? e.target : null;
