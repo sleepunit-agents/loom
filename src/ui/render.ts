@@ -282,7 +282,7 @@ export interface Shell {
   /** A page below the top: where its back link goes, by name ("‹ Knowledge"). */
   back?: { label: string; href: string };
   /** Loom's own places: Knowledge, People (and Mind for a lone agent). */
-  core: Array<{ label: string; href: string; current: boolean }>;
+  core: Array<{ label: string; href: string; current: boolean; count?: number }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
   /** kind: a place (Places) or a setting (Setup), from the piece's tab.kind or the catalog. */
   pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting' }>;
@@ -399,14 +399,16 @@ function rail(c: Chrome, sh: Shell): string {
   return `<aside class="rail" aria-label="loom"><a class="wordmark" href="/">${LOGO}<span>loom</span></a>` +
     `<a class="scope-btn" href="/scope" data-sheet="scope">${scopeMark(sh, 32)}<span class="body"><span class="text">${esc(scopeLabel)}</span>${scopeSub ? `<span class="sub">${esc(scopeSub)}</span>` : ''}</span>${ICON.updown}</a>` +
     `<a class="find-btn" href="/find" data-sheet="find">${ICON.find}<span>Find anything</span><kbd>⌘K</kbd></a>` +
-    `<nav class="rail-nav">${item(sh.home, 'Home', sh.tab === 'home', sh.asks ? `<span class="count">${sh.asks}</span>` : '')}${sh.core.map((x) => item(x.href, x.label, x.current)).join('')}` +
+    // In a household what needs the owner is counted on the Inbox; a lone agent's Home still carries it.
+    `<nav class="rail-nav">${item(sh.home, 'Home', sh.tab === 'home', sh.asks && !sh.core.some((x) => x.count !== undefined) ? `<span class="count">${sh.asks}</span>` : '')}${
+      sh.core.map((x) => item(x.href, x.label, x.current, x.count ? `<span class="count">${x.count}</span>` : '')).join('')}` +
     (places(sh).length ? `<span class="rail-label">Pieces</span>${places(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
     // Setup: what's visited rarely (pieces that say they're settings), and managing the pieces themselves.
     `<span class="rail-label">Setup</span>${settings(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` +
     `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
     // The owner's own things (passkeys, notifications, signing out) in a menu at the foot, not always in view (Jonathan, 2026-10-27).
     `<details class="account"><summary><span class="mark owner-mark" aria-hidden="true">${esc((sh.owner.trim()[0] ?? '?').toUpperCase())}</span><span class="who">${esc(sh.owner)}</span>${ICON.updown}</summary>` +
-    `<div class="account-menu"><a href="/passkeys">Passkeys and notifications</a>${signOut(c, 'menu-out')}</div></details></aside>`;
+    `<div class="account-menu"><a href="/passkeys">Passkeys</a><a href="/passkeys#notifications">Notifications</a>${signOut(c, 'menu-out')}</div></details></aside>`;
 }
 
 /**
@@ -575,6 +577,8 @@ export interface Dashboard {
   /** An agent's Today: its mark, and Today · Mind · People · Setup. */
   agent?: { label: string; bg: string; fg: string; sub?: string; tabs: Array<{ label: string; href: string; current: boolean }> };
   asks: HomeAsk[];
+  /** A household's Home: what needs the owner is in the Inbox; Home says how much, and links there, instead of the cards. */
+  inbox?: { count: number; first?: string };
   tiles: HomeTile[];
   thread: ThreadRow[];
   /** "Since you last looked" (epoch ms); rows after it get a new dot, and a line marks it. */
@@ -626,7 +630,7 @@ function agentHead(a: AgentHead): string {
 }
 
 export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome, nowMs = Date.now()): string {
-  const need = d.asks.length;
+  const need = d.inbox ? d.inbox.count : d.asks.length;
   const fresh = d.sinceMs === undefined ? 0 : d.thread.filter((r) => Date.parse(r.at) > d.sinceMs!).length;
   const head = d.agent
     ? agentHead(d.agent)
@@ -639,7 +643,10 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   // The first three, as the boards show them; the rest a tap away, so Home stays a glance.
   const cards = d.asks.map((a) => askCard(a, ctx, nowMs));
   const rest = cards.length > CARDS_SHOWN + 1 ? cards.splice(CARDS_SHOWN) : [];
-  const yours = need
+  const yours = d.inbox
+    ? (need ? `<section class="your-call to-inbox" id="your-call"><a class="link-row card" href="/inbox"><span class="body"><span class="text">${esc(d.inbox.first ?? `${need} need${need === 1 ? 's' : ''} you`)}</span>${
+        need > 1 ? `<span class="meta">and ${need - 1} more</span>` : ''}</span><span class="go-inbox">Open the Inbox</span>${CHEVRON}</a></section>` : '')
+    : need
     ? `<section class="your-call" id="your-call"><h2 class="label">Your call <span class="n">${need}</span></h2><ul class="ask-list">${cards.join('')}</ul>${
       rest.length ? `<details class="more-asks"><summary>${rest.length} more</summary><ul class="ask-list">${rest.join('')}</ul></details>` : ''}</section>` : '';
   const glance = d.tiles.length
@@ -705,7 +712,7 @@ export function renderPasskeys(page: Page, ctx: RenderContext, chrome: Chrome, a
     ? `<form class="passkey-add" action="/passkeys" method="get"><input id="passkey-label" maxlength="60" placeholder="Name it, like Jonathan's phone" aria-label="name"><button type="button" id="passkey-add" data-csrf="${esc(add.csrf)}">Add a passkey</button><p class="sub" id="passkey-msg"></p></form>`
     : `<p class="sub passkey-note">${esc(add.note)}</p>`;
   // Push for Your call: shown by /app.js only where the browser can (https, a service worker, PushManager).
-  const notify = `<section class="card"><h2>Notifications</h2><p class="sub">Your call, on this device: a notification when something new needs you, and a tap opens it on Home.</p>` +
+  const notify = `<section class="card" id="notifications"><h2>Notifications</h2><p class="sub">Your call, on this device: a notification when something new needs you, and a tap opens it on Home.</p>` +
     `<p class="sub" data-push-status>Needs loom over https; on an iPhone, loom added to the Home Screen first.</p><button class="btn" type="button" data-push data-csrf="${esc(ctx.csrf)}" hidden>Turn on for this device</button></section>`;
   const html = renderPage(page, ctx, chrome);
   const at = /<section[^>]*id="s-loom--another"/.test(html) ? /(<section[^>]*id="s-loom--another")/ : /(<\/main>)/;
@@ -718,4 +725,99 @@ export function renderPasskeys(page: Page, ctx: RenderContext, chrome: Chrome, a
     .replace(at, `${control}$1`)
     .replace(/<\/main>/, `${notify}</main>`)
     .replace('</body>', `${'csrf' in add ? '<script src="/login/passkey.js" defer></script>' : ''}</body>`);
+}
+
+// ─── The Inbox (t-1621): folders, a list above the open item ─────────────────
+
+export type InboxFolder = 'needs' | 'permission' | 'decision' | 'reply' | 'fyi' | 'answered';
+
+/** One row in the Inbox: an ask (to allow, choose or answer), a notice (FYI) or one already answered. */
+export interface InboxItem {
+  key: string;
+  /** What it is: an ask's kind, or fyi (a notice), or answered. */
+  kind: 'permission' | 'decision' | 'reply' | 'fyi' | 'answered';
+  /** It needs the owner: counted, and unread until opened. */
+  attention: boolean;
+  unread: boolean;
+  text: string;
+  meta?: string;
+  at?: string;
+  expires?: string;
+  agent?: string;
+  source: Source;
+  sourceLabel?: string;
+  page?: string;
+  label?: string;
+  actions?: Button[];
+  outcome?: string;
+}
+
+export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [
+  { id: 'needs', label: 'Needs you', hint: 'What blocks work or expires' },
+  { id: 'permission', label: 'Permissions', hint: 'Approvals, secrets, boxes asking to join' },
+  { id: 'decision', label: 'Decisions', hint: 'An agent asks you to choose' },
+  { id: 'reply', label: 'Replies', hint: 'Someone waits on words, not a button' },
+  { id: 'fyi', label: 'FYI', hint: 'News; never unread' },
+  { id: 'answered', label: 'Answered', hint: 'What was decided, and what expired' },
+];
+
+/** Which items a folder holds. */
+export function inFolder(f: InboxFolder, it: InboxItem): boolean {
+  if (f === 'needs') return it.attention;
+  return it.kind === f;
+}
+
+const KIND_WORD: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', fyi: 'FYI', answered: 'Answered' };
+
+/** When something stops mattering: "expires in 54m", or "expired". */
+function untilWord(iso: string, nowMs: number): string {
+  const ms = Date.parse(iso) - nowMs;
+  if (Number.isNaN(ms)) return '';
+  if (ms <= 0) return 'expired';
+  const m = Math.ceil(ms / 60_000);
+  return `expires in ${m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`}`;
+}
+
+export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: string | undefined, ctx: RenderContext, chrome: Chrome, nowMs = Date.now()): string {
+  const f = INBOX_FOLDERS.find((x) => x.id === folder) ?? INBOX_FOLDERS[0];
+  const here = (q: Record<string, string>) => `/inbox${qs(q)}`;
+  const folders = INBOX_FOLDERS.map((x) => {
+    const n = items.filter((it) => inFolder(x.id, it)).length;
+    // Needs you counts what's unread; the kind folders count quietly; FYI and Answered not at all.
+    const unread = items.filter((it) => inFolder(x.id, it) && it.unread).length;
+    const count = x.id === 'needs' ? (n ? `<span class="count">${n}</span>` : '')
+      : x.id === 'fyi' || x.id === 'answered' ? '' : n ? `<span class="count quiet${unread ? ' has-unread' : ''}">${n}</span>` : '';
+    return `<a class="folder-link${x.id === f.id ? ' on' : ''}" href="${esc(here(x.id === 'needs' ? {} : { f: x.id }))}"${x.id === f.id ? ' aria-current="page"' : ''}><span>${esc(x.label)}</span>${count}</a>`;
+  }).join('');
+  const shown = items.filter((it) => inFolder(f.id, it));
+  const open = shown.find((it) => it.key === openKey) ?? shown[0];
+  const fq: Record<string, string> = f.id === 'needs' ? {} : { f: f.id };
+  const rows = shown.map((it) => {
+    const who = it.agent ? ctx.agents?.[it.agent] : undefined;
+    const on = open && it.key === open.key;
+    return `<li><a class="msg${on ? ' on' : ''}${it.unread ? ' unread' : ''}" href="${esc(here({ ...fq, i: it.key }))}"${on ? ' aria-current="true"' : ''}>` +
+      `<span class="new${it.unread ? '' : ' read'}" aria-hidden="true"></span>${who ? mark(who, 24) : `<span class="mark src-mark" aria-hidden="true">${esc((it.sourceLabel ?? it.source.id).slice(0, 1).toUpperCase())}</span>`}` +
+      `<span class="kind">${esc(KIND_WORD[it.kind])}</span><span class="subj">${it.unread ? '<span class="visually-hidden">Unread: </span>' : ''}${esc(it.text)}</span>` +
+      `<span class="meta">${esc(age(it.at, nowMs))}</span></a></li>`;
+  }).join('');
+  const list = `<section class="card inbox-list" aria-label="${esc(f.label)}"><div class="inbox-head"><h2>${esc(f.label)}</h2><span class="sub">${esc(f.hint)}</span></div>` +
+    (rows ? `<ul class="msgs">${rows}</ul>` : '<p class="empty">Nothing here.</p>') + '</section>';
+  let detail = '';
+  if (open) {
+    const who = open.agent ? ctx.agents?.[open.agent] : undefined;
+    const back = { ...ctx, source: open.source, path: 'loom:inbox', query: { ...fq, i: open.key } };
+    const acts = open.actions?.length
+      ? `<div class="ask-acts">${open.actions.map((b) => actionForm(back, b.action, buttonInner(b, `btn${b.tone ? '' : ' quiet'}`), 'button-form')).join('')}</div>`
+      : open.page !== undefined ? `<a class="go" href="${esc(pageHref(open.page, open.source))}">${esc(open.label ?? 'Open')}</a>` : '';
+    const until = open.expires ? untilWord(open.expires, nowMs) : '';
+    detail = `<section class="card inbox-open" aria-label="The open item"><div class="open-src">${who ? mark(who, 28) : ''}<span>${esc(open.sourceLabel ?? open.source.id)}</span>` +
+      `<span class="chip">${esc(KIND_WORD[open.kind])}</span>${until ? `<span class="chip warn">${esc(until)}</span>` : ''}<span class="meta">${open.at ? `${esc(age(open.at, nowMs))} ago` : ''}</span></div>` +
+      `<h3>${open.page !== undefined && open.actions?.length ? `<a href="${esc(pageHref(open.page, open.source))}">${esc(open.text)}</a>` : esc(open.text)}</h3>` +
+      (open.meta ? `<p class="open-meta">${esc(open.meta)}</p>` : '') +
+      (open.outcome ? `<p class="outcome">${esc(open.outcome)}</p>` : acts) + '</section>';
+  }
+  const body = `${shellOpen(chrome)}<main class="inbox-page">${flash(chrome)}<header class="dash-head"><span class="label">Household</span><h1 class="display">Inbox</h1></header>` +
+    `<div class="inbox"><nav class="folders" aria-label="Folders">${folders}<p class="folders-note">Only what blocks work or expires is ever unread.</p></nav>` +
+    `<div class="inbox-main">${list}${detail}</div></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
+  return document('Inbox', body, true);
 }

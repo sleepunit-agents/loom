@@ -47,6 +47,8 @@ interface File {
   seen?: { at: number; since: number };
   /** Push for Your call (push.ts): the server's VAPID keys, each browser's subscription, what's been announced. */
   push?: PushState;
+  /** The Inbox: which items the owner has opened (an item's key → when), so they're no longer unread. */
+  opened?: Record<string, number>;
 }
 
 export interface PushSub { endpoint: string; keys: { p256dh: string; auth: string } }
@@ -62,6 +64,8 @@ interface PushState {
 
 /** Away for at least this long, and the "new since" boundary moves up to when you last looked. */
 export const SEEN_GAP_S = 15 * 60;
+/** The Inbox remembers this many opened items; past it, the longest-opened are forgotten. */
+export const OPENED_MAX = 500;
 
 export const MAX_PASSKEYS = 20;
 
@@ -259,6 +263,24 @@ export class SessionStore {
       const was = f.seen;
       return !was ? nowS : nowS - was.at >= SEEN_GAP_S ? was.at : was.since;
     });
+  }
+
+  /** The Inbox opened this item: it isn't unread any more. */
+  markOpened(key: string, nowS = Math.floor(Date.now() / 1000)): void {
+    this.withLock((f) => {
+      f.opened ??= {};
+      f.opened[key] = nowS;
+      const keys = Object.keys(f.opened);
+      if (keys.length > OPENED_MAX) {
+        for (const k of keys.sort((a, b) => f.opened![a] - f.opened![b]).slice(0, keys.length - OPENED_MAX)) delete f.opened[k];
+      }
+    });
+  }
+
+  /** The items the Inbox has opened. */
+  openedKeys(): Set<string> {
+    if (!existsSync(this.file)) return new Set();
+    return this.withLock((f) => new Set(Object.keys(f.opened ?? {})));
   }
 
   /** The VAPID key pair, made the first time it's asked for (`make` is web-push's generator). */

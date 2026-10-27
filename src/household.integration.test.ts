@@ -8,6 +8,7 @@
  *  - tokens.json never holds a token, and a plain context dir is untouched.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { clearPieceCache } from './ui/pieces.js';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -725,6 +726,61 @@ describe('the household page', () => {
     expect(await (await page(cookie, '/find?q=%25')).text()).not.toContain('<h2 class="label">Memories</h2>');
   });
 
+  it('the Inbox files every ask, notice and answer by folder; only what needs the owner is unread, until it is opened', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'loom-inbox-bin-'));
+    const soon = new Date(Date.now() + 54 * 60_000).toISOString();
+    const m = { v: 2, tab: { label: 'Gate' }, asks: [
+      { text: 'Push the fix to onterris/pond', kind: 'permission', agent: 'art', at: new Date(Date.now() - 6 * 60_000).toISOString(), expires: soon,
+        actions: [{ action: 'allow', label: 'Allow once', tone: 'primary' }, { action: 'deny', label: 'Deny', tone: 'danger' }] },
+      { text: 'Tonight or tomorrow?', kind: 'reply', agent: 'mark', page: 'q/1', label: 'Answer' },
+      { text: 'Keep this memory?', kind: 'decision', attention: false },
+    ], notices: [{ text: 'one joined loom', at: new Date(Date.now() - 30 * 60_000).toISOString() }],
+    answered: [{ text: 'A box asks to join: evil', outcome: 'Blocked.', at: new Date(Date.now() - 86_400_000).toISOString(), kind: 'permission' }] };
+    writeFileSync(join(bin, 'loom-gate'), `#!/bin/sh\ncase "$1 $2" in "ui --json") echo '${JSON.stringify(m)}' ;; *) exit 2 ;; esac\n`);
+    chmodSync(join(bin, 'loom-gate'), 0o755);
+    const was = { PATH: process.env.PATH, LOOM_HOME: process.env.LOOM_HOME };
+    process.env.PATH = `${bin}:/usr/bin:/bin`;
+    process.env.LOOM_HOME = h.home;
+    clearPieceCache();
+    try {
+      const cookie = await login();
+      const needs = await (await page(cookie, '/inbox')).text();
+      // Needs you: the permission and the reply; the decision nothing waits on is filed, not counted.
+      expect(needs).toMatch(/<a class="folder-link on" href="\/inbox" aria-current="page"><span>Needs you<\/span><span class="count">2<\/span><\/a>/);
+      expect(needs).toMatch(/href="\/inbox"[^>]*><span>Inbox<\/span><span class="count">2<\/span>/);
+      expect(needs).toContain('Push the fix to onterris/pond');
+      expect(needs).toContain('Tonight or tomorrow?');
+      expect(needs).not.toContain('Keep this memory?');
+      expect(needs.match(/class="msg[^"]* unread"/g)?.length).toBe(2);
+      const hrefOf = (html: string, text: string) => new RegExp(`href="(\\/inbox\\?i=[0-9a-f]{16})"[^>]*>(?:(?!<\\/a>)[\\s\\S])*${text}`).exec(html)![1];
+      // Opened: its buttons post to its piece and come back here, and it says when it stops mattering.
+      const push = await (await page(cookie, hrefOf(needs, 'Push the fix'))).text();
+      expect(push).toMatch(/<span class="chip warn">expires in 5[34]m<\/span>/);
+      expect(push).toMatch(/action="\/act\/gate">[\s\S]*?name="_path" value="loom:inbox\?i=[0-9a-f]{16}"[\s\S]*?>Allow once<\/button>/);
+      // Opened is read: one unread left.
+      expect(push.match(/class="msg[^"]* unread"/g)?.length).toBe(1);
+      const reply = await (await page(cookie, hrefOf(needs, 'Tonight or tomorrow'))).text();
+      expect(reply).toMatch(/<a class="go" href="\/p\/gate\/q\/1">Answer<\/a>/);
+      expect(reply).not.toMatch(/class="msg[^"]* unread"/);
+      const decisions = await (await page(cookie, '/inbox?f=decision')).text();
+      expect(decisions).toContain('Keep this memory?');
+      expect(decisions).not.toMatch(/class="msg[^"]* unread"/);
+      const fyi = await (await page(cookie, '/inbox?f=fyi')).text();
+      expect(fyi).toContain('one joined loom');
+      expect(fyi).not.toMatch(/class="msg[^"]* unread"/);
+      const answered = await (await page(cookie, '/inbox?f=answered')).text();
+      expect(answered).toContain('<p class="outcome">Blocked.</p>');
+      // Home says how much, and links here, instead of the cards.
+      const home = await (await page(cookie, '/')).text();
+      expect(home).toMatch(/<h1 class="display">2 need you<\/h1>/);
+      expect(home).toContain('<span class="go-inbox">Open the Inbox</span>');
+    } finally {
+      for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      clearPieceCache();
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
   it('a household with no pieces yet says who is listening and offers two to install', async () => {
     const cookie = await login();
     // No pieces: none on PATH, none managed (this machine's own would otherwise show up).
@@ -853,26 +909,33 @@ describe('the household page', () => {
     expect(r.headers.get('location')).toBe('/a/art/mind?category=user');
   });
 
-  it('one memory waiting: the Home card quotes it, with Ratify and Reject that act on that agent', async () => {
+  it('one memory waiting: Home counts it, and the Inbox quotes it, with Ratify and Reject that act on that agent', async () => {
     const art = join(h.home, 'agents', 'art');
     propose(art, { category: 'user', title: 'DnB workflow', content: 'Jonathan builds DnB on the Push 3 first', source: 'test' });
     const cookie = await login();
-    const home = await (await page(cookie, '/')).text();
+    const front = await (await page(cookie, '/')).text();
+    expect(front).toMatch(/<a class="link-row card" href="\/inbox"><span class="body"><span class="text">Art E Fish wants to remember something<\/span>/);
+    expect(front).not.toContain('<div class="ask-acts">');
+    expect(front).toMatch(/href="\/inbox"[^>]*><span>Inbox<\/span><span class="count">\d+<\/span>/);
+    const home = await (await page(cookie, '/inbox')).text();
+    expect(home).toMatch(/<a class="msg on unread" href="\/inbox\?i=[0-9a-f]{16}"/);
     expect(home).toContain('Art E Fish wants to remember something');
     expect(home).toContain('“Jonathan builds DnB on the Push 3 first”');
     const card = /<div class="ask-acts">[\s\S]*?<\/div>/.exec(home)![0];
     expect(card).toContain('action="/a/art/act/loom"');
     expect(card).toMatch(/value="ratify">[\s\S]*?>Ratify<\/button>[\s\S]*?value="reject">[\s\S]*?>Reject<\/button>/);
     const id = /name="id" value="(\d+)"/.exec(card)![1];
-    const r = await post(cookie, '/a/art/act/loom', { _csrf: csrfOf(home), _action: 'ratify', _path: '', id });
+    expect(card).toContain('name="_path" value="loom:inbox?i=');
+    const r = await post(cookie, '/a/art/act/loom', { _csrf: csrfOf(home), _action: 'ratify', _path: /name="_path" value="([^"]+)"/.exec(card)![1], id });
     expect(r.status).toBe(303);
+    expect(r.headers.get('location')).toMatch(/^\/inbox\?i=[0-9a-f]{16}&_flash=/);
     expect(listProposals(art).filter((p) => p.status === 'pending')).toHaveLength(0);
   });
 
   it('a waiting memory too long for the card is reviewed on Mind, never ratified unseen', async () => {
     const art = join(h.home, 'agents', 'art');
     propose(art, { category: 'user', title: 'short title', content: 'x'.repeat(400), source: 'test' });
-    const home = await (await page(await login(), '/')).text();
+    const home = await (await page(await login(), '/inbox')).text();
     expect(home).toMatch(/Art E Fish wants to remember something[\s\S]*?<a class="go" href="\/a\/art\/mind">Review<\/a>/);
     expect(home).not.toContain('<div class="ask-acts">');
   });
