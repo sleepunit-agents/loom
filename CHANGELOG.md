@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A bundle brings the household back whole.** `household.json` travels whole
+  (its own settings, like the relay pairs, came back stripped), and so do the
+  managed pieces: which ones, at which commit, with the owner's settings.
+  `loom restore` installs them before it hands each piece its part, so a fresh
+  machine gets working pieces, not parts left in `pieces-pending/`
+  (`--no-install` skips it).
+
 - **Service tokens.** `loom token create --agent art --service slack` mints
   role `agent:art/slack`: a service house's token. It's the agent in every
   way, and a piece's API sees `{"kind":"agent","agent":"art","service":"slack"}`,

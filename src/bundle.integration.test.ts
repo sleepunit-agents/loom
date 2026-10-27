@@ -123,6 +123,40 @@ esac
     expect(existsSync(join(to, 'commons', 'knowledge.db'))).toBe(true);
   });
 
+  // The household's own settings come along whole (the relay pairs, t-1597), and
+  // so do the managed pieces: which ones, at which commit, with their settings.
+  // A restore puts them back and installs them before it hands each its part,
+  // so a fresh machine gets a working household, not parts left pending.
+  it('household.json comes back whole, and the managed pieces are installed (pinned, with their settings) before their parts are imported', async () => {
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', owner: 'jonathan', relay: { art: ['mark'] } }), { mode: 0o600 });
+    const piece = join(h.home, 'pieces', 'vault');
+    mkdirSync(piece, { recursive: true });
+    writeFileSync(join(piece, 'piece.json'), JSON.stringify({ v: 1, name: 'vault', source: { repo: 'sleepunit-agents/vault', commit: 'a'.repeat(40) }, package: 'vault', version: '1.0.0', installed: 'x', bins: ['loom-vault'], loom: { settings: [{ name: 'VAULT_DIR', label: 'v', kind: 'text' }] } }));
+    writeFileSync(join(piece, 'settings.json'), JSON.stringify({ VAULT_DIR: '/srv/vault' }));
+    const file = join(work, 'household.bundle');
+    await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
+
+    const to = join(work, 'restored');
+    const installs: Array<{ name: string; commit: string }> = [];
+    // Install by putting the piece's bin in the new home's managed bin dir, as installPiece would.
+    const install = async (e: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string) => {
+      installs.push({ name, commit: source.commit });
+      const root = join(e.LOOM_HOME!, 'pieces');
+      mkdirSync(join(root, 'bin'), { recursive: true });
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, 'piece.json'), JSON.stringify({ v: 1, name, source, package: name, version: '1.0.0', installed: 'x', bins: [`loom-${name}`], loom: { settings: [{ name: 'VAULT_DIR', label: 'v', kind: 'text' }] } }));
+      writeFileSync(join(root, 'bin', `loom-${name}`), `#!/bin/sh\n[ "$1 $2" = "bundle import" ] && cat > "${work}/fresh-imported"\n`);
+      chmodSync(join(root, 'bin', `loom-${name}`), 0o755);
+    };
+    // The restoring machine has no pieces at all: only what restore installs.
+    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install });
+    expect(installs).toEqual([{ name: 'vault', commit: 'a'.repeat(40) }]);
+    expect(JSON.parse(readFileSync(join(to, 'pieces', 'vault', 'settings.json'), 'utf-8'))).toEqual({ VAULT_DIR: '/srv/vault' });
+    expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
+    expect(readFileSync(join(work, 'fresh-imported'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
+    expect(JSON.parse(readFileSync(join(to, 'household.json'), 'utf-8')).relay).toEqual({ art: ['mark'] });
+  });
+
   it('a bundle from before compression (a plain tar) still restores', async () => {
     const file = join(work, 'new.bundle');
     await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });

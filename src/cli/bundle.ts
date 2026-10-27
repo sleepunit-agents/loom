@@ -16,12 +16,14 @@ encrypts itself (loom-<piece> bundle export). A plain context dir exports as a
 household of one.
 `;
 
-const RESTORE_USAGE = `Usage: loom restore <file> --identity <key file> [--to <dir>]
+const RESTORE_USAGE = `Usage: loom restore <file> --identity <key file> [--to <dir>] [--no-install]
        loom restore <file> --identity <key file> --drill
 
 Lay a bundle down in an empty LOOM_HOME (--to, else $LOOM_HOME, else
-~/.config/loom), then hand each installed piece its part (loom-<piece> bundle import).
-A piece that isn't installed keeps its part in pieces-pending/.
+~/.config/loom), install the managed pieces it names at their pinned commits
+with their settings (--no-install skips that), then hand each installed piece
+its part (loom-<piece> bundle import). A piece that isn't installed keeps its
+part in pieces-pending/.
 
 --drill restores into a throwaway directory instead and compares it with the
 live household (agents, identities, memories, every card, knowledge, tokens),
@@ -76,8 +78,9 @@ export async function runRestore(rawArgv: string[], io: IOStreams): Promise<numb
       return 1;
     }
     const home = flags(argv, '--to')[0] ?? householdHome(io.env);
-    const r = await restoreBundle({ file, identity, home, env: io.env });
+    const r = await restoreBundle({ file, identity, home, env: io.env, ...(argv.includes('--no-install') ? { install: false as const } : {}) });
     io.stdout(`Restored the household (${r.manifest.household.agents.join(', ')}, bundle from ${r.manifest.created}) to ${r.home}.\n`);
+    for (const p of r.installs) io.stdout(`  installed ${p.name} at ${p.commit.slice(0, 7)}: ${p.installed ? 'yes' : `no (${p.reason})`}\n`);
     for (const p of r.pieces) io.stdout(`  piece ${p.name}: ${p.restored ? 'restored' : `not restored (${p.reason})`}\n`);
     return 0;
   } catch (err) {
