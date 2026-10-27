@@ -58,6 +58,10 @@ an agent's persistent state:
   pairs, category breakdown.
 - **`memory_recompute_salience`** — refresh stored salience from timestamps
   (the consolidation lane's step after the audit); derived and idempotent.
+- **`relay`** (a household served over HTTP) — ask another agent something:
+  it wakes a body of theirs in their house, and the answer comes back as a
+  wake of yours. Runs the clock piece's `wake relay` as the calling agent;
+  only between agents `household.json`'s `relay` list pairs.
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.

@@ -308,8 +308,25 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const serverFor = (c: Caller | undefined, identity: string) => {
     if (!c) return makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
     if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
-    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true });
+    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true, relay: relayAs(c.agent) });
   };
+
+  /**
+   * The relay tool's reach (t-1597): the clock piece's `relay`, called the way
+   * a house calls it, as this session's own agent. An owner session acting
+   * for an agent relays as that agent; it gains nothing the agent's own token
+   * doesn't have.
+   */
+  function relayAs(agent: string) {
+    return async (argv: string[]): Promise<{ ok: boolean; text: string }> => {
+      const path = findPiece('clock', process.env);
+      if (!path) return { ok: false, text: 'relay: this loom has no clock piece' };
+      const out = await pieceApi(path, { caller: { kind: 'agent', agent }, path: 'run', body: { argv } }, process.env);
+      const b = (out.body ?? {}) as { exit?: number; stdout?: string; stderr?: string; error?: string };
+      const ok = out.status === 200 && b.exit === 0;
+      return { ok, text: (ok ? b.stdout : b.stderr || b.error || b.stdout || `the clock answered ${out.status}`)?.trim() || '(no answer)' };
+    };
+  }
 
   // One transport (+ its connected server) per live MCP session, plus the
   // identity it was opened for — a multi-token session is pinned to that
