@@ -32,7 +32,7 @@ import {
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
 import { listPieces } from './cli/pieces.js';
-import { pieceEnvFor } from './cli/pieces-managed.js';
+import { installPiece, managedPieces, pieceEnvFor, readCatalog, readSettings, type CatalogEntry } from './cli/pieces-managed.js';
 
 export class BundleError extends Error {}
 
@@ -50,6 +50,18 @@ export interface Manifest {
   household: { agents: string[]; default: string; owner?: string };
   pieces: PiecePart[];
 }
+
+function readHouseholdJson(home: string): Record<string, unknown> | undefined {
+  try {
+    const d = JSON.parse(readFileSync(join(home, 'household.json'), 'utf-8')) as unknown;
+    return d && typeof d === 'object' && !Array.isArray(d) ? d as Record<string, unknown> : undefined;
+  } catch { return undefined; }
+}
+
+/** A managed piece as the bundle records it. */
+interface BundledPiece { name: string; source: { repo: string; commit: string }; settings: Record<string, string> }
+
+export type PieceInstaller = (env: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string) => Promise<unknown>;
 
 function loomVersion(): string {
   try { return (JSON.parse(readFileSync(join(resolveRepoRoot(), 'package.json'), 'utf-8')) as { version: string }).version; } catch { return 'unknown'; }
@@ -154,7 +166,16 @@ export async function exportBundle(opts: {
     const stage = join(work, 'household');
     mkdirSync(stage, { mode: 0o700 });
     // The household's own files.
-    writeFileSync(join(stage, 'household.json'), JSON.stringify({ v: 1, agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, null, 2) + '\n', { mode: 0o600 });
+    // Whole, not just the keys core reads: the household's own settings (the relay pairs) come along.
+    const raw = src.plain ? undefined : readHouseholdJson(h.home);
+    writeFileSync(join(stage, 'household.json'), JSON.stringify({ ...(raw ?? {}), v: 1, agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, null, 2) + '\n', { mode: 0o600 });
+    // The managed pieces: which, at which commit, with the owner's settings for each. A restore
+    // installs them, so their parts have somewhere to go on a fresh machine.
+    if (!src.plain) {
+      const homeEnv = { ...env, LOOM_HOME: h.home };
+      const managed = managedPieces(homeEnv).map((r) => ({ name: r.name, source: r.source, settings: readSettings(homeEnv, r.name) }));
+      if (managed.length) writeFileSync(join(stage, 'pieces.json'), JSON.stringify({ v: 1, pieces: managed }, null, 2) + '\n', { mode: 0o600 });
+    }
     if (!src.plain) for (const f of ['tokens.json', 'tokens.used.json']) if (existsSync(join(h.home, f))) copyFileSync(join(h.home, f), join(stage, f));
     // The commons.
     mkdirSync(join(stage, 'commons'), { mode: 0o700 });
@@ -220,7 +241,7 @@ function unpack(fileIn: string, identityIn: string, dir: string, env: NodeJS.Pro
     if (m.v !== 1) throw new BundleError(`this bundle is format v${String(m.v)}; this loom reads v1`);
     rmSync(join(dir, 'manifest.json'));
     chmodSync(dir, 0o700);
-    for (const f of ['household.json', 'tokens.json', 'tokens.used.json']) if (existsSync(join(dir, f))) chmodSync(join(dir, f), 0o600);
+    for (const f of ['household.json', 'tokens.json', 'tokens.used.json', 'pieces.json']) if (existsSync(join(dir, f))) chmodSync(join(dir, f), 0o600);
     return m;
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -231,7 +252,38 @@ function emptyOrMissing(dir: string): boolean {
   return !existsSync(dir) || readdirSync(dir).length === 0;
 }
 
-export interface RestoreReport { home: string; manifest: Manifest; pieces: Array<{ name: string; restored: boolean; reason?: string }> }
+export interface RestoreReport {
+  home: string;
+  manifest: Manifest;
+  pieces: Array<{ name: string; restored: boolean; reason?: string }>;
+  installs: Array<{ name: string; commit: string; installed: boolean; reason?: string }>;
+}
+
+const PIECE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** pieces/ as unpacked: only the manifest's parts, each a plain file, or the restore stops here. */
+function assertOnlyParts(dir: string, manifest: Manifest): void {
+  for (const p of manifest.pieces) if (!PIECE_NAME.test(p.name)) throw new BundleError(`the bundle names a piece ${JSON.stringify(p.name)}; refusing it`);
+  if (!existsSync(dir)) return;
+  const parts = new Set(manifest.pieces.filter((p) => p.included).map((p) => `${p.name}.part`));
+  for (const e of readdirSync(dir)) {
+    if (!parts.has(e) || !lstatSync(join(dir, e)).isFile()) {
+      throw new BundleError(`pieces/ holds something other than parts (${e}); a bundle never brings code. Nothing was installed or imported.`);
+    }
+  }
+}
+
+function readBundledPieces(home: string): BundledPiece[] {
+  try {
+    const d = JSON.parse(readFileSync(join(home, 'pieces.json'), 'utf-8')) as { v?: number; pieces?: unknown };
+    if (d.v !== 1 || !Array.isArray(d.pieces)) return [];
+    return d.pieces.filter((p): p is BundledPiece => {
+      const x = p as BundledPiece;
+      return !!x && /^[a-z][a-z0-9-]{0,39}$/.test(x.name) && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(x.source?.repo ?? '')
+        && /^[0-9a-f]{40}$/.test(x.source?.commit ?? '') && !!x.settings && typeof x.settings === 'object';
+    });
+  } catch { return []; }
+}
 
 /**
  * Lay a bundle down in an empty $LOOM_HOME and hand each piece its part
@@ -239,15 +291,56 @@ export interface RestoreReport { home: string; manifest: Manifest; pieces: Array
  * piece can re-encrypt for this machine). A piece that isn't installed here
  * has its part kept in pieces-pending/ for later.
  */
-export async function restoreBundle(opts: { file: string; identity: string; home: string; env?: NodeJS.ProcessEnv }): Promise<RestoreReport> {
-  const env = opts.env ?? process.env;
+export async function restoreBundle(opts: {
+  file: string; identity: string; home: string; env?: NodeJS.ProcessEnv;
+  /** How a managed piece is installed (installPiece); `false` installs none, leaving their parts pending. */
+  install?: PieceInstaller | false;
+  /** What may be installed: this loom's catalog (assets/pieces.json). */
+  catalog?: CatalogEntry[];
+}): Promise<RestoreReport> {
   const home = resolve(opts.home);
+  // The restored household's own pieces: managed ones land in its pieces/, searched before PATH.
+  const env = { ...(opts.env ?? process.env), LOOM_HOME: home };
   if (!emptyOrMissing(home)) throw new BundleError(`${home} isn't empty; restore into a new LOOM_HOME (--to), never over a live one`);
   const manifest = unpack(opts.file, opts.identity, home, env);
   const h = loadHousehold(home);
   if (!h) throw new BundleError('the bundle has no household.json');
   // A bundle made from a plain context dir still holds whole cards: split them now.
   for (const a of h.agents) if (existsSync(resolveSqliteDbPath(agentDir(h, a)))) splitPeopleIntoCommons(h, a, agentDir(h, a));
+  // A bundle is encrypted, not signed: anyone with the owner's public key can make one.
+  // So nothing in it runs. pieces/ holds the parts and nothing else (no bin, no link,
+  // no directory), and the pieces it names install from this loom's catalog, at the
+  // catalog's commit, never from a repo or commit the bundle supplies.
+  assertOnlyParts(join(home, 'pieces'), manifest);
+  const installs: RestoreReport['installs'] = [];
+  const bundled = readBundledPieces(home);
+  if (bundled.length && opts.install !== false) {
+    const install = opts.install ?? ((e, source, name) => installPiece(e, source, name));
+    const catalog = opts.catalog ?? readCatalog();
+    for (const p of bundled) {
+      const known = catalog.find((c) => c.name === p.name && c.repo === p.source.repo);
+      if (!known) {
+        installs.push({ name: p.name, commit: p.source.commit, installed: false,
+          reason: `not this loom's catalog (${p.source.repo}): install it by hand if you trust it` });
+        continue;
+      }
+      try {
+        await install(env, { repo: known.repo, commit: known.commit }, p.name);
+        const dir = join(home, 'pieces', p.name);
+        if (!lstatSync(dir).isDirectory()) throw new BundleError(`${dir} isn't a directory the install made`);
+        // The same values setSettings takes: names it knows the shape of, one line, 500 characters at most.
+        const settings = Object.fromEntries(Object.entries(p.settings)
+          .filter(([k, v]) => /^[A-Z][A-Z0-9_]{0,63}$/.test(k) && typeof v === 'string' && v.length <= 500 && !/[\n\r\0]/.test(v)));
+        if (Object.keys(settings).length) {
+          writeFileSync(join(home, 'pieces', p.name, 'settings.json'), JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+        }
+        installs.push({ name: p.name, commit: known.commit, installed: true });
+      } catch (e) {
+        installs.push({ name: p.name, commit: p.source.commit, installed: false, reason: (e as Error).message });
+      }
+    }
+  }
+  rmSync(join(home, 'pieces.json'), { force: true });
   const installed = new Map(listPieces(env).map((p) => [p.name, p.path]));
   const pieces: RestoreReport['pieces'] = [];
   for (const part of manifest.pieces.filter((p) => p.included)) {
@@ -261,8 +354,9 @@ export async function restoreBundle(opts: { file: string; identity: string; home
     const r = await pieceRun(path, 'import', { ...env, LOOM_IMPORT_IDENTITY: resolve(opts.identity) }, readFileSync(blob));
     if (r.ok) { rmSync(blob); pieces.push({ name: part.name, restored: true }); } else { pending(); pieces.push({ name: part.name, restored: false, reason: r.reason }); }
   }
-  rmSync(join(home, 'pieces'), { recursive: true, force: true });
-  return { home, manifest, pieces };
+  // Only the parts go: the managed pieces just installed live in pieces/ too.
+  for (const part of manifest.pieces) rmSync(join(home, 'pieces', `${part.name}.part`), { force: true });
+  return { home, manifest, pieces, installs };
 }
 
 // ─── The drill ───────────────────────────────────────────────────────────────
