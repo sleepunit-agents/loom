@@ -44,6 +44,10 @@ import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../
 import { WATCH_S } from '../ui/push.js';
 import { pieceApi, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
+import { readRecord } from '../cli/pieces-managed.js';
+
+/** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
+const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
 import { hasUnsplitPeople } from '../backends/people-household.js';
 import { agentDir, assertRealAgentDir, commonsProblem, liveHousehold, roleString, TokenResolver, type Household, type Role } from '../household.js';
@@ -390,6 +394,13 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    */
   async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
     if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);
+    // No token at all: only a path the piece declared open to strangers (its loom block, fixed at
+    // install), with a small body, as {kind:'stranger', address}. Everything else still needs a token.
+    if (req.headers['authorization'] === undefined) {
+      const rec = piece === 'loom' ? undefined : readRecord(process.env, piece);
+      if (!rec?.loom.strangers?.includes(subpath)) return sendError(res, 401, 'unauthorized: a bearer token is required');
+      return pieceCall(req, res, piece, subpath, { kind: 'stranger', address: req.socket.remoteAddress ?? 'unknown' }, STRANGER_MAX_BYTES);
+    }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
     let caller: ApiCaller;
@@ -402,6 +413,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         break;
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
+    return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  async function pieceCall(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string, caller: ApiCaller, maxBytes: number): Promise<void> {
     if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
       return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');

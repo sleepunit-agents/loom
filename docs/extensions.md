@@ -292,6 +292,14 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   box/thor`). A piece credential reaches its own piece's API and nothing
   else: no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
   get nothing. The piece decides what each caller may do.
+- **Strangers, only where a piece says.** A call with no token at all reaches
+  a managed piece only on a path its package's `loom` block lists in
+  `strangers` (at most 4, fixed when it's installed), as
+  `{"kind": "stranger", "address": "<the caller's IP>"}`, with a body of 8 KB at
+  most. It's for a box asking to join (the box piece's `join-request` and
+  `join-poll`): the piece holds the request until the owner allows it on the
+  page. Any other tokenless call is a 401, and a wrong token is never taken for
+  a stranger.
 - **Like `/cli`:** POST only, `application/json`, no `Origin` header (a browser
   always sends one, and the route grants no CORS), within the daemon's body
   cap. The piece's own status passes through; an answer that isn't
