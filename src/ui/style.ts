@@ -361,4 +361,7 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 .to-inbox-row{margin:0;display:flex;align-items:center;gap:12px;padding:14px 16px;color:var(--ink);border:1px solid var(--line)}.to-inbox-row:hover{text-decoration:none;border-color:var(--ink-2)}
 .to-inbox-row .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.to-inbox-row .text{font-size:16px;font-weight:600}.to-inbox-row .meta{font-size:13px;color:var(--ink-2);font-family:inherit}.to-inbox-row .go-inbox{font-weight:600;color:var(--link);white-space:nowrap}
 .house-home .moving .label,.house-home .agents .label{margin:0 0 10px}.house-home .house-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;overflow:visible;margin:0;padding:0}.house-home .house-tiles .tile{min-width:0}
+.agent-link .who{display:flex;align-items:center;gap:10px;min-width:0}.agent-link .who span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rail-link.on .count.quiet{color:var(--ground)}
+.inbox-pill{padding:0 12px;gap:8px}.place-agents{margin-bottom:12px}.place-agents .who{display:flex;align-items:center;gap:12px;flex:1;min-width:0}.place-agents .body{display:flex;flex-direction:column;min-width:0}
+@media (max-width:959px){.dash-head .head-live{position:static;margin-top:6px}}
 `;

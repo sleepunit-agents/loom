@@ -329,7 +329,8 @@ function agentsOf(h: Household | undefined): Record<string, { label: string; bg:
 const HOME_THREAD = 30;
 
 function agentTabs(agent: string, current: string): AgentHead['tabs'] {
-  return [['Today', ''], ['Mind', 'mind'], ['People', 'people'], ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
+  // People are the household's (the nav has them), so an agent's own pages are its day, its mind and how it runs.
+  return [['Today', ''], ['Mind', 'mind'], ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
 }
 
 /** Your call, everywhere: the household's proposals and every piece's asks (or a lone agent's). For the push watch. */
@@ -496,9 +497,13 @@ function clockAt(ms: number): string {
 const SCOPE_COOKIE = 'loom_scope';
 
 /** The scope the owner chose (a cookie), if it still names an agent in the household. */
-function scopeOf(req: IncomingMessage, h: Household | undefined): string {
-  const c = readCookie(req, SCOPE_COOKIE);
-  return h && c && h.agents.includes(c) ? c : 'household';
+/**
+ * Whose pages these are: the household's, always, unless the address is an agent's own (/a/<id>).
+ * There's no picker any more (t-1625): the loom's pages are the household's, an agent's are under /a/.
+ * An old loom_scope cookie is ignored (and /scope/<id> clears it).
+ */
+function scopeOf(_req: IncomingMessage, _h: Household | undefined): string {
+  return 'household';
 }
 
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
@@ -513,7 +518,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const asks = pieces.reduce((n, p) => n + p.manifest.asks.length, 0) + piecesAsks(opts.env).length;
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted).
   const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
-  const tab = current === '' || /^a\/[^/]+$/.test(current) ? 'home' : current === 'places' || current === 'scope' || current === 'find' || current === 'setup' ? current : '';
+  const tab = current === '' ? 'home' : current === 'places' || current === 'scope' || current === 'find' || current === 'setup' ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
@@ -535,8 +540,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       skipped,
       shell: {
         owner: h.owner ?? 'owner', scope, household: true, asks, tab, back,
-        home: scope === 'household' ? '/' : `/a/${scope}`,
-        agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/scope/${a}`, current: scope === a,
+        home: '/',
+        agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
           sub: lastActive(agentDir(h, a)) })),
         core: [
@@ -887,7 +892,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (pick) {
     const hh2 = opts.household?.();
     const id = pick[1] === 'household' || !hh2?.agents.includes(pick[1]) ? 'household' : pick[1];
-    res.writeHead(303, { location: id === 'household' ? '/' : `/a/${id}`, 'set-cookie': `${SCOPE_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure ? '; Secure' : ''}`, ...SECURITY_HEADERS });
+    // No scope to choose any more: an old link goes to the agent's own pages, and the old cookie goes.
+    res.writeHead(303, { location: id === 'household' ? '/' : `/a/${id}`, 'set-cookie': `${SCOPE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`, ...SECURITY_HEADERS });
     return void res.end();
   }
   if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup') {

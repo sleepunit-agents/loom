@@ -380,7 +380,9 @@ function setupSheetBody(sh: Shell): string {
 function placesSheetBody(sh: Shell): string {
   const tiles = places(sh).map((p) => `<a class="place${p.current ? ' on' : ''}${tone(p.tone)}" href="${esc(p.href)}"><span class="pl-top">${glyph(p.tone === 'ok' ? undefined : p.tone)}</span><span class="pl-label">${esc(p.label)}</span>${
     p.stat ? `<span class="pl-stat">${esc(p.stat)}</span>` : ''}</a>`).join('');
-  return `${tiles ? `<div class="place-grid">${tiles}</div>` : '<p class="empty">No pieces yet.</p>'}<div class="place-core">${sh.core.map((x) =>
+  const agents = sh.household ? `<div class="card rows place-agents">${sh.agents.map((a) =>
+    `<a class="link-row${a.current ? ' on' : ''}" href="${esc(a.href)}"><span class="who">${mark(a, 28)}<span class="body"><span class="text">${esc(a.label)}</span>${a.sub ? `<span class="meta">${esc(a.sub)}</span>` : ''}</span></span>${CHEVRON}</a>`).join('')}</div>` : '';
+  return `${agents}${tiles ? `<div class="place-grid">${tiles}</div>` : '<p class="empty">No pieces yet.</p>'}<div class="place-core">${sh.core.map((x) =>
     `<a class="place-btn${x.current ? ' on' : ''}" href="${esc(x.href)}">${esc(x.label)}</a>`).join('')}</div>`;
 }
 
@@ -396,13 +398,17 @@ function rail(c: Chrome, sh: Shell): string {
   const scopeLabel = sh.scope === 'household' || !cur ? 'Household' : cur.label;
   const scopeSub = sh.scope === 'household' ? sh.agents.map((a) => a.label).join(', ') : sh.household ? 'one agent' : '';
   const item = (href: string, label: string, current: boolean, extra = '') => `<a class="rail-link${current ? ' on' : ''}" href="${esc(href)}"${current ? ' aria-current="page"' : ''}><span>${esc(label)}</span>${extra}</a>`;
+  // A household has no scope picker (t-1625): its agents are a section of the nav; a lone agent keeps its one row.
+  const agentLinks = sh.household ? `<span class="rail-label">Agents</span>${sh.agents.map((a) =>
+    `<a class="rail-link agent-link${a.current ? ' on' : ''}" href="${esc(a.href)}"${a.current ? ' aria-current="page"' : ''}><span class="who">${mark(a, 22)}<span>${esc(a.label)}</span></span>${a.asks ? `<span class="count quiet">${a.asks}</span>` : ''}</a>`).join('')}` : '';
   return `<aside class="rail" aria-label="loom"><a class="wordmark" href="/">${LOGO}<span>loom</span></a>` +
-    `<a class="scope-btn" href="/scope" data-sheet="scope">${scopeMark(sh, 32)}<span class="body"><span class="text">${esc(scopeLabel)}</span>${scopeSub ? `<span class="sub">${esc(scopeSub)}</span>` : ''}</span>${ICON.updown}</a>` +
+    (sh.household ? '' : `<a class="scope-btn" href="/scope" data-sheet="scope">${scopeMark(sh, 32)}<span class="body"><span class="text">${esc(scopeLabel)}</span>${scopeSub ? `<span class="sub">${esc(scopeSub)}</span>` : ''}</span>${ICON.updown}</a>`) +
     `<a class="find-btn" href="/find" data-sheet="find">${ICON.find}<span>Find anything</span><kbd>⌘K</kbd></a>` +
     // In a household what needs the owner is counted on the Inbox; a lone agent's Home still carries it.
     `<nav class="rail-nav">${item(sh.home, 'Home', sh.tab === 'home', sh.asks && !sh.core.some((x) => x.count !== undefined) ? `<span class="count">${sh.asks}</span>` : '')}${
       sh.core.map((x) => item(x.href, x.label, x.current, x.count ? `<span class="count">${x.count}</span>` : '')).join('')}` +
-    (places(sh).length ? `<span class="rail-label">Pieces</span>${places(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
+    agentLinks +
+    (places(sh).length ? `<span class="rail-label">${sh.household ? 'The house' : 'Pieces'}</span>${places(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
     // Setup: what's visited rarely (pieces that say they're settings), and managing the pieces themselves.
     `<span class="rail-label">Setup</span>${settings(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` +
     `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
@@ -423,6 +429,12 @@ function phoneTop(sh: Shell): string {
       ? `<a class="back named" href="${esc(sh.back.href)}">${ICON.back}<span>${esc(sh.back.label)}</span></a>`
       : `<a class="back" href="${esc(sh.home)}" aria-label="Home">${ICON.back}</a>`;
   const who = sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '';
+  // A household's top right is its Inbox (no scope to pick); a lone agent keeps its pill.
+  const inbox = sh.core.find((x) => x.href === '/inbox');
+  if (sh.household && inbox) {
+    return `<div class="phone-top">${left}<span class="bar-title" aria-hidden="true"></span><a class="scope-pill inbox-pill" href="/inbox"${inbox.current ? ' aria-current="page"' : ''}><span>Inbox</span>${
+      inbox.count ? `<span class="count">${inbox.count}</span>` : ''}</a></div>`;
+  }
   const pill = `<a class="scope-pill" href="/scope" data-sheet="scope" aria-label="Showing ${esc(who)}. Change">${scopeMark(sh, 26)}<span>${esc(who)}</span><span class="caret" aria-hidden="true">⌄</span></a>`;
   // The page's title slides in here once it scrolls under this bar (app.js fills and shows it).
   return `<div class="phone-top">${left}<span class="bar-title" aria-hidden="true"></span>${pill}</div>`;
