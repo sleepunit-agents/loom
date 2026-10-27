@@ -750,7 +750,9 @@ describe('the household page', () => {
       { text: 'Keep this memory?', kind: 'decision', attention: false },
     ], notices: [{ text: 'one joined loom', at: new Date(Date.now() - 30 * 60_000).toISOString() }],
     answered: [{ text: 'A box asks to join: evil', outcome: 'Blocked.', at: new Date(Date.now() - 86_400_000).toISOString(), kind: 'permission' }] };
-    writeFileSync(join(bin, 'loom-gate'), `#!/bin/sh\ncase "$1 $2" in "ui --json") echo '${JSON.stringify(m)}' ;; *) exit 2 ;; esac\n`);
+    const qPage = { title: 'Tonight or tomorrow?', sections: [{ id: 'q', title: 'The question', blocks: [{ type: 'text', text: 'Loren is around until 6.' },
+      { type: 'buttons', items: [{ action: 'answer', label: 'Tonight', tone: 'primary', fields: { id: 'q-1' } }] }] }] };
+    writeFileSync(join(bin, 'loom-gate'), `#!/bin/sh\ncase "$1 $2" in "ui --json") echo '${JSON.stringify(m)}' ;; "ui page") cat > /dev/null; echo '${JSON.stringify(qPage)}' ;; *) exit 2 ;; esac\n`);
     chmodSync(join(bin, 'loom-gate'), 0o755);
     const was = { PATH: process.env.PATH, LOOM_HOME: process.env.LOOM_HOME };
     process.env.PATH = `${bin}:/usr/bin:/bin`;
@@ -774,7 +776,12 @@ describe('the household page', () => {
       // Opened is read: one unread left.
       expect(push.match(/class="msg[^"]* unread"/g)?.length).toBe(1);
       const reply = await (await page(cookie, hrefOf(needs, 'Tonight or tomorrow'))).text();
-      expect(reply).toMatch(/<a class="go" href="\/p\/gate\/q\/1">Answer<\/a>/);
+      // Its own page, drawn here: its button posts to the piece and comes back to the Inbox; its page is a link away.
+      expect(reply).toMatch(/<div class="open-page"><section[^>]*>[\s\S]*?Loren is around until 6\./);
+      expect(reply).toMatch(/<div class="open-page">[\s\S]*?action="\/act\/gate">[\s\S]*?name="_path" value="loom:inbox\?i=[0-9a-f]{16}"[\s\S]*?>Tonight<\/button>/);
+      expect(reply).toContain('<a class="more-link" href="/p/gate/q/1">Open its page</a>');
+      // An item with buttons of its own (the permission) keeps them, and draws no page.
+      expect(push).not.toContain('class="open-page"');
       expect(reply).not.toMatch(/class="msg[^"]* unread"/);
       const decisions = await (await page(cookie, '/inbox?f=decision')).text();
       expect(decisions).toContain('Keep this memory?');

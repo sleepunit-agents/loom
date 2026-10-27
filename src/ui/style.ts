@@ -364,4 +364,6 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 .agent-link .who{display:flex;align-items:center;gap:10px;min-width:0}.agent-link .who span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rail-link.on .count.quiet{color:var(--ground)}
 .inbox-pill{padding:0 12px;gap:8px}.place-agents{margin-bottom:12px}.place-agents .who{display:flex;align-items:center;gap:12px;flex:1;min-width:0}.place-agents .body{display:flex;flex-direction:column;min-width:0}
 @media (max-width:959px){.dash-head .head-live{position:static;margin-top:6px}}
+.open-page{display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--line);padding-top:14px}.open-page .card{padding:0;background:none;border-radius:0}.open-page .card.toned .band{margin:0 0 10px;border-radius:10px}
+.open-page h4{margin:0 0 8px;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}.inbox-open .more-link{align-self:flex-start;font-size:14px}
 `;
