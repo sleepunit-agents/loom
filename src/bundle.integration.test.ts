@@ -27,10 +27,16 @@ const which = (name: string) => (spawnSync('sh', ['-c', `command -v ${name}`], {
 const AGE = which('age');
 const AGE_KEYGEN = which('age-keygen');
 const hasAge = AGE !== '' && AGE_KEYGEN !== '';
-/** Only this test's pieces, never the host's: PATH is the test's bin plus the system's basics. */
-const sealed = (bin?: string): NodeJS.ProcessEnv => ({
-  ...process.env, LOOM_AGE: AGE, PATH: [...(bin ? [bin] : []), '/usr/bin', '/bin'].join(delimiter),
-});
+/**
+ * Only this test's pieces, never the host's: PATH is the test's bin plus the system's basics,
+ * and HOME is a throwaway, since managed pieces are found under $HOME/.config/loom/pieces (a
+ * machine with installed pieces otherwise leaks them into every export here).
+ */
+const sealedHome = mkdtempSync(join(tmpdir(), 'loom-bundle-home-'));
+const sealed = (bin?: string): NodeJS.ProcessEnv => {
+  const { LOOM_HOME: _h, LOOM_CONTEXT_DIR: _c, ...rest } = process.env;
+  return { ...rest, HOME: sealedHome, LOOM_AGE: AGE, PATH: [...(bin ? [bin] : []), '/usr/bin', '/bin'].join(delimiter) };
+};
 
 function keypair(dir: string, name: string): { identity: string; recipient: string } {
   const identity = join(dir, `${name}.key`);
@@ -139,7 +145,8 @@ esac
     const to = join(work, 'restored');
     const installs: Array<{ name: string; commit: string }> = [];
     // Install by putting the piece's bin in the new home's managed bin dir, as installPiece would.
-    const install = async (e: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string) => {
+    const install = async (e: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string, opts?: { services?: boolean }) => {
+      expect(opts?.services).toBe(false);
       installs.push({ name, commit: source.commit });
       const root = join(e.LOOM_HOME!, 'pieces');
       mkdirSync(join(root, 'bin'), { recursive: true });
@@ -152,8 +159,13 @@ esac
     // isn't signed (age only encrypts, to a public key), so it names pieces, never code:
     // only this loom's catalog's repos install, at the catalog's commit.
     const catalog = [{ name: 'vault', repo: 'sleepunit-agents/vault', commit: 'b'.repeat(40) }];
-    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog });
+    // A piece's services start only after every part is in (the rebuild drill, t-1607: the box
+    // piece's service wrote an empty state first, and its part was refused).
+    const order: string[] = [];
+    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog,
+      startServices: (_e, name) => { order.push(`services ${name} (part in: ${existsSync(join(work, 'fresh-imported'))})`); } });
     expect(installs).toEqual([{ name: 'vault', commit: 'b'.repeat(40) }]);
+    expect(order).toEqual(['services vault (part in: true)']);
     expect(JSON.parse(readFileSync(join(to, 'pieces', 'vault', 'settings.json'), 'utf-8'))).toEqual({ VAULT_DIR: '/srv/vault' });
     expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
     expect(readFileSync(join(work, 'fresh-imported'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
