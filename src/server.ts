@@ -23,6 +23,7 @@ import { memoryList } from './tools/memory-list.js';
 import { tapeForContext } from './backends/episodes.js';
 import { findSimilar } from './tools/find-similar.js';
 import { memoryAudit } from './tools/memory-audit.js';
+import { recomputeSalienceForContext } from './backends/salience.js';
 import { archive } from './tools/archive.js';
 import { restore } from './tools/restore.js';
 import { memoryMerge } from './tools/memory-merge.js';
@@ -427,6 +428,22 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         maxDuplicates: max_duplicates,
       });
       return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'memory_recompute_salience',
+    {
+      description:
+      'Refresh every memory\'s stored salience from its timestamps (the consolidation ' +
+      'lane\'s step after memory_audit). Derived and idempotent: no content changes, ' +
+      'and running it twice gives the same result.',
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      const n = recomputeSalienceForContext(contextDir, Date.now());
+      return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories` }] };
     },
   );
 

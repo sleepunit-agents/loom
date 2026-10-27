@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`memory_recompute_salience`** MCP tool, and `loom memory recompute-salience`
+  now runs over the remote CLI. A consolidation lane in a house (Mark's
+  continuity, 2026-10-27) was refused it: "has no MCP tool, so it doesn't run
+  remotely" (t-1544). `recall-stats` stays local.
+
 ### Changed
 
 - **Catalog: shuttle at bb5e92b.** A relay's words are quoted under a one-line

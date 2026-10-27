@@ -218,7 +218,6 @@ describe('POST /cli refusals (the server half)', () => {
   it.each([
     [{ argv: ['doctor'] }, /doesn't run remotely/],
     [{ argv: ['inject', '--all'] }, /doesn't run remotely/],
-    [{ argv: ['memory', 'recompute-salience'] }, /no MCP tool/],
     [{ argv: ['--json', 'memory', 'recall-stats'] }, /no MCP tool/],
     [{ argv: ['memory', '--json', 'recall-stats'] }, /no MCP tool/],
     [{ argv: ['recall', 'x', '--context-dir', '/etc'] }, /only serves its own/],
@@ -230,6 +229,14 @@ describe('POST /cli refusals (the server half)', () => {
     const res = await post(body);
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toMatch(error);
+  });
+
+  it('runs memory recompute-salience (a consolidation lane in a house, t-1544): it has an MCP tool now', async () => {
+    const res = await post({ argv: ['memory', 'recompute-salience'] });
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { exitCode: number; stdout: string };
+    expect(out.exitCode).toBe(0);
+    expect(out.stdout).toMatch(/recomputed salience for \d+ memories/);
   });
 
   it('sits behind the bearer gate', async () => {
