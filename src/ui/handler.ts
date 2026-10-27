@@ -54,8 +54,8 @@ import { agentSetup, householdAct, householdHome, householdPeople, householdPers
 import { agentDir, MARKS, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
-import { agentSource, CORE, INBOX_FOLDERS, pageHref, pieceSource, renderHome, renderInbox, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
-import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
+import { agentSource, CORE, INBOX_FOLDERS, pageHref, pieceSource, renderHome, renderHouseHome, renderInbox, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
@@ -91,7 +91,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/setup', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
+const PAGE_ROOTS = ['/setup', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -380,6 +380,23 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
   ];
 }
 
+/**
+ * Each agent's card: the worst state any piece reports for it (and that piece's reason), every piece's readings,
+ * and what loom itself knows: when it was last on the tape, and where.
+ */
+function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { label: string; bg: string; fg: string }>, nowMs: number): AgentCard[] {
+  const rank: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
+  return h.agents.map((a) => {
+    const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
+    const worst = reports.filter((x) => x.r.state).sort((x, y) => rank[y.r.state!] - rank[x.r.state!])[0];
+    const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
+    const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
+    const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
+    if (last) readings.push({ label: 'Last seen', value: `${age(last.created, nowMs)} ago`, detail: whereLabel(last.where), source: agentSource(a), page: '' });
+    return { id: a, ...marks[a], state: worst?.r.state ?? 'available', reason: worst?.r.reason ?? lastLine, readings: readings.slice(0, 6) };
+  });
+}
+
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, newest first. */
 function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): InboxItem[] {
   const asks = [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...pieceAsks(pieces, env)];
@@ -524,6 +541,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           sub: lastActive(agentDir(h, a)) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
+          { label: 'Activity', href: '/activity', current: current === 'activity' },
           { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length },
           { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
           { label: 'People', href: '/people', current: current.startsWith('people') },
@@ -916,6 +934,27 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash), undefined, head), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
     if (pathname === '/') {
       const nowMs = Date.now();
+      const agents = agentsOf(hh)!;
+      const waiting = inboxItems(hh, pieces, opts.env).filter((it) => it.attention);
+      const cards = agentCards(hh, pieces, agents, nowMs);
+      const down = (st: AgentState) => cards.filter((c) => c.state === st).map((c) => c.label);
+      const say = (names: string[], what: string) => `${names.join(' and ')} ${names.length === 1 ? 'is' : 'are'} ${what}`;
+      const broken = down('broken');
+      const out = down('unavailable');
+      const headline = broken.length ? say(broken, 'broken') : out.length ? say(out, 'unavailable') : 'Everyone\u2019s fine';
+      const moving = pieces.flatMap((p) => Object.entries(p.manifest.agents ?? {}).filter(([a, r]) => hh.agents.includes(a) && r.state === 'working')
+        .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
+      const d: HouseHome = {
+        headline, needs: waiting.length, firstNeed: waiting[0]?.text, cards, moving,
+        house: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
+        firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
+      };
+      return html(renderHouseHome(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash)));
+    }
+    // Activity: everything that happened (the household's thread), what Home was before it showed how the agents are.
+    if (pathname === '/activity') {
+      const at = 'activity';
+      const nowMs = Date.now();
       const store = storeFor(opts);
       const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000)) : store.lookedAt(Math.floor(nowMs / 1000))) * 1000;
       const t = householdThread(hh, 24, nowMs);
@@ -926,21 +965,18 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const agents = agentsOf(hh)!;
       const chips = [...(hh.agents.length > 1 ? hh.agents.map((a) => ({ value: a, label: agents[a].label })) : []),
         ...(surfaces.length > 1 ? surfaces.filter((s) => !hh.agents.includes(s)).map((s) => ({ value: s, label: whereLabel(s) })) : [])];
-      // The same items, in the same order, as the Inbox's Needs you.
-      const waiting = inboxItems(hh, pieces, opts.env).filter((it) => it.attention);
+      // Activity is the thread, and the house's tiles beside it: what Home was before it showed how the agents are.
       const d: Dashboard = {
-        label: 'Household',
+        label: 'Activity',
+        title: 'Everything today',
         asks: [],
-        inbox: { count: waiting.length, first: waiting[0]?.text },
         tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
         thread: t.items.filter((r) => !from || r.agent === from || surfaceOf(r.where) === from).slice(0, HOME_THREAD)
           .map((r) => ({ agent: r.agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), at: r.created, page: r.page })),
         sinceMs, sinceLabel: clockAt(sinceMs),
         filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
-        shared: { pages: t.pages, people: t.people },
-        firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
-      return html(renderDashboard(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash), nowMs));
+      return html(renderDashboard(d, { ...ctxOf(at), agents }, chrome(req, opts, pieces, skippedNames, at, csrf, flash), nowMs));
     }
     if (pathname === '/inbox') {
       const nowMs = Date.now();

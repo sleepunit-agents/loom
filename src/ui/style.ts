@@ -352,4 +352,13 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 .to-inbox .link-row{margin:0;display:flex;align-items:center;gap:12px;padding:14px 16px;color:var(--ink);border:1px solid var(--line)}.to-inbox .link-row:hover{text-decoration:none;border-color:var(--ink-2)}
 .to-inbox .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.to-inbox .text{font-size:16px;font-weight:600}.to-inbox .meta{font-size:13px;color:var(--ink-2);font-family:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .to-inbox .go-inbox{font-weight:600;color:var(--link);white-space:nowrap}
+.house-home .agent-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.agent-card .who{display:flex;align-items:center;gap:10px;color:var(--ink)}.agent-card .who:hover{text-decoration:none}.agent-card .who h2{margin:0;font-size:17px;font-weight:600}
+.agent-card .reason{margin:0;font-size:15px}
+.agent-card .readings{margin:10px 0 0;display:flex;flex-direction:column}.agent-card .reading{display:flex;gap:10px;padding:6px 0;border-top:1px solid var(--line)}
+.agent-card .reading dt{width:72px;flex:none;font-size:13px;color:var(--ink-2)}.agent-card .reading dd{margin:0;min-width:0;display:flex;flex-wrap:wrap;gap:0 8px;font-size:14px}.agent-card .reading dd a{color:inherit;display:flex;flex-wrap:wrap;gap:0 8px}
+.agent-card .reading .value[class*=tone-]{color:var(--tone)}.agent-card .reading .detail{color:var(--ink-2)}
+.to-inbox-row{margin:0;display:flex;align-items:center;gap:12px;padding:14px 16px;color:var(--ink);border:1px solid var(--line)}.to-inbox-row:hover{text-decoration:none;border-color:var(--ink-2)}
+.to-inbox-row .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.to-inbox-row .text{font-size:16px;font-weight:600}.to-inbox-row .meta{font-size:13px;color:var(--ink-2);font-family:inherit}.to-inbox-row .go-inbox{font-weight:600;color:var(--link);white-space:nowrap}
+.house-home .moving .label,.house-home .agents .label{margin:0 0 10px}.house-home .house-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;overflow:visible;margin:0;padding:0}.house-home .house-tiles .tile{min-width:0}
 `;

@@ -693,21 +693,32 @@ describe('the household page', () => {
     method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields).toString(),
   });
 
-  it('Home is every agent and the tape across all of them', async () => {
+  it('Home is a card per agent: how it is, and what loom last saw of it; Knowledge and People are only in the nav', async () => {
     const cookie = await login();
-    const html = await (await page(cookie, '/')).text();
-    for (const s of ['Art E Fish', 'Visual Mark', 'art did a thing', 'mark did a thing', '<h2 class="label">Shared</h2>', 'href="/scope/mark"', 'href="/knowledge"']) expect(html).toContain(s);
-    // The design's Home: a headline, Thread with a pill per agent, each row with its agent's mark.
-    expect(html).toMatch(/<h1 class="display">(Nothing needs you|\d+ needs? you)<\/h1>/);
-    expect(html).toContain('href="/?who=mark"');
+    const home = await (await page(cookie, '/')).text();
+    expect(home).toMatch(/<h1 class="display">(Everyone\u2019s fine|.+ (is|are) (broken|unavailable))<\/h1>/);
+    expect(home).toMatch(/<article class="card toned agent-card tone-[a-z]+"><div class="band"><a class="who" href="\/a\/art">[\s\S]*?<h2>Art E Fish<\/h2>/);
+    expect(home).toMatch(/<a class="who" href="\/a\/mark">[\s\S]*?<h2>Visual Mark<\/h2>/);
+    expect(home).toMatch(/<dt>Last seen<\/dt><dd><a href="\/a\/art"><span class="value">\d+m ago<\/span><span class="detail">Discord #pond<\/span>/);
+    expect(home).not.toContain('<h2 class="label">Shared</h2>');
+    expect(home).toContain('<a class="more-link" href="/activity">');
+  });
+
+  it('Activity is the tape across every agent', async () => {
+    const cookie = await login();
+    const html = await (await page(cookie, '/activity')).text();
+    for (const s of ['Art E Fish', 'Visual Mark', 'art did a thing', 'mark did a thing', 'href="/scope/mark"', 'href="/knowledge"']) expect(html).toContain(s);
+    // Activity: a headline, Thread with a pill per agent, each row with its agent's mark.
+    expect(html).toContain('<h1 class="display">Everything today</h1>');
+    expect(html).toContain('href="/activity?who=mark"');
     // The Scope sheet: each agent with how long since it was last active, as the board has it.
     expect(html).toMatch(/href="\/scope\/art"[^>]*>[\s\S]*?<span class="sub">active \d+m ago<\/span>/);
-    expect((await (await page(cookie, '/?who=mark')).text())).not.toContain('art did a thing');
+    expect((await (await page(cookie, '/activity?who=mark')).text())).not.toContain('art did a thing');
     // ...and a pill per place it happened, rows saying it the way a person would.
-    expect(html).toContain('href="/?who=discord"');
+    expect(html).toContain('href="/activity?who=discord"');
     expect(html).toContain('Discord #pond · ');
-    expect(html).not.toContain('href="/?who=%3F"');
-    expect((await (await page(cookie, '/?who=letters')).text())).not.toContain('art did a thing');
+    expect(html).not.toContain('href="/activity?who=%3F"');
+    expect((await (await page(cookie, '/activity?who=letters')).text())).not.toContain('art did a thing');
   });
 
   it('Find looks through knowledge, people and memories, in the scope', async () => {
@@ -772,8 +783,47 @@ describe('the household page', () => {
       expect(answered).toContain('<p class="outcome">Blocked.</p>');
       // Home says how much, and links here, instead of the cards.
       const home = await (await page(cookie, '/')).text();
-      expect(home).toMatch(/<h1 class="display">2 need you<\/h1>/);
-      expect(home).toContain('<span class="go-inbox">Open the Inbox</span>');
+      expect(home).toContain('<span class="go-inbox">2 in the Inbox</span>');
+    } finally {
+      for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      clearPieceCache();
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it('Home: each agent takes the worst state its pieces report, with their readings; what is working is Moving now', async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'loom-home-bin-'));
+    const box = { v: 2, tab: { label: 'Boxes' }, tile: { label: 'Boxes', value: '2 of 2', page: '' }, agents: {
+      art: { state: 'working', reason: 'house h-52 on one · building its image', readings: [{ label: 'Bridges', value: 'Discord ✓ Slack ✓', tone: 'ok' }] },
+      mark: { state: 'unavailable', reason: 'Discord bridge down 14m', readings: [{ label: 'Bridges', value: 'Discord ✗', tone: 'bad' }] } } };
+    const subs = { v: 2, tab: { label: 'Subscriptions' }, agents: { art: { readings: [{ label: 'Fuel', value: '58% of the week', detail: 'resets Thu', page: '' }] }, mark: { state: 'available' } } };
+    for (const [name, m] of [['box', box], ['subs', subs]] as const) {
+      writeFileSync(join(bin, `loom-${name}`), `#!/bin/sh\ncase "$1 $2" in "ui --json") echo '${JSON.stringify(m)}' ;; *) exit 2 ;; esac\n`);
+      chmodSync(join(bin, `loom-${name}`), 0o755);
+    }
+    const was = { PATH: process.env.PATH, LOOM_HOME: process.env.LOOM_HOME };
+    process.env.PATH = `${bin}:/usr/bin:/bin`;
+    process.env.LOOM_HOME = h.home;
+    clearPieceCache();
+    try {
+      const home = await (await page(await login(), '/')).text();
+      expect(home).toContain('<h1 class="display">Visual Mark is unavailable</h1>');
+      const card = (who: string) => new RegExp(`<article class="card toned agent-card tone-([a-z]+)"><div class="band"><a class="who" href="/a/${who}">[\\s\\S]*?</article>`).exec(home)!;
+      // Art: working (box), its reason, and both pieces' readings, the Fuel one linking to its piece.
+      expect(card('art')[1]).toBe('ok');
+      expect(card('art')[0]).toContain('<span class="tone-word">');
+      expect(card('art')[0]).toContain('Working</span>');
+      expect(card('art')[0]).toContain('<p class="reason">house h-52 on one · building its image</p>');
+      expect(card('art')[0]).toMatch(/<dt>Fuel<\/dt><dd><a href="\/p\/subs"><span class="value">58% of the week<\/span><span class="detail">resets Thu<\/span><\/a><\/dd>/);
+      expect(card('art')[0]).toContain('<span class="value tone-ok">Discord ✓ Slack ✓</span>');
+      // Mark: one piece says available, another unavailable: the worst wins, with that piece's reason.
+      expect(card('mark')[1]).toBe('warn');
+      expect(card('mark')[0]).toContain('<p class="reason">Discord bridge down 14m</p>');
+      // Moving now: only what's working.
+      expect(home).toMatch(/<section class="moving">[\s\S]*?house h-52 on one · building its image<\/span><span class="meta">Boxes<\/span>/);
+      expect(/<section class="moving">[\s\S]*?<\/section>/.exec(home)![0]).not.toContain('Discord bridge down');
+      // The house: the pieces' tiles.
+      expect(home).toMatch(/<h2 class="label">The house<\/h2><div class="tiles house-tiles"><a class="tile" href="\/p\/box"><span class="eyebrow">Boxes<\/span><span class="value">2 of 2<\/span>/);
     } finally {
       for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
       clearPieceCache();
@@ -914,7 +964,7 @@ describe('the household page', () => {
     propose(art, { category: 'user', title: 'DnB workflow', content: 'Jonathan builds DnB on the Push 3 first', source: 'test' });
     const cookie = await login();
     const front = await (await page(cookie, '/')).text();
-    expect(front).toMatch(/<a class="link-row card" href="\/inbox"><span class="body"><span class="text">Art E Fish wants to remember something<\/span>/);
+    expect(front).toMatch(/<a class="link-row card to-inbox-row" href="\/inbox"><span class="body"><span class="text">Art E Fish wants to remember something<\/span>/);
     expect(front).not.toContain('<div class="ask-acts">');
     expect(front).toMatch(/href="\/inbox"[^>]*><span>Inbox<\/span><span class="count">\d+<\/span>/);
     const home = await (await page(cookie, '/inbox')).text();
@@ -995,20 +1045,20 @@ describe('the household page', () => {
     expect(await (await page(cookie, '/a/mark/setup')).text()).toMatch(/Revoke &quot;Mark · phone&quot;|data-confirm="Anything still using it/);
   });
 
-  it('a live refresh of Home doesn\'t count as a new look', async () => {
+  it('a live refresh of Activity doesn\'t count as a new look', async () => {
     const cookie = await login();
-    const first = await (await page(cookie, '/')).text();
+    const first = await (await page(cookie, '/activity')).text();
     expect(first).toContain('data-live="');
     expect(first).toContain('<noscript><meta http-equiv="refresh" content="60"></noscript>');
     // No "N new since" line is 0 new: a household with no pieces yet shows its first-run line instead.
     const sub = (html: string) => Number(/<p class="sub">(\d+) new since/.exec(html)?.[1] ?? 0);
     const n = sub(first);
     await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did another thing', content: 'x' });
-    const live = await (await fetch(`${base}/`, { headers: { cookie, 'x-loom-live': '1' } })).text();
+    const live = await (await fetch(`${base}/activity`, { headers: { cookie, 'x-loom-live': '1' } })).text();
     expect(sub(live)).toBe(n + 1);
     expect(live).toMatch(/<li data-key="art\|[^"]*\|art did another thing">/);
     // And again: still one, since the live check didn't move the line.
-    expect(sub(await (await fetch(`${base}/`, { headers: { cookie, 'x-loom-live': '1' } })).text())).toBe(n + 1);
+    expect(sub(await (await fetch(`${base}/activity`, { headers: { cookie, 'x-loom-live': '1' } })).text())).toBe(n + 1);
   });
 
   it('an agent added on the page is served at once, without a restart', async () => {

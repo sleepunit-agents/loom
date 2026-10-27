@@ -8,7 +8,7 @@
  */
 import { prose } from './prose.js';
 import { askKey } from './push.js';
-import type { Ask, Block, Button, Cell, Field, Page, Section, Tile, Tone } from './vocab.js';
+import type { AgentState, Ask, Block, Button, Cell, Field, Page, Reading, Section, Tile, Tone } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
 
@@ -574,6 +574,8 @@ export interface ThreadRow { agent?: string; text: string; meta: string; at: str
 export interface Dashboard {
   /** 'Household', or the agent's name. */
   label: string;
+  /** A headline in place of "N need you" (Activity's). */
+  title?: string;
   /** An agent's Today: its mark, and Today · Mind · People · Setup. */
   agent?: { label: string; bg: string; fg: string; sub?: string; tabs: Array<{ label: string; href: string; current: boolean }> };
   asks: HomeAsk[];
@@ -634,7 +636,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   const fresh = d.sinceMs === undefined ? 0 : d.thread.filter((r) => Date.parse(r.at) > d.sinceMs!).length;
   const head = d.agent
     ? agentHead(d.agent)
-    : `<header class="dash-head"><span class="label">${esc(d.label)}</span><h1 class="display">${need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you'}</h1>${
+    : `<header class="dash-head"><span class="label">${esc(d.label)}</span><h1 class="display">${d.title ? esc(d.title) : need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you'}</h1>${
       d.sinceLabel && (fresh || !d.firstRun) ? `<p class="sub">${fresh} new since ${esc(d.sinceLabel)}</p>` : ''}${d.firstRun ? `<p class="sub">${esc(d.firstRun.line)}</p>` : ''}<span class="head-live" data-live-status></span></header>`;
   const starters = d.firstRun?.starters.length
     ? `<section class="starters"><h2 class="label">Start with these</h2><div class="card rows">${d.firstRun.starters.map((s) =>
@@ -820,4 +822,63 @@ export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: st
     `<div class="inbox"><nav class="folders" aria-label="Folders">${folders}<p class="folders-note">Only what blocks work or expires is ever unread.</p></nav>` +
     `<div class="inbox-main">${list}${detail}</div></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
   return document('Inbox', body, true);
+}
+
+// ─── Home (t-1622): how the agents are, whether the house is OK, what's moving ─
+
+/** An agent's card on Home: its state (the worst any piece reports), why, and the pieces' readings. */
+export interface AgentCard {
+  id: string;
+  label: string;
+  bg: string;
+  fg: string;
+  state: AgentState;
+  reason: string;
+  readings: Array<Reading & { source: Source }>;
+}
+
+export interface HouseHome {
+  headline: string;
+  needs: number;
+  firstNeed?: string;
+  cards: AgentCard[];
+  house: HomeTile[];
+  moving: Array<{ agent?: string; text: string; meta?: string }>;
+  /** No pieces yet: a line, and a couple of catalog pieces to install. */
+  firstRun?: Dashboard['firstRun'];
+}
+
+const STATE_TONE: Record<AgentState, Tone> = { working: 'ok', available: 'muted', unavailable: 'warn', broken: 'bad' };
+const STATE_WORD: Record<AgentState, string> = { working: 'Working', available: 'Available', unavailable: 'Unavailable', broken: 'Broken' };
+
+export function renderHouseHome(d: HouseHome, ctx: RenderContext, chrome: Chrome): string {
+  const needLine = d.needs
+    ? `<a class="link-row card to-inbox-row" href="/inbox"><span class="body"><span class="text">${esc(d.firstNeed ?? `${d.needs} need${d.needs === 1 ? 's' : ''} you`)}</span>${
+        d.needs > 1 ? `<span class="meta">and ${d.needs - 1} more</span>` : ''}</span><span class="go-inbox">${d.needs} in the Inbox</span>${CHEVRON}</a>` : '';
+  const head = `<header class="dash-head"><span class="label">Household</span><h1 class="display">${esc(d.headline)}</h1><span class="head-live" data-live-status></span></header>`;
+  const cards = d.cards.map((c) => {
+    const t = STATE_TONE[c.state];
+    const readings = c.readings.map((r) => {
+      const v = `<span class="value${r.tone ? ` tone-${r.tone}` : ''}">${esc(r.value)}</span>${r.detail ? `<span class="detail">${esc(r.detail)}</span>` : ''}`;
+      return `<div class="reading"><dt>${esc(r.label)}</dt><dd>${r.page !== undefined ? `<a href="${esc(pageHref(r.page, r.source))}">${v}</a>` : v}</dd></div>`;
+    }).join('');
+    return `<article class="card toned agent-card tone-${t}"><div class="band"><a class="who" href="/a/${esc(c.id)}">${mark(c, 32)}<h2>${esc(c.label)}</h2></a>` +
+      `<span class="tone-word">${glyph(t)}${STATE_WORD[c.state]}</span></div><p class="reason">${esc(c.reason)}</p>${readings ? `<dl class="readings">${readings}</dl>` : ''}</article>`;
+  }).join('');
+  const house = d.house.length
+    ? `<section class="glance"><h2 class="label">The house</h2><div class="tiles house-tiles">${d.house.map((t) => {
+        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value${String(t.value).length > 9 ? ' long' : ''}">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${
+          t.tone && t.tone !== 'ok' ? glyph(t.tone) : ''}`;
+        return t.page !== undefined ? `<a class="tile${tone(t.tone)}" href="${esc(pageHref(t.page, t.source))}">${inner}</a>` : `<div class="tile${tone(t.tone)}">${inner}</div>`;
+      }).join('')}</div></section>` : '';
+  const moving = `<section class="moving"><h2 class="label">Moving now</h2><ul class="list thread-list">${d.moving.length
+    ? d.moving.map((m) => { const who = m.agent ? ctx.agents?.[m.agent] : undefined; return `<li>${who ? mark(who, 24) : ''}<span class="body"><span class="text">${esc(m.text)}</span>${m.meta ? `<span class="meta">${esc(m.meta)}</span>` : ''}</span></li>`; }).join('')
+    : '<li><span class="empty">Nothing is working on anything right now.</span></li>'}</ul><a class="more-link" href="/activity">Everything that happened today</a></section>`;
+  const starters = d.firstRun?.starters.length
+    ? `<p class="sub">${esc(d.firstRun.line)}</p><section class="starters"><h2 class="label">Start with these</h2><div class="card rows">${d.firstRun.starters.map((s) =>
+        `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
+          actionForm({ ...ctx, source: CORE, path: '', query: {} }, 'piece-install', `${hiddenInputs({ name: s.name })}<button class="btn small" type="submit">Install</button>`, 'button-form')}</div>`).join('')}</div></section>` : '';
+  const body = `${shellOpen(chrome)}<main class="dash house-home">${flash(chrome)}${head}${starters}${needLine}<section class="agents"><h2 class="label">Agents</h2><div class="agent-cards">${cards}</div></section>${house}${moving}</main>` +
+    `${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
+  return document('Home', body, true);
 }
