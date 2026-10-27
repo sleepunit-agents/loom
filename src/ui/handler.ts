@@ -952,7 +952,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
       const d: HouseHome = {
         headline, needs: waiting.length, firstNeed: waiting[0]?.text, cards, moving,
-        house: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
+        // Home is the agents and what's moving (Jonathan, 2026-10-27): the pieces' tiles live on their own pages.
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
       return html(renderHouseHome(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash)));

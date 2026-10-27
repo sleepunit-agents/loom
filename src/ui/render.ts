@@ -854,7 +854,6 @@ export interface HouseHome {
   needs: number;
   firstNeed?: string;
   cards: AgentCard[];
-  house: HomeTile[];
   moving: Array<{ agent?: string; text: string; meta?: string }>;
   /** No pieces yet: a line, and a couple of catalog pieces to install. */
   firstRun?: Dashboard['firstRun'];
@@ -877,20 +876,14 @@ export function renderHouseHome(d: HouseHome, ctx: RenderContext, chrome: Chrome
     return `<article class="card toned agent-card tone-${t}"><div class="band"><a class="who" href="/a/${esc(c.id)}">${mark(c, 32)}<h2>${esc(c.label)}</h2></a>` +
       `<span class="tone-word">${glyph(t)}${STATE_WORD[c.state]}</span></div><p class="reason">${esc(c.reason)}</p>${readings ? `<dl class="readings">${readings}</dl>` : ''}</article>`;
   }).join('');
-  const house = d.house.length
-    ? `<section class="glance"><h2 class="label">The house</h2><div class="tiles house-tiles">${d.house.map((t) => {
-        const inner = `<span class="eyebrow">${esc(t.label)}</span><span class="value${String(t.value).length > 9 ? ' long' : ''}">${esc(t.value)}</span>${t.detail ? `<span class="detail">${esc(t.detail)}</span>` : ''}${
-          t.tone && t.tone !== 'ok' ? glyph(t.tone) : ''}`;
-        return t.page !== undefined ? `<a class="tile${tone(t.tone)}" href="${esc(pageHref(t.page, t.source))}">${inner}</a>` : `<div class="tile${tone(t.tone)}">${inner}</div>`;
-      }).join('')}</div></section>` : '';
   const moving = `<section class="moving"><h2 class="label">Moving now</h2><ul class="list thread-list">${d.moving.length
     ? d.moving.map((m) => { const who = m.agent ? ctx.agents?.[m.agent] : undefined; return `<li>${who ? mark(who, 24) : ''}<span class="body"><span class="text">${esc(m.text)}</span>${m.meta ? `<span class="meta">${esc(m.meta)}</span>` : ''}</span></li>`; }).join('')
-    : '<li><span class="empty">Nothing is working on anything right now.</span></li>'}</ul><a class="more-link" href="/activity">Everything that happened today</a></section>`;
+    : '<li><span class="empty">Nothing is working on anything right now.</span></li>'}</ul></section>`;
   const starters = d.firstRun?.starters.length
     ? `<p class="sub">${esc(d.firstRun.line)}</p><section class="starters"><h2 class="label">Start with these</h2><div class="card rows">${d.firstRun.starters.map((s) =>
         `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
           actionForm({ ...ctx, source: CORE, path: '', query: {} }, 'piece-install', `${hiddenInputs({ name: s.name })}<button class="btn small" type="submit">Install</button>`, 'button-form')}</div>`).join('')}</div></section>` : '';
-  const body = `${shellOpen(chrome)}<main class="dash house-home">${flash(chrome)}${head}${starters}${needLine}<section class="agents"><h2 class="label">Agents</h2><div class="agent-cards">${cards}</div></section>${house}${moving}</main>` +
+  const body = `${shellOpen(chrome)}<main class="dash house-home">${flash(chrome)}${head}${starters}${needLine}<section class="agents"><h2 class="label">Agents</h2><div class="agent-cards">${cards}</div></section>${moving}</main>` +
     `${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
   return document('Home', body, true);
 }
