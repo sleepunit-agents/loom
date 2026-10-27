@@ -107,6 +107,8 @@ describe('createLoomServer', () => {
     person: { readOnlyHint: true, openWorldHint: false },
     person_list: { readOnlyHint: true, openWorldHint: false },
     person_history: { readOnlyHint: true, openWorldHint: false },
+    person_evidence: { readOnlyHint: true, openWorldHint: false },
+    knowledge_list: { readOnlyHint: true, openWorldHint: false },
     person_revision_restore: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   };
 
@@ -280,6 +282,10 @@ describe('createLoomServer — knowledge attribution uses the local identity', (
       };
       await call('knowledge_write', { title: 'Rings', domain: 'music/eurorack', body: 'v1', citations });
       await call('knowledge_write', { slug: 'rings', title: 'Rings', domain: 'music/eurorack', body: 'v2', citations });
+      // t-1598: the freshness listing a verification sweep picks from, as the CLI's `knowledge list` gives it.
+      const listed = JSON.parse(((await call('knowledge_list', { domain: 'music/eurorack' })).content as { text: string }[])[0].text);
+      expect(listed.map((p: { slug: string }) => p.slug)).toEqual(['rings']);
+      expect(Object.keys(listed[0]).sort()).toEqual(['created', 'domain', 'freshness_anchor', 'sla_class', 'slug', 'title', 'verified_at']);
       const backend = createKnowledgeBackend(contextDir);
       let revisionId: number;
       try {
@@ -385,6 +391,12 @@ describe('createLoomServer — person cards over MCP', () => {
       expect(archived.archived).toBe(true);
       expect(await text('identity', { people: ['patrick-kells'] })).toContain('_(card for patrick-kells is archived)_');
       await text('person_restore', { slug: 'patrick-kells' });
+
+      // t-1598: what the card condenses, as the CLI's `person evidence` gives it.
+      await text('remember', { category: 'user', title: 'Patrick prefers mornings', content: 'Calls before 10.', metadata: { person: 'patrick-kells' } });
+      const evidence = JSON.parse(await text('person_evidence', { slug: 'patrick-kells' }));
+      expect(evidence.map((e: { title: string }) => e.title)).toContain('Patrick prefers mornings');
+      expect(JSON.parse(await text('person_evidence', { slug: 'nobody-here' }))).toEqual([]);
 
       // Unknown keys reject at the MCP boundary instead of being stripped (PR143 review).
       const before = await text('person', { slug: 'patrick-kells' });

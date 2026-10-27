@@ -34,8 +34,8 @@ flowchart LR
       IDW["Identity wing<br/>identity · dossier · update_identity<br/>bootstrap · harness_init · harness_describe"]
       MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit · memory_recompute_salience<br/>relay (household HTTP)<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
-      PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore"]
-      KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history"]
+      PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence"]
+      KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end
