@@ -205,8 +205,13 @@ main{padding:40px 40px 48px;max-width:1180px;margin:0}footer{margin:0;padding:0 
 .rail-link.on{background:var(--ink);color:var(--ground)}.rail-link.quiet{color:var(--ink-2);font-size:14px}
 .count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;border-radius:999px;background:var(--thread);color:#161614;font-size:13px;font-weight:600}
 .rail-label{margin:16px 12px 4px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}
-.rail-foot{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:14px;font-size:14px;color:var(--ink)}.rail-foot a{color:var(--ink)}
-.rail-foot form.inline button{background:none;padding:0;font-size:14px}
+.account{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);position:relative}
+.account summary{list-style:none;display:flex;align-items:center;gap:10px;min-height:48px;padding:0 12px;border-radius:10px;cursor:pointer;color:var(--ink);font-size:15px}.account summary::-webkit-details-marker{display:none}
+.account summary:hover,.account[open] summary{background:var(--surface)}.account .who{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.account summary svg{color:var(--ink-2)}
+.owner-mark{width:28px;height:28px;font-size:13px;background:var(--ink);color:var(--ground)}
+.account-menu{position:absolute;left:0;right:0;bottom:calc(100% - 10px);background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:6px;box-shadow:0 8px 24px rgba(22,22,20,.12);display:flex;flex-direction:column;gap:2px;z-index:5}
+.account-menu a,.account-menu form.inline button{display:flex;align-items:center;width:100%;min-height:42px;padding:0 12px;border-radius:10px;color:var(--ink);font-size:15px;background:none;text-align:left}
+.account-menu a:hover,.account-menu form.inline button:hover{text-decoration:none;background:var(--raised)}.account-menu form.inline{display:block}.account-menu .menu-out button{color:var(--bad)}
 dialog.sheet{position:fixed;inset:auto 0 0 0;margin:0 auto;width:100%;max-width:520px;max-height:86vh;overflow:auto;border:0;border-radius:var(--r-sheet) var(--r-sheet) 0 0;background:var(--surface);color:var(--ink);padding:6px 16px calc(16px + env(safe-area-inset-bottom))}
 dialog.sheet::backdrop{background:rgba(14,14,13,.45)}
 dialog.sheet[open]{animation:sheet-up .22s ease-out}@keyframes sheet-up{from{transform:translateY(32px);opacity:.4}to{transform:none;opacity:1}}

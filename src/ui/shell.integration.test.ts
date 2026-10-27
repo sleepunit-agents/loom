@@ -60,9 +60,11 @@ describe('the app shell', () => {
     expect(html).toContain('<dialog class="sheet" id="sheet-places"');
     // The agent's mark: its initial on its color.
     expect(html).toMatch(/<span class="mark" style="[^"]*background:#B8A6FF;color:#1D1240"[^>]*>A<\/span>/);
-    // Passkeys and Sign out are in the sheet (and the rail's foot), not the page header.
+    // Passkeys and Sign out are in the sheet, and in the rail's account menu (folded under the owner's name), not the page header.
     expect(html).not.toContain('<header class="top">');
     expect(html.match(/action="\/logout"/g)?.length).toBe(2);
+    expect(html).toMatch(/<details class="account"><summary>[\s\S]*?<\/summary><div class="account-menu"><a href="\/passkeys">Passkeys and notifications<\/a><form class="inline menu-out" method="post" action="\/logout">/);
+    expect(html).not.toContain('class="rail-foot"');
   });
 
   it('is an installable app: manifest, icons and a service worker, open to anyone; signing out drops what it kept', async () => {
