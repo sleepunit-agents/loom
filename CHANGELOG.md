@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **House tokens name their house.** Role `agent:<a>[/<service>][@<house>]`
+  (`loom token create --agent art --house h-104`), and a piece's API sees
+  `"house"` in the caller, so a piece can grant one house something: the
+  secrets piece's requests.
+
 - **A bundle brings the household back whole.** `household.json` travels whole
   (its own settings, like the relay pairs, came back stripped), and so do the
   managed pieces: which ones, at which commit, with the owner's settings.

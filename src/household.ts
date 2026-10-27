@@ -44,7 +44,7 @@ export type Role =
    * agent's bridge, say, so a piece can tell it from the agent's other
    * bodies (t-1591). It grants nothing more than the agent has.
    */
-  | { kind: 'agent'; agent: string; service?: string }
+  | { kind: 'agent'; agent: string; service?: string; house?: string }
   | { kind: 'owner' }
   | { kind: 'peer'; name: string }
   /**
@@ -55,7 +55,7 @@ export type Role =
 
 export interface TokenRecord {
   label: string;
-  /** `agent:<name>[/<service>]`, `owner`, `peer:<name>` or `piece:<piece>/<subject>`. */
+  /** `agent:<name>[/<service>][@<house>]`, `owner`, `peer:<name>` or `piece:<piece>/<subject>`. */
   role: string;
   /** sha256 of the token, hex. The token itself is never stored. */
   sha256: string;
@@ -119,8 +119,10 @@ export function parseRole(s: string): Role | null {
   if (s === 'owner') return { kind: 'owner' };
   const p = /^piece:([a-z][a-z0-9-]{0,39})\/([a-z0-9][a-z0-9._-]{0,63})$/.exec(s);
   if (p) return p[1] === 'loom' ? null : { kind: 'piece', piece: p[1], subject: p[2] };
-  const a = /^agent:([a-z][a-z0-9-]{0,39})\/([a-z][a-z0-9-]{0,39})$/.exec(s);
-  if (a) return { kind: 'agent', agent: a[1], service: a[2] };
+  // A house's token: the agent, the service if it's a service house, and the house (loom-box
+  // mints it), so a piece can grant one house something and none of the agent's others.
+  const a = /^agent:([a-z][a-z0-9-]{0,39})(?:\/([a-z][a-z0-9-]{0,39}))?(?:@(h-[0-9]{1,9}))?$/.exec(s);
+  if (a && (a[2] || a[3])) return { kind: 'agent', agent: a[1], ...(a[2] ? { service: a[2] } : {}), ...(a[3] ? { house: a[3] } : {}) };
   const m = /^(agent|peer):([a-z][a-z0-9-]{0,39})$/.exec(s);
   if (!m) return null;
   return m[1] === 'agent' ? { kind: 'agent', agent: m[2] } : { kind: 'peer', name: m[2] };
@@ -129,7 +131,7 @@ export function parseRole(s: string): Role | null {
 export function roleString(r: Role): string {
   switch (r.kind) {
     case 'owner': return 'owner';
-    case 'agent': return r.service ? `agent:${r.agent}/${r.service}` : `agent:${r.agent}`;
+    case 'agent': return `agent:${r.agent}${r.service ? `/${r.service}` : ''}${r.house ? `@${r.house}` : ''}`;
     case 'peer': return `peer:${r.name}`;
     case 'piece': return `piece:${r.piece}/${r.subject}`;
   }

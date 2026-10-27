@@ -55,6 +55,8 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     tok.owner = createToken(h, { role: { kind: 'owner' }, label: 'owner' }).token;
     tok.art = createToken(h, { role: { kind: 'agent', agent: 'art' }, label: 'art' }).token;
     tok.slack = createToken(h, { role: { kind: 'agent', agent: 'art', service: 'slack' }, label: 'art · house h-80 on loom' }).token;
+    tok.house = createToken(h, { role: { kind: 'agent', agent: 'art', house: 'h-104' }, label: 'art · house h-104 on loom' }).token;
+    tok.svcHouse = createToken(h, { role: { kind: 'agent', agent: 'art', service: 'slack', house: 'h-105' }, label: 'art · house h-105 on loom' }).token;
     tok.peer = createToken(h, { role: { kind: 'peer', name: 'phil' }, label: 'peer' }).token;
     tok.box = createToken(h, { role: { kind: 'piece', piece: 'thing', subject: 'thor' }, label: 'thing · thor' }).token;
     tok.ghost = createToken(h, { role: { kind: 'piece', piece: 'ghost', subject: 'x' }, label: 'ghost · x' }).token;
@@ -90,6 +92,13 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   it('a service house\'s token calls as its agent, with its service', async () => {
     const r = await call('/api/thing/', tok.slack);
     expect((await r.json() as { caller: unknown }).caller).toEqual({ kind: 'agent', agent: 'art', service: 'slack' });
+  });
+
+  // A house's token says which house it is, so a piece can grant one house something
+  // (the secrets piece's requests) and nothing else of the agent's.
+  it('a house\'s token calls as its agent, with its house (and its service, for a service house)', async () => {
+    expect((await (await call('/api/thing/', tok.house)).json() as { caller: unknown }).caller).toEqual({ kind: 'agent', agent: 'art', house: 'h-104' });
+    expect((await (await call('/api/thing/', tok.svcHouse)).json() as { caller: unknown }).caller).toEqual({ kind: 'agent', agent: 'art', service: 'slack', house: 'h-105' });
   });
 
   it('nobody, a peer, a revoked credential and another piece\'s credential get nothing', async () => {
@@ -173,6 +182,10 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     expect(svc).toEqual({ kind: 'agent', agent: 'art', service: 'slack' });
     expect(roleString(svc!)).toBe('agent:art/slack');
     for (const bad of ['agent:art/', 'agent:art/Slack', 'agent:art/a/b', 'peer:phil/x']) expect(parseRole(bad), bad).toBeNull();
+    expect(parseRole('agent:art@h-104')).toEqual({ kind: 'agent', agent: 'art', house: 'h-104' });
+    expect(parseRole('agent:art/slack@h-105')).toEqual({ kind: 'agent', agent: 'art', service: 'slack', house: 'h-105' });
+    expect(roleString(parseRole('agent:art/slack@h-105')!)).toBe('agent:art/slack@h-105');
+    for (const bad of ['agent:art@', 'agent:art@H-1', 'agent:art@h-1@h-2', 'agent:art@h-1/slack', 'peer:phil@h-1']) expect(parseRole(bad), bad).toBeNull();
     for (const bad of ['piece:loom/x', 'piece:box/', 'piece:box/../x', 'piece:Box/x', 'piece:box/x/y', 'piece:box']) expect(parseRole(bad), bad).toBeNull();
   });
 });

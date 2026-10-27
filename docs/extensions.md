@@ -283,9 +283,10 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
 
 - **loom authenticates, the piece authorizes.** The caller is what the bearer
   resolved to: `{"kind": "owner"}`, `{"kind": "agent", "agent": "art"}`
-  (with `"service": "slack"` when it's a service house's token, role
-  `agent:art/slack`: the agent's bridge, say, which a piece can then tell
-  from the agent's other bodies), or
+  (with `"service": "slack"` when it's a service house's token, and
+  `"house": "h-104"` when it's a house's: role `agent:art/slack@h-104`. A piece
+  can then tell the agent's bridge from its other bodies, or grant one house
+  something and none of the agent's others), or
   `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
   with the role `piece:<piece>/<subject>` (`loom token create --piece
   box/thor`). A piece credential reaches its own piece's API and nothing
