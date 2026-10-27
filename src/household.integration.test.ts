@@ -701,7 +701,8 @@ describe('the household page', () => {
     expect(home).toMatch(/<a class="who" href="\/a\/mark">[\s\S]*?<h2>Visual Mark<\/h2>/);
     expect(home).toMatch(/<dt>Last seen<\/dt><dd><a href="\/a\/art"><span class="value">\d+m ago<\/span><span class="detail">Discord #pond<\/span>/);
     expect(home).not.toContain('<h2 class="label">Shared</h2>');
-    expect(home).toContain('<a class="more-link" href="/activity">');
+    // Just the agents and what's moving: Activity is in the nav, the pieces' tiles on their own pages.
+    expect(home).not.toContain('href="/activity">Everything');
   });
 
   it('Activity is the tape across every agent', async () => {
@@ -824,8 +825,9 @@ describe('the household page', () => {
       // Moving now: only what's working.
       expect(home).toMatch(/<section class="moving">[\s\S]*?house h-52 on one · building its image<\/span><span class="meta">Boxes<\/span>/);
       expect(/<section class="moving">[\s\S]*?<\/section>/.exec(home)![0]).not.toContain('Discord bridge down');
-      // The house: the pieces' tiles.
-      expect(home).toMatch(/<h2 class="label">The house<\/h2><div class="tiles house-tiles"><a class="tile" href="\/p\/box"><span class="eyebrow">Boxes<\/span><span class="value">2 of 2<\/span>/);
+      // No tiles: the box's own state is its page's.
+      expect(home).not.toContain('class="tile');
+      expect(home).not.toContain('<h2 class="label">The house</h2><div');
     } finally {
       for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
       clearPieceCache();
