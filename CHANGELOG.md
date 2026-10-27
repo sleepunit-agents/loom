@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: shuttle at df79324.** Relay: a body asks the body that owns
+  another conversation to say something (`piece-call shuttle relay --via slack
+  --person <slug> --say …`), through loom's piece API; the Slack bridge hands
+  it to that person's DM.
 - **Catalog: tasks at da669f3.** The owner's comment from the page hands the
   task back to the agents and runs a command (a wake), set by
   TASKSTORE_ON_OWNER_COMMENT; the owner's comments carry their initial.
