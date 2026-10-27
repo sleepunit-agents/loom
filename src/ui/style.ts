@@ -339,10 +339,11 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 .inbox-main{flex:999 1 520px;min-width:0;display:flex;flex-direction:column;gap:12px}
 .inbox-list{padding:4px 12px}.inbox-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:10px 4px 8px;border-bottom:1px solid var(--line)}.inbox-head h2{margin:0;font-size:16px;font-weight:600}.inbox-head .sub{font-size:13px;color:var(--ink-2)}
 .msgs{list-style:none;margin:0;padding:0;max-height:320px;overflow-y:auto}.msgs li{border-bottom:1px solid var(--line)}.msgs li:last-child{border-bottom:0}
-.msg{display:flex;gap:12px;align-items:center;padding:12px 6px;min-height:52px;color:var(--ink);border-radius:10px}.msg:hover{text-decoration:none;background:var(--ground)}.msg.on{background:var(--raised)}
-.msg .new{width:8px;height:8px;border-radius:50%;flex:none;background:var(--thread);box-shadow:0 0 0 1px rgba(22,22,20,.25)}.msg .new.read{background:transparent;box-shadow:none}
-.msg .kind{font-size:12px;color:var(--ink-2);width:84px;flex:none}.msg .subj{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}.msg.unread .subj{font-weight:600}.msg .meta{font-size:12px;color:var(--ink-2);white-space:nowrap}
-.src-mark{width:24px;height:24px;font-size:11px;background:var(--raised);color:var(--ink-2)}
+.msg{display:flex;gap:12px;align-items:flex-start;padding:12px 8px;min-height:56px;color:var(--ink);border-radius:10px}.msg:hover{text-decoration:none;background:var(--ground)}.msg.on{background:var(--raised)}
+.msg .new{width:8px;height:8px;border-radius:50%;flex:none;margin-top:10px;background:var(--thread);box-shadow:0 0 0 1px rgba(22,22,20,.25)}.msg .new.read{background:transparent;box-shadow:none}
+.msg-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.msg-top{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink-2)}.msg-top .from{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg .subj{font-size:15px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.msg.unread .subj{font-weight:600}.msg .meta{font-size:12px;color:var(--ink-2);white-space:nowrap}
+.src-mark{width:28px;height:28px;font-size:12px;background:var(--raised);color:var(--ink-2)}.msg .mark{margin-top:1px}
 .inbox-open{padding:20px;display:flex;flex-direction:column;gap:12px}.inbox-open h3{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.25}.inbox-open h3 a{color:inherit}
 .open-src{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:14px;color:var(--ink-2)}.open-src .meta{margin-left:auto;font-size:12px}
 .chip{font-size:12px;font-weight:600;border-radius:999px;padding:3px 10px;background:var(--raised);color:var(--ink-2)}.chip.warn{background:var(--warn-bg);color:var(--warn)}
@@ -366,4 +367,12 @@ dialog.find-sheet{inset:12vh 0 auto 0;margin:0 auto;width:640px;height:auto;max-
 @media (max-width:959px){.dash-head .head-live{position:static;margin-top:6px}}
 .open-page{display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--line);padding-top:14px}.open-page .card{padding:0;background:none;border-radius:0}.open-page .card.toned .band{margin:0 0 10px;border-radius:10px}
 .open-page h4{margin:0 0 8px;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}.inbox-open .more-link{align-self:flex-start;font-size:14px}
+.msgs{max-height:44vh}
+@media (max-width:959px){
+.inbox-page .dash-head .label{display:none}.inbox-page .dash-head .display{font-size:30px}
+.folders{flex:1 1 100%;max-width:none;flex-direction:row;overflow-x:auto;scrollbar-width:none;gap:8px;margin:0 -16px;padding:0 16px 2px}.folders::-webkit-scrollbar{display:none}
+.folder-link{flex:none;min-height:40px;border:1px solid var(--line);border-radius:999px;background:var(--surface);white-space:nowrap;gap:8px;padding:0 14px}.folder-link.on{border-color:var(--ink)}.folders-note{display:none}
+.inbox-main{flex:1 1 100%}.msgs{max-height:none}.inbox-list{padding:0 8px}.inbox-head .sub{display:none}
+.inbox:not(.has-open) .inbox-open{display:none}.inbox:not(.has-open) .msg.on{background:transparent}.inbox-head{display:none}.inbox-list{padding-top:4px}.inbox.has-open .folders,.inbox.has-open .inbox-list{display:none}
+.inbox-open{padding:16px}.inbox-open h3{font-size:20px}.inbox-page:has(.inbox.has-open) .dash-head{display:none}}
 `;
