@@ -431,6 +431,8 @@ function phoneTop(sh: Shell): string {
   const who = sh.scope === 'household' ? 'Household' : sh.agents.find((a) => a.current)?.label ?? '';
   // A household's top right is its Inbox (no scope to pick); a lone agent keeps its pill.
   const inbox = sh.core.find((x) => x.href === '/inbox');
+  // (Not on the Inbox itself: the bar's back, or Home, is the way out.)
+  if (sh.household && inbox?.current) return `<div class="phone-top">${left}<span class="bar-title" aria-hidden="true"></span></div>`;
   if (sh.household && inbox) {
     return `<div class="phone-top">${left}<span class="bar-title" aria-hidden="true"></span><a class="scope-pill inbox-pill" href="/inbox"${inbox.current ? ' aria-current="page"' : ''}><span>Inbox</span>${
       inbox.count ? `<span class="count">${inbox.count}</span>` : ''}</a></div>`;
@@ -808,15 +810,18 @@ export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: st
     return `<a class="folder-link${x.id === f.id ? ' on' : ''}" href="${esc(here(x.id === 'needs' ? {} : { f: x.id }))}"${x.id === f.id ? ' aria-current="page"' : ''}><span>${esc(x.label)}</span>${count}</a>`;
   }).join('');
   const shown = items.filter((it) => inFolder(f.id, it));
-  const open = shown.find((it) => it.key === openKey) ?? shown[0];
+  const asked = shown.find((it) => it.key === openKey);
+  const open = asked ?? shown[0];
   const fq: Record<string, string> = f.id === 'needs' ? {} : { f: f.id };
   const rows = shown.map((it) => {
     const who = it.agent ? ctx.agents?.[it.agent] : undefined;
     const on = open && it.key === open.key;
+    // A mail client's row: where it's from (and, in Needs you, what kind it is) and its age, then what it says.
+    const from = [it.sourceLabel ?? it.source.id, f.id === 'needs' ? KIND_WORD[it.kind] : ''].filter(Boolean).join(' · ');
     return `<li><a class="msg${on ? ' on' : ''}${it.unread ? ' unread' : ''}" href="${esc(here({ ...fq, i: it.key }))}"${on ? ' aria-current="true"' : ''}>` +
-      `<span class="new${it.unread ? '' : ' read'}" aria-hidden="true"></span>${who ? mark(who, 24) : `<span class="mark src-mark" aria-hidden="true">${esc((it.sourceLabel ?? it.source.id).slice(0, 1).toUpperCase())}</span>`}` +
-      `<span class="kind">${esc(KIND_WORD[it.kind])}</span><span class="subj">${it.unread ? '<span class="visually-hidden">Unread: </span>' : ''}${esc(it.text)}</span>` +
-      `<span class="meta">${esc(age(it.at, nowMs))}</span></a></li>`;
+      `<span class="new${it.unread ? '' : ' read'}" aria-hidden="true"></span>${who ? mark(who, 28) : `<span class="mark src-mark" aria-hidden="true">${esc((it.sourceLabel ?? it.source.id).slice(0, 1).toUpperCase())}</span>`}` +
+      `<span class="msg-body"><span class="msg-top"><span class="from">${esc(from)}</span><span class="meta">${esc(age(it.at, nowMs))}</span></span>` +
+      `<span class="subj">${it.unread ? '<span class="visually-hidden">Unread: </span>' : ''}${esc(it.text)}</span></span></a></li>`;
   }).join('');
   const list = `<section class="card inbox-list" aria-label="${esc(f.label)}"><div class="inbox-head"><h2>${esc(f.label)}</h2><span class="sub">${esc(f.hint)}</span></div>` +
     (rows ? `<ul class="msgs">${rows}</ul>` : '<p class="empty">Nothing here.</p>') + '</section>';
@@ -828,7 +833,7 @@ export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: st
       ? `<div class="ask-acts">${open.actions.map((b) => actionForm(back, b.action, buttonInner(b, `btn${b.tone ? '' : ' quiet'}`), 'button-form')).join('')}</div>`
       : open.page !== undefined ? `<a class="go" href="${esc(pageHref(open.page, open.source))}">${esc(open.label ?? 'Open')}</a>` : '';
     const until = open.expires ? untilWord(open.expires, nowMs) : '';
-    detail = `<section class="card inbox-open" aria-label="The open item"><div class="open-src">${who ? mark(who, 28) : ''}<span>${esc(open.sourceLabel ?? open.source.id)}</span>` +
+      detail = `<section class="card inbox-open" aria-label="The open item"><div class="open-src">${who ? mark(who, 28) : ''}<span>${esc(open.sourceLabel ?? open.source.id)}</span>` +
       `<span class="chip">${esc(KIND_WORD[open.kind])}</span>${until ? `<span class="chip warn">${esc(until)}</span>` : ''}<span class="meta">${open.at ? `${esc(age(open.at, nowMs))} ago` : ''}</span></div>` +
       `<h3>${open.page !== undefined && open.actions?.length ? `<a href="${esc(pageHref(open.page, open.source))}">${esc(open.text)}</a>` : esc(open.text)}</h3>` +
       (open.meta ? `<p class="open-meta">${esc(open.meta)}</p>` : '') +
@@ -837,8 +842,9 @@ export function renderInbox(items: InboxItem[], folder: InboxFolder, openKey: st
         ? `<div class="open-page">${inline.sections.map((s) => renderSection(s, back, 4)).join('')}</div>${open.page !== undefined ? `<a class="more-link" href="${esc(pageHref(open.page, open.source))}">Open its page</a>` : ''}`
         : acts) + '</section>';
   }
+  // has-open: an item was asked for; on a phone that's the item alone, else the folders and the list alone.
   const body = `${shellOpen(chrome)}<main class="inbox-page">${flash(chrome)}<header class="dash-head"><span class="label">Household</span><h1 class="display">Inbox</h1></header>` +
-    `<div class="inbox"><nav class="folders" aria-label="Folders">${folders}<p class="folders-note">Only what blocks work or expires is ever unread.</p></nav>` +
+    `<div class="inbox${asked ? ' has-open' : ''}"><nav class="folders" aria-label="Folders">${folders}<p class="folders-note">Only what blocks work or expires is ever unread.</p></nav>` +
     `<div class="inbox-main">${list}${detail}</div></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
   return document('Inbox', body, true);
 }

@@ -1006,7 +1006,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const pg = await piecePage(info, sp.path, sp.query, scopedEnv);
         if (typeof pg !== 'string') inline = { key: shown!.key, sections: pg.sections };
       }
-      return html(renderInbox(items, folder, open?.key, { ...ctxOf('inbox'), agents: agentsOf(hh)! }, chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash), nowMs, inline));
+      const ch = chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash);
+      // An item open: on a phone it's its own screen, and the bar's back goes to its folder.
+      if (open && shown?.key === open.key && ch.shell) {
+        ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
+      }
+      return html(renderInbox(items, folder, open?.key, { ...ctxOf('inbox'), agents: agentsOf(hh)! }, ch, nowMs, inline));
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {
