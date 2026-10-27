@@ -20,7 +20,7 @@
     {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
-      "commit": "655bd2eb4e9b76b88e146a9114e4f87666351ac5",
+      "commit": "d6bcbb5c4f3bb80c3db55200915683374c5e9e02",
       "version": "0.1.0",
       "label": "Shuttle",
       "description": "Chat bridges (Discord, Slack) and the household's model subscriptions: accounts, sign-ins, usage."
@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "a35e9963929a044e3e88d5397bbf1fd829e9ae28",
+      "commit": "ff272794269ef625414fbde369f9ec97640d1a56",
       "version": "0.5.0",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
