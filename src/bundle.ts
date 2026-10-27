@@ -32,7 +32,7 @@ import {
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
 import { listPieces } from './cli/pieces.js';
-import { installPiece, managedPieces, pieceEnvFor, readSettings } from './cli/pieces-managed.js';
+import { installPiece, managedPieces, pieceEnvFor, readCatalog, readSettings, type CatalogEntry } from './cli/pieces-managed.js';
 
 export class BundleError extends Error {}
 
@@ -259,6 +259,20 @@ export interface RestoreReport {
   installs: Array<{ name: string; commit: string; installed: boolean; reason?: string }>;
 }
 
+const PIECE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** pieces/ as unpacked: only the manifest's parts, each a plain file, or the restore stops here. */
+function assertOnlyParts(dir: string, manifest: Manifest): void {
+  for (const p of manifest.pieces) if (!PIECE_NAME.test(p.name)) throw new BundleError(`the bundle names a piece ${JSON.stringify(p.name)}; refusing it`);
+  if (!existsSync(dir)) return;
+  const parts = new Set(manifest.pieces.filter((p) => p.included).map((p) => `${p.name}.part`));
+  for (const e of readdirSync(dir)) {
+    if (!parts.has(e) || !lstatSync(join(dir, e)).isFile()) {
+      throw new BundleError(`pieces/ holds something other than parts (${e}); a bundle never brings code. Nothing was installed or imported.`);
+    }
+  }
+}
+
 function readBundledPieces(home: string): BundledPiece[] {
   try {
     const d = JSON.parse(readFileSync(join(home, 'pieces.json'), 'utf-8')) as { v?: number; pieces?: unknown };
@@ -281,6 +295,8 @@ export async function restoreBundle(opts: {
   file: string; identity: string; home: string; env?: NodeJS.ProcessEnv;
   /** How a managed piece is installed (installPiece); `false` installs none, leaving their parts pending. */
   install?: PieceInstaller | false;
+  /** What may be installed: this loom's catalog (assets/pieces.json). */
+  catalog?: CatalogEntry[];
 }): Promise<RestoreReport> {
   const home = resolve(opts.home);
   // The restored household's own pieces: managed ones land in its pieces/, searched before PATH.
@@ -291,20 +307,34 @@ export async function restoreBundle(opts: {
   if (!h) throw new BundleError('the bundle has no household.json');
   // A bundle made from a plain context dir still holds whole cards: split them now.
   for (const a of h.agents) if (existsSync(resolveSqliteDbPath(agentDir(h, a)))) splitPeopleIntoCommons(h, a, agentDir(h, a));
+  // A bundle is encrypted, not signed: anyone with the owner's public key can make one.
+  // So nothing in it runs. pieces/ holds the parts and nothing else (no bin, no link,
+  // no directory), and the pieces it names install from this loom's catalog, at the
+  // catalog's commit, never from a repo or commit the bundle supplies.
+  assertOnlyParts(join(home, 'pieces'), manifest);
   const installs: RestoreReport['installs'] = [];
   const bundled = readBundledPieces(home);
   if (bundled.length && opts.install !== false) {
     const install = opts.install ?? ((e, source, name) => installPiece(e, source, name));
+    const catalog = opts.catalog ?? readCatalog();
     for (const p of bundled) {
+      const known = catalog.find((c) => c.name === p.name && c.repo === p.source.repo);
+      if (!known) {
+        installs.push({ name: p.name, commit: p.source.commit, installed: false,
+          reason: `not this loom's catalog (${p.source.repo}): install it by hand if you trust it` });
+        continue;
+      }
       try {
-        await install(env, p.source, p.name);
+        await install(env, { repo: known.repo, commit: known.commit }, p.name);
+        const dir = join(home, 'pieces', p.name);
+        if (!lstatSync(dir).isDirectory()) throw new BundleError(`${dir} isn't a directory the install made`);
         // The same values setSettings takes: names it knows the shape of, one line, 500 characters at most.
         const settings = Object.fromEntries(Object.entries(p.settings)
           .filter(([k, v]) => /^[A-Z][A-Z0-9_]{0,63}$/.test(k) && typeof v === 'string' && v.length <= 500 && !/[\n\r\0]/.test(v)));
         if (Object.keys(settings).length) {
           writeFileSync(join(home, 'pieces', p.name, 'settings.json'), JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
         }
-        installs.push({ name: p.name, commit: p.source.commit, installed: true });
+        installs.push({ name: p.name, commit: known.commit, installed: true });
       } catch (e) {
         installs.push({ name: p.name, commit: p.source.commit, installed: false, reason: (e as Error).message });
       }

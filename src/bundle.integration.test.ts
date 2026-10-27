@@ -148,13 +148,46 @@ esac
       writeFileSync(join(root, 'bin', `loom-${name}`), `#!/bin/sh\n[ "$1 $2" = "bundle import" ] && cat > "${work}/fresh-imported"\n`);
       chmodSync(join(root, 'bin', `loom-${name}`), 0o755);
     };
-    // The restoring machine has no pieces at all: only what restore installs.
-    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install });
-    expect(installs).toEqual([{ name: 'vault', commit: 'a'.repeat(40) }]);
+    // The restoring machine has no pieces at all: only what restore installs. A bundle
+    // isn't signed (age only encrypts, to a public key), so it names pieces, never code:
+    // only this loom's catalog's repos install, at the catalog's commit.
+    const catalog = [{ name: 'vault', repo: 'sleepunit-agents/vault', commit: 'b'.repeat(40) }];
+    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog });
+    expect(installs).toEqual([{ name: 'vault', commit: 'b'.repeat(40) }]);
     expect(JSON.parse(readFileSync(join(to, 'pieces', 'vault', 'settings.json'), 'utf-8'))).toEqual({ VAULT_DIR: '/srv/vault' });
     expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
     expect(readFileSync(join(work, 'fresh-imported'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
     expect(JSON.parse(readFileSync(join(to, 'household.json'), 'utf-8')).relay).toEqual({ art: ['mark'] });
+  });
+
+  it('a piece the catalog doesn\'t have (or names another repo) isn\'t installed from a bundle; it\'s reported', async () => {
+    const piece = join(h.home, 'pieces', 'vault');
+    mkdirSync(piece, { recursive: true });
+    writeFileSync(join(piece, 'piece.json'), JSON.stringify({ v: 1, name: 'vault', source: { repo: 'someone/evil', commit: 'a'.repeat(40) }, package: 'vault', version: '1', installed: 'x', bins: ['loom-vault'], loom: { settings: [] } }));
+    const file = join(work, 'household.bundle');
+    await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
+    const calls: string[] = [];
+    const r = await restoreBundle({ file, identity: owner.identity, home: join(work, 'restored'), env: sealed(),
+      install: async (_e, s) => { calls.push(s.repo); }, catalog: [{ name: 'vault', repo: 'sleepunit-agents/vault', commit: 'b'.repeat(40) }] });
+    expect(calls).toEqual([]);
+    expect(r.installs).toEqual([{ name: 'vault', commit: 'a'.repeat(40), installed: false, reason: expect.stringMatching(/not this loom's catalog/) }]);
+  });
+
+  it('a bundle that brings anything but parts into pieces/ (a bin, a link, a directory) is refused before anything runs', async () => {
+    const file = join(work, 'household.bundle');
+    await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
+    // Re-pack it with a planted bin, the way anyone holding the owner's public key could.
+    const x = join(work, 'x');
+    mkdirSync(x);
+    spawnSync(AGE, ['-d', '-i', owner.identity, '-o', join(work, 'h.tgz'), file]);
+    spawnSync('tar', ['-C', x, '-xzf', join(work, 'h.tgz')]);
+    mkdirSync(join(x, 'pieces', 'bin'), { recursive: true });
+    writeFileSync(join(x, 'pieces', 'bin', 'loom-vault'), `#!/bin/sh\ntouch ${work}/pwned\n`, { mode: 0o755 });
+    spawnSync('tar', ['-C', x, '-czf', join(work, 'evil.tgz'), '.']);
+    spawnSync(AGE, ['-e', '-r', owner.recipient, '-o', join(work, 'evil.bundle'), join(work, 'evil.tgz')]);
+    await expect(restoreBundle({ file: join(work, 'evil.bundle'), identity: owner.identity, home: join(work, 'restored'), env: sealed(), install: false }))
+      .rejects.toThrow(/pieces\/ holds something other than parts/);
+    expect(existsSync(join(work, 'pwned'))).toBe(false);
   });
 
   it('a bundle from before compression (a plain tar) still restores', async () => {
