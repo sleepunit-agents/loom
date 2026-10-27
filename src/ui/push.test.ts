@@ -61,9 +61,9 @@ describe('push: the watch', () => {
     await run(['a']);                    // seed
     expect(sent).toEqual([]);
     await run(['a', 'b']);               // b is new
-    expect(sent).toEqual(['/#ask-b']);
+    expect(sent).toEqual(['/inbox?i=b']);
     await run(['a', 'b']);               // nothing new
-    expect(sent).toEqual(['/#ask-b']);
+    expect(sent).toEqual(['/inbox?i=b']);
     const w = store.takePushWatch(0);
     expect(w!.subs.map((s) => s.endpoint)).toEqual(['https://fcm.googleapis.com/fcm/send/abc']);   // the 410 one is gone
   });

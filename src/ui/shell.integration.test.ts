@@ -63,7 +63,7 @@ describe('the app shell', () => {
     // Passkeys and Sign out are in the sheet, and in the rail's account menu (folded under the owner's name), not the page header.
     expect(html).not.toContain('<header class="top">');
     expect(html.match(/action="\/logout"/g)?.length).toBe(2);
-    expect(html).toMatch(/<details class="account"><summary>[\s\S]*?<\/summary><div class="account-menu"><a href="\/passkeys">Passkeys and notifications<\/a><form class="inline menu-out" method="post" action="\/logout">/);
+    expect(html).toMatch(/<details class="account"><summary>[\s\S]*?<\/summary><div class="account-menu"><a href="\/passkeys">Passkeys<\/a><a href="\/passkeys#notifications">Notifications<\/a><form class="inline menu-out" method="post" action="\/logout">/);
     expect(html).not.toContain('class="rail-foot"');
   });
 

@@ -62,7 +62,7 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   const vapid = store.pushKeys(() => webpush.generateVAPIDKeys());
   let sent = 0;
   for (const a of fresh.slice(0, 5)) {
-    const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: `/#ask-${a.key}` });
+    const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: `/inbox?i=${a.key}` });
     for (const sub of w.subs) {
       try {
         await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 6 * 3600, urgency: 'high' });

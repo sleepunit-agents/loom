@@ -54,7 +54,7 @@ import { agentSetup, householdAct, householdHome, householdPeople, householdPers
 import { agentDir, MARKS, type Household } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
-import { agentSource, CORE, pageHref, pieceSource, renderHome, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, CORE, INBOX_FOLDERS, pageHref, pieceSource, renderHome, renderInbox, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Page } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -91,7 +91,7 @@ export interface UiOptions {
   household?: () => Household;
 }
 
-const PAGE_ROOTS = ['/setup', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
+const PAGE_ROOTS = ['/setup', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -336,8 +336,9 @@ function agentTabs(agent: string, current: string): AgentHead['tabs'] {
 export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
   const hh = opts.household?.();
-  if (hh) return [...proposalAsks(hh, Object.fromEntries(hh.agents.map((a) => [a, pendingProposals(hh, a)]))), ...pieceAsks(pieces, opts.env)];
-  return pieceAsks(pieces, opts.env);
+  const needs = (a: HomeAsk) => a.attention !== false;
+  if (hh) return [...proposalAsks(hh, Object.fromEntries(hh.agents.map((a) => [a, pendingProposals(hh, a)]))), ...pieceAsks(pieces, opts.env)].filter(needs);
+  return pieceAsks(pieces, opts.env).filter(needs);
 }
 
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
@@ -377,6 +378,28 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
     ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece }))),
     ...piecesAsks(env).map((a) => ({ ...a, source: CORE, sourceLabel: 'Pieces', tone: 'warn' as const })),
   ];
+}
+
+/** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, newest first. */
+function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): InboxItem[] {
+  const asks = [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...pieceAsks(pieces, env)];
+  const items: InboxItem[] = [
+    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? 'decision', attention: a.attention !== false, unread: false,
+      text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions })),
+    ...pieces.flatMap((p) => {
+      const source = pieceSource(p.piece);
+      const sourceLabel = p.manifest.tab?.label ?? p.piece;
+      return [
+        ...(p.manifest.notices ?? []).map((n): InboxItem => ({ key: askKey({ source, text: n.text, page: `fyi:${n.at}` }), kind: 'fyi', attention: false, unread: false,
+          text: n.text, meta: n.meta, at: n.at, agent: n.agent, source, sourceLabel, page: n.page })),
+        ...(p.manifest.answered ?? []).map((a): InboxItem => ({ key: askKey({ source, text: a.text, page: `answered:${a.at}` }), kind: 'answered', attention: false, unread: false,
+          text: a.text, outcome: a.outcome, at: a.at, agent: a.agent, source, sourceLabel, page: a.page })),
+      ];
+    }),
+  ];
+  // Newest first; an ask with no time stays where its piece put it, ahead of the dated ones.
+  const t = (it: InboxItem) => (it.at ? Date.parse(it.at) : Number.POSITIVE_INFINITY);
+  return items.map((it, i) => ({ it, i })).sort((x, y) => t(y.it) - t(x.it) || x.i - y.i).map((x) => x.it);
 }
 
 /** Find's groups beyond the places: asks that match (Do), and, in a household, knowledge, people and the scope's memories. */
@@ -471,6 +494,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place' }))
     .sort((a, b) => a.label.localeCompare(b.label));
   const asks = pieces.reduce((n, p) => n + p.manifest.asks.length, 0) + piecesAsks(opts.env).length;
+  // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted).
+  const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
   const tab = current === '' || /^a\/[^/]+$/.test(current) ? 'home' : current === 'places' || current === 'scope' || current === 'find' || current === 'setup' ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
@@ -498,6 +523,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
           sub: lastActive(agentDir(h, a)) })),
         core: [
+          // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
+          { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length },
           { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
           { label: 'People', href: '/people', current: current.startsWith('people') },
         ],
@@ -533,6 +560,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
 
 /** Where to land after an action: the page the piece names, or back where the form was. */
 function landing(source: Source, result: ActResult, back: string): string {
+  // Answered from the Inbox: back to the Inbox, whatever page the action would show next.
+  if (splitPage(back)?.core && splitPage(back)?.path === 'inbox') return pageHref(back, source);
   const link = result.page !== undefined && splitPage(result.page) ? result.page : splitPage(back) ? back : '';
   return pageHref(link, source);
 }
@@ -800,7 +829,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const info = pieces.find((p) => p.piece === sourceId);
       if (!info) return send(res, 404, 'text/plain', 'not found');
       source = pieceSource(info.piece);
-      const path = splitPage(backLink)?.path ?? '';
+      const sp = splitPage(backLink);
+      const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv);
     }
     const to = landing(source, result, backLink);
@@ -896,9 +926,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const agents = agentsOf(hh)!;
       const chips = [...(hh.agents.length > 1 ? hh.agents.map((a) => ({ value: a, label: agents[a].label })) : []),
         ...(surfaces.length > 1 ? surfaces.filter((s) => !hh.agents.includes(s)).map((s) => ({ value: s, label: whereLabel(s) })) : [])];
+      // The same items, in the same order, as the Inbox's Needs you.
+      const waiting = inboxItems(hh, pieces, opts.env).filter((it) => it.attention);
       const d: Dashboard = {
         label: 'Household',
-        asks: [...proposalAsks(hh, t.proposals), ...pieceAsks(pieces, opts.env)],
+        asks: [],
+        inbox: { count: waiting.length, first: waiting[0]?.text },
         tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
         thread: t.items.filter((r) => !from || r.agent === from || surfaceOf(r.where) === from).slice(0, HOME_THREAD)
           .map((r) => ({ agent: r.agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), at: r.created, page: r.page })),
@@ -908,6 +941,18 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
       return html(renderDashboard(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash), nowMs));
+    }
+    if (pathname === '/inbox') {
+      const nowMs = Date.now();
+      const store = storeFor(opts);
+      const items = inboxItems(hh, pieces, opts.env);
+      const folder = (INBOX_FOLDERS.find((f) => f.id === query.f)?.id ?? 'needs') as InboxFolder;
+      const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
+      // Opening an attention item reads it; nothing else is ever unread.
+      if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000));
+      const opened = store.openedKeys();
+      for (const it of items) it.unread = it.attention && !opened.has(it.key);
+      return html(renderInbox(items, folder, open?.key, { ...ctxOf('inbox'), agents: agentsOf(hh)! }, chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash), nowMs));
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {
