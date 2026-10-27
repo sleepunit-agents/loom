@@ -71,6 +71,13 @@ export interface LoomServerConfig {
    * daemon's machine, not the caller's.
    */
   remote?: boolean;
+  /**
+   * Agent to agent (t-1597): the household HTTP server passes a relay that
+   * runs the clock piece's `relay` as this session's own agent (so it reaches
+   * no further than that agent's `wake relay`). Without one there is no
+   * relay tool.
+   */
+  relay?: (argv: string[]) => Promise<{ ok: boolean; text: string }>;
 }
 
 export interface LoomServerInstance {
@@ -446,6 +453,34 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       return { content: [{ type: 'text' as const, text: `recomputed salience for ${n ?? 0} memories` }] };
     },
   );
+
+  if (config.relay) {
+    const relay = config.relay;
+    server.registerTool(
+      'relay',
+      {
+        description:
+        'Ask another agent in this household something: it wakes a body of theirs in their house ' +
+        'with your words, framed as a peer\'s request (none of the owner\'s authority). Their answer ' +
+        'comes back the same way, as a wake of yours. Only between agents the household pairs; the ' +
+        'same words twice within the hour are refused. Answer a relay with reply_to set to its id.',
+        inputSchema: {
+          to: z.string().describe('The other agent, e.g. "mark"'),
+          say: z.string().describe('What to tell or ask them (2500 characters at most; point at a PR or file for more)'),
+          why: z.string().optional().describe('One line: why you are asking'),
+          reply_to: z.string().optional().describe('The relay id (r-…) this answers'),
+          from: z.string().optional().describe('Where it was asked, e.g. "discord:#workshop", so the answer can go back there'),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      },
+      async ({ to, say, why, reply_to, from }) => {
+        const argv = ['relay', '--to', to, '--say', say,
+          ...(why ? ['--why', why] : []), ...(reply_to ? ['--reply-to', reply_to] : []), ...(from ? ['--from', from] : [])];
+        const r = await relay(argv);
+        return { content: [{ type: 'text' as const, text: r.text }], ...(r.ok ? {} : { isError: true }) };
+      },
+    );
+  }
 
   server.registerTool(
     'memory_archive',

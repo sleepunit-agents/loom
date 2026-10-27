@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`relay`** MCP tool, for a household served over HTTP: ask another agent
+  something. It runs the clock piece's `wake relay` as the session's own
+  agent, so it wakes a body of theirs in their house, and their answer comes
+  back as a wake of yours (t-1597). Only between agents `household.json`'s
+  `relay` list pairs.
+
 - **`memory_recompute_salience`** MCP tool, and `loom memory recompute-salience`
   now runs over the remote CLI. A consolidation lane in a house (Mark's
   continuity, 2026-10-27) was refused it: "has no MCP tool, so it doesn't run
