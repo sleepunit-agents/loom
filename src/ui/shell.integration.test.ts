@@ -133,13 +133,13 @@ describe('the app shell', () => {
     expect(odd).toContain('Nothing matches “&lt;script&gt;”.');
   });
 
-  it('choosing a scope sets it and goes to its home; one that names no agent is the household', async () => {
+  it('an old scope link goes home (or to the agent) and clears the old cookie', async () => {
     const cookie = await login();
     const r = await get('/scope/household', cookie);
     expect([r.status, r.headers.get('location')]).toEqual([303, '/']);
-    expect(r.headers.get('set-cookie')).toMatch(/^loom_scope=household; Path=\/; HttpOnly; SameSite=Strict/);
+    expect(r.headers.get('set-cookie')).toMatch(/^loom_scope=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/);
     const bogus = await get('/scope/nobody', cookie);
-    expect(bogus.headers.get('set-cookie')).toMatch(/^loom_scope=household/);
+    expect(bogus.headers.get('location')).toBe('/');
     expect((await get('/scope/Bad..Name', cookie)).status).not.toBe(303);
   });
 });

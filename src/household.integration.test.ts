@@ -711,8 +711,10 @@ describe('the household page', () => {
     // Activity: a headline, Thread with a pill per agent, each row with its agent's mark.
     expect(html).toContain('<h1 class="display">Everything today</h1>');
     expect(html).toContain('href="/activity?who=mark"');
-    // The Scope sheet: each agent with how long since it was last active, as the board has it.
-    expect(html).toMatch(/href="\/scope\/art"[^>]*>[\s\S]*?<span class="sub">active \d+m ago<\/span>/);
+    // No scope picker (t-1625): the agents are a section of the rail, each to its own pages; Places on a phone says how long since each was active.
+    expect(html).toMatch(/<span class="rail-label">Agents<\/span><a class="rail-link agent-link" href="\/a\/art"><span class="who"><span class="mark"[^>]*>A<\/span><span>Art E Fish<\/span>/);
+    expect(html).not.toContain('class="scope-btn"');
+    expect(html).toMatch(/<a class="link-row" href="\/a\/art"><span class="who">[\s\S]*?<span class="meta">active \d+m ago<\/span>/);
     expect((await (await page(cookie, '/activity?who=mark')).text())).not.toContain('art did a thing');
     // ...and a pill per place it happened, rows saying it the way a person would.
     expect(html).toContain('href="/activity?who=discord"');
@@ -730,9 +732,9 @@ describe('the household page', () => {
     expect(mem).toContain('<h2 class="label">Memories</h2>');
     expect(mem).toContain('href="/a/mark/memory/');
     expect(mem).toContain('<strong>Babylon</strong> scenes');
-    // Scoped to Art, Mark's memory isn't Art's to find.
+    // Find is the household's: an old scope cookie (from before t-1625) narrows nothing.
     const asArt = await fetch(`${base}/find?q=babylon`, { headers: { cookie: `${cookie}; loom_scope=art` } });
-    expect(await asArt.text()).not.toContain('Babylon</strong> scenes');
+    expect(await asArt.text()).toContain('Babylon</strong> scenes');
     // LIKE's wildcards are only themselves.
     expect(await (await page(cookie, '/find?q=%25')).text()).not.toContain('<h2 class="label">Memories</h2>');
   });

@@ -73,7 +73,7 @@ describe('scope', () => {
   }
   const get = async (path: string, cookie: string) => (await fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' })).text();
 
-  it('pieces see the selected agent; one that can\'t narrow says so', async () => {
+  it('pieces are the household\'s on loom\'s pages; an old scope link or cookie changes nothing', async () => {
     const owner = await login();
     // Household: no scope, no line.
     expect(await get('/p/narrow', owner)).toContain('scope=</span>');
@@ -81,18 +81,15 @@ describe('scope', () => {
     // A piece's page says how fresh it is under its title (the script counts it up); loom's own pages don't.
     expect(await get('/p/wide', owner)).toContain('<p class="stamp" data-stamp>updated just now</p>');
     expect(await get('/people', owner)).not.toContain('data-stamp>');
-    // Mark selected.
+    // There's no scope to pick any more (t-1625): an old link goes to the agent's own pages and clears the old cookie,
+    // and a piece's page is the household's whatever cookie a browser still sends.
     const pick = await fetch(`${base}/scope/mark`, { headers: { cookie: owner }, redirect: 'manual' });
-    const both = `${owner}; ${(pick.headers.get('set-cookie') ?? '').split(';')[0]}`;
-    const narrow = await get('/p/narrow', both);
-    expect(narrow).toContain('scope=mark');
-    expect(narrow).not.toContain('class="unscoped"');
-    const wide = await get('/p/wide', both);
-    expect(wide).toContain('scope=mark');
-    expect(wide).toContain("<span>Showing the whole household — this piece can't narrow to Visual Mark.</span></p>");
-    // The manifest is cached per scope: the Places tile follows it.
-    expect(await get('/places', both)).toContain('<span class="pl-stat">scope=mark</span>');
-    expect(await get('/places', owner)).toContain('<span class="pl-stat">scope=</span>');
+    expect(pick.headers.get('location')).toBe('/a/mark');
+    expect(pick.headers.get('set-cookie')).toMatch(/^loom_scope=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/);
+    const old = `${owner}; loom_scope=mark`;
+    expect(await get('/p/narrow', old)).toContain('scope=</span>');
+    expect(await get('/p/wide', old)).not.toContain('class="unscoped"');
+    expect(await get('/places', old)).toContain('<span class="pl-stat">scope=</span>');
   });
 
   it('a list row naming an agent carries its mark; an unknown agent gets none', async () => {
