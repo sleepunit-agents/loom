@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`knowledge_list`** and **`person_evidence`** MCP tools: the CLI's
+  `knowledge list` and `person evidence`, so an agent in a house has them as
+  tools (t-1598). `knowledge_list` is on the full server only, not the
+  commons-only peer scope.
+
 - **`relay`** MCP tool, for a household served over HTTP: ask another agent
   something. It runs the clock piece's `wake relay` as the session's own
   agent, so it wakes a body of theirs in their house, and their answer comes

@@ -29,7 +29,7 @@ export const TOOLS = [
   'knowledge_archive', 'knowledge_restore', 'knowledge_supersede', 'knowledge_move', 'knowledge_merge',
   'knowledge_purge', 'knowledge_verify', 'knowledge_history',
   'person_write', 'person_verify', 'person_archive', 'person_restore',
-  'person', 'person_list', 'person_history', 'person_revision_restore',
+  'person', 'person_list', 'person_history', 'person_revision_restore', 'person_evidence', 'knowledge_list',
 ];
 
 function toolList(prefix: string): string {

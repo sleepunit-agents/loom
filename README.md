@@ -113,6 +113,8 @@ an agent's persistent state:
 - **`knowledge_maintain`** — read-only health report for the knowledge store:
   expansion candidates (thin body + high hit_count), cold pages (not recently
   accessed), and misfile audit (pages that belong in memory instead).
+- **`knowledge_list`** — every active page's freshness fields (no bodies): what
+  a verification sweep picks from, as `loom knowledge list` gives it.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.
@@ -156,7 +158,8 @@ an agent's persistent state:
 
 - **Person cards** — `person_write`, `person_verify`, `person_archive`,
   `person_restore`, `person`, `person_list`, `person_history`,
-  `person_revision_restore`. A card is the condensed current state of one human
+  `person_revision_restore`, `person_evidence` (the tagged memories a card
+  condenses, as `loom person evidence` gives them). A card is the condensed current state of one human
   the agent works with (where they are in each system, with a freshness marker;
   how to work with them; what they were said to be allowed to do, each with a
   source). One value per field, overwritten; the past lives in revisions. Cards
