@@ -261,6 +261,29 @@ export interface RestoreReport {
 
 const PIECE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
 
+/**
+ * Everywhere restore writes after unpacking (the home's own entries, commons/,
+ * each agents/<name>/, pieces/) must be a real file or directory, not a link a
+ * bundle planted to send those writes somewhere else. Links inside an agent's
+ * own directory are its data, copied as they were (copyAgent), and stay.
+ */
+function assertNoLinkedWrites(home: string): void {
+  const check = (p: string) => {
+    if (lstatExists(p)) {
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) throw new BundleError(`the bundle's ${p.slice(home.length + 1)} is a link; refusing to restore through it. Nothing was installed or imported.`);
+      if (!st.isFile() && !st.isDirectory()) throw new BundleError(`the bundle's ${p.slice(home.length + 1)} isn't a file or a directory; refusing it.`);
+    }
+  };
+  for (const e of readdirSync(home)) check(join(home, e));
+  const agents = join(home, 'agents');
+  if (existsSync(agents) && lstatSync(agents).isDirectory()) for (const a of readdirSync(agents)) check(join(agents, a));
+}
+
+function lstatExists(p: string): boolean {
+  try { lstatSync(p); return true; } catch { return false; }
+}
+
 /** pieces/ as unpacked: only the manifest's parts, each a plain file, or the restore stops here. */
 function assertOnlyParts(dir: string, manifest: Manifest): void {
   for (const p of manifest.pieces) if (!PIECE_NAME.test(p.name)) throw new BundleError(`the bundle names a piece ${JSON.stringify(p.name)}; refusing it`);
@@ -303,6 +326,7 @@ export async function restoreBundle(opts: {
   const env = { ...(opts.env ?? process.env), LOOM_HOME: home };
   if (!emptyOrMissing(home)) throw new BundleError(`${home} isn't empty; restore into a new LOOM_HOME (--to), never over a live one`);
   const manifest = unpack(opts.file, opts.identity, home, env);
+  assertNoLinkedWrites(home);
   const h = loadHousehold(home);
   if (!h) throw new BundleError('the bundle has no household.json');
   // A bundle made from a plain context dir still holds whole cards: split them now.
