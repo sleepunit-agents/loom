@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Catalog: tasks at da669f3.** The owner's comment from the page hands the
+  task back to the agents and runs a command (a wake), set by
+  TASKSTORE_ON_OWNER_COMMENT; the owner's comments carry their initial.
 - **loom's mark on the page is the v7 icon,** not the four squares: the
   32px export beside "loom" in the rail and the phone header, the 192px one
   on the sign-in page.
