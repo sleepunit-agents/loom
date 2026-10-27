@@ -780,6 +780,10 @@ describe('the household page', () => {
       expect(reply).toMatch(/<div class="open-page"><section[^>]*>[\s\S]*?Loren is around until 6\./);
       expect(reply).toMatch(/<div class="open-page">[\s\S]*?action="\/act\/gate">[\s\S]*?name="_path" value="loom:inbox\?i=[0-9a-f]{16}"[\s\S]*?>Tonight<\/button>/);
       expect(reply).toContain('<a class="more-link" href="/p/gate/q/1">Open its page</a>');
+      // An item asked for in a folder it isn't in: the folder's own first item is drawn, and no page from the other.
+      const elsewhere = await (await page(cookie, `/inbox?f=fyi&i=${hrefOf(needs, 'Tonight or tomorrow').split('i=')[1]}`)).text();
+      expect(elsewhere).toContain('one joined loom');
+      expect(elsewhere).not.toContain('class="open-page"');
       // An item with buttons of its own (the permission) keeps them, and draws no page.
       expect(push).not.toContain('class="open-page"');
       expect(reply).not.toMatch(/class="msg[^"]* unread"/);
