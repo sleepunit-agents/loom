@@ -186,13 +186,50 @@ Each step ships on its own.
 3. **Agents' bridge settings into shuttle's loom store**: platforms, token
    secrets, channel primaries, shown on each agent's Setup. A migration from
    `shuttle.json` and `routes.json`.
-4. **One shuttle, every agent's connections**: the household's shuttle service
-   holds Art's and Mark's bots, routes by the rules above, and runs bodies as it
-   does today, still in its own house. The Bridges board covers every agent,
+4. **One shuttle, every agent's connections** (after step 5, see "Bodies
+   before the one service"): the household's shuttle service holds Art's and
+   Mark's bots and routes by the rules above; bodies stay in each agent's house. The Bridges board covers every agent,
    and owner scoping applies to it.
 5. **Bodies in the agent's house**: conversations, warm houses, busy-only
    capacity, and slots for continuity. The bridge stops running bodies itself.
 6. **Retire the per-agent bridge houses and files.**
+
+### Bodies before the one service (2026-10-28, building step 4)
+
+Jonathan, terminal, 2026-10-28: "shuttle would just spawn the right body for
+the job. like shuttle itself doesn't host the bodies, it just tells who to wake
+up and response to what."
+
+Step 4 as first written ("runs bodies as it does today, still in its own
+house") would put every agent's bodies in the household's shuttle house: Art's
+bodies beside Mark's repo, Mark's secrets and Mark's bot token. Today each
+agent's bridge is in that agent's own house, so each agent's bodies see only
+its own things. Step 4 alone would undo that. So **step 5 ships first**, while
+each bridge is still in its agent's house, and step 4 then only moves the
+connections:
+
+- **A body host** runs in the agent's house: shuttle's code, as that agent. It
+  takes body requests for its agent from shuttle's store (`bodies`, an `agent`
+  collection: each agent reads and writes only its own), starts each with the
+  local runner (`claude --bg` today), and writes back each body's status
+  (busy, idle, done, its last entry). Follow-ups for a live body go the same
+  way, into its local inbox.
+- **The bridge's runner becomes a remote one**: `start` writes a request,
+  `list`/`working`/`done`/`last_entry` read the statuses the host writes. The
+  core, dispatch and reaper don't change: they already talk to a runner.
+- **Warm house**: when a request has no host to take it (no heartbeat in the
+  last minute), the bridge asks loom-box for a house for that agent
+  (`loom box up --agent a`) with the body host as its task. The host exits
+  after it's had no live body for the idle time; the next request starts a
+  house again (about 10 s).
+- **Continuity**: each conversation's session is kept in the store
+  (`convos`, a piece collection keyed by agent, who and venue); the host
+  restores it before `--resume`. That's how a conversation resumes in whichever
+  house runs next. Slots stay for lanes (one house per slot doesn't fit many
+  conversations in one house).
+
+Then step 4 moves only the connections into the one service, which holds no
+agent's repo or secrets beyond its bot tokens.
 
 ## What the tests must pin
 
