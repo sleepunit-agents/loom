@@ -51,7 +51,7 @@ h1{margin:0;font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.2
 
 .stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0}.stats:has(>.stat:nth-child(3):last-child){grid-template-columns:repeat(3,minmax(0,1fr))}
 .stats.strip{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;margin:0 -16px;padding:0 16px}.stats.strip::-webkit-scrollbar{display:none}.stats.strip .stat{flex:0 0 46%;scroll-snap-align:start}
-@media (min-width:720px){.stats,.stats.strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));overflow:visible;margin:0;padding:0}}
+@media (min-width:720px){.stats,.stats.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));overflow:visible;margin:0;padding:0}}
 .stat{position:relative;background:var(--ground);border-radius:12px;padding:12px 14px;min-height:88px;display:flex;flex-direction:column;gap:2px;min-width:0}
 .card .stat{background:var(--raised)}
 .stat dt{font-size:13px;color:var(--ink-2)}.stat dd{margin:0}.stat .value{font-size:28px;font-weight:600;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stat .value.long{font-size:19px;line-height:1.25;white-space:normal;overflow-wrap:anywhere}
