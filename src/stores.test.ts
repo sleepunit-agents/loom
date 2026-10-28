@@ -3,7 +3,7 @@
  * write it, compare-and-swap, revisions, and the grants loom signs.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mayWrite, mintGrant, parseStoreDecl, PieceStore, readGrant, StoreError, storesDir, type StoreDecl } from './stores.js';
@@ -56,6 +56,24 @@ describe('piece storage', () => {
     expect(st.get('gates', 'loren')!.doc).toEqual({ tier: 1 });
     expect(st.del('gates', 'loren', owner, decl)).toBe(true);
     expect(st.get('gates', 'loren')).toBeNull();
+  });
+
+  it('a history: false collection keeps no revisions, so a deleted document is gone, on disk too', () => {
+    const d: StoreDecl = { ...decl, wire: { writers: 'piece', history: false } };
+    st.put('wire', 'm1', { text: 'a secret said in a DM' }, piece, d);
+    st.put('wire', 'm1', { text: 'a second secret' }, piece, d);
+    expect(st.history('wire', 'm1')).toEqual([]);
+    expect(st.del('wire', 'm1', piece, d)).toBe(true);
+    expect(st.get('wire', 'm1')).toBeNull();
+    expect(st.history('wire', 'm1')).toEqual([]);
+    st.close();
+    const raw = readFileSync(join(storesDir(home), 'shuttle.db')).toString('latin1')
+      + (existsSync(join(storesDir(home), 'shuttle.db-wal')) ? readFileSync(join(storesDir(home), 'shuttle.db-wal')).toString('latin1') : '');
+    expect(raw).not.toContain('a second secret');
+    st = new PieceStore(home, 'shuttle');
+    expect(parseStoreDecl({ wire: { writers: 'piece', history: false } })).toEqual({ wire: { writers: 'piece', history: false } });
+    expect(parseStoreDecl({ wire: { writers: 'piece', history: true } })).toMatch(/history/);
+    expect(parseStoreDecl({ gates: { writers: 'owner', history: false } })).toMatch(/keeps its history/);
   });
 
   it('refuses a document over 256 KB, and bad names', () => {
