@@ -135,18 +135,23 @@ A resumed conversation should feel like the same one, on any box.
 
 ### Who someone is, and what they may do
 
-- **Who a platform id is** (this Slack id is `jonathan-barket`) and **what
-  they may do** (tiers, grants, restricts) move out of `people.json` into
-  loom, in a part only an owner can write: the Members-style owner-only
-  surface owners.md built, not People's `where`.
-- **This reopens notes/decisions/2026-10-21-shuttle-beside-loom.md on its own
-  trigger**: "loom gains a surface that only the operator can write and bodies
-  can't (enforced, not by convention)". Owner-only page actions and the
-  household's settings are now that. Its second trigger, sharing gates across
-  shuttles, is this spec. **Jonathan decides.** The rule that stays: People
-  describes, the gates authorize. An agent-written card never grants anything,
-  and People's `where` handles are not the authority for who an id is.
-- **Gates are per agent**: Loren may be a guest of Art's and trusted by Mark.
+**Jonathan, 2026-10-28:** "shuttle is a loom extension, right? so loom the
+ecosystem can own it just fine. it can still belong to shuttle if that's what
+makes sense. extensions need the ability to store proper data and such."
+
+- **The gates belong to shuttle**: who a platform id is (this Slack id is
+  `jonathan-barket`), and what each person may do with each agent (tiers,
+  grants, restricts). Gates are per agent: Loren may be a guest of Art's and
+  trusted by Mark.
+- **Shuttle keeps them in its loom store** ([piece-storage.md](piece-storage.md)),
+  not in `people.json`: an **owner-written collection**, which a piece can
+  change only while it's acting on an owner's page action. A body, an agent's
+  token, or the piece serving an agent's call can't write it. That's the
+  enforced owner-only surface notes/decisions/2026-10-21-shuttle-beside-loom.md
+  named as its reopen trigger, and this ruling closes that reopen.
+- **People still describes, the gates authorize.** An agent-written card never
+  grants anything, and People's `where` handles are not the authority for who
+  an id is. The gate entry is, keyed by the same slug.
 
 ### Harnesses
 
@@ -168,12 +173,12 @@ Each step ships on its own.
 1. **Measure.** A body's cold start (a new house, then a session) and warm
    start (a session in a running house), on loom and on a remote box. The warm
    pool policy rests on these numbers, not a guess.
-2. **Gates and identities into loom** (once Jonathan rules on the reopen): the
-   owner-only store, its page, and a migration from Art's and Mark's
-   `people.json`. Shuttle reads them through loom.
-3. **Agents' bridge settings into loom**: platforms, token secrets, channel
-   primaries, on each agent's Setup. A migration from `shuttle.json` and
-   `routes.json`.
+2. **Gates and identities into shuttle's loom store** (after piece storage,
+   [piece-storage.md](piece-storage.md)): an owner-written collection, its page
+   (on Bridges), and a migration from Art's and Mark's `people.json`.
+3. **Agents' bridge settings into shuttle's loom store**: platforms, token
+   secrets, channel primaries, shown on each agent's Setup. A migration from
+   `shuttle.json` and `routes.json`.
 4. **One shuttle, every agent's connections**: the household's shuttle service
    holds Art's and Mark's bots, routes by the rules above, and runs bodies as it
    does today, still in its own house. The Bridges board covers every agent,
@@ -200,7 +205,6 @@ Each step ships on its own.
 
 ## Open questions
 
-- **The reopen** (gates into loom's owner-only part): Jonathan's call.
 - **Default warm-idle time and busy limit**, after the measurement in step 1.
 - **One warm house per agent, or a pool per box?** Start with per agent; a
   shared pool only if cold start forces it.
