@@ -38,6 +38,7 @@ Commands:
   token             Mint, list and revoke the household's tokens
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
+  store             A piece's own store in loom: get, list, put, del, history, revert
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> (managed, then PATH)
 (e.g. loom tasks list). Core commands always win. See docs/extensions.md.
@@ -226,6 +227,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'restore': {
       const { runRestore } = await import('./bundle.js');
       return runRestore(rest, io);
+    }
+    case 'store': {
+      const { runStore } = await import('./store.js');
+      return runStore(rest, io);
     }
     default:
       io.stderr(`Subcommand not implemented yet: ${sub}\n`);
