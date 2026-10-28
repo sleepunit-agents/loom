@@ -375,6 +375,11 @@ It declares its collections in its package, with who may write each:
 - **`agent`**: written while serving an agent's call (its grant names the agent), that
   agent's keys only (`<agent>/…`).
 
+Add `"history": false` to a `piece` or `agent` collection to keep no revisions: a
+deleted document is gone, overwritten on disk too. It's for data in flight that must
+not outlive its use, like a message on its way to a body. An `owner` collection always
+keeps its history, since that's how a bad save is undone.
+
 ```bash
 loom store <piece> get <collection> <key>
 loom store <piece> list <collection> [--prefix P] [--limit N]

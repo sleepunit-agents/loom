@@ -13,6 +13,10 @@
  *   piece   the piece's own code, whoever it's serving
  *   agent   an agent's calls through the piece, each agent its own keys (`<agent>/…`)
  *
+ * A collection declared `"history": false` keeps no revisions: what's deleted
+ * is gone (secure_delete overwrites it on disk too). For data in flight that
+ * mustn't outlive its use, like the text of a message on its way to a body.
+ *
  * The grant is what makes `owner` enforced rather than a convention for
  * anything outside loom's own machine (a house, another box): only loom holds
  * the key that signs it. A process running as loom's own user on loom's machine
@@ -33,7 +37,8 @@ const KEEP_REVISIONS = 20;
 const GRANT_TTL_S = 300;
 
 export type Writers = 'owner' | 'piece' | 'agent';
-export type StoreDecl = Record<string, { writers: Writers }>;
+/** `history: false`: a collection that keeps no revisions, so a delete is gone (message text in flight). */
+export type StoreDecl = Record<string, { writers: Writers; history?: false }>;
 
 /** Who's acting: a household owner's page action, the piece itself, or the piece serving an agent. */
 export interface Grant {
@@ -115,6 +120,7 @@ export class PieceStore {
     this.db = new BetterSqlite3(this.path);
     chmodSync(this.path, 0o600);
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('secure_delete = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS docs (collection TEXT NOT NULL, key TEXT NOT NULL, doc TEXT NOT NULL,
         rev INTEGER NOT NULL, updated TEXT NOT NULL, by TEXT NOT NULL, PRIMARY KEY (collection, key));
@@ -165,7 +171,7 @@ export class PieceStore {
       const by = writerOf(g);
       this.db.prepare('INSERT INTO docs (collection, key, doc, rev, updated, by) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (collection, key) DO UPDATE SET doc = excluded.doc, rev = excluded.rev, updated = excluded.updated, by = excluded.by')
         .run(collection, key, text, rev, at, by);
-      this.revision(collection, key, text, rev, 'put', at, by);
+      this.revision(collection, key, text, rev, 'put', at, by, decl);
       return rev;
     })();
   }
@@ -180,7 +186,7 @@ export class PieceStore {
       if (ifRev !== undefined && cur.rev !== ifRev) throw new StoreError(`${collection}/${key} is at revision ${cur.rev}, not ${ifRev}: read it again`, 409);
       const at = new Date(this.now()).toISOString();
       this.db.prepare('DELETE FROM docs WHERE collection = ? AND key = ?').run(collection, key);
-      this.revision(collection, key, null, cur.rev + 1, 'del', at, writerOf(g));
+      this.revision(collection, key, null, cur.rev + 1, 'del', at, writerOf(g), decl);
       return true;
     })();
   }
@@ -201,7 +207,11 @@ export class PieceStore {
     return this.put(collection, key, JSON.parse(r.doc), g, decl);
   }
 
-  private revision(collection: string, key: string, doc: string | null, rev: number, op: 'put' | 'del', at: string, by: string): void {
+  private revision(collection: string, key: string, doc: string | null, rev: number, op: 'put' | 'del', at: string, by: string, decl: StoreDecl): void {
+    if (decl[collection]?.history === false) {
+      this.db.prepare('DELETE FROM revisions WHERE collection = ? AND key = ?').run(collection, key);
+      return;
+    }
     this.db.prepare('INSERT INTO revisions (collection, key, doc, rev, op, at, by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(collection, key, doc, rev, op, at, by);
     // A document keeps its last few revisions: enough to see and undo, not a second copy of everything.
     this.db.prepare(`DELETE FROM revisions WHERE collection = ? AND key = ? AND id NOT IN
@@ -222,10 +232,14 @@ export function parseStoreDecl(v: unknown): StoreDecl | string {
   if (entries.length > 32) return 'loom.store declares at most 32 collections';
   for (const [name, c] of entries) {
     const w = (c as { writers?: unknown } | null)?.writers;
+    const h = (c as { history?: unknown } | null)?.history;
     if (!COLLECTION.test(name) || (w !== 'owner' && w !== 'piece' && w !== 'agent')) {
       return `loom.store.${name}: a collection is lowercase letters, digits and dashes, and its writers are owner, piece or agent`;
     }
-    out[name] = { writers: w };
+    if (h !== undefined && h !== false) return `loom.store.${name}.history: false keeps no revisions; leave it out to keep them`;
+    // An owner collection's history is how a bad save is undone: it always keeps it.
+    if (h === false && w === 'owner') return `loom.store.${name}: an owner collection keeps its history`;
+    out[name] = h === false ? { writers: w, history: false } : { writers: w };
   }
   return out;
 }
