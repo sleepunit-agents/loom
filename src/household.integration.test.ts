@@ -1399,10 +1399,11 @@ esac
     const sessL = store.create(Buffer.alloc(32, 2));
     store.addPushSub(sessJ, subs[0]);
     store.addPushSub(sessL, subs[1], undefined, 'loren');
-    const hears = (member: string | undefined, agent: string | undefined) => member === undefined || (member === 'loren' && agent === 'mark');
+    const hears = (member: string | undefined, a: { agent?: string; open?: boolean }) => member === undefined || (member === 'loren' && a.agent === 'mark' && a.open === true);
     store.markPushed(['~seeded']);  // the first watch only records; this one has run
-    await watch(store, async () => [{ key: 'a1', title: 't', body: 'art', agent: 'art' }, { key: 'a2', title: 't', body: 'mark', agent: 'mark' }, { key: 'a3', title: 't', body: 'house' }],
+    await watch(store, async () => [{ key: 'a1', title: 't', body: 'art', agent: 'art', open: true }, { key: 'a2', title: 't', body: 'mark', agent: 'mark', open: true },
+      { key: 'a3', title: 't', body: 'house' }, { key: 'a4', title: 't', body: 'mark-unscoped', agent: 'mark', open: false }],
       'mailto:t@t', async (sub: { endpoint: string }, payload: string) => { sent.push(`${sub.endpoint.slice(-1)}:${JSON.parse(payload).body}`); return {} as never; }, hears);
-    expect(sent.sort()).toEqual(['j:art', 'j:house', 'j:mark', 'l:mark']);
+    expect(sent.sort()).toEqual(['j:art', 'j:house', 'j:mark', 'j:mark-unscoped', 'l:mark']);
   });
 });

@@ -45,7 +45,11 @@ export function publicKey(store: SessionStore): string {
 }
 
 /** agent: whose it is, so only that agent's owners hear of it (docs/specs/owners.md); none is the household's. */
-export interface Announce { key: string; title: string; body: string; agent?: string }
+export interface Announce {
+  key: string; title: string; body: string; agent?: string;
+  /** Whether an agent owner may hear of it: loom's own, or from a piece that understands agent owners. */
+  open?: boolean;
+}
 
 /**
  * One watch: if this process has it, announce the asks not announced before.
@@ -54,7 +58,7 @@ export interface Announce { key: string; title: string; body: string; agent?: st
  */
 export async function watch(store: SessionStore, asks: () => Promise<Announce[]>, subject: string, send = webpush.sendNotification.bind(webpush),
   /** Whether a device's member may hear of an ask for this agent (none: the household's). Everyone, without it. */
-  hears: (member: string | undefined, agent: string | undefined) => boolean = () => true): Promise<number> {
+  hears: (member: string | undefined, a: Announce) => boolean = () => true): Promise<number> {
   const w = store.takePushWatch(WATCH_S);
   if (!w) return 0;
   const now = await asks();
@@ -67,7 +71,7 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   for (const a of fresh.slice(0, 5)) {
     const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: `/inbox?i=${a.key}` });
     for (const { member, ...sub } of w.subs) {
-      if (!hears(member, a.agent)) continue;
+      if (!hears(member, a)) continue;
       try {
         await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 6 * 3600, urgency: 'high' });
         sent++;

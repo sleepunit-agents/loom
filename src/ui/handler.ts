@@ -418,15 +418,18 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
 export async function pushWatch(opts: UiOptions): Promise<number> {
   const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
   const hh = opts.household?.();
+  // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
+  const ownersOk = new Set((await pieceManifests(opts.env)).pieces.filter((p) => p.manifest.owners === 2).map((p) => pieceSource(p.piece).id));
   // A device hears only of its member's agents; a household ask, only household owners (docs/specs/owners.md).
-  const hears = (member: string | undefined, agent: string | undefined) => {
+  const hears = (member: string | undefined, a: { agent?: string; open?: boolean }) => {
     const m = hh ? (member === undefined ? firstOwner(hh) : memberOf(hh, member)) : undefined;
     if (!hh) return true;
     if (!m) return false;
-    return m.agents === '*' || (agent !== undefined && m.agents.includes(agent));
+    return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
   return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
     key: askKey(a), title: `Your call · ${a.sourceLabel ?? a.source.id}`, body: a.text, ...(a.agent ? { agent: a.agent } : {}),
+    open: a.source.id === CORE.id || ownersOk.has(a.source.id),
   })), subject, undefined, hears);
 }
 
@@ -513,8 +516,9 @@ function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: Piece
   if (!hh) return found;
   const scope = scopeOf(req, hh);
   const f = householdFind(hh, q, scope === 'household' ? hh.agents : [scope]);
-  found.knowledge = f.knowledge.map((k) => ({ label: k.title, href: `/knowledge/${k.slug}` }));
-  found.people = f.people.map((p) => ({ label: p.name, href: `/people/${p.slug}` }));
+  // Knowledge and People are the household's: an agent owner's Find searches their agents' memories only.
+  found.knowledge = opts.ownerScope ? [] : f.knowledge.map((k) => ({ label: k.title, href: `/knowledge/${k.slug}` }));
+  found.people = opts.ownerScope ? [] : f.people.map((p) => ({ label: p.name, href: `/people/${p.slug}` }));
   found.memories = f.memories.map((m) => ({ label: m.title, href: pageHref(`memory/${m.ref}`, agentSource(m.agent)), agent: m.agent }));
   return found;
 }
