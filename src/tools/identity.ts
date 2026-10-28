@@ -8,6 +8,7 @@
  * The response is structured text that the agent incorporates into its context.
  * The agent doesn't need to understand the structure — it just reads and follows.
  */
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadClientAdapter } from '../clients.js';
@@ -17,7 +18,9 @@ import { resolveDefaultContextPath } from '../config.js';
 import { pathSegmentError } from '../path-safety.js';
 import { digestForContext } from '../backends/salience.js';
 import { tapeForContext } from '../backends/episodes.js';
-import { roomBlock } from '../backends/people.js';
+import { PeopleStore, roomBlock } from '../backends/people.js';
+import { commonsPeoplePath } from '../backends/people-household.js';
+import { householdOf } from '../household.js';
 import { readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
 
 async function readOptional(path: string): Promise<string | null> {
@@ -51,6 +54,39 @@ const PEER_CLIENT_ALIASES: Record<string, string> = {
   gemini: 'gemini-cli',
   opencode: 'opencode',
 };
+
+/**
+ * Who this agent belongs to, read from the household's members on every load (not the name
+ * baked in when it was made): each owner's People name and slug, and whether they own the
+ * household or only some of its agents. Null outside a household, or when it can't be read.
+ */
+/** A name as data: one line, no control characters or markdown, at most 80 characters. */
+function plainName(name: unknown): string {
+  return typeof name === 'string' ? name.normalize('NFKC').replace(/[\p{C}\n\r]/gu, ' ').replace(/[`*_#>\[\]<>|~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+}
+
+export function ownersBlock(contextDir: string): string | null {
+  try {
+    const hh = householdOf(contextDir);
+    if (!hh) return null;
+    const mine = hh.household.members.filter((m) => m.agents === '*' || m.agents.includes(hh.agent));
+    if (!mine.length) return null;
+    const path = commonsPeoplePath(hh.household);
+    const dir = existsSync(path) ? new PeopleStore({ dbPath: path, readonly: true }) : null;
+    try {
+      const lines = mine.map((m) => {
+        // A card's name is agent-written text: one plain line here, never markup in an authoritative block.
+        const name = plainName(dir?.getRow(m.person)?.card.name) || m.person;
+        return `- ${name} (\`${m.person}\`): ${m.agents === '*' ? 'owns the household and every agent in it' : `owns ${m.agents.join(', ')}`}`;
+      });
+      return '# Owners\n\nThe people you belong to. Their cards are in People.\n\n' + lines.join('\n');
+    } finally {
+      dir?.close();
+    }
+  } catch {
+    return null;
+  }
+}
 
 export function resolveClientFromPeer(peerName?: string): string | undefined {
   if (!peerName) return undefined;
@@ -117,6 +153,10 @@ export async function loadIdentity(
   if (preferences) {
     parts.push('# Preferences\n\n' + preferences.trim());
   }
+
+  // Owners (docs/specs/owners.md): in a household, the members who own this agent, by name.
+  const owners = ownersBlock(contextDir);
+  if (owners) parts.push(owners);
 
   // Episode tape (t-142) — the short-term cross-body tier: what happened across
   // ALL sleeves in the last 24h, time-ordered and unconditional. Injected right
