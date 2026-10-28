@@ -20,7 +20,7 @@
     {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
-      "commit": "3816290c49a024ed2c6333bd23d1f7417976b6a1",
+      "commit": "f0665a497dc2112a61cb8a12d025e3bebb10a11c",
       "version": "0.1.0",
       "label": "Shuttle",
       "description": "Chat bridges (Discord, Slack) and the household's model subscriptions: accounts, sign-ins, usage."
