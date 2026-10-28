@@ -18,7 +18,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { runToken } from './cli/household.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import {
-  addAgent, commonsKnowledgePath, firstOwner, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
+  addAgent, commonsKnowledgePath, firstOwner, removeMember, setMember, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
   moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
 } from './household.js';
 import BetterSqlite3 from 'better-sqlite3';
@@ -1215,6 +1215,37 @@ esac
       clearPieceCache();
     }
   });
+
+  it('Members: a household owner adds an agent owner, sends her a sign-in link, and removes her (docs/specs/owners.md)', async () => {
+    const cookie = await login();
+    const html = await (await page(cookie, '/members')).text();
+    expect(html).toContain('<h1>Members</h1>');
+    expect(html).toContain('every agent, and the household');
+    expect(html).not.toContain('member-remove');  // the one household owner can't be removed
+    const csrf = csrfOf(html);
+    const act = async (fields: Record<string, string>) => (await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _csrf: csrf, _path: 'members', ...fields }).toString() })).json() as { ok: boolean; message: string };
+    expect(await act({ _action: 'member-set', person: 'nobody', agents: '*' })).toMatchObject({ ok: false });
+    expect(await act({ _action: 'member-set', person: 'loren', agents: 'mark' })).toMatchObject({ ok: true });
+    expect(loadHousehold(h.home)!.members).toEqual([{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }]);
+    // Her link opens a session that sees Mark alone.
+    const link = await act({ _action: 'member-link', person: 'loren' });
+    const code = /\/login\/([A-Za-z0-9_-]+)/.exec(link.message)?.[1] ?? '';
+    // The GET only shows a button (a link preview mustn't spend it); the button posts.
+    const r = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { origin: base } });
+    const hers = (r.headers.get('set-cookie') ?? '').split(';')[0];
+    expect(hers).toMatch(/loom_ui=/);
+    const home = await (await page(hers, '/')).text();
+    expect(home).toContain('<h2>Visual Mark</h2>');
+    expect(home).not.toContain('<h2>Art E Fish</h2>');
+    expect(home).not.toContain('href="/members"');
+    expect((await page(hers, '/members')).status).toBe(403);
+    // Removed: her session stops working.
+    expect(await act({ _action: 'member-remove', person: 'loren' })).toMatchObject({ ok: true });
+    expect((await page(hers, '/')).status).not.toBe(200);
+    expect(await act({ _action: 'member-remove', person: 'jonathan' })).toMatchObject({ ok: false, message: expect.stringMatching(/every agent/) });
+  });
 });
 
 describe('owners: members (docs/specs/owners.md, step 1)', () => {
@@ -1268,6 +1299,25 @@ describe('owners: members (docs/specs/owners.md, step 1)', () => {
     const recs = loadTokens(h.home).filter((t) => !t.revoked);
     expect(recs.map((t) => [t.label, t.member ?? null])).toEqual([['page sign-in links', null], ['page sign-in links · loren', 'loren']]);
     expect(() => signinLink(h, 60, 'ghost')).toThrow(/no member named ghost/);
+  });
+
+  it("a token that names no member stays with its first owner when someone else becomes first; removed, it stops", () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: '*' }] });
+    h = loadHousehold(h.home)!;
+    const old = createToken(h, { role: { kind: 'owner' }, label: 'old page' }).token;
+    signinLink(h, 60);
+    const r = () => new TokenResolver(() => loadHousehold(h.home)!);
+    expect(r().resolve(old)).toEqual({ kind: 'owner', member: 'jonathan-barket' });
+    // Jonathan narrows to mark: Loren is first now, but his old token stays his.
+    setMember(h, 'jonathan-barket', ['mark']);
+    expect(r().resolve(old)).toEqual({ kind: 'owner', member: 'jonathan-barket' });
+    expect(loadTokens(h.home).find((t) => t.label === 'page sign-in links')!.member).toBe('jonathan-barket');
+    // Loren's link (she's first now) is her own, not the household's (still his).
+    signinLink(loadHousehold(h.home)!, 60);
+    expect(loadTokens(h.home).filter((t) => !t.revoked).map((t) => [t.label, t.member])).toContainEqual(['page sign-in links · loren', 'loren']);
+    // Removed: it reaches nothing, rather than passing to Loren.
+    removeMember(loadHousehold(h.home)!, 'jonathan-barket');
+    expect(r().resolve(old)).toBeNull();
   });
 
   it('every member has a People entry', () => {

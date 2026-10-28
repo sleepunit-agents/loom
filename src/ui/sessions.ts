@@ -383,9 +383,14 @@ export const LINK_TOKEN = 'page sign-in links';
 export function signinLink(h: Household, ttlS: number, member?: string): string {
   const m = member === undefined ? firstOwner(h) : memberOf(h, member);
   if (!m) throw new HouseholdError(`no member named ${member} in this household`);
-  const first = m.person === firstOwner(h).person;
-  const label = first ? LINK_TOKEN : `${LINK_TOKEN} · ${m.person}`;
-  let record = loadTokens(h.home).find((t) => t.label === label && !t.revoked && (first ? t.member === undefined || t.member === m.person : t.member === m.person));
-  if (!record) record = createToken(h, { role: { kind: 'owner', ...(first ? {} : { member: m.person }) }, label }).record;
+  const tokens = loadTokens(h.home).filter((t) => !t.revoked && t.role === 'owner');
+  // The household's link token, if it's still this member's (no member: the first owner's); else one of their own.
+  const shared = tokens.find((t) => t.label === LINK_TOKEN);
+  const sharedIsTheirs = shared && (shared.member === undefined ? m.person === firstOwner(h).person : shared.member === m.person);
+  let record = sharedIsTheirs ? shared : tokens.find((t) => t.label === `${LINK_TOKEN} · ${m.person}` && t.member === m.person);
+  if (!record) {
+    const label = !shared && m.person === firstOwner(h).person ? LINK_TOKEN : `${LINK_TOKEN} · ${m.person}`;
+    record = createToken(h, { role: { kind: 'owner', ...(label === LINK_TOKEN ? {} : { member: m.person }) }, label }).record;
+  }
   return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS);
 }

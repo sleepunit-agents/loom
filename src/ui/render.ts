@@ -271,6 +271,8 @@ export interface AgentView { id: string; label: string; bg: string; fg: string; 
 
 export interface Shell {
   owner: string;
+  /** false for an agent owner (docs/specs/owners.md): no Members, no managing pieces. */
+  admin?: boolean;
   /** 'household', or the selected agent's id. */
   scope: string;
   household: boolean;
@@ -374,7 +376,7 @@ function scopeSheetBody(c: Chrome, sh: Shell): string {
 function setupSheetBody(sh: Shell): string {
   const rows = settings(sh).map((p) => `<a class="link-row${p.tone && p.tone !== 'ok' ? tone(p.tone) : ''}" href="${esc(p.href)}"><span class="body"><span class="text">${esc(p.label)}</span>${
     p.stat ? `<span class="meta">${esc(p.stat)}</span>` : ''}</span>${p.tone && p.tone !== 'ok' ? glyph(p.tone) : ''}${CHEVRON}</a>`).join('');
-  return `${rows ? `<div class="card rows">${rows}</div>` : ''}<div class="card rows"><a class="link-row" href="/pieces"><span>Manage pieces</span>${CHEVRON}</a><a class="link-row" href="/passkeys"><span>Passkeys and notifications</span>${CHEVRON}</a></div>`;
+  return `${rows ? `<div class="card rows">${rows}</div>` : ''}<div class="card rows">${sh.admin === false ? '' : `${sh.household ? `<a class="link-row" href="/members"><span>Members</span>${CHEVRON}</a>` : ''}<a class="link-row" href="/pieces"><span>Manage pieces</span>${CHEVRON}</a>`}<a class="link-row" href="/passkeys"><span>Passkeys and notifications</span>${CHEVRON}</a></div>`;
 }
 
 function placesSheetBody(sh: Shell): string {
@@ -411,7 +413,8 @@ function rail(c: Chrome, sh: Shell): string {
     (places(sh).length ? `<span class="rail-label">${sh.household ? 'The house' : 'Pieces'}</span>${places(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` : '') +
     // Setup: what's visited rarely (pieces that say they're settings), and managing the pieces themselves.
     `<span class="rail-label">Setup</span>${settings(sh).map((p) => item(p.href, p.label, p.current, p.tone && p.tone !== 'ok' ? glyph(p.tone) : '')).join('')}` +
-    `<a class="rail-link quiet" href="/pieces">Manage pieces…</a></nav>` +
+    // Members and the pieces are a household owner's (docs/specs/owners.md); an agent owner's rail has neither.
+    (sh.admin === false ? '' : `${sh.household ? `<a class="rail-link quiet" href="/members">Members…</a>` : ''}<a class="rail-link quiet" href="/pieces">Manage pieces…</a>`) + `</nav>` +
     // The owner's own things (passkeys, notifications, signing out) in a menu at the foot, not always in view (Jonathan, 2026-10-27).
     `<details class="account"><summary><span class="mark owner-mark" aria-hidden="true">${esc((sh.owner.trim()[0] ?? '?').toUpperCase())}</span><span class="who">${esc(sh.owner)}</span>${ICON.updown}</summary>` +
     `<div class="account-menu"><a href="/passkeys">Passkeys</a><a href="/passkeys#notifications">Notifications</a>${signOut(c, 'menu-out')}</div></details></aside>`;
@@ -480,7 +483,7 @@ function lit(text: string, q: string): string {
 function findBody(c: Chrome, q: string, found?: Found): string {
   const sh = c.shell!;
   const term = q.trim();
-  const places = [{ label: 'Home', href: sh.home }, ...sh.core, ...sh.pieces, { label: 'Manage pieces', href: '/pieces' }, { label: 'Passkeys', href: '/passkeys' },
+  const places = [{ label: 'Home', href: sh.home }, ...sh.core, ...sh.pieces, ...(sh.admin === false ? [] : [{ label: 'Manage pieces', href: '/pieces' }, ...(sh.household ? [{ label: 'Members', href: '/members' }] : [])]), { label: 'Passkeys', href: '/passkeys' },
     ...sh.agents.filter(() => sh.household).map((a) => ({ label: a.label, href: `/scope/${a.id}` }))];
   const go = [
     ...places.filter((x) => !term || x.label.toLowerCase().includes(term.toLowerCase())).map((x) => ({ html: lit(x.label, term), href: x.href })),

@@ -17,8 +17,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import {
-  addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, revokeToken, setMark,
-  type Household,
+  addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setMark,
+  setMember, type Household, type Member,
 } from '../household.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
@@ -516,6 +516,45 @@ export function newPersonPage(): Page {
   }] }] };
 }
 
+/** Members (docs/specs/owners.md): who owns what, adding or changing one, and a sign-in link for each. A household owner's page. */
+export function householdMembers(h: Household): Page {
+  const dir = directory(h);
+  try {
+    const nameOf = (slug: string) => dir?.getRow(slug)?.card.name ?? slug;
+    const all = h.members.filter((m) => m.agents === '*').length;
+    const owns = (m: Member) => m.agents === '*' ? 'every agent, and the household' : m.agents.map((a) => agentName(agentDir(h, a))).join(', ');
+    const people = (dir?.list() ?? []).filter((p) => kindOf(dir!.getRow(p.slug)?.card ?? { how: {} }) === 'person');
+    return {
+      title: 'Members',
+      intro: 'The people who own this household\'s agents. A household owner owns every agent and the shared things; an agent owner, only their agents.',
+      sections: [
+        { id: 'members', blocks: [{ type: 'list', items: h.members.map((m) => ({
+          text: nameOf(m.person), avatar: initials(nameOf(m.person)), meta: owns(m), page: validPath(`people/${m.person}`) ? `loom:people/${m.person}` : undefined,
+          // The last household owner stays: someone owns the shared things.
+          ...(m.agents === '*' && all === 1 ? {} : { act: { action: 'member-remove', label: 'Remove', tone: 'danger' as const, fields: { person: m.person },
+            confirm: `${nameOf(m.person)} is signed out everywhere, and their tokens stop working.` } }),
+        })) }] },
+        { id: 'links', title: 'Sign-in links', blocks: [
+          { type: 'buttons', items: h.members.map((m) => ({ action: 'member-link', label: `For ${nameOf(m.person)}`, fields: { person: m.person } })) },
+          { type: 'text', tone: 'muted', text: 'One sign-in within 10 minutes, as that member. Send it to them; they can add a passkey once they\'re in.' },
+        ] },
+        { id: 'add', title: 'Add or change a member', blocks: [{
+          type: 'form', action: 'member-set', submit: 'Save',
+          fields: [
+            { name: 'person', label: 'Who', kind: 'choice', required: true, value: '',
+              options: [{ value: '', label: '(pick from People)' }, ...people.map((p) => ({ value: p.slug, label: p.name }))],
+              hint: 'Someone in People. Not there yet? Add them in People first.' },
+            { name: 'agents', label: 'What they own', kind: 'text', required: true, value: '*',
+              hint: `* for every agent and the household, or agents by id, comma-separated: ${h.agents.join(', ')}` },
+          ],
+        }] },
+      ],
+    };
+  } finally {
+    dir?.close();
+  }
+}
+
 export function newFactPage(): Page {
   return { title: 'Add a fact', intro: 'Knowledge is facts about the world, shared by every agent. Every one says where it came from.', sections: [{ id: 'form', blocks: [{
     type: 'form', action: 'fact-add', submit: 'Add',
@@ -573,6 +612,19 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const r = parseRole(t.role);
       const agent = r?.kind === 'agent' ? r.agent : h.default;
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
+    }
+    if (action === 'member-set') {
+      const person = fields.person ?? '';
+      const raw = (fields.agents ?? '').trim();
+      if (!directory(h)?.getRow(person)) return { ok: false, message: 'Pick someone from People.' };
+      const agents = raw === '*' ? '*' as const : raw.split(',').map((a) => a.trim()).filter(Boolean);
+      if (agents !== '*' && !agents.length) return { ok: false, message: 'Say what they own: * or agent ids.' };
+      setMember(h, person, agents);
+      return { ok: true, message: `${person} owns ${agents === '*' ? 'every agent' : agents.join(', ')}.`, page: 'loom:members' };
+    }
+    if (action === 'member-remove') {
+      removeMember(h, fields.person ?? '');
+      return { ok: true, message: `${fields.person} is no longer a member; their tokens stop working at once.`, page: 'loom:members' };
     }
     if (action === 'person-add') {
       const name = (fields.name ?? '').trim();
