@@ -44,14 +44,17 @@ export function publicKey(store: SessionStore): string {
   return store.pushKeys(() => webpush.generateVAPIDKeys()).publicKey;
 }
 
-export interface Announce { key: string; title: string; body: string }
+/** agent: whose it is, so only that agent's owners hear of it (docs/specs/owners.md); none is the household's. */
+export interface Announce { key: string; title: string; body: string; agent?: string }
 
 /**
  * One watch: if this process has it, announce the asks not announced before.
  * The record is kept current whether or not anyone is subscribed, so a new
  * subscription hears what's new from then on, not a backlog.
  */
-export async function watch(store: SessionStore, asks: () => Promise<Announce[]>, subject: string, send = webpush.sendNotification.bind(webpush)): Promise<number> {
+export async function watch(store: SessionStore, asks: () => Promise<Announce[]>, subject: string, send = webpush.sendNotification.bind(webpush),
+  /** Whether a device's member may hear of an ask for this agent (none: the household's). Everyone, without it. */
+  hears: (member: string | undefined, agent: string | undefined) => boolean = () => true): Promise<number> {
   const w = store.takePushWatch(WATCH_S);
   if (!w) return 0;
   const now = await asks();
@@ -63,7 +66,8 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   let sent = 0;
   for (const a of fresh.slice(0, 5)) {
     const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: `/inbox?i=${a.key}` });
-    for (const sub of w.subs) {
+    for (const { member, ...sub } of w.subs) {
+      if (!hears(member, a.agent)) continue;
       try {
         await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 6 * 3600, urgency: 'high' });
         sent++;

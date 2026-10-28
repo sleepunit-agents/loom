@@ -94,6 +94,12 @@ export type Level = 'loom' | 'agent';
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
   scope?: boolean;
+  /**
+   * 2: the piece understands agent owners (docs/specs/owners.md): it reads the caller's
+   * `who` and `agents`, scopes what it shows and refuses what isn't theirs. Without it,
+   * only household owners see the piece at all.
+   */
+  owners?: 2;
   /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages. */
   tab?: { label: string; kind?: 'place' | 'setting'; level?: Level };
   tile?: Tile;
@@ -492,6 +498,10 @@ export function parseManifest(value: unknown): Manifest | string {
     if (top.scope !== undefined) {
       if (typeof top.scope !== 'boolean') throw new Invalid('scope must be true or false');
       if (top.scope) m.scope = true;
+    }
+    if (top.owners !== undefined) {
+      if (top.owners !== 2) throw new Invalid('owners must be 2');
+      m.owners = 2;
     }
     if (top.tab !== undefined) {
       const t = obj(top.tab, 'tab');

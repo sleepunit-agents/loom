@@ -191,6 +191,8 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
 
 /** "Your call" items: managed pieces still missing a required setting. */
 export function piecesAsks(env: NodeJS.ProcessEnv): Ask[] {
+  // Setting a piece up is a household owner's; an agent owner's page doesn't ask them (docs/specs/owners.md).
+  if (env.LOOM_OWNER_SCOPE) return [];
   return managedPieces(env).flatMap((r) => {
     const missing = missingSettings(env, r);
     return missing.length ? [{ text: `Finish setting up ${r.loom.label ?? r.name}`, meta: `needs ${missing.join(', ')}`, page: 'loom:pieces', label: 'Set up' }] : [];
