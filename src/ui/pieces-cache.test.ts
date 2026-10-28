@@ -28,4 +28,14 @@ describe('the manifest cache', () => {
     symlinkSync(join(root, 'v2', 'loom-gizmo'), join(bin, 'loom-gizmo'));
     expect(await value()).toBe('v2');
   });
+
+  it('a piece with only answered items (no tab, tile or asks) still counts', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-cache-'));
+    dirs.push(root);
+    writeFileSync(join(root, 'loom-gate'), `#!/bin/sh\necho '{"v":2,"answered":[{"text":"x","outcome":"Denied.","at":"2026-10-27T20:00:00Z"}]}'\n`);
+    chmodSync(join(root, 'loom-gate'), 0o755);
+    const r = await pieceManifests({ PATH: `${root}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') });
+    expect(r.pieces.map((p) => p.piece)).toContain('gate');
+    expect(r.skipped.map((p) => p.piece)).not.toContain('gate');
+  });
 });

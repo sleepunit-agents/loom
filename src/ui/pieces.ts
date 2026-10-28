@@ -206,7 +206,9 @@ export async function pieceManifests(
   const installed = listPieces(env).filter((p) => p.name !== 'loom');
   const results = await Promise.all(installed.map((p) => manifestFor(p.name, p.path, env, nowMs)));
   const pieces = results.filter((r): r is PieceInfo => 'manifest' in r);
-  const empty = pieces.filter((p) => !p.manifest.tab && !p.manifest.tile && !p.manifest.asks.length && !p.manifest.legacy?.length);
+  // A piece with only Inbox history (notices, answered) or readings for the agents' cards has something to show.
+  const empty = pieces.filter((p) => !p.manifest.tab && !p.manifest.tile && !p.manifest.asks.length && !p.manifest.legacy?.length
+    && !p.manifest.notices?.length && !p.manifest.answered?.length && !Object.keys(p.manifest.agents ?? {}).length);
   return {
     pieces: pieces.filter((p) => !empty.includes(p)),
     skipped: [...results.filter((r): r is PieceSkip => 'reason' in r), ...empty.map((p) => ({ piece: p.piece, reason: 'nothing to show' }))],
