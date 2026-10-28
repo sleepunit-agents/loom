@@ -1,6 +1,6 @@
 # Piece storage: an extension's data lives in loom
 
-*2026-10-28. Status: **proposed**. Jonathan, terminal: "shuttle is a loom
+*2026-10-28. Status: **accepted** (Jonathan, terminal, 2026-10-28: "send em"). Jonathan, terminal: "shuttle is a loom
 extension, right? so loom the ecosystem can own it just fine. it can still
 belong to shuttle if that's what makes sense. extensions need the ability to
 store proper data and such." With notes/decisions/2026-10-28-loom-owns-the-data.md

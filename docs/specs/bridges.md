@@ -1,6 +1,6 @@
 # Bridges: one shuttle for the household, a conversation as the unit
 
-*2026-10-28. Status: **proposed**. Jonathan, terminal: "imagine this. magical
+*2026-10-28. Status: **accepted** (Jonathan, terminal, 2026-10-28: "send em"). Jonathan, terminal: "imagine this. magical
 future loom is running on its box, and loom-shuttle is running there with it,
 and the slack bridge is enabled. its running there, on the loom box, once
 instance. a message comes in from slack... it goes oh ok, this is for: agent
