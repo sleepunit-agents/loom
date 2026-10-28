@@ -60,6 +60,11 @@ const PEER_CLIENT_ALIASES: Record<string, string> = {
  * baked in when it was made): each owner's People name and slug, and whether they own the
  * household or only some of its agents. Null outside a household, or when it can't be read.
  */
+/** A name as data: one line, no control characters or markdown, at most 80 characters. */
+function plainName(name: unknown): string {
+  return typeof name === 'string' ? name.normalize('NFKC').replace(/[\p{C}\n\r]/gu, ' ').replace(/[`*_#>\[\]<>|~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+}
+
 export function ownersBlock(contextDir: string): string | null {
   try {
     const hh = householdOf(contextDir);
@@ -70,7 +75,8 @@ export function ownersBlock(contextDir: string): string | null {
     const dir = existsSync(path) ? new PeopleStore({ dbPath: path, readonly: true }) : null;
     try {
       const lines = mine.map((m) => {
-        const name = dir?.getRow(m.person)?.card.name ?? m.person;
+        // A card's name is agent-written text: one plain line here, never markup in an authoritative block.
+        const name = plainName(dir?.getRow(m.person)?.card.name) || m.person;
         return `- ${name} (\`${m.person}\`): ${m.agents === '*' ? 'owns the household and every agent in it' : `owns ${m.agents.join(', ')}`}`;
       });
       return '# Owners\n\nThe people you belong to. Their cards are in People.\n\n' + lines.join('\n');
