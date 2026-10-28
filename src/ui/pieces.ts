@@ -18,6 +18,7 @@
  * Install only pieces you'd trust with the daemon itself.
  */
 import { spawn } from 'node:child_process';
+import { realpathSync, statSync } from 'node:fs';
 import { listPieces } from '../cli/pieces.js';
 import { pieceEnvFor } from '../cli/pieces-managed.js';
 import { parseActResult, parseManifest, parsePage, type ActResult, type Manifest, type Page } from './vocab.js';
@@ -173,9 +174,21 @@ async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv
   return typeof m === 'string' ? { piece, reason: `invalid: ${m}` } : { piece, path, manifest: m };
 }
 
+/** Where a piece's path leads, and when that file last changed: what makes its answer a new one. */
+function resolved(path: string): string {
+  try {
+    const real = realpathSync(path);
+    return `${real}\0${statSync(real).mtimeMs}`;
+  } catch {
+    return '';
+  }
+}
+
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
-  // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately.
-  const key = `${path}\0${env.LOOM_SCOPE ?? ''}`;
+  // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately. And per the file
+  // the path resolves to now: an install points pieces/bin/loom-<name> at a new version, which is a new
+  // answer at once, not 45s later (t-1584).
+  const key = `${path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(path)}`;
   const hit = cache.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
   // Cache the promise itself: concurrent page loads share one run.
@@ -193,7 +206,9 @@ export async function pieceManifests(
   const installed = listPieces(env).filter((p) => p.name !== 'loom');
   const results = await Promise.all(installed.map((p) => manifestFor(p.name, p.path, env, nowMs)));
   const pieces = results.filter((r): r is PieceInfo => 'manifest' in r);
-  const empty = pieces.filter((p) => !p.manifest.tab && !p.manifest.tile && !p.manifest.asks.length && !p.manifest.legacy?.length);
+  // A piece with only Inbox history (notices, answered) or readings for the agents' cards has something to show.
+  const empty = pieces.filter((p) => !p.manifest.tab && !p.manifest.tile && !p.manifest.asks.length && !p.manifest.legacy?.length
+    && !p.manifest.notices?.length && !p.manifest.answered?.length && !Object.keys(p.manifest.agents ?? {}).length);
   return {
     pieces: pieces.filter((p) => !empty.includes(p)),
     skipped: [...results.filter((r): r is PieceSkip => 'reason' in r), ...empty.map((p) => ({ piece: p.piece, reason: 'nothing to show' }))],
