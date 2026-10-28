@@ -375,6 +375,20 @@ function hasPages(p: PieceInfo): boolean {
   return Boolean(p.manifest.tab || p.manifest.legacy?.length);
 }
 
+/** On the household's pages: a tab that isn't only each agent's. */
+function householdTab(p: PieceInfo): boolean {
+  return hasPages(p) && p.manifest.tab?.level !== 'agent';
+}
+
+/** The tab a piece puts on each agent's own pages, if any: agentTab, or a tab whose level is 'agent'. */
+function agentTabOf(p: PieceInfo): { label: string } | undefined {
+  if (p.manifest.agentTab) return p.manifest.agentTab;
+  return p.manifest.tab?.level === 'agent' ? { label: p.manifest.tab.label } : undefined;
+}
+
+/** A piece's pages as one agent's: links and actions stay under /a/<agent>/. */
+const agentPieceSource = (agent: string, piece: string): Source => ({ id: piece, base: `/a/${agent}/p/${piece}/`, act: `/a/${agent}/act/${piece}` });
+
 /** Agent marks: an initial on a color; colors differ in lightness, not just hue (the design's rule). */
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 
@@ -400,9 +414,12 @@ function agentsOf(h: Household | undefined): Record<string, { label: string; bg:
 
 const HOME_THREAD = 30;
 
-function agentTabs(agent: string, current: string): AgentHead['tabs'] {
-  // People are the household's (the nav has them), so an agent's own pages are its day, its mind and how it runs.
-  return [['Today', ''], ['Mind', 'mind'], ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
+function agentTabs(agent: string, current: string, pieces: PieceInfo[] = []): AgentHead['tabs'] {
+  // People are the household's (the nav has them), so an agent's own pages are its day, its mind and how it runs,
+  // then each piece's tab for it (its clock, its bridges), before Setup.
+  const own = pieces.flatMap((p) => { const t = agentTabOf(p); return t ? [[t.label, `p/${p.piece}`]] : []; })
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return [['Today', ''], ['Mind', 'mind'], ...own, ['Setup', 'setup']].map(([label, tab]) => ({ label, href: tab ? `/a/${agent}/${tab}` : `/a/${agent}`, current: tab === current }));
 }
 
 /** Your call, everywhere: the household's proposals and every piece's asks (or a lone agent's). For the push watch. */
@@ -591,11 +608,11 @@ function scopeOf(_req: IncomingMessage, _h: Household | undefined): string {
 }
 
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
-  const tabs = pieces.filter(hasPages)
+  const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
     .sort((a, b) => a.label.localeCompare(b.label));
   const kinds = catalogKinds();
-  const places = pieces.filter(hasPages)
+  const places = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value,
       kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place' }))
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -895,12 +912,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const hh = opts.household?.();
-  const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/loom$/.exec(pathname) : null;
+  const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/(loom|[a-z][a-z0-9-]{0,39})$/.exec(pathname) : null;
   if (pathname.startsWith('/act/') || agentAct) {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
     if (agentAct && !hh!.agents.includes(agentAct[1])) return send(res, 404, 'text/plain', 'not found');
-    const sourceId = agentAct ? 'loom' : pathname.slice('/act/'.length);
+    const sourceId = agentAct ? agentAct[2] : pathname.slice('/act/'.length);
     if (sourceId !== 'loom' && !ID.test(sourceId)) return send(res, 404, 'text/plain', 'not found');
     const form = await readForm(req, ACT_MAX_BYTES);
     if (!form) return send(res, 413, 'text/plain', 'too large');
@@ -924,7 +941,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (Object.keys(fields).length > LIMITS.fields + LIMITS.hidden) return send(res, 400, 'text/plain', 'too many fields');
     let source: Source;
     let result: ActResult;
-    if (agentAct) {
+    if (agentAct && agentAct[2] !== 'loom') {
+      // A piece's action from its tab on this agent's pages: called with LOOM_SCOPE=<agent>, landing back there.
+      const pieces = forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope);
+      const info = pieces.find((p) => p.piece === agentAct[2] && agentTabOf(p));
+      if (!info) return send(res, 404, 'text/plain', 'not found');
+      source = agentPieceSource(agentAct[1], info.piece);
+      const sp = splitPage(backLink);
+      const path = sp && !sp.core ? sp.path : '';
+      result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+    } else if (agentAct) {
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
@@ -1165,7 +1191,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const scoped = pieces.filter((p) => p.manifest.scope);
         const d: Dashboard = {
           label: agents[agent].label,
-          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '') },
+          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces) },
           asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
@@ -1174,7 +1200,21 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         return html(renderDashboard(d, { ...ctxOf('', src), agents }, chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash), nowMs));
       }
       // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
-      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab) });
+      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces) });
+      // A piece's tab for this agent: its pages, called with LOOM_SCOPE=<agent>, links and actions kept here.
+      const pp = /^p\/([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(rest);
+      if (pp) {
+        const info = pieces.find((p) => p.piece === pp[1] && agentTabOf(p));
+        const path = pp[2] ?? '';
+        const asrc = agentPieceSource(agent, pp[1]);
+        if (!info || !validPath(path)) return send200(notFound, `a/${agent}`, ctxOf('', asrc), head(`p/${pp[1]}`));
+        const pg = await piecePage(info, path, query, scopedEnv, callerOf(who));
+        if (typeof pg === 'string') {
+          return send200({ title: agentTabOf(info)!.label, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${pp[1]} couldn't show this page (${pg}).` }] }] },
+            `a/${agent}`, ctxOf(path, asrc), head(`p/${pp[1]}`));
+        }
+        return send200(pg, `a/${agent}`, ctxOf(path, asrc), head(`p/${pp[1]}`));
+      }
       if (rest === 'setup') return send200(agentSetup(hh, agent, { ownerTokens: !opts.ownerScope }), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
       return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src), page && (rest === 'mind' || rest === 'people') ? head(rest) : undefined);

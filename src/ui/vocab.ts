@@ -102,6 +102,12 @@ export interface Manifest {
   owners?: 2;
   /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages. */
   tab?: { label: string; kind?: 'place' | 'setting'; level?: Level };
+  /**
+   * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
+   * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
+   * mostly each agent's (a clock's schedules) with a little of the household's (its own lanes).
+   */
+  agentTab?: { label: string };
   tile?: Tile;
   asks: Ask[];
   notices?: Notice[];
@@ -508,6 +514,10 @@ export function parseManifest(value: unknown): Manifest | string {
       if (t.kind !== undefined && t.kind !== 'place' && t.kind !== 'setting') throw new Invalid('tab.kind must be place or setting');
       const lv = level(t.level, 'tab.level');
       m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}) };
+    }
+    if (top.agentTab !== undefined) {
+      const t = obj(top.agentTab, 'agentTab');
+      m.agentTab = { label: str(t.label, 'agentTab.label') };
     }
     if (top.tile !== undefined) {
       const t = obj(top.tile, 'tile');

@@ -199,6 +199,8 @@ describe('the manifest for Home and the Inbox (t-1618)', () => {
 
   it('a tab or a section says whether it is the household\'s or an agent\'s', () => {
     expect(ok({ v: 2, tab: { label: 'Clock', level: 'agent' } }).tab).toEqual({ label: 'Clock', level: 'agent' });
+    expect(ok({ v: 2, tab: { label: 'Clock' }, agentTab: { label: 'Clock' } }).agentTab).toEqual({ label: 'Clock' });
+    expect(typeof parseManifest({ v: 2, agentTab: { label: {} } })).toBe('string');
     expect(typeof parseManifest({ v: 2, tab: { label: 'Clock', level: 'everyone' } })).toBe('string');
     const p = parsePage({ title: 'Clock', sections: [{ id: 'wakes', level: 'agent', blocks: [] }] });
     expect(typeof p === 'string' ? p : p.sections[0].level).toBe('agent');
