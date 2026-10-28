@@ -1,6 +1,6 @@
 # Agents in People: the directory is everyone, not only humans
 
-*2026-10-28. Status: **proposed** (Jonathan, terminal: "please do, and then go
+*2026-10-28. Status: **accepted** (Jonathan, terminal: "please do, and then go
 ahead and grind on them"). A companion to [owners.md](owners.md): both change
 what a directory entry is, so they land together. It extends
 [household.md](household.md), "The commons". t-1650.*

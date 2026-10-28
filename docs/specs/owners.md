@@ -1,6 +1,6 @@
 # Owners: a household's people, and which agents each one owns
 
-*2026-10-28. Status: **proposed**. Jonathan's calls on the open points (terminal,
+*2026-10-28. Status: **accepted** (Jonathan, terminal: "this is good as is"). His calls on the open points (terminal,
 2026-10-28): two kinds of owner, yes; with several owners on one agent the first
 answer wins; an agent owner asks for household things rather than granting them;
 a view-only role later. A design doc in the `docs/specs/` sense: it says what
