@@ -685,7 +685,7 @@ export function renderDashboard(d: Dashboard, ctx: RenderContext, chrome: Chrome
   const shared = d.shared
     ? `<section class="shared"><h2 class="label">Shared</h2><div class="card rows"><a class="link-row" href="/knowledge"><span><span>Knowledge</span><span class="domain">${d.shared.pages.toLocaleString('en-US')} facts</span></span>${CHEVRON}</a>` +
       `<a class="link-row" href="/people"><span><span>People</span><span class="domain">${d.shared.people} cards</span></span>${CHEVRON}</a></div></section>` : '';
-  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}${starters}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
+  const body = `${shellOpen(chrome)}<main class="dash${d.agent ? ' today' : ''}">${flash(chrome)}${head}${yours}${starters}<div class="dash-cols"><div class="dash-main">${glance ? `<div class="glance-phone">${glance}</div>` : ''}${thread}</div><aside class="dash-side">${glance}${shared}</aside></div></main>${shellClose(chrome, '')}`;
   return document(d.label, body, true);
 }
 
@@ -897,6 +897,7 @@ export function renderHouseHome(d: HouseHome, ctx: RenderContext, chrome: Chrome
         `<div class="starter"><span class="body"><span class="text">${esc(s.label)}</span><span class="meta">${esc(s.what)}</span></span>${
           actionForm({ ...ctx, source: CORE, path: '', query: {} }, 'piece-install', `${hiddenInputs({ name: s.name })}<button class="btn small" type="submit">Install</button>`, 'button-form')}</div>`).join('')}</div></section>` : '';
   const body = `${shellOpen(chrome)}<main class="dash house-home">${flash(chrome)}${head}${starters}${needLine}<section class="agents"><h2 class="label">Agents</h2><div class="agent-cards">${cards}</div></section>${moving}</main>` +
-    `${shellClose(chrome, '<footer><span data-live-status>Refreshes every minute.</span></footer>')}`;
+    // Its live status is in the header (head-live); a second in the footer said it twice.
+    `${shellClose(chrome, '')}`;
   return document('Home', body, true);
 }
