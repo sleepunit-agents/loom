@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { parseManifest, parsePage } from './vocab.js';
-import { renderDashboard, renderPage, CORE, type Chrome } from './render.js';
+import { renderDashboard, renderPage, CORE, type Chrome, renderHouseHome } from './render.js';
 import { whereLabel } from './data.js';
 import { identityFacts } from './household-pages.js';
 
@@ -62,8 +62,16 @@ describe('meter, code and status blocks', () => {
     const html = renderDashboard({ label: 'Household', asks: [], thread: [], tiles: [
       { label: 'Work', value: '19 in progress', source: CORE }, { label: 'Boxes', value: '1 box', source: CORE }] }, ctx, chrome);
     expect(html).toContain('<span class="head-live" data-live-status></span></header>');
+    // Once: the footer doesn't say it again.
+    expect(html.match(/<span[^>]*data-live-status/g)).toHaveLength(1);
     expect(html).toContain('<span class="value long">19 in progress</span>');
     expect(html).toContain('<span class="value">1 box</span>');
+  });
+
+  it('the house Home says it is live once, in its head', () => {
+    const html = renderHouseHome({ headline: "Everyone's fine", needs: 0, cards: [], moving: [] }, ctx, chrome);
+    expect(html).toContain('<span class="head-live" data-live-status></span></header>');
+    expect(html.match(/<span[^>]*data-live-status/g)).toHaveLength(1);
   });
 
   it('Your call shows three cards; past four, the rest fold under N more', () => {
