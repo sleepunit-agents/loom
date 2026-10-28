@@ -24,7 +24,9 @@ import {
 import BetterSqlite3 from 'better-sqlite3';
 import { parsePage } from './ui/vocab.js';
 import { resolveKnowledgeDbPath } from './config.js';
-import { commonsPeoplePath, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
+import { commonsPeoplePath, ensureAgentEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
+import { householdPeople, householdPerson } from './ui/household-pages.js';
+import { agentName } from './ui/core.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
 import { personArchive, personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
 import { remember } from './tools/remember.js';
@@ -657,6 +659,64 @@ describe('the commons: people', () => {
     // And not onto an archived card.
     await personArchive(art(), { slug: loren.slug, reason: 'test' });
     expect(await personRevisionRestore(art(), { slug: loren.slug, revision_id: pre.id })).toMatch(/archived/);
+  });
+
+  describe('agents in People (docs/specs/agents-in-people.md)', () => {
+    const names = (a: string) => agentName(join(h.home, 'agents', a));
+
+    it('every household agent gets an entry, kind agent, once', () => {
+      expect(ensureAgentEntries(h, names)).toEqual(['art', 'mark']);
+      expect(ensureAgentEntries(h, names)).toEqual([]);
+      const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), readonly: true });
+      try {
+        expect(dir.getRow('mark')!.card).toMatchObject({ name: 'Visual Mark', how: { kind: 'agent' } });
+        expect(dir.getRow('art')!.card).toMatchObject({ name: 'Art E Fish', how: { kind: 'agent' } });
+        expect(dir.history('mark')[0]?.actor ?? 'loom').toBe('loom');
+      } finally { dir.close(); }
+    });
+
+    it("a household agent's entry stays an agent's; another agent's can be one by an ordinary write", async () => {
+      ensureAgentEntries(h, names);
+      expect(await personWrite(art(), { slug: 'mark', how: { kind: 'person' } })).toMatch(/one of this household's agents/);
+      expect(await personWrite(art(), { slug: 'mark', how: { kind: null } })).toMatch(/one of this household's agents/);
+      expect(await personWrite(art(), { slug: 'mark', name: 'Visual Mark', merge: false })).not.toMatch(/^Error/);
+      const m = readPerson(art(), 'mark');
+      if (!('card' in m)) throw new Error('mark should have an entry');
+      expect(m.card.how.kind).toBe('agent');
+      expect(await personWrite(art(), { slug: 'gabe', name: 'Gabe', how: { kind: 'agent', via: 'jonathan-barket' } })).not.toMatch(/^Error/);
+      expect(await personWrite(art(), { slug: 'robot', name: 'Robot', how: { kind: 'droid' } })).toMatch(/person or agent/);
+      expect(await personWrite(art(), { slug: 'robot', name: 'Robot', how: { via: 'Not A Slug' } })).toMatch(/how\.via/);
+    });
+
+    it("Art's card for Mark is Art's relationship: Mark never reads it", async () => {
+      ensureAgentEntries(h, names);
+      expect(await personWrite(mark(), { slug: 'art', summary: 'Art runs the house.' })).not.toMatch(/^Error/);
+      expect(await personWrite(art(), { slug: 'mark', summary: 'Mark reviews my PRs; terse, fast.', how: { mode: 'peer' } })).not.toMatch(/^Error/);
+      const a = readPerson(art(), 'mark');
+      const m = readPerson(mark(), 'mark');
+      if (!('card' in a) || !('card' in m)) throw new Error('both read the entry');
+      expect(a.card.summary).toBe('Mark reviews my PRs; terse, fast.');
+      expect(m.card.summary).toBeUndefined();
+      expect(m.card.how.mode).toBeUndefined();
+    });
+
+    it('People shows everyone, filters by kind, and links an agent to its pages', async () => {
+      ensureAgentEntries(h, names);
+      expect(await personWrite(art(), { slug: loren.slug, name: loren.name, where: loren.where })).not.toMatch(/^Error/);
+      expect(await personWrite(art(), { slug: 'mark', summary: 'Reviews my PRs.' })).not.toMatch(/^Error/);
+      const texts = (q: Record<string, string>) => (householdPeople(h, q).sections[0].blocks[1] as { items: Array<{ text: string; meta?: string }> }).items;
+      expect(texts({}).map((i) => i.text).sort()).toEqual(['Art E Fish', 'Loren Clawitter', 'Visual Mark']);
+      expect(texts({ kind: 'agents' }).map((i) => i.text).sort()).toEqual(['Art E Fish', 'Visual Mark']);
+      expect(texts({ kind: 'people' }).map((i) => i.text)).toEqual(['Loren Clawitter']);
+      expect(texts({}).find((i) => i.text === 'Visual Mark')!.meta).toBe('agent in this household · known to Art E Fish');
+      const page = householdPerson(h, 'mark');
+      expect(JSON.stringify(page)).toContain('loom:a/mark');
+      const knows = page.sections.find((s) => s.id === 'agents')!;
+      expect(knows.title).toBe('How each agent knows it');
+      expect(JSON.stringify(knows)).not.toContain('"agent":"mark"');
+      // A person's entry doesn't say kind person.
+      expect(JSON.stringify(householdPerson(h, loren.slug))).not.toContain('"label":"kind"');
+    });
   });
 });
 
