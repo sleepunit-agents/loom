@@ -18,6 +18,7 @@
  * Install only pieces you'd trust with the daemon itself.
  */
 import { spawn } from 'node:child_process';
+import { realpathSync, statSync } from 'node:fs';
 import { listPieces } from '../cli/pieces.js';
 import { pieceEnvFor } from '../cli/pieces-managed.js';
 import { parseActResult, parseManifest, parsePage, type ActResult, type Manifest, type Page } from './vocab.js';
@@ -173,9 +174,21 @@ async function fetchManifest(piece: string, path: string, env: NodeJS.ProcessEnv
   return typeof m === 'string' ? { piece, reason: `invalid: ${m}` } : { piece, path, manifest: m };
 }
 
+/** Where a piece's path leads, and when that file last changed: what makes its answer a new one. */
+function resolved(path: string): string {
+  try {
+    const real = realpathSync(path);
+    return `${real}\0${statSync(real).mtimeMs}`;
+  } catch {
+    return '';
+  }
+}
+
 function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs: number): Promise<ManifestResult> {
-  // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately.
-  const key = `${path}\0${env.LOOM_SCOPE ?? ''}`;
+  // A piece narrowed to an agent (LOOM_SCOPE) answers per scope: cache each separately. And per the file
+  // the path resolves to now: an install points pieces/bin/loom-<name> at a new version, which is a new
+  // answer at once, not 45s later (t-1584).
+  const key = `${path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(path)}`;
   const hit = cache.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
   // Cache the promise itself: concurrent page loads share one run.
