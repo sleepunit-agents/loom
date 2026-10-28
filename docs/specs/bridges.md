@@ -196,6 +196,10 @@ Each step ships on its own.
 
 ### Bodies before the one service (2026-10-28, building step 4)
 
+Jonathan, terminal, 2026-10-28: "shuttle would just spawn the right body for
+the job. like shuttle itself doesn't host the bodies, it just tells who to wake
+up and response to what."
+
 Step 4 as first written ("runs bodies as it does today, still in its own
 house") would put every agent's bodies in the household's shuttle house: Art's
 bodies beside Mark's repo, Mark's secrets and Mark's bot token. Today each
