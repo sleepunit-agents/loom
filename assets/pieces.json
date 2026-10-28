@@ -4,7 +4,7 @@
     {
       "name": "box",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "037066a76f9c6e5ecf6353024b3c8de9d6480d26",
+      "commit": "2d8324d347f1b7f18161962ca13c7f71b8984b23",
       "version": "0.1.0",
       "label": "Boxes",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -12,7 +12,7 @@
     {
       "name": "secrets",
       "repo": "sleepunit-agents/loom-secrets",
-      "commit": "980d70541ed2f2bde95e17d21bf271c263448660",
+      "commit": "57564e8ac5d3df5fc63f3f8fc97a23392e7bdf50",
       "version": "0.1.0",
       "label": "Secrets",
       "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
