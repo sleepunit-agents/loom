@@ -29,6 +29,7 @@ import { resolveKnowledgeDbPath } from './config.js';
 import { commonsPeoplePath, ensureAgentEntries, ensureMemberEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
 import { householdPeople, householdPerson } from './ui/household-pages.js';
 import { agentName } from './ui/core.js';
+import { loadIdentity, ownersBlock } from './tools/identity.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
 import { personArchive, personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
 import { remember } from './tools/remember.js';
@@ -1318,6 +1319,18 @@ describe('owners: members (docs/specs/owners.md, step 1)', () => {
     // Removed: it reaches nothing, rather than passing to Loren.
     removeMember(loadHousehold(h.home)!, 'jonathan-barket');
     expect(r().resolve(old)).toBeNull();
+  });
+
+  it("an agent's identity names the members who own it, by their People names", async () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }] });
+    h = loadHousehold(h.home)!;
+    ensureMemberEntries(h);
+    const markOwners = ownersBlock(join(h.home, 'agents', 'mark'))!;
+    expect(markOwners).toContain('- Jonathan Barket (`jonathan-barket`): owns the household and every agent in it');
+    expect(markOwners).toContain('- Loren (`loren`): owns mark');
+    expect(ownersBlock(join(h.home, 'agents', 'art'))).not.toContain('loren');
+    const id = await loadIdentity(join(h.home, 'agents', 'mark'));
+    expect(id).toContain('# Owners');
   });
 
   it('every member has a People entry', () => {
