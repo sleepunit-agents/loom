@@ -25,6 +25,16 @@ describe('meter, code and status blocks', () => {
     expect(html).not.toContain('+ 1 more field');
   });
 
+  it('a long list of plain choices is a dropdown; a short one stays radios', () => {
+    const opts = (n: number) => Array.from({ length: n }, (_, i) => ({ value: `p${i}`, label: `Person ${i}` }));
+    const long = page([{ type: 'form', action: 'pick', submit: 'Save', fields: [{ name: 'who', label: 'Who', kind: 'choice', value: 'p3', options: opts(12) }] }]);
+    const html = renderPage(long as Exclude<typeof long, string>, ctx, chrome);
+    expect(html).toMatch(/<select id="[^"]+" name="who">/);
+    expect(html).toContain('<option value="p3" selected>Person 3</option>');
+    const short = page([{ type: 'form', action: 'pick', submit: 'Save', fields: [{ name: 'who', label: 'Who', kind: 'choice', options: opts(6) }] }]);
+    expect(renderPage(short as Exclude<typeof short, string>, ctx, chrome)).not.toContain('<select');
+  });
+
   it('a list row may carry one action, inline, that asks first when it is danger', () => {
     const p = page([{ type: 'list', items: [{ text: 'laptop', meta: 'used 3 days ago', act: { action: 'revoke', label: 'Revoke', tone: 'danger', confirm: 'Signed out at once.', fields: { label: 'laptop' } } }] }]);
     const html = renderPage(p as Exclude<typeof p, string>, ctx, chrome);
