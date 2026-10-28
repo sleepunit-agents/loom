@@ -343,6 +343,13 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
     // An agent's own entry: its pages are a tap away, and it isn't listed as knowing itself.
     const own = h.agents.includes(slug);
     if (own) sections.push({ id: 'agent', blocks: [{ type: 'list', items: [{ agent: slug, text: `${d.card.name}'s pages`, meta: 'Today, Mind and Setup', page: agentLink(slug) }] }] });
+    // A member's entry says what they own (docs/specs/owners.md).
+    const member = h.members.find((m) => m.person === slug);
+    if (member) {
+      sections.push({ id: 'owns', title: 'Owns', blocks: [{ type: 'list', items: member.agents === '*'
+        ? [{ text: 'The household, and every agent in it', meta: 'household owner', page: 'loom:members' }]
+        : member.agents.map((a) => ({ agent: a, text: agentName(agentDir(h, a)), meta: 'agent owner', page: agentLink(a) })) }] });
+    }
     sections.push({ id: 'agents', title: own || kindOf(d.card) === 'agent' ? 'How each agent knows it' : 'How each agent knows them', blocks: [{
       type: 'list',
       items: h.agents.filter((a) => a !== slug).map((a) => {
