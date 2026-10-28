@@ -4,8 +4,8 @@
  * rendered as data: every string escaped.
  */
 import { describe, it, expect } from 'vitest';
-import { parseManifest, parsePage } from './vocab.js';
-import { renderDashboard, renderPage, CORE, type Chrome, renderHouseHome } from './render.js';
+import { parseManifest, parsePage, splitPage } from './vocab.js';
+import { pageHref, renderDashboard, renderPage, CORE, type Chrome, renderHouseHome } from './render.js';
 import { whereLabel } from './data.js';
 import { identityFacts } from './household-pages.js';
 
@@ -199,6 +199,17 @@ describe('the manifest for Home and the Inbox (t-1618)', () => {
 
   it('a tab or a section says whether it is the household\'s or an agent\'s', () => {
     expect(ok({ v: 2, tab: { label: 'Clock', level: 'agent' } }).tab).toEqual({ label: 'Clock', level: 'agent' });
+    expect(ok({ v: 2, tab: { label: 'Clock' }, agentTab: { label: 'Clock' } }).agentTab).toEqual({ label: 'Clock' });
+    expect(typeof parseManifest({ v: 2, agentTab: { label: {} } })).toBe('string');
+    // A piece links to its own pages on an agent's tab, or the household's: never another piece's.
+    expect(splitPage('agent:art')).toMatchObject({ core: false, path: '', agent: 'art' });
+    expect(splitPage('agent:art/schedule/art/x?y=1')).toMatchObject({ path: 'schedule/art/x', agent: 'art', query: { y: '1' } });
+    expect(splitPage('household:lane/x')).toMatchObject({ path: 'lane/x', household: true });
+    expect(splitPage('agent:art/loom:pieces')).toBeNull();
+    expect(splitPage('agent:Bad')).toBeNull();
+    expect(pageHref('agent:mark/next', { id: 'wake', base: '/p/wake/' })).toBe('/a/mark/p/wake/next');
+    expect(pageHref('household:lane/x', { id: 'wake', base: '/a/art/p/wake/' })).toBe('/p/wake/lane/x');
+    expect(pageHref('agent:mark', { id: 'loom', base: '/' })).toBe('#');
     expect(typeof parseManifest({ v: 2, tab: { label: 'Clock', level: 'everyone' } })).toBe('string');
     const p = parsePage({ title: 'Clock', sections: [{ id: 'wakes', level: 'agent', blocks: [] }] });
     expect(typeof p === 'string' ? p : p.sections[0].level).toBe('agent');

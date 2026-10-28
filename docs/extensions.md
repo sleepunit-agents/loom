@@ -140,6 +140,16 @@ that ignores it keeps working. Outside a household there's no `caller`.
   tab on the household's pages. `"agent"` puts it on each agent's own pages,
   where the piece is called with `LOOM_SCOPE` set. A page's section may carry
   the same `level` when it's about one agent within a household page.
+- **`agentTab`** (`{ "label": "Clock" }`) puts a tab on each agent's own pages
+  too, beside Today, Mind and Setup: served at `/a/<agent>/p/<piece>/<path>`,
+  the piece called with `LOOM_SCOPE=<agent>`, its links and actions staying
+  under that agent (`/a/<agent>/act/<piece>`). For a piece whose things are
+  mostly each agent's with a little of the household's (a clock: each agent's
+  schedule, and loom's own lanes). The household's rule (2026-10-28): what's
+  shaped like a list of agents belongs to each agent, not the household. A link on such a page can reach the
+  piece's own pages elsewhere: `agent:<id>[/<path>]` (this piece's tab on that
+  agent's pages) and `household:<path>` (this piece's household pages). Never
+  another piece's.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
 - **`owners`** (optional, `2`): the piece understands agent owners

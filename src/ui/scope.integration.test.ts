@@ -32,6 +32,25 @@ esac
   chmodSync(join(dir, `loom-${name}`), 0o755);
 }
 
+/** A stand-in piece with tabs of its own: its manifest, page and act answers carry LOOM_SCOPE. */
+function tabbed(dir: string, name: string, manifest: object) {
+  writeFileSync(join(dir, `${name}.manifest.json`), JSON.stringify({ v: 2, scope: true, ...manifest }));
+  writeFileSync(join(dir, `${name}.page.json`), JSON.stringify({ title: name, sections: [{ id: 's', blocks: [
+    { type: 'text', text: 'scope=@SCOPE@' }, { type: 'link', text: 'next', page: 'next' },
+    { type: 'form', action: 'poke', submit: 'Poke', fields: [] }] }] }));
+  writeFileSync(join(dir, `${name}.act.json`), JSON.stringify({ ok: true, message: 'poked scope=@SCOPE@', page: 'done' }));
+  writeFileSync(join(dir, `loom-${name}`), `#!/bin/sh
+d=$(dirname "$0")
+case "$1 $2" in
+"ui --json") sed "s/@SCOPE@/$LOOM_SCOPE/" "$d/${name}.manifest.json" ;;
+"ui page") cat >/dev/null; sed "s/@SCOPE@/$LOOM_SCOPE/" "$d/${name}.page.json" ;;
+"ui act") cat >/dev/null; sed "s/@SCOPE@/$LOOM_SCOPE/" "$d/${name}.act.json" ;;
+*) exit 2 ;;
+esac
+`);
+  chmodSync(join(dir, `loom-${name}`), 0o755);
+}
+
 describe('scope', () => {
   let home: string;
   let handle: HttpServeHandle;
@@ -50,6 +69,10 @@ describe('scope', () => {
     mkdirSync(bin);
     piece(bin, 'narrow', true);
     piece(bin, 'wide', false);
+    // Both: the household's lanes on its tab, each agent's schedule on that agent's pages.
+    tabbed(bin, 'clocky', { tab: { label: 'Clocky' }, agentTab: { label: 'Clocky' } });
+    // Only each agent's.
+    tabbed(bin, 'bridgy', { tab: { label: 'Bridgy', level: 'agent' } });
     for (const k of ['PATH', 'LOOM_HOME', 'XDG_CONFIG_HOME', 'LOOM_SCOPE']) saved[k] = process.env[k];
     process.env.PATH = [bin, '/usr/bin', '/bin'].join(delimiter);
     process.env.LOOM_HOME = join(home, 'managed');
@@ -90,6 +113,29 @@ describe('scope', () => {
     expect(await get('/p/narrow', old)).toContain('scope=</span>');
     expect(await get('/p/wide', old)).not.toContain('class="unscoped"');
     expect(await get('/places', old)).toContain('<span class="pl-stat">scope=</span>');
+  });
+
+  it("a piece's agent tab is on each agent's pages, called for that agent, its links and actions kept there", async () => {
+    const owner = await login();
+    const places = await get('/places', owner);
+    expect(places).toContain('href="/p/clocky"');
+    expect(places).not.toContain('href="/p/bridgy"');   // only each agent's: not the household's
+    const today = await get('/a/mark', owner);
+    expect(today).toContain('href="/a/mark/p/clocky"');
+    expect(today).toContain('href="/a/mark/p/bridgy"');
+    const page = await get('/a/mark/p/bridgy', owner);
+    expect(page).toContain('scope=mark');
+    expect(page).toContain('href="/a/mark/p/bridgy/next"');
+    expect(page).toContain('action="/a/mark/act/bridgy"');
+    expect(await get('/a/mark/p/wide', owner)).toContain('Not found');   // no agent tab: not here
+    // An action from mark's page: the piece is called for mark and lands back under mark.
+    const form = /name="_csrf" value="([^"]+)"/.exec(page)![1];
+    const res = await fetch(`${base}/a/mark/act/bridgy`, { method: 'POST', redirect: 'manual',
+      headers: { cookie: owner, origin: base, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ _csrf: form, _action: 'poke', _path: '' }).toString() });
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toMatch(/^\/a\/mark\/p\/bridgy\/done\?_flash=/);
+    expect((await fetch(`${base}/a/nobody/act/bridgy`, { method: 'POST', headers: { cookie: owner, origin: base } })).status).toBe(404);
   });
 
   it('a list row naming an agent carries its mark; an unknown agent gets none', async () => {

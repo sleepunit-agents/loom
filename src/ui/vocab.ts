@@ -102,6 +102,12 @@ export interface Manifest {
   owners?: 2;
   /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages. */
   tab?: { label: string; kind?: 'place' | 'setting'; level?: Level };
+  /**
+   * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
+   * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
+   * mostly each agent's (a clock's schedules) with a little of the household's (its own lanes).
+   */
+  agentTab?: { label: string };
   tile?: Tile;
   asks: Ask[];
   notices?: Notice[];
@@ -232,8 +238,19 @@ function name(v: unknown, what: string): string {
  * A page link: `[loom:]<path>[?<query>]`. Split into the source (loom's own or
  * this piece's), the path and the query, or null when it isn't valid.
  */
-export function splitPage(s: string): { core: boolean; path: string; query: Record<string, string> } | null {
+export function splitPage(s: string): { core: boolean; path: string; query: Record<string, string>; agent?: string; household?: true } | null {
   const core = s.startsWith('loom:');
+  // This piece's own pages elsewhere: `agent:<id>[/path]` on that agent's tab, `household:<path>` on the household's.
+  // Never another piece's: the piece is always the one whose page the link is on.
+  const ag = /^agent:([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(s);
+  if (ag) {
+    const inner = splitPage(ag[2] ?? '');
+    return inner && !inner.core ? { ...inner, agent: ag[1] } : null;
+  }
+  if (s.startsWith('household:')) {
+    const inner = splitPage(s.slice('household:'.length));
+    return inner && !inner.core ? { ...inner, household: true } : null;
+  }
   const rest = core ? s.slice(5) : s;
   const q = rest.indexOf('?');
   const path = q === -1 ? rest : rest.slice(0, q);
@@ -508,6 +525,10 @@ export function parseManifest(value: unknown): Manifest | string {
       if (t.kind !== undefined && t.kind !== 'place' && t.kind !== 'setting') throw new Invalid('tab.kind must be place or setting');
       const lv = level(t.level, 'tab.level');
       m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}) };
+    }
+    if (top.agentTab !== undefined) {
+      const t = obj(top.agentTab, 'agentTab');
+      m.agentTab = { label: str(t.label, 'agentTab.label') };
     }
     if (top.tile !== undefined) {
       const t = obj(top.tile, 'tile');
