@@ -112,9 +112,15 @@ A piece takes part by answering up to three commands. Each one is optional.
 
 ```bash
 loom-<piece> ui --json                # the manifest: tab, Home tile, asks
-loom-<piece> ui page --json           # stdin {"path": "...", "query": {...}} → one page
-loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "fields": {...}} → a result
+loom-<piece> ui page --json           # stdin {"path": "...", "query": {...}, "caller": {...}} → one page
+loom-<piece> ui act --json            # stdin {"action": "...", "path": "...", "fields": {...}, "caller": {...}} → a result
 ```
+
+In a household, `caller` says who is looking or acting:
+`{"kind": "owner", "who": "jonathan-barket", "agents": "*"}`, the member and
+what they own ([specs/owners.md](specs/owners.md)). A piece records `who` as
+whoever decided (`by: "jonathan-barket"`), rather than a bare "owner". A piece
+that ignores it keeps working. Outside a household there's no `caller`.
 
 ### The manifest
 
@@ -312,7 +318,9 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
 ```
 
 - **loom authenticates, the piece authorizes.** The caller is what the bearer
-  resolved to: `{"kind": "owner"}`, `{"kind": "agent", "agent": "art"}`
+  resolved to: `{"kind": "owner", "who": "<member>", "agents": "*"}` (the
+  household member and what they own, [specs/owners.md](specs/owners.md); a
+  piece that only checks `kind` keeps working), `{"kind": "agent", "agent": "art"}`
   (with `"service": "slack"` when it's a service house's token, and
   `"house": "h-104"` when it's a house's: role `agent:art/slack@h-104`. A piece
   can then tell the agent's bridge from its other bodies, or grant one house

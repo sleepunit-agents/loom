@@ -79,6 +79,9 @@ function parseMembers(raw: Record<string, unknown>, agents: string[], path: stri
     if (a !== '*' && !(Array.isArray(a) && a.length > 0 && a.every((x) => typeof x === 'string' && agents.includes(x)))) {
       throw bad(`${r.person}'s agents is "*" or a list of this household's agents`);
     }
+    // Agent owners arrive with core's scoping (owners.md, "Moving there" step 2): until loom limits
+    // what a member with a list can reach, such a member would reach everything, so none loads.
+    if (a !== '*') throw bad(`${r.person} owns only some agents, and loom doesn't scope an owner to their agents yet; give "*" for now`);
     return { person: r.person, role: 'owner' as const, agents: a === '*' ? '*' as const : [...new Set(a as string[])] };
   });
   // There's always a household owner: someone owns the shared things.

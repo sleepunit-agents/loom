@@ -18,13 +18,14 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { runToken } from './cli/household.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import {
-  addAgent, commonsKnowledgePath, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
+  addAgent, commonsKnowledgePath, firstOwner, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
   moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
 } from './household.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { parsePage } from './ui/vocab.js';
+import { signinLink } from './ui/sessions.js';
 import { resolveKnowledgeDbPath } from './config.js';
-import { commonsPeoplePath, ensureAgentEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
+import { commonsPeoplePath, ensureAgentEntries, ensureMemberEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
 import { householdPeople, householdPerson } from './ui/household-pages.js';
 import { agentName } from './ui/core.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
@@ -82,7 +83,7 @@ describe('household files', () => {
   it('a revoke takes effect on the next resolve, even from another resolver already warm', () => {
     const { token } = createToken(h, { role: { kind: 'owner' }, label: 'page' });
     const r = new TokenResolver(h);
-    expect(r.resolve(token)).toEqual({ kind: 'owner' });
+    expect(r.resolve(token)).toEqual({ kind: 'owner', member: 'jonathan' });
     revokeToken(h, 'page');
     expect(r.resolve(token)).toBeNull();
     expect(loadTokens(h.home)[0].revoked).toBeTruthy();
@@ -92,7 +93,7 @@ describe('household files', () => {
     const { token } = createToken(h, { role: { kind: 'owner' }, label: 'page' });
     const before = readFileSync(join(h.home, 'tokens.json'), 'utf-8');
     const r = new TokenResolver(h);
-    expect(r.resolve(token)).toEqual({ kind: 'owner' });
+    expect(r.resolve(token)).toEqual({ kind: 'owner', member: 'jonathan' });
     expect(readFileSync(join(h.home, 'tokens.json'), 'utf-8')).toBe(before);
     expect(loadTokens(h.home)[0].last_used).toBeTruthy();
     revokeToken(h, 'page');
@@ -1179,5 +1180,101 @@ describe('the household page', () => {
     const db = new BetterSqlite3(join(markDir, 'memories.db'), { readonly: true });
     expect((db.prepare('SELECT archived FROM memories WHERE ref = ?').get(r) as { archived: number }).archived).toBe(1);
     db.close();
+  });
+
+  it("a piece's page and its actions are told who the member is (docs/specs/owners.md)", async () => {
+    const bin = join(h.home, 'bin');
+    mkdirSync(bin);
+    const seen = join(bin, 'seen');
+    const vault = JSON.stringify({ title: 'Vault', sections: [{ id: 's', blocks: [{ type: 'buttons', items: [{ action: 'poke', label: 'Poke' }] }] }] });
+    writeFileSync(join(bin, 'loom-vault'), `#!/bin/sh
+case "$1 $2" in
+  "ui --json") echo '${JSON.stringify({ v: 2, tab: { label: 'Vault' }, asks: [] })}' ;;
+  "ui page") cat >> '${seen}'; echo >> '${seen}'; echo '${vault}' ;;
+  "ui act") cat >> '${seen}'; echo >> '${seen}'; echo '{"ok":true,"message":"Done.","page":""}' ;;
+  *) exit 2 ;;
+esac
+`);
+    chmodSync(join(bin, 'loom-vault'), 0o755);
+    const saved = process.env.PATH;
+    process.env.PATH = [bin, saved].join(':');
+    clearPieceCache();
+    try {
+      const cookie = await login();
+      const html = await (await page(cookie, '/p/vault')).text();
+      expect(html).toContain('<h1>Vault</h1>');
+      const res = await post(cookie, '/act/vault', { _csrf: csrfOf(html), _action: 'poke', _path: '' });
+      expect(res.status).toBe(303);
+      const [viewed, acted] = readFileSync(seen, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
+      const jonathan = { kind: 'owner', who: 'jonathan', agents: '*' };
+      expect(viewed).toMatchObject({ path: '', caller: jonathan });
+      expect(acted).toMatchObject({ action: 'poke', path: '', caller: jonathan });
+    } finally {
+      process.env.PATH = saved;
+      clearPieceCache();
+    }
+  });
+});
+
+describe('owners: members (docs/specs/owners.md, step 1)', () => {
+  let h: Household;
+  beforeEach(() => { h = makeHousehold(); });
+  afterEach(() => rmSync(h.home, { recursive: true, force: true }));
+  const write = (raw: Record<string, unknown>) => writeFileSync(join(h.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', ...raw }));
+
+  it('a household with only "owner" has that one household owner; members replaces it', () => {
+    expect(loadHousehold(h.home)!.members).toEqual([{ person: 'jonathan', role: 'owner', agents: '*' }]);
+    write({ owner: 'jonathan', members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: '*' }] });
+    const got = loadHousehold(h.home)!;
+    expect(got.members.map((m) => m.person)).toEqual(['jonathan-barket', 'loren']);
+    expect(firstOwner(got).person).toBe('jonathan-barket');
+  });
+
+  it('refuses members that would leave nobody owning everything, repeat a person, or scope an owner before core can', () => {
+    for (const [members, why] of [
+      [[], /non-empty/],
+      [[{ person: 'Not A Slug', role: 'owner', agents: '*' }], /People slug/],
+      [[{ person: 'pat', role: 'viewer', agents: '*' }], /role is owner/],
+      [[{ person: 'pat', role: 'owner', agents: '*' }, { person: 'pat', role: 'owner', agents: '*' }], /twice/],
+      [[{ person: 'pat', role: 'owner', agents: ['ghost'] }], /household's agents/],
+      [[{ person: 'pat', role: 'owner', agents: ['mark'] }], /doesn't scope an owner/],
+    ] as const) {
+      write({ members });
+      expect(() => loadHousehold(h.home), JSON.stringify(members)).toThrow(why);
+    }
+  });
+
+  it("an owner token is its member's; one naming none is the first household owner's; a departed member's reaches nothing", () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: '*' }] });
+    h = loadHousehold(h.home)!;
+    const plain = createToken(h, { role: { kind: 'owner' }, label: 'old' }).token;
+    const loren = createToken(h, { role: { kind: 'owner', member: 'loren' }, label: 'loren · page' }).token;
+    expect(() => createToken(h, { role: { kind: 'owner', member: 'ghost' }, label: 'x' })).toThrow(/no member named ghost/);
+    let r = new TokenResolver(() => loadHousehold(h.home)!);
+    expect(r.resolve(plain)).toEqual({ kind: 'owner', member: 'jonathan-barket' });
+    expect(r.resolve(loren)).toEqual({ kind: 'owner', member: 'loren' });
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }] });
+    r = new TokenResolver(() => loadHousehold(h.home)!);
+    expect(r.resolve(loren)).toBeNull();
+    expect(r.resolve(plain)).toEqual({ kind: 'owner', member: 'jonathan-barket' });
+  });
+
+  it("a sign-in link opens its member's session: the first owner's on the household's link token, another's on their own", () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: '*' }] });
+    h = loadHousehold(h.home)!;
+    signinLink(h, 60);
+    signinLink(h, 60, 'loren');
+    const recs = loadTokens(h.home).filter((t) => !t.revoked);
+    expect(recs.map((t) => [t.label, t.member ?? null])).toEqual([['page sign-in links', null], ['page sign-in links · loren', 'loren']]);
+    expect(() => signinLink(h, 60, 'ghost')).toThrow(/no member named ghost/);
+  });
+
+  it('every member has a People entry', () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }] });
+    h = loadHousehold(h.home)!;
+    expect(ensureMemberEntries(h)).toEqual(['jonathan-barket']);
+    expect(ensureMemberEntries(h)).toEqual([]);
+    const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), readonly: true });
+    try { expect(dir.getRow('jonathan-barket')!.card.name).toBe('Jonathan Barket'); } finally { dir.close(); }
   });
 });
