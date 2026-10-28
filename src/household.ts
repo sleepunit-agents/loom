@@ -488,16 +488,20 @@ export function moveKnowledgeToCommons(h: Household, agent: string): string | nu
  * agent added while a daemon runs is served without a restart. Keeps the
  * last good copy if the file is briefly unreadable mid-write.
  */
-export function liveHousehold(initial: Household): () => Household {
+export function liveHousehold(initial: Household, onChange?: (h: Household) => void): () => Household {
   let current = initial;
   let key = '';
+  // The first read counts as a change: whatever onChange keeps up to date is done at start too.
   return () => {
     try {
       const st = statSync(join(initial.home, HOUSEHOLD_FILE));
       const k = `${st.ino}:${st.size}:${st.mtimeMs}`;
       if (k !== key) {
         const next = loadHousehold(initial.home);
-        if (next) { current = next; key = k; }
+        if (next) {
+          current = next; key = k;
+          try { onChange?.(next); } catch { /* the household still serves */ }
+        }
       }
     } catch { /* keep the last good one */ }
     return current;
