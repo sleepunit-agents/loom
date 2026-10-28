@@ -49,7 +49,8 @@ import { readRecord } from '../cli/pieces-managed.js';
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
-import { hasUnsplitPeople } from '../backends/people-household.js';
+import { ensureAgentEntries, hasUnsplitPeople } from '../backends/people-household.js';
+import { agentName } from '../ui/core.js';
 import { agentDir, assertRealAgentDir, commonsProblem, liveHousehold, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
@@ -221,7 +222,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
   }
   // Read fresh on each use: an agent added from the page is served at once.
-  const live = household ? liveHousehold(household) : undefined;
+  // Every agent has a directory entry (docs/specs/agents-in-people.md), at start and when one is added.
+  const live = household ? liveHousehold(household, (h) => {
+    const wrote = ensureAgentEntries(h, (a) => agentName(agentDir(h, a)));
+    if (wrote.length) process.stderr.write(`loom: made directory entries for ${wrote.join(', ')} (agents in People)\n`);
+  }) : undefined;
+  live?.();
   const resolver = live ? new TokenResolver(live) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
 

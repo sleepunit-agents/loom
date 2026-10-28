@@ -1018,7 +1018,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const slug = decode(pathname.slice('/knowledge/'.length));
       return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
     }
-    if (pathname === '/people') return send200(householdPeople(hh), 'people', ctxOf('people'));
+    if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));

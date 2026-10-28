@@ -20,7 +20,7 @@ import {
   addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, revokeToken, setMark,
   type Household,
 } from '../household.js';
-import { commonsPeoplePath } from '../backends/people-household.js';
+import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { bootstrap } from '../tools/bootstrap.js';
@@ -279,24 +279,31 @@ function initials(name: string): string | undefined {
   return out || undefined;
 }
 
-export function householdPeople(h: Household): Page {
+const PEOPLE_KINDS = [{ value: '', label: 'Everyone' }, { value: 'people', label: 'People' }, { value: 'agents', label: 'Agents' }];
+
+export function householdPeople(h: Household, query: Record<string, string | undefined> = {}): Page {
   const dir = directory(h);
   if (!dir) return { title: 'People', intro: 'Nobody in the directory yet.', sections: [], add: NEW_PERSON };
   try {
-    const list = dir.list();
+    // The directory is everyone: people and agents (docs/specs/agents-in-people.md).
+    const show = query.kind === 'agents' || query.kind === 'people' ? query.kind : '';
+    const kinds = new Map(dir.list().map((p) => [p.slug, kindOf(dir.getRow(p.slug)?.card ?? { how: {} })]));
+    const list = dir.list().filter((p) => !show || (kinds.get(p.slug) === 'agent') === (show === 'agents'));
     return {
       title: 'People',
       add: NEW_PERSON,
-      intro: 'One entry per person, shared by every agent: who they are and where to reach them. Each agent keeps its own relationship with them.',
-      sections: [{ id: 'everyone', blocks: [{
+      intro: 'One entry for each person and agent, shared by every agent: who they are and where to reach them. Each agent keeps its own relationship with them.',
+      sections: [{ id: 'everyone', blocks: [{ type: 'filters', param: 'kind', options: PEOPLE_KINDS }, {
         type: 'list',
         items: list.map((p) => {
-          const rel = relationships(h, p.slug).map((r) => r.name);
+          const rel = relationships(h, p.slug).filter((r) => r.agent !== p.slug).map((r) => r.name);
+          const isAgent = kinds.get(p.slug) === 'agent';
           const flag = [p.stale ? `${p.stale} stale` : '', p.unverified ? `${p.unverified} unverified` : ''].filter(Boolean).join(' · ');
           return {
             text: p.name,
             avatar: initials(p.name),
-            meta: rel.length ? `known to ${rel.join(', ')}` : 'no agent has a relationship yet',
+            meta: [isAgent ? (h.agents.includes(p.slug) ? 'agent in this household' : 'agent') : '',
+              rel.length ? `known to ${rel.join(', ')}` : 'no agent has a relationship yet'].filter(Boolean).join(' · '),
             badge: flag || undefined,
             tone: flag ? 'warn' as const : undefined,
             page: validPath(`people/${p.slug}`) ? `loom:people/${p.slug}` : undefined,
@@ -327,14 +334,18 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
     const d = dir.getRow(slug);
     if (!d) return { title: 'Not found', sections: [] };
     const where = Object.entries(d.card.where ?? {}).sort(([a], [b]) => a.localeCompare(b));
-    const facts = Object.entries(d.card.how ?? {});
+    // kind: person is the default, so a person's entry doesn't say it.
+    const facts = Object.entries(d.card.how ?? {}).filter(([k, v]) => !(k === 'kind' && v === 'person'));
     const history = dir.history(slug).slice(0, 12);
     const sections: Section[] = [];
     // The board's order: how each agent knows them (every agent, met or not), then how to reach them.
     const rels = new Map(relationships(h, slug).map((r) => [r.agent, r]));
-    sections.push({ id: 'agents', title: 'How each agent knows them', blocks: [{
+    // An agent's own entry: its pages are a tap away, and it isn't listed as knowing itself.
+    const own = h.agents.includes(slug);
+    if (own) sections.push({ id: 'agent', blocks: [{ type: 'list', items: [{ agent: slug, text: `${d.card.name}'s pages`, meta: 'Today, Mind and Setup', page: agentLink(slug) }] }] });
+    sections.push({ id: 'agents', title: own || kindOf(d.card) === 'agent' ? 'How each agent knows it' : 'How each agent knows them', blocks: [{
       type: 'list',
-      items: h.agents.map((a) => {
+      items: h.agents.filter((a) => a !== slug).map((a) => {
         const r = rels.get(a);
         if (!r) return { agent: a, text: 'Hasn\'t met them' };
         const how = Object.entries(r.row.card.how ?? {}).map(([k, v]) => `${k}: ${value(v)}`).join(' · ');
@@ -446,6 +457,8 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions = {}):
           ...(born ? [{ label: 'Born', value: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: tz }).format(new Date(born)) }] : []),
           { label: 'Harnesses', value: harnesses.join(', ') || 'none' },
         ] },
+        // Its entry in People: where to reach it, and how every other agent knows it.
+        { type: 'list', items: [{ text: 'Its entry in People', meta: 'where to reach it, and how the other agents know it', page: validPath(`people/${agent}`) ? `loom:people/${agent}` : undefined }] },
         ...(facts.bio ? [{ type: 'text' as const, text: facts.bio.slice(0, 1900) }] : []),
         identity.trim()
           ? { type: 'details', summary: 'The whole creed', meta: 'read-only: the agent changes it (update_identity), or it\'s changed by hand', blocks: identitySections(identity) }
