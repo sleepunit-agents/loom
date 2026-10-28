@@ -100,6 +100,14 @@ The scaling answer is to separate houses from conversations:
   second house when the first is full; an idle agent has none.
 - **The house is stopped after it's been idle a while** (no live body for N
   minutes), and started again on the next message.
+- **Measured 2026-10-28** (Art's repo, notes/bridges/2026-10-28-body-start.md):
+  a cold house is running about 10 s after it's asked for (12.0 s, 9.3 s, on
+  loom's box with the image cached); a session's process in a warm house starts
+  in about 0.1 s. Everything after that (the session loading, the model
+  answering) is the same either way. So a warm house saves about 10 s on a
+  conversation's first message: keep it warm while a conversation is active and
+  for a few minutes after, and let a new conversation after a quiet spell pay
+  the 10 s once. A shared pool only if remote boxes prove much slower.
 - Sixty agents, mostly idle, are a handful of houses at any moment, not 120.
 
 ### Capacity is squishy, not a hard cap
@@ -170,9 +178,8 @@ repo the same way.
 
 Each step ships on its own.
 
-1. **Measure.** A body's cold start (a new house, then a session) and warm
-   start (a session in a running house), on loom and on a remote box. The warm
-   pool policy rests on these numbers, not a guess.
+1. **Measure.** Done on loom's box (above); a remote box (`one`) still to
+   measure before the defaults are settled.
 2. **Gates and identities into shuttle's loom store** (after piece storage,
    [piece-storage.md](piece-storage.md)): an owner-written collection, its page
    (on Bridges), and a migration from Art's and Mark's `people.json`.
@@ -205,6 +212,6 @@ Each step ships on its own.
 
 ## Open questions
 
-- **Default warm-idle time and busy limit**, after the measurement in step 1.
+- **Default warm-idle time and busy limit**, once `one` is measured too.
 - **One warm house per agent, or a pool per box?** Start with per agent; a
   shared pool only if cold start forces it.
