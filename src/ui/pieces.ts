@@ -221,12 +221,14 @@ export async function piecePage(
   path: string,
   query: Record<string, string>,
   env: NodeJS.ProcessEnv,
+  /** Who's looking (docs/specs/owners.md): the member, beside the path and query. */
+  caller?: ApiCaller,
 ): Promise<Page | string> {
   // A first-version piece has one page: its sections.
   if (info.manifest.legacy) {
     return path === '' ? { title: info.piece, sections: info.manifest.legacy } : { title: 'Not found', sections: [] };
   }
-  const r = await ask(info.path, ['ui', 'page', '--json'], env, { stdin: JSON.stringify({ path, query }) });
+  const r = await ask(info.path, ['ui', 'page', '--json'], env, { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }) });
   if (!r.ok) return r.reason;
   const parsed = json(r.stdout);
   if (parsed === undefined) return 'not JSON';
@@ -238,8 +240,10 @@ export async function pieceAct(
   info: PieceInfo,
   request: { action: string; path: string; fields: Record<string, string> },
   env: NodeJS.ProcessEnv,
+  /** Who's acting (docs/specs/owners.md): a piece records it as who decided. */
+  caller?: ApiCaller,
 ): Promise<ActResult> {
-  const r = await ask(info.path, ['ui', 'act', '--json'], env, { stdin: JSON.stringify(request), timeoutMs: ACT_TIMEOUT_MS });
+  const r = await ask(info.path, ['ui', 'act', '--json'], env, { stdin: JSON.stringify({ ...request, ...(caller ? { caller } : {}) }), timeoutMs: ACT_TIMEOUT_MS });
   // Whatever happened, the piece's state may have changed.
   clearPieceCache(info.path);
   if (!r.ok) return { ok: false, message: `${info.piece} didn't answer (${r.reason}).` };
@@ -257,7 +261,10 @@ export const API_TIMEOUT_MS = 15_000;
 export const API_MAX_BYTES = 8 * 1024 * 1024;
 
 /** Who is calling a piece's API, as core resolved the bearer. */
-export type ApiCaller = { kind: 'owner' } | { kind: 'agent'; agent: string; service?: string; house?: string } | { kind: 'piece'; subject: string }
+export type ApiCaller =
+  /** `who`: the member (a People slug); `agents`: what they own, `*` for a household owner (docs/specs/owners.md). */
+  | { kind: 'owner'; who?: string; agents?: '*' | string[] }
+  | { kind: 'agent'; agent: string; service?: string; house?: string } | { kind: 'piece'; subject: string }
   /** No token, on a path the piece declared open (loom.strangers): a box asking to join. */
   | { kind: 'stranger'; address: string };
 

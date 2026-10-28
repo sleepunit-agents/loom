@@ -50,7 +50,7 @@ import { readRecord } from '../cli/pieces-managed.js';
 const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
 import { hasUnsplitPeople } from '../backends/people-household.js';
-import { agentDir, assertRealAgentDir, commonsProblem, liveHousehold, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
   assertSafeBind,
@@ -224,6 +224,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const live = household ? liveHousehold(household) : undefined;
   const resolver = live ? new TokenResolver(live) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
+  /** An owner's caller for a piece: who, and what they own (docs/specs/owners.md). */
+  const ownerCaller = (member: string | undefined): ApiCaller => {
+    const m = live ? memberOf(live(), member) : undefined;
+    return m ? { kind: 'owner', who: m.person, agents: m.agents } : { kind: 'owner' };
+  };
 
   /** The role a presented bearer has: 401 (none/unknown) or 503 (tokens.json unreadable). */
   function roleFor(header: string | undefined): Role | { status: number; error: string } {
@@ -231,7 +236,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (!presented) return { status: 401, error: 'unauthorized: missing bearer token' };
     // The env owner token first: a broken tokens.json must not lock it out.
     let role: Role | null = null;
-    if (ownerDigest && cryptoTimingSafeEqual(createHash('sha256').update(presented).digest(), ownerDigest)) role = { kind: 'owner' };
+    if (ownerDigest && cryptoTimingSafeEqual(createHash('sha256').update(presented).digest(), ownerDigest)) {
+      // The env owner token is the first household owner's.
+      role = { kind: 'owner', ...(live ? { member: firstOwner(live()).person } : {}) };
+    }
     if (!role) {
       try {
         role = resolver!.resolve(presented);
@@ -304,6 +312,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         live: (d) => {
           if (ownerDigest !== undefined && cryptoTimingSafeEqual(d, ownerDigest)) return true;
           try { return resolver!.ownerDigestLive(d.toString('hex')); } catch { return false; }
+        },
+        member: (d) => {
+          if (ownerDigest !== undefined && cryptoTimingSafeEqual(d, ownerDigest)) return firstOwner(live!());
+          try { return resolver!.ownerMember(d.toString('hex')); } catch { return undefined; }
         },
       }
     : legacyUiAuth(opts.token ? [opts.token] : Object.values(opts.tokens ?? {}));
@@ -405,7 +417,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if ('status' in role) return sendError(res, role.status, role.error);
     let caller: ApiCaller;
     switch (role.kind) {
-      case 'owner': caller = { kind: 'owner' }; break;
+      case 'owner': caller = ownerCaller(role.member); break;
       case 'agent': caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) }; break;
       case 'piece':
         if (role.piece !== piece) return sendError(res, 403, `forbidden: this credential is ${role.piece}'s`);

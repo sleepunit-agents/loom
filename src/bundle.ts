@@ -142,7 +142,7 @@ export function exportSource(contextDir: string): { household: Household; plain:
   if (hh) return { household: hh.household, plain: false, contextDir };
   const name = basename(resolve(contextDir)).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^[^a-z]+/, '') || 'agent';
   const agent = AGENT_NAME.test(name) ? name : 'agent';
-  return { household: { home: resolve(contextDir, '..'), agents: [agent], default: agent }, plain: true, contextDir };
+  return { household: { home: resolve(contextDir, '..'), agents: [agent], default: agent, members: [{ person: 'owner', role: 'owner', agents: '*' }] }, plain: true, contextDir };
 }
 
 /** Write the bundle. Returns the manifest. */
