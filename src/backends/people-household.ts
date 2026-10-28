@@ -17,15 +17,25 @@
 import { join } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import {
-  PeopleStore, PersonCardError, renderCard,
+  PeopleStore, PersonCardError, renderCard, SLUG_RE,
   type MutationResult, type PersonCard, type PersonEvidence, type PersonListEntry, type PersonReadResult, type PersonRevisionMeta,
   type PersonRow, type PersonWriteInput,
 } from './people.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { commonsDir, type Household } from '../household.js';
 
-/** `how` fields that are facts about the person, not how one agent talks to them. */
-export const FACT_KEYS: ReadonlySet<string> = new Set(['tz', 'timezone', 'pronouns', 'languages']);
+/**
+ * `how` fields that are facts about the entry, not how one agent talks to them.
+ * `kind` (person | agent) and `via` (the person an agent writes through) are an
+ * entry's too: the directory is everyone, not only humans (docs/specs/agents-in-people.md).
+ */
+export const FACT_KEYS: ReadonlySet<string> = new Set(['tz', 'timezone', 'pronouns', 'languages', 'kind', 'via']);
+export const KINDS: ReadonlySet<string> = new Set(['person', 'agent']);
+
+/** An entry's kind: what its `how.kind` says, a person unless it says agent. */
+export function kindOf(card: Pick<PersonCard, 'how'>): 'person' | 'agent' {
+  return card.how?.kind === 'agent' ? 'agent' : 'person';
+}
 
 export function commonsPeoplePath(h: Household): string {
   return join(commonsDir(h), 'people.db');
@@ -92,6 +102,8 @@ export class HouseholdPeople {
     private readonly directory: PeopleStore,
     private readonly relationship: PeopleStore,
     private readonly now: () => number = Date.now,
+    /** The household's agents: their entries are always kind agent. */
+    private readonly agents: ReadonlySet<string> = new Set(),
   ) {}
 
   close(): void {
@@ -158,6 +170,17 @@ export class HouseholdPeople {
     const name = input.name ?? dirRow?.card.name;
     if (name === undefined) throw new PersonCardError('name: is required to create a card');
     const { facts, rest } = splitHow(input.how);
+    if (facts.kind !== undefined && facts.kind !== null && (typeof facts.kind !== 'string' || !KINDS.has(facts.kind))) {
+      throw new PersonCardError('how.kind: is person or agent');
+    }
+    if (facts.via !== undefined && facts.via !== null && (typeof facts.via !== 'string' || !SLUG_RE.test(facts.via))) {
+      throw new PersonCardError('how.via: is the slug of the person the agent writes through');
+    }
+    if (this.agents.has(input.slug)) {
+      // A household agent's entry is an agent's, whatever a write says; a replace keeps it so.
+      if (facts.kind !== undefined && facts.kind !== 'agent') throw new PersonCardError(`how.kind: ${input.slug} is one of this household's agents`);
+      if (!merge) facts.kind = 'agent';
+    }
 
     const dirInput: PersonWriteInput | null =
       input.name !== undefined || input.where !== undefined || Object.keys(facts).length > 0 || !dirRow || !merge
@@ -264,7 +287,53 @@ export function openHouseholdPeople(
     new PeopleStore({ dbPath: dirPath, readonly: opts.readonly, now: opts.now, actor: agent }),
     new PeopleStore({ dbPath: relPath, readonly: opts.readonly, now: opts.now, actor: agent }),
     opts.now,
+    new Set(h.agents),
   );
+}
+
+/**
+ * Every member has a directory entry (docs/specs/owners.md: a member is a People
+ * entry): made when missing, with a name from the slug ("jonathan-barket" →
+ * "Jonathan Barket") until someone writes a better one. Returns the slugs it wrote.
+ */
+export function ensureMemberEntries(h: Household, now?: () => number): string[] {
+  const wrote: string[] = [];
+  mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
+  const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), now, actor: 'loom' });
+  try {
+    for (const m of h.members) {
+      if (!SLUG_RE.test(m.person) || dir.getRow(m.person)) continue;
+      dir.write({ slug: m.person, name: m.person.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') });
+      wrote.push(m.person);
+    }
+  } finally {
+    dir.close();
+  }
+  return wrote;
+}
+
+/**
+ * Every household agent has a directory entry, kind agent (docs/specs/agents-in-people.md):
+ * made when missing, its kind put right when it says otherwise, never deleted. An
+ * archived entry is left alone. Returns the slugs it wrote. `nameOf` gives an
+ * agent's display name (its IDENTITY.md heading).
+ */
+export function ensureAgentEntries(h: Household, nameOf: (agent: string) => string, now?: () => number): string[] {
+  const wrote: string[] = [];
+  mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
+  const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), now, actor: 'loom' });
+  try {
+    for (const a of h.agents) {
+      if (!SLUG_RE.test(a)) continue;
+      const row = dir.getRow(a);
+      if (row && (row.archived_at !== null || kindOf(row.card) === 'agent')) continue;
+      dir.write(row ? { slug: a, name: row.card.name, how: { kind: 'agent' } } : { slug: a, name: nameOf(a), how: { kind: 'agent' } });
+      wrote.push(a);
+    }
+  } finally {
+    dir.close();
+  }
+  return wrote;
 }
 
 /**
