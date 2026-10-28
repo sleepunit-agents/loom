@@ -46,7 +46,7 @@ directory entry with a role:
 ```
 
 - **`person` is a directory slug.** The owner is in the directory like anyone
-  else, so what an agent knows about Jonathan and what loom lets Jonathan do
+  else ([agents-in-people.md](agents-in-people.md) makes sure the entry exists), so what an agent knows about Jonathan and what loom lets Jonathan do
   hang off the same entry.
 - **`"owner": "<name>"` keeps working.** A household without `members` reads as
   `[{"person": <owner>, "role": "owner", "agents": "*"}]`. Writing `members`
