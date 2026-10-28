@@ -49,13 +49,19 @@ interface File {
   push?: PushState;
   /** The Inbox: which items the owner has opened (an item's key → when), so they're no longer unread. */
   opened?: Record<string, number>;
+  /**
+   * Another member's own `seen` and `opened` (docs/specs/owners.md): one member's reading doesn't
+   * read it for another. The first household owner keeps the household's `seen` and `opened` above.
+   */
+  members?: Record<string, { seen?: { at: number; since: number }; opened?: Record<string, number> }>;
 }
 
 export interface PushSub { endpoint: string; keys: { p256dh: string; auth: string } }
 interface PushState {
   vapid?: { publicKey: string; privateKey: string };
   /** By endpoint; `session` is the session it was made in, and it goes with it. */
-  subs?: Record<string, { session: string; sub: PushSub; at: number }>;
+  /** member: whose device it is (docs/specs/owners.md); none is the first household owner's. */
+  subs?: Record<string, { session: string; sub: PushSub; at: number; member?: string }>;
   /** Ask keys already announced, with when they were last seen; an ask is announced once. */
   pushed?: Record<string, number>;
   /** When a process last took the watch: three listeners, one of them checks each minute. */
@@ -64,6 +70,13 @@ interface PushState {
 
 /** Away for at least this long, and the "new since" boundary moves up to when you last looked. */
 export const SEEN_GAP_S = 15 * 60;
+/** Where a reader's `seen` and `opened` live: the household's for the first owner (no reader), else their own. */
+function readerOf(f: File, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number> } {
+  if (!reader) return f;
+  f.members ??= {};
+  return (f.members[reader] ??= {});
+}
+
 /** The Inbox remembers this many opened items; past it, the longest-opened are forgotten. */
 export const OPENED_MAX = 500;
 
@@ -248,39 +261,41 @@ export class SessionStore {
    * to the last visit only after SEEN_GAP_S away, so a reload or a quick trip
    * to another page doesn't wipe the new dots. The first visit ever has none.
    */
-  lookedAt(nowS = Math.floor(Date.now() / 1000)): number {
+  lookedAt(nowS = Math.floor(Date.now() / 1000), reader?: string): number {
     return this.withLock((f) => {
-      const was = f.seen;
+      const r = readerOf(f, reader);
+      const was = r.seen;
       const since = !was ? nowS : nowS - was.at >= SEEN_GAP_S ? was.at : was.since;
-      f.seen = { at: nowS, since };
+      r.seen = { at: nowS, since };
       return since;
     });
   }
 
   /** lookedAt's answer without moving it: a live refresh of an open page isn't a new look. */
-  seenSince(nowS = Math.floor(Date.now() / 1000)): number {
+  seenSince(nowS = Math.floor(Date.now() / 1000), reader?: string): number {
     return this.withLock((f) => {
-      const was = f.seen;
+      const was = readerOf(f, reader).seen;
       return !was ? nowS : nowS - was.at >= SEEN_GAP_S ? was.at : was.since;
     });
   }
 
-  /** The Inbox opened this item: it isn't unread any more. */
-  markOpened(key: string, nowS = Math.floor(Date.now() / 1000)): void {
+  /** The Inbox opened this item: it isn't unread any more (for this reader). */
+  markOpened(key: string, nowS = Math.floor(Date.now() / 1000), reader?: string): void {
     this.withLock((f) => {
-      f.opened ??= {};
-      f.opened[key] = nowS;
-      const keys = Object.keys(f.opened);
+      const r = readerOf(f, reader);
+      r.opened ??= {};
+      r.opened[key] = nowS;
+      const keys = Object.keys(r.opened);
       if (keys.length > OPENED_MAX) {
-        for (const k of keys.sort((a, b) => f.opened![a] - f.opened![b]).slice(0, keys.length - OPENED_MAX)) delete f.opened[k];
+        for (const k of keys.sort((a, b) => r.opened![a] - r.opened![b]).slice(0, keys.length - OPENED_MAX)) delete r.opened[k];
       }
     });
   }
 
-  /** The items the Inbox has opened. */
-  openedKeys(): Set<string> {
+  /** The items this reader's Inbox has opened. */
+  openedKeys(reader?: string): Set<string> {
     if (!existsSync(this.file)) return new Set();
-    return this.withLock((f) => new Set(Object.keys(f.opened ?? {})));
+    return this.withLock((f) => new Set(Object.keys(readerOf(f, reader).opened ?? {})));
   }
 
   /** The VAPID key pair, made the first time it's asked for (`make` is web-push's generator). */
@@ -293,13 +308,13 @@ export class SessionStore {
   }
 
   /** This browser's subscription, for the session it's signed in with. */
-  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000)): void {
+  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000), member?: string): void {
     const key = hashId(session);
     this.withLock((f) => {
       if (!f.sessions[key]) return;
       f.push ??= {};
       const subs = (f.push.subs ??= {});
-      subs[sub.endpoint] = { session: key, sub, at: nowS };
+      subs[sub.endpoint] = { session: key, sub, at: nowS, ...(member ? { member } : {}) };
       // A household has a handful of devices; past 20, the oldest go.
       const all = Object.entries(subs).sort((a, b) => b[1].at - a[1].at);
       for (const [ep] of all.slice(20)) delete subs[ep];
@@ -315,7 +330,7 @@ export class SessionStore {
    * listeners). Returns the live subscriptions and what's been announced, or
    * null when another process has the watch.
    */
-  takePushWatch(everyS: number, nowS = Math.floor(Date.now() / 1000)): { subs: PushSub[]; pushed: Record<string, number> } | null {
+  takePushWatch(everyS: number, nowS = Math.floor(Date.now() / 1000)): { subs: Array<PushSub & { member?: string }>; pushed: Record<string, number> } | null {
     return this.withLock((f) => {
       f.push ??= {};
       if (f.push.tickAt && nowS - f.push.tickAt < everyS - 5) return null;
@@ -323,7 +338,7 @@ export class SessionStore {
       // A subscription whose session ended goes with it.
       const subs = f.push.subs ?? {};
       for (const [ep, s] of Object.entries(subs)) if (!f.sessions[s.session]) delete subs[ep];
-      return { subs: Object.values(subs).map((s) => s.sub), pushed: { ...(f.push.pushed ?? {}) } };
+      return { subs: Object.values(subs).map((s) => ({ ...s.sub, ...(s.member ? { member: s.member } : {}) })), pushed: { ...(f.push.pushed ?? {}) } };
     });
   }
 

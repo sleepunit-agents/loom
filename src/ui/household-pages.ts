@@ -425,7 +425,7 @@ function since(iso: string | undefined, nowMs: number): string {
   return m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)} days ago`;
 }
 
-export function agentSetup(h: Household, agent: string, opts: CoreOptions = {}): Page {
+export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ownerTokens?: boolean } = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
   const dir = agentDir(h, agent);
@@ -433,7 +433,8 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions = {}):
   try { identity = readFileSync(join(dir, 'IDENTITY.md'), 'utf-8'); } catch { /* none */ }
   const harnesses = (() => { try { return readdirSync(join(dir, 'harnesses')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)); } catch { return []; } })();
   const agentOf = (role: string) => { const r = parseRole(role); return r?.kind === 'agent' ? r.agent : null; };
-  const tokens = loadTokens(h.home).filter((t) => agentOf(t.role) === agent || (agent === h.default && t.role === 'owner'));
+  // The owner's tokens show on the default agent's Setup, to a household owner only (docs/specs/owners.md).
+  const tokens = loadTokens(h.home).filter((t) => agentOf(t.role) === agent || (opts.ownerTokens !== false && agent === h.default && t.role === 'owner'));
   const live = tokens.filter((t) => !t.revoked).sort((a, b) => (b.last_used ?? '').localeCompare(a.last_used ?? ''));
   const db = resolveSqliteDbPath(dir);
   const dbSize = (() => { try { return statSync(db).size; } catch { return 0; } })();

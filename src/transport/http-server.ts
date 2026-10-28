@@ -42,7 +42,7 @@ import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { WATCH_S } from '../ui/push.js';
-import { pieceApi, type ApiCaller } from '../ui/pieces.js';
+import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { readRecord } from '../cli/pieces-managed.js';
 
@@ -275,9 +275,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       return { role, agent: role.agent, contextDir: agentDir(h, role.agent), key: `${roleString(role)}>${role.agent}` };
     }
     if (role.kind !== 'owner') return { status: 403, error: 'forbidden' };
-    const agent = target ?? h.default;
+    // An agent owner reaches only their agents (docs/specs/owners.md); with none named, the
+    // household's default if it's theirs, else their first.
+    const m = memberOf(h, role.member);
+    const own = m && m.agents !== '*' ? m.agents : null;
+    const agent = target ?? (own && !own.includes(h.default) ? own[0] : h.default);
     if (!h.agents.includes(agent)) return { status: 404, error: `not-found: no agent named ${agent}` };
-    return { role, agent, contextDir: agentDir(h, agent), key: `owner>${agent}` };
+    if (own && !own.includes(agent)) return { status: 403, error: `forbidden: ${agent} isn't one of ${m!.person}'s agents` };
+    return { role, agent, contextDir: agentDir(h, agent), key: own ? `owner:${m!.person}>${agent}` : `owner>${agent}` };
   }
   // A scoped server factory (e.g. the knowledge-only service) always needs
   // to know WHO is calling for attribution — refuse to boot it open or on a
@@ -423,7 +428,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if ('status' in role) return sendError(res, role.status, role.error);
     let caller: ApiCaller;
     switch (role.kind) {
-      case 'owner': caller = ownerCaller(role.member); break;
+      case 'owner':
+        caller = ownerCaller(role.member);
+        // An agent owner reaches only a piece that understands them (its manifest says owners: 2).
+        if (caller.kind === 'owner' && caller.agents !== undefined && caller.agents !== '*') {
+          const { pieces } = await pieceManifests(process.env);
+          if (pieces.find((p) => p.piece === piece)?.manifest.owners !== 2) {
+            return sendError(res, 403, `forbidden: ${piece} doesn't scope an owner to their agents yet; a household owner can use it`);
+          }
+        }
+        break;
       case 'agent': caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) }; break;
       case 'piece':
         if (role.piece !== piece) return sendError(res, 403, `forbidden: this credential is ${role.piece}'s`);

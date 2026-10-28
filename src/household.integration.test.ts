@@ -23,7 +23,8 @@ import {
 } from './household.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { parsePage } from './ui/vocab.js';
-import { signinLink } from './ui/sessions.js';
+import { sessionStore, signinLink } from './ui/sessions.js';
+import { watch } from './ui/push.js';
 import { resolveKnowledgeDbPath } from './config.js';
 import { commonsPeoplePath, ensureAgentEntries, ensureMemberEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
 import { householdPeople, householdPerson } from './ui/household-pages.js';
@@ -1230,14 +1231,14 @@ describe('owners: members (docs/specs/owners.md, step 1)', () => {
     expect(firstOwner(got).person).toBe('jonathan-barket');
   });
 
-  it('refuses members that would leave nobody owning everything, repeat a person, or scope an owner before core can', () => {
+  it('refuses members that would leave nobody owning everything, or repeat a person', () => {
     for (const [members, why] of [
       [[], /non-empty/],
       [[{ person: 'Not A Slug', role: 'owner', agents: '*' }], /People slug/],
       [[{ person: 'pat', role: 'viewer', agents: '*' }], /role is owner/],
       [[{ person: 'pat', role: 'owner', agents: '*' }, { person: 'pat', role: 'owner', agents: '*' }], /twice/],
       [[{ person: 'pat', role: 'owner', agents: ['ghost'] }], /household's agents/],
-      [[{ person: 'pat', role: 'owner', agents: ['mark'] }], /doesn't scope an owner/],
+      [[{ person: 'pat', role: 'owner', agents: ['mark'] }], /at least one member owns every agent/],
     ] as const) {
       write({ members });
       expect(() => loadHousehold(h.home), JSON.stringify(members)).toThrow(why);
@@ -1276,5 +1277,133 @@ describe('owners: members (docs/specs/owners.md, step 1)', () => {
     expect(ensureMemberEntries(h)).toEqual([]);
     const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), readonly: true });
     try { expect(dir.getRow('jonathan-barket')!.card.name).toBe('Jonathan Barket'); } finally { dir.close(); }
+  });
+});
+
+describe('owners: an agent owner sees and reaches only their agents (docs/specs/owners.md, step 2)', () => {
+  let h: Household;
+  let handle: HttpServeHandle;
+  let base: string;
+  let jonathan: string;
+  let loren: string;
+  let bin: string;
+  const saved = process.env.PATH;
+  beforeEach(async () => {
+    h = makeHousehold();
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', owner: 'jonathan',
+      members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }] }));
+    h = loadHousehold(h.home)!;
+    jonathan = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    loren = createToken(h, { role: { kind: 'owner', member: 'loren' }, label: 'loren · page' }).token;
+    await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art secret thing', content: 'x', metadata: { where: 'discord:#pond' } });
+    await remember(join(h.home, 'agents', 'mark'), { category: 'episode', title: 'mark did a thing', content: 'x', metadata: { where: 'letters' } });
+    await closeAllBackends();
+    // Two pieces: one that understands agent owners (owners: 2), one that doesn't.
+    bin = join(h.home, 'bin');
+    mkdirSync(bin);
+    const man = (owners: boolean) => JSON.stringify({ v: 2, ...(owners ? { owners: 2 } : {}), tab: { label: owners ? 'Scoped' : 'Whole' },
+      tile: { label: 'T', value: '1' },
+      asks: [{ text: 'art needs a yes', agent: 'art' }, { text: 'mark needs a yes', agent: 'mark' }, { text: 'the house needs a yes' }] });
+    for (const [name, owners] of [['scoped', true], ['whole', false]] as const) {
+      writeFileSync(join(bin, `loom-${name}`), `#!/bin/sh
+case "$1 $2" in
+  "ui --json") echo '${man(owners)}' ;;
+  "ui page") cat > /dev/null; echo '{"title":"${name}","sections":[]}' ;;
+  "api --json") cat > /dev/null; echo '{"body":"${name} answered"}' ;;
+  *) exit 2 ;;
+esac
+`);
+      chmodSync(join(bin, `loom-${name}`), 0o755);
+    }
+    process.env.PATH = [bin, saved].join(':');
+    clearPieceCache();
+    handle = await startHttpServer({ contextDir: join(h.home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
+    base = `http://127.0.0.1:${handle.port}`;
+  });
+  afterEach(async () => {
+    process.env.PATH = saved;
+    clearPieceCache();
+    await handle.close();
+    await closeAllBackends();
+    rmSync(h.home, { recursive: true, force: true });
+  });
+  const login = async (token: string) => {
+    const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(token)}`, redirect: 'manual' });
+    return (r.headers.get('set-cookie') ?? '').split(';')[0];
+  };
+  const page = async (cookie: string, path: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' });
+
+  it("Home, the Inbox and Activity are Mark's alone; the household's pages are refused", async () => {
+    const cookie = await login(loren);
+    const home = await (await page(cookie, '/')).text();
+    expect(home).toContain('<h2>Visual Mark</h2>');
+    expect(home).not.toContain('<h2>Art E Fish</h2>');
+    expect(home).not.toContain('href="/knowledge"');
+    expect(home).not.toContain('href="/people"');
+    const inbox = await (await page(cookie, '/inbox')).text();
+    expect(inbox).toContain('mark needs a yes');
+    expect(inbox).not.toContain('art needs a yes');
+    expect(inbox).not.toContain('the house needs a yes');
+    const activity = await (await page(cookie, '/activity')).text();
+    expect(activity).toContain('mark did a thing');
+    expect(activity).not.toContain('art secret thing');
+    for (const path of ['/knowledge', '/people', '/pieces', '/new-agent', '/a/art', '/p/whole']) {
+      const r = await page(cookie, path);
+      expect([403, 404], path).toContain(r.status);
+    }
+    expect((await page(cookie, '/a/mark')).status).toBe(200);
+    expect((await page(cookie, '/p/scoped')).status).toBe(200);
+    // Mark's Setup doesn't list the household's owner tokens to her.
+    const setup = await (await page(cookie, '/a/mark/setup')).text();
+    expect(setup).not.toContain('loren · page');
+    expect(setup).not.toContain('>jonathan<');
+    // A household owner still sees everything.
+    const all = await (await page(await login(jonathan), '/inbox')).text();
+    for (const t of ['art needs a yes', 'mark needs a yes', 'the house needs a yes']) expect(all).toContain(t);
+  });
+
+  it("the household's actions are refused to an agent owner", async () => {
+    const cookie = await login(loren);
+    const html = await (await page(cookie, '/a/mark')).text();
+    const csrf = /name="_csrf" value="([0-9a-f]{64})"/.exec(html)?.[1] ?? '';
+    const r = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _csrf: csrf, _action: 'create-token', _path: 'a/mark/setup', agent: 'mark', label: 'sneaky' }).toString() });
+    expect(await r.json()).toMatchObject({ ok: false, message: expect.stringMatching(/household's to do/) });
+    expect(loadTokens(h.home).some((t) => t.label === 'sneaky')).toBe(false);
+  });
+
+  it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
+    const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } }) });
+    expect((await mcp(loren, '/agents/art/mcp')).status).toBe(403);
+    expect((await mcp(loren, '/agents/mark/mcp')).status).toBe(200);
+    // With no agent named, Loren's default is hers: Mark, not the household's Art.
+    const c = await connect(handle.port, loren, '/mcp');
+    const id = await c.callTool({ name: 'identity', arguments: { client: 't' } });
+    expect(JSON.stringify(id.content)).toContain('Visual Mark');
+    await c.close();
+    const api = (token: string, piece: string) => fetch(`${base}/api/${piece}/x`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: '{}' });
+    expect((await api(loren, 'whole')).status).toBe(403);
+    expect((await api(loren, 'scoped')).status).toBe(200);
+    expect((await api(jonathan, 'whole')).status).toBe(200);
+  });
+
+  it("each member's Inbox reads for them alone, and a push reaches only its agent's owners", async () => {
+    const store = sessionStore(h.home);
+    store.markOpened('k1', 100, 'loren');
+    expect(store.openedKeys('loren').has('k1')).toBe(true);
+    expect(store.openedKeys().has('k1')).toBe(false);
+    const sent: string[] = [];
+    const subs = [{ endpoint: 'https://push.invalid/j', keys: { p256dh: 'x', auth: 'y' } }, { endpoint: 'https://push.invalid/l', keys: { p256dh: 'x', auth: 'y' } }];
+    const sessJ = store.create(Buffer.alloc(32, 1));
+    const sessL = store.create(Buffer.alloc(32, 2));
+    store.addPushSub(sessJ, subs[0]);
+    store.addPushSub(sessL, subs[1], undefined, 'loren');
+    const hears = (member: string | undefined, a: { agent?: string; open?: boolean }) => member === undefined || (member === 'loren' && a.agent === 'mark' && a.open === true);
+    store.markPushed(['~seeded']);  // the first watch only records; this one has run
+    await watch(store, async () => [{ key: 'a1', title: 't', body: 'art', agent: 'art', open: true }, { key: 'a2', title: 't', body: 'mark', agent: 'mark', open: true },
+      { key: 'a3', title: 't', body: 'house' }, { key: 'a4', title: 't', body: 'mark-unscoped', agent: 'mark', open: false }],
+      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => { sent.push(`${sub.endpoint.slice(-1)}:${JSON.parse(payload).body}`); return {} as never; }, hears);
+    expect(sent.sort()).toEqual(['j:art', 'j:house', 'j:mark', 'j:mark-unscoped', 'l:mark']);
   });
 });

@@ -142,6 +142,13 @@ that ignores it keeps working. Outside a household there's no `caller`.
   the same `level` when it's about one agent within a household page.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
+- **`owners`** (optional, `2`): the piece understands agent owners
+  ([specs/owners.md](specs/owners.md)). It reads the caller's `who` and
+  `agents`, shows only those agents' things and refuses what isn't theirs.
+  Without it, a member who owns only some agents doesn't see the piece at all:
+  no tab, tile, asks or readings, and its API answers them 403. Even with it,
+  loom passes such a member only the asks, notices, answered items and readings
+  that name one of their agents, and no tile.
 - **`scope`** (optional, `true`): the piece narrows to one agent. When the
   owner has an agent selected (the page's scope selector), loom runs every
   `loom-<piece>` call with `LOOM_SCOPE=<agent id>` in its environment. A piece

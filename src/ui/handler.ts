@@ -51,7 +51,7 @@ import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { agentDir, firstOwner, MARKS, type Household, type Member } from '../household.js';
+import { agentDir, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
 import { agentSource, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, renderHome, renderHouseHome, renderInbox, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -89,6 +89,60 @@ export interface UiOptions {
    * next request). Absent for a plain context dir: the single-agent page.
    */
   household?: () => Household;
+  /**
+   * Set for an agent owner's request (docs/specs/owners.md): the agents they own. `household`
+   * is then theirs alone, pieces are the ones that understand agent owners, and the
+   * household's own pages and actions are refused.
+   */
+  ownerScope?: string[];
+  /** The member signed in, for the account menu (docs/specs/owners.md). */
+  viewer?: string;
+}
+
+/** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
+function scopedPathOk(pathname: string): boolean {
+  return pathname === '/' || pathname === '/inbox' || pathname === '/activity' || pathname === '/passkeys'
+    || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup'
+    || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/');
+}
+
+/**
+ * The pieces as an agent owner sees them: only those that understand agent owners (owners: 2),
+ * each manifest cut to their agents' asks, notices, answered items and readings. An item that
+ * names no agent is the household's, and a tile is a household figure, so both go.
+ */
+function forOwner(pieces: PieceInfo[], own: string[] | undefined): PieceInfo[] {
+  if (!own) return pieces;
+  const mine = <T extends { agent?: string }>(xs: T[] | undefined) => (xs ?? []).filter((x) => x.agent !== undefined && own.includes(x.agent));
+  return pieces.filter((p) => p.manifest.owners === 2).map((p) => ({
+    ...p,
+    manifest: {
+      ...p.manifest,
+      tile: undefined,
+      asks: mine(p.manifest.asks),
+      notices: mine(p.manifest.notices),
+      answered: mine(p.manifest.answered),
+      agents: p.manifest.agents ? Object.fromEntries(Object.entries(p.manifest.agents).filter(([a]) => own.includes(a))) : undefined,
+    },
+  }));
+}
+
+/** Whose read state a request reads and writes: none for the first household owner (the household's own record), else the member. */
+function readerFor(opts: UiOptions, who: Who): string | undefined {
+  const m = who?.member;
+  const h = opts.household?.();
+  return !m || !h || m.person === firstOwner(h).person ? undefined : m.person;
+}
+
+/** A member's passkeys: those whose token is theirs. */
+function passkeysOf(opts: UiOptions, m: Member) {
+  return storeFor(opts).passkeys().filter((k) => opts.auth.member?.(Buffer.from(k.secret, 'hex'))?.person === m.person);
+}
+
+/** The household as an agent owner sees it: their agents only (the default, theirs too). */
+function narrowed(h: Household, agents: string[]): Household {
+  const own = h.agents.filter((a) => agents.includes(a));
+  return { ...h, agents: own, default: own.includes(h.default) ? h.default : own[0] };
 }
 
 const PAGE_ROOTS = ['/setup', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
@@ -363,9 +417,20 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
 export async function pushWatch(opts: UiOptions): Promise<number> {
   const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
+  const hh = opts.household?.();
+  // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
+  const ownersOk = new Set((await pieceManifests(opts.env)).pieces.filter((p) => p.manifest.owners === 2).map((p) => pieceSource(p.piece).id));
+  // A device hears only of its member's agents; a household ask, only household owners (docs/specs/owners.md).
+  const hears = (member: string | undefined, a: { agent?: string; open?: boolean }) => {
+    const m = hh ? (member === undefined ? firstOwner(hh) : memberOf(hh, member)) : undefined;
+    if (!hh) return true;
+    if (!m) return false;
+    return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
+  };
   return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
-    key: askKey(a), title: `Your call · ${a.sourceLabel ?? a.source.id}`, body: a.text,
-  })), subject);
+    key: askKey(a), title: `Your call · ${a.sourceLabel ?? a.source.id}`, body: a.text, ...(a.agent ? { agent: a.agent } : {}),
+    open: a.source.id === CORE.id || ownersOk.has(a.source.id),
+  })), subject, undefined, hears);
 }
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
@@ -451,8 +516,9 @@ function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: Piece
   if (!hh) return found;
   const scope = scopeOf(req, hh);
   const f = householdFind(hh, q, scope === 'household' ? hh.agents : [scope]);
-  found.knowledge = f.knowledge.map((k) => ({ label: k.title, href: `/knowledge/${k.slug}` }));
-  found.people = f.people.map((p) => ({ label: p.name, href: `/people/${p.slug}` }));
+  // Knowledge and People are the household's: an agent owner's Find searches their agents' memories only.
+  found.knowledge = opts.ownerScope ? [] : f.knowledge.map((k) => ({ label: k.title, href: `/knowledge/${k.slug}` }));
+  found.people = opts.ownerScope ? [] : f.people.map((p) => ({ label: p.name, href: `/people/${p.slug}` }));
   found.memories = f.memories.map((m) => ({ label: m.title, href: pageHref(`memory/${m.ref}`, agentSource(m.agent)), agent: m.agent }));
   return found;
 }
@@ -546,9 +612,12 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       agent: h.owner ? `${h.owner}'s household` : 'household',
       nav: [
         { label: 'Home', href: '/', current: current === '', piece: false },
-        { label: 'Knowledge', href: '/knowledge', current: current === 'knowledge', piece: false },
-        { label: 'People', href: '/people', current: current === 'people', piece: false },
-        { label: 'Pieces', href: '/pieces', current: current === 'pieces', piece: false },
+        // Knowledge, People and Pieces are the household's: not an agent owner's (docs/specs/owners.md).
+        ...(opts.ownerScope ? [] : [
+          { label: 'Knowledge', href: '/knowledge', current: current === 'knowledge', piece: false },
+          { label: 'People', href: '/people', current: current === 'people', piece: false },
+          { label: 'Pieces', href: '/pieces', current: current === 'pieces', piece: false },
+        ]),
         ...h.agents.map((a) => ({ label: agentName(agentDir(h, a)), href: `/a/${a}`, current: current === `a/${a}`, piece: true })),
         ...tabs,
       ],
@@ -557,7 +626,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       flash,
       skipped,
       shell: {
-        owner: h.owner ?? 'owner', scope, household: true, asks, tab, back,
+        owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back,
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
@@ -566,8 +635,10 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },
           { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length },
-          { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
-          { label: 'People', href: '/people', current: current.startsWith('people') },
+          ...(opts.ownerScope ? [] : [
+            { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
+            { label: 'People', href: '/people', current: current.startsWith('people') },
+          ]),
         ],
         pieces: places,
       },
@@ -731,6 +802,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const who = whoIs(req, opts);
+  // An agent owner (docs/specs/owners.md): from here on, the household is theirs alone and the
+  // pieces are the ones that understand them. The household's own pages are refused.
+  const full = opts.household?.();
+  // The account menu names who's signed in; the first household owner keeps the household's name for them.
+  if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
+  if (full && who?.member && who.member.agents !== '*') {
+    const own = who.member.agents;
+    if (!scopedPathOk(pathname)) return send(res, 403, 'text/plain', 'That page is the household\'s: ask a household owner.');
+    const base = opts.household!;
+    opts = { ...opts, household: () => narrowed(base(), own), ownerScope: own, env: { ...opts.env, LOOM_OWNER_SCOPE: own.join(',') } };
+  }
   // The agent the owner is looking at (an agent's own pages, else the chosen scope); pieces get it as LOOM_SCOPE.
   const hhScope = opts.household?.();
   const scope = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/|$)/.exec(pathname)?.[1] ?? scopeOf(req, hhScope);
@@ -770,7 +852,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const sub = pushSub(body.sub);
     if (!sub) return sendJson(res, 400, { error: 'not a push subscription loom sends to' });
     if (pathname === '/push/unsubscribe') storeFor(opts).removePushSub(sub.endpoint);
-    else storeFor(opts).addPushSub(who.cookie, sub);
+    else storeFor(opts).addPushSub(who.cookie, sub, undefined, readerFor(opts, who));
     return sendJson(res, 200, { ok: true });
   }
   if ((pathname === '/passkeys/options' || pathname === '/passkeys') && req.method === 'POST') {
@@ -846,9 +928,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
+    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link') {
+      // An agent owner's core actions are their agents' own (/a/<agent>/act/loom); the household's are refused.
+      source = CORE;
+      result = { ok: false, message: 'That\'s the household\'s to do: ask a household owner.' };
     } else if (sourceId === 'loom' && action === 'passkey-remove') {
       source = CORE;
-      result = storeFor(opts).removePasskey(fields.id ?? '')
+      const own = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : undefined;
+      result = (!own || own.some((k) => k.id === fields.id)) && storeFor(opts).removePasskey(fields.id ?? '')
         ? { ok: true, message: 'Removed. That device can\'t sign in with it any more.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
@@ -870,7 +957,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = CORE;
       result = await coreAct(opts.contextDir, action, fields);
     } else {
-      const { pieces } = await pieceManifests(scopedEnv);
+      const pieces = forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope);
       const info = pieces.find((p) => p.piece === sourceId);
       if (!info) return send(res, 404, 'text/plain', 'not found');
       source = pieceSource(info.piece);
@@ -896,7 +983,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
   if (!allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: loom\'s page can only be opened, not embedded or fetched from another site');
   if (pathname === '/pieces.json') {
-    const m = await pieceManifests(scopedEnv);
+    const m0 = await pieceManifests(scopedEnv);
+    const m = { ...m0, pieces: forOwner(m0.pieces, opts.ownerScope) };
     return send(res, 200, 'application/json', JSON.stringify({
       agent: agentName(opts.contextDir),
       pieces: m.pieces.map((p) => ({ piece: p.piece, manifest: p.manifest })),
@@ -905,7 +993,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   const query = pageQuery(url);
   const flash = takeFlash(url.searchParams.get('_flash'));
-  const { pieces, skipped } = await pieceManifests(scopedEnv);
+  const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
+  const pieces = forOwner(allPieces, opts.ownerScope);
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
 
@@ -928,7 +1017,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (pathname === '/passkeys') {
     const tz = uiTimeZone();
     const when = (s?: number) => (s ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(s * 1000)) : 'never');
-    const keys = storeFor(opts).passkeys();
+    // An agent owner sees their own passkeys; a household owner, every one.
+    const keys = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : storeFor(opts).passkeys();
     const page: Page = {
       title: 'Passkeys',
       sections: [
@@ -984,7 +1074,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const at = 'activity';
       const nowMs = Date.now();
       const store = storeFor(opts);
-      const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000)) : store.lookedAt(Math.floor(nowMs / 1000))) * 1000;
+      const reader = readerFor(opts, who);
+      const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000), reader) : store.lookedAt(Math.floor(nowMs / 1000), reader)) * 1000;
       const t = householdThread(hh, 24, nowMs);
       // Thread chips: All, each agent (when there's more than one), then each place it happened.
       // A row with no where ("?") is under All only: a pill for it says nothing.
@@ -1013,8 +1104,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const folder = (INBOX_FOLDERS.find((f) => f.id === query.f)?.id ?? 'needs') as InboxFolder;
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
       // Opening an attention item reads it; nothing else is ever unread.
-      if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000));
-      const opened = store.openedKeys();
+      const reader = readerFor(opts, who);
+      if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000), reader);
+      const opened = store.openedKeys(reader);
       for (const it of items) it.unread = it.attention && !opened.has(it.key);
       // The open item's own page (a task's, for a task), drawn in the Inbox: only a piece's ask that links to
       // one of its pages (not its main page) and has no buttons of its own.
@@ -1074,7 +1166,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       }
       // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
       const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab) });
-      if (rest === 'setup') return send200(agentSetup(hh, agent), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
+      if (rest === 'setup') return send200(agentSetup(hh, agent, { ownerTokens: !opts.ownerScope }), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
       return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src), page && (rest === 'mind' || rest === 'people') ? head(rest) : undefined);
     }
