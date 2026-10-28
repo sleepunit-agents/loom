@@ -50,7 +50,7 @@ import { catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
-import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { agentDir, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
@@ -145,7 +145,7 @@ function narrowed(h: Household, agents: string[]): Household {
   return { ...h, agents: own, default: own.includes(h.default) ? h.default : own[0] };
 }
 
-const PAGE_ROOTS = ['/setup', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
+const PAGE_ROOTS = ['/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -626,7 +626,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       flash,
       skipped,
       shell: {
-        owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back,
+        owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
@@ -945,6 +945,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = who?.member
         ? { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600, who.member.person)}` }
         : { ok: false, message: 'This session isn\'t a member of the household; sign in again.', page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'member-link' && hh) {
+      // A household owner makes a sign-in link for a member (Members): it opens a session as them.
+      source = CORE;
+      const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
+      const m = memberOf(hh, fields.person);
+      result = m
+        ? { ok: true, keep: true, page: 'loom:members', message: `For ${m.person}, one sign-in within 10 minutes: ${base}/login/${signinLink(hh, 600, m.person)}` }
+        : { ok: false, message: 'No such member.', page: 'loom:members' };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
       source = CORE;
@@ -1138,6 +1146,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const slug = decode(pathname.slice('/people/'.length));
       return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
     }
+    if (pathname === '/members') return send200(householdMembers(hh), 'members', ctxOf('members'));
     if (pathname === '/new-agent') return send200(newAgentPage(hh), '', ctxOf('new-agent'));
     if (pathname === '/new-person') return send200(newPersonPage(), 'people', ctxOf('new-person'));
     if (pathname === '/new-fact') return send200(newFactPage(), 'knowledge', ctxOf('new-fact'));

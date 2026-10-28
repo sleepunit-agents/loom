@@ -467,6 +467,41 @@ export function addAgent(h: Household, agent: string): Household {
   });
 }
 
+/**
+ * Add a member or change what they own (docs/specs/owners.md). The whole list is checked as
+ * loading checks it, so a change that would leave no household owner is refused.
+ */
+export function setMember(h: Household, person: string, agents: '*' | string[]): Household {
+  return withLock(h.home, () => {
+    const current = loadHousehold(h.home) ?? h;
+    const others = current.members.filter((m) => m.person !== person);
+    const next = [...current.members.map((m) => (m.person === person ? { ...m, agents } : m)), ...(others.length === current.members.length ? [{ person, role: 'owner' as const, agents }] : [])];
+    if (!next.some((m) => m.agents === '*')) throw new HouseholdError(`${person} is the only one who owns every agent; someone has to own the household`);
+    return writeMembers(current, next);
+  });
+}
+
+/** Remove a member: their tokens stop working at once (a token's member must be one). The last household owner stays. */
+export function removeMember(h: Household, person: string): Household {
+  return withLock(h.home, () => {
+    const current = loadHousehold(h.home) ?? h;
+    const m = memberOf(current, person);
+    if (!m) throw new HouseholdError(`${person} isn't a member`);
+    if (m.agents === '*' && current.members.filter((x) => x.agents === '*').length === 1) {
+      throw new HouseholdError(`${person} is the only one who owns every agent; someone has to own the household`);
+    }
+    return writeMembers(current, current.members.filter((x) => x.person !== person));
+  });
+}
+
+function writeMembers(current: Household, members: Member[]): Household {
+  const raw = rawHousehold(current.home);
+  // The same checks loading does: a list that wouldn't load isn't written.
+  const checked = parseMembers({ ...raw, members }, current.agents, join(current.home, HOUSEHOLD_FILE));
+  writePrivate(join(current.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, members: checked }, null, 2) + '\n');
+  return { ...current, members: checked };
+}
+
 /** Agent marks: the palette an agent's mark takes its colors from, in order, unless household.json's `marks` says otherwise. */
 export const MARKS: ReadonlyArray<{ bg: string; fg: string; name: string }> = [
   { bg: '#B8A6FF', fg: '#1D1240', name: 'Lilac' }, { bg: '#7A2E4F', fg: '#FFE3EE', name: 'Plum' }, { bg: '#2F6B5A', fg: '#E2F5EE', name: 'Pine' },

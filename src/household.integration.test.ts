@@ -1215,6 +1215,37 @@ esac
       clearPieceCache();
     }
   });
+
+  it('Members: a household owner adds an agent owner, sends her a sign-in link, and removes her (docs/specs/owners.md)', async () => {
+    const cookie = await login();
+    const html = await (await page(cookie, '/members')).text();
+    expect(html).toContain('<h1>Members</h1>');
+    expect(html).toContain('every agent, and the household');
+    expect(html).not.toContain('member-remove');  // the one household owner can't be removed
+    const csrf = csrfOf(html);
+    const act = async (fields: Record<string, string>) => (await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _csrf: csrf, _path: 'members', ...fields }).toString() })).json() as { ok: boolean; message: string };
+    expect(await act({ _action: 'member-set', person: 'nobody', agents: '*' })).toMatchObject({ ok: false });
+    expect(await act({ _action: 'member-set', person: 'loren', agents: 'mark' })).toMatchObject({ ok: true });
+    expect(loadHousehold(h.home)!.members).toEqual([{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }]);
+    // Her link opens a session that sees Mark alone.
+    const link = await act({ _action: 'member-link', person: 'loren' });
+    const code = /\/login\/([A-Za-z0-9_-]+)/.exec(link.message)?.[1] ?? '';
+    // The GET only shows a button (a link preview mustn't spend it); the button posts.
+    const r = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { origin: base } });
+    const hers = (r.headers.get('set-cookie') ?? '').split(';')[0];
+    expect(hers).toMatch(/loom_ui=/);
+    const home = await (await page(hers, '/')).text();
+    expect(home).toContain('<h2>Visual Mark</h2>');
+    expect(home).not.toContain('<h2>Art E Fish</h2>');
+    expect(home).not.toContain('href="/members"');
+    expect((await page(hers, '/members')).status).toBe(403);
+    // Removed: her session stops working.
+    expect(await act({ _action: 'member-remove', person: 'loren' })).toMatchObject({ ok: true });
+    expect((await page(hers, '/')).status).not.toBe(200);
+    expect(await act({ _action: 'member-remove', person: 'jonathan' })).toMatchObject({ ok: false, message: expect.stringMatching(/every agent/) });
+  });
 });
 
 describe('owners: members (docs/specs/owners.md, step 1)', () => {
