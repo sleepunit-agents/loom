@@ -854,7 +854,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
       source = CORE;
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
-      result = { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600, who?.member?.person)}` };
+      // A household session always is a member; one that isn't gets no link, rather than the first owner's.
+      result = who?.member
+        ? { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600, who.member.person)}` }
+        : { ok: false, message: 'This session isn\'t a member of the household; sign in again.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
       source = CORE;
