@@ -130,6 +130,8 @@ export const LIMITS = {
   columns: 12,
   string: 2000,
   asks: 10,
+  // An ask's own buttons: a yes, a no, and one more (a request's Allow, Always allow, Deny).
+  askActions: 3,
   notices: 20,
   answered: 20,
   agents: 16,
@@ -543,7 +545,7 @@ export function parseManifest(value: unknown): Manifest | string {
         return {
           text: str(a.text, 'ask.text'), meta: optStr(a.meta, 'ask.meta'), page: page(a.page, 'ask.page'), label: optStr(a.label, 'ask.label'),
           tone: tone(a.tone), at: when(a.at, 'ask.at'), agent: agentId(a.agent, 'ask.agent'),
-          ...(a.actions !== undefined ? { actions: arr(a.actions, 'ask.actions', 2).map(button) } : {}),
+          ...(a.actions !== undefined ? { actions: arr(a.actions, 'ask.actions', LIMITS.askActions).map(button) } : {}),
           ...(a.kind !== undefined ? { kind: askKind(a.kind, 'ask.kind') } : {}),
           ...(a.attention !== undefined ? attention(a.attention) : {}),
           ...(a.expires !== undefined ? { expires: when(a.expires, 'ask.expires') } : {}),
