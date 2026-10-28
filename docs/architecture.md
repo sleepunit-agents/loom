@@ -187,6 +187,7 @@ have fallen behind.
 | Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
 | Telemetry | `telemetry/recall.jsonl`, `recorder-health.json` | `recall-log.ts`, `recorder-health.ts` |
 | Gaps dir (optional) | `recall-miss.jsonl` | knowledge recall misses, input for the expansion lane |
+| `commons/stores/<piece>.db` | `docs`, `revisions`: a piece's own collections (docs/specs/piece-storage.md) | `stores.ts`; `loom store`, `POST /api/loom/store/…` |
 
 ## The pieces, by file
 
@@ -234,5 +235,5 @@ have fallen behind.
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`. Any other name runs an
+`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`, `store`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).

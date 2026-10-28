@@ -17,6 +17,9 @@
  * boundary: a same-user process can read the daemon's environment from /proc.
  * Install only pieces you'd trust with the daemon itself.
  */
+import { pieceOfPath } from '../cli/pieces-managed.js';
+import { householdHome } from '../household.js';
+import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
 import { listPieces } from '../cli/pieces.js';
@@ -32,6 +35,25 @@ export const CACHE_MS = 45_000;
 const DRAIN_MS = 200;
 /** Env loom never hands to a piece. */
 const WITHHELD = ['LOOM_BEARER_TOKEN', 'LOOM_KNOWLEDGE_BEARER_TOKENS'];
+
+/**
+ * What a piece's process may write in its loom store, for this one call (docs/specs/piece-storage.md):
+ * a household owner's action writes its owner collections; an agent's call, that agent's keys. Anything
+ * else gets no grant, and writes as the piece itself (LOOM_PIECE_NAME). Only for a managed piece.
+ */
+function withGrant(env0: NodeJS.ProcessEnv, path: string, caller: ApiCaller | undefined): NodeJS.ProcessEnv {
+  // Never one inherited from loom's own environment: a grant is minted for this call or there's none.
+  const { LOOM_STORE_GRANT: _inherited, ...env } = env0;
+  const rec = caller ? pieceOfPath(env, path) : undefined;
+  if (!caller || !rec) return env;
+  const piece = rec.name;
+  const home = householdHome(env);
+  if (caller.kind === 'owner' && (caller.agents === undefined || caller.agents === '*')) {
+    return { ...env, LOOM_STORE_GRANT: mintGrant(home, { piece, owner: true, ...(caller.who ? { who: caller.who } : {}) }) };
+  }
+  if (caller.kind === 'agent') return { ...env, LOOM_STORE_GRANT: mintGrant(home, { piece, agent: caller.agent }) };
+  return env;
+}
 
 export interface PieceInfo {
   piece: string;
@@ -228,7 +250,7 @@ export async function piecePage(
   if (info.manifest.legacy) {
     return path === '' ? { title: info.piece, sections: info.manifest.legacy } : { title: 'Not found', sections: [] };
   }
-  const r = await ask(info.path, ['ui', 'page', '--json'], env, { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }) });
+  const r = await ask(info.path, ['ui', 'page', '--json'], withGrant(env, info.path, undefined), { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }) });
   if (!r.ok) return r.reason;
   const parsed = json(r.stdout);
   if (parsed === undefined) return 'not JSON';
@@ -243,7 +265,7 @@ export async function pieceAct(
   /** Who's acting (docs/specs/owners.md): a piece records it as who decided. */
   caller?: ApiCaller,
 ): Promise<ActResult> {
-  const r = await ask(info.path, ['ui', 'act', '--json'], env, { stdin: JSON.stringify({ ...request, ...(caller ? { caller } : {}) }), timeoutMs: ACT_TIMEOUT_MS });
+  const r = await ask(info.path, ['ui', 'act', '--json'], withGrant(env, info.path, caller), { stdin: JSON.stringify({ ...request, ...(caller ? { caller } : {}) }), timeoutMs: ACT_TIMEOUT_MS });
   // Whatever happened, the piece's state may have changed.
   clearPieceCache(info.path);
   if (!r.ok) return { ok: false, message: `${info.piece} didn't answer (${r.reason}).` };
@@ -280,7 +302,7 @@ export async function pieceApi(
   env: NodeJS.ProcessEnv,
   gone?: AbortSignal,
 ): Promise<{ status: number; body: unknown }> {
-  const r = await apiPool.run(() => run(path, ['api', '--json'], env, { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES }), gone);
+  const r = await apiPool.run(() => run(path, ['api', '--json'], withGrant(env, path, request.caller), { stdin: JSON.stringify(request), timeoutMs: API_TIMEOUT_MS, maxBytes: API_MAX_BYTES }), gone);
   if (r === null) return { status: 503, body: { error: 'busy: too many piece API calls at once; try again shortly' } };
   if (!r.ok) return { status: 502, body: { error: `the piece didn't answer (${r.reason})` } };
   const parsed = json(r.stdout) as { status?: unknown; body?: unknown } | undefined;

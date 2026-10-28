@@ -14,6 +14,7 @@
  *   pieces/<name>/current         -> versions/<sha>
  *   pieces/<name>/install.log     the last install's npm output
  */
+import { parseStoreDecl, type StoreDecl } from '../stores.js';
 import { spawn } from 'node:child_process';
 import {
   accessSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
@@ -61,6 +62,12 @@ export interface LoomBlock {
    * install, so a piece can't open its door at run time.
    */
   strangers?: string[];
+  /**
+   * The piece's collections in loom's store and who may write each
+   * (docs/specs/piece-storage.md). Fixed at install, so a running piece can't
+   * widen who writes an owner's collection.
+   */
+  store?: StoreDecl;
 }
 
 export interface PieceRecord {
@@ -182,8 +189,14 @@ export function pieceEnvFor(path: string, env: NodeJS.ProcessEnv): NodeJS.Proces
   return out;
 }
 
-function ownerOfBin(env: NodeJS.ProcessEnv, bin: string): PieceRecord | undefined {
+export function ownerOfBin(env: NodeJS.ProcessEnv, bin: string): PieceRecord | undefined {
   return managedPieces(env).find((r) => r.bins.includes(bin));
+}
+
+/** The managed piece a bin at `path` belongs to (one package may ship several bins), if it's a managed one. */
+export function pieceOfPath(env: NodeJS.ProcessEnv, path: string): PieceRecord | undefined {
+  const bin = managedBinDir(env);
+  return bin && dirname(path) === bin ? ownerOfBin(env, basename(path)) : undefined;
 }
 
 /** The catalog of first-party pieces that ships with loom (assets/pieces.json). */
@@ -281,6 +294,11 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
       return 'loom.strangers is a list of at most 4 API path names (lowercase letters, digits and dashes)';
     }
     out.strangers = st as string[];
+  }
+  if (b.store !== undefined) {
+    const d = parseStoreDecl(b.store);
+    if (typeof d === 'string') return d;
+    out.store = d;
   }
   return out;
 }

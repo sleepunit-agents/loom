@@ -356,6 +356,41 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   no `.` or `..`.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
 
+## Storage: a piece's data in loom
+
+A piece keeps its data in **its own store in loom** (docs/specs/piece-storage.md),
+not in files beside its code: collections of JSON documents by key, every write a
+revision naming its writer, carried in loom's bundle with no verbs from the piece.
+
+It declares its collections in its package, with who may write each:
+
+```json
+"loom": { "store": { "gates": { "writers": "owner" }, "convos": { "writers": "piece" }, "inbox": { "writers": "agent" } } }
+```
+
+- **`owner`**: only while the piece handles a household owner's page action (or an
+  owner's API call). loom hands that one process `LOOM_STORE_GRANT`, signed and good
+  for a few minutes.
+- **`piece`**: the piece's own code, whoever it's serving.
+- **`agent`**: written while serving an agent's call (its grant names the agent), that
+  agent's keys only (`<agent>/…`).
+
+```bash
+loom store <piece> get <collection> <key>
+loom store <piece> list <collection> [--prefix P] [--limit N]
+loom store <piece> put <collection> <key> [--if-rev N]      # the JSON document on stdin
+loom store <piece> del <collection> <key> [--if-rev N]
+loom store <piece> history <collection> <key>
+loom store <piece> revert <collection> <key> <revision-id>
+```
+
+`loom store` reads the grant from the environment loom gave the process; the
+piece's own services (`LOOM_PIECE_NAME`) write its `piece` and `agent` collections.
+Exit codes: 0, 3 not found, 4 a stale `--if-rev`, 5 not allowed. Code running
+elsewhere (a service house on another box) uses `POST /api/loom/store/<piece>/<op>`
+with the piece's credential (`piece:<piece>/<subject>`), as the piece. 256 KB a
+document, 64 MB a piece. Only a managed piece has a store.
+
 ## The bundle: a piece's part
 
 `loom export` asks each installed piece for its part, and `loom restore`

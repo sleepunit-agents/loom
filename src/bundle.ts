@@ -17,6 +17,7 @@
  * Encryption and archiving use the `age` and `tar` programs. Plaintext only
  * ever sits in a fresh 0700 temp directory that's removed on the way out.
  */
+import { storesDir } from './stores.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -182,6 +183,13 @@ export async function exportBundle(opts: {
     const knowledge = src.plain ? join(src.contextDir, 'knowledge.db') : commonsKnowledgePath(h);
     if (existsSync(knowledge)) await backupDb(knowledge, join(stage, 'commons', 'knowledge.db'));
     if (!src.plain && existsSync(commonsPeoplePath(h))) await backupDb(commonsPeoplePath(h), join(stage, 'commons', 'people.db'));
+    // Each piece's store in loom (docs/specs/piece-storage.md): loom carries it, with no verbs from the piece.
+    if (!src.plain && existsSync(storesDir(h.home))) {
+      mkdirSync(join(stage, 'commons', 'stores'), { mode: 0o700 });
+      for (const f of readdirSync(storesDir(h.home)).filter((n) => /^[a-z][a-z0-9-]{0,39}\.db$/.test(n))) {
+        await backupDb(join(storesDir(h.home), f), join(stage, 'commons', 'stores', f));
+      }
+    }
     // Each agent.
     for (const a of h.agents) {
       const from = src.plain ? src.contextDir : agentDir(h, a);
@@ -280,6 +288,9 @@ function assertNoLinkedWrites(home: string): void {
   for (const e of readdirSync(home)) check(join(home, e));
   const agents = join(home, 'agents');
   if (existsSync(agents) && lstatSync(agents).isDirectory()) for (const a of readdirSync(agents)) check(join(agents, a));
+  for (const d of [join(home, 'commons'), storesDir(home)]) {
+    if (existsSync(d) && lstatSync(d).isDirectory()) for (const e of readdirSync(d)) check(join(d, e));
+  }
 }
 
 function lstatExists(p: string): boolean {
