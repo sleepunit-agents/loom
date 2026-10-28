@@ -19,6 +19,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import {
   addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setMark,
   setMember, type Household, type Member,
+  relayOf, setRelay, markIndexOf,
 } from '../household.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
@@ -468,10 +469,24 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         // Its entry in People: where to reach it, and how every other agent knows it.
         { type: 'list', items: [{ text: 'Its entry in People', meta: 'where to reach it, and how the other agents know it', page: validPath(`people/${agent}`) ? `loom:people/${agent}` : undefined }] },
         ...(facts.bio ? [{ type: 'text' as const, text: facts.bio.slice(0, 1900) }] : []),
+        // Its mark's color: its own, chosen here (it was only chosen when the agent was made).
+        ...(opts.ownerTokens === false ? [] : [{ type: 'form' as const, action: 'mark-set', submit: 'Save', hidden: { agent }, fields: [
+          { name: 'mark', label: 'Color', kind: 'choice' as const, value: String(markIndexOf(h, agent)), options: MARKS.map((m, i) => ({ value: String(i), label: m.name, swatch: m.bg })) }] }]),
         identity.trim()
           ? { type: 'details', summary: 'The whole creed', meta: 'read-only: the agent changes it (update_identity), or it\'s changed by hand', blocks: identitySections(identity) }
           : { type: 'text', text: '(no IDENTITY.md)', tone: 'muted' },
       ] },
+      // Who it may relay to without asking: the household owner's to set (an agent owner's Setup shows it read-only).
+      { id: 'relay', title: 'Who it may write to', side: true, blocks: (() => {
+        const others = h.agents.filter((a) => a !== agent);
+        const to = relayOf(h, agent);
+        const say = { type: 'text' as const, tone: 'muted' as const, text: others.length
+          ? `It relays to these without asking (wake relay); to any other, it asks you first. ${to.length ? `Now: ${to.join(', ')}.` : 'Now: nobody.'}`
+          : 'There\'s no other agent to write to.' };
+        if (!others.length || opts.ownerTokens === false) return [say];
+        return [say, { type: 'form' as const, action: 'relay-set', submit: 'Save', hidden: { agent }, fields: [
+          { name: 'to', label: 'Agents', kind: 'text' as const, ...(to.length ? { value: to.join(', ') } : {}), hint: `comma separated: ${others.join(', ')}` }] }];
+      })() },
       { id: 'tokens', title: 'Tokens', blocks: [
         live.length
           ? { type: 'list', items: live.slice(0, 50).map((t) => ({
@@ -619,6 +634,19 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const r = parseRole(t.role);
       const agent = r?.kind === 'agent' ? r.agent : h.default;
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
+    }
+    if (action === 'mark-set') {
+      const agent = fields.agent ?? '';
+      const mark = /^\d$/.test(fields.mark ?? '') ? MARKS[Number(fields.mark)] : undefined;
+      if (!h.agents.includes(agent) || !mark) return { ok: false, message: 'Pick an agent and one of the colors.' };
+      setMark(h, agent, mark);
+      return { ok: true, message: `${agent} wears ${mark.name}.`, page: `loom:a/${agent}/setup` };
+    }
+    if (action === 'relay-set') {
+      const agent = fields.agent ?? '';
+      const to = (fields.to ?? '').split(',').map((a) => a.trim()).filter(Boolean);
+      const now = setRelay(h, agent, to);
+      return { ok: true, message: now.length ? `${agent} writes to ${now.join(', ')} without asking.` : `${agent} asks you before writing to any agent.`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'member-set') {
       const person = fields.person ?? '';
