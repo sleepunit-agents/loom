@@ -9,6 +9,7 @@
  *  - the drill passes against the live household, and notices a change.
  * Needs the `age` and `tar` programs (CI installs age).
  */
+import { PieceStore } from './stores.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -99,6 +100,9 @@ esac
 
   it('a restore into an empty LOOM_HOME is the same household', async () => {
     const file = join(work, 'household.bundle');
+    // A piece's store in loom (docs/specs/piece-storage.md) rides along with no verbs from the piece.
+    const st = new PieceStore(h.home, 'vault');
+    try { st.put('gates', 'loren', { tier: 'STORE-DOC' }, { piece: 'vault', owner: true, who: 'jonathan', exp: 9e9 }, { gates: { writers: 'owner' } }); } finally { st.close(); }
     const m = await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
     expect(m.household.agents).toEqual(['art', 'mark']);
     expect(m.pieces.find((p) => p.name === 'vault')).toMatchObject({ included: true });
@@ -106,7 +110,7 @@ esac
 
     // The file is encrypted: none of the household's text is in it.
     const raw = readFileSync(file);
-    for (const s of ['zebra kiln', 'Art E Fish', 'U0LOREN', 'VAULT-PART', 'caveman']) expect(raw.includes(Buffer.from(s))).toBe(false);
+    for (const s of ['zebra kiln', 'Art E Fish', 'U0LOREN', 'VAULT-PART', 'caveman', 'STORE-DOC']) expect(raw.includes(Buffer.from(s))).toBe(false);
 
     const to = join(work, 'restored');
     const r = await restoreBundle({ file, identity: owner.identity, home: to, env });
@@ -127,6 +131,8 @@ esac
     expect([la.card.how.mode, lm.card.how.mode, la.card.where.slack.value]).toEqual(['caveman', 'shakespearean', 'U0LOREN']);
     expect(new TokenResolver(h2).resolve(ownerToken)).toEqual({ kind: 'owner', member: 'jonathan' });
     expect(existsSync(join(to, 'commons', 'knowledge.db'))).toBe(true);
+    const st2 = new PieceStore(to, 'vault');
+    try { expect(st2.get('gates', 'loren')).toMatchObject({ doc: { tier: 'STORE-DOC' }, by: 'jonathan' }); } finally { st2.close(); }
   });
 
   // The household's own settings come along whole (the relay pairs, t-1597), and

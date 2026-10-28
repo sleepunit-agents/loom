@@ -31,6 +31,7 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
+import { PieceStore, StoreError, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
@@ -125,6 +126,12 @@ export interface HttpServeHandle {
   port: number;
   host: string;
   close(): Promise<void>;
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  if (res.headersSent) return;
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(body));
 }
 
 function sendError(res: ServerResponse, status: number, message: string): void {
@@ -426,6 +433,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
+    // A piece's own store in loom (docs/specs/piece-storage.md): its credential, or a household owner.
+    if (piece === 'loom') return storeApi(req, res, subpath, role);
     let caller: ApiCaller;
     switch (role.kind) {
       case 'owner':
@@ -446,6 +455,49 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  /**
+   * POST /api/loom/store/<piece>/<op> {collection, key?, doc?, ifRev?, prefix?, limit?, revision?}.
+   * A piece's credential (piece:<piece>/<subject>) reads and writes its own store as the piece;
+   * a household owner, any store, as the owner. Nobody else: an agent writes through the piece.
+   */
+  async function storeApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Role): Promise<void> {
+    const m = /^store\/([a-z][a-z0-9-]{0,39})\/(get|list|put|del|history|revert)$/.exec(subpath);
+    if (!m) return sendError(res, 404, 'not-found: /api/loom/store/<piece>/<get|list|put|del|history|revert>');
+    const [, storePiece, op] = m;
+    let grant: Grant;
+    if (role.kind === 'piece' && role.piece === storePiece) grant = { piece: storePiece, exp: Number.MAX_SAFE_INTEGER };
+    else if (role.kind === 'owner') {
+      const c = ownerCaller(role.member);
+      if (c.kind !== 'owner' || (c.agents !== undefined && c.agents !== '*')) return sendError(res, 403, 'forbidden: a piece\'s store is its own and the household owner\'s');
+      grant = { piece: storePiece, owner: true, ...(c.who ? { who: c.who } : {}), exp: Number.MAX_SAFE_INTEGER };
+    } else return sendError(res, 403, 'forbidden: a piece\'s store is its own and the household owner\'s');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: application/json');
+    const raw = await collectBody(req, 512 * 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: a store call is 512 KB at most');
+    let b: Record<string, unknown>;
+    try { b = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    const rec = readRecord(process.env, storePiece);
+    if (!rec) return sendError(res, 404, `not-found: no managed piece ${storePiece}`);
+    const st = new PieceStore(live!().home, storePiece);
+    try {
+      const decl = rec.loom.store ?? {};
+      const c = String(b.collection ?? ''), k = String(b.key ?? '');
+      const ifRev = typeof b.ifRev === 'number' ? b.ifRev : undefined;
+      const out = op === 'get' ? st.get(c, k)
+        : op === 'list' ? st.list(c, { prefix: typeof b.prefix === 'string' ? b.prefix : undefined, limit: typeof b.limit === 'number' ? b.limit : undefined })
+        : op === 'put' ? { rev: st.put(c, k, b.doc, grant, decl, ifRev) }
+        : op === 'del' ? { deleted: st.del(c, k, grant, decl, ifRev) }
+        : op === 'history' ? st.history(c, k)
+        : { rev: st.revert(c, k, Number(b.revision), grant, decl) };
+      return sendJson(res, out === null ? 404 : 200, out ?? { error: `no ${c}/${k}` });
+    } catch (e) {
+      if (e instanceof StoreError) return sendError(res, e.status, e.message);
+      throw e;
+    } finally {
+      st.close();
+    }
   }
 
   async function pieceCall(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string, caller: ApiCaller, maxBytes: number): Promise<void> {
