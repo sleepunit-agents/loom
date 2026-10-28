@@ -125,7 +125,7 @@ esac
     const lm = readPerson(mark2, 'loren');
     if (!('card' in la) || !('card' in lm)) throw new Error('loren restored');
     expect([la.card.how.mode, lm.card.how.mode, la.card.where.slack.value]).toEqual(['caveman', 'shakespearean', 'U0LOREN']);
-    expect(new TokenResolver(h2).resolve(ownerToken)).toEqual({ kind: 'owner' });
+    expect(new TokenResolver(h2).resolve(ownerToken)).toEqual({ kind: 'owner', member: 'jonathan' });
     expect(existsSync(join(to, 'commons', 'knowledge.db'))).toBe(true);
   });
 
