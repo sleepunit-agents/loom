@@ -261,6 +261,7 @@ landed, since it only needs tokens.
   taskstore's question, not core's.
 - **Mark's knowledge:** what's in it, and how much overlaps Art's.
 - **The owner as a person:** Jonathan is in the directory like anyone else.
-  Does the owner role hang off his directory entry?
+  Does the owner role hang off his directory entry? Yes: see
+  [owners.md](owners.md) (members, household and agent owners, 2026-10-28).
 - **How often the bundle is written,** and whether a warm standby is worth
   having, or the USB stick is enough.
