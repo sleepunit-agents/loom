@@ -119,6 +119,11 @@ function renderField(f: Field): string {
         return `<fieldset class="field"><legend>${esc(f.label)}</legend><div class="segmented">${(f.options ?? []).map((o, i) =>
           `<label><input type="radio" name="${esc(f.name)}" value="${esc(o.value)}"${f.value === o.value || (!f.value && i === 0 && f.required) ? ' checked' : ''}${req && i === 0 ? ' required' : ''}><span>${esc(o.label)}</span></label>`).join('')}</div>${hint}</fieldset>`;
       }
+      // A long list of plain options (a person from People): a dropdown, not a wall of radios.
+      if ((f.options ?? []).length > 8 && !(f.options ?? []).some((o) => o.detail)) {
+        return `<div class="field"><label for="${id}">${esc(f.label)}</label><select id="${id}" name="${esc(f.name)}"${req}${desc}>${(f.options ?? []).map((o) =>
+          `<option value="${esc(o.value)}"${f.value === o.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>${hint}</div>`;
+      }
       return `<fieldset class="field choice"><legend>${esc(f.label)}</legend>${(f.options ?? []).map((o, i) =>
         `<label class="option"><input type="radio" name="${esc(f.name)}" value="${esc(o.value)}"${f.value === o.value ? ' checked' : ''}${req && i === 0 ? ' required' : ''}><span><strong>${esc(o.label)}</strong>${o.detail ? `<span class="hint">${esc(o.detail)}</span>` : ''}</span></label>`).join('')}${hint}</fieldset>`;
   }
