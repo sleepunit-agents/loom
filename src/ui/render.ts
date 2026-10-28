@@ -54,7 +54,9 @@ function qs(query: Record<string, string>): string {
 export function pageHref(link: string, source: Source): string {
   const s = splitPage(link);
   if (!s) return '#';
-  const base = s.core ? CORE.base : source.base;
+  // agent:/household: are this piece's own pages under an agent or the household; loom's own pages have neither.
+  if ((s.agent || s.household) && source.id === 'loom') return '#';
+  const base = s.core ? CORE.base : s.agent ? `/a/${s.agent}/p/${source.id}/` : s.household ? `/p/${source.id}/` : source.base;
   const url = s.path === '' ? (base === CORE.base ? '/' : base.replace(/\/$/, '')) : base + s.path;
   return url + qs(s.query);
 }

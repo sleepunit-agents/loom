@@ -238,8 +238,19 @@ function name(v: unknown, what: string): string {
  * A page link: `[loom:]<path>[?<query>]`. Split into the source (loom's own or
  * this piece's), the path and the query, or null when it isn't valid.
  */
-export function splitPage(s: string): { core: boolean; path: string; query: Record<string, string> } | null {
+export function splitPage(s: string): { core: boolean; path: string; query: Record<string, string>; agent?: string; household?: true } | null {
   const core = s.startsWith('loom:');
+  // This piece's own pages elsewhere: `agent:<id>[/path]` on that agent's tab, `household:<path>` on the household's.
+  // Never another piece's: the piece is always the one whose page the link is on.
+  const ag = /^agent:([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(s);
+  if (ag) {
+    const inner = splitPage(ag[2] ?? '');
+    return inner && !inner.core ? { ...inner, agent: ag[1] } : null;
+  }
+  if (s.startsWith('household:')) {
+    const inner = splitPage(s.slice('household:'.length));
+    return inner && !inner.core ? { ...inner, household: true } : null;
+  }
   const rest = core ? s.slice(5) : s;
   const q = rest.indexOf('?');
   const path = q === -1 ? rest : rest.slice(0, q);

@@ -146,7 +146,10 @@ that ignores it keeps working. Outside a household there's no `caller`.
   under that agent (`/a/<agent>/act/<piece>`). For a piece whose things are
   mostly each agent's with a little of the household's (a clock: each agent's
   schedule, and loom's own lanes). The household's rule (2026-10-28): what's
-  shaped like a list of agents belongs to each agent, not the household.
+  shaped like a list of agents belongs to each agent, not the household. A link on such a page can reach the
+  piece's own pages elsewhere: `agent:<id>[/<path>]` (this piece's tab on that
+  agent's pages) and `household:<path>` (this piece's household pages). Never
+  another piece's.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
 - **`owners`** (optional, `2`): the piece understands agent owners
