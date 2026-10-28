@@ -81,7 +81,7 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
   it('owner and agent tokens call as themselves; a piece credential as its subject', async () => {
     const asOwner = await call('/api/thing/boxes/list', tok.owner);
     expect(asOwner.status).toBe(200);
-    expect(await asOwner.json()).toEqual({ caller: { kind: 'owner' }, path: 'boxes/list', body: { hi: 1 } });
+    expect(await asOwner.json()).toEqual({ caller: { kind: 'owner', who: 'owner', agents: '*' }, path: 'boxes/list', body: { hi: 1 } });
     expect((await (await call('/api/thing/', tok.art)).json() as { caller: unknown }).caller).toEqual({ kind: 'agent', agent: 'art' });
     const asBox = await call('/api/thing/poll', tok.box, { facts: { gpu: 'none' } });
     expect(await asBox.json()).toEqual({ caller: { kind: 'piece', subject: 'thor' }, path: 'poll', body: { facts: { gpu: 'none' } } });

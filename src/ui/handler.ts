@@ -51,8 +51,8 @@ import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { agentDir, MARKS, type Household } from '../household.js';
-import { pieceAct, pieceManifests, piecePage, type PieceInfo } from './pieces.js';
+import { agentDir, firstOwner, MARKS, type Household, type Member } from '../household.js';
+import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, renderDashboard, type Dashboard } from './render.js';
 import { agentSource, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, renderHome, renderHouseHome, renderInbox, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
@@ -125,6 +125,8 @@ export interface UiAuth {
   enabled: boolean;
   check(token: string): Buffer | null;
   live(digest: Buffer): boolean;
+  /** The household member an owner token digest belongs to (docs/specs/owners.md); none outside a household. */
+  member?(digest: Buffer): Member | undefined;
 }
 
 /** A fixed list of tokens (a single bearer, or a token map's values). */
@@ -170,16 +172,32 @@ function readCookie(req: IncomingMessage, name: string): string | undefined {
 }
 
 /** Who's asking: a browser session (with its cookie, for the anti-forgery token), a script with the bearer, or nobody. */
-type Who = { kind: 'session'; cookie: string } | { kind: 'bearer' } | null;
+/** A signed-in request, and the member it is (docs/specs/owners.md): from its session's token, or the bearer's. */
+type Who = { kind: 'session'; cookie: string; member?: Member } | { kind: 'bearer'; member?: Member } | null;
 
 function whoIs(req: IncomingMessage, opts: UiOptions): Who {
   if (!opts.auth.enabled) return null;
   const c = readCookie(req, COOKIE);
-  if (c && validSession(c, opts)) return { kind: 'session', cookie: c };
+  if (c && validSession(c, opts)) {
+    const s = storeFor(opts).get(c);
+    return { kind: 'session', cookie: c, member: s ? opts.auth.member?.(s.secret) : undefined };
+  }
   const header = req.headers['authorization'];
   const presented = header?.replace(/^Bearer\s+/i, '').trim();
-  if (presented && opts.auth.check(presented)) return { kind: 'bearer' };
+  const d = presented ? opts.auth.check(presented) : null;
+  if (d) return { kind: 'bearer', member: opts.auth.member?.(d) };
   return null;
+}
+
+/** The WebAuthn user a member's passkeys are made under. */
+function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id: string; name: string; displayName: string } {
+  const seed = !m || first ? `loom-owner|${rpId}` : `loom-member|${m.person}|${rpId}`;
+  return { id: Buffer.from(createHash('sha256').update(seed).digest().subarray(0, 16)).toString('base64url'), name: m?.person ?? 'owner', displayName: 'loom' };
+}
+
+/** The caller a piece's page or action is told about: the member, and what they own. */
+function callerOf(who: Who): ApiCaller | undefined {
+  return who?.member ? { kind: 'owner', who: who.member.person, agents: who.member.agents } : undefined;
 }
 
 /**
@@ -769,8 +787,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return sendJson(res, 200, {
         challenge: store.createChallenge('register', session.secret),
         rp: { id: rp.rpId, name: 'loom' },
-        // One user per household: the owner. A discoverable passkey needs some id; this one is stable and says nothing.
-        user: { id: Buffer.from(createHash('sha256').update(`loom-owner|${rp.rpId}`).digest().subarray(0, 16)).toString('base64url'), name: 'owner', displayName: 'loom' },
+        // One user per member (docs/specs/owners.md): a stable id that says nothing. The first household
+        // owner keeps the household's old id, so the passkeys made before members stay theirs.
+        user: passkeyUser(who.member, !!who.member && opts.household !== undefined && firstOwner(opts.household()).person === who.member.person, rp.rpId),
         pubKeyCredParams: ALGS.map((alg) => ({ type: 'public-key', alg })),
         authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
         excludeCredentials: store.passkeys().map((p) => ({ id: p.id })),
@@ -835,7 +854,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
       source = CORE;
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
-      result = { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600)}` };
+      // A household session always is a member; one that isn't gets no link, rather than the first owner's.
+      result = who?.member
+        ? { ok: true, keep: true, page: 'loom:passkeys', message: `One sign-in, within 10 minutes: ${base}/login/${signinLink(hh, 600, who.member.person)}` }
+        : { ok: false, message: 'This session isn\'t a member of the household; sign in again.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
       source = CORE;
@@ -854,7 +876,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = pieceSource(info.piece);
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
-      result = await pieceAct(info, { action, path, fields }, scopedEnv);
+      result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
     }
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
@@ -1003,7 +1025,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const info = shown && !shown.actions?.length && shown.kind !== 'answered' && shown.page ? pieces.find((p) => pieceSource(p.piece).id === shown.source.id && hasPages(p)) : undefined;
       const sp = info ? splitPage(shown!.page!) : null;
       if (info && sp && !sp.core && sp.path !== '') {
-        const pg = await piecePage(info, sp.path, sp.query, scopedEnv);
+        const pg = await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who));
         if (typeof pg !== 'string') inline = { key: shown!.key, sections: pg.sections };
       }
       const ch = chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash);
@@ -1084,7 +1106,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
     if (!info || path === null || !validPath(path)) return html(renderPage(notFound, { source: pieceSource(piece), path: '', query: {}, csrf }, ch), 404);
-    const page = await piecePage(info, path, query, scopedEnv);
+    const page = await piecePage(info, path, query, scopedEnv, callerOf(who));
     const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
       return html(renderPage({ title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${piece} couldn't show this page (${page}).` }] }] }, ctx, ch), 502);

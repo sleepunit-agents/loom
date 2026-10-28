@@ -36,6 +36,57 @@ export interface Household {
   /** The agent the owner's token acts as when it names none. */
   default: string;
   owner?: string;
+  /**
+   * The household's people with a role (docs/specs/owners.md): each a People
+   * slug, the role, and the agents they own (`*`: a household owner). Read
+   * from `members`, else the legacy `owner` as the one household owner.
+   */
+  members: Member[];
+}
+
+export interface Member {
+  person: string;
+  role: 'owner';
+  agents: '*' | string[];
+}
+
+const PERSON_SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** The household owner a credential belongs to when it names no member: the first with every agent. */
+export function firstOwner(h: Household): Member {
+  return h.members.find((m) => m.agents === '*')!;
+}
+
+export function memberOf(h: Household, person: string | undefined): Member | undefined {
+  return person === undefined ? undefined : h.members.find((m) => m.person === person);
+}
+
+function parseMembers(raw: Record<string, unknown>, agents: string[], path: string): Member[] {
+  if (raw.members === undefined) {
+    const o = typeof raw.owner === 'string' ? raw.owner.toLowerCase() : '';
+    return [{ person: PERSON_SLUG.test(o) ? o : 'owner', role: 'owner', agents: '*' }];
+  }
+  const bad = (why: string) => new HouseholdError(`${path}: members: ${why}`);
+  if (!Array.isArray(raw.members) || raw.members.length === 0) throw bad('a non-empty list');
+  const seen = new Set<string>();
+  const out = raw.members.map((m: unknown) => {
+    const r = (m ?? {}) as Record<string, unknown>;
+    if (typeof r.person !== 'string' || !PERSON_SLUG.test(r.person)) throw bad('each names a person by their People slug');
+    if (seen.has(r.person)) throw bad(`${r.person} is listed twice`);
+    seen.add(r.person);
+    if (r.role !== 'owner') throw bad(`${r.person}'s role is owner (the only role yet)`);
+    const a = r.agents;
+    if (a !== '*' && !(Array.isArray(a) && a.length > 0 && a.every((x) => typeof x === 'string' && agents.includes(x)))) {
+      throw bad(`${r.person}'s agents is "*" or a list of this household's agents`);
+    }
+    // Agent owners arrive with core's scoping (owners.md, "Moving there" step 2): until loom limits
+    // what a member with a list can reach, such a member would reach everything, so none loads.
+    if (a !== '*') throw bad(`${r.person} owns only some agents, and loom doesn't scope an owner to their agents yet; give "*" for now`);
+    return { person: r.person, role: 'owner' as const, agents: a === '*' ? '*' as const : [...new Set(a as string[])] };
+  });
+  // There's always a household owner: someone owns the shared things.
+  if (!out.some((m) => m.agents === '*')) throw bad('at least one member owns every agent ("agents": "*")');
+  return out;
 }
 
 export type Role =
@@ -45,7 +96,8 @@ export type Role =
    * bodies (t-1591). It grants nothing more than the agent has.
    */
   | { kind: 'agent'; agent: string; service?: string; house?: string }
-  | { kind: 'owner' }
+  /** `member`: the household member the token is (docs/specs/owners.md); the first household owner if it names none. */
+  | { kind: 'owner'; member?: string }
   | { kind: 'peer'; name: string }
   /**
    * A piece's credential (docs/extensions.md, "The API"): reaches only
@@ -59,6 +111,8 @@ export interface TokenRecord {
   role: string;
   /** sha256 of the token, hex. The token itself is never stored. */
   sha256: string;
+  /** An owner token's member (a People slug), when it names one. */
+  member?: string;
   created: string;
   last_used?: string;
   revoked?: string;
@@ -96,6 +150,7 @@ export function loadHousehold(home: string): Household | null {
     agents: agents as string[],
     default: def,
     owner: typeof raw.owner === 'string' ? raw.owner : undefined,
+    members: parseMembers(raw, agents as string[], path),
   };
 }
 
@@ -201,7 +256,8 @@ function validRecord(t: unknown): t is TokenRecord {
   if (typeof t !== 'object' || t === null) return false;
   const r = t as Record<string, unknown>;
   return typeof r.label === 'string' && typeof r.role === 'string' && typeof r.sha256 === 'string' && SHA_HEX.test(r.sha256)
-    && typeof r.created === 'string' && (r.revoked === undefined || typeof r.revoked === 'string');
+    && typeof r.created === 'string' && (r.revoked === undefined || typeof r.revoked === 'string')
+    && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)));
 }
 
 /**
@@ -243,6 +299,9 @@ function checkRole(h: Household, role: Role): void {
   if (role.kind === 'agent' && !h.agents.includes(role.agent)) {
     throw new HouseholdError(`no agent named ${role.agent} in this household (${h.agents.join(', ')})`);
   }
+  if (role.kind === 'owner' && role.member !== undefined && !memberOf(h, role.member)) {
+    throw new HouseholdError(`no member named ${role.member} in this household (${h.members.map((m) => m.person).join(', ')})`);
+  }
 }
 
 /** Mint a token. Returns it once; only its sha256 is kept. */
@@ -254,7 +313,11 @@ export function createToken(h: Household, input: { role: Role; label: string }, 
     const tokens = loadTokens(h.home);
     if (tokens.some((t) => t.label === label && !t.revoked)) throw new HouseholdError(`a live token is already labeled ${JSON.stringify(label)}`);
     const token = `loom_${randomBytes(32).toString('base64url')}`;
-    const record: TokenRecord = { label, role: roleString(input.role), sha256: sha(token), created: now.toISOString() };
+    const record: TokenRecord = {
+      label, role: roleString(input.role), sha256: sha(token),
+      ...(input.role.kind === 'owner' && input.role.member ? { member: input.role.member } : {}),
+      created: now.toISOString(),
+    };
     saveTokens(h.home, [...tokens, record]);
     return { token, record };
   });
@@ -309,13 +372,28 @@ export class TokenResolver {
     if (!hit) return null;
     const role = parseRole(hit.role);
     if (!role || (role.kind === 'agent' && !this.h.agents.includes(role.agent))) return null;
+    if (role.kind === 'owner') {
+      // An owner token is a member's: named on it, else the first household owner. One whose
+      // member has left the household reaches nothing.
+      const m = hit.member === undefined ? firstOwner(this.h) : memberOf(this.h, hit.member);
+      if (!m) return null;
+      this.touch(hit.sha256);
+      return { kind: 'owner', member: m.person };
+    }
     this.touch(hit.sha256);
     return role;
   }
 
   /** Whether a live owner token has this sha256 (the page's sessions check this, so revoking ends them). */
   ownerDigestLive(digestHex: string): boolean {
-    return this.current().some((t) => !t.revoked && t.role === 'owner' && t.sha256 === digestHex);
+    return this.ownerMember(digestHex) !== undefined;
+  }
+
+  /** The member a live owner token with this sha256 belongs to, if it's live and they're still a member. */
+  ownerMember(digestHex: string): Member | undefined {
+    const t = this.current().find((x) => !x.revoked && x.role === 'owner' && x.sha256 === digestHex);
+    if (!t) return undefined;
+    return t.member === undefined ? firstOwner(this.h) : memberOf(this.h, t.member);
   }
 
   private touch(digest: string): void {
@@ -352,7 +430,7 @@ export function initHousehold(home: string, agent: string, opts: { owner?: strin
   mkdirSync(join(home, 'agents'), { recursive: true, mode: 0o700 });
   renameSync(from, to);
   symlinkSync(join('agents', agent), from);
-  const h: Household = { home, agents: [agent], default: agent, owner: opts.owner };
+  const h: Household = { home, agents: [agent], default: agent, owner: opts.owner, members: parseMembers({ owner: opts.owner }, [agent], join(home, HOUSEHOLD_FILE)) };
   // The first agent's knowledge becomes the household's commons.
   if (existsSync(join(to, 'knowledge.db')) && !existsSync(join(home, 'commons', 'knowledge.db'))) {
     const kdb = new BetterSqlite3(join(to, 'knowledge.db'));

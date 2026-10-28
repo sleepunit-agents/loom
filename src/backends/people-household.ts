@@ -292,6 +292,27 @@ export function openHouseholdPeople(
 }
 
 /**
+ * Every member has a directory entry (docs/specs/owners.md: a member is a People
+ * entry): made when missing, with a name from the slug ("jonathan-barket" →
+ * "Jonathan Barket") until someone writes a better one. Returns the slugs it wrote.
+ */
+export function ensureMemberEntries(h: Household, now?: () => number): string[] {
+  const wrote: string[] = [];
+  mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
+  const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), now, actor: 'loom' });
+  try {
+    for (const m of h.members) {
+      if (!SLUG_RE.test(m.person) || dir.getRow(m.person)) continue;
+      dir.write({ slug: m.person, name: m.person.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') });
+      wrote.push(m.person);
+    }
+  } finally {
+    dir.close();
+  }
+  return wrote;
+}
+
+/**
  * Every household agent has a directory entry, kind agent (docs/specs/agents-in-people.md):
  * made when missing, its kind put right when it says otherwise, never deleted. An
  * archived entry is left alone. Returns the slugs it wrote. `nameOf` gives an
