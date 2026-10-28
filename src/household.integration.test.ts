@@ -18,7 +18,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { runToken } from './cli/household.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import {
-  addAgent, commonsKnowledgePath, firstOwner, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
+  addAgent, commonsKnowledgePath, firstOwner, removeMember, setMember, contextFromHome, createToken, householdOf, initHousehold, loadHousehold, loadTokens,
   moveKnowledgeToCommons, parseRole, revokeToken, TokenResolver, type Household,
 } from './household.js';
 import BetterSqlite3 from 'better-sqlite3';
@@ -1299,6 +1299,25 @@ describe('owners: members (docs/specs/owners.md, step 1)', () => {
     const recs = loadTokens(h.home).filter((t) => !t.revoked);
     expect(recs.map((t) => [t.label, t.member ?? null])).toEqual([['page sign-in links', null], ['page sign-in links · loren', 'loren']]);
     expect(() => signinLink(h, 60, 'ghost')).toThrow(/no member named ghost/);
+  });
+
+  it("a token that names no member stays with its first owner when someone else becomes first; removed, it stops", () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: '*' }] });
+    h = loadHousehold(h.home)!;
+    const old = createToken(h, { role: { kind: 'owner' }, label: 'old page' }).token;
+    signinLink(h, 60);
+    const r = () => new TokenResolver(() => loadHousehold(h.home)!);
+    expect(r().resolve(old)).toEqual({ kind: 'owner', member: 'jonathan-barket' });
+    // Jonathan narrows to mark: Loren is first now, but his old token stays his.
+    setMember(h, 'jonathan-barket', ['mark']);
+    expect(r().resolve(old)).toEqual({ kind: 'owner', member: 'jonathan-barket' });
+    expect(loadTokens(h.home).find((t) => t.label === 'page sign-in links')!.member).toBe('jonathan-barket');
+    // Loren's link (she's first now) is her own, not the household's (still his).
+    signinLink(loadHousehold(h.home)!, 60);
+    expect(loadTokens(h.home).filter((t) => !t.revoked).map((t) => [t.label, t.member])).toContainEqual(['page sign-in links · loren', 'loren']);
+    // Removed: it reaches nothing, rather than passing to Loren.
+    removeMember(loadHousehold(h.home)!, 'jonathan-barket');
+    expect(r().resolve(old)).toBeNull();
   });
 
   it('every member has a People entry', () => {

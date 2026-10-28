@@ -498,6 +498,16 @@ function writeMembers(current: Household, members: Member[]): Household {
   const raw = rawHousehold(current.home);
   // The same checks loading does: a list that wouldn't load isn't written.
   const checked = parseMembers({ ...raw, members }, current.agents, join(current.home, HOUSEHOLD_FILE));
+  // An owner token that names no member is the first household owner's. If this change makes
+  // someone else first, those tokens stay with who they belonged to: their member is written on
+  // them first, so they never pass to the next person (and stop with them, if they're removed).
+  const was = firstOwner(current).person;
+  if (checked.find((m) => m.agents === '*')!.person !== was) {
+    const tokens = loadTokens(current.home);
+    let pinned = false;
+    for (const t of tokens) if (t.role === 'owner' && t.member === undefined && !t.revoked) { t.member = was; pinned = true; }
+    if (pinned) saveTokens(current.home, tokens);
+  }
   writePrivate(join(current.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, members: checked }, null, 2) + '\n');
   return { ...current, members: checked };
 }
