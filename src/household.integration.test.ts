@@ -1320,6 +1320,16 @@ describe('owners: members (docs/specs/owners.md, step 1)', () => {
     expect(r().resolve(old)).toBeNull();
   });
 
+  it("a member's People entry says what they own", () => {
+    write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }] });
+    h = loadHousehold(h.home)!;
+    ensureMemberEntries(h);
+    const owns = (slug: string) => JSON.stringify(householdPerson(h, slug).sections.find((s) => s.id === 'owns') ?? null);
+    expect(owns('jonathan-barket')).toContain('The household, and every agent in it');
+    expect(owns('loren')).toContain('Visual Mark');
+    expect(owns('loren')).not.toContain('Art E Fish');
+  });
+
   it('every member has a People entry', () => {
     write({ members: [{ person: 'jonathan-barket', role: 'owner', agents: '*' }] });
     h = loadHousehold(h.home)!;
