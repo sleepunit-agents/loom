@@ -99,7 +99,7 @@ been used.
    from, and the auth, scoping and CSRF rules are the same for both.
 2. **The app, beside the old page.** `web/` scaffolded with shadcn and the 000h
    components; built in CI; served at every page path when the browser carries
-   `loom_ui=app` (a toggle in Setup, and `?ui=app` to try it). Everyone else
+   `loom_view=app` (a toggle in Setup, and `?ui=app` to try it). Everyone else
    keeps today's page.
 3. **Pages and blocks.** The shell (dock, rail, top bar, sheets), the `Page`
    view, every block per the table, actions and toasts. Then Home, the Inbox, an
@@ -108,7 +108,7 @@ been used.
    sheets, checked on an iPhone and an Android.
 5. **The default.** When every page has been used in the app for a week without
    a regression, the app is the default and the old page is the fallback
-   (`loom_ui=classic`).
+   (`loom_view=classic`).
 6. **The old renderer goes** a release later: `render.ts` keeps only the login
    pages.
 

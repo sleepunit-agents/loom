@@ -1,0 +1,70 @@
+@layer cojeev-states {
+/* Cojeev authored subparts, state precedence, and irreducible shapes; scoped to this registry item. */
+.v-scrim:where([data-slot="drawer"], [data-slot^="drawer-"]) {
+  position: fixed;
+  inset: 0;
+  background: var(--v-scrim);
+  z-index: var(--z-sheet);
+}
+.v-dialog__head:where([data-slot="drawer"], [data-slot^="drawer-"]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.v-dialog__actions:where([data-slot="drawer"], [data-slot^="drawer-"]) {
+  display: flex;
+  gap: var(--s-2);
+  justify-content: flex-end;
+}
+/* Scrim paint and retained close use the shared opacity-only Motion lane. */
+.v-dialog__head:where([data-slot="drawer"], [data-slot^="drawer-"]) {
+  align-items: start;
+}
+.v-dialog__head:where([data-slot="drawer"], [data-slot^="drawer-"]) .v-section {
+  font-size: var(--fs-section);
+  line-height: 1.15;
+  padding-top: var(--s-2);
+}
+.v-dialog__actions:where([data-slot="drawer"], [data-slot^="drawer-"]) {
+  margin-top: var(--s-2);
+  gap: var(--s-3);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .v-drawer:where([data-slot="drawer"], [data-slot^="drawer-"]) {
+    scrollbar-color: rgba(251, 244, 230, 0.5) transparent;
+  }
+}
+.v-drawer:where(
+    [data-slot="drawer"],
+    [data-slot^="drawer-"]
+  )::-webkit-scrollbar-thumb {
+  background-color: rgba(251, 244, 230, 0.42);
+}
+@keyframes v-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="drawer"],
+  [data-slot^="drawer-"],
+  [data-slot="drawer"]::before,
+  [data-slot="drawer"]::after,
+  [data-slot^="drawer-"]::before,
+  [data-slot^="drawer-"]::after {
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    transition-duration: 0s;
+    scroll-behavior: auto;
+  }
+}
+
+
+[data-slot="drawer-content"] { max-height:calc(100dvh - var(--dock-h) - 32px); overflow-y:auto; overscroll-behavior:contain; display:grid; gap:var(--s-4); grid-template-columns:minmax(0,1fr); }
+[data-slot="drawer-description"] { color:var(--v-on-ink); opacity:.85; }
+[data-slot="drawer-title"], [data-slot="drawer-description"] { overflow-wrap:anywhere; }
+[data-slot="drawer-footer"] { flex-wrap:wrap; }
+:root[data-mode="dark"] .v-drawer[data-slot="drawer-content"] [data-slot="drawer-description"] { color:var(--v-on-ink); }
+
+}

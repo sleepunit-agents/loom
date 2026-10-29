@@ -26,12 +26,13 @@
     "url": "https://github.com/sleepunit-agents/loom/issues"
   },
   "scripts": {
-    "build": "tsc && node scripts/build-widgets.mjs",
+    "build": "tsc && node scripts/build-widgets.mjs && npm run build:web",
     "prepare": "tsc",
     "prepublishOnly": "npm run build && npm test",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:web": "npm --prefix web ci --no-audit --no-fund --silent && npm --prefix web run build"
   },
   "publishConfig": {
     "access": "public",
