@@ -38,13 +38,15 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   if (!s) return { tabs: chrome.nav.map((n) => ({ ...n })), more: [] };
   const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')];
   const settings = s.pieces.filter((p) => p.kind === 'setting');
-  const tabs: Tab[] = [
-    { label: 'Home', href: s.home, current: s.tab === 'home' },
-    { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks },
-    ...places.filter((p) => p.href !== '/inbox'),
-    { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) },
-  ];
-  return { tabs, more: settings };
+  const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
+  const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
+  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) };
+  // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, and More (Setup and every place). A desktop's rail: all of it.
+  const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
+    { label: 'Find', href: '/find', current: s.tab === 'find' }];
+  return matchMedia('(min-width: 1024px)').matches
+    ? { tabs: [home, inbox, ...places.filter((p) => p.href !== '/inbox'), setup], more: settings }
+    : { tabs: phone, more: [setup, ...places.filter((p) => p.href !== '/inbox'), ...settings] };
 }
 
 export default function App() {
@@ -63,10 +65,23 @@ export default function App() {
   useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
   const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem('loom-mode', m); } catch { /* private window */ } };
 
+  // A page that stays fresh is fetched again in place (the classic page's data-live): page.refresh seconds, or 20 for a
+  // page without a form, and Home, Today and the Inbox; never while a sheet, an editor or a field is in use, or hidden.
+  const every = !data ? 0 : data.view === 'page' ? (data.page.refresh ?? (JSON.stringify(data.page).includes('"type":"form"') ? 0 : 20))
+    : data.view === 'sheet' ? 0 : 20;
+  useEffect(() => {
+    if (!every) return;
+    const t = setInterval(() => {
+      const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+      if (!busy) void load(location.pathname + location.search, false, true);
+    }, every * 1000);
+    return () => clearInterval(t);
+  }, [every]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => [...x, { ...n, id: Date.now() + Math.random() }]), []);
 
-  const load = useCallback(async (to: string, push: boolean) => {
-    setLoading(true);
+  const load = useCallback(async (to: string, push: boolean, quiet = false) => {
+    if (!quiet) setLoading(true);
     const r = await fetchView(to).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string }));
     setLoading(false);
     if (r.redirect || r.status === 401) { location.href = to; return; }   // signed out: loom's own sign-in page
@@ -75,7 +90,7 @@ export default function App() {
     setError(null); setData(r.data); setUrl(to);
     const flash = r.data.chrome?.flash;
     if (flash) say(flash);
-    window.scrollTo({ top: 0 });
+    if (!quiet) window.scrollTo({ top: 0 });
   }, [say]);
 
   useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -117,7 +132,7 @@ export default function App() {
     for (const t of nav.tabs) if (keep.length < 4 && !keep.includes(t)) keep.push(t);
     return nav.tabs.filter((t) => keep.includes(t));
   })();
-  const phoneTabs = nav.tabs.length > 5 ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
+  const phoneTabs = nav.tabs.length > 5 || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
     value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />,
@@ -130,7 +145,7 @@ export default function App() {
 
   return (
     <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
-      <div className="min-h-dvh lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]" data-mode={effective}
+      <div className="min-h-dvh lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]" data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {wide && chrome && (
           <aside className="sticky top-0 h-dvh w-60 overflow-y-auto border-r px-3 py-6">
@@ -217,6 +232,10 @@ export default function App() {
     </ToastProvider>
   );
 }
+
+/** An agent's accent: the 000h family nearest its mark (loom's MARKS: Lilac, Plum, Pine, Mustard, Denim, Coral). */
+const ACCENT: Record<string, string> = { '#b8a6ff': 'blue', '#7a2e4f': 'pink', '#2f6b5a': 'olive', '#e3b341': 'yellow', '#3d5a99': 'blue', '#f09a7a': 'pink' };
+const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
 function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const main = page.sections.filter((s) => !s.side);

@@ -412,3 +412,8 @@
 .v-dock [data-part="visual"] [data-slot="animated-icon"],
 .v-dock [data-part="visual"] [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 26px; height: 26px; }
 .v-dock [data-part="visual"] svg { width: 26px !important; height: 26px !important; }
+
+/* An agent's pages wear its accent (docs/specs/ui-app.md): 000h's components accent in pink; point pink at the family. */
+[data-accent="blue"] { --v-pink: var(--v-blue); --v-pink-soft: var(--v-blue-soft); --v-pink-deep: var(--v-blue-deep); }
+[data-accent="olive"] { --v-pink: var(--v-olive); --v-pink-soft: var(--v-olive-soft); --v-pink-deep: var(--v-olive-deep); --v-accent-ink: var(--v-olive-ink); }
+[data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
