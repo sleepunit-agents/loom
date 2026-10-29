@@ -242,7 +242,7 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
 
 // ---- sheets: Places, Setup, Find, Scope --------------------------------------------------------
 
-export function SheetView({ which, chrome, q, found, mode, setMode }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void }) {
+export function SheetView({ which, chrome, q, found, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void; ground: 'contours' | 'wash'; setGround: (g: 'contours' | 'wash') => void }) {
   const { go } = useEnv();
   const s = chrome.shell;
   const [query, setQuery] = useState(q);
@@ -266,7 +266,11 @@ export function SheetView({ which, chrome, q, found, mode, setMode }: { which: s
       <div className="grid gap-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{[...s.pieces.filter((p) => p.kind === 'setting'), ...own].map(tile)}</div>
         <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
-          <CardContent><Appearance mode={mode} setMode={setMode} /></CardContent></Card>
+          <CardContent className="grid gap-4"><Appearance mode={mode} setMode={setMode} />
+            <div className="grid gap-2"><p className="text-sm opacity-70">Background</p>
+              <div className="flex gap-2" role="radiogroup" aria-label="Background">{([['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => (
+                <Button key={g} role="radio" aria-checked={ground === g} size="sm" variant={ground === g ? 'default' : 'outline'} onClick={() => setGround(g)}>{l}</Button>))}</div></div>
+          </CardContent></Card>
         <Card><CardContent className="grid gap-2 py-4">
           <form method="post" action="/logout"><input type="hidden" name="_csrf" value={chrome.csrf} /><Button type="submit" variant="ghost" className="w-full">Sign out</Button></form>
         </CardContent></Card>

@@ -3,6 +3,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
+// The ground (contour field) and the loader (strands), on their own (ground.tsx).
+const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contours })));
+const Weaving = lazy(() => import('./ground').then((m) => ({ default: m.Weaving })));
 // The More drawer's menu (000h's navigation menu) loads when it opens.
 const MoreMenu = lazy(() => import('./more-menu'));
 // Passkeys' controls (WebAuthn, push) load with that page only.
@@ -72,6 +75,9 @@ export default function App() {
   const [more, setMore] = useState(false);
   // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup, kept in this browser.
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
+  // The ground: the contour field (on trial) or the plain wash; a choice in Setup, kept in this browser.
+  const [ground, setGroundState] = useState<'contours' | 'wash'>(() => { try { return localStorage.getItem('loom-ground') === 'wash' ? 'wash' : 'contours'; } catch { return 'contours'; } });
+  const setGround = (g: 'contours' | 'wash') => { setGroundState(g); try { localStorage.setItem('loom-ground', g); } catch { /* private window */ } };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
   const effective = mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
@@ -230,6 +236,7 @@ export default function App() {
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
+        {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
         {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} />}
         <div className="min-w-0">
           {/* A phone's top bar stays put, frosted. A desktop has none (as 000h's own pages): the trail and the page's title
@@ -261,7 +268,8 @@ export default function App() {
             </div>
           </header>
 
-          {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden><Spinner appearance="orbit" className="scale-[2.2]" /></div>}
+          {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden>
+            <Suspense fallback={<Spinner appearance="orbit" className="scale-[2.2]" />}><Weaving /></Suspense></div>}
           <main aria-busy={waiting || undefined} className={`mx-auto max-w-5xl px-4 pb-44 pt-5 transition-opacity duration-300 lg:pb-10 ${waiting ? 'opacity-35' : ''}`}>
             {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
             {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => location.reload()}>Try again</Button>}</CardContent></Card>}
@@ -274,7 +282,7 @@ export default function App() {
                   : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
                   : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
                     <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
-                  : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} />
+                  : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} />
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
