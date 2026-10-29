@@ -248,6 +248,30 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   return result;
 }
 
+/**
+ * Ask every piece for its manifest now, whatever the cache holds, and keep the answers (src/ui/live.ts runs
+ * this while an app is open). Returns each piece's answer as a fingerprint, so a caller can tell which changed;
+ * a piece that changed has its kept pages dropped, so the next look at them is fresh.
+ */
+export async function refreshPieceManifests(env: NodeJS.ProcessEnv): Promise<Map<string, string>> {
+  const installed = listPieces(env).filter((p) => p.name !== 'loom');
+  const out = new Map<string, string>();
+  await Promise.all(installed.map(async (p) => {
+    const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
+    const result = fetchManifest(p.name, p.path, env);
+    const r = await result;
+    // A piece that failed this once keeps its last good answer, as a page load would.
+    if ('manifest' in r || !cache.has(key)) cache.set(key, { at: Date.now(), result });
+    out.set(p.path, 'manifest' in r ? JSON.stringify(r.manifest) : '');
+  }));
+  return out;
+}
+
+/** Drop a piece's kept pages (not its manifest). */
+export function clearPiecePages(path: string): void {
+  for (const k of [...pages.keys()]) if (k.startsWith(`${path}\0`)) pages.delete(k);
+}
+
 /** Every installed piece's manifest, plus the ones that had nothing to show and why. */
 export async function pieceManifests(
   env: NodeJS.ProcessEnv,

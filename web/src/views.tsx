@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
+import { Arrive } from './arrive';
 import { ActButton, BlockView, EnvContext, Link, type Env } from './blocks';
 import type { Button as Btn, Chrome, Source, Tone } from './loom';
 
@@ -56,7 +57,7 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
           <Card key={c.id} className="cursor-pointer" onClick={() => go(`/a/${c.id}`)}>
             <CardHeader className="flex flex-row items-center gap-3">
               <Mark a={c} />
-              <div className="min-w-0 flex-1"><CardTitle>{c.label}</CardTitle>{c.reason && <p className="truncate text-sm opacity-70">{c.reason}</p>}</div>
+              <div className="min-w-0 flex-1"><CardTitle>{c.label}</CardTitle>{c.reason && <Arrive as="p" k={`why:${c.label}\0${c.reason}`} className="truncate text-sm opacity-70">{c.reason}</Arrive>}</div>
               {c.state && <AgentState status={STATE[c.state].status} size="sm" label={STATE[c.state].word} />}
             </CardHeader>
             {c.readings && c.readings.length > 0 && (
@@ -64,7 +65,7 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
                 <dl className="grid min-w-0 gap-1.5 text-sm">{c.readings.map((r) => (
                   <div key={r.label} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-3">
                     <dt className="flex items-center gap-2 opacity-70">{r.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[r.tone]}`} />}{r.label}</dt>
-                    <dd className="min-w-0 truncate text-right">{r.value}</dd>
+                    <Arrive as="dd" k={`rd:${c.id ?? c.label}\0${r.label}\0${r.value}`} className="min-w-0 truncate text-right">{r.value}</Arrive>
                   </div>))}</dl>
               </CardContent>
             )}
@@ -74,7 +75,7 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
       {home.moving.length > 0 && (
         <Card><CardHeader><CardTitle>What's moving</CardTitle></CardHeader>
           <CardContent><ul className="divide-y">{home.moving.map((m, n) => (
-            <li key={n} className="py-2.5"><span className="block">{m.text}</span><span className="block text-sm opacity-70">{[m.agent, m.meta].filter(Boolean).join(' · ')}</span></li>))}</ul></CardContent>
+            <Arrive as="li" key={n} k={`mv:${m.agent ?? ''}\0${m.text}`} className="py-2.5"><span className="block">{m.text}</span><span className="block text-sm opacity-70">{[m.agent, m.meta].filter(Boolean).join(' · ')}</span></Arrive>))}</ul></CardContent>
         </Card>
       )}
     </div>
@@ -87,7 +88,7 @@ function Asks({ asks }: { asks: Ask[] }) {
   if (!asks.length) return null;
   return (
     <div className="grid gap-3">{asks.map((a, n) => (
-      <As key={n} source={a.source}>
+      <As key={n} source={a.source}><Arrive k={`ask:${a.source.id}\0${a.text}`} className="rounded-3xl">
         <Card className={a.tone === 'bad' ? 'ring-1 ring-red-400' : 'ring-1 ring-amber-300'}>
           <CardContent className="grid gap-2 py-4">
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
@@ -96,7 +97,7 @@ function Asks({ asks }: { asks: Ask[] }) {
             {a.actions && <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>}
           </CardContent>
         </Card>
-      </As>))}
+      </Arrive></As>))}
     </div>
   );
 }
@@ -106,11 +107,11 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{tiles.map((t) => (
       <As key={t.source.id + t.label} source={t.source}>
-        <Link page={t.page} className="grid gap-0.5 rounded-3xl border p-4 no-underline hover:border-current">
+        <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-3xl"><Link page={t.page} className="grid gap-0.5 rounded-3xl border p-4 no-underline hover:border-current">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="text-xl font-semibold">{t.value}</span>
           {t.detail && <span className="line-clamp-2 text-xs opacity-60">{t.detail}</span>}
-        </Link>
+        </Link></Arrive>
       </As>))}
     </div>
   );
@@ -131,11 +132,11 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
           <CardContent><ol className="relative grid gap-0 border-l pl-4">{d.thread.map((r, n) => {
             const fresh = d.sinceMs && r.at && Date.parse(r.at) > d.sinceMs;
             return (
-              <li key={n} className="relative py-2.5">
+              <Arrive as="li" key={n} k={`th:${r.at}\0${r.text}`} className="relative py-2.5">
                 <span className={`absolute -left-[21px] top-4 size-2.5 rounded-full ${fresh ? 'bg-[var(--loom-accent,#16a34a)]' : 'bg-neutral-300 dark:bg-neutral-600'}`} />
                 <Link page={r.page} className="block no-underline hover:underline">{r.text}</Link>
                 {r.meta && <span className="block text-xs opacity-60">{r.meta}</span>}
-              </li>);
+              </Arrive>);
           })}</ol>{void now}</CardContent>
         </Card>
       )}
@@ -155,7 +156,7 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
   const need = items.filter((i) => i.attention);
   const rest = items.filter((i) => !i.attention);
   const row = (i: InboxItem) => (
-    <li key={i.key}>
+    <Arrive as="li" key={i.key} k={`in:${i.key}\0${i.kind}`}>
       <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <span className="size-7" />}
         <span className="min-w-0 flex-1">
@@ -165,7 +166,7 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
         </span>
         <Badge variant={i.attention ? 'pending' : 'default'}>{KIND[i.kind]}</Badge>
       </button>
-    </li>
+    </Arrive>
   );
   return (
     <div className="grid gap-4">

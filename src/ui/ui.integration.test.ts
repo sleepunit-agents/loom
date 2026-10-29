@@ -12,6 +12,7 @@ import { update } from '../tools/update.js';
 import { listProposals, propose } from '../backends/proposals.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { parseActResult, parseManifest, parsePage, splitPage, validPath } from './vocab.js';
+import { listening } from './live.js';
 import { clearPieceCache } from './pieces.js';
 import { esc, pageHref, pieceSource } from './render.js';
 
@@ -763,6 +764,35 @@ describe('loom UI over HTTP', () => {
       const r = await fetch(`${base}/app/${js}`, { headers: { 'accept-encoding': enc } });
       expect([r.status, r.headers.get('content-encoding'), r.headers.get('vary')], enc).toEqual([200, want, 'accept-encoding']);
     }
+  });
+
+  it('an open app hears "change" on its stream when an action runs, and a piece that answers differently is one too', async () => {
+    const seen = join(bin, 'seen');
+    await piece(bin, 'vault', fullPiece(seen));
+    const cookie = await login();
+    expect((await fetch(`${base}/events`, { redirect: 'manual' })).status).toBe(303);   // signed out: the sign-in page
+    const ac = new AbortController();
+    const stream = await fetch(`${base}/events`, { headers: { cookie, accept: 'text/event-stream' }, signal: ac.signal });
+    expect([stream.status, stream.headers.get('content-type'), stream.headers.get('content-encoding')]).toEqual([200, 'text/event-stream; charset=utf-8', null]);
+    const reader = stream.body!.getReader();
+    let got = '';
+    const until = async (text: string, ms: number) => {
+      const end = Date.now() + ms;
+      while (!got.includes(text) && Date.now() < end) {
+        const r = await Promise.race([reader.read(), new Promise<null>((res) => setTimeout(() => res(null), end - Date.now()))]);
+        if (!r || r.done) break;
+        got += new TextDecoder().decode(r.value);
+      }
+      return got.includes(text);
+    };
+    expect(await until('retry: 5000', 2000)).toBe(true);
+    expect(listening()).toBe(1);
+    const csrf = csrfOf(await view('/p/vault', cookie));
+    await post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'k', value: 'v' }, { 'x-loom-fetch': '1' });
+    expect(await until('event: change', 4000)).toBe(true);
+    ac.abort();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(listening()).toBe(0);
   });
 
   it('a burst of page loads runs at most a few pieces at once', async () => {

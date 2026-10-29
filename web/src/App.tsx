@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { PasskeyAdd, PushSwitch } from './passkeys';
+import { ArrivalContext, type Arrivals } from './arrive';
 import { LoomSidebar } from './sidebar';
 import { Boundary, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
@@ -68,18 +69,7 @@ export default function App() {
   useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
   const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem('loom-mode', m); } catch { /* private window */ } };
 
-  // A page that stays fresh is fetched again in place (the classic page's data-live): page.refresh seconds, or 20 for a
-  // page without a form, and Home, Today and the Inbox; never while a sheet, an editor or a field is in use, or hidden.
-  const every = !data ? 0 : data.view === 'page' ? (data.page.refresh ?? (JSON.stringify(data.page).includes('"type":"form"') ? 0 : 20))
-    : data.view === 'sheet' ? 0 : 20;
-  useEffect(() => {
-    if (!every) return;
-    const t = setInterval(() => {
-      const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
-      if (!busy) void load(location.pathname + location.search, false, true);
-    }, every * 1000);
-    return () => clearInterval(t);
-  }, [every]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-line react-hooks/exhaustive-deps
 
   const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => [...x, { ...n, id: Date.now() + Math.random() }]), []);
 
@@ -124,6 +114,38 @@ export default function App() {
     if (flash) say(flash);
     if (!quiet && !have) window.scrollTo({ top: 0 });
   }, [say]);
+
+  // What's new arrives (arrive.tsx): what this page showed at its last answer, against what it shows now.
+  const shown = useRef<{ url: string; data: View | null; keys: Set<string> }>({ url: '', data: null, keys: new Set() });
+  const arrivals: Arrivals = { before: shown.current.url === url && shown.current.data !== null ? shown.current.keys : null, now: new Set() };
+  useEffect(() => { shown.current = { url, data, keys: arrivals.now }; });   // after every draw
+
+  // Live (src/ui/live.ts): loom says "something changed" and this page asks again, with its fingerprint (a 304
+  // when nothing it shows moved). While the stream is open, the timer below is only a slow fallback.
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    if (!('EventSource' in window)) return;
+    const es = new EventSource('/events');
+    es.onopen = () => setLive(true);
+    es.onerror = () => setLive(false);
+    es.addEventListener('change', () => { if (!document.hidden) void load(showing.current, false, true); });
+    const back = () => { if (!document.hidden) void load(showing.current, false, true); };
+    document.addEventListener('visibilitychange', back);
+    return () => { es.close(); document.removeEventListener('visibilitychange', back); };
+  }, [load]);
+
+  // A page that stays fresh is fetched again in place (the classic page's data-live): page.refresh seconds, or 20 for a
+  // page without a form, and Home, Today and the Inbox; never while a sheet, an editor or a field is in use, or hidden.
+  const every = !data ? 0 : data.view === 'page' ? (data.page.refresh ?? (JSON.stringify(data.page).includes('"type":"form"') ? 0 : 20))
+    : data.view === 'sheet' ? 0 : 20;
+  useEffect(() => {
+    if (!every) return;
+    const t = setInterval(() => {
+      const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
+      if (!busy) void load(location.pathname + location.search, false, true);
+    }, (live ? Math.max(every, 60) : every) * 1000);
+    return () => clearInterval(t);
+  }, [every, live]); 
 
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
   useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -216,7 +238,7 @@ export default function App() {
             {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
             {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => location.reload()}>Try again</Button>}</CardContent></Card>}
             {!error && data && env && (
-              <EnvContext.Provider value={env}><Boundary where={url}>
+              <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
@@ -226,7 +248,7 @@ export default function App() {
                     <PushSwitch csrf={data.chrome.csrf} /></div>
                   : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} />
                   : <NotYet kind={data.view} url={url} />}
-              </Boundary></EnvContext.Provider>
+              </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
             {!error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>

@@ -33,9 +33,10 @@
  * on stdin and are never logged, stored, or put in a URL; the one-time result
  * message is kept in memory under a random id for a minute.
  */
+import { changed, openStream } from './live.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
@@ -104,7 +105,7 @@ export interface UiOptions {
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/activity' || pathname === '/passkeys'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup'
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/');
 }
@@ -161,7 +162,7 @@ function webFile(rel: string): string | null {
   try { return existsSync(p) && statSync(p).isFile() ? p : null; } catch { return null; }
 }
 
-const PAGE_ROOTS = ['/app', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
+const PAGE_ROOTS = ['/app', '/events', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -311,6 +312,13 @@ function send(res: ServerResponse, status: number, type: string, body: string, e
  * went out as 786 KB); a page's data is compressed quickly, when it's big enough to be worth it.
  */
 const packed = new Map<string, { br: Buffer; gzip: Buffer }>();
+// The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at start.
+setTimeout(() => {
+  const dir = WEB_DIR && join(WEB_DIR, 'assets');
+  if (!dir || !existsSync(dir)) return;
+  const fake = { headers: { 'accept-encoding': 'br' } } as IncomingMessage;
+  for (const f of readdirSync(dir)) if (/\.(js|css|svg|json)$/.test(f)) encoded(fake, readFileSync(join(dir, f)), join(dir, f));
+}, 1_000).unref();
 function encoded(req: IncomingMessage, body: Buffer, keep?: string): { body: Buffer; headers: Record<string, string> } {
   const accepts = String(req.headers['accept-encoding'] ?? '');
   const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
@@ -905,6 +913,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
+  // The app's live stream (src/ui/live.ts): "something changed", and nothing else.
+  if (pathname === '/events') {
+    if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
+    return openStream(res, scopedEnv, opts.household?.().home ?? opts.contextDir, SECURITY_HEADERS);
+  }
+
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
   // Push for Your call (push.ts): the key to subscribe with, and this browser's subscription.
   if (pathname === '/push/key' && req.method === 'GET') {
@@ -1050,6 +1064,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
     }
+    changed();   // whatever it did, every open app looks again
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
     const from = source.id === 'loom' ? undefined : source.id;
