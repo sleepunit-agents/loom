@@ -20,7 +20,7 @@ import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastV
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
 import { BlockView, EnvContext, Nothing, type Env } from './blocks';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
-import { Appearance, DashboardView, HouseHomeView, InboxView, SheetView, type Mode } from './views';
+import { DashboardView, HouseHomeView, InboxView, SheetView, type Mode } from './views';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -70,7 +70,7 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
-  // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup and More, kept in this browser.
+  // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup, kept in this browser.
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
@@ -232,7 +232,9 @@ export default function App() {
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
         {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} />}
         <div className="min-w-0">
-          <header className="loom-top sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)] lg:border-0 lg:pt-3">
+          {/* A phone's top bar stays put, frosted. A desktop has none (as 000h's own pages): the trail and the page's title
+              head the page and scroll away with it, so nothing slides under a band across the wash. */}
+          <header className="loom-top sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)] lg:static lg:border-0 lg:pt-8">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
               {chrome?.shell?.back ? null : accent && chrome?.shell?.household ? (
                 // An agent's own pages: its mark, with a chevron, is the way back to the household.
@@ -246,12 +248,12 @@ export default function App() {
               <div className="min-w-0 flex-1">
                 {chrome?.shell?.back && (
                   // Where this page sits (000h's breadcrumb): the page it's under, then this one.
-                  <Breadcrumb aria-label="You are here" className="[&_[data-slot=breadcrumb-page]]:text-lg [&_[data-slot=breadcrumb-page]]:font-semibold"><BreadcrumbList>
+                  <Breadcrumb aria-label="You are here" className="[&_[data-slot=breadcrumb-page]]:text-lg [&_[data-slot=breadcrumb-page]]:font-semibold lg:[&_[data-slot=breadcrumb-page]]:text-sm lg:[&_[data-slot=breadcrumb-page]]:font-normal"><BreadcrumbList>
                     <BreadcrumbItem><BreadcrumbLink href={chrome.shell.back.href} onClick={(e) => { e.preventDefault(); go(chrome.shell!.back!.href); }}>{chrome.shell.back.label}</BreadcrumbLink></BreadcrumbItem>
                     <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
                   </BreadcrumbList></Breadcrumb>
                 )}
-                <h1 className={chrome?.shell?.back ? 'sr-only' : 'truncate text-lg font-semibold leading-tight'}>{title}</h1>
+                <h1 className={`${chrome?.shell?.back ? 'sr-only lg:not-sr-only' : ''} block truncate text-lg font-semibold leading-tight lg:mt-1 lg:font-[family-name:var(--font-display)] lg:text-4xl lg:tracking-tight`}>{title}</h1>
                 {head?.sub && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
               {loading && <Spinner appearance="relay" aria-label="Loading" />}
@@ -298,7 +300,6 @@ export default function App() {
               <MoreMenu pages={moreTabs} agents={chrome?.shell?.agents ?? []} here={head?.label} icon={icon} go={(href) => { setMore(false); go(href); }} />
             </Suspense>
           )}
-          <div className="grid gap-2"><p className="text-sm opacity-70">Appearance</p><Appearance mode={mode} setMode={setMode} /></div>
         </DrawerContent>
       </Drawer>
 
