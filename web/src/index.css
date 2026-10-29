@@ -49,6 +49,7 @@
 @import "@/styles/cojeev/activity-feed.css";
 @import "@/styles/cojeev/table.css";
 @import "@/styles/cojeev/pagination.css";
+@import "@/styles/cojeev/navigation-menu.css";
 
 @custom-variant dark (&:is(.dark *));
 
