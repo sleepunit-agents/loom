@@ -51,7 +51,7 @@
 @import "@/styles/cojeev/pagination.css";
 @import "@/styles/cojeev/navigation-menu.css";
 @import "@/styles/cojeev/contour-field.css";
-@import "@/styles/cojeev/strands.css";
+@import "@/styles/cojeev/depth-background.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -479,3 +479,5 @@ body { background: var(--v-canvas); }
 @media (prefers-reduced-motion: reduce) { .loom-dot-live { animation: none; } }/* The contour field over the wash (ground.tsx): its own paper off, so the wash shows through its lines; quieter in the dark. */
 .loom-ground .v-contour-field { background: transparent; }
 [data-mode="dark"] .loom-ground { opacity: .55; }
+/* How much terrain the contour field shows: 1 is 000h's (three big hills to a screen); more is further out. */
+.loom-ground { --field-zoom: 2.2; }

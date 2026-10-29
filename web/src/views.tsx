@@ -83,6 +83,8 @@ type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?:
 type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string };
 type ThreadRow = { agent?: string; text: string; meta?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
+/** The page's ground (ground.tsx): the contour field, the depth background's contours, or the plain wash. */
+export type Ground = 'contours' | 'depth' | 'wash';
 
 const useEnv = () => useContext(EnvContext)!;
 const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'error'; word: string }> = {
@@ -242,7 +244,7 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
 
 // ---- sheets: Places, Setup, Find, Scope --------------------------------------------------------
 
-export function SheetView({ which, chrome, q, found, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void; ground: 'contours' | 'wash'; setGround: (g: 'contours' | 'wash') => void }) {
+export function SheetView({ which, chrome, q, found, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
   const { go } = useEnv();
   const s = chrome.shell;
   const [query, setQuery] = useState(q);
@@ -268,7 +270,7 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
         <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
           <CardContent className="grid gap-4"><Appearance mode={mode} setMode={setMode} />
             <div className="grid gap-2"><p className="text-sm opacity-70">Background</p>
-              <div className="flex gap-2" role="radiogroup" aria-label="Background">{([['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => (
+              <div className="flex gap-2" role="radiogroup" aria-label="Background">{([['contours', 'Contours'], ['depth', 'Depth'], ['wash', 'Wash']] as const).map(([g, l]) => (
                 <Button key={g} role="radio" aria-checked={ground === g} size="sm" variant={ground === g ? 'default' : 'outline'} onClick={() => setGround(g)}>{l}</Button>))}</div></div>
           </CardContent></Card>
         <Card><CardContent className="grid gap-2 py-4">

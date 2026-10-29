@@ -48,6 +48,7 @@ uniform vec2 uSize;
 uniform float uTime;
 uniform float uIntensity;
 uniform float uKind;
+uniform float uZoom;
 uniform vec3 uPaper;
 uniform vec3 uA;
 uniform vec3 uB;
@@ -61,7 +62,8 @@ float mound(vec2 p, vec2 center, vec2 stretch) {
 void main() {
   vec2 uv = gl_FragCoord.xy / uSize;
   float aspect = uSize.x / max(uSize.y, 1.0);
-  vec2 p = vec2((uv.x - 0.5) * min(aspect, 2.5), uv.y - 0.5);
+  // loom: uZoom (the host's --field-zoom, 1 = 000h's) shows more of the terrain: smaller hills, more lines.
+  vec2 p = vec2((uv.x - 0.5) * min(aspect, 2.5), uv.y - 0.5) * max(uZoom, 0.25);
   float t = uTime * 0.16;
   vec2 drift = vec2(sin(t * 0.71), cos(t * 0.53)) * 0.12;
   vec2 folded = p + vec2(sin(p.y * 5.7 + t), cos(p.x * 4.1 - t * 0.8)) * 0.09;
@@ -160,7 +162,7 @@ export function createLivingShader(
       const position = gl.getAttribLocation(program, "aPosition");
       gl.enableVertexAttribArray(position);
       gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-      for (const name of ["uSize", "uTime", "uIntensity", "uKind", "uPaper", "uA", "uB", "uC"]) locations[name] = gl.getUniformLocation(program, name);
+      for (const name of ["uSize", "uTime", "uIntensity", "uKind", "uZoom", "uPaper", "uA", "uB", "uC"]) locations[name] = gl.getUniformLocation(program, name);
       themeDirty = sizeDirty = true;
       announced = false;
     } catch { unavailable(); }
@@ -204,6 +206,7 @@ export function createLivingShader(
       gl.uniform1f(locations.uTime, elapsed);
       gl.uniform1f(locations.uIntensity, options.intensity);
       gl.uniform1f(locations.uKind, kind === "pigment" ? 0 : 1);
+      gl.uniform1f(locations.uZoom, parseFloat(getComputedStyle(host).getPropertyValue("--field-zoom")) || 1);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       if (!announced) { announced = true; onStatus("webgl"); }
       if (options.moving && options.speed > 0 && options.intensity > 0) request();
