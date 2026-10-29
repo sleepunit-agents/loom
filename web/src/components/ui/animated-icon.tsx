@@ -8,6 +8,9 @@ import { useMotionVisibility } from "@/lib/cojeev-motion/use-motion-visibility";
 export type IconMotion = "auto" | "tremor" | "draw" | "spin" | "bounce" | "validation" | "pulse" | "none";
 export type IconMotionEase="gentle"|"settle"|"linear"|readonly [number,number,number,number];
 export type AnimatedIconProps = Omit<IconProps,"draw"|"feedback"> & { preset?:IconMotion; active?:boolean; amplitude?:number; duration?:number; ease?:IconMotionEase };
+// loom: 000h's .55s with a front-loaded curve drew an icon in ~110ms, which read as a flicker (Jonathan, 2026-10-29:
+// "it flashes like its broken"). Slower, and eased at both ends, so the motion is something you can see.
+const ICON_S=1.1;
 export function AnimatedIcon({name,preset="auto",active,amplitude=1,duration,ease="gentle",className,size="default",children,...props}:AnimatedIconProps) {
   const host=React.useRef<HTMLSpanElement>(null);
   const {quiet}=useChoreography();
@@ -20,7 +23,7 @@ export function AnimatedIcon({name,preset="auto",active,amplitude=1,duration,eas
   const seconds=duration!==undefined&&Number.isFinite(duration)?Math.max(.08,Math.min(duration,10)):undefined;
   React.useEffect(()=>{
     if(!replayActive)return;
-    const timer=setTimeout(()=>setReplayActive(false),(seconds??.55)*1000);
+    const timer=setTimeout(()=>setReplayActive(false),(seconds??ICON_S)*1000);
     return()=>clearTimeout(timer);
   },[replay,replayActive,seconds]);
   React.useEffect(()=>{
@@ -74,8 +77,8 @@ export function AnimatedIcon({name,preset="auto",active,amplitude=1,duration,eas
     const lane=createMotionLane(0,painter.paint);
     const looping=intent==="spin"||(intent==="semantic"&&(name==="loader"||name==="loader-circle"));
     lane.jump(0);
-    const timing=looping?"linear":ease==="gentle"?([.22,.72,.22,1] as const):ease==="settle"?([.2,.8,.2,1] as const):ease;
-    lane.to(1,{duration:seconds??(looping?1.35:.55),ease:timing,repeat:looping?Infinity:0},painter.restore);
+    const timing=looping?"linear":ease==="gentle"?([.45,0,.25,1] as const):ease==="settle"?([.2,.8,.2,1] as const):ease;
+    lane.to(1,{duration:seconds??(looping?1.35:ICON_S),ease:timing,repeat:looping?Infinity:0},painter.restore);
     return ()=>{lane.dispose();painter.restore()};
   },[intent,running,name,amount,seconds,ease,active,replay]);
   return <span ref={host} data-slot="animated-icon" data-preset={intent} data-icon-replay={replay||undefined} data-animated={(running&&intent!=="none")||undefined} className="v-animated-icon">

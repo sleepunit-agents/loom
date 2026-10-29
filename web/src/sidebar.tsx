@@ -44,7 +44,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
   }
   return (
     <Sidebar aria-label="loom" className="loom-side sticky top-3 m-3 mr-0 h-[calc(100dvh-24px)] w-[16.5rem] overflow-hidden">
-      <SidebarHeader className="flex items-center gap-3 px-1">
+      <SidebarHeader className="mb-4 justify-start gap-3 px-1">
         <a href="/" onClick={(e) => { e.preventDefault(); go('/'); }} className="flex min-w-0 items-center gap-3 no-underline">
           <img src="/icons/loom-192.png" alt="" width={40} height={40} className="size-10 shrink-0 rounded-[12px]" />
           <span className="grid min-w-0 leading-tight">
