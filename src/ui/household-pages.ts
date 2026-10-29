@@ -326,6 +326,9 @@ function gist(text: string, n: number): string {
   return end > n / 2 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}…`;
 }
 
+const SERVICE: Record<string, string> = { discord: 'Discord', slack: 'Slack', email: 'Email', phone: 'Phone', github: 'GitHub', telegram: 'Telegram', signal: 'Signal' };
+const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
+
 export function householdPerson(h: Household, slug: string, opts: CoreOptions = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
@@ -337,7 +340,6 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
     const where = Object.entries(d.card.where ?? {}).sort(([a], [b]) => a.localeCompare(b));
     // kind: person is the default, so a person's entry doesn't say it.
     const facts = Object.entries(d.card.how ?? {}).filter(([k, v]) => !(k === 'kind' && v === 'person'));
-    const history = dir.history(slug).slice(0, 12);
     const sections: Section[] = [];
     // The board's order: how each agent knows them (every agent, met or not), then how to reach them.
     const rels = new Map(relationships(h, slug).map((r) => [r.agent, r]));
@@ -352,38 +354,44 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
         : member.agents.map((a) => ({ agent: a, text: agentName(agentDir(h, a)), meta: 'agent owner', page: agentLink(a) })) }] });
     }
     sections.push({ id: 'agents', title: own || kindOf(d.card) === 'agent' ? 'How each agent knows it' : 'How each agent knows them', blocks: [{
-      type: 'list',
+      type: 'list', wrap: true,
       items: h.agents.filter((a) => a !== slug).map((a) => {
         const r = rels.get(a);
         if (!r) return { agent: a, text: 'Hasn\'t met them' };
         const how = Object.entries(r.row.card.how ?? {}).map(([k, v]) => `${k}: ${value(v)}`).join(' · ');
         // A line or two here, as the board has it; all of it is on that agent's own card.
-        const known = gist(r.row.card.summary || how || 'Knows of them; nothing more yet.', 180);
+        const known = gist(r.row.card.summary || how || 'Knows of them; nothing more yet.', 600);
         const newer = r.memories ? `${r.memories} newer memor${r.memories === 1 ? 'y' : 'ies'} · ` : '';
         return { agent: a, text: known, meta: `${newer}updated ${ago(r.row.updated, tz, nowMs)}`, tone: r.memories ? 'warn' as const : undefined, page: agentLink(a, `people/${slug}`) };
       }),
     }] });
     if (where.length) {
+      // In words (Jonathan, 2026-10-29: "on where to reach them, lets humanize that"): the name the service shows,
+      // the service under it, and a Discord profile a tap away; the raw id only when there's no name for it.
       sections.push({ id: 'reach', title: 'Reach', blocks: [
-        { type: 'kv', items: where.map(([k, env]) => {
+        { type: 'list', items: where.map(([k, env]) => {
           const st = fieldState(env, nowMs);
-          return { label: k, value: `${value(env.value)}${st.kind === 'stale' ? ` · stale ${st.days}d` : st.kind === 'ok' ? '' : ' · unverified'}` };
+          const id = typeof env.value === 'string' ? env.value : '';
+          const profile = k === 'discord' && /^\d{5,25}$/.test(id) ? `https://discord.com/users/${id}` : undefined;
+          return {
+            text: env.label ? oneLine(env.label) : value(env.value),
+            meta: [SERVICE[k] ?? k.replace(/^./, (c) => c.toUpperCase()), st.kind === 'stale' ? `not checked in ${st.days} days` : st.kind === 'ok' ? '' : 'not checked'].filter(Boolean).join(' · '),
+            ...(st.kind === 'ok' ? {} : { tone: 'warn' as const }),
+            ...(profile ? { href: profile } : {}),
+          };
         }) },
         { type: 'details', summary: 'Where this came from', blocks: [{
-          type: 'table', columns: ['where', 'from', 'checked'],
+          type: 'table', columns: ['where', 'id', 'from', 'checked'],
           rows: where.map(([k, env]) => {
             const st = fieldState(env, nowMs);
-            return [k, env.source ?? '', st.kind === 'ok' ? `ok, ${ago(env.verified_at ?? null, tz, nowMs)}` : st.kind === 'stale' ? `stale ${st.days}d` : 'unverified'];
+            return [SERVICE[k] ?? k, value(env.value), env.source ?? '', st.kind === 'ok' ? `ok, ${ago(env.verified_at ?? null, tz, nowMs)}` : st.kind === 'stale' ? `stale ${st.days}d` : 'unverified'];
           }),
         }] },
       ] });
     }
-    if (facts.length) sections.push({ id: 'facts', title: 'Facts', side: true, blocks: [{ type: 'kv', items: facts.map(([k, v]) => ({ label: k, value: value(v) })) }] });
-    if (history.length) {
-      sections.push({ id: 'changes', side: true, blocks: [{ type: 'details', summary: 'Changes to the shared entry', meta: `${history.length}`, blocks: [{
-        type: 'list', items: history.map((r) => ({ text: `${r.actor ?? 'someone'} ${r.op === 'write' ? 'changed it' : r.op}`, meta: ago(r.replaced_at, tz, nowMs) })),
-      }] }] });
-    }
+    // One column (Jonathan, 2026-10-29: ditch the right column): facts under the rest; the entry's change log is
+    // the directory's, not the page's.
+    if (facts.length) sections.push({ id: 'facts', title: 'Facts', blocks: [{ type: 'kv', items: facts.map(([k, v]) => ({ label: k, value: value(v) })) }] });
     const role = d.card.how?.role;
     return { title: d.card.name, intro: d.card.summary ? gist(d.card.summary, 220) : (role ? value(role) : undefined), sections };
   } finally {

@@ -32,7 +32,7 @@ export interface Button { action: string; label: string; tone?: 'primary' | 'dan
 
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
-  | { type: 'list'; numbered?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
+  | { type: 'list'; numbered?: boolean; wrap?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -404,6 +404,7 @@ function block(v: unknown, depth = 0): Block {
       return {
         type: 'list',
         ...(b.numbered === true ? { numbered: true } : {}),
+        ...(b.wrap === true ? { wrap: true } : {}),
         ...(b.pages !== undefined ? { pages: pages(b.pages) } : {}),
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');

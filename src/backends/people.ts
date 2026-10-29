@@ -50,7 +50,7 @@ export const RESERVED_KEYS = ['tier', 'field', 'projects', 'scope', 'trust'] as 
 
 const TOP_KEYS = ['slug', 'name', 'summary', 'where', 'how', 'may'];
 const WRITE_KEYS = [...TOP_KEYS, 'merge'];
-const ENVELOPE_KEYS = ['value', 'verified_at', 'source', 'stale_after_days'];
+const ENVELOPE_KEYS = ['value', 'verified_at', 'source', 'stale_after_days', 'label'];
 const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -62,6 +62,8 @@ export interface WhereEnvelope {
   verified_at?: string;
   source?: string;
   stale_after_days?: number;
+  /** What a person reads for the value: "@sleepunit" for a Discord id, "Jonathan Barket (@jbarket)" for a Slack one. */
+  label?: string;
 }
 
 export interface MayEntry {
@@ -251,6 +253,7 @@ function checkEnvelope(env: unknown, path: string, nowMs: number | null): void {
   checkValue(env.value, `${path}.value`);
   if ('verified_at' in env) checkVerifiedAt(env.verified_at, `${path}.verified_at`, nowMs);
   if ('source' in env) checkString(env.source, `${path}.source`, MAX_STRING);
+  if ('label' in env) checkString(env.label, `${path}.label`, MAX_STRING);
   if ('stale_after_days' in env) {
     const d = env.stale_after_days;
     if (typeof d !== 'number' || !Number.isInteger(d) || d < 1 || d > 365) {
@@ -373,7 +376,7 @@ export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: 
         where
           .map(([n, env]) => {
             const m = opts.worstCase ? '[STALE 999+d]' : marker(fieldState(env, nowMs));
-            return `${n}: ${renderValue(env.value)} ${m}`;
+            return `${n}: ${renderValue(env.value)}${env.label ? ` (${oneLine(env.label)})` : ''} ${m}`;
           })
           .join(' · '),
     );

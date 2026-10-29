@@ -897,11 +897,12 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
               verified_at: z.string().optional(),
               source: z.string().optional(),
               stale_after_days: z.number().int().optional(),
+              label: z.string().optional().describe('What a person reads for the value, ≤ 200 chars: "@sleepunit" for a Discord id.'),
             }).passthrough(),
             z.null(),
           ]),
         ).optional().describe(
-          'Where the person is in each system: field -> {value, verified_at?, source?, stale_after_days?}. ' +
+          'Where the person is in each system: field -> {value, verified_at?, source?, stale_after_days?, label?}. ' +
           'null removes a field (merge writes only).',
         ),
         how: z.record(z.string(), z.union([cardValue, z.null()])).optional().describe(

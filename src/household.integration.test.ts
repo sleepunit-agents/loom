@@ -1055,6 +1055,28 @@ describe('the household page', () => {
     expect(rows).toContainEqual(expect.objectContaining({ agent: 'mark', page: 'loom:a/mark/people/loren' }));
   });
 
+  it('a person\'s Reach is in words: the name the service shows, the service, a Discord profile a tap away; one column', async () => {
+    expect(await personWrite(join(h.home, 'agents', 'art'), { slug: 'loren', where: {
+      discord: { value: '216348202406772736', verified_at: new Date(Date.now() - 3_600_000).toISOString(), label: '@loren' },
+      slack: { value: 'U0LOREN', verified_at: new Date(Date.now() - 3_600_000).toISOString(), label: 'Loren Clawitter (@lclawitter)' } } })).not.toMatch(/^Error/);
+    // The card an agent reads carries the name beside the id.
+    const card = readPerson(join(h.home, 'agents', 'art'), 'loren');
+    if (!('rendered' in card)) throw new Error('found');
+    expect(card.rendered).toContain('discord: 216348202406772736 (@loren) [ok]');
+    const d = await data(await login(), '/people/loren');
+    const reach = (sectionOf(d, 'reach').blocks as Data[])[0];
+    expect(reach.type).toBe('list');
+    expect(reach.items).toEqual([
+      { text: '@loren', meta: 'Discord', href: 'https://discord.com/users/216348202406772736' },
+      { text: 'Loren Clawitter (@lclawitter)', meta: 'Slack' }]);
+    // No side column: the change log is gone, and what's left is the page's width.
+    expect((d.page.sections as Data[]).filter((s) => s.side)).toEqual([]);
+    expect((d.page.sections as Data[]).map((s) => s.id)).not.toContain('changes');
+    expect((sectionOf(d, 'agents').blocks as Data[])[0].wrap).toBe(true);
+    // A label is a string of at most 200.
+    expect(await personWrite(join(h.home, 'agents', 'art'), { slug: 'loren', where: { discord: { value: '1', label: 'x'.repeat(201) } } })).toMatch(/label: longer than 200/);
+  });
+
   it('an agent\'s view is its own tape, Mind and Setup', async () => {
     const cookie = await login();
     const mark = await data(cookie, '/a/mark');
