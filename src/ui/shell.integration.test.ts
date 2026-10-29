@@ -86,6 +86,9 @@ describe('the app shell', () => {
     // It never keeps sign-in pages or a page with a one-time message.
     expect(swText).toContain("searchParams.has('_flash')");
     expect(swText).toMatch(/NEVER = .*login\|logout/);
+    // The app's JSON views are kept the same way, and dropped with the pages.
+    expect(swText).toContain("caches.delete(VIEWS)");
+    expect(swText).toMatch(/startsWith\('application\/json'\) && !NEVER\.test/);
     const cookie = await login();
     const page = await get('/', cookie);
     const html = await page.text();

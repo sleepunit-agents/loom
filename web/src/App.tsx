@@ -55,6 +55,7 @@ export default function App() {
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
   // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup and More, kept in this browser.
@@ -82,17 +83,19 @@ export default function App() {
 
   const load = useCallback(async (to: string, push: boolean, quiet = false) => {
     if (!quiet) setLoading(true);
-    const r = await fetchView(to).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string }));
+    const r = await fetchView(to).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string }));
     setLoading(false);
+    if (quiet && !r.data) return;   // a refresh that missed keeps what's shown
     if (r.redirect || r.status === 401) { location.href = to; return; }   // signed out: loom's own sign-in page
     if (!r.data) { setError(`loom answered ${r.status || 'nothing'} for ${to}`); return; }
     if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
-    setError(null); setData(r.data); setUrl(to);
+    setError(null); setData(r.data); setUrl(to); setSavedAt(r.savedAt);
     const flash = r.data.chrome?.flash;
     if (flash) say(flash);
     if (!quiet) window.scrollTo({ top: 0 });
   }, [say]);
 
+  useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
   useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const go = useCallback((href: string) => {
@@ -172,6 +175,7 @@ export default function App() {
           </header>
 
           <main className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
+            {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
             {error && <Card><CardContent className="py-6"><p>{error}</p><Button className="mt-3" variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open the classic page</Button></CardContent></Card>}
             {!error && data && env && (
               <EnvContext.Provider value={env}><Boundary where={url}>

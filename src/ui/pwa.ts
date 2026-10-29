@@ -9,6 +9,11 @@
  * the page's own live checks, MCP. A service worker needs a secure context,
  * so on a plain-http address there is none, and no copy is kept.
  *
+ * The React app (web/, docs/specs/ui-app.md) asks for the same pages as JSON;
+ * the worker keeps the last copy of each the same way (its own cache, the
+ * time it was saved in an x-loom-saved-at header), and the app's built files
+ * under /app/assets/ once fetched (their names change with their content).
+ *
  * What it never keeps: the sign-in pages, a page carrying a one-time message
  * (?_flash=, which can hold a token shown once), and anything that isn't a
  * 200 HTML page. Signing out, or landing on the sign-in page because the
@@ -33,10 +38,10 @@ export const MANIFEST = JSON.stringify({
 });
 
 /** Bumped when what the worker keeps changes shape; an old cache is dropped on activate. */
-const VERSION = 'loom-1';
+const VERSION = 'loom-2';
 
 export const SW_JS = `'use strict';
-const PAGES = '${VERSION}-pages', STATIC = '${VERSION}-static';
+const PAGES = '${VERSION}-pages', VIEWS = '${VERSION}-views', STATIC = '${VERSION}-static';
 const SHELL = ['/app.js', '/fonts/instrument-sans-latin-wght-normal.woff2', '/fonts/jetbrains-mono-latin-wght-normal.woff2', '/icons/loom-32.png'];
 const NEVER = /^\\/(login|logout)(\\/|$)/;
 self.addEventListener('install', (e) => {
@@ -44,9 +49,9 @@ self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}));
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== PAGES && k !== STATIC).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== PAGES && k !== VIEWS && k !== STATIC).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
-const forget = () => caches.delete(PAGES);
+const forget = () => Promise.all([caches.delete(PAGES), caches.delete(VIEWS)]);
 self.addEventListener('message', (e) => { if (e.data === 'forget') e.waitUntil(forget()); });
 // A page's key: its address without the one-time message.
 const keyOf = (u) => { const k = new URL(u); k.searchParams.delete('_flash'); return k.href; };
@@ -81,6 +86,28 @@ async function kept(url) {
   const text = (await hit.text()).replace('<body', '<body data-offline-from="' + at.replace(/[^0-9TZ:.-]/g, '') + '"');
   return new Response(text, { status: 200, headers: hit.headers });
 }
+// The app's view of a page (Accept: application/json): the network first; the kept copy, stamped, when loom can't be reached.
+async function view(req) {
+  const url = new URL(req.url);
+  const ctl = new AbortController();
+  const slow = setTimeout(() => ctl.abort(), 8000);
+  let res;
+  try { res = await fetch(req, { signal: ctl.signal }); }
+  catch {
+    clearTimeout(slow);
+    const hit = await (await caches.open(VIEWS)).match(keyOf(url.href));
+    if (!hit) throw new Error('offline');
+    return hit;
+  }
+  clearTimeout(slow);
+  if (res.status === 200 && res.type === 'basic' && (res.headers.get('content-type') || '').startsWith('application/json') && !NEVER.test(url.pathname) && !url.searchParams.has('_flash') && !res.redirected) {
+    const body = await res.clone().arrayBuffer();
+    const h = new Headers(res.headers);
+    h.set('x-loom-saved-at', new Date().toISOString());
+    caches.open(VIEWS).then((c) => c.put(keyOf(req.url), new Response(body, { status: 200, headers: h }))).catch(() => {});
+  }
+  return res;
+}
 async function shell(req) {
   const c = await caches.open(STATIC);
   try { const res = await fetch(req); if (res.ok) c.put(req, res.clone()).catch(() => {}); return res; }
@@ -111,6 +138,7 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
   if (req.mode === 'navigate') return e.respondWith(page(req));
-  if (SHELL.includes(url.pathname) || url.pathname.startsWith('/icons/')) return e.respondWith(shell(req));
+  if (SHELL.includes(url.pathname) || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/app/assets/')) return e.respondWith(shell(req));
+  if ((req.headers.get('accept') || '').startsWith('application/json') && !NEVER.test(url.pathname)) return e.respondWith(view(req));
 });
 `;
