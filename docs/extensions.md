@@ -189,7 +189,12 @@ that ignores it keeps working. Outside a household there's no `caller`.
   agent's card on Home. It maps an agent's id to:
   - `state`: `working`, `available`, `unavailable` or `broken`;
   - `reason`: one line;
-  - `readings`: up to four `{label, value, detail?, tone?, page?}`.
+  - `readings`: up to four `{label, value, detail?, tone?, page?}`;
+  - `doing`: up to eight things it has going right now, `{text, kind?, where?, since?, page?}`, `kind` one of
+    `talk` (a conversation a body is in), `lane`, `task`, `session` or `other`, `since` when it started (ISO 8601).
+    Home's card lists them, simply ("are they up, are they working, what's happening, but that's it"); the
+    details are the piece's own page. A reading marked `bad` or `warn` is the card's trouble line; the rest
+    stay off the card.
 
   ```json
   "agents": { "art": { "state": "working", "reason": "house h-52 on one",

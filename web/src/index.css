@@ -462,3 +462,7 @@ body { background: var(--v-canvas); }
 .loom-back-mark { font-family: var(--font-display); font-weight: 600; font-size: 21px; line-height: 1; }
 .loom-side .loom-side-back { height: auto; min-height: var(--nav-row); padding-block: 8px; padding-inline-start: 12px; background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 18%, transparent); }
 .loom-side .loom-side-back:hover { background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 30%, transparent); }
+/* An agent's state on its mark: a dot; a working one breathes. */
+@keyframes loom-dot-live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #0ea5e9 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+.loom-dot-live { animation: loom-dot-live 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .loom-dot-live { animation: none; } }

@@ -123,6 +123,12 @@ describe('the manifest for Home and the Inbox (t-1618)', () => {
     expect(m.agents?.art).toMatchObject({ state: 'working', readings: [{ label: 'Bridges' }] });
     expect(m.agents?.mark.state).toBeUndefined();
     expect(typeof parseManifest({ v: 2, agents: { art: { state: 'asleep' } } })).toBe('string');
+    // What it has going (its card's summary): a kind from the set, a real time, at most eight.
+    const doing = (d: unknown) => parseManifest({ v: 2, agents: { art: { doing: d } } });
+    expect(doing([{ text: 'Talking in #pond', kind: 'talk', where: 'Discord', since: '2026-10-29T10:00:00Z', page: '' }])).toMatchObject({ agents: { art: { doing: [{ text: 'Talking in #pond', kind: 'talk', since: '2026-10-29T10:00:00Z' }] } } });
+    expect(typeof doing([{ text: 'x', kind: 'dancing' }])).toBe('string');
+    expect(typeof doing([{ text: 'x', since: 'soonish' }])).toBe('string');
+    expect(typeof doing(Array.from({ length: 9 }, () => ({ text: 'x' })))).toBe('string');
     expect(typeof parseManifest({ v: 2, agents: { Art: { readings: [] } } })).toBe('string');
     expect(typeof parseManifest({ v: 2, agents: { art: { readings: Array.from({ length: 5 }, () => ({ label: 'x', value: 'y' })) } } })).toBe('string');
   });

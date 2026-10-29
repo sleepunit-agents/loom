@@ -899,9 +899,11 @@ describe('the household page', () => {
   it('Home: each agent takes the worst state its pieces report, with their readings; what is working is Moving now', async () => {
     const bin = mkdtempSync(join(tmpdir(), 'loom-home-bin-'));
     const box = { v: 2, tab: { label: 'Boxes' }, tile: { label: 'Boxes', value: '2 of 2', page: '' }, agents: {
-      art: { state: 'working', reason: 'house h-52 on one · building its image', readings: [{ label: 'Bridges', value: 'Discord ✓ Slack ✓', tone: 'ok' }] },
+      art: { state: 'working', reason: 'house h-52 on one · building its image', readings: [{ label: 'Bridges', value: 'Discord ✓ Slack ✓', tone: 'ok' }],
+        doing: [{ text: 'reflect: nightly retro', kind: 'lane', where: 'lane · h-52 on one', since: '2026-10-29T10:00:00Z' }] },
       mark: { state: 'unavailable', reason: 'Discord bridge down 14m', readings: [{ label: 'Bridges', value: 'Discord ✗', tone: 'bad' }] } } };
-    const subs = { v: 2, tab: { label: 'Subscriptions' }, agents: { art: { readings: [{ label: 'Fuel', value: '58% of the week', detail: 'resets Thu', page: '' }] }, mark: { state: 'available' } } };
+    const subs = { v: 2, tab: { label: 'Subscriptions' }, agents: { art: { readings: [{ label: 'Fuel', value: '58% of the week', detail: 'resets Thu', page: '' }],
+      doing: [{ text: 'Talking in #pond', kind: 'talk', where: 'Discord · active 1m ago', since: '2026-10-29T10:30:00Z' }] }, mark: { state: 'available' } } };
     for (const [name, m] of [['box', box], ['subs', subs]] as const) {
       writeFileSync(join(bin, `loom-${name}`), `#!/bin/sh\ncase "$1 $2" in "ui --json") echo '${JSON.stringify(m)}' ;; *) exit 2 ;; esac\n`);
       chmodSync(join(bin, `loom-${name}`), 0o755);
@@ -920,6 +922,11 @@ describe('the household page', () => {
       expect(card('art').readings).toContainEqual(expect.objectContaining({ label: 'Bridges', value: 'Discord ✓ Slack ✓', tone: 'ok' }));
       // Mark: one piece says available, another unavailable: the worst wins, with that piece's reason.
       expect(card('mark')).toMatchObject({ state: 'unavailable', reason: 'Discord bridge down 14m' });
+      // The summary card: what each has going from every piece, newest first; and only what's wrong.
+      expect(card('art').doing.map((x: Data) => [x.text, x.kind, x.source.id])).toEqual([['Talking in #pond', 'talk', 'subs'], ['reflect: nightly retro', 'lane', 'box']]);
+      expect(card('art').problems).toEqual([]);
+      expect(card('mark').problems.map((x: Data) => [x.text, x.tone])).toEqual([['Discord bridge down 14m', 'warn'], ['Bridges: Discord ✗', 'bad']]);
+      expect(card('mark').doing).toEqual([]);
       // Moving now: only what's working.
       expect(d.home.moving).toContainEqual(expect.objectContaining({ agent: 'art', text: 'house h-52 on one · building its image', meta: 'Boxes' }));
       expect(JSON.stringify(d.home.moving)).not.toContain('Discord bridge down');
