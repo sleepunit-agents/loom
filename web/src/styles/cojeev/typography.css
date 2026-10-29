@@ -1,0 +1,43 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+.v-value[data-slot] .u{font-family:var(--font-text);font-size:max(var(--fs-caps), .3em);font-weight:var(--fw-regular);letter-spacing:0;margin-left:.15em;color:var(--muted-foreground)}
+.v-hero[data-slot] .u{font-family:var(--font-text);font-size:max(var(--fs-caps), .3em);font-weight:var(--fw-regular);letter-spacing:0;margin-left:.15em;color:var(--muted-foreground)}
+.v-display[data-slot] .u{font-family:var(--font-text);font-size:max(var(--fs-caps), .3em);font-weight:var(--fw-regular);letter-spacing:0;margin-left:.15em;color:var(--muted-foreground)}
+.v-prose[data-slot] h1{font-family:var(--font-display);font-size:var(--fs-display);line-height:var(--lh-display);font-weight:var(--fw-display);letter-spacing:var(--ls-display)}
+.v-prose[data-slot] h2{font-family:var(--font-display);font-size:var(--fs-section);font-weight:var(--fw-medium);line-height:1.1}
+.v-prose[data-slot] h3{font-size:var(--fs-title);font-weight:var(--fw-semibold)}
+.v-prose[data-slot] p{line-height:var(--lh-body)}
+.v-prose[data-slot] ul{padding-left:1.2em;display:grid;gap:var(--s-1)}
+.v-prose[data-slot] blockquote{border-left:2px solid var(--v-pink);padding-left:var(--s-4);color:var(--muted-foreground)}
+.v-prose[data-slot] code{background:var(--v-beige);padding:1px var(--s-2);border-radius:var(--r-xs);font-size:max(var(--fs-caps), .92em)}
+.v-prose[data-slot] a{text-decoration:underline;text-underline-offset:3px}
+.v-hero[data-slot] .u{color:var(--muted-foreground)}
+.v-display[data-slot] .u{color:var(--muted-foreground)}
+.v-value[data-slot] .u{color:var(--muted-foreground)}
+:root[data-mode="dark"] .v-meta[data-slot]{color:var(--v-text-2)}
+:root[data-mode="dark"] .v-body-2[data-slot]{color:var(--v-text-2)}
+:root[data-mode="dark"] .v-caps[data-slot]{color:var(--v-text-2)}
+.v-caps[data-slot]{box-shadow:none;border:0}
+.v-meta[data-slot]{box-shadow:none;border:0}
+.v-prose[data-slot]{box-shadow:none;border:0}
+.v-tnum[data-slot]{font-variant-numeric:tabular-nums lining-nums}
+
+/* Content determines line breaks; long titles must not enlarge their parent. */
+:is(.v-hero,.v-display,.v-section,.v-title,.v-lead,.v-body,.v-body-2,.v-prose)[data-slot] {
+  min-width:0;
+  max-width:100%;
+  overflow-wrap:anywhere;
+}
+.v-hero[data-slot] { white-space:normal; text-wrap:balance; }
+.v-prose[data-slot] { max-width:70ch; gap:var(--s-4); }
+.v-prose[data-slot] :is(h2,h3):not(:first-child) { margin-block-start:var(--s-5); }
+.v-prose[data-slot] :is(p,li) { line-height:1.65; }
+.v-prose[data-slot] :is(pre,table) { max-width:100%; overflow-x:auto; }
+@media (max-width:640px) {
+  .v-hero[data-slot] { font-size:3rem; line-height:1.05; }
+  .v-display[data-slot] { font-size:2.25rem; line-height:1.1; }
+}
+
+}

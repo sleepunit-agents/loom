@@ -35,8 +35,9 @@
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { sessionStore, signinLink } from './sessions.js';
 import { APP_JS } from './app.js';
@@ -68,8 +69,9 @@ const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
 const SECURITY_HEADERS = {
-  // Script only from loom itself (/app.js, /login/passkey.js), never inline: a piece's page is data.
-  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+  // Script only from loom itself (/app.js, /login/passkey.js, the app under /app/), never inline: a piece's page
+  // is data. Stylesheets from loom itself too (the app's), and data: images (its components' small SVG backgrounds).
+  'content-security-policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
   // same-origin, not no-referrer: under no-referrer, browsers send `Origin:
   // null` on the page's own form posts, which the cross-site guard has to
@@ -145,7 +147,22 @@ function narrowed(h: Household, agents: string[]): Household {
   return { ...h, agents: own, default: own.includes(h.default) ? h.default : own[0] };
 }
 
-const PAGE_ROOTS = ['/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
+// Not loom_ui: that is the session's cookie (COOKIE, above).
+const UI_COOKIE = 'loom_view';
+/** The built app (web/ → dist/web): beside this module's dist/ui, or from src/ui (tests, `npm run dev`) the repo's dist/web. */
+const WEB_DIR = [new URL('../web/', import.meta.url), new URL('../../dist/web/', import.meta.url)]
+  .map((u) => fileURLToPath(u)).find((d) => existsSync(join(d, 'index.html'))) ?? fileURLToPath(new URL('../web/', import.meta.url));
+const WEB_TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+/** A file of the built app, or null: never outside its folder. */
+function webFile(rel: string): string | null {
+  if (!rel || rel.includes('\0')) return null;
+  const p = normalize(join(WEB_DIR, rel));
+  if (!p.startsWith(WEB_DIR.endsWith(sep) ? WEB_DIR : WEB_DIR + sep)) return null;
+  try { return existsSync(p) && statSync(p).isFile() ? p : null; } catch { return null; }
+}
+
+const PAGE_ROOTS = ['/app', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -769,6 +786,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
     return send(res, 200, 'text/javascript; charset=utf-8', SW_JS, { 'cache-control': 'no-cache' });
   }
+  // The app (docs/specs/ui-app.md): its built files, public like /app.js (no data in them).
+  if (pathname.startsWith('/app/')) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
+    const file = webFile(pathname.slice('/app/'.length));
+    if (!file) return send(res, 404, 'text/plain', 'not found');
+    const immutable = pathname.startsWith('/app/assets/');
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': WEB_TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' });
+    return void res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
+  }
   if (pathname === '/app.js') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
     return send(res, 200, 'text/javascript; charset=utf-8', APP_JS, { 'cache-control': 'no-cache' });
@@ -853,6 +879,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
+
+  // ?ui=app or ?ui=classic: this browser's choice of page, kept in a cookie (docs/specs/ui-app.md step 2).
+  const ui = url.searchParams.get('ui');
+  if (req.method === 'GET' && (ui === 'app' || ui === 'classic')) {
+    url.searchParams.delete('ui');
+    return redirect(res, url.pathname + url.search, { 'set-cookie': `${UI_COOKIE}=${ui}; Path=/; SameSite=Strict; Max-Age=31536000` });
+  }
 
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
   // Push for Your call (push.ts): the key to subscribe with, and this browser's subscription.
@@ -1036,6 +1069,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
   const view = (kind: string, data: Record<string, unknown>, render: () => string, status = 200) =>
     (asJson ? sendJson(res, status, { view: kind, ...data }) : html(render(), status));
+  // A browser that chose the app gets it for every page; it asks this same path for the JSON.
+  if (req.method === 'GET' && !asJson && readCookie(req, UI_COOKIE) === 'app') {
+    const shell = webFile('index.html');
+    if (shell) return send(res, 200, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
+  }
 
   // The shell's sheets as pages: they work without script; app.js opens them as sheets.
   const pick = /^\/scope\/([a-z][a-z0-9-]{0,39}|household)$/.exec(pathname);

@@ -1,0 +1,59 @@
+@layer cojeev-states {
+/* Shared example composition, shipped with every choice-family entry. */
+.v-choice-example {
+  display: grid;
+  gap: var(--s-5);
+  width: 100%;
+  max-width: 560px;
+  min-width: 0;
+  color: var(--v-text);
+}
+.v-choice-example header {
+  display: grid;
+  gap: var(--s-1);
+}
+.v-choice-example header strong {
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
+}
+.v-choice-example header p,
+.v-choice-result {
+  margin: 0;
+  font-size: var(--fs-small);
+  line-height: 1.5;
+  color: var(--v-text-2);
+}
+.v-choice-options {
+  display: grid;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.v-choice-options[data-approach="chip"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.v-choice-options[data-approach="card"] {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  align-items: stretch;
+}
+.v-choice-options[data-approach="card"]
+  > :is([data-slot="checkbox"], [data-slot="radio-group-item"]) {
+  grid-template-columns: 1fr;
+  align-content: start;
+  gap: var(--s-4);
+}
+.v-choice-options[data-approach="card"] [data-slot$="-body"] {
+  gap: var(--s-2);
+}
+/* The summary below already closes the list; a second adjacent rule reads as a seam. */
+.v-choice-options[data-approach="row"]
+  > :is([data-slot="checkbox"], [data-slot="radio-group-item"]):last-child {
+  border-bottom: none;
+}
+.v-choice-result {
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--v-border);
+}
+
+}

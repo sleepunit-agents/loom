@@ -162,6 +162,33 @@ describe('scope', () => {
     expect((await json('/a/mark', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' })).status).toBe(403);
   });
 
+  it('?ui=app gives this browser the app on every page; ?ui=classic takes it back; its files are public, never outside its folder', async () => {
+    const owner = await login();
+    const shell = await fetch(`${base}/app/index.html`);
+    expect(shell.status).toBe(200);
+    expect(await shell.text()).toContain('<div id="root">');
+    const js = /src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
+    const asset = await fetch(`${base}/app/${js}`);
+    expect([asset.status, asset.headers.get('content-type'), asset.headers.get('cache-control')]).toEqual([200, 'text/javascript; charset=utf-8', 'public, max-age=31536000, immutable']);
+    for (const bad of ['/app/../package.json', '/app/%2e%2e/package.json', '/app/assets/../../package.json', '/app/']) {
+      expect((await fetch(`${base}${bad}`)).status, bad).toBe(404);
+    }
+    const pick = await fetch(`${base}/a/mark?ui=app`, { headers: { cookie: owner }, redirect: 'manual' });
+    expect([pick.status, pick.headers.get('location')]).toEqual([303, '/a/mark']);
+    const ui = (pick.headers.get('set-cookie') ?? '').split(';')[0];
+    expect(ui).toBe('loom_view=app');
+    const page = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: `${owner}; ${ui}` } });
+    expect(await page.text()).toContain('<div id="root">');
+    // The app asks the same path for its data, and gets it.
+    const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: `${owner}; ${ui}`, accept: 'application/json' } });
+    expect(((await data.json()) as { view: string }).view).toBe('page');
+    // Signed out, the app is no way in: loom's sign-in, as before.
+    expect((await fetch(`${base}/a/mark`, { headers: { cookie: ui }, redirect: 'manual' })).headers.get('location')).toBe('/login');
+    const back = await fetch(`${base}/a/mark?ui=classic`, { headers: { cookie: `${owner}; ${ui}` }, redirect: 'manual' });
+    expect((back.headers.get('set-cookie') ?? '').split(';')[0]).toBe('loom_view=classic');
+    expect(await (await fetch(`${base}/a/mark`, { headers: { cookie: `${owner}; loom_view=classic` } })).text()).not.toContain('<div id="root">');
+  });
+
   it('a list row naming an agent carries its mark; an unknown agent gets none', async () => {
     const html = await get('/p/wide', await login());
     expect(html).toMatch(/<li class=""><span class="mark"[^>]*background:#B8A6FF;color:#1D1240[^>]*>A<\/span><span class="body"><span class="text">Closed a task/);
