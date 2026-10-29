@@ -87,7 +87,12 @@ export default function App() {
     setLoading(false);
     if (quiet && !r.data) return;   // a refresh that missed keeps what's shown
     if (r.redirect || r.status === 401) { location.href = to; return; }   // signed out: loom's own sign-in page
-    if (!r.data) { setError(`loom answered ${r.status || 'nothing'} for ${to}`); return; }
+    if (!r.data) {
+      if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
+      setSavedAt(undefined); setUrl(to);
+      setError(r.status ? `loom answered ${r.status} for ${to}` : 'Can’t reach loom, and this page isn’t saved on this device. It opens when there’s a connection.');
+      return;
+    }
     if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
     setError(null); setData(r.data); setUrl(to); setSavedAt(r.savedAt);
     const flash = r.data.chrome?.flash;
@@ -176,7 +181,7 @@ export default function App() {
 
           <main className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
             {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
-            {error && <Card><CardContent className="py-6"><p>{error}</p><Button className="mt-3" variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open the classic page</Button></CardContent></Card>}
+            {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open the classic page</Button>}</CardContent></Card>}
             {!error && data && env && (
               <EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
