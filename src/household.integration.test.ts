@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { clearPieceCache } from './ui/pieces.js';
+import { STREAMS_PER_SESSION, listening } from './ui/live.js';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -1508,6 +1509,24 @@ esac
     await new Promise((r) => setTimeout(r, 2500));
     expect(lo.heard()).toBeGreaterThan(l0);
     jo.close(); lo.close();
+  }, 15000);
+
+  it('streams are capped per credential: one token\'s streams never make room for another\'s', async () => {
+    const opened: AbortController[] = [];
+    const open = async (token: string) => {
+      const ac = new AbortController(); opened.push(ac);
+      const r = await fetch(`${base}/events`, { headers: { authorization: `Bearer ${token}`, accept: 'text/event-stream' }, signal: ac.signal });
+      expect(r.status).toBe(200);
+      void r.body!.getReader().read().catch(() => {});
+    };
+    for (let i = 0; i < STREAMS_PER_SESSION; i++) await open(jonathan);
+    await open(loren);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(listening()).toBe(STREAMS_PER_SESSION + 1);   // Loren's didn't close one of Jonathan's
+    await open(jonathan);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(listening()).toBe(STREAMS_PER_SESSION + 1);   // Jonathan's seventh closed his own oldest
+    for (const ac of opened) ac.abort();
   }, 15000);
 
   it("Home, the Inbox and Activity are Mark's alone; the household's pages are refused", async () => {
