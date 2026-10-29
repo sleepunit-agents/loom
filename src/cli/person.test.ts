@@ -78,6 +78,30 @@ describe('loom person', () => {
     expect(JSON.parse(json.stdout).map((e: { slug: string }) => e.slug)).toEqual(['gone', 'patrick-kells']);
   });
 
+  it('reach files where someone was seen, on a card that exists, and touches nothing else', async () => {
+    seed();
+    const s0 = openPeopleStore(dir)!;
+    s0.write({ slug: 'patrick-kells', where: { slack: { value: 'U1', source: 'bridge/people.json', verified_at: '2026-10-01T00:00:00Z' } } });
+    s0.close();
+    const r = await runCliCaptured(['person', 'reach', 'patrick-kells', 'discord', '42', '--label', '@pkells', '--at', '2026-10-29T12:00:00Z', '--source', 'seen by the bridge', '--context-dir', dir]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe('patrick-kells: discord 42 (@pkells)\n');
+    // A second Slack account joins the first; the source it had stays.
+    expect((await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U2', '--label', 'Patrick Kells (@pk2)', '--at', '2026-10-29T12:00:00Z', '--context-dir', dir])).code).toBe(0);
+    const card = JSON.parse((await runCliCaptured(['person', 'show', 'patrick-kells', '--json', '--context-dir', dir])).stdout).card;
+    expect(card.where.discord).toEqual({ value: '42', label: '@pkells', verified_at: '2026-10-29T12:00:00Z', source: 'seen by the bridge' });
+    expect(card.where.slack).toEqual({ value: ['U1', 'U2'], label: 'Patrick Kells (@pk2)', verified_at: '2026-10-29T12:00:00Z', source: 'bridge/people.json' });
+    expect(card.summary).toBe('Field lead.');
+    expect(card.how).toEqual({ tz: 'America/New_York' });
+    // Seen again as an id it has: no duplicate.
+    await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U1', '--label', 'Patrick Kells (@pk)', '--context-dir', dir]);
+    expect(JSON.parse((await runCliCaptured(['person', 'show', 'patrick-kells', '--json', '--context-dir', dir])).stdout).card.where.slack.value).toEqual(['U1', 'U2']);
+    // Never a new card, never without a name, never a field that isn't a word.
+    expect((await runCliCaptured(['person', 'reach', 'nobody', 'slack', 'U9', '--label', 'x', '--context-dir', dir])).code).toBe(3);
+    expect((await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U9', '--context-dir', dir])).code).toBe(2);
+    expect((await runCliCaptured(['person', 'reach', 'patrick-kells', 'how.mode', 'x', '--label', 'x', '--context-dir', dir])).code).toBe(2);
+  });
+
   it('unknown subcommand exits 2', async () => {
     expect((await runCliCaptured(['person', 'bogus', '--context-dir', dir])).code).toBe(2);
   });
