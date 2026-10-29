@@ -182,6 +182,8 @@ describe('scope', () => {
     // The app asks the same path for its data, and gets it.
     const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: `${owner}; ${ui}`, accept: 'application/json' } });
     expect(((await data.json()) as { view: string }).view).toBe('page');
+    // Passkeys is loom's own page even here: the app sends the browser to it, and it mustn't send it back.
+    expect(await (await fetch(`${base}/passkeys`, { headers: { cookie: `${owner}; ${ui}` } })).text()).not.toContain('<div id="root">');
     // Signed out, the app is no way in: loom's sign-in, as before.
     expect((await fetch(`${base}/a/mark`, { headers: { cookie: ui }, redirect: 'manual' })).headers.get('location')).toBe('/login');
     const back = await fetch(`${base}/a/mark?ui=classic`, { headers: { cookie: `${owner}; ${ui}` }, redirect: 'manual' });
