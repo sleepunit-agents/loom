@@ -32,15 +32,31 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
   if (s) {
     const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox');
     const settings = s.pieces.filter((p) => p.kind === 'setting');
+    // The same swap as a phone's dock (Jonathan, 2026-10-29): on an agent's pages the side is that agent's: its mark
+    // with a back chevron first (the household), then its tabs, then the other agents to switch to. On the household's,
+    // the settings pieces fold into Setup, so the side never needs to scroll.
     if (head && agent) {
-      groups.push({ label: agent.label, items: head.tabs.map((t) => row(t)) });
-      groups.push({ items: [row({ label: 'The household', href: '/', current: false }, <AnimatedIcon name={iconFor('house')} size="sm" />)] });
+      groups.push({ items: [(
+        <SidebarMenuButton key="#back" href="/" label={`${agent.label}: back to the household`} className="loom-side-back"
+          onClick={(e) => { e.preventDefault(); go('/'); }}>
+          <span className="relative grid size-8 shrink-0 place-items-center rounded-[10px] text-sm font-semibold" style={{ background: agent.bg, color: agent.fg }}>
+            {agent.label[0]}
+            <span className="absolute -left-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full border-2 border-[var(--v-paper)] bg-[var(--v-text)] text-[color:var(--v-canvas)]">
+              <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>
+            </span>
+          </span>
+          <SidebarMenuLabel className="grid leading-tight"><span className="truncate font-semibold">{agent.label}</span><span className="text-xs opacity-70">The household</span></SidebarMenuLabel>
+        </SidebarMenuButton>
+      )] });
+      groups.push({ items: head.tabs.map((t) => row(t)) });
+      const others = s.agents.filter((a) => a.id !== agent.id);
+      if (others.length) groups.push({ label: 'Switch to', items: others.map((a) => row({ label: a.label, href: a.href, current: false, count: a.asks }, mark(a))) });
     } else {
       groups.push({ items: [row({ label: 'Home', href: s.home, current: s.tab === 'home' }), row({ label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks })] });
       if (places.length) groups.push({ label: 'Places', items: places.map((p) => row(p)) });
+      groups.push({ label: 'Agents', items: s.agents.map((a) => row({ label: a.label, href: a.href, current: false, count: a.asks }, mark(a))) });
+      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) })] });
     }
-    if (s.agents.length > 1 || !head) groups.push({ label: 'Agents', items: s.agents.map((a) => row({ label: a.label, href: a.href, current: a.current && !!head, count: a.asks }, mark(a))) });
-    if (!head) groups.push({ label: 'Setup', items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' }), ...settings.map((p) => row(p))] });
   }
   return (
     <Sidebar aria-label="loom" className="loom-side sticky top-3 m-3 mr-0 h-[calc(100dvh-24px)] w-[16.5rem] overflow-hidden">

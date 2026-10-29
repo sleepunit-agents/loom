@@ -449,3 +449,16 @@ body { background: var(--v-canvas); }
 }
 .loom-arrive { animation: loom-arrive-in 900ms cubic-bezier(.2,.8,.2,1) both, loom-arrive-glow 2600ms cubic-bezier(.3,.6,.2,1); border-radius: 14px; }
 @media (prefers-reduced-motion: reduce) { .loom-arrive { animation: none; } }
+
+/* An agent's dock on a phone (the "dock swap"): its mark with a back chevron first, a rule, then its tabs in its colour,
+   the one you're on solid. The page root carries the agent's colour (--loom-accent, --loom-on-accent). */
+.loom-agent-dock.v-dock [data-part="lane"] [data-part="visual"] { background: color-mix(in oklab, var(--loom-accent) 34%, var(--v-paper)); color: var(--v-text); }
+.loom-agent-dock.v-dock [data-part="lane"][data-active] [data-part="visual"],
+.loom-agent-dock.v-dock [data-part="lane"]:first-child [data-part="visual"] { background: var(--loom-accent); color: var(--loom-on-accent); }
+.loom-agent-dock.v-dock [data-part="lane"]:first-child { position: relative; margin-inline-end: 14px; }
+.loom-agent-dock.v-dock [data-part="lane"]:first-child::after { content: ""; position: absolute; inset-inline-end: -11px; inset-block: 22% 30%; width: 1px; background: var(--v-border); }
+.loom-agent-dock [data-part="lane"]:first-child [data-part="badge"] { inset-inline-start: -7px; inset-inline-end: auto; inset-block-start: -7px; inline-size: 22px; block-size: 22px; min-inline-size: 0; padding: 0;
+  border-radius: 999px; background: var(--v-text); color: var(--v-canvas); display: grid; place-items: center; border: 2px solid var(--v-paper); }
+.loom-back-mark { font-family: var(--font-display); font-weight: 600; font-size: 21px; line-height: 1; }
+.loom-side .loom-side-back { height: auto; min-height: var(--nav-row); padding-block: 8px; padding-inline-start: 12px; background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 18%, transparent); }
+.loom-side .loom-side-back:hover { background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 30%, transparent); }

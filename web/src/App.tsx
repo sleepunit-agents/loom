@@ -54,6 +54,8 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
 
 export default function App() {
   const wide = useWide();
+  const [vw, setVw] = useState(() => innerWidth);
+  useEffect(() => { const f = () => setVw(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
   const [url, setUrl] = useState(() => location.pathname + location.search);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -185,21 +187,31 @@ export default function App() {
   const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
   // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
+  // A phone's dock never scrolls (Jonathan, 2026-10-29): as many tiles as the width holds, the one you're on always
+  // among them, the rest under More (…). On an agent's pages the dock swaps (his "dock swap" board): the agent's
+  // mark with a back chevron on the left, the household a tap away, and its own tabs on the right in its colour.
+  const agentDock = !!head && !!accent;
+  const room = agentDock ? Math.max(3, Math.floor((vw - 52) / 60) - 1) : Math.max(4, Math.floor((vw - 40) / 60));
   const onPhone = (() => {
-    if (nav.tabs.length <= 5) return nav.tabs;
+    if (nav.tabs.length <= room && !nav.more.length) return nav.tabs;
+    const keep = nav.tabs.slice(0, room - 1);
     const cur = nav.tabs.find((t) => t.current);
-    const keep = [nav.tabs[0], ...(cur && cur !== nav.tabs[0] ? [cur] : [])];
-    for (const t of nav.tabs) if (keep.length < 4 && !keep.includes(t)) keep.push(t);
+    if (cur && !keep.includes(cur)) keep[keep.length - 1] = cur;
     return nav.tabs.filter((t) => keep.includes(t));
   })();
-  const phoneTabs = nav.tabs.length > 5 || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
+  const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
     value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />,
     ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
-  const pick = (href: string) => (href === '#more' ? setMore(true) : go(href));
+  const pick = (href: string) => (href === '#more' ? setMore(true) : href === '#back' ? go('/') : go(href));
+  const backTile: DockItem | null = agentDock && accent ? {
+    value: '#back', label: 'Back',
+    icon: <span className="loom-back-mark" aria-hidden>{accent.label[0]}</span>,
+    badge: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>,
+  } : null;
   const title = data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
 
@@ -256,7 +268,9 @@ export default function App() {
           {!wide && chrome && <div aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
           {!wide && chrome && (
             <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
-              <Dock variant="shelf" items={dockItems(phoneTabs)} value={current(phoneTabs)} onValueChange={pick} aria-label="Pages" />
+              <Dock key={agentDock ? `agent:${accent?.id}` : 'household'} variant="shelf" className={agentDock ? 'loom-agent-dock' : undefined}
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : dockItems(phoneTabs)} value={current(phoneTabs)} onValueChange={pick}
+                aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
             </nav>
           )}
         </div>
