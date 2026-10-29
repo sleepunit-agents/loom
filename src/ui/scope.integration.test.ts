@@ -138,6 +138,30 @@ describe('scope', () => {
     expect((await fetch(`${base}/a/nobody/act/bridgy`, { method: 'POST', headers: { cookie: owner, origin: base } })).status).toBe(404);
   });
 
+  it('every page answers as JSON too: the data it is drawn from, under the same rules (docs/specs/ui-app.md)', async () => {
+    const owner = await login();
+    const json = (path: string, extra: Record<string, string> = {}) => fetch(`${base}${path}`, { headers: { cookie: owner, accept: 'application/json', ...extra }, redirect: 'manual' });
+    const views: Record<string, string> = { '/': 'house-home', '/a/mark': 'dashboard', '/a/mark/setup': 'page', '/a/mark/p/bridgy': 'page',
+      '/p/narrow': 'page', '/people': 'page', '/inbox': 'inbox', '/places': 'sheet', '/p/nope': 'page' };
+    for (const [path, kind] of Object.entries(views)) {
+      const r = await json(path);
+      expect(r.headers.get('content-type'), path).toMatch(/^application\/json/);
+      const v = await r.json() as { view: string; chrome?: { csrf?: string } };
+      expect(v.view, path).toBe(kind);
+      if (kind !== 'sheet') expect(v.chrome?.csrf, path).toMatch(/^[0-9a-f]{64}$/);
+    }
+    // The same data the HTML is drawn from: a piece's page, scoped to the agent whose tab it is.
+    const tab = await (await json('/a/mark/p/bridgy')).json() as { page: { sections: { blocks: { text?: string }[] }[] }; ctx: { source: { base: string; act: string } } };
+    expect(tab.page.sections[0].blocks[0].text).toBe('scope=mark');
+    expect(tab.ctx.source).toMatchObject({ base: '/a/mark/p/bridgy/', act: '/a/mark/act/bridgy' });
+    expect((await json('/p/nope')).status).toBe(404);
+    // A browser's ordinary request still gets the page.
+    expect((await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: owner } })).headers.get('content-type')).toMatch(/^text\/html/);
+    // The same rules: no session, no data; another site can't read it.
+    expect((await fetch(`${base}/a/mark`, { headers: { accept: 'application/json' }, redirect: 'manual' })).status).not.toBe(200);
+    expect((await json('/a/mark', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' })).status).toBe(403);
+  });
+
   it('a list row naming an agent carries its mark; an unknown agent gets none', async () => {
     const html = await get('/p/wide', await login());
     expect(html).toMatch(/<li class=""><span class="mark"[^>]*background:#B8A6FF;color:#1D1240[^>]*>A<\/span><span class="body"><span class="text">Closed a task/);
