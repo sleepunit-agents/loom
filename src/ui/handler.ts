@@ -54,8 +54,8 @@ import { listProposals } from '../backends/proposals.js';
 import { agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { agentDir, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
-import { age, renderDashboard, type Dashboard } from './render.js';
-import { agentSource, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, renderHome, renderHouseHome, renderInbox, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, renderPage, renderPasskeys, renderSheetPage, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { age, type Dashboard } from './render.js';
+import { agentSource, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -1054,23 +1054,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
   const pieces = forOwner(allPieces, opts.ownerScope);
   const skippedNames = skipped.map((s) => s.piece);
-  const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
   // Every page as JSON too (docs/specs/ui-app.md): the data a page is drawn from, for the app, under the
   // same auth, scoping and same-origin rule (allowedGet, above). A browser's ordinary request gets the HTML.
   const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
-  const view = (kind: string, data: Record<string, unknown>, render: () => string, status = 200) =>
-    (asJson ? sendJson(res, status, { view: kind, ...data }) : html(render(), status));
-  // A browser opening a page gets the app (docs/specs/ui-app.md; the default since Jonathan, 2026-10-29: "swap to
-  // this thing full time"), which asks this same path for the JSON. Only a browser's page load gets it: one that
-  // asks for text/html (every browser's navigation does, and loom's service worker passes the request on as it came;
-  // Sec-Fetch-Dest isn't enough, as a worker's re-sent request needn't carry it). A script, a test or curl (Accept
-  // */*) still gets the HTML. Passkeys stays loom's own page (its WebAuthn and push switch are /login/passkey.js and
-  // /app.js), so the app opens it whole.
-  const pageLoad = req.headers['sec-fetch-dest'] === 'document' || /\btext\/html\b/.test(String(req.headers.accept ?? ''));
-  if (req.method === 'GET' && !asJson && pageLoad && pathname !== '/passkeys') {
+  // Every page is the app (web/, docs/specs/ui-app.md; the old HTML renderer went 2026-10-29, Jonathan: "let's just
+  // remove classic entirely"). A browser loads the app's one page at any path, and the app asks the same path for the
+  // page's data as JSON: the same auth, scoping and CSRF answer both. Only the sign-in pages are still loom's HTML.
+  const app = (status = 200) => {
     const shell = webFile('index.html');
-    if (shell) return send(res, 200, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
-  }
+    if (!shell) return send(res, 503, 'text/plain; charset=utf-8', 'loom\'s app isn\'t built here (npm run build:web).');
+    return send(res, status, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
+  };
+  const view = (kind: string, data: Record<string, unknown>, status = 200) =>
+    (asJson ? sendJson(res, status, { view: kind, ...data }) : app(status));
+  if (req.method === 'GET' && !asJson) return app();
 
   // The shell's sheets as pages: they work without script; app.js opens them as sheets.
   const pick = /^\/scope\/([a-z][a-z0-9-]{0,39}|household)$/.exec(pathname);
@@ -1086,7 +1083,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
     const q = (url.searchParams.get('q') ?? '').slice(0, 100);
     { const which = tab as 'scope' | 'places' | 'find' | 'setup'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
-      return view('sheet', { which, chrome: ch, q, found }, () => renderSheetPage(which, ch, q, found)); }
+      return view('sheet', { which, chrome: ch, q, found }); }
   }
 
   if (pathname === '/passkeys') {
@@ -1117,7 +1114,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
       : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
       : { csrf };
-    return send(res, 200, 'text/html; charset=utf-8', renderPasskeys(page, { source: CORE, path: 'passkeys', query, csrf }, ch, add), 'csrf' in add ? PASSKEY_CSP : {});
+    // The app draws the list, and adds loom's own "add a passkey" control (WebAuthn) and the push switch beside it.
+    return view('passkeys', { page, ctx: { source: CORE, path: 'passkeys', query, csrf }, chrome: ch, add });
   }
 
   if (hh) {
@@ -1125,7 +1123,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf, agents: hhAgents });
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead) =>
       { const ch = chrome(req, opts, pieces, skippedNames, current, csrf, flash);
-        return view('page', { page, ctx, chrome: ch, head }, () => renderPage(page, ctx, ch, undefined, head), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
+        return view('page', { page, ctx, chrome: ch, head }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
@@ -1144,7 +1142,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
       { const ctx = { ...ctxOf(''), agents }; const ch = chrome(req, opts, pieces, skippedNames, '', csrf, flash);
-        return view('house-home', { home: d, ctx, chrome: ch }, () => renderHouseHome(d, ctx, ch)); }
+        return view('house-home', { home: d, ctx, chrome: ch }); }
     }
     // Activity: everything that happened (the household's thread), what Home was before it showed how the agents are.
     if (pathname === '/activity') {
@@ -1173,7 +1171,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
       };
       { const ctx = { ...ctxOf(at), agents }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
-        return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }, () => renderDashboard(d, ctx, ch, nowMs)); }
+        return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
     }
     if (pathname === '/inbox') {
       const nowMs = Date.now();
@@ -1204,7 +1202,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
-        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline }, () => renderInbox(items, folder, open?.key, ctx, ch, nowMs, inline)); }
+        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline }); }
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {
@@ -1243,7 +1241,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           thread: t.items.slice(0, HOME_THREAD).map((r) => ({ text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), at: r.created, page: r.page })),
         };
         { const ctx = { ...ctxOf('', src), agents }; const ch = chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash);
-          return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }, () => renderDashboard(d, ctx, ch, nowMs)); }
+          return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
       }
       // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
       const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces) });
@@ -1283,7 +1281,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
     ];
     { const ctx = { source: CORE, path: '', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, '', csrf, flash);
-      return view('home', { page: home.page, ctx, chrome: ch, tiles, asks }, () => renderHome(home.page, ctx, ch, tiles, asks)); }
+      return view('home', { page: home.page, ctx, chrome: ch, tiles, asks }); }
   }
 
   if (pathname.startsWith('/p/')) {
@@ -1293,22 +1291,22 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const path = slash === -1 ? '' : decode(rest.slice(slash + 1));
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
-    if (!info || path === null || !validPath(path)) { const ctx = { source: pieceSource(piece), path: '', query: {}, csrf }; return view('page', { page: notFound, ctx, chrome: ch }, () => renderPage(notFound, ctx, ch), 404); }
+    if (!info || path === null || !validPath(path)) { const ctx = { source: pieceSource(piece), path: '', query: {}, csrf }; return view('page', { page: notFound, ctx, chrome: ch }, 404); }
     const page = await piecePage(info, path, query, scopedEnv, callerOf(who));
     const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
       { const err = { title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout' as const, tone: 'bad' as const, text: `${piece} couldn't show this page (${page}).` }] }] };
-        return view('page', { page: err, ctx, chrome: ch }, () => renderPage(err, ctx, ch), 502); }
+        return view('page', { page: err, ctx, chrome: ch }, 502); }
     }
     // A piece that can't narrow to the selected agent says so, once, at the top.
     const unscoped = scopedEnv.LOOM_SCOPE && !info.manifest.scope ? agentName(agentDir(hhScope!, scopedEnv.LOOM_SCOPE)) : undefined;
-    return view('page', { page, ctx, chrome: ch, unscoped }, () => renderPage(page, ctx, ch, unscoped), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+    return view('page', { page, ctx, chrome: ch, unscoped }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
   }
 
   if (pathname === '/pieces') {
     const page = piecesPage(opts.env, query);
     { const ctx = { source: CORE, path: 'pieces', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash);
-      return view('page', { page, ctx, chrome: ch }, () => renderPage(page, ctx, ch)); }
+      return view('page', { page, ctx, chrome: ch }); }
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';
@@ -1316,6 +1314,6 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const ch = chrome(req, opts, pieces, skippedNames, top, csrf, flash);
   const page = validPath(path) ? corePage(opts.contextDir, path, query) : null;
   const ctx = { source: CORE, path: validPath(path) ? path : '', query, csrf };
-  if (!page) return view('page', { page: notFound, ctx, chrome: ch }, () => renderPage(notFound, ctx, ch), 404);
-  return view('page', { page, ctx, chrome: ch }, () => renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+  if (!page) return view('page', { page: notFound, ctx, chrome: ch }, 404);
+  return view('page', { page, ctx, chrome: ch }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
 }

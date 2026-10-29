@@ -2,17 +2,14 @@
  * loom's page as an installable app: the manifest, and a service worker
  * (served at /sw.js, so its scope is the whole page).
  *
- * The worker keeps the last copy of each page loom showed this browser, and
- * shows it when loom can't be reached, marked with when it was saved
- * (body data-offline-from), so /app.js can say how old it is and hold the
- * actions. Everything else goes to the network untouched: actions (POST),
- * the page's own live checks, MCP. A service worker needs a secure context,
- * so on a plain-http address there is none, and no copy is kept.
- *
- * The React app (web/, docs/specs/ui-app.md) asks for the same pages as JSON;
- * the worker keeps the last copy of each the same way (its own cache, the
- * time it was saved in an x-loom-saved-at header), and the app's built files
- * under /app/assets/ once fetched (their names change with their content).
+ * Every page is the app (web/, docs/specs/ui-app.md): a page load is its one
+ * HTML page, and the page's data is the same path asked for as JSON. The
+ * worker keeps the app's page (so any address opens while loom can't be
+ * reached), its built files under /app/assets/ once fetched (their names
+ * change with their content), and the last copy of each page's data, with
+ * the time it was saved (x-loom-saved-at), which the app shows. Everything
+ * else goes to the network untouched: actions (POST), MCP. A service worker
+ * needs a secure context, so on a plain-http address there is none.
  *
  * What it never keeps: the sign-in pages, a page carrying a one-time message
  * (?_flash=, which can hold a token shown once), and anything that isn't a
@@ -38,7 +35,7 @@ export const MANIFEST = JSON.stringify({
 });
 
 /** Bumped when what the worker keeps changes shape; an old cache is dropped on activate. */
-const VERSION = 'loom-2';
+const VERSION = 'loom-3';
 
 export const SW_JS = `'use strict';
 const PAGES = '${VERSION}-pages', VIEWS = '${VERSION}-views', STATIC = '${VERSION}-static';
@@ -55,13 +52,15 @@ const forget = () => Promise.all([caches.delete(PAGES), caches.delete(VIEWS)]);
 self.addEventListener('message', (e) => { if (e.data === 'forget') e.waitUntil(forget()); });
 // A page's key: its address without the one-time message.
 const keyOf = (u) => { const k = new URL(u); k.searchParams.delete('_flash'); return k.href; };
+// The app's one page, whatever address it was loaded at.
+const APP = new URL('/__app', location.origin).href;
 async function page(req) {
   const url = new URL(req.url);
   const ctl = new AbortController();
   const slow = setTimeout(() => ctl.abort(), 8000);
   let res;
   try { res = await fetch(req, { signal: ctl.signal }); }
-  catch { clearTimeout(slow); return kept(url); }
+  catch { clearTimeout(slow); return kept(); }
   clearTimeout(slow);
   const landed = new URL(res.url || req.url);
   if (NEVER.test(landed.pathname)) { await forget(); return res; }
@@ -70,21 +69,16 @@ async function page(req) {
     const body = await res.clone().arrayBuffer();
     const h = new Headers(res.headers);
     h.set('x-loom-saved-at', new Date().toISOString());
-    caches.open(PAGES).then((c) => c.put(keyOf(req.url), new Response(body, { status: 200, headers: h }))).catch(() => {});
+    caches.open(PAGES).then((c) => c.put(APP, new Response(body, { status: 200, headers: h }))).catch(() => {});
   }
   return res;
 }
-// The saved copy, marked with when it was saved; its own headers (the CSP among them) kept.
-async function kept(url) {
-  const c = await caches.open(PAGES);
-  const hit = await c.match(keyOf(url.href));
-  if (!hit) {
-    return new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>loom</title><body style="font:16px system-ui;padding:24px;background:#0E0E0D;color:#F2F1EC"><h1 style="font-size:22px">Can\\u2019t reach loom</h1><p>This page isn\\u2019t saved on this device. It will open when there\\u2019s a connection.</p><p><a href="/" style="color:#D4FF3A">Home, as last seen</a></p></body>',
-      { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } });
-  }
-  const at = hit.headers.get('x-loom-saved-at') || '';
-  const text = (await hit.text()).replace('<body', '<body data-offline-from="' + at.replace(/[^0-9TZ:.-]/g, '') + '"');
-  return new Response(text, { status: 200, headers: hit.headers });
+// The app's page, kept from the last load; it then asks for the page's data, which view() answers from VIEWS.
+async function kept() {
+  const hit = await (await caches.open(PAGES)).match(APP);
+  if (hit) return hit;
+  return new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>loom</title><body style="font:16px system-ui;padding:24px;background:#0E0E0D;color:#F2F1EC"><h1 style="font-size:22px">Can\\u2019t reach loom</h1><p>loom isn\\u2019t saved on this device yet. It opens when there\\u2019s a connection.</p></body>',
+    { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } });
 }
 // The app's view of a page (Accept: application/json): the network first; the kept copy, stamped, when loom can't be reached.
 async function view(req) {

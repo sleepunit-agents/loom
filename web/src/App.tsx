@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
+import { PasskeyAdd, PushSwitch } from './passkeys';
 import { Boundary, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -86,8 +87,8 @@ export default function App() {
     const r = await fetchView(to).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string }));
     setLoading(false);
     if (quiet && !r.data) return;   // a refresh that missed keeps what's shown
-    if (r.redirect || r.status === 401) { location.href = to; return; }   // signed out: loom's own sign-in page
-    if (!r.data && r.status === 200) { location.href = to; return; }   // a page loom only draws itself (Passkeys)
+    if (!r.data && (r.redirect || r.status === 401)) { location.href = r.redirect ?? '/login'; return; }   // signed out: loom's own sign-in page
+    if (r.redirect) { to = r.redirect; if (!push) history.replaceState(null, '', to); }   // loom moved it (/mind → an agent's Mind): show where it landed
     if (!r.data) {
       if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
       setSavedAt(undefined); setUrl(to);
@@ -196,6 +197,8 @@ export default function App() {
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
                   : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
+                  : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
+                    <PushSwitch csrf={data.chrome.csrf} /></div>
                   : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} />
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider>
