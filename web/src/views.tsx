@@ -14,7 +14,68 @@ import { ActButton, BlockView, EnvContext, Link, type Env } from './blocks';
 import type { Button as Btn, Chrome, Source, Tone } from './loom';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
-type AgentCard = { id: string; label: string; bg: string; fg: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string; readings?: Reading[] };
+type Doing = { text: string; kind?: 'talk' | 'lane' | 'task' | 'session' | 'other'; where?: string; since?: string; page?: string; source: Source };
+type AgentCard = { id: string; label: string; bg: string; fg: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string; readings?: Reading[];
+  doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn'; source: Source; page?: string }[]; seen?: { at: string; where: string } };
+
+const DOING_ICON: Record<string, string> = { talk: 'message-circle', lane: 'route', task: 'hammer', session: 'terminal', other: 'sparkles' };
+const ago = (iso?: string) => {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return '';
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return m < 1 ? 'just now' : m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+};
+
+/**
+ * An agent at a glance, as 000h's identity card (Jonathan, 2026-10-29: "are they up, are they working, what's
+ * happening, but that's it"): its mark with its state on it, a line saying how it is, its name, what it's on, and
+ * each thing it has going (a conversation, a lane, a task, a session), simply. Trouble shows only when there is some.
+ * The details are a tap away.
+ */
+function AgentIdentity({ c }: { c: AgentCard }) {
+  const { go } = useEnv();
+  const doing = c.doing ?? [];
+  const problems = c.problems ?? [];
+  const state = c.state ?? 'available';
+  const eyebrow = problems.length ? (state === 'broken' ? 'Something’s broken' : 'Needs a look')
+    : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
+    : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
+  return (
+    <Card className="loom-identity cursor-pointer gap-0 p-0" onClick={() => go(`/a/${c.id}`)}>
+      <div className="flex items-center gap-4 p-5">
+        <span className="relative shrink-0">
+          <span className="grid size-16 place-items-center rounded-full font-[family-name:var(--font-display)] text-2xl font-semibold"
+            style={{ background: c.bg, color: c.fg, boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }}>{c.label[0]}</span>
+          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-sky-500 loom-dot-live' : state === 'broken' ? 'bg-red-500' : state === 'unavailable' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill,#b42c22)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
+          <h3 className="truncate font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">{c.label}</h3>
+          {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="truncate text-sm opacity-70">{c.reason}</Arrive>}
+        </div>
+      </div>
+      {(doing.length > 0 || problems.length > 0) && (
+        <ul className="grid gap-0.5 px-3 pb-3">
+          {problems.map((p) => (
+            <Arrive as="li" key={`p:${p.text}`} k={`pb:${c.id}\0${p.text}`} className={`flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm ${p.tone === 'bad' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
+              <AnimatedIcon name={iconFor('triangle-alert')} size="sm" /><span className="min-w-0 flex-1 truncate font-medium">{p.text}</span>
+            </Arrive>))}
+          {doing.map((d, n) => (
+            <Arrive as="li" key={n} k={`do:${c.id}\0${d.text}\0${d.where ?? ''}`} className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm">
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${c.bg} 22%, transparent)` }}>
+                <AnimatedIcon name={iconFor(DOING_ICON[d.kind ?? 'other'])} size="sm" /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate font-medium">{d.text}</span>
+                {(d.where || d.since) && <span className="block truncate text-xs opacity-60">{[d.where, d.since ? ago(d.since) : ''].filter(Boolean).join(' · ')}</span>}</span>
+            </Arrive>))}
+        </ul>
+      )}
+      <div className="flex items-center gap-2 border-t px-5 py-3 text-sm">
+        <span className="font-medium">Open {c.label}</span><AnimatedIcon name={iconFor('chevron-right')} size="sm" />
+        {c.seen && <span className="ml-auto truncate text-xs opacity-60">seen {ago(c.seen.at)}{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
+      </div>
+    </Card>
+  );
+}
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
 type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string };
 type ThreadRow = { text: string; meta?: string; at?: string; page?: string };
@@ -52,32 +113,9 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
           <AnimatedIcon name={iconFor("chevron-right")} size="sm" />
         </button>
       )}
-      <div className="grid gap-4 md:grid-cols-2">
-        {home.cards.map((c) => (
-          <Card key={c.id} className="cursor-pointer" onClick={() => go(`/a/${c.id}`)}>
-            <CardHeader className="flex flex-row items-center gap-3">
-              <Mark a={c} />
-              <div className="min-w-0 flex-1"><CardTitle>{c.label}</CardTitle>{c.reason && <Arrive as="p" k={`why:${c.label}\0${c.reason}`} className="truncate text-sm opacity-70">{c.reason}</Arrive>}</div>
-              {c.state && <AgentState status={STATE[c.state].status} size="sm" label={STATE[c.state].word} />}
-            </CardHeader>
-            {c.readings && c.readings.length > 0 && (
-              <CardContent>
-                <dl className="grid min-w-0 gap-1.5 text-sm">{c.readings.map((r) => (
-                  <div key={r.label} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-3">
-                    <dt className="flex items-center gap-2 opacity-70">{r.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[r.tone]}`} />}{r.label}</dt>
-                    <Arrive as="dd" k={`rd:${c.id ?? c.label}\0${r.label}\0${r.value}`} className="min-w-0 truncate text-right">{r.value}</Arrive>
-                  </div>))}</dl>
-              </CardContent>
-            )}
-          </Card>
-        ))}
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        {home.cards.map((c) => <AgentIdentity key={c.id} c={c} />)}
       </div>
-      {home.moving.length > 0 && (
-        <Card><CardHeader><CardTitle>What's moving</CardTitle></CardHeader>
-          <CardContent><ul className="divide-y">{home.moving.map((m, n) => (
-            <Arrive as="li" key={n} k={`mv:${m.agent ?? ''}\0${m.text}`} className="py-2.5"><span className="block">{m.text}</span><span className="block text-sm opacity-70">{[m.agent, m.meta].filter(Boolean).join(' · ')}</span></Arrive>))}</ul></CardContent>
-        </Card>
-      )}
     </div>
   );
 }

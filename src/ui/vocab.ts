@@ -87,7 +87,15 @@ export type AgentState = 'working' | 'available' | 'unavailable' | 'broken';
 export const AGENT_STATES: ReadonlySet<string> = new Set(['working', 'available', 'unavailable', 'broken']);
 /** One short reading on an agent's card on Home (Fuel: 58% of the week). */
 export interface Reading { label: string; value: string; detail?: string; tone?: Tone; page?: string }
-export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[] }
+/**
+ * One thing an agent has going right now, for its card on Home (docs/extensions.md, "agents"): a conversation a
+ * body is in, a lane or a wake running, a task, a remote session. The card lists them, simply; the details are a
+ * tap away (`page`). `since` is when it started (ISO 8601).
+ */
+export interface Doing { text: string; kind?: DoingKind; where?: string; since?: string; page?: string }
+export type DoingKind = 'talk' | 'lane' | 'task' | 'session' | 'other';
+export const DOING_KINDS: ReadonlySet<string> = new Set(['talk', 'lane', 'task', 'session', 'other']);
+export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
 /** Where a piece's tab (or one section) belongs: the household's (the default), or each agent's own pages. */
 export type Level = 'loom' | 'agent';
 
@@ -136,6 +144,7 @@ export const LIMITS = {
   answered: 20,
   agents: 16,
   readings: 4,
+  doing: 8,
   fields: 30,
   hidden: 20,
   options: 50,
@@ -582,6 +591,14 @@ export function parseManifest(value: unknown): Manifest | string {
             const d = obj(x, 'reading');
             return { label: str(d.label, 'reading.label'), value: str(d.value, 'reading.value'), detail: optStr(d.detail, 'reading.detail'), tone: tone(d.tone), page: page(d.page, 'reading.page') };
           }),
+          ...(r.doing !== undefined ? { doing: arr(r.doing, `agents.${id}.doing`, LIMITS.doing).map((x) => {
+            const d = obj(x, 'doing');
+            if (d.kind !== undefined && (typeof d.kind !== 'string' || !DOING_KINDS.has(d.kind))) throw new Invalid(`doing.kind must be one of ${[...DOING_KINDS].join(', ')}`);
+            const since = optStr(d.since, 'doing.since');
+            if (since !== undefined && !Number.isFinite(Date.parse(since))) throw new Invalid('doing.since is a time (ISO 8601)');
+            return { text: str(d.text, 'doing.text'), ...(d.kind ? { kind: d.kind as DoingKind } : {}), ...(d.where !== undefined ? { where: str(d.where, 'doing.where') } : {}),
+              ...(since ? { since } : {}), ...(d.page !== undefined ? { page: page(d.page, 'doing.page') } : {}) };
+          }) } : {}),
         };
       }
     }

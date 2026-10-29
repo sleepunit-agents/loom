@@ -558,7 +558,17 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
     if (last) readings.push({ label: 'Last seen', value: `${age(last.created, nowMs)} ago`, detail: whereLabel(last.where), source: agentSource(a), page: '' });
-    return { id: a, ...marks[a], state: worst?.r.state ?? 'available', reason: worst?.r.reason ?? lastLine, readings: readings.slice(0, 6) };
+    // What it has going, newest first; and only what's wrong (a reading marked bad or warn): no news is good news.
+    const doing = reports.flatMap((x) => (x.r.doing ?? []).map((d) => ({ ...d, source: pieceSource(x.p.piece) })))
+      .sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0)).slice(0, 8);
+    const problems = reports.flatMap((x) => x.r.readings.filter((r) => r.tone === 'bad' || r.tone === 'warn')
+      .map((r) => ({ text: `${r.label}: ${r.value}`, tone: r.tone as 'bad' | 'warn', source: pieceSource(x.p.piece), ...(r.page !== undefined ? { page: r.page } : {}) })));
+    if (worst && (worst.r.state === 'broken' || worst.r.state === 'unavailable') && worst.r.reason && !problems.some((p) => p.text.includes(worst.r.reason!))) {
+      problems.unshift({ text: worst.r.reason, tone: worst.r.state === 'broken' ? 'bad' : 'warn', source: pieceSource(worst.p.piece) });
+    }
+    const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
+    const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
+    return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6) };
   });
 }
 
