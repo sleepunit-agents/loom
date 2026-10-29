@@ -189,8 +189,17 @@ describe('loom UI over HTTP', () => {
     return cookie.split(';')[0];
   }
 
+  /** A browser's page load: the app's one HTML shell (or a redirect to sign in). */
   const get = (path: string, cookie: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' });
-  const csrfOf = (html: string) => /name="_csrf" value="([0-9a-f]{64})"/.exec(html)?.[1] ?? '';
+  /** What the app asks for at the same path: the page's data, with the page's status. */
+  const getJson = (path: string, cookie: string) => fetch(`${base}${path}`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const view = async (path: string, cookie: string): Promise<any> => (await getJson(path, cookie)).json();
+  /** The page's anti-forgery token, as the app gets it. */
+  const csrfOf = (v: { chrome: { csrf: string } }) => v.chrome.csrf;
+  /** Every section of a page view, by id. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const section = (v: any, id: string) => (v.page.sections as Array<{ id: string; title?: string; blocks: any[] }>).find((s) => s.id === id);
 
   async function post(path: string, cookie: string, fields: Record<string, string>, headers: Record<string, string> = {}) {
     return fetch(`${base}${path}`, {
@@ -203,15 +212,14 @@ describe('loom UI over HTTP', () => {
 
   it('a restart signs nobody out: the session and its form token survive a new server', async () => {
     const cookie = await login();
-    const before = await (await get('/', cookie)).text();
-    const csrf = csrfOf(before);
-    expect(csrf).not.toBe('');
+    const csrf = csrfOf(await view('/', cookie));
+    expect(csrf).toMatch(/^[0-9a-f]{64}$/);
     await handle.close();
     handle = await startHttpServer({ contextDir: stack, host: '127.0.0.1', port: 0, token: TOKEN });
     base = `http://127.0.0.1:${handle.port}`;
-    const after = await get('/', cookie);
+    const after = await getJson('/', cookie);
     expect(after.status).toBe(200);
-    expect(csrfOf(await after.text())).toBe(csrf);
+    expect(csrfOf(await after.json())).toBe(csrf);
     // And logging out still ends it, after the restart too.
     expect((await post('/logout', cookie, { _csrf: csrf })).status).toBe(303);
     expect((await get('/', cookie)).status).toBe(303);
@@ -255,14 +263,29 @@ describe('loom UI over HTTP', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-security-policy')).toMatch(/default-src 'none'/);
     const html = await res.text();
-    expect(html).toContain('Test Agent');
-    expect(html).toContain('What&#39;s happening');
-    expect(html).toContain('shipped the ui');
-    expect(html).toContain('a hot memory');
-    expect(html).toContain('href="/mind"');
+    // The shell carries no page data: that comes as JSON.
+    expect(html).toContain('<div id="root">');
+    expect(html).not.toContain('shipped the ui');
     // Script only by src, from loom: no inline script, and the CSP allows neither inline nor eval.
-    expect(html.match(/<script\b[^>]*>/gi)).toEqual(['<script src="/app.js" defer>']);
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const [, attrs, body] of scripts) {
+      expect(attrs).toMatch(/\bsrc="\/app\//);
+      expect(body.trim()).toBe('');
+    }
     expect(res.headers.get('content-security-policy')).toMatch(/script-src 'self';/);
+    const j = await getJson('/', cookie);
+    expect(j.status).toBe(200);
+    expect(j.headers.get('content-security-policy')).toMatch(/default-src 'none'/);
+    const v = await j.json();
+    expect(v.view).toBe('home');
+    expect(v.chrome.agent).toBe('Test Agent');
+    expect(section(v, 'tape')!.title).toBe('What\'s happening');
+    expect(JSON.stringify(section(v, 'tape'))).toContain('shipped the ui');
+    const mind = section(v, 'mind')!;
+    expect(JSON.stringify(mind)).toContain('a hot memory');
+    const why = mind.blocks.find((b) => b.type === 'link');
+    expect(pageHref(why.page, v.ctx.source)).toBe('/mind');
     expect((await get('/app.js', cookie)).headers.get('content-type')).toMatch(/javascript/);
   });
 
@@ -282,10 +305,15 @@ describe('loom UI over HTTP', () => {
 
   it('the tape filters by where it happened', async () => {
     const cookie = await login();
-    const html = await (await get('/?where=discord', cookie)).text();
-    expect(html).toContain('talked on discord');
-    expect(html).not.toContain('shipped the ui');
-    expect(html).toContain('class="pill on" href="/?where=discord"');
+    const v = await view('/?where=discord', cookie);
+    const json = JSON.stringify(v);
+    expect(json).toContain('talked on discord');
+    expect(json).not.toContain('shipped the ui');
+    // The filter the page is on: the pill the app marks, from the page's own query.
+    expect(v.ctx.query.where).toBe('discord');
+    const filters = section(v, 'tape')!.blocks.find((b) => b.type === 'filters');
+    expect(filters.param).toBe('where');
+    expect(filters.options.map((o: { value: string }) => o.value)).toContain('discord');
   });
 
   it('Mind explains heat, and an aged memory sits below a fresh one with no recompute', async () => {
@@ -295,14 +323,20 @@ describe('loom UI over HTTP', () => {
     db.close();
     const cookie = await login();
     // The board's Mind: top of mind, ranked, with every memory a link away.
-    const top = await (await get('/mind', cookie)).text();
-    expect(top).toContain('<ol class="list numbered">');
-    expect(top).toMatch(/<span class="rank" aria-hidden="true">1<\/span>/);
-    expect(top).toMatch(/href="\/mind\?all=1"[^>]*>[\s\S]*?All \d+ memories/);
-    const html = await (await get('/mind?all=1', cookie)).text();
-    expect(html).toContain('At wake');
-    expect(html.indexOf('a hot memory')).toBeLessThan(html.indexOf('an old memory'));
-    expect(html).toMatch(/Project memories cool by half every 10 days/);
+    const top = await view('/mind', cookie);
+    const ranked = section(top, 'top')!;
+    const list = ranked.blocks.find((b) => b.type === 'list');
+    expect(list.numbered).toBe(true);
+    expect(list.items.length).toBeGreaterThan(0);
+    const all = ranked.blocks.find((b) => b.type === 'link');
+    expect(all.text).toMatch(/^All \d+ memories$/);
+    expect(pageHref(all.page, top.ctx.source)).toBe('/mind?all=1');
+    const v = await view('/mind?all=1', cookie);
+    expect(v.page.sections.map((s: { title?: string }) => s.title)).toContain('At wake');
+    const json = JSON.stringify(v);
+    expect(json.indexOf('a hot memory')).toBeGreaterThan(-1);
+    expect(json.indexOf('a hot memory')).toBeLessThan(json.indexOf('an old memory'));
+    expect(json).toMatch(/Project memories cool by half every 10 days/);
   });
 
   it('archiving a memory offers Undo, which restores it: on the page and in the script\'s JSON', async () => {
@@ -310,22 +344,21 @@ describe('loom UI over HTTP', () => {
     const db = new BetterSqlite3(resolveSqliteDbPath(stack), { readonly: true });
     const ref = (db.prepare("SELECT ref FROM memories WHERE title = 'a hot memory'").get() as { ref: string }).ref;
     db.close();
-    const page = await (await get(`/memory/${ref}`, cookie)).text();
-    const csrf = csrfOf(page);
+    const csrf = csrfOf(await view(`/memory/${ref}`, cookie));
     // The script's way: JSON with where to go, and what undoes it.
     const r = await post('/act/loom', cookie, { _csrf: csrf, _action: 'archive', _path: `memory/${ref}`, ref }, { 'x-loom-fetch': '1' });
     const body = await r.json() as { ok: boolean; go?: string; undo?: { act: string; path: string; action: string; fields: Record<string, string> } };
     expect(body).toMatchObject({ ok: true, undo: { act: '/act/loom', path: `memory/${ref}`, action: 'restore', fields: { ref } } });
-    expect((await get(`/memory/${ref}`, cookie)).status).toBe(404);
-    // The page's way: the message it lands on carries an Undo form, the same token.
-    const landed = await (await get(body.go!, cookie)).text();
-    const form = /<form class="undo" method="post" action="\/act\/loom">([\s\S]*?)<\/form>/.exec(landed)?.[1] ?? '';
-    const fields = Object.fromEntries([...form.matchAll(/name="([^"]+)" value="([^"]*)"/g)].map((m) => [m[1], m[2].replace(/&#x2F;|&#47;/g, '/')]));
-    expect(fields).toMatchObject({ _action: 'restore', _csrf: csrf, ref });
-    const undone = await post('/act/loom', cookie, fields);
+    expect((await getJson(`/memory/${ref}`, cookie)).status).toBe(404);
+    // The page's way: the message it lands on carries the Undo, with the same token to post it.
+    const landed = await view(body.go!, cookie);
+    expect(landed.chrome.csrf).toBe(csrf);
+    const undo = landed.chrome.flash.undo as { act: string; path: string; action: string; fields: Record<string, string> };
+    expect(undo).toMatchObject({ act: '/act/loom', path: `memory/${ref}`, action: 'restore', fields: { ref } });
+    const undone = await post(undo.act, cookie, { _csrf: landed.chrome.csrf, _action: undo.action, _path: undo.path, ...undo.fields });
     expect(undone.status).toBe(303);
     expect(undone.headers.get('location')).toMatch(new RegExp(`^/memory/${ref.replace(/[/-]/g, (c) => `\\${c}`)}\\?_flash=`));
-    expect((await get(`/memory/${ref}`, cookie)).status).toBe(200);
+    expect((await getJson(`/memory/${ref}`, cookie)).status).toBe(200);
   });
 
   it('a piece\'s undo is parsed like a button, and dropped when the action failed', () => {
@@ -340,34 +373,44 @@ describe('loom UI over HTTP', () => {
     const db = new BetterSqlite3(resolveSqliteDbPath(stack), { readonly: true });
     const ref = (db.prepare("SELECT ref FROM memories WHERE title = 'a hot memory'").get() as { ref: string }).ref;
     db.close();
-    const html = await (await get(`/memory/${ref}`, cookie)).text();
-    expect(html).toContain('<h1>a hot memory</h1>');
-    expect(html).toContain('half-life');
+    const v = await view(`/memory/${ref}`, cookie);
+    expect(v.page.title).toBe('a hot memory');
+    const json = JSON.stringify(v);
+    expect(json).toContain('half-life');
     // The board's summary, and the record behind Machine details.
-    for (const s of ['Learned from', 'First written', 'Recalled', '<summary>', 'Machine details']) expect(html).toContain(s);
-    expect(html).not.toContain('<h2>History</h2>');   // never edited: no history to show
+    const summary = section(v, 'memory')!.blocks.find((b) => b.type === 'kv');
+    for (const s of ['Learned from', 'First written', 'Recalled']) expect(summary.items.map((i: { label: string }) => i.label)).toContain(s);
+    const details = section(v, 'record')!.blocks.find((b) => b.type === 'details');
+    expect(details.summary).toBe('Machine details');
+    expect(details.blocks.length).toBeGreaterThan(0);
+    expect(section(v, 'history')).toBeUndefined();   // never edited: no history to show
     // Edited twice: now, then each earlier body back to the first.
     await update(stack, { ref, content: 'second take' });
     await update(stack, { ref, content: 'third take' });
-    const edited = await (await get(`/memory/${ref}`, cookie)).text();
-    const hist = /<h2>History<\/h2>([\s\S]*?)<\/section>/.exec(edited)?.[1] ?? '';
-    expect([...hist.matchAll(/<span class="text">([^<]*)<\/span>/g)].map((m) => m[1])).toEqual(['third take', 'second take', 'body']);
-    expect(hist).toMatch(/Now · edited/);
-    expect(hist).toMatch(/· first written/);
-    expect((await get('/memory/nope/none', cookie)).status).toBe(404);
-    expect((await get('/people', cookie)).status).toBe(200);
+    const edited = await view(`/memory/${ref}`, cookie);
+    const hist = section(edited, 'history')!;
+    expect(hist.title).toBe('History');
+    const items = hist.blocks.find((b) => b.type === 'list').items as Array<{ text: string; meta: string }>;
+    expect(items.map((i) => i.text)).toEqual(['third take', 'second take', 'body']);
+    expect(items[0].meta).toMatch(/Now · edited/);
+    expect(items[items.length - 1].meta).toMatch(/· first written/);
+    expect((await getJson('/memory/nope/none', cookie)).status).toBe(404);
+    expect((await getJson('/people', cookie)).status).toBe(200);
     // A piece may link to someone with no card: a page that says so, not an error.
-    expect(await (await get('/people/no-such-person', cookie)).text()).toContain('no person card for no-such-person');
+    const nobody = await getJson('/people/no-such-person', cookie);
+    expect(nobody.status).toBe(200);
+    expect(JSON.stringify(await nobody.json())).toContain('no person card for no-such-person');
   });
 
   it('pending proposals show on Mind (not Home), and ratify / reject work from the page', async () => {
     propose(stack, { category: 'feedback', title: 'please ratify me', content: 'c', source: 'test' });
     propose(stack, { category: 'feedback', title: 'please reject me', content: 'c', source: 'test' });
     const cookie = await login();
-    expect(await (await get('/', cookie)).text()).not.toContain('please ratify me');
-    const mind = await (await get('/mind', cookie)).text();
-    expect(mind).toContain('Your call');
-    expect(mind).toContain('“please ratify me”');
+    expect(JSON.stringify(await view('/', cookie))).not.toContain('please ratify me');
+    const mind = await view('/mind', cookie);
+    const call = section(mind, 'proposals')!;
+    expect(call.title).toBe('Your call');
+    expect(JSON.stringify(call)).toContain('“please ratify me”');
     const csrf = csrfOf(mind);
     const [a, b] = listProposals(stack);
     const r1 = await post('/act/loom', cookie, { _csrf: csrf, _action: 'ratify', _path: 'mind', id: String(a.id) });
@@ -375,16 +418,19 @@ describe('loom UI over HTTP', () => {
     const r2 = await post('/act/loom', cookie, { _csrf: csrf, _action: 'reject', _path: 'mind', id: String(b.id) });
     expect(r2.headers.get('location')).toMatch(/^\/mind\?_flash=[0-9a-f]+$/);
     expect(listProposals(stack)).toHaveLength(0);
-    const after = await (await get(r2.headers.get('location')!, cookie)).text();
-    expect(after).toContain(`Proposal #${b.id} rejected.`);
+    const after = await view(r2.headers.get('location')!, cookie);
+    expect(after.chrome.flash).toMatchObject({ ok: true, message: `Proposal #${b.id} rejected.` });
     // The message shows once.
-    expect(await (await get(r2.headers.get('location')!, cookie)).text()).not.toContain('rejected.');
+    const again = await view(r2.headers.get('location')!, cookie);
+    expect(again.chrome.flash).toBeUndefined();
+    expect(JSON.stringify(again)).not.toContain('rejected.');
   });
 
   it('an action without the anti-forgery token, or from another site, is refused', async () => {
     propose(stack, { category: 'feedback', title: 'p', content: 'c', source: 'test' });
     const cookie = await login();
-    const csrf = csrfOf(await (await get('/mind', cookie)).text());
+    const csrf = csrfOf(await view('/mind', cookie));
+    expect(csrf).toMatch(/^[0-9a-f]{64}$/);   // a real token: the refusals below are for the reason named
     const id = String(listProposals(stack)[0].id);
     expect((await post('/act/loom', cookie, { _action: 'reject', id })).status).toBe(403);
     expect((await post('/act/loom', cookie, { _csrf: '0'.repeat(64), _action: 'reject', id })).status).toBe(403);
@@ -408,21 +454,22 @@ describe('loom UI over HTTP', () => {
     };
     expect(body.pieces.map((p) => [p.piece, p.manifest.tab.label])).toEqual([['shuttle', 'Bridges']]);
     const cookie = await login();
-    const html = await (await get('/', cookie)).text();
+    const v = await view('/', cookie);
     // Its tab is in the desktop rail's Pieces group and in the Places sheet, by the tab's label.
-    expect(html).toContain('<a class="rail-link" href="/p/shuttle"><span>Bridges</span>');
-    expect(html).toContain('<span class="pl-label">Bridges</span>');
-    expect(html).toContain('2 live');
-    expect(html).toContain('Your call');
-    expect(html).toContain('Slack bridge is dark');
+    expect(v.chrome.nav).toContainEqual(expect.objectContaining({ label: 'Bridges', href: '/p/shuttle', piece: true }));
+    expect(v.chrome.shell.pieces).toContainEqual(expect.objectContaining({ label: 'Bridges', href: '/p/shuttle', kind: 'place' }));
+    // Its tile, and its ask in Your call.
+    expect(v.tiles).toContainEqual(expect.objectContaining({ label: 'Bridges', value: '2 live', source: pieceSource('shuttle') }));
+    expect(v.asks).toContainEqual(expect.objectContaining({ text: 'Slack bridge is dark', source: pieceSource('shuttle') }));
   });
 
   it('a first-version piece still shows, as its own page', async () => {
     await piece(bin, 'old', `[ "$1 $2" = "ui --json" ] && echo '${legacy}'`);
     const cookie = await login();
-    const html = await (await get('/p/old', cookie)).text();
-    expect(html).toContain('<h2>Bridges</h2>');
-    expect((await get('/p/old/deeper', cookie)).status).toBe(404);
+    const v = await view('/p/old', cookie);
+    expect(v.view).toBe('page');
+    expect(section(v, 'bridges')!.title).toBe('Bridges');
+    expect((await getJson('/p/old/deeper', cookie)).status).toBe(404);
   });
 
   it('a piece that says it\'s a setting goes under Setup, not Places; the catalog says for box, secrets, subscriptions', async () => {
@@ -431,14 +478,16 @@ describe('loom UI over HTTP', () => {
     await piece(bin, 'secrets', `[ "$1 $2" = "ui --json" ] && echo '${m('Secrets')}'`);   // no kind: the catalog's
     await piece(bin, 'daily', `[ "$1 $2" = "ui --json" ] && echo '${m('Daily')}'`);
     const cookie = await login();
-    const html = await (await get('/', cookie)).text();
-    const sheet = (id: string) => new RegExp(`<dialog class="sheet" id="sheet-${id}"[\\s\\S]*?</dialog>`).exec(html)?.[0] ?? '';
-    for (const s of ['Gizmo', 'Secrets', 'Manage pieces', 'Passkeys']) expect(sheet('setup')).toContain(s);
-    expect(sheet('setup')).not.toContain('Daily');
-    expect(sheet('places')).toContain('Daily');
-    for (const s of ['Gizmo', 'Secrets', 'Manage pieces']) expect(sheet('places')).not.toContain(s);
-    expect(html).toContain('aria-label="Setup" data-sheet="setup"');
-    expect((await get('/setup', cookie)).status).toBe(200);
+    // The Setup sheet is a page the app draws from the shell's pieces: settings there, places under Places.
+    const res = await getJson('/setup', cookie);
+    expect(res.status).toBe(200);
+    const v = await res.json();
+    expect(v).toMatchObject({ view: 'sheet', which: 'setup' });
+    const kinds = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; kind: string }>).map((p) => [p.label, p.kind]));
+    expect(kinds).toEqual({ Daily: 'place', Gizmo: 'setting', Secrets: 'setting' });
+    // A lone agent's owner is an admin: Setup keeps its own links (Pieces, Passkeys) beside the settings.
+    expect(v.chrome.shell.admin).not.toBe(false);
+    expect((await view('/places', cookie)).which).toBe('places');
     // A kind that isn't one is refused with the manifest.
     expect(parseManifest({ v: 2, tab: { label: 'x', kind: 'drawer' } })).toMatch(/tab.kind/);
   });
@@ -447,20 +496,27 @@ describe('loom UI over HTTP', () => {
     const seen = join(bin, 'seen');
     await piece(bin, 'vault', fullPiece(seen));
     const cookie = await login();
-    const html = await (await get('/p/vault', cookie)).text();
-    expect(html).toContain('<h1>Vault</h1>');
-    expect(html).toContain('type="password" autocomplete="off" data-1p-ignore');
-    expect(html).not.toContain('MUST-NOT-RENDER');
-    expect(html).toContain('action="/act/vault"');
-    expect(html).toContain('href="/p/vault/item/alpha"');
-    const csrf = csrfOf(html);
+    const v = await view('/p/vault', cookie);
+    expect(v.page.title).toBe('Vault');
+    const form = section(v, 'add')!.blocks.find((b) => b.type === 'form');
+    expect(form.action).toBe('add');
+    expect(form.fields.find((f: { name: string }) => f.name === 'value')).toMatchObject({ kind: 'secret' });
+    expect(JSON.stringify(v)).not.toContain('MUST-NOT-RENDER');
+    // Its forms post to the piece, its links stay under it.
+    expect(v.ctx.source).toEqual(pieceSource('vault'));
+    expect(v.ctx.source.act ?? `/act/${v.ctx.source.id}`).toBe('/act/vault');
+    const item = section(v, 'list')!.blocks.find((b) => b.type === 'list').items[0];
+    expect(pageHref(item.page, v.ctx.source)).toBe('/p/vault/item/alpha');
+    const csrf = csrfOf(v);
     const res = await post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'sentry-dsn', value: 'hunter2-secret' });
     expect(res.status).toBe(303);
     const to = res.headers.get('location')!;
     expect(to).toMatch(/^\/p\/vault\?_flash=/);
     expect(to).not.toContain('hunter2');
     expect(JSON.parse(await readFile(seen, 'utf-8'))).toEqual({ action: 'add', path: '', fields: { name: 'sentry-dsn', value: 'hunter2-secret' } });
-    expect(await (await get(to, cookie)).text()).toContain('Stored.');
+    // The browser loads the app at that address first; that load must not spend the message the app then asks for.
+    expect(await (await get(to, cookie)).text()).toContain('<div id="root">');
+    expect((await view(to, cookie)).chrome.flash).toMatchObject({ ok: true, message: 'Stored.' });
   });
 
   it('pieces without a ui, with garbage, or too slow are left out, and the page still renders', async () => {
@@ -479,17 +535,26 @@ describe('loom UI over HTTP', () => {
       slow: 'timed out',
     });
     const cookie = await login();
-    expect((await get('/', cookie)).status).toBe(200);
+    const res = await getJson('/', cookie);
+    expect(res.status).toBe(200);
+    expect((await res.json()).view).toBe('home');
   }, 15000);
 
   it('a piece can\'t inject markup: its strings are escaped', async () => {
     const evil = JSON.stringify({ v: 2, tab: { label: '<img src=x onerror=alert(1)>' }, tile: { label: 'x', value: '</a><script>alert(1)</script>' } });
     await piece(bin, 'evil', `echo '${evil}'`);
     const cookie = await login();
+    // The page a browser renders carries none of a piece's strings...
     const html = await (await get('/', cookie)).text();
-    expect(html).not.toContain('<script>alert');
+    expect(html).not.toContain('alert(1)');
     expect(html).not.toContain('<img src=x');
-    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    // ...they reach it as data, served as JSON the browser won't sniff into a page, for the app to draw as text.
+    const res = await getJson('/', cookie);
+    expect(res.headers.get('content-type')).toMatch(/^application\/json/);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const v = await res.json();
+    expect(v.chrome.shell.pieces).toContainEqual(expect.objectContaining({ label: '<img src=x onerror=alert(1)>' }));
+    expect(v.tiles).toContainEqual(expect.objectContaining({ value: '</a><script>alert(1)</script>' }));
   });
 
   it('a piece page path can\'t climb out', async () => {
@@ -497,7 +562,8 @@ describe('loom UI over HTTP', () => {
     const cookie = await login();
     // Raw request paths: fetch() would normalise the dots away before sending.
     const raw = (path: string) => new Promise<number>((resolve, reject) => {
-      const r = httpRequest({ host: '127.0.0.1', port: handle.port, path, headers: { cookie } }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+      // As the app asks: a browser's page load is the app's shell at any path; the page itself is the JSON.
+      const r = httpRequest({ host: '127.0.0.1', port: handle.port, path, headers: { cookie, accept: 'application/json' } }, (res) => { res.resume(); resolve(res.statusCode ?? 0); });
       r.on('error', reject);
       r.end();
     });
@@ -522,7 +588,10 @@ describe('loom UI over HTTP', () => {
 
   it('/ is the page for a browser, and MCP\'s for an MCP client', async () => {
     const cookie = await login();
-    expect(await (await get('/', cookie)).text()).toContain('What&#39;s happening');
+    expect(await (await get('/', cookie)).text()).toContain('<div id="root">');
+    const home = await view('/', cookie);
+    expect(home.view).toBe('home');
+    expect(section(home, 'tape')!.title).toBe('What\'s happening');
     // An MCP initialize posted to the root is MCP's, not the page's.
     const init = await fetch(`${base}/`, {
       method: 'POST',
@@ -623,7 +692,7 @@ describe('loom UI over HTTP', () => {
     await piece(bin, 'vault', fullPiece(join(bin, 'seen')));
     const cookie = await login();
     for (const p of ['/p/vault/%E0', '/memory/%E0%A4%A']) {
-      const res = await get(p, cookie);
+      const res = await getJson(p, cookie);
       expect(res.status).toBe(404);
       expect(res.headers.get('content-security-policy')).toMatch(/default-src 'none'/);
     }
@@ -633,7 +702,7 @@ describe('loom UI over HTTP', () => {
     const seen = join(bin, 'seen');
     await piece(bin, 'vault', fullPiece(seen));
     const cookie = await login();
-    const csrf = csrfOf(await (await get('/p/vault', cookie)).text());
+    const csrf = csrfOf(await view('/p/vault', cookie));
     const fields: Record<string, string> = { _csrf: csrf, _action: 'add', _path: '' };
     for (let i = 0; i < 20; i++) fields[`h${i}`] = 'hidden';
     for (let i = 0; i < 9; i++) fields[`f${i}`] = 'visible';
@@ -653,11 +722,13 @@ describe('loom UI over HTTP', () => {
     const body = fullPiece(seen).replace(`'{"ok":true,"message":"Stored.","page":""}'`, `'{"ok":true,"message":"Stored.","page":"loom:mind?category=user"}'`);
     await piece(bin, 'vault', body);
     const cookie = await login();
-    const csrf = csrfOf(await (await get('/p/vault', cookie)).text());
+    const csrf = csrfOf(await view('/p/vault', cookie));
     const res = await post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: '', name: 'n', value: 'v' });
     const to = res.headers.get('location')!;
     expect(to).toMatch(/^\/mind\?category=user&_flash=/);
-    expect(await (await get(to, cookie)).text()).toContain('<span>Stored.</span><span class="from">vault</span>');
+    const landed = await view(to, cookie);
+    expect(landed.ctx.query).toMatchObject({ category: 'user' });
+    expect(landed.chrome.flash).toMatchObject({ message: 'Stored.', from: 'vault' });
   });
 
   it('a piece leaves nothing running after it answers', async () => {
@@ -676,9 +747,9 @@ describe('loom UI over HTTP', () => {
   "ui page") cat > /dev/null; echo "+ $(date +%s%N)" >> '${log}'; sleep 0.3; echo "- $(date +%s%N)" >> '${log}'; echo '{"title":"B","sections":[]}' ;;
 esac`);
     const cookie = await login();
-    await get('/p/busy', cookie);
+    await getJson('/p/busy', cookie);
     await writeFile(log, '');
-    await Promise.all(Array.from({ length: 18 }, () => get('/p/busy', cookie).then((r) => r.text())));
+    await Promise.all(Array.from({ length: 18 }, () => getJson('/p/busy', cookie).then((r) => r.text())));
     const events = (await readFile(log, 'utf-8')).trim().split('\n').map((l) => ({ d: l[0] === '+' ? 1 : -1, t: BigInt(l.slice(2)) }))
       .sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.d - b.d));
     let now = 0; let peak = 0;
@@ -744,8 +815,8 @@ esac`);
     process.env.TZ = ':/etc/localtime';
     try {
       const cookie = await login();
-      expect((await get('/', cookie)).status).toBe(200);
-      expect((await get('/mind', cookie)).status).toBe(200);
+      expect((await getJson('/', cookie)).status).toBe(200);
+      expect((await getJson('/mind', cookie)).status).toBe(200);
     } finally {
       if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
     }

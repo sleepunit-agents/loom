@@ -61,12 +61,13 @@ describe('passkeys', () => {
   let handle: HttpServeHandle;
   let saved: string | undefined;
 
-  function call(method: string, path: string, opts: { cookie?: string; json?: unknown; form?: Record<string, string>; host?: string } = {}): Promise<Reply> {
+  function call(method: string, path: string, opts: { cookie?: string; json?: unknown; form?: Record<string, string>; host?: string; accept?: string } = {}): Promise<Reply> {
     return new Promise((resolve, reject) => {
       const body = opts.json !== undefined ? JSON.stringify(opts.json) : opts.form ? new URLSearchParams(opts.form).toString() : undefined;
       const req = request({ host: '127.0.0.1', port: handle.port, method, path, headers: {
         host: opts.host ?? HOST, 'sec-fetch-site': 'same-origin',
         ...(opts.cookie ? { cookie: opts.cookie } : {}),
+        ...(opts.accept ? { accept: opts.accept } : {}),
         ...(body !== undefined ? { 'content-type': opts.json !== undefined ? 'application/json' : 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } : {}),
       } }, (res) => {
         let data = '';
@@ -79,14 +80,18 @@ describe('passkeys', () => {
     });
   }
   const cookieOf = (r: Reply) => String(r.headers['set-cookie'] ?? '').split(';')[0];
-  const csrfOf = (html: string) => /data-csrf="([0-9a-f]{64})"/.exec(html)?.[1] ?? /name="_csrf" value="([0-9a-f]{64})"/.exec(html)?.[1] ?? '';
+  // The Passkeys page's data, as the app asks for it (docs/specs/ui-app.md): `add` is its form token where a passkey
+  // can be added here, or the reason it can't.
+  interface PasskeysView { view: string; page: { title: string; refresh?: number; sections: Array<{ id: string; blocks: Array<{ type: string; items?: Array<{ text: string; act?: { action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> } }> }> }> }; ctx: { csrf: string }; add: { csrf: string } | { note: string } }
+  const passkeys = async (cookie: string, host?: string) => JSON.parse((await call('GET', '/passkeys', { cookie, host, accept: 'application/json' })).body) as PasskeysView;
+  const csrfOf = (v: PasskeysView) => v.ctx.csrf;
 
   async function signIn(): Promise<string> {
     return cookieOf(await call('POST', '/login', { form: { token: TOKEN } }));
   }
 
   async function addPasskey(cookie: string, device: Device, label = 'Test phone'): Promise<Reply> {
-    const csrf = csrfOf((await call('GET', '/passkeys', { cookie })).body);
+    const csrf = csrfOf(await passkeys(cookie));
     const o = JSON.parse((await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } })).body);
     return call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label, ...device.register(o.challenge) } });
   }
@@ -112,19 +117,27 @@ describe('passkeys', () => {
 
   it('adds one from a signed-in browser, then signs in with it alone', async () => {
     const cookie = await signIn();
-    const page = await call('GET', '/passkeys', { cookie });
-    expect(page.body).toContain('id="passkey-add"');
-    expect(page.body).toContain('<script src="/login/passkey.js" defer></script>');
-    expect(String(page.headers['content-security-policy'])).toContain("script-src 'self'");
+    // A signed-in browser on loom's public address may add one: the page hands the app its form token for it.
+    const page = await passkeys(cookie);
+    expect(page.view).toBe('passkeys');
+    expect(page.add).toEqual({ csrf: page.ctx.csrf });
+    expect(page.ctx.csrf).toMatch(/^[0-9a-f]{64}$/);
+    // The app that draws it: script only from loom itself.
+    const shell = await call('GET', '/passkeys', { cookie });
+    expect(shell.body).toContain('<div id="root">');
+    expect(String(shell.headers['content-security-policy'])).toContain("script-src 'self'");
+    expect(String(shell.headers['content-security-policy'])).not.toMatch(/script-src[^;]*unsafe/);
     // No minute refresh: it would cut off a passkey being made.
-    expect(page.body).not.toContain('http-equiv="refresh"');
+    expect(page.page.refresh).toBeUndefined();
     const device = new Device();
     const added = await addPasskey(cookie, device);
     expect([added.status, added.body]).toEqual([200, '{"ok":true}']);
-    const listed = (await call('GET', '/passkeys', { cookie })).body;
-    // The board's order: each passkey a row with an inline Remove (asking first), then Add a passkey.
-    expect(listed).toMatch(/<span class="text">Test phone<\/span>[\s\S]*?<button class="row-act danger" type="submit" data-confirm="[^"]+">Remove<\/button>/);
-    expect(listed.indexOf('Test phone')).toBeLessThan(listed.indexOf('id="passkey-add"'));
+    const listed = await passkeys(cookie);
+    // The board's order: the passkeys first, each a row with an inline Remove (asking first); the app puts Add after them.
+    expect(listed.page.sections[0].id).toBe('passkeys');
+    const [row] = listed.page.sections[0].blocks[0].items!;
+    expect(row).toMatchObject({ text: 'Test phone', act: { action: 'passkey-remove', label: 'Remove', tone: 'danger', confirm: expect.stringMatching(/.+/) } });
+    expect(listed.add).toEqual({ csrf: listed.ctx.csrf });
 
     const login = await call('GET', '/login');
     expect(login.body).toContain('id="passkey-signin"');
@@ -183,7 +196,8 @@ describe('passkeys', () => {
     await writeFile(join(stack, 'ui-sessions.json'), JSON.stringify(raw));
     expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/token that added this passkey was revoked/);
     // Removed from the page: gone.
-    const csrf = csrfOf((await call('GET', '/passkeys', { cookie })).body);
+    const csrf = csrfOf(await passkeys(cookie));
+    expect((await passkeys(cookie)).page.sections[0].blocks[0].items![0].act?.fields).toEqual({ id: pk.id });
     expect((await call('POST', '/act/loom', { cookie, form: { _csrf: csrf, _action: 'passkey-remove', _path: 'passkeys', id: pk.id } })).status).toBe(303);
     expect(store.passkeys()).toEqual([]);
     expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/doesn't know that passkey/);
@@ -194,12 +208,12 @@ describe('passkeys', () => {
     expect((await call('POST', '/passkeys/options', { cookie, json: { _csrf: '0'.repeat(64) } })).status).toBe(403);
     expect((await call('POST', '/passkeys/options', { json: {} })).status).toBe(401);
     // On another address (the tailnet IP), passkeys aren't offered: their origin is LOOM_PUBLIC_URL's.
-    const elsewhere = await call('GET', '/passkeys', { cookie, host: '100.64.0.1:8787' });
-    expect(elsewhere.body).toContain('Passkeys work at https://loom.test');
-    expect(elsewhere.body).not.toContain('/login/passkey.js');
+    const elsewhere = await passkeys(cookie, '100.64.0.1:8787');
+    expect(elsewhere.add).toEqual({ note: expect.stringContaining('Passkeys work at https://loom.test') });
+    expect(JSON.stringify(elsewhere.add)).not.toContain('csrf');
     expect((await call('GET', '/login', { host: '100.64.0.1:8787' })).body).not.toContain('passkey-signin');
     // A registration whose challenge was never issued.
-    const csrf = csrfOf((await call('GET', '/passkeys', { cookie })).body);
+    const csrf = csrfOf(await passkeys(cookie));
     const r = await call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label: 'x', ...new Device().register('bm90LWlzc3VlZA') } });
     expect(r.status).toBe(401);
   });

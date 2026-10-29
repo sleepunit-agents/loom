@@ -94,42 +94,52 @@ describe('scope', () => {
     const res = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${TOKEN}`, redirect: 'manual' });
     return (res.headers.get('set-cookie') ?? '').split(';')[0];
   }
-  const get = async (path: string, cookie: string) => (await fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' })).text();
+  // A page's data, as the app asks for it (docs/specs/ui-app.md): the same path, as JSON.
+  const view = async (path: string, cookie: string) =>
+    (await fetch(`${base}${path}`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' })).json() as Promise<any>;
 
   it('pieces are the household\'s on loom\'s pages; an old scope link or cookie changes nothing', async () => {
     const owner = await login();
     // Household: no scope, no line.
-    expect(await get('/p/narrow', owner)).toContain('scope=</span>');
-    expect(await get('/p/wide', owner)).not.toContain('class="unscoped"');
-    // A piece's page says how fresh it is under its title (the script counts it up); loom's own pages don't.
-    expect(await get('/p/wide', owner)).toContain('<p class="stamp" data-stamp>updated just now</p>');
-    expect(await get('/people', owner)).not.toContain('data-stamp>');
+    expect((await view('/p/narrow', owner)).page.sections[0].blocks[0].text).toBe('scope=');
+    expect((await view('/p/wide', owner)).unscoped).toBeUndefined();
+    // A piece's page is the piece's (the app says how fresh it is); loom's own pages are loom's.
+    expect((await view('/p/wide', owner)).ctx.source).toEqual({ id: 'wide', base: '/p/wide/' });
+    expect((await view('/people', owner)).ctx.source.base).not.toMatch(/^\/p\//);
     // There's no scope to pick any more (t-1625): an old link goes to the agent's own pages and clears the old cookie,
     // and a piece's page is the household's whatever cookie a browser still sends.
     const pick = await fetch(`${base}/scope/mark`, { headers: { cookie: owner }, redirect: 'manual' });
     expect(pick.headers.get('location')).toBe('/a/mark');
     expect(pick.headers.get('set-cookie')).toMatch(/^loom_scope=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/);
     const old = `${owner}; loom_scope=mark`;
-    expect(await get('/p/narrow', old)).toContain('scope=</span>');
-    expect(await get('/p/wide', old)).not.toContain('class="unscoped"');
-    expect(await get('/places', old)).toContain('<span class="pl-stat">scope=</span>');
+    expect((await view('/p/narrow', old)).page.sections[0].blocks[0].text).toBe('scope=');
+    expect((await view('/p/wide', old)).unscoped).toBeUndefined();
+    const places = await view('/places', old);
+    expect(places.chrome.shell.scope).toBe('household');
+    expect(places.chrome.shell.pieces).toContainEqual(expect.objectContaining({ label: 'narrow', stat: 'scope=' }));
   });
 
   it("a piece's agent tab is on each agent's pages, called for that agent, its links and actions kept there", async () => {
     const owner = await login();
-    const places = await get('/places', owner);
-    expect(places).toContain('href="/p/clocky"');
-    expect(places).not.toContain('href="/p/bridgy"');   // only each agent's: not the household's
-    const today = await get('/a/mark', owner);
-    expect(today).toContain('href="/a/mark/p/clocky"');
-    expect(today).toContain('href="/a/mark/p/bridgy"');
-    const page = await get('/a/mark/p/bridgy', owner);
-    expect(page).toContain('scope=mark');
-    expect(page).toContain('href="/a/mark/p/bridgy/next"');
-    expect(page).toContain('action="/a/mark/act/bridgy"');
-    expect(await get('/a/mark/p/wide', owner)).toContain('Not found');   // no agent tab: not here
+    const places = (await view('/places', owner)).chrome.shell.pieces.map((p: { href: string }) => p.href);
+    expect(places).toContain('/p/clocky');
+    expect(places).not.toContain('/p/bridgy');   // only each agent's: not the household's
+    const today = await view('/a/mark', owner);
+    const tabs = today.dashboard.agent.tabs.map((t: { href: string }) => t.href);
+    expect(tabs).toContain('/a/mark/p/clocky');
+    expect(tabs).toContain('/a/mark/p/bridgy');
+    const page = await view('/a/mark/p/bridgy', owner);
+    const blocks = page.page.sections[0].blocks;
+    expect(blocks[0].text).toBe('scope=mark');
+    // Its link and its form resolve under mark's pages: the page's source says where.
+    expect(blocks).toContainEqual(expect.objectContaining({ type: 'link', page: 'next' }));
+    expect(blocks).toContainEqual(expect.objectContaining({ type: 'form', action: 'poke' }));
+    expect(page.ctx.source).toMatchObject({ base: '/a/mark/p/bridgy/', act: '/a/mark/act/bridgy' });
+    const wide = await fetch(`${base}/a/mark/p/wide`, { headers: { cookie: owner, accept: 'application/json' } });
+    expect(wide.status).toBe(404);   // no agent tab: not here
+    expect(((await wide.json()) as { page: { title: string } }).page.title).toBe('Not found');
     // An action from mark's page: the piece is called for mark and lands back under mark.
-    const form = /name="_csrf" value="([^"]+)"/.exec(page)![1];
+    const form = page.ctx.csrf as string;
     const res = await fetch(`${base}/a/mark/act/bridgy`, { method: 'POST', redirect: 'manual',
       headers: { cookie: owner, origin: base, 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ _csrf: form, _action: 'poke', _path: '' }).toString() });
@@ -162,7 +172,7 @@ describe('scope', () => {
     expect((await json('/a/mark', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' })).status).toBe(403);
   });
 
-  it('a browser opening a page gets the app (Passkeys aside); a script gets the HTML; the app\'s files are public, never outside its folder', async () => {
+  it('every page a browser opens is the app (Passkeys too), whatever it asks for; the sign-in is loom\'s; the app\'s files are public, never outside its folder', async () => {
     const owner = await login();
     const shell = await fetch(`${base}/app/index.html`);
     expect(shell.status).toBe(200);
@@ -173,29 +183,34 @@ describe('scope', () => {
     for (const bad of ['/app/../package.json', '/app/%2e%2e/package.json', '/app/assets/../../package.json', '/app/']) {
       expect((await fetch(`${base}${bad}`)).status, bad).toBe(404);
     }
-    const nav = { cookie: owner, 'sec-fetch-dest': 'document' };
-    expect(await (await fetch(`${base}/a/mark/p/bridgy`, { headers: nav })).text()).toContain('<div id="root">');
-    // A page load re-sent by a service worker may carry no Sec-Fetch-Dest; it still asks for HTML (Safari's).
-    const safari = { cookie: owner, accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' };
-    expect(await (await fetch(`${base}/a/mark`, { headers: safari })).text()).toContain('<div id="root">');
-    expect(await (await fetch(`${base}/passkeys`, { headers: safari })).text()).not.toContain('<div id="root">');
-    // The app asks the same path for its data, and gets it.
-    const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { ...nav, accept: 'application/json' } });
+    // Any GET that doesn't ask for JSON gets the app's one page: a navigation, a worker's re-sent one, a script.
+    const safari = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+    for (const headers of [{ cookie: owner, 'sec-fetch-dest': 'document' }, { cookie: owner, accept: safari }, { cookie: owner }, { cookie: owner, accept: '*/*' }]) {
+      for (const path of ['/a/mark/p/bridgy', '/a/mark', '/passkeys', '/', '/people', '/places']) {
+        const r = await fetch(`${base}${path}`, { headers, redirect: 'manual' });
+        expect([r.status, r.headers.get('content-type')], `${path} ${JSON.stringify(headers)}`).toEqual([200, 'text/html; charset=utf-8']);
+        expect(r.headers.get('content-security-policy'), path).toContain("script-src 'self'");
+        expect(await r.text(), path).toContain('<div id="root">');
+      }
+    }
+    // The app asks the same path for its data, and gets it: Passkeys included.
+    const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: owner, 'sec-fetch-dest': 'empty', accept: 'application/json' } });
     expect(((await data.json()) as { view: string }).view).toBe('page');
-    // Passkeys is loom's own page: the app sends the browser to it, and it mustn't send it back.
-    expect(await (await fetch(`${base}/passkeys`, { headers: nav })).text()).not.toContain('<div id="root">');
-    // A script that isn't a browser opening a page gets the HTML, as before.
-    expect(await (await fetch(`${base}/a/mark`, { headers: { cookie: owner } })).text()).not.toContain('<div id="root">');
-    // Signed out, the app is no way in: loom's sign-in.
-    const out = await fetch(`${base}/a/mark`, { headers: { 'sec-fetch-dest': 'document' }, redirect: 'manual' });
-    expect(out.headers.get('location')).toBe('/login');
+    expect(((await (await fetch(`${base}/passkeys`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { view: string }).view).toBe('passkeys');
+    // Signed out, the app is no way in: loom's sign-in, which is still loom's own HTML.
+    for (const headers of [{ 'sec-fetch-dest': 'document' }, {}, { accept: 'application/json' }]) {
+      const out = await fetch(`${base}/a/mark`, { headers, redirect: 'manual' });
+      expect([out.status, out.headers.get('location')], JSON.stringify(headers)).toEqual([303, '/login']);
+    }
     expect(await (await fetch(`${base}/login`, { headers: { 'sec-fetch-dest': 'document' } })).text()).not.toContain('<div id="root">');
   });
 
-  it('a list row naming an agent carries its mark; an unknown agent gets none', async () => {
-    const html = await get('/p/wide', await login());
-    expect(html).toMatch(/<li class=""><span class="mark"[^>]*background:#B8A6FF;color:#1D1240[^>]*>A<\/span><span class="body"><span class="text">Closed a task/);
-    expect(html).toMatch(/<span class="mark"[^>]*background:#7A2E4F;color:#FFE3EE[^>]*>V<\/span><span class="body"><span class="text">Rendered props/);
-    expect(html).toMatch(/<li class=""><span class="body"><span class="text">Nobody&#39;s/);
+  it('a list row naming an agent carries it, and the page carries each agent\'s mark; an unknown agent gets none', async () => {
+    const v = await view('/p/wide', await login());
+    const rows = v.page.sections[0].blocks[1].items;
+    expect(rows.map((r: { text: string; agent?: string }) => [r.text, r.agent])).toEqual([['Closed a task', 'art'], ['Rendered props', 'mark'], ["Nobody's", 'nobody']]);
+    expect(v.ctx.agents.art).toMatchObject({ label: 'Art E Fish', bg: '#B8A6FF', fg: '#1D1240' });
+    expect(v.ctx.agents.mark).toMatchObject({ label: 'Visual Mark', bg: '#7A2E4F', fg: '#FFE3EE' });
+    expect(v.ctx.agents.nobody).toBeUndefined();
   });
 });

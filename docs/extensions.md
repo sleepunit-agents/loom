@@ -293,10 +293,10 @@ short.
 
 ### Rules for all three
 
-- **Data, never markup.** loom renders every block and escapes every string,
-  and the only script on the page is loom's own, loaded from loom (`/app.js`;
-  the CSP allows `script-src 'self'`, never inline). A piece can't put HTML or JS
-  on loom's page.
+- **Data, never markup.** loom's app (`web/`) draws every block from its data,
+  as text, and the only script on the page is loom's own, loaded from loom (the
+  app under `/app/`; the CSP allows `script-src 'self'`, never inline). A piece
+  can't put HTML or JS on loom's page.
   A manifest that doesn't validate is dropped whole and the piece is listed
   in the footer as "no page"; a page that doesn't validate shows an error in
   its place.

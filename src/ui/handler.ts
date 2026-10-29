@@ -69,7 +69,7 @@ const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
 const SECURITY_HEADERS = {
-  // Script only from loom itself (/app.js, /login/passkey.js, the app under /app/), never inline: a piece's page
+  // Script only from loom itself (the app under /app/; the sign-in pages' /app.js and /login/passkey.js), never inline: a piece's page
   // is data. Stylesheets from loom itself too (the app's), and data: images (its components' small SVG backgrounds).
   'content-security-policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self' data:; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   'x-content-type-options': 'nosniff',
@@ -361,7 +361,7 @@ function pageQuery(url: URL): Record<string, string> {
 
 // ─── One-time result messages ────────────────────────────────────────────────
 
-/** undo: posted to `act` with `path` to land on: where the action came from (render.ts flash). */
+/** undo: posted to `act` with `path` to land on: where the action came from (the app's toast offers it). */
 interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
 const flashes = new Map<string, { at: number; flash: Flash }>();
 
@@ -866,7 +866,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // Revoke it server-side, so a copy of the cookie stops working too.
     const c = readCookie(req, COOKIE);
     if (c && /^[0-9a-f]{64}$/.test(c)) storeFor(opts).delete(c);
-    // And the copies of pages this browser kept for offline (https only; /app.js also asks the worker).
+    // And the copies of pages this browser kept for offline (https only; the sign-in page's /app.js also asks the worker).
     return redirect(res, '/login', { 'set-cookie': `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, 'clear-site-data': '"cache", "storage"' });
   }
 
@@ -1049,27 +1049,6 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       skipped: m.skipped,
     }));
   }
-  const query = pageQuery(url);
-  const flash = takeFlash(url.searchParams.get('_flash'));
-  const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
-  const pieces = forOwner(allPieces, opts.ownerScope);
-  const skippedNames = skipped.map((s) => s.piece);
-  // Every page as JSON too (docs/specs/ui-app.md): the data a page is drawn from, for the app, under the
-  // same auth, scoping and same-origin rule (allowedGet, above). A browser's ordinary request gets the HTML.
-  const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
-  // Every page is the app (web/, docs/specs/ui-app.md; the old HTML renderer went 2026-10-29, Jonathan: "let's just
-  // remove classic entirely"). A browser loads the app's one page at any path, and the app asks the same path for the
-  // page's data as JSON: the same auth, scoping and CSRF answer both. Only the sign-in pages are still loom's HTML.
-  const app = (status = 200) => {
-    const shell = webFile('index.html');
-    if (!shell) return send(res, 503, 'text/plain; charset=utf-8', 'loom\'s app isn\'t built here (npm run build:web).');
-    return send(res, status, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
-  };
-  const view = (kind: string, data: Record<string, unknown>, status = 200) =>
-    (asJson ? sendJson(res, status, { view: kind, ...data }) : app(status));
-  if (req.method === 'GET' && !asJson) return app();
-
-  // The shell's sheets as pages: they work without script; app.js opens them as sheets.
   const pick = /^\/scope\/([a-z][a-z0-9-]{0,39}|household)$/.exec(pathname);
   if (pick) {
     const hh2 = opts.household?.();
@@ -1078,6 +1057,26 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.writeHead(303, { location: id === 'household' ? '/' : `/a/${id}`, 'set-cookie': `${SCOPE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure ? '; Secure' : ''}`, ...SECURITY_HEADERS });
     return void res.end();
   }
+  const query = pageQuery(url);
+  const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
+  // Every page is the app (web/, docs/specs/ui-app.md; the old HTML renderer went 2026-10-29, Jonathan: "let's just
+  // remove classic entirely"). A browser loads the app's one page at any path, and the app asks the same path for the
+  // page's data as JSON: the same auth, scoping and CSRF answer both. Only the sign-in pages are still loom's HTML.
+  // The page load returns before anything is read or spent: a one-time message (?_flash=) is the JSON's to take.
+  const app = (status = 200) => {
+    const shell = webFile('index.html');
+    if (!shell) return send(res, 503, 'text/plain; charset=utf-8', 'loom\'s app isn\'t built here (npm run build:web).');
+    return send(res, status, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
+  };
+  if (req.method === 'GET' && !asJson) return app();
+  const flash = takeFlash(url.searchParams.get('_flash'));
+  const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
+  const pieces = forOwner(allPieces, opts.ownerScope);
+  const skippedNames = skipped.map((s) => s.piece);
+  const view = (kind: string, data: Record<string, unknown>, status = 200) =>
+    (asJson ? sendJson(res, status, { view: kind, ...data }) : app(status));
+
+  // The shell's sheets (Scope, Places, Find, Setup): the app draws them as pages.
   if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup') {
     const tab = pathname.slice(1);
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);

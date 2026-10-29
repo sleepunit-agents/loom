@@ -750,57 +750,77 @@ describe('the household page', () => {
     const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
     return (r.headers.get('set-cookie') ?? '').split(';')[0];
   };
-  const page = async (cookie: string, path: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' });
-  const csrfOf = (html: string) => /name="_csrf" value="([0-9a-f]{64})"/.exec(html)?.[1] ?? '';
+  // Every page is the app's one HTML shell; its data is the same path asked for as JSON (docs/specs/ui-app.md).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Data = any;
+  const page = async (cookie: string, path: string, headers: Record<string, string> = {}) =>
+    fetch(`${base}${path}`, { headers: { cookie, accept: 'application/json', ...headers }, redirect: 'manual' });
+  const data = async (cookie: string, path: string, headers: Record<string, string> = {}): Promise<Data> => (await page(cookie, path, headers)).json();
+  const csrfOf = (d: Data): string => d.ctx?.csrf ?? d.chrome?.csrf ?? '';
+  const flashOf = (d: Data): string => d.chrome?.flash?.message ?? '';
+  const sectionOf = (d: Data, id: string) => (d.page.sections as Array<{ id: string; title?: string; blocks: Data[] }>).find((s) => s.id === id)!;
+  const blocksOf = (d: Data): Data[] => (d.page.sections as Array<{ blocks: Data[] }>).flatMap((s) => s.blocks);
+  const listItems = (d: Data): Data[] => blocksOf(d).filter((b) => b.type === 'list').flatMap((b) => b.items);
   const post = (cookie: string, path: string, fields: Record<string, string>) => fetch(`${base}${path}`, {
     method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields).toString(),
   });
 
   it('Home is a card per agent: how it is, and what loom last saw of it; Knowledge and People are only in the nav', async () => {
     const cookie = await login();
-    const home = await (await page(cookie, '/')).text();
-    expect(home).toMatch(/<h1 class="display">(Everyone\u2019s fine|.+ (is|are) (broken|unavailable))<\/h1>/);
-    expect(home).toMatch(/<article class="card toned agent-card tone-[a-z]+"><div class="band"><a class="who" href="\/a\/art">[\s\S]*?<h2>Art E Fish<\/h2>/);
-    expect(home).toMatch(/<a class="who" href="\/a\/mark">[\s\S]*?<h2>Visual Mark<\/h2>/);
-    expect(home).toMatch(/<dt>Last seen<\/dt><dd><a href="\/a\/art"><span class="value">\d+m ago<\/span><span class="detail">Discord #pond<\/span>/);
-    expect(home).not.toContain('<h2 class="label">Shared</h2>');
+    const d = await data(cookie, '/');
+    expect(d.view).toBe('house-home');
+    expect(d.home.headline).toMatch(/^(Everyone’s fine|.+ (is|are) (broken|unavailable))$/);
+    const card = (id: string) => (d.home.cards as Data[]).find((c) => c.id === id);
+    expect(card('art')).toMatchObject({ label: 'Art E Fish', state: expect.stringMatching(/^(working|available|unavailable|broken)$/) });
+    expect(card('mark')).toMatchObject({ label: 'Visual Mark' });
+    // Last seen links to the agent's own pages.
+    expect(card('art').readings).toContainEqual(expect.objectContaining({ label: 'Last seen', value: expect.stringMatching(/^\d+m ago$/), detail: 'Discord #pond', page: '', source: expect.objectContaining({ base: '/a/art/' }) }));
+    expect(d.home).not.toHaveProperty('shared');
     // Just the agents and what's moving: Activity is in the nav, the pieces' tiles on their own pages.
-    expect(home).not.toContain('href="/activity">Everything');
+    expect(JSON.stringify(d.home)).not.toContain('/activity');
+    expect(d.home).not.toHaveProperty('tiles');
+    expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toEqual(expect.arrayContaining(['/activity', '/knowledge', '/people']));
   });
 
   it('Activity is the tape across every agent', async () => {
     const cookie = await login();
-    const html = await (await page(cookie, '/activity')).text();
-    for (const s of ['Art E Fish', 'Visual Mark', 'art did a thing', 'mark did a thing', 'href="/scope/mark"', 'href="/knowledge"']) expect(html).toContain(s);
-    // Activity: a headline, Thread with a pill per agent, each row with its agent's mark.
-    expect(html).toContain('<h1 class="display">Everything today</h1>');
-    expect(html).toContain('href="/activity?who=mark"');
-    // No scope picker (t-1625): the agents are a section of the rail, each to its own pages; Places on a phone says how long since each was active.
-    expect(html).toMatch(/<span class="rail-label">Agents<\/span><a class="rail-link agent-link" href="\/a\/art"><span class="who"><span class="mark"[^>]*>A<\/span><span>Art E Fish<\/span>/);
-    expect(html).not.toContain('class="scope-btn"');
-    expect(html).toMatch(/<a class="link-row" href="\/a\/art"><span class="who">[\s\S]*?<span class="meta">active \d+m ago<\/span>/);
-    expect((await (await page(cookie, '/activity?who=mark')).text())).not.toContain('art did a thing');
+    const d = await data(cookie, '/activity');
+    expect(d.view).toBe('dashboard');
+    const texts = (x: Data) => (x.dashboard.thread as Data[]).map((r) => r.text);
+    expect(texts(d)).toEqual(expect.arrayContaining(['art did a thing', 'mark did a thing']));
+    // Activity: a headline, Thread with a pill per agent, each row with its agent.
+    expect(d.dashboard.title).toBe('Everything today');
+    expect((d.dashboard.thread as Data[]).find((r) => r.text === 'art did a thing').agent).toBe('art');
+    const opts = (d.dashboard.filters.options as Data[]);
+    expect(d.dashboard.filters.param).toBe('who');
+    expect(opts).toContainEqual({ value: 'mark', label: 'Visual Mark' });
+    // No scope picker (t-1625): the agents are a section of the rail, each to its own pages, saying how long since each was active.
+    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'art', label: 'Art E Fish', href: '/a/art', sub: expect.stringMatching(/^active \d+m ago$/) }));
+    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'mark', label: 'Visual Mark', href: '/a/mark' }));
+    expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toContain('/knowledge');
+    expect(texts(await data(cookie, '/activity?who=mark'))).not.toContain('art did a thing');
     // ...and a pill per place it happened, rows saying it the way a person would.
-    expect(html).toContain('href="/activity?who=discord"');
-    expect(html).toContain('Discord #pond · ');
-    expect(html).not.toContain('href="/activity?who=%3F"');
-    expect((await (await page(cookie, '/activity?who=letters')).text())).not.toContain('art did a thing');
+    expect(opts.map((o) => o.value)).toContain('discord');
+    expect(opts.map((o) => o.value)).not.toContain('?');
+    expect((d.dashboard.thread as Data[]).find((r) => r.text === 'art did a thing').meta).toMatch(/^Discord #pond · /);
+    expect(texts(await data(cookie, '/activity?who=letters'))).not.toContain('art did a thing');
   });
 
   it('Find looks through knowledge, people and memories, in the scope', async () => {
     const cookie = await login();
     await remember(join(h.home, 'agents', 'mark'), { category: 'project', title: 'Babylon scenes stay under 200 draw calls', content: 'x' });
-    const html = await (await page(cookie, '/find?q=lor')).text();
-    expect(html).toContain('People › <strong>Lor</strong>en');
-    const mem = await (await page(cookie, '/find?q=babylon')).text();
-    expect(mem).toContain('<h2 class="label">Memories</h2>');
-    expect(mem).toContain('href="/a/mark/memory/');
-    expect(mem).toContain('<strong>Babylon</strong> scenes');
+    const lor = await data(cookie, '/find?q=lor');
+    expect(lor).toMatchObject({ view: 'sheet', which: 'find', q: 'lor' });
+    expect(lor.found.people).toContainEqual({ label: 'Loren', href: '/people/loren' });
+    const mem = await data(cookie, '/find?q=babylon');
+    expect(mem.found.memories.length).toBeGreaterThan(0);
+    expect(mem.found.memories[0].href).toMatch(/^\/a\/mark\/memory\//);
+    expect(mem.found.memories[0].label).toContain('Babylon scenes');
     // Find is the household's: an old scope cookie (from before t-1625) narrows nothing.
-    const asArt = await fetch(`${base}/find?q=babylon`, { headers: { cookie: `${cookie}; loom_scope=art` } });
-    expect(await asArt.text()).toContain('Babylon</strong> scenes');
+    const asArt = await data(`${cookie}; loom_scope=art`, '/find?q=babylon');
+    expect(JSON.stringify(asArt.found.memories)).toContain('Babylon scenes');
     // LIKE's wildcards are only themselves.
-    expect(await (await page(cookie, '/find?q=%25')).text()).not.toContain('<h2 class="label">Memories</h2>');
+    expect((await data(cookie, '/find?q=%25')).found.memories).toEqual([]);
   });
 
   it('the Inbox files every ask, notice and answer by folder; only what needs the owner is unread, until it is opened', async () => {
@@ -823,44 +843,51 @@ describe('the household page', () => {
     clearPieceCache();
     try {
       const cookie = await login();
-      const needs = await (await page(cookie, '/inbox')).text();
+      const inFolder = (d: Data, f: string) => (d.items as Data[]).filter((it) => (f === 'needs' ? it.attention : it.kind === f));
+      const unread = (d: Data) => (d.items as Data[]).filter((it) => it.unread).length;
+      const item = (d: Data, text: string) => (d.items as Data[]).find((it) => it.text.startsWith(text));
+      const needs = await data(cookie, '/inbox');
+      expect(needs).toMatchObject({ view: 'inbox', folder: 'needs' });
       // Needs you: the permission and the reply; the decision nothing waits on is filed, not counted.
-      expect(needs).toMatch(/<a class="folder-link on" href="\/inbox" aria-current="page"><span>Needs you<\/span><span class="count">2<\/span><\/a>/);
-      expect(needs).toMatch(/href="\/inbox"[^>]*><span>Inbox<\/span><span class="count">2<\/span>/);
-      expect(needs).toContain('Push the fix to onterris/pond');
-      expect(needs).toContain('Tonight or tomorrow?');
-      expect(needs).not.toContain('Keep this memory?');
-      expect(needs.match(/class="msg[^"]* unread"/g)?.length).toBe(2);
-      const hrefOf = (html: string, text: string) => new RegExp(`href="(\\/inbox\\?i=[0-9a-f]{16})"[^>]*>(?:(?!<\\/a>)[\\s\\S])*${text}`).exec(html)![1];
-      // Opened: its buttons post to its piece and come back here, and it says when it stops mattering.
-      const push = await (await page(cookie, hrefOf(needs, 'Push the fix'))).text();
-      expect(push).toMatch(/<span class="chip warn">expires in 5[34]m<\/span>/);
-      expect(push).toMatch(/action="\/act\/gate">[\s\S]*?name="_path" value="loom:inbox\?i=[0-9a-f]{16}"[\s\S]*?>Allow once<\/button>/);
+      expect(inFolder(needs, 'needs').map((it) => it.text).sort()).toEqual(['Push the fix to onterris/pond', 'Tonight or tomorrow?']);
+      expect((needs.chrome.shell.core as Data[]).find((c) => c.href === '/inbox')).toMatchObject({ label: 'Inbox', count: 2 });
+      expect(item(needs, 'Keep this memory?')).toMatchObject({ attention: false, kind: 'decision' });
+      expect(unread(needs)).toBe(2);
+      const keyOf = (text: string) => item(needs, text).key as string;
+      expect(keyOf('Push the fix')).toMatch(/^[0-9a-f]{16}$/);
+      // Opened: its buttons post to its piece, and it says when it stops mattering.
+      const push = await data(cookie, `/inbox?i=${keyOf('Push the fix')}`);
+      expect(push.open).toBe(keyOf('Push the fix'));
+      expect(item(push, 'Push the fix')).toMatchObject({ expires: soon, source: { id: 'gate' } });
+      expect((item(push, 'Push the fix').actions as Data[]).map((a) => a.label)).toEqual(['Allow once', 'Deny']);
       // Opened is read: one unread left.
-      expect(push.match(/class="msg[^"]* unread"/g)?.length).toBe(1);
-      const reply = await (await page(cookie, hrefOf(needs, 'Tonight or tomorrow'))).text();
-      // Its own page, drawn here: its button posts to the piece and comes back to the Inbox; its page is a link away.
-      expect(reply).toMatch(/<div class="open-page"><section[^>]*>[\s\S]*?Loren is around until 6\./);
-      expect(reply).toMatch(/<div class="open-page">[\s\S]*?action="\/act\/gate">[\s\S]*?name="_path" value="loom:inbox\?i=[0-9a-f]{16}"[\s\S]*?>Tonight<\/button>/);
-      expect(reply).toContain('<a class="more-link" href="/p/gate/q/1">Open its page</a>');
+      expect(unread(push)).toBe(1);
+      expect(item(push, 'Push the fix').unread).toBe(false);
+      const reply = await data(cookie, `/inbox?i=${keyOf('Tonight or tomorrow')}`);
+      // Its own page, drawn here: its button posts to the piece; its page is a link away.
+      expect(reply.inline.key).toBe(keyOf('Tonight or tomorrow'));
+      expect(JSON.stringify(reply.inline.sections)).toContain('Loren is around until 6.');
+      expect((reply.inline.sections as Data[]).flatMap((s) => s.blocks).find((b: Data) => b.type === 'buttons').items[0]).toMatchObject({ action: 'answer', label: 'Tonight' });
+      expect(item(reply, 'Tonight or tomorrow')).toMatchObject({ page: 'q/1', source: { id: 'gate', base: '/p/gate/' } });
       // An item asked for in a folder it isn't in: the folder's own first item is drawn, and no page from the other.
-      const elsewhere = await (await page(cookie, `/inbox?f=fyi&i=${hrefOf(needs, 'Tonight or tomorrow').split('i=')[1]}`)).text();
-      expect(elsewhere).toContain('one joined loom');
-      expect(elsewhere).not.toContain('class="open-page"');
+      const elsewhere = await data(cookie, `/inbox?f=fyi&i=${keyOf('Tonight or tomorrow')}`);
+      expect(elsewhere.folder).toBe('fyi');
+      expect(inFolder(elsewhere, 'fyi').map((it) => it.text)).toContain('one joined loom');
+      expect(elsewhere.inline).toBeUndefined();
       // An item with buttons of its own (the permission) keeps them, and draws no page.
-      expect(push).not.toContain('class="open-page"');
-      expect(reply).not.toMatch(/class="msg[^"]* unread"/);
-      const decisions = await (await page(cookie, '/inbox?f=decision')).text();
-      expect(decisions).toContain('Keep this memory?');
-      expect(decisions).not.toMatch(/class="msg[^"]* unread"/);
-      const fyi = await (await page(cookie, '/inbox?f=fyi')).text();
-      expect(fyi).toContain('one joined loom');
-      expect(fyi).not.toMatch(/class="msg[^"]* unread"/);
-      const answered = await (await page(cookie, '/inbox?f=answered')).text();
-      expect(answered).toContain('<p class="outcome">Blocked.</p>');
-      // Home says how much, and links here, instead of the cards.
-      const home = await (await page(cookie, '/')).text();
-      expect(home).toContain('<span class="go-inbox">2 in the Inbox</span>');
+      expect(push.inline).toBeUndefined();
+      expect(unread(reply)).toBe(0);
+      const decisions = await data(cookie, '/inbox?f=decision');
+      expect(inFolder(decisions, 'decision').map((it) => it.text)).toContain('Keep this memory?');
+      expect(inFolder(decisions, 'decision').some((it) => it.unread)).toBe(false);
+      const fyi = await data(cookie, '/inbox?f=fyi');
+      expect(inFolder(fyi, 'fyi').map((it) => it.text)).toContain('one joined loom');
+      expect(inFolder(fyi, 'fyi').some((it) => it.unread)).toBe(false);
+      const answered = await data(cookie, '/inbox?f=answered');
+      expect(inFolder(answered, 'answered')).toContainEqual(expect.objectContaining({ text: 'A box asks to join: evil', outcome: 'Blocked.' }));
+      // Home says how much, and links to the Inbox, instead of the cards.
+      const home = await data(cookie, '/');
+      expect(home.home.needs).toBe(2);
     } finally {
       for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
       clearPieceCache();
@@ -883,25 +910,21 @@ describe('the household page', () => {
     process.env.LOOM_HOME = h.home;
     clearPieceCache();
     try {
-      const home = await (await page(await login(), '/')).text();
-      expect(home).toContain('<h1 class="display">Visual Mark is unavailable</h1>');
-      const card = (who: string) => new RegExp(`<article class="card toned agent-card tone-([a-z]+)"><div class="band"><a class="who" href="/a/${who}">[\\s\\S]*?</article>`).exec(home)!;
+      const d = await data(await login(), '/');
+      expect(d.home.headline).toBe('Visual Mark is unavailable');
+      const card = (id: string) => (d.home.cards as Data[]).find((c) => c.id === id);
       // Art: working (box), its reason, and both pieces' readings, the Fuel one linking to its piece.
-      expect(card('art')[1]).toBe('ok');
-      expect(card('art')[0]).toContain('<span class="tone-word">');
-      expect(card('art')[0]).toContain('Working</span>');
-      expect(card('art')[0]).toContain('<p class="reason">house h-52 on one · building its image</p>');
-      expect(card('art')[0]).toMatch(/<dt>Fuel<\/dt><dd><a href="\/p\/subs"><span class="value">58% of the week<\/span><span class="detail">resets Thu<\/span><\/a><\/dd>/);
-      expect(card('art')[0]).toContain('<span class="value tone-ok">Discord ✓ Slack ✓</span>');
+      expect(card('art')).toMatchObject({ state: 'working', reason: 'house h-52 on one · building its image' });
+      expect(card('art').readings).toContainEqual(expect.objectContaining({ label: 'Fuel', value: '58% of the week', detail: 'resets Thu', page: '', source: expect.objectContaining({ id: 'subs', base: '/p/subs/' }) }));
+      expect(card('art').readings).toContainEqual(expect.objectContaining({ label: 'Bridges', value: 'Discord ✓ Slack ✓', tone: 'ok' }));
       // Mark: one piece says available, another unavailable: the worst wins, with that piece's reason.
-      expect(card('mark')[1]).toBe('warn');
-      expect(card('mark')[0]).toContain('<p class="reason">Discord bridge down 14m</p>');
+      expect(card('mark')).toMatchObject({ state: 'unavailable', reason: 'Discord bridge down 14m' });
       // Moving now: only what's working.
-      expect(home).toMatch(/<section class="moving">[\s\S]*?house h-52 on one · building its image<\/span><span class="meta">Boxes<\/span>/);
-      expect(/<section class="moving">[\s\S]*?<\/section>/.exec(home)![0]).not.toContain('Discord bridge down');
+      expect(d.home.moving).toContainEqual(expect.objectContaining({ agent: 'art', text: 'house h-52 on one · building its image', meta: 'Boxes' }));
+      expect(JSON.stringify(d.home.moving)).not.toContain('Discord bridge down');
       // No tiles: the box's own state is its page's.
-      expect(home).not.toContain('class="tile');
-      expect(home).not.toContain('<h2 class="label">The house</h2><div');
+      expect(d.home).not.toHaveProperty('tiles');
+      expect(JSON.stringify(d.home)).not.toContain('2 of 2');
     } finally {
       for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
       clearPieceCache();
@@ -915,14 +938,13 @@ describe('the household page', () => {
     const was = { PATH: process.env.PATH, LOOM_HOME: process.env.LOOM_HOME };
     process.env.PATH = '/usr/bin:/bin';
     process.env.LOOM_HOME = h.home;
-    let html: string;
-    try { html = await (await page(cookie, '/')).text(); } finally {
+    let d: Data;
+    try { d = await data(cookie, '/'); } finally {
       for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }
-    expect(html).toContain('Art E Fish and Visual Mark are here and listening. Add pieces to give them hands.');
-    expect(html).toContain('<h2 class="label">Start with these</h2>');
-    expect(html.match(/<input type="hidden" name="_action" value="piece-install">/g)?.length).toBe(2);
-    expect(html).toMatch(/<span class="text">Shuttle<\/span>|<span class="text">shuttle<\/span>/i);
+    expect(d.home.firstRun.line).toBe('Art E Fish and Visual Mark are here and listening. Add pieces to give them hands.');
+    expect(d.home.firstRun.starters).toHaveLength(2);
+    expect((d.home.firstRun.starters as Data[]).some((s) => /^shuttle$/i.test(s.name) || /^shuttle$/i.test(s.label))).toBe(true);
   });
 
   it('Knowledge searches as you\'d expect, rows say how fresh they are, and a page below the top goes back by name', async () => {
@@ -932,24 +954,24 @@ describe('the household page', () => {
     }
     await c.close();
     const cookie = await login();
-    const all = await (await page(cookie, '/knowledge')).text();
-    expect(all).toContain('placeholder="Search 2 facts"');
-    expect(all).toMatch(/<span class="meta">(verified|written) [^<]*· ceramics<\/span>/);
-    const hit = await (await page(cookie, '/knowledge?q=cone')).text();
-    expect(hit).toContain('Cone 6 is about 1222 °C');
-    expect(hit).not.toContain('Food-safe glazes');
-    expect(hit).toContain('value="cone"');
-    expect(await (await page(cookie, '/knowledge?q=%25')).text()).not.toContain('Cone 6 is about');
-    const one = await (await page(cookie, '/knowledge/kiln-cone-6')).text();
-    expect(one).toContain('<a class="back named" href="/knowledge">');
+    const all = await data(cookie, '/knowledge');
+    expect(blocksOf(all).find((b) => b.type === 'filters')).toMatchObject({ search: 'Search 2 facts' });
+    expect(listItems(all).find((i) => i.text === 'Cone 6 is about 1222 °C').meta).toMatch(/^(verified|written) .*· ceramics$/);
+    const hit = await data(cookie, '/knowledge?q=cone');
+    expect(JSON.stringify(hit.page)).toContain('Cone 6 is about 1222 °C');
+    expect(JSON.stringify(hit.page)).not.toContain('Food-safe glazes');
+    expect(hit.ctx.query.q).toBe('cone');
+    expect(JSON.stringify((await data(cookie, '/knowledge?q=%25')).page)).not.toContain('Cone 6 is about');
+    const one = await data(cookie, '/knowledge/kiln-cone-6');
+    expect(one.chrome.shell.back).toEqual({ label: 'Knowledge', href: '/knowledge' });
     // An agent's tabs carry the way around; a memory under them goes back to Mind.
-    expect(await (await page(cookie, '/a/mark/mind')).text()).not.toContain('class="back named"');
-    expect(await (await page(cookie, '/a/mark/memory/x')).text()).toContain('<a class="back named" href="/a/mark/mind">');
+    expect((await data(cookie, '/a/mark/mind')).chrome.shell.back ?? undefined).toBeUndefined();
+    expect((await data(cookie, '/a/mark/memory/x')).chrome.shell.back).toEqual({ label: 'Mind', href: '/a/mark/mind' });
   });
 
   it('the People list gives each person their initials', async () => {
     const cookie = await login();
-    expect(await (await page(cookie, '/people')).text()).toMatch(/<span class="avatar" aria-hidden="true">L<\/span>[\s\S]*?Loren/);
+    expect(listItems(await data(cookie, '/people')).find((i) => i.text === 'Loren')).toMatchObject({ avatar: 'L' });
     expect(parsePage({ title: 't', sections: [{ id: 's', blocks: [{ type: 'list', items: [{ text: 'x', avatar: '<b>' }] }] }] })).toMatch(/avatar/);
   });
 
@@ -960,13 +982,16 @@ describe('the household page', () => {
     const db = () => new BetterSqlite3(commonsKnowledgePath(h), { readonly: true });
     const before = (() => { const d = db(); try { return (d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string | null }).verified_at; } finally { d.close(); } })();
     const cookie = await login();
-    const html = await (await page(cookie, '/knowledge/kiln-cone-6')).text();
-    expect(html).toContain('<input type="hidden" name="_action" value="knowledge-verify">');
+    const k = await data(cookie, '/knowledge/kiln-cone-6');
+    const verifyAt = (k.page.sections as Data[]).findIndex((s) => JSON.stringify(s.blocks).includes('"knowledge-verify"'));
+    expect(verifyAt).toBeGreaterThanOrEqual(0);
     // The board's order: when it was confirmed under the title, the body, Sources, then Still true.
-    expect(html).toMatch(/<p class="intro">(Verified|Not verified yet)/);
-    expect(html.indexOf('<h2>Sources</h2>')).toBeLessThan(html.indexOf('value="knowledge-verify"'));
+    expect(k.page.intro).toMatch(/^(Verified|Not verified yet)/);
+    const sourcesAt = (k.page.sections as Data[]).findIndex((s) => s.title === 'Sources');
+    expect(sourcesAt).toBeGreaterThanOrEqual(0);
+    expect(sourcesAt).toBeLessThan(verifyAt);
     await new Promise((r) => setTimeout(r, 20));
-    const r = await post(cookie, '/act/loom', { _csrf: csrfOf(html), _action: 'knowledge-verify', _path: 'knowledge/kiln-cone-6', slug: 'kiln-cone-6' });
+    const r = await post(cookie, '/act/loom', { _csrf: csrfOf(k), _action: 'knowledge-verify', _path: 'knowledge/kiln-cone-6', slug: 'kiln-cone-6' });
     expect(r.headers.get('location')).toMatch(/^\/knowledge\/kiln-cone-6\?_flash=/);
     const d = db();
     try {
@@ -979,58 +1004,70 @@ describe('the household page', () => {
 
   it('the boards\' +: People and Knowledge each add one, as the owner, and never overwrite', async () => {
     const cookie = await login();
-    const people = await (await page(cookie, '/people')).text();
-    expect(/<h1>[\s\S]{0,300}/.exec(people)?.[0]).toContain('<a class="head-add" href="/new-person" aria-label="Add a person"');
-    const pform = await (await page(cookie, '/new-person')).text();
+    expect((await data(cookie, '/people')).page.add).toEqual({ page: 'loom:new-person', label: 'Add a person' });
+    const pform = await data(cookie, '/new-person');
     const added = await post(cookie, '/act/loom', { _csrf: csrfOf(pform), _action: 'person-add', _path: 'new-person', name: 'Gage Taylor', summary: 'Runs the box.', channel: 'slack', handle: 'U0GAGE' });
     expect(added.headers.get('location')).toMatch(/^\/people\/gage-taylor\?_flash=/);
-    const card = await (await page(cookie, '/people/gage-taylor')).text();
+    const card = JSON.stringify((await data(cookie, '/people/gage-taylor')).page);
     for (const x of ['Gage Taylor', 'U0GAGE']) expect(card).toContain(x);
     const dup = await post(cookie, '/act/loom', { _csrf: csrfOf(pform), _action: 'person-add', _path: 'new-person', name: 'Gage Taylor' });
-    expect(await (await page(cookie, dup.headers.get('location')!)).text()).toContain('already in People');
+    expect(flashOf(await data(cookie, dup.headers.get('location')!))).toContain('already in People');
 
-    expect(await (await page(cookie, '/knowledge')).text()).toContain('<a class="head-add" href="/new-fact" aria-label="Add a fact"');
-    const kform = await (await page(cookie, '/new-fact')).text();
+    expect((await data(cookie, '/knowledge')).page.add).toEqual({ page: 'loom:new-fact', label: 'Add a fact' });
+    const kform = await data(cookie, '/new-fact');
     const k = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'Ceramics', body: 'Ramp **slowly** past 573 °C.', source: '' });
     expect(k.headers.get('location')).toMatch(/^\/knowledge\/glaze-firing-is-slower\?_flash=/);
-    const entry = await (await page(cookie, '/knowledge/glaze-firing-is-slower')).text();
-    expect(entry).toContain('<strong>slowly</strong>');
+    // The body reaches the page as its markdown, for the app to render.
+    const body = async () => blocksOf(await data(cookie, '/knowledge/glaze-firing-is-slower')).filter((b) => b.type === 'prose').map((b) => b.text).join('\n');
+    expect(await body()).toContain('Ramp **slowly** past 573 °C.');
     const again = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'ceramics', body: 'something else' });
-    expect(await (await page(cookie, again.headers.get('location')!)).text()).toContain('already has a page');
-    expect(await (await page(cookie, '/knowledge/glaze-firing-is-slower')).text()).toContain('<strong>slowly</strong>');
+    expect(flashOf(await data(cookie, again.headers.get('location')!))).toContain('already has a page');
+    expect(await body()).toContain('Ramp **slowly** past 573 °C.');
+    expect(await body()).not.toContain('something else');
     const bad = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'x', domain: 'y', body: 'z', source: 'javascript:alert(1)' });
-    expect(await (await page(cookie, bad.headers.get('location')!)).text()).toContain('The source is a link');
+    expect(flashOf(await data(cookie, bad.headers.get('location')!))).toContain('The source is a link');
   });
 
   it('a person shows the shared entry and every agent\'s relationship', async () => {
     const cookie = await login();
-    const html = await (await page(cookie, '/people/loren')).text();
-    for (const s of ['U0LOREN', 'caveman', 'shakespearean', 'Art E Fish', 'Visual Mark']) expect(html).toContain(s);
+    const d = await data(cookie, '/people/loren');
+    const all = JSON.stringify(d);
+    for (const s of ['U0LOREN', 'caveman', 'shakespearean', 'Art E Fish', 'Visual Mark']) expect(all).toContain(s);
     // The board's order: how each agent knows them, then Reach (a value per channel), the sources a tap away.
-    expect(html.indexOf('How each agent knows them')).toBeLessThan(html.indexOf('<h2>Reach</h2>'));
-    expect(html).toContain('mode: caveman');
-    expect(html).toContain('Where this came from');
-    expect(html).toContain('href="/a/mark/people/loren"');
-    // Each agent's row carries its mark.
-    expect(html).toMatch(/<span class="mark"[^>]*>V<\/span>/);
+    const ids = (d.page.sections as Data[]).map((s) => s.id);
+    expect(sectionOf(d, 'agents').title).toBe('How each agent knows them');
+    expect(sectionOf(d, 'reach').title).toBe('Reach');
+    expect(ids.indexOf('agents')).toBeLessThan(ids.indexOf('reach'));
+    const rows = listItems(d);
+    expect(rows).toContainEqual(expect.objectContaining({ agent: 'art', text: 'mode: caveman' }));
+    expect(JSON.stringify(sectionOf(d, 'reach'))).toContain('Where this came from');
+    // Each agent's row carries its agent (its mark), and links to that agent's view of them.
+    expect(rows).toContainEqual(expect.objectContaining({ agent: 'mark', page: 'loom:a/mark/people/loren' }));
   });
 
   it('an agent\'s view is its own tape, Mind and Setup', async () => {
     const cookie = await login();
-    const mark = await (await page(cookie, '/a/mark')).text();
-    expect(mark).toContain('mark did a thing');
-    // Its Today: Today · Mind · People · Setup.
-    expect(mark).toContain('<nav class="seg-tabs" aria-label="Visual Mark"><a href="/a/mark" class="on" aria-current="page">Today</a><a href="/a/mark/mind">Mind</a>');
-    expect(mark).not.toContain('art did a thing');
+    const mark = await data(cookie, '/a/mark');
+    expect(mark.view).toBe('dashboard');
+    const texts = (mark.dashboard.thread as Data[]).map((r) => r.text);
+    expect(texts).toContain('mark did a thing');
+    expect(texts).not.toContain('art did a thing');
+    // Its Today: Today · Mind · ... · Setup, the current one marked.
+    const tabs = mark.dashboard.agent.tabs as Data[];
+    expect(tabs[0]).toEqual({ label: 'Today', href: '/a/mark', current: true });
+    expect(tabs[1]).toEqual({ label: 'Mind', href: '/a/mark/mind', current: false });
+    expect(mark.dashboard.agent.label).toBe('Visual Mark');
     // Mind and Setup wear the same head and tabs, the current one marked.
     const mind = await page(cookie, '/a/mark/mind');
     expect(mind.status).toBe(200);
-    expect(await mind.text()).toContain('<a href="/a/mark/mind" class="on" aria-current="page">Mind</a>');
-    expect(await (await page(cookie, '/a/mark/setup')).text()).toContain('<a href="/a/mark/setup" class="on" aria-current="page">Setup</a>');
+    expect(((await mind.json()).head.tabs as Data[]).find((t) => t.current)).toEqual({ label: 'Mind', href: '/a/mark/mind', current: true });
+    expect(((await data(cookie, '/a/mark/setup')).head.tabs as Data[]).find((t) => t.current)).toEqual({ label: 'Setup', href: '/a/mark/setup', current: true });
     expect((await page(cookie, '/a/ghost')).status).toBe(404);
-    const setup = await (await page(cookie, '/a/art/setup')).text();
-    expect(setup).toContain('Art E Fish · Setup');
-    expect(setup).toContain('action="/act/loom"');
+    const setup = await data(cookie, '/a/art/setup');
+    expect(setup.page.title).toBe('Art E Fish · Setup');
+    // Its forms post to loom's own /act/loom.
+    expect(setup.ctx.source).toEqual({ id: 'loom', base: '/' });
+    expect(blocksOf(setup).some((b) => b.type === 'form')).toBe(true);
     // The single-agent addresses land on the default agent.
     const r = await page(cookie, '/mind?category=user');
     expect(r.status).toBe(302);
@@ -1041,20 +1078,24 @@ describe('the household page', () => {
     const art = join(h.home, 'agents', 'art');
     propose(art, { category: 'user', title: 'DnB workflow', content: 'Jonathan builds DnB on the Push 3 first', source: 'test' });
     const cookie = await login();
-    const front = await (await page(cookie, '/')).text();
-    expect(front).toMatch(/<a class="link-row card to-inbox-row" href="\/inbox"><span class="body"><span class="text">Art E Fish wants to remember something<\/span>/);
-    expect(front).not.toContain('<div class="ask-acts">');
-    expect(front).toMatch(/href="\/inbox"[^>]*><span>Inbox<\/span><span class="count">\d+<\/span>/);
-    const home = await (await page(cookie, '/inbox')).text();
-    expect(home).toMatch(/<a class="msg on unread" href="\/inbox\?i=[0-9a-f]{16}"/);
-    expect(home).toContain('Art E Fish wants to remember something');
-    expect(home).toContain('“Jonathan builds DnB on the Push 3 first”');
-    const card = /<div class="ask-acts">[\s\S]*?<\/div>/.exec(home)![0];
-    expect(card).toContain('action="/a/art/act/loom"');
-    expect(card).toMatch(/value="ratify">[\s\S]*?>Ratify<\/button>[\s\S]*?value="reject">[\s\S]*?>Reject<\/button>/);
-    const id = /name="id" value="(\d+)"/.exec(card)![1];
-    expect(card).toContain('name="_path" value="loom:inbox?i=');
-    const r = await post(cookie, '/a/art/act/loom', { _csrf: csrfOf(home), _action: 'ratify', _path: /name="_path" value="([^"]+)"/.exec(card)![1], id });
+    const front = await data(cookie, '/');
+    expect(front.home.needs).toBeGreaterThanOrEqual(1);
+    expect(front.home.firstNeed).toBe('Art E Fish wants to remember something');
+    // Home only links to the Inbox: no buttons of its own.
+    expect(JSON.stringify(front.home)).not.toContain('ratify');
+    expect((front.chrome.shell.core as Data[]).find((c) => c.href === '/inbox')).toMatchObject({ label: 'Inbox', count: expect.any(Number) });
+    const inbox = await data(cookie, '/inbox');
+    const it = (inbox.items as Data[]).find((i) => i.text === 'Art E Fish wants to remember something');
+    expect(it).toMatchObject({ unread: true, attention: true });
+    expect(it.key).toMatch(/^[0-9a-f]{16}$/);
+    expect(inbox.items[0].key).toBe(it.key);
+    expect(JSON.stringify(it)).toContain('“Jonathan builds DnB on the Push 3 first”');
+    expect(it.source.act).toBe('/a/art/act/loom');
+    expect((it.actions as Data[]).map((a) => a.action)).toEqual(['ratify', 'reject']);
+    expect((it.actions as Data[]).map((a) => a.label)).toEqual(['Ratify', 'Reject']);
+    const id = it.actions[0].fields.id as string;
+    expect(id).toMatch(/^\d+$/);
+    const r = await post(cookie, '/a/art/act/loom', { _csrf: csrfOf(inbox), _action: 'ratify', _path: `loom:inbox?i=${it.key}`, id });
     expect(r.status).toBe(303);
     expect(r.headers.get('location')).toMatch(/^\/inbox\?i=[0-9a-f]{16}&_flash=/);
     expect(listProposals(art).filter((p) => p.status === 'pending')).toHaveLength(0);
@@ -1063,17 +1104,20 @@ describe('the household page', () => {
   it('a waiting memory too long for the card is reviewed on Mind, never ratified unseen', async () => {
     const art = join(h.home, 'agents', 'art');
     propose(art, { category: 'user', title: 'short title', content: 'x'.repeat(400), source: 'test' });
-    const home = await (await page(await login(), '/inbox')).text();
-    expect(home).toMatch(/Art E Fish wants to remember something[\s\S]*?<a class="go" href="\/a\/art\/mind">Review<\/a>/);
-    expect(home).not.toContain('<div class="ask-acts">');
+    const inbox = await data(await login(), '/inbox');
+    const it = (inbox.items as Data[]).find((i) => i.text === 'Art E Fish wants to remember something');
+    // Review goes to Art's Mind (pageHref('loom:a/art/mind') is /a/art/mind).
+    expect(it).toMatchObject({ page: 'loom:a/art/mind', label: 'Review' });
+    expect(it.actions ?? []).toEqual([]);
   });
 
   it('Passkeys makes a one-time sign-in link for another device, good once', async () => {
     const cookie = await login();
-    const pk = await (await page(cookie, '/passkeys')).text();
-    expect(pk).toContain('Make a one-time sign-in link');
+    const pk = await data(cookie, '/passkeys');
+    expect(pk.view).toBe('passkeys');
+    expect(JSON.stringify(pk.page)).toContain('Make a one-time sign-in link');
     const made = await post(cookie, '/act/loom', { _csrf: csrfOf(pk), _action: 'signin-link', _path: 'passkeys' });
-    const shown = await (await page(cookie, made.headers.get('location')!)).text();
+    const shown = flashOf(await data(cookie, made.headers.get('location')!));
     const code = /\/login\/([A-Za-z0-9_-]{16,})/.exec(shown)?.[1];
     expect(code).toBeTruthy();
     const first = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' });
@@ -1083,10 +1127,10 @@ describe('the household page', () => {
 
   it("who an agent may write to, and its color, are set on its own Setup", async () => {
     const cookie = await login();
-    const html = await (await page(cookie, '/a/mark/setup')).text();
-    expect(html).toContain('<h2>Who it may write to');
-    expect(html).toContain('Now: nobody.');
-    const csrf = csrfOf(html);
+    const d = await data(cookie, '/a/mark/setup');
+    expect(sectionOf(d, 'relay').title).toBe('Who it may write to');
+    expect(JSON.stringify(sectionOf(d, 'relay'))).toContain('Now: nobody.');
+    const csrf = csrfOf(d);
     const ok = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'art' });
     expect(ok.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
     const raw = () => JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
@@ -1102,21 +1146,23 @@ describe('the household page', () => {
 
   it('a token is made on the page, shown once, works, and is revoked on the page', async () => {
     const cookie = await login();
-    const csrf = csrfOf(await (await page(cookie, '/a/mark/setup')).text());
+    const csrf = csrfOf(await data(cookie, '/a/mark/setup'));
     const made = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'create-token', _path: 'a/mark/setup', agent: 'mark', label: 'Mark · laptop' });
     const to = made.headers.get('location')!;
     expect(to).toMatch(/^\/a\/mark\/setup\?_flash=/);
-    const shown = await (await page(cookie, to)).text();
-    const token = /shown this once: (loom_[A-Za-z0-9_-]+)/.exec(shown)?.[1];
+    const token = /shown this once: (loom_[A-Za-z0-9_-]+)/.exec(flashOf(await data(cookie, to)))?.[1];
     expect(token).toBeTruthy();
-    expect(await (await page(cookie, to)).text()).not.toContain(token!);
+    expect(JSON.stringify(await data(cookie, to))).not.toContain(token!);
     const c = await connect(handle.port, token!);
     expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Visual Mark');
     await c.close();
     // The board's Setup: Health first, then Identity, then each live token a row with an inline Revoke that asks first.
-    const setupHtml = await (await page(cookie, '/a/mark/setup')).text();
-    expect(setupHtml.indexOf('<h2>Health')).toBeLessThan(setupHtml.indexOf('<h2>Identity'));
-    expect(setupHtml).toMatch(/<span class="text">Mark · laptop<\/span>[\s\S]*?<button class="row-act danger" type="submit" data-confirm="[^"]+">Revoke<\/button>/);
+    const setup = await data(cookie, '/a/mark/setup');
+    const ids = (setup.page.sections as Data[]).map((s) => s.id);
+    expect(ids.indexOf('health')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('health')).toBeLessThan(ids.indexOf('identity'));
+    const row = (sectionOf(setup, 'tokens').blocks.filter((b: Data) => b.type === 'list').flatMap((b: Data) => b.items) as Data[]).find((i) => i.text === 'Mark · laptop');
+    expect(row.act).toMatchObject({ action: 'revoke-token', label: 'Revoke', tone: 'danger', confirm: expect.any(String) });
     const rev = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'revoke-token', _path: 'a/mark/setup', label: 'Mark · laptop' });
     expect(rev.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
     await expect(connect(handle.port, token!)).rejects.toThrow();
@@ -1124,8 +1170,7 @@ describe('the household page', () => {
 
   it('an action from the page\'s script answers in JSON and stays put; a token in it is kept', async () => {
     const cookie = await login();
-    const setup = await (await page(cookie, '/a/mark/setup')).text();
-    const csrf = csrfOf(setup);
+    const csrf = csrfOf(await data(cookie, '/a/mark/setup'));
     const fetchPost = (fields: Record<string, string>) => fetch(`${base}/act/loom`, {
       method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' }, body: new URLSearchParams(fields).toString(),
     });
@@ -1139,46 +1184,52 @@ describe('the household page', () => {
     const added = await (await fetchPost({ _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'sancho', name: 'Sancho', purpose: 'Squire.', voice: 'Plain.' })).json() as { go?: string };
     expect(added.go).toMatch(/^\/a\/sancho\/setup\?_flash=/);
     // Revoking asks first: the button carries what happens.
-    expect(await (await page(cookie, '/a/mark/setup')).text()).toMatch(/Revoke &quot;Mark · phone&quot;|data-confirm="Anything still using it/);
+    const setup = await data(cookie, '/a/mark/setup');
+    const row = listItems(setup).find((i) => i.text === 'Mark · phone');
+    expect(row.act.confirm).toMatch(/Revoke "Mark · phone"|Anything still using it/);
   });
 
   it('a live refresh of Activity doesn\'t count as a new look', async () => {
     const cookie = await login();
-    const first = await (await page(cookie, '/activity')).text();
-    expect(first).toContain('data-live="');
-    expect(first).toContain('<noscript><meta http-equiv="refresh" content="60"></noscript>');
-    // No "N new since" line is 0 new: a household with no pieces yet shows its first-run line instead.
-    const sub = (html: string) => Number(/<p class="sub">(\d+) new since/.exec(html)?.[1] ?? 0);
-    const n = sub(first);
+    // "N new since": the thread's rows after the line Activity draws (sinceMs).
+    const fresh = (d: Data) => (d.dashboard.thread as Data[]).filter((r) => Date.parse(r.at) > d.dashboard.sinceMs).length;
+    const first = await data(cookie, '/activity');
+    expect(first.dashboard.sinceMs).toEqual(expect.any(Number));
+    const n = fresh(first);
     await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did another thing', content: 'x' });
-    const live = await (await fetch(`${base}/activity`, { headers: { cookie, 'x-loom-live': '1' } })).text();
-    expect(sub(live)).toBe(n + 1);
-    expect(live).toMatch(/<li data-key="art\|[^"]*\|art did another thing">/);
+    const live = await data(cookie, '/activity', { 'x-loom-live': '1' });
+    expect(fresh(live)).toBe(n + 1);
+    expect(live.dashboard.thread).toContainEqual(expect.objectContaining({ agent: 'art', text: 'art did another thing' }));
     // And again: still one, since the live check didn't move the line.
-    expect(sub(await (await fetch(`${base}/activity`, { headers: { cookie, 'x-loom-live': '1' } })).text())).toBe(n + 1);
+    expect(fresh(await data(cookie, '/activity', { 'x-loom-live': '1' }))).toBe(n + 1);
   });
 
   it('an agent added on the page is served at once, without a restart', async () => {
     const cookie = await login();
-    const csrf = csrfOf(await (await page(cookie, '/new-agent')).text());
+    const csrf = csrfOf(await data(cookie, '/new-agent'));
     const r = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'quixote', name: 'Don Quixote', purpose: 'Tilting at windmills.', voice: 'Grandiloquent.' });
-    const shown = await (await page(cookie, r.headers.get('location')!)).text();
-    const token = /shown this once: (loom_[A-Za-z0-9_-]+)/.exec(shown)?.[1];
+    const token = /shown this once: (loom_[A-Za-z0-9_-]+)/.exec(flashOf(await data(cookie, r.headers.get('location')!)))?.[1];
     expect(token).toBeTruthy();
     expect(loadHousehold(h.home)!.agents).toEqual(['art', 'mark', 'quixote']);
     const c = await connect(handle.port, token!);
     expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Don Quixote');
     await c.close();
-    expect(await (await page(cookie, '/')).text()).toContain('Don Quixote');
+    expect((await data(cookie, '/')).home.cards).toContainEqual(expect.objectContaining({ id: 'quixote', label: 'Don Quixote' }));
     const dup = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'add-agent', _path: 'new-agent', agent: 'quixote', name: 'x', purpose: 'x', voice: 'x' });
-    expect(await (await page(cookie, dup.headers.get('location')!)).text()).toContain('already in the household');
+    expect(flashOf(await data(cookie, dup.headers.get('location')!))).toContain('already in the household');
   });
 
   it('the board\'s new agent: a name, a color, a voice word; the short name from its name, the color kept', async () => {
     const cookie = await login();
-    const form = await (await page(cookie, '/new-agent')).text();
-    expect(form).toContain('<div class="swatches">');
-    expect(form).toMatch(/<div class="segmented">[\s\S]*?>Dry<[\s\S]*?>Warm<[\s\S]*?>Terse</);
+    const form = await data(cookie, '/new-agent');
+    const fields = blocksOf(form).find((b) => b.type === 'form' && b.action === 'add-agent').fields as Data[];
+    const field = (name: string) => fields.find((f) => f.name === name);
+    // A color: swatches to choose from.
+    expect(field('mark')).toMatchObject({ kind: 'choice' });
+    expect((field('mark').options as Data[]).every((o) => /^#[0-9A-F]{6}$/i.test(o.swatch))).toBe(true);
+    // A voice word: Dry, Warm, Terse.
+    expect(field('voice')).toMatchObject({ kind: 'choice' });
+    expect((field('voice').options as Data[]).map((o) => o.label)).toEqual(['Dry', 'Warm', 'Terse']);
     writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')), marks: { art: { bg: '#111111', fg: '#EEEEEE' } } }));
     const r = await post(cookie, '/act/loom', { _csrf: csrfOf(form), _action: 'add-agent', _path: 'new-agent', name: 'Gabe Ortiz', mark: '4', purpose: 'Keeps the books.', voice: 'terse' });
     expect(r.headers.get('location')).toMatch(/^\/a\/gabe-ortiz\/setup\?_flash=/);
@@ -1195,8 +1246,10 @@ describe('the household page', () => {
     await closeAllBackends();
     const r = typeof ref === 'string' ? ref : ref.ref!;
     const cookie = await login();
-    const csrf = csrfOf(await (await page(cookie, '/a/mark/mind')).text());
-    const res = await post(cookie, '/a/mark/act/loom', { _csrf: csrf, _action: 'archive', _path: 'mind', ref: r });
+    const mind = await data(cookie, '/a/mark/mind');
+    // Mind's forms post to the agent's own stack.
+    expect(mind.ctx.source.act).toBe('/a/mark/act/loom');
+    const res = await post(cookie, '/a/mark/act/loom', { _csrf: csrfOf(mind), _action: 'archive', _path: 'mind', ref: r });
     expect(res.headers.get('location')).toMatch(/^\/a\/mark\/mind\?_flash=/);
     const db = new BetterSqlite3(join(markDir, 'memories.db'), { readonly: true });
     expect((db.prepare('SELECT archived FROM memories WHERE ref = ?').get(r) as { archived: number }).archived).toBe(1);
@@ -1222,9 +1275,9 @@ esac
     clearPieceCache();
     try {
       const cookie = await login();
-      const html = await (await page(cookie, '/p/vault')).text();
-      expect(html).toContain('<h1>Vault</h1>');
-      const res = await post(cookie, '/act/vault', { _csrf: csrfOf(html), _action: 'poke', _path: '' });
+      const d = await data(cookie, '/p/vault');
+      expect(d.page.title).toBe('Vault');
+      const res = await post(cookie, '/act/vault', { _csrf: csrfOf(d), _action: 'poke', _path: '' });
       expect(res.status).toBe(303);
       const [viewed, acted] = readFileSync(seen, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
       const jonathan = { kind: 'owner', who: 'jonathan', agents: '*' };
@@ -1238,11 +1291,11 @@ esac
 
   it('Members: a household owner adds an agent owner, sends her a sign-in link, and removes her (docs/specs/owners.md)', async () => {
     const cookie = await login();
-    const html = await (await page(cookie, '/members')).text();
-    expect(html).toContain('<h1>Members</h1>');
-    expect(html).toContain('every agent, and the household');
-    expect(html).not.toContain('member-remove');  // the one household owner can't be removed
-    const csrf = csrfOf(html);
+    const d = await data(cookie, '/members');
+    expect(d.page.title).toBe('Members');
+    expect(JSON.stringify(d.page)).toContain('every agent, and the household');
+    expect(JSON.stringify(d.page)).not.toContain('member-remove');  // the one household owner can't be removed
+    const csrf = csrfOf(d);
     const act = async (fields: Record<string, string>) => (await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
       body: new URLSearchParams({ _csrf: csrf, _path: 'members', ...fields }).toString() })).json() as { ok: boolean; message: string };
@@ -1256,14 +1309,15 @@ esac
     const r = await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { origin: base } });
     const hers = (r.headers.get('set-cookie') ?? '').split(';')[0];
     expect(hers).toMatch(/loom_ui=/);
-    const home = await (await page(hers, '/')).text();
-    expect(home).toContain('<h2>Visual Mark</h2>');
-    expect(home).not.toContain('<h2>Art E Fish</h2>');
-    expect(home).not.toContain('href="/members"');
+    const home = await data(hers, '/');
+    expect((home.home.cards as Data[]).map((c) => c.label)).toEqual(['Visual Mark']);
+    expect(JSON.stringify(home.chrome)).not.toContain('/members');
+    expect(home.chrome.shell.admin).toBe(false);
     expect((await page(hers, '/members')).status).toBe(403);
     // Removed: her session stops working.
     expect(await act({ _action: 'member-remove', person: 'loren' })).toMatchObject({ ok: true });
     expect((await page(hers, '/')).status).not.toBe(200);
+    expect((await fetch(`${base}/`, { headers: { cookie: hers }, redirect: 'manual' })).status).not.toBe(200);
     expect(await act({ _action: 'member-remove', person: 'jonathan' })).toMatchObject({ ok: false, message: expect.stringMatching(/every agent/) });
   });
 });
@@ -1427,20 +1481,23 @@ esac
     const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(token)}`, redirect: 'manual' });
     return (r.headers.get('set-cookie') ?? '').split(';')[0];
   };
-  const page = async (cookie: string, path: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' });
+  // The page's data: the same path asked for as JSON (docs/specs/ui-app.md).
+  const page = async (cookie: string, path: string) => fetch(`${base}${path}`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const data = async (cookie: string, path: string): Promise<any> => (await page(cookie, path)).json();
 
   it("Home, the Inbox and Activity are Mark's alone; the household's pages are refused", async () => {
     const cookie = await login(loren);
-    const home = await (await page(cookie, '/')).text();
-    expect(home).toContain('<h2>Visual Mark</h2>');
-    expect(home).not.toContain('<h2>Art E Fish</h2>');
-    expect(home).not.toContain('href="/knowledge"');
-    expect(home).not.toContain('href="/people"');
-    const inbox = await (await page(cookie, '/inbox')).text();
+    const home = await data(cookie, '/');
+    expect((home.home.cards as Array<{ label: string }>).map((c) => c.label)).toEqual(['Visual Mark']);
+    expect(JSON.stringify(home)).not.toContain('Art E Fish');
+    expect(JSON.stringify(home.chrome)).not.toContain('/knowledge');
+    expect(JSON.stringify(home.chrome)).not.toContain('/people');
+    const inbox = JSON.stringify((await data(cookie, '/inbox')).items);
     expect(inbox).toContain('mark needs a yes');
     expect(inbox).not.toContain('art needs a yes');
     expect(inbox).not.toContain('the house needs a yes');
-    const activity = await (await page(cookie, '/activity')).text();
+    const activity = JSON.stringify(await data(cookie, '/activity'));
     expect(activity).toContain('mark did a thing');
     expect(activity).not.toContain('art secret thing');
     for (const path of ['/knowledge', '/people', '/pieces', '/new-agent', '/a/art', '/p/whole']) {
@@ -1450,24 +1507,23 @@ esac
     expect((await page(cookie, '/a/mark')).status).toBe(200);
     expect((await page(cookie, '/p/scoped')).status).toBe(200);
     // Mark's Setup doesn't list the household's owner tokens to her.
-    const setup = await (await page(cookie, '/a/mark/setup')).text();
+    const setup = JSON.stringify(await data(cookie, '/a/mark/setup'));
     expect(setup).not.toContain('loren · page');
-    expect(setup).not.toContain('>jonathan<');
+    expect(setup).not.toContain('"jonathan"');
     // A household owner still sees everything.
-    const all = await (await page(await login(jonathan), '/inbox')).text();
+    const all = JSON.stringify((await data(await login(jonathan), '/inbox')).items);
     for (const t of ['art needs a yes', 'mark needs a yes', 'the house needs a yes']) expect(all).toContain(t);
   });
 
   it("the household's actions are refused to an agent owner", async () => {
     const cookie = await login(loren);
-    const html = await (await page(cookie, '/a/mark')).text();
-    const csrf = /name="_csrf" value="([0-9a-f]{64})"/.exec(html)?.[1] ?? '';
+    const csrf = (await data(cookie, '/a/mark')).ctx.csrf as string;
+    expect(csrf).toMatch(/^[0-9a-f]{64}$/);
     const r = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
       body: new URLSearchParams({ _csrf: csrf, _action: 'create-token', _path: 'a/mark/setup', agent: 'mark', label: 'sneaky' }).toString() });
     expect(await r.json()).toMatchObject({ ok: false, message: expect.stringMatching(/household's to do/) });
     expect(loadTokens(h.home).some((t) => t.label === 'sneaky')).toBe(false);
   });
-
   it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
     const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } }) });

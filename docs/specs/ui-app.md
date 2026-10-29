@@ -112,10 +112,13 @@ been used.
    You can remove all back to classic stuff too"). Every browser opening a page
    (`Sec-Fetch-Dest: document`, or `Accept` naming `text/html`, which is what a
    service worker's re-sent page load carries) gets the app; the `loom_view` cookie and `?ui=`
-   are gone. Passkeys and the sign-in pages stay loom's HTML; a script, a test or
-   curl asking without `Accept: application/json` still gets the old page.
-6. **The old renderer goes** a release later: `render.ts` keeps only the login
-   pages.
+   are gone. (Superseded by step 6 below: every page is the app.)
+6. **The old renderer goes.** Done 2026-10-29, the same day (Jonathan: "Oh let's
+   just remove classic entirely"). Every page GET without `Accept:
+   application/json` answers the app's page; Passkeys moved into the app (its
+   WebAuthn control and push switch, `web/src/passkeys.tsx`). `render.ts` keeps
+   the page data's types, the links rule and the sign-in pages; `style.ts` is
+   their stylesheet and `/app.js` their few lines of script.
 
 ## What the tests must pin
 
