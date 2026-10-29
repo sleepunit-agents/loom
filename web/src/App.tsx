@@ -1,9 +1,11 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
-import { PasskeyAdd, PushSwitch } from './passkeys';
+// Passkeys' controls (WebAuthn, push) load with that page only.
+const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
+const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
 import { ArrivalContext, type Arrivals } from './arrive';
 import { LoomSidebar } from './sidebar';
 import { Boundary, iconFor } from './safe';
@@ -14,7 +16,8 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } f
 import { Spinner } from '@/components/ui/spinner';
 import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
-import { BlockView, EnvContext, type Env } from './blocks';
+import { BlockView, EnvContext, Nothing, type Env } from './blocks';
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { Appearance, DashboardView, HouseHomeView, InboxView, SheetView, type Mode } from './views';
 
 const ICON: Record<string, string> = {
@@ -60,6 +63,8 @@ export default function App() {
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // A page with no copy kept yet: the last one dims under Orbit until it lands.
+  const [waiting, setWaiting] = useState(false);
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
@@ -88,8 +93,10 @@ export default function App() {
         setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
       }
       setLoading(true);
+      setWaiting(!have);
     }
     const r = await fetchView(to, have?.etag).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }));
+    if (!quiet && showing.current === to) setWaiting(false);
     if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
       if (r.data && r.etag && !r.redirect && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
       return;
@@ -225,10 +232,7 @@ export default function App() {
         <div className="min-w-0">
           <header className="loom-top sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)] lg:border-0 lg:pt-3">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
-              {chrome?.shell?.back ? (
-                <Button size="sm" variant="ghost" aria-label={`Back to ${chrome.shell.back.label}`} onClick={() => go(chrome.shell!.back!.href)}>
-                  <AnimatedIcon name={iconFor("chevron-left")} size="sm" />{wide && <span>{chrome.shell.back.label}</span>}</Button>
-              ) : accent && chrome?.shell?.household ? (
+              {chrome?.shell?.back ? null : accent && chrome?.shell?.household ? (
                 // An agent's own pages: its mark, with a chevron, is the way back to the household.
                 <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
                   <AnimatedIcon name={iconFor("chevron-left")} size="sm" />
@@ -238,15 +242,23 @@ export default function App() {
                 <span className="grid size-10 shrink-0 place-items-center rounded-2xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
               ) : null}
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-lg font-semibold leading-tight">{title}</h1>
+                {chrome?.shell?.back && (
+                  // Where this page sits (000h's breadcrumb): the page it's under, then this one.
+                  <Breadcrumb aria-label="You are here" className="[&_[data-slot=breadcrumb-page]]:text-lg [&_[data-slot=breadcrumb-page]]:font-semibold"><BreadcrumbList>
+                    <BreadcrumbItem><BreadcrumbLink href={chrome.shell.back.href} onClick={(e) => { e.preventDefault(); go(chrome.shell!.back!.href); }}>{chrome.shell.back.label}</BreadcrumbLink></BreadcrumbItem>
+                    <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
+                  </BreadcrumbList></Breadcrumb>
+                )}
+                <h1 className={chrome?.shell?.back ? 'sr-only' : 'truncate text-lg font-semibold leading-tight'}>{title}</h1>
                 {head?.sub && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
-              {loading && <Spinner />}
+              {loading && <Spinner appearance="relay" aria-label="Loading" />}
               {accent && wide && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
             </div>
           </header>
 
-          <main className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
+          {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden><Spinner appearance="orbit" className="scale-[2.2]" /></div>}
+          <main aria-busy={waiting || undefined} className={`mx-auto max-w-5xl px-4 pb-44 pt-5 transition-opacity duration-300 lg:pb-10 ${waiting ? 'opacity-35' : ''}`}>
             {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
             {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => location.reload()}>Try again</Button>}</CardContent></Card>}
             {!error && data && env && (
@@ -256,8 +268,8 @@ export default function App() {
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
                   : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
-                  : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
-                    <PushSwitch csrf={data.chrome.csrf} /></div>
+                  : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
+                    <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
                   : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} />
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
@@ -329,7 +341,9 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
       <div className="grid min-w-0 content-start gap-4">
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
-        {page.sections.length === 0 && <Card><CardContent className="py-6 text-sm opacity-70">{page.title === 'Not found' ? 'There’s no page here.' : `${page.title} has nothing yet.`}</CardContent></Card>}
+        {page.sections.length === 0 && (page.title === 'Not found'
+          ? <Nothing title="There’s no page here" text="It may have moved, or it was never there." />
+          : <Nothing title={`${page.title} has nothing yet`} text="When there’s something to show, it’ll be here." />)}
         {page.intro && <p className="opacity-80">{page.intro}</p>}
         {main.map(card)}
       </div>

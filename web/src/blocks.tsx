@@ -2,7 +2,11 @@
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
 import { Arrive } from './arrive';
-import { createContext, useContext, useState, type ReactNode } from 'react';
+const ChoiceSelect = lazy(() => import('./choice-select'));
+import { Field as UiField, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
+import { createContext, useContext, useState, type ReactNode, lazy, Suspense } from 'react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Badge } from '@/components/ui/badge';
@@ -10,8 +14,6 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { pageHref, type Block, type Button as Btn, type Ctx, type Field, type ListItem, type Tone } from './loom';
@@ -66,12 +68,19 @@ export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; si
 function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: string) => void; id: string }) {
   if (f.kind === 'textarea') return <Textarea id={id} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
   if (f.kind === 'toggle') return <Switch id={id} checked={value === 'on' || value === 'true'} onCheckedChange={(c) => set(c ? 'on' : '')} />;
+  // A few choices show at once (000h's radio chips); many go in a select.
+  if (f.kind === 'choice' && (f.options?.length ?? 0) <= 5 && !f.options?.some((o) => o.swatch)) {
+    return (
+      <RadioGroup id={id} value={value || f.options?.[0]?.value || ''} onValueChange={set} className="flex flex-wrap gap-2">
+        {f.options?.map((o) => <RadioGroupItem key={o.value || '_'} value={o.value} appearance="chip">{o.label}</RadioGroupItem>)}
+      </RadioGroup>
+    );
+  }
   if (f.kind === 'choice') {
     return (
-      <Select value={value === '' ? '_' : value} onValueChange={(v) => set(v === '_' ? '' : v)}>
-        <SelectTrigger id={id} className="w-full min-w-0 [&>span]:truncate"><SelectValue /></SelectTrigger>
-        <SelectContent>{f.options?.map((o) => <SelectItem key={o.value || '_'} value={o.value || '_'}>{o.label}</SelectItem>)}</SelectContent>
-      </Select>
+      <Suspense fallback={<Input id={id} value={f.options?.find((o) => o.value === value)?.label ?? ''} readOnly />}>
+        <ChoiceSelect id={id} value={value} options={f.options ?? []} set={set} />
+      </Suspense>
     );
   }
   return <Input id={id} type={f.kind === 'secret' ? 'password' : f.kind === 'number' ? 'number' : f.kind === 'date' ? 'date' : 'text'}
@@ -85,11 +94,11 @@ export function Form({ form, onDone, inDialog = false }: { form: Extract<Block, 
   const fields = (
     <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 ${inDialog ? 'max-h-[52dvh] overflow-y-auto pr-1' : ''}`}>
       {form.fields.map((f) => (
-        <div key={f.name} className="grid gap-1.5">
-          <Label htmlFor={`${form.action}-${f.name}`}>{f.label}</Label>
+        <UiField key={f.name} controlId={`${form.action}-${f.name}`}>
+          <FieldLabel htmlFor={`${form.action}-${f.name}`}>{f.label}{f.required ? <span aria-hidden className="opacity-50"> *</span> : null}</FieldLabel>
           <FieldInput id={`${form.action}-${f.name}`} f={f} value={vals[f.name] ?? ''} set={(v) => setVals((s) => ({ ...s, [f.name]: v }))} />
-          {f.hint && <p className="text-xs opacity-60">{f.hint}</p>}
-        </div>
+          {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
+        </UiField>
       ))}
       {form.note && <p className="text-sm opacity-70">{form.note}</p>}
     </div>
@@ -215,6 +224,15 @@ function Filters({ b }: { b: Extract<Block, { type: 'filters' }> }) {
   );
 }
 
+/** An empty collection says so (000h's empty), never a blank. */
+export function Nothing({ title, text, children }: { title: string; text?: string; children?: ReactNode }) {
+  return (
+    <Empty className="loom-empty grid justify-items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
+      <EmptyTitle className="text-base">{title}</EmptyTitle>{text && <EmptyDescription className="text-sm">{text}</EmptyDescription>}{children}
+    </Empty>
+  );
+}
+
 export function BlockView({ b }: { b: Block }) {
   switch (b.type) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{t.text}</p>; }
@@ -222,7 +240,8 @@ export function BlockView({ b }: { b: Block }) {
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
       return <div className={`rounded-2xl border p-4 ${c.tone === 'bad' ? 'border-red-300 bg-red-50 dark:bg-red-950/30' : c.tone === 'warn' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30' : 'opacity-90'}`}>
         {c.title && <p className="font-medium">{c.title}</p>}<p className="text-sm">{c.text}</p></div>; }
-    case 'list': return <ul className="divide-y">{(b as Extract<Block, { type: 'list' }>).items.map((i, n) => <Row key={n} i={i} />)}</ul>;
+    case 'list': { const items = (b as Extract<Block, { type: 'list' }>).items;
+      return items.length ? <ul className="divide-y">{items.map((i, n) => <Row key={n} i={i} />)}</ul> : <Nothing title="Nothing here yet" />; }
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">

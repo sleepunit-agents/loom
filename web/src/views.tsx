@@ -1,6 +1,6 @@
 // The kinds of page that aren't a piece's Page (src/ui/handler.ts views): the household's home, an agent's
 // Today, the Inbox, and the Places, Setup, Find and Scope sheets. Same data the classic page draws.
-import { useContext, useState } from 'react';
+import { useContext, useState, lazy, Suspense } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
@@ -10,7 +10,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
 import { Arrive } from './arrive';
-import { ActButton, BlockView, EnvContext, Link, type Env } from './blocks';
+import { Spinner } from '@/components/ui/spinner';
+// The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
+const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
+import { ActButton, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
 import type { Button as Btn, Chrome, Source, Tone } from './loom';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
@@ -78,7 +81,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
 }
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
 type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string };
-type ThreadRow = { text: string; meta?: string; at?: string; page?: string };
+type ThreadRow = { agent?: string; text: string; meta?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
 
 const useEnv = () => useContext(EnvContext)!;
@@ -113,6 +116,8 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
           <AnimatedIcon name={iconFor("chevron-right")} size="sm" />
         </button>
       )}
+      {home.cards.length === 0 && <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one.">
+        <Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>}
       <div className="grid items-start gap-4 md:grid-cols-2">
         {home.cards.map((c) => <AgentIdentity key={c.id} c={c} />)}
       </div>
@@ -156,7 +161,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
 }
 
 export function DashboardView({ d, now }: { d: { label: string; title?: string; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
-  const { go } = useEnv();
+  const { go, ctx } = useEnv();
   return (
     <div className="grid gap-4">
       {d.inbox && d.inbox.count > 0 && (
@@ -165,19 +170,21 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
       {d.filters && <BlockView b={{ type: 'filters', ...d.filters }} />}
       <Asks asks={d.asks} />
       <Tiles tiles={d.tiles} />
-      {d.thread.length > 0 && (
-        <Card><CardHeader><CardTitle>{d.title ?? 'Thread'}</CardTitle></CardHeader>
-          <CardContent><ol className="relative grid gap-0 border-l pl-4">{d.thread.map((r, n) => {
-            const fresh = d.sinceMs && r.at && Date.parse(r.at) > d.sinceMs;
-            return (
-              <Arrive as="li" key={n} k={`th:${r.at}\0${r.text}`} className="relative py-2.5">
-                <span className={`absolute -left-[21px] top-4 size-2.5 rounded-full ${fresh ? 'bg-[var(--loom-accent,#16a34a)]' : 'bg-neutral-300 dark:bg-neutral-600'}`} />
-                <Link page={r.page} className="block no-underline hover:underline">{r.text}</Link>
-                {r.meta && <span className="block text-xs opacity-60">{r.meta}</span>}
-              </Arrive>);
-          })}</ol>{void now}</CardContent>
-        </Card>
-      )}
+      {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
+      <div className="min-w-0">
+        <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>
+        <ActivityFeed variant="thread" title={d.title ?? 'Thread'} initialVisible={12} pageSize={12} showMoreLabel="Earlier"
+          empty={<Nothing title="Quiet" text="Nothing on the thread yet today." />}
+          entries={d.thread.map((r) => ({
+            id: `${r.at}\0${r.text}`,
+            title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{r.text}</Link></Arrive>,
+            description: r.meta,
+            ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0] } } : {}),
+            ...(r.at ? { dateTime: r.at } : {}),   // its age is already in the meta line
+          }))} />
+        </Suspense>
+        {void now}
+      </div>
     </div>
   );
 }
@@ -211,7 +218,7 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
       <div className="flex gap-2">{[['needs', 'Needs you'], ['all', 'Everything']].map(([f, l]) => (
         <Button key={f} size="sm" variant={folder === f ? 'default' : 'outline'} onClick={() => go(`/inbox${f === 'needs' ? '' : `?folder=${f}`}`)}>{l}</Button>))}</div>
       {need.length > 0 && <Card><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="divide-y">{need.map(row)}</ul></CardContent></Card>}
-      {need.length === 0 && <p className="opacity-70">Nothing needs you.</p>}
+      {need.length === 0 && <Nothing title="Nothing needs you" text="Asks from your agents land here." />}
       {rest.length > 0 && <Card><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="divide-y">{rest.map(row)}</ul></CardContent></Card>}
       <Drawer open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
         {open && (
@@ -288,7 +295,7 @@ export function SheetView({ which, chrome, q, found, mode, setMode }: { which: s
             <CardContent><ul className="divide-y">{found[k].map((f) => (
               <li key={f.href}><button className="w-full py-2.5 text-left" onClick={() => go(f.href)}>{f.label}{f.agent ? <span className="opacity-60"> · {f.agent}</span> : null}</button></li>))}</ul></CardContent></Card>
         ) : null))}
-        {found && !goTo.length && groups.every(([k]) => !found[k]?.length) && <p className="opacity-70">Nothing found for “{q}”.</p>}
+        {found && !goTo.length && groups.every(([k]) => !found[k]?.length) && <Nothing title={`Nothing found for “${q}”`} text="Try fewer words, or another name." />}
       </div>
     );
   }
