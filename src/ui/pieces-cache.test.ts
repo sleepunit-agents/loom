@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CACHE_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage } from './pieces.js';
+import { CACHE_MS, PAGE_STALE_MS, PIECE_TIMEOUT_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage } from './pieces.js';
 
 // t-1584: 'loom pieces install' points pieces/bin/loom-<name> at a new version; Home showed the old one's
 // answer until the 45s cache ran out (or a restart). The cache keys on where the path resolves now.
@@ -69,6 +69,24 @@ describe('the manifest cache', () => {
     await pieceAct(info, { action: 'bump', path: '', fields: {} }, env);
     expect(await title()).toBe('n6');               // an action drops the piece's pages: the next look is fresh
   });
+
+  // Jonathan, 2026-10-29: "machine couldn't show this page, timed out, when it didn't wait very long".
+  it('a page you opened waits past a manifest\'s limit, and a piece that fails later shows the last page it drew', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-slowpage-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(root, 'mode'), 'slow');
+    // `ui page`: slower than a manifest may take, or broken; the manifest answers at once.
+    writeFileSync(join(bin, 'loom-gizmo'), `#!/bin/sh\ncase "$2" in\n page) case "$(cat '${join(root, 'mode')}')" in slow) sleep ${(PIECE_TIMEOUT_MS + 700) / 1000}; echo '{"title":"Machine","sections":[]}' ;; *) exit 1 ;; esac ;;\n *) echo '{"v":2,"tab":{"label":"Gizmo"}}' ;;\nesac\n`);
+    chmodSync(join(bin, 'loom-gizmo'), 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const info = (await pieceManifests(env)).pieces.find((p) => p.piece === 'gizmo')!;
+    expect(await piecePage(info, '', {}, env)).toMatchObject({ title: 'Machine' });
+    writeFileSync(join(root, 'mode'), 'broken');
+    // Past the window it asks again; the piece fails; the last page beats "couldn't show this page".
+    expect(await piecePage(info, '', {}, env, undefined, Date.now() + PAGE_STALE_MS + 1)).toMatchObject({ title: 'Machine' });
+  }, PIECE_TIMEOUT_MS + 8000);
 
   it('a piece with only answered items (no tab, tile or asks) still counts', async () => {
     const root = mkdtempSync(join(tmpdir(), 'loom-cache-'));

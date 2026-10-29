@@ -27,6 +27,13 @@ import { pieceEnvFor } from '../cli/pieces-managed.js';
 import { parseActResult, parseManifest, parsePage, type ActResult, type Manifest, type Page } from './vocab.js';
 
 export const PIECE_TIMEOUT_MS = 3_000;
+/**
+ * A page you opened waits longer than a manifest: you're looking at it, and a piece that reads the machine (systemctl,
+ * the journal) can take seconds while every other piece answers its manifest at the same moment (Jonathan,
+ * 2026-10-29: "machine couldn't show this page, timed out, when it didn't wait very long"; loom-machine's page took
+ * 0.3-1.5s alone, so 3s ran out under load).
+ */
+export const PAGE_TIMEOUT_MS = 15_000;
 export const ACT_TIMEOUT_MS = 15_000;
 export const PIECE_MAX_BYTES = 512 * 1024;
 /** Longer than the page's 30s refresh, so an open tab doesn't re-run every piece each time. */
@@ -298,20 +305,20 @@ export async function piecePage(
   env: NodeJS.ProcessEnv,
   /** Who's looking (docs/specs/owners.md): the member, beside the path and query. */
   caller?: ApiCaller,
+  now = Date.now(),
 ): Promise<Page | string> {
   // A first-version piece has one page: its sections.
   if (info.manifest.legacy) {
     return path === '' ? { title: info.piece, sections: info.manifest.legacy } : { title: 'Not found', sections: [] };
   }
   const run = async (): Promise<Page | string> => {
-    const r = await ask(info.path, ['ui', 'page', '--json'], withGrant(env, info.path, undefined), { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }) });
+    const r = await ask(info.path, ['ui', 'page', '--json'], withGrant(env, info.path, undefined), { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }), timeoutMs: PAGE_TIMEOUT_MS });
     if (!r.ok) return r.reason;
     const parsed = json(r.stdout);
     if (parsed === undefined) return 'not JSON';
     return parsePage(parsed);
   };
   const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
-  const now = Date.now();
   const hit = pages.get(key);
   if (hit && now - hit.at < PAGE_FRESH_MS) return hit.result;
   if (hit && now - hit.at < PAGE_STALE_MS) {
@@ -323,10 +330,24 @@ export async function piecePage(
     }
     return hit.result;
   }
-  const result = run();
+  // Too old to show without asking: ask, but if the piece fails now, the last page it drew beats an error. That
+  // fallback is kept as old (at 0), so the next look asks the piece again.
+  const last = hit?.result;
+  let fellBack = false;
+  const result = run().then(async (r) => {
+    if (typeof r !== 'string' || !last) return r;
+    const was = await last;
+    if (typeof was === 'string') return r;
+    fellBack = true;
+    return was;
+  });
   pages.set(key, { at: now, result });
-  // A failure isn't kept; and the oldest go first past PAGES_MAX.
-  void result.then((r) => { if (typeof r === 'string' && pages.get(key)?.result === result) pages.delete(key); });
+  // A failure isn't kept; the oldest go first past PAGES_MAX.
+  void result.then((r) => {
+    if (pages.get(key)?.result !== result) return;
+    if (typeof r === 'string') pages.delete(key);
+    else if (fellBack) pages.set(key, { at: 0, result });
+  });
   if (pages.size > PAGES_MAX) pages.delete(pages.keys().next().value!);
   return result;
 }
