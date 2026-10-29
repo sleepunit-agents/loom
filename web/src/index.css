@@ -432,3 +432,4 @@ body { background: var(--v-canvas); }
 .loom-side.v-sidebar { background: color-mix(in oklab, var(--v-paper) 72%, transparent); color: var(--v-text); backdrop-filter: blur(18px);
   box-shadow: 0 8px 28px rgb(0 0 0 / .06); border: 1px solid color-mix(in oklab, var(--v-border) 55%, transparent); border-radius: 24px; --sidebar-foreground: var(--v-text); }
 .loom-search { background: color-mix(in oklab, var(--v-paper) 80%, transparent); border-color: color-mix(in oklab, var(--v-border) 80%, transparent); }
+.loom-menu { background: var(--v-paper); color: var(--v-text); border-color: color-mix(in oklab, var(--v-border) 70%, transparent); box-shadow: 0 12px 32px rgb(0 0 0 / .12); }

@@ -158,7 +158,7 @@ export default function App() {
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const pick = (href: string) => (href === '#more' ? setMore(true) : go(href));
-  const title = data?.view === 'page' ? data.page.title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
+  const title = data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
 
   return (
@@ -167,7 +167,7 @@ export default function App() {
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
-        {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} mode={mode} setMode={setMode} />}
+        {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} />}
         <div className="min-w-0">
           <header className="loom-top sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)] lg:border-0 lg:pt-3">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
