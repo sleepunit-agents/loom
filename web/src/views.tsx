@@ -1,19 +1,17 @@
 // The kinds of page that aren't a piece's Page (src/ui/handler.ts views): the household's home, an agent's
 // Today, the Inbox, and the Places, Setup, Find and Scope sheets. Same data the classic page draws.
-import { useContext, useState, lazy, Suspense } from 'react';
+import { useContext, lazy, Suspense } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { Card, CardContent } from '@/components/ui/card';
 import { Arrive } from './arrive';
 import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
 const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
-import type { Button as Btn, Chrome, Source, Tone } from './loom';
+import type { Button as Btn, Source, Tone } from './loom';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
 type Doing = { text: string; kind?: 'talk' | 'lane' | 'task' | 'session' | 'other'; where?: string; since?: string; page?: string; source: Source };
@@ -92,7 +90,7 @@ const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'erro
 export const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
 
 /** The same blocks, but links and actions go to another source (a tile's piece, an ask's piece). */
-function As({ source, children }: { source: Source; children: React.ReactNode }) {
+export function As({ source, children }: { source: Source; children: React.ReactNode }) {
   const env = useEnv();
   return <EnvContext.Provider value={env.withSource(source)}>{children}</EnvContext.Provider>;
 }
@@ -195,54 +193,6 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
 
 // ---- the Inbox ---------------------------------------------------------------------------------
 
-type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
-const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', fyi: 'FYI', answered: 'Answered' };
-
-export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folder: string; chrome: Chrome }) {
-  const { go, ctx } = useEnv();
-  const [open, setOpen] = useState<InboxItem | null>(null);
-  const agents = ctx.agents ?? {};
-  const need = items.filter((i) => i.attention);
-  const rest = items.filter((i) => !i.attention);
-  const row = (i: InboxItem) => (
-    <Arrive as="li" key={i.key} k={`in:${i.key}\0${i.kind}`}>
-      <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
-        {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <span className="size-7" />}
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
-            <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{i.text}</span></span>
-          <span className="block truncate text-sm opacity-70">{i.outcome ?? i.meta ?? ''}</span>
-        </span>
-        <Badge variant={i.attention ? 'pending' : 'default'}>{KIND[i.kind]}</Badge>
-      </button>
-    </Arrive>
-  );
-  return (
-    <div className="grid gap-4">
-      <div className="flex gap-2">{[['needs', 'Needs you'], ['all', 'Everything']].map(([f, l]) => (
-        <Button key={f} size="sm" variant={folder === f ? 'default' : 'outline'} onClick={() => go(`/inbox${f === 'needs' ? '' : `?folder=${f}`}`)}>{l}</Button>))}</div>
-      {need.length > 0 && <Card><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="divide-y">{need.map(row)}</ul></CardContent></Card>}
-      {need.length === 0 && <Nothing title="Nothing needs you" text="Asks from your agents land here." />}
-      {rest.length > 0 && <Card><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="divide-y">{rest.map(row)}</ul></CardContent></Card>}
-      <Drawer open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        {open && (
-          <DrawerContent className="lg:mx-auto lg:max-w-xl">
-            <DrawerHeader><DrawerTitle>{open.text}</DrawerTitle><DrawerDescription>{[open.sourceLabel ?? open.source.id, open.agent].filter(Boolean).join(' · ')}</DrawerDescription></DrawerHeader>
-            {open.meta && <p className="text-sm">{open.meta}</p>}
-            {open.outcome && <p className="text-sm opacity-80">{open.outcome}</p>}
-            <As source={open.source}>
-              <div className="grid gap-2">
-                {open.actions?.map((b) => <ActButton key={b.action + b.label} b={b} size="default" full onDone={() => setOpen(null)} />)}
-                {open.page !== undefined && <Link page={open.page} className="text-center underline underline-offset-4">{open.label ?? 'Open it'}</Link>}
-              </div>
-            </As>
-          </DrawerContent>
-        )}
-      </Drawer>
-      {void chrome}
-    </div>
-  );
-}
 
 // ---- sheets: Places, Setup, Find, Scope --------------------------------------------------------
 

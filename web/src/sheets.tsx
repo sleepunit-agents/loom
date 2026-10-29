@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EnvContext, Nothing } from './blocks';
 import type { Chrome, Tone } from './loom';
 import { DOT, Mark, PressCard, type Ground, type Mode } from './views';
@@ -39,8 +40,8 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
         <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
           <CardContent className="grid gap-4"><Appearance mode={mode} setMode={setMode} />
             <div className="grid gap-2"><p className="text-sm opacity-70">Background</p>
-              <div className="flex gap-2" role="radiogroup" aria-label="Background">{([['contours', 'Contours'], ['depth', 'Depth'], ['wash', 'Wash']] as const).map(([g, l]) => (
-                <Button key={g} role="radio" aria-checked={ground === g} size="sm" variant={ground === g ? 'default' : 'outline'} onClick={() => setGround(g)}>{l}</Button>))}</div></div>
+              <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
+                {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup></div>
           </CardContent></Card>
         <Card><CardContent className="grid gap-2 py-4">
           <form method="post" action="/logout"><input type="hidden" name="_csrf" value={chrome.csrf} /><Button type="submit" variant="ghost" className="w-full">Sign out</Button></form>
@@ -91,10 +92,9 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
 
 export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
   return (
-    <div className="flex gap-2" role="radiogroup" aria-label="Appearance">{(['auto', 'light', 'dark'] as Mode[]).map((m) => (
-      <Button key={m} role="radio" aria-checked={mode === m} size="sm" variant={mode === m ? 'default' : 'outline'} onClick={() => setMode(m)}>
-        {m === 'auto' ? 'Auto' : m === 'light' ? 'Light' : 'Dark'}</Button>))}
-    </div>
+    <ToggleGroup type="single" className="v-seg" aria-label="Appearance" value={mode} onValueChange={(m) => { if (m) setMode(m as Mode); }}>
+      {(['auto', 'light', 'dark'] as Mode[]).map((m) => <ToggleGroupItem key={m} value={m}>{m === 'auto' ? 'Auto' : m === 'light' ? 'Light' : 'Dark'}</ToggleGroupItem>)}
+    </ToggleGroup>
   );
 }
 

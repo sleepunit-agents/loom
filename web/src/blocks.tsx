@@ -2,6 +2,8 @@
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
 import { Arrive } from './arrive';
+// Filters (000h's toggle group) load with a page that has them.
+const Filters = lazy(() => import('./filters'));
 import { Alert, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
@@ -37,7 +39,7 @@ export interface Env {
   withSource: (source: Ctx['source']) => Env;
 }
 export const EnvContext = createContext<Env | null>(null);
-const useEnv = () => useContext(EnvContext)!;
+export const useEnv = () => useContext(EnvContext)!;
 
 const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
 const BADGE: Record<string, string> = { running: 'live', wanted: 'pending', starting: 'pending', failed: 'danger', lost: 'danger' };
@@ -280,25 +282,6 @@ function DetailsBlock({ b }: { b: Extract<Block, { type: 'details' }> }) {
 }
 
 /** Pills that set one query value on this page, and an optional search over them (?q=), the other choices kept. */
-function Filters({ b }: { b: Extract<Block, { type: 'filters' }> }) {
-  const { ctx, go } = useEnv();
-  const here = pageHref(ctx.path, ctx.source);
-  const to = (q: Record<string, string>) => { const s = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== '')).toString(); return here + (s ? `?${s}` : ''); };
-  const [q, setQ] = useState(ctx.query.q ?? '');
-  const current = ctx.query[b.param] ?? '';
-  return (
-    <div className="grid gap-3">
-      {b.search !== undefined && (
-        <form role="search" onSubmit={(e) => { e.preventDefault(); go(to({ ...ctx.query, q })); }}>
-          <Input type="search" placeholder={b.search} aria-label={b.search} value={q} onChange={(e) => setQ(e.target.value)} />
-        </form>
-      )}
-      <nav aria-label="Filter" className="flex flex-wrap gap-2">{b.options.map((o) => (
-        <Button key={o.value || '_'} size="sm" variant={o.value === current ? 'default' : 'outline'} aria-current={o.value === current || undefined}
-          onClick={() => go(to({ ...ctx.query, [b.param]: o.value }))}>{o.label}</Button>))}</nav>
-    </div>
-  );
-}
 
 /** A link block (000h's living link): one of the page's own, or another site's. */
 function PageLink({ l }: { l: Extract<Block, { type: 'link' }> }) {
@@ -362,7 +345,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
     case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
     case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
-    case 'filters': return <Filters b={b as Extract<Block, { type: 'filters' }>} />;
+    case 'filters': return <Suspense fallback={null}><Filters b={b as Extract<Block, { type: 'filters' }>} /></Suspense>;
     default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet)</p>;
   }
 }
