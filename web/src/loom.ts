@@ -44,7 +44,7 @@ export type View =
 
 // ---- links: loom's own rule (src/ui/vocab.ts splitPage, render.ts pageHref) ----------------------
 
-const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
 
 export function pageHref(link: string, source: Source): string {
   const ag = /^agent:([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(link);
