@@ -8,12 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
-import { Input } from '@/components/ui/input';
 import { Arrive } from './arrive';
 import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
 const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
-import { ActButton, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
+import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
 import type { Button as Btn, Chrome, Source, Tone } from './loom';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
@@ -47,8 +46,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
     <Card className="loom-identity cursor-pointer gap-0 p-0" onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
         <span className="relative shrink-0">
-          <span className="grid size-16 place-items-center rounded-full font-[family-name:var(--font-display)] text-2xl font-semibold"
-            style={{ background: c.bg, color: c.fg, boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }}>{c.label[0]}</span>
+          <AgentAvatar a={c} size={64} shape="circle" style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }} />
           <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-sky-500 loom-dot-live' : state === 'broken' ? 'bg-red-500' : state === 'unavailable' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
         </span>
         <div className="min-w-0 flex-1">
@@ -91,7 +89,7 @@ const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'erro
   working: { status: 'working', word: 'Working' }, available: { status: 'idle', word: 'Available' },
   unavailable: { status: 'needs-input', word: 'Unavailable' }, broken: { status: 'error', word: 'Broken' },
 };
-const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
+export const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
 
 /** The same blocks, but links and actions go to another source (a tile's piece, an ask's piece). */
 function As({ source, children }: { source: Source; children: React.ReactNode }) {
@@ -99,9 +97,13 @@ function As({ source, children }: { source: Source; children: React.ReactNode })
   return <EnvContext.Provider value={env.withSource(source)}>{children}</EnvContext.Provider>;
 }
 
-const Mark = ({ a, size = 40 }: { a: { label: string; bg: string; fg: string }; size?: number }) => (
-  <span className="grid shrink-0 place-items-center rounded-2xl font-semibold" style={{ background: a.bg, color: a.fg, width: size, height: size, fontSize: size * 0.42 }}>{a.label[0]}</span>
-);
+/** An agent's mark: 000h's avatar (blocks.tsx AgentAvatar). */
+export const Mark = ({ a, size = 40 }: { a: { label: string; bg: string; fg: string }; size?: number }) => <AgentAvatar a={a} size={size} className="shrink-0" />;
+
+/** A box you can press (a place, a tile, a choice): 000h's card, lifting, the whole of it the button. */
+export function PressCard({ onPress, className, children }: { onPress: () => void; className?: string; children: React.ReactNode }) {
+  return <Card lift className="gap-0 p-0"><button type="button" className={`w-full rounded-[inherit] p-4 text-left ${className ?? ''}`} onClick={onPress}>{children}</button></Card>;
+}
 
 // ---- the household's home ----------------------------------------------------------------------
 
@@ -111,12 +113,12 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
     <div className="grid gap-4">
       <h2 className="text-2xl font-semibold">{home.headline}</h2>
       {home.needs > 0 && (
-        <button className="flex items-center gap-3 rounded-3xl border p-4 text-left" onClick={() => go('/inbox')}>
+        <PressCard className="flex items-center gap-3" onPress={() => go('/inbox')}>
           <AgentState status="needs-input" size="sm" />
           <span className="min-w-0 flex-1"><span className="block font-medium">{home.firstNeed ?? `${home.needs} need${home.needs === 1 ? 's' : ''} you`}</span>
             <span className="block text-sm opacity-70">In the Inbox</span></span>
           <AnimatedIcon name={iconFor("chevron-right")} size="sm" />
-        </button>
+        </PressCard>
       )}
       {home.cards.length === 0 && <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one.">
         <Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>}
@@ -152,11 +154,11 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{tiles.map((t) => (
       <As key={t.source.id + t.label} source={t.source}>
-        <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-3xl"><Link page={t.page} className="grid gap-0.5 rounded-3xl border p-4 no-underline hover:border-current">
+        <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-[var(--r-card)]"><Card lift className="gap-0 p-0"><Link page={t.page} className="grid gap-0.5 p-4 no-underline">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="text-xl font-semibold">{t.value}</span>
           {t.detail && <span className="line-clamp-2 text-xs opacity-60">{t.detail}</span>}
-        </Link></Arrive>
+        </Link></Card></Arrive>
       </As>))}
     </div>
   );
@@ -244,93 +246,4 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
 
 // ---- sheets: Places, Setup, Find, Scope --------------------------------------------------------
 
-export function SheetView({ which, chrome, q, found, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
-  const { go } = useEnv();
-  const s = chrome.shell;
-  const [query, setQuery] = useState(q);
-  const tile = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
-    <button key={p.href} className="grid gap-1 rounded-3xl border p-4 text-left" onClick={() => go(p.href)}>
-      <span className="flex items-center gap-2"><AnimatedIcon name={iconFor(ICONS[p.label] ?? 'circle')} />{p.tone && <span className={`size-2 rounded-full ${DOT[p.tone]}`} />}</span>
-      <span className="font-medium">{p.label}</span>
-      {(p.stat ?? p.count) !== undefined && <span className="text-sm opacity-70">{p.stat ?? p.count}</span>}
-    </button>
-  );
-  if (which === 'places' && s) {
-    return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{[...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].map(tile)}</div>;
-  }
-  if (which === 'setup' && s) {
-    const admin = s.admin !== false;
-    const own = [
-      ...(admin ? [{ label: 'Members', href: '/members' }, { label: 'Pieces', href: '/pieces' }] : []),
-      { label: 'Passkeys', href: '/passkeys' },
-    ];
-    return (
-      <div className="grid gap-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{[...s.pieces.filter((p) => p.kind === 'setting'), ...own].map(tile)}</div>
-        <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
-          <CardContent className="grid gap-4"><Appearance mode={mode} setMode={setMode} />
-            <div className="grid gap-2"><p className="text-sm opacity-70">Background</p>
-              <div className="flex gap-2" role="radiogroup" aria-label="Background">{([['contours', 'Contours'], ['depth', 'Depth'], ['wash', 'Wash']] as const).map(([g, l]) => (
-                <Button key={g} role="radio" aria-checked={ground === g} size="sm" variant={ground === g ? 'default' : 'outline'} onClick={() => setGround(g)}>{l}</Button>))}</div></div>
-          </CardContent></Card>
-        <Card><CardContent className="grid gap-2 py-4">
-          <form method="post" action="/logout"><input type="hidden" name="_csrf" value={chrome.csrf} /><Button type="submit" variant="ghost" className="w-full">Sign out</Button></form>
-        </CardContent></Card>
-      </div>
-    );
-  }
-  if (which === 'find') {
-    const groups: [string, string][] = [['do', 'Do'], ['knowledge', 'Knowledge'], ['people', 'People'], ['memories', 'Memories']];
-    // Places whose name matches, as the classic Find sheet had them: loom's own, the pieces', the agents', and Setup's.
-    const needle = q.trim().toLowerCase();
-    const places = s ? [...s.core, ...s.pieces, ...s.agents.map((x) => ({ label: x.label, href: x.href })), { label: 'Setup', href: '/setup' }, { label: 'Passkeys', href: '/passkeys' },
-      ...(s.admin ? [{ label: 'Members', href: '/members' }, { label: 'Manage pieces', href: '/pieces' }] : [])] : [];
-    const goTo = needle ? places.filter((p, n) => p.label.toLowerCase().includes(needle) && places.findIndex((x) => x.href === p.href) === n) : [];
-    return (
-      <div className="grid gap-4">
-        <form onSubmit={(e) => { e.preventDefault(); go(`/find?q=${encodeURIComponent(query)}`); }}>
-          <Input autoFocus placeholder="Find anything" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </form>
-        {goTo.length > 0 && (
-          <Card><CardHeader><CardTitle>Go to</CardTitle></CardHeader>
-            <CardContent><ul className="divide-y">{goTo.map((p) => (
-              <li key={p.href}><button className="w-full py-2.5 text-left" onClick={() => go(p.href)}>{p.label}</button></li>))}</ul></CardContent></Card>
-        )}
-        {found && groups.map(([k, l]) => (found[k]?.length ? (
-          <Card key={k}><CardHeader><CardTitle>{l}</CardTitle></CardHeader>
-            <CardContent><ul className="divide-y">{found[k].map((f) => (
-              <li key={f.href}><button className="w-full py-2.5 text-left" onClick={() => go(f.href)}>{f.label}{f.agent ? <span className="opacity-60"> · {f.agent}</span> : null}</button></li>))}</ul></CardContent></Card>
-        ) : null))}
-        {found && !goTo.length && groups.every(([k]) => !found[k]?.length) && <Nothing title={`Nothing found for “${q}”`} text="Try fewer words, or another name." />}
-      </div>
-    );
-  }
-  if (which === 'scope' && s) {
-    return (
-      <div className="grid gap-3">
-        <button className="flex items-center gap-3 rounded-3xl border p-4 text-left" onClick={() => go('/')}><AnimatedIcon name={iconFor("house")} /><span className="font-medium">The household</span></button>
-        {s.agents.map((a) => (
-          <button key={a.id} className="flex items-center gap-3 rounded-3xl border p-4 text-left" onClick={() => go(a.href)}>
-            <Mark a={a} /><span className="min-w-0 flex-1"><span className="block font-medium">{a.label}</span>{a.sub && <span className="block text-sm opacity-70">{a.sub}</span>}</span>
-            {a.asks ? <Badge variant="pending">{a.asks}</Badge> : null}
-          </button>))}
-      </div>
-    );
-  }
-  return <p className="opacity-70">Nothing here.</p>;
-}
-
-export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
-  return (
-    <div className="flex gap-2" role="radiogroup" aria-label="Appearance">{(['auto', 'light', 'dark'] as Mode[]).map((m) => (
-      <Button key={m} role="radio" aria-checked={mode === m} size="sm" variant={mode === m ? 'default' : 'outline'} onClick={() => setMode(m)}>
-        {m === 'auto' ? 'Auto' : m === 'light' ? 'Light' : 'Dark'}</Button>))}
-    </div>
-  );
-}
-
-const ICONS: Record<string, string> = {
-  Knowledge: 'book-open', People: 'users', Mind: 'brain', Activity: 'activity', Bridges: 'messages-square', Clock: 'alarm-clock', Boxes: 'server',
-  Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'key-round', Machine: 'cpu',
-};
 export type { Env };

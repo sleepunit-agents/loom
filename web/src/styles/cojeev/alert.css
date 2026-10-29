@@ -1,0 +1,557 @@
+@layer cojeev-states {
+/* Orthogonal authored class modifiers remain composable with CVA axes. */
+.v-alert[data-slot].-info {
+  background: var(--status-info-bg);
+  --muted-foreground: var(--muted-foreground-tinted);
+  color: var(--v-on-accent);
+  --hue-ink: var(--status-info-ink);
+}
+.v-alert[data-slot].-ok {
+  background: var(--status-ok-bg);
+  --muted-foreground: var(--muted-foreground-tinted);
+  color: var(--v-on-accent);
+  --hue-ink: var(--status-ok-ink);
+}
+.v-alert[data-slot].-warn {
+  background: var(--status-warn-bg);
+  --muted-foreground: var(--muted-foreground-tinted);
+  color: var(--v-on-accent);
+  --hue-ink: var(--status-warn-ink);
+}
+.v-alert[data-slot].-danger {
+  background: var(--status-danger-bg);
+  --muted-foreground: var(--muted-foreground-tinted);
+  --hue-ink: var(--status-danger-ink);
+}
+.v-alert[data-slot].-pink {
+  background: var(--v-pink);
+  --muted-foreground: var(--muted-foreground-ink);
+  color: var(--v-on-accent);
+  --hue: var(--v-paper);
+  --hue-deep: var(--v-pink-deep);
+}
+
+/* Authored contextual and pseudo-element rules, scoped to component-owned roots. */
+.v-alert[data-slot][data-morph] {
+  --mfill: var(--v-beige);
+}
+.v-alert[data-slot].-info[data-morph] {
+  --mfill: var(--v-blue-soft);
+}
+.v-alert[data-slot].-ok[data-morph] {
+  --mfill: var(--v-olive-soft);
+}
+.v-alert[data-slot].-warn[data-morph] {
+  --mfill: var(--v-yellow-soft);
+}
+.v-alert[data-slot].-danger[data-morph] {
+  --mfill: var(--v-danger-soft);
+}
+.v-alert[data-slot].-pink[data-morph] {
+  --mfill: var(--v-pink);
+}
+.v-alert[data-slot].-danger .v-alert__title {
+  color: var(--v-danger-ink);
+}
+.v-alert[data-slot].-ok .v-alert__title {
+  color: var(--status-ok-ink);
+}
+.v-alert[data-slot].-warn .v-alert__title {
+  color: var(--status-warn-ink);
+}
+.v-alert[data-slot].-danger .v-alert__title {
+  color: var(--status-danger-ink);
+}
+.v-alert[data-slot].-info .v-alert__title {
+  color: var(--status-info-ink);
+}
+.v-alert[data-slot].-ok .v-alert__text {
+  color: rgba(17, 17, 17, 0.68);
+}
+.v-alert[data-slot].-warn .v-alert__text {
+  color: rgba(17, 17, 17, 0.68);
+}
+.v-alert[data-slot].-danger .v-alert__text {
+  color: rgba(17, 17, 17, 0.68);
+}
+.v-alert[data-slot].-info .v-alert__text {
+  color: rgba(17, 17, 17, 0.68);
+}
+.v-alert[data-slot] > .v-icon:first-child {
+  width: 32px;
+  height: 32px;
+  padding: var(--s-2);
+  border-radius: 50%;
+  background: var(--v-canvas);
+  color: var(--v-on-accent);
+  stroke-width: 1.8;
+}
+.v-alert__text[data-slot] a {
+  color: inherit;
+  font-weight: var(--fw-medium);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.v-alert[data-slot].-info > .v-icon:first-child {
+  background: var(--v-blue);
+}
+.v-alert[data-slot].-ok > .v-icon:first-child {
+  background: var(--v-olive);
+}
+.v-alert[data-slot].-warn > .v-icon:first-child {
+  background: var(--v-yellow);
+}
+.v-alert[data-slot].-danger > .v-icon:first-child {
+  background: var(--v-danger-fill);
+  color: var(--destructive-foreground);
+}
+.v-alert[data-slot].-pink > .v-icon:first-child {
+  background: var(--v-canvas);
+}
+.v-alert[data-slot].-ok .v-alert__text {
+  color: var(--alert-ink);
+}
+.v-alert[data-slot].-warn .v-alert__text {
+  color: var(--alert-ink);
+}
+.v-alert[data-slot].-danger .v-alert__text {
+  color: var(--alert-ink);
+}
+.v-alert[data-slot].-info .v-alert__text {
+  color: var(--alert-ink);
+}
+.v-alert[data-slot] .v-alert__text {
+  color: var(--alert-ink);
+}
+:root[data-mode="dark"] .v-alert[data-slot] .v-alert__text {
+  color: var(--v-text-2);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-info {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-ok {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-warn {
+  color: var(--v-text);
+}
+.v-alert[data-slot] > .v-icon:first-child {
+  position: relative;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  padding: var(--s-3);
+  border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  color: var(--v-on-accent);
+  background: var(--hue, var(--v-beige));
+  stroke-width: 1.9;
+  display: grid;
+  place-items: center;
+}
+.v-alert[data-slot] > .v-alert__blob {
+  position: relative;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  padding: var(--s-3);
+  border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  color: var(--v-on-accent);
+  background: var(--hue, var(--v-beige));
+  stroke-width: 1.9;
+  display: grid;
+  place-items: center;
+}
+.v-alert[data-slot] > .v-alert__blob > .v-icon {
+  width: 20px;
+  height: 20px;
+}
+.v-alert[data-slot] > .v-alert__blob:has(> svg.v-morph) {
+  background: transparent;
+}
+.v-alert[data-slot] > .v-alert__blob > svg.v-morph {
+  z-index: 0;
+}
+.v-alert[data-slot]::after {
+  content: "";
+  position: absolute;
+  right: -6%;
+  top: -40%;
+  width: 34%;
+  aspect-ratio: 1;
+  background: var(--hue-deep, var(--v-beige-2));
+  -webkit-mask: var(--wm-m) center/contain no-repeat;
+  mask: var(--wm-m) center/contain no-repeat;
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 0;
+}
+.v-alert[data-slot].-info {
+  --hue: var(--v-blue);
+  --hue-deep: var(--v-blue-deep);
+  background: color-mix(in oklab, var(--v-blue) 30%, var(--v-canvas));
+  --wm-m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='24' r='20'/%3E%3Ccircle cx='76' cy='50' r='20'/%3E%3Ccircle cx='50' cy='76' r='20'/%3E%3Ccircle cx='24' cy='50' r='20'/%3E%3Ccircle cx='50' cy='50' r='22'/%3E%3C/svg%3E");
+}
+.v-alert[data-slot].-ok {
+  --hue: var(--v-olive);
+  --hue-deep: var(--v-olive-deep);
+  background: color-mix(in oklab, var(--v-olive) 26%, var(--v-canvas));
+  --wm-m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 90C22 68 6 52 6 33A20 20 0 0 1 50 21A20 20 0 0 1 94 33C94 52 78 68 50 90Z'/%3E%3C/svg%3E");
+}
+.v-alert[data-slot].-warn {
+  --hue: var(--v-yellow);
+  --hue-deep: var(--v-yellow-deep);
+  background: color-mix(in oklab, var(--v-yellow) 34%, var(--v-canvas));
+  --wm-m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 2l12 30 30 12-30 12-12 30-12-30-30-12 30-12z'/%3E%3C/svg%3E");
+}
+.v-alert[data-slot].-danger {
+  --hue: var(--v-danger-fill);
+  --hue-deep: var(--danger-deep);
+  background: color-mix(in oklab, var(--v-danger) 13%, var(--v-canvas));
+  --wm-m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M60 5A45 45 0 1 0 60 95A50 50 0 0 1 60 5Z'/%3E%3C/svg%3E");
+}
+.v-alert[data-slot].-danger > .v-icon:first-child {
+  color: var(--destructive-foreground);
+}
+.v-alert[data-slot].-danger > .v-alert__blob {
+  color: var(--destructive-foreground);
+}
+.v-alert[data-slot]:not([class*=" -"]) {
+  background: var(--v-beige);
+}
+.v-alert[data-slot]:not([class*=" -"]) > .v-icon:first-child {
+  background: var(--v-beige-2);
+}
+.v-alert[data-slot]:not([class*=" -"]) > .v-alert__blob {
+  background: var(--v-beige-2);
+}
+.v-alert[data-slot]:not([class*=" -"])::after {
+  background: var(--v-beige-2);
+}
+.v-alert[data-slot].-ok .v-alert__title {
+  color: var(--v-on-accent);
+}
+.v-alert[data-slot].-warn .v-alert__title {
+  color: var(--v-on-accent);
+}
+.v-alert[data-slot].-info .v-alert__title {
+  color: var(--v-on-accent);
+}
+.v-alert__actions[data-slot] .v-btn {
+  height: 32px;
+  padding: 0 var(--s-4);
+  font-size: var(--fs-small);
+}
+.v-alert[data-slot] > .v-alert__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  z-index: 2;
+  background: rgba(251, 244, 230, 0.6);
+  box-shadow: none;
+}
+.v-alert[data-slot] > .v-alert__close:hover {
+  background: var(--v-canvas);
+}
+.v-alert[data-slot]::after {
+  width: 26%;
+  top: -24%;
+  right: -3%;
+  opacity: 0.55;
+}
+.v-alert[data-slot]:has(.v-alert__close) .v-alert__body {
+  padding-right: var(--s-8);
+}
+.v-alert[data-slot] > .v-alert__close {
+  cursor: pointer;
+  transition:
+    background var(--t-micro),
+    transform var(--t-micro) var(--enter);
+}
+.v-alert[data-slot] > .v-alert__close:hover {
+  transform: none;
+}
+:root[data-mode="dark"] .v-alert[data-slot].-info {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-ok {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-warn {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-danger {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-info .v-alert__title {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-ok .v-alert__title {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-warn .v-alert__title {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-danger .v-alert__title {
+  color: var(--v-text);
+}
+:root[data-mode="dark"] .v-alert[data-slot] .v-alert__text {
+  color: var(--v-text-2);
+}
+:root[data-mode="dark"] .v-alert[data-slot].-info {
+  background: color-mix(in oklab, var(--v-blue) 18%, var(--v-canvas));
+}
+:root[data-mode="dark"] .v-alert[data-slot].-ok {
+  background: color-mix(in oklab, var(--v-olive) 18%, var(--v-canvas));
+}
+:root[data-mode="dark"] .v-alert[data-slot].-warn {
+  background: color-mix(in oklab, var(--v-yellow) 16%, var(--v-canvas));
+}
+:root[data-mode="dark"] .v-alert[data-slot].-danger {
+  background: color-mix(in oklab, var(--v-danger) 16%, var(--v-canvas));
+}
+:root[data-mode="dark"] .v-alert[data-slot]::after {
+  opacity: 0.25;
+}
+:root[data-mode="dark"] .v-alert[data-slot] > .v-alert__close {
+  background: rgba(246, 239, 226, 0.1);
+  color: var(--v-text);
+}
+
+/* The authored icon body is transparent; keep the glyph legible on the alert surface. */
+.v-alert[data-slot] > .v-alert__blob > .v-icon {
+  color: var(--v-text);
+}
+.v-alert[data-slot].-danger > .v-alert__blob > .v-icon {
+  color: var(--v-danger-ink);
+}
+.v-alert[data-slot].-pink > .v-alert__blob > .v-icon {
+  color: var(--v-on-accent);
+}
+
+/* Pink stays light in either theme, including secondary copy and ghost actions. */
+:root[data-mode="dark"] .v-alert[data-slot].-pink .v-alert__text {
+  color: var(--alert-ink);
+}
+.v-alert[data-slot].-pink
+  .v-btn.-ghost:not(:disabled):not([aria-disabled="true"]) {
+  color: var(--v-on-accent);
+}
+.v-alert[data-slot].-pink
+  .v-btn.-ghost:not(:disabled):not([aria-disabled="true"]):hover {
+  background: color-mix(in oklab, var(--v-pink) 88%, var(--ink-fixed));
+}
+.v-alert__body[data-slot] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.v-alert[data-slot] :is(.v-alert__title, .v-alert__text) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* New compositions retain semantic colours, with one stamp and one quiet face. */
+.v-alert[data-slot][data-presentation] {
+  container-type: inline-size;
+  --alert-accent: var(--hue, var(--v-pink));
+  padding: var(--s-6);
+  gap: var(--s-4);
+  background: var(--v-canvas);
+  color: var(--v-text);
+  border: 1px solid var(--v-border);
+  border-radius: min(var(--v-control-radius, 20px), 28px);
+}
+.v-alert[data-slot][data-presentation]::after {
+  display: none;
+}
+.v-alert[data-slot][data-presentation] .v-alert__title {
+  color: var(--v-text);
+  font-size: var(--fs-title);
+  line-height: 1.3;
+  font-family: var(--font-display);
+}
+.v-alert[data-slot][data-presentation] .v-alert__text {
+  color: var(--v-text-2);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+}
+.v-alert[data-slot][data-presentation] .v-alert__body {
+  padding-top: 0;
+  gap: var(--s-2);
+}
+.v-alert[data-slot][data-presentation] .v-alert__kicker {
+  color: var(--v-text-2);
+  font-size: var(--fs-caps);
+  letter-spacing: 0.04em;
+}
+.v-alert[data-slot][data-presentation] .v-alert__actions {
+  margin-top: var(--s-2);
+  gap: var(--s-2);
+}
+.v-alert[data-slot] .v-alert__actions .v-btn {
+  min-height: 44px;
+  height: auto;
+  padding: var(--s-2) var(--s-4);
+}
+.v-alert[data-slot][data-presentation] > .v-alert__blob {
+  --mfill: var(--alert-accent);
+  background: var(--alert-accent);
+  color: var(--v-on-accent);
+}
+.v-alert[data-slot][data-presentation] > .v-alert__blob > .v-icon {
+  color: var(--v-on-accent);
+}
+.v-alert[data-slot][data-presentation] > .v-alert__blob:has(> svg.v-morph) {
+  background: transparent;
+}
+.v-alert[data-slot][data-presentation] > .v-alert__close {
+  background: transparent;
+  color: var(--v-text-2);
+}
+.v-alert[data-slot][data-presentation]:has(.v-alert__close) .v-alert__body {
+  padding-inline-end: var(--s-8);
+}
+.v-alert[data-slot][data-presentation="note"] {
+  border-inline-start: 4px solid var(--alert-accent);
+  border-radius: var(--r-xs) min(var(--v-control-radius, 20px), 28px)
+    min(var(--v-control-radius, 20px), 28px) var(--r-xs);
+}
+.v-alert[data-slot][data-presentation="banner"] {
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--alert-accent) 10%, var(--v-canvas));
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  padding: var(--s-4) var(--s-5);
+}
+.v-alert[data-slot][data-presentation="banner"] .v-alert__body {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--s-4);
+  align-items: center;
+}
+.v-alert[data-slot][data-presentation="banner"] .v-alert__title {
+  font-size: var(--fs-reading);
+}
+.v-alert[data-slot][data-presentation="banner"] .v-alert__kicker {
+  display: none;
+}
+.v-alert[data-slot][data-presentation="banner"] .v-alert__title,
+.v-alert[data-slot][data-presentation="banner"] .v-alert__text {
+  grid-column: 1;
+}
+.v-alert[data-slot][data-presentation="banner"] .v-alert__actions {
+  grid-column: 2;
+  grid-row: 1/3;
+  margin: 0;
+}
+.v-alert[data-slot][data-presentation="dispatch"] {
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--s-6) var(--s-7);
+  border-radius: var(--r-xs) var(--r-panel) var(--r-panel) var(--r-panel);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--alert-accent) 10%, var(--v-canvas)),
+    var(--v-canvas) 70%
+  );
+}
+.v-alert[data-slot][data-presentation="dispatch"] > .v-alert__blob {
+  width: 48px;
+  height: 48px;
+}
+.v-alert[data-slot][data-presentation="dispatch"] .v-alert__title {
+  font-size: var(--fs-section);
+  max-width: 26ch;
+}
+.v-alert[data-slot][data-presentation="dispatch"] .v-alert__actions {
+  border-top: 1px dashed var(--v-border);
+  padding-top: var(--s-4);
+  margin-top: var(--s-3);
+}
+.v-alert[data-slot][data-presentation="dispatch"] .v-alert__body {
+  padding-inline-end: 0;
+}
+.v-alert[data-slot][data-presentation="dispatch"]::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 auto;
+  width: 24px;
+  height: 24px;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    transparent 48%,
+    var(--v-border) 50%,
+    color-mix(in srgb, var(--alert-accent) 25%, var(--v-canvas)) 54%
+  );
+}
+@container (max-width:460px) {
+  .v-alert[data-slot][data-presentation="banner"] > .v-alert__blob {
+    align-self: start;
+  }
+  .v-alert[data-slot][data-presentation="banner"] .v-alert__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .v-alert[data-slot][data-presentation="banner"] .v-alert__actions {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: var(--s-2);
+  }
+}
+.v-message-example {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: var(--s-4);
+}
+.v-message-example__hint {
+  margin: 0;
+  color: var(--v-text-2);
+  font-size: var(--fs-caps);
+  line-height: 1.6;
+}
+.v-message-example__restored {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  justify-content: space-between;
+  flex-wrap: wrap;
+  min-height: 100px;
+  padding: var(--s-5);
+  border: 1px dashed var(--v-border);
+  border-radius: var(--r-card-sm);
+}
+.v-message-example__restored p {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--v-text-2);
+}
+.v-message-example__notes {
+  border-inline-start: 2px solid var(--v-blue);
+  padding: var(--s-1) 0 var(--s-1) var(--s-5);
+}
+.v-message-example__notes h4 {
+  font-size: var(--fs-body);
+  font-weight: var(--fw-title);
+  margin: 0 0 var(--s-2);
+}
+.v-message-example__notes ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--s-2);
+}
+.v-message-example__notes li {
+  display: flex;
+  gap: var(--s-3);
+  align-items: baseline;
+  font-size: var(--fs-small);
+  color: var(--v-text-2);
+}
+.v-message-example__notes li span {
+  font-family: var(--font-mono);
+  font-size: var(--fs-caps);
+}
+
+}

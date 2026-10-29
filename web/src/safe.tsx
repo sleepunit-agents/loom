@@ -1,5 +1,7 @@
 // Nothing on a page may take the app down: an icon 000h doesn't have becomes a plain one, and a part
 // that fails to draw says so (with a reload a tap away) instead of blanking everything.
+import { Alert, AlertActions, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Component, type ReactNode } from 'react';
 import { iconNames } from '@/components/ui/icon';
 
@@ -16,11 +18,10 @@ export class Boundary extends Component<{ children: ReactNode; where: string }, 
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div className="rounded-3xl border p-5">
-        <p className="font-medium">This page couldn't be drawn in the app.</p>
-        <p className="text-sm opacity-70">{this.state.error}</p>
-        <button type="button" className="mt-3 inline-block underline underline-offset-4" onClick={() => location.reload()}>Reload</button>
-      </div>
+      <Alert variant="danger">
+        <AlertBody><AlertTitle>This page couldn't be drawn in the app.</AlertTitle><AlertDescription>{this.state.error}</AlertDescription></AlertBody>
+        <AlertActions><Button size="sm" variant="outline" onClick={() => location.reload()}>Reload</Button></AlertActions>
+      </Alert>
     );
   }
 }

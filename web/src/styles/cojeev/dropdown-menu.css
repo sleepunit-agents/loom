@@ -1,0 +1,135 @@
+@layer cojeev-states {
+/* Cojeev authored subparts, state precedence, and irreducible shapes; scoped to this registry item. */
+.v-menu__item:where(
+  [data-slot="dropdown-menu"],
+  [data-slot^="dropdown-menu-"]
+) {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 40px;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-md);
+  font-size: var(--fs-control);
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+}
+.v-menu__item:where(
+    [data-slot="dropdown-menu"],
+    [data-slot^="dropdown-menu-"]
+  ):hover,
+.v-menu__item:where(
+    [data-slot="dropdown-menu"],
+    [data-slot^="dropdown-menu-"]
+  )[data-highlighted] {
+  background: var(--v-beige);
+}
+.v-menu__item:where(
+    [data-slot="dropdown-menu"],
+    [data-slot^="dropdown-menu-"]
+  ).-danger {
+  color: var(--v-danger-ink);
+}
+.v-menu__sep:where([data-slot="dropdown-menu"], [data-slot^="dropdown-menu-"]) {
+  height: 1px;
+  background: var(--v-border);
+  margin: var(--s-1) 0;
+}
+.v-menu__group:where(
+  [data-slot="dropdown-menu"],
+  [data-slot^="dropdown-menu-"]
+) {
+  font-size: var(--fs-caps);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  padding: var(--s-2) var(--s-3) var(--s-1);
+}
+.v-menu:where([data-slot="dropdown-menu"], [data-slot^="dropdown-menu-"]) {
+  scrollbar-gutter: stable;
+}
+.v-menu:where(
+    [data-slot="dropdown-menu"],
+    [data-slot^="dropdown-menu-"]
+  )::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.v-menu:where(
+    [data-slot="dropdown-menu"],
+    [data-slot^="dropdown-menu-"]
+  )::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: var(--r-pill);
+}
+.v-menu:where(
+    [data-slot="dropdown-menu"],
+    [data-slot^="dropdown-menu-"]
+  )::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--v-ink) 34%, transparent);
+  border-radius: var(--r-pill);
+  border: 4px solid transparent;
+  background-clip: content-box;
+  min-height: 36px;
+}
+.v-menu:where([data-slot="dropdown-menu"], [data-slot^="dropdown-menu-"]) {
+  scrollbar-gutter: stable;
+}
+.v-menu:where([data-slot="dropdown-menu"], [data-slot^="dropdown-menu-"]) {
+  scrollbar-gutter: stable;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="dropdown-menu"],
+  [data-slot^="dropdown-menu-"],
+  [data-slot="dropdown-menu"]::before,
+  [data-slot="dropdown-menu"]::after,
+  [data-slot^="dropdown-menu-"]::before,
+  [data-slot^="dropdown-menu-"]::after {
+    animation-duration: 0s;
+    animation-iteration-count: 1;
+    transition-duration: 0s;
+    scroll-behavior: auto;
+  }
+}
+
+[data-slot^="dropdown-menu-"][data-inset] {
+  padding-left: var(--s-8);
+}
+[data-slot^="dropdown-menu-"][data-disabled] {
+  color: var(--v-disabled-ink);
+  cursor: not-allowed;
+}
+[data-slot^="dropdown-menu-"][data-highlighted] {
+  outline: none;
+  background: var(--v-beige);
+}
+
+[data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"] {
+ min-width:min(200px,calc(100vw - 24px)); max-width:calc(100vw - 24px);
+ max-height:min(480px,var(--radix-dropdown-menu-content-available-height,calc(100dvh - 32px)));
+ overflow:visible; overscroll-behavior:contain; overflow-wrap:anywhere;
+}
+[data-slot="dropdown-menu-item"] { min-width:0; height:auto; min-height:36px; white-space:normal; }
+[data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"] { z-index:var(--z-popover); }
+[data-slot^="dropdown-menu-"][data-part="item"] { min-width:0; white-space:normal; overflow-wrap:anywhere; padding-block:var(--s-2); }
+
+/* Compact by default; --menu-width or inline width can deliberately match a large trigger. */
+[data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"] { width:var(--menu-width,260px); min-width:min(200px,calc(100vw - 24px)); max-width:calc(100vw - 24px); color:var(--popover-foreground); }
+[data-slot^="dropdown-menu-"][data-part="item"] { min-width:0; min-height:44px; padding-block:var(--s-2); gap:var(--s-3); white-space:normal; overflow-wrap:anywhere; text-align:start; }
+[data-slot^="dropdown-menu-"][data-part="item"]:is(:hover,[data-highlighted],[data-state="checked"]) { background:var(--v-beige); color:var(--v-text); }
+[data-slot^="dropdown-menu-"][data-part="item"][data-state="checked"] { background:var(--v-pink-soft); }
+[data-slot^="dropdown-menu-"][data-part="item"]:active { background:var(--v-pink-soft); color:var(--v-text); }
+[data-slot^="dropdown-menu-"][data-part="item"].-danger { color:var(--v-danger-ink); }
+[data-slot^="dropdown-menu-"][data-part="item"][data-disabled] { background:transparent; color:var(--v-disabled-ink); }
+[data-slot^="dropdown-menu-"] .v-menu__check { display:inline-grid; place-items:center; width:18px; min-width:18px; margin-inline-start:auto; color:inherit; }
+[data-slot^="dropdown-menu-"] .v-menu__check .v-icon { width:16px; height:16px; }
+
+/* A native flyout may share a narrow viewport with its parent. Use Popper's
+   measured free width so its labels wrap instead of leaving the screen. */
+[data-slot="dropdown-menu-sub-content"] { min-width:min(200px,var(--radix-dropdown-menu-content-available-width,200px)); max-width:min(calc(100vw - 24px),var(--radix-dropdown-menu-content-available-width,260px)); }
+
+/* The shared ScrollArea owns menu overflow and its custom thumb. */
+:is([data-slot="dropdown-menu-content"],[data-slot="dropdown-menu-sub-content"]) .v-list-scroll { --list-scroll-max-height:min(320px, calc(var(--radix-popper-available-height, 60dvh) - 20px)); }
+
+}
