@@ -484,3 +484,22 @@ body { background: var(--v-canvas); }
 [data-mode="dark"] .loom-ground { opacity: .55; }
 /* How much terrain the contour field shows: 1 is 000h's (three big hills to a screen); more is further out. */
 .loom-ground { --field-zoom: 2.2; }
+
+/* A prose block's markdown (markdown.tsx): headings come two levels down (h3 is a body's #), lists with their marks,
+   code on beige, tables ruled; spaced for reading, at the page's width. */
+.loom-prose { line-height: 1.65; overflow-wrap: anywhere; }
+.loom-prose > * + * { margin-top: .8em; }
+.loom-prose :is(h3, h4, h5, h6) { font-family: var(--font-display); font-weight: 600; line-height: 1.25; margin-top: 1.4em; }
+.loom-prose > :first-child { margin-top: 0; }
+.loom-prose h3 { font-size: 1.5rem; } .loom-prose h4 { font-size: 1.2rem; } .loom-prose :is(h5, h6) { font-size: 1rem; }
+.loom-prose :is(ul, ol) { padding-inline-start: 1.4em; } .loom-prose ul { list-style: disc; } .loom-prose ol { list-style: decimal; }
+.loom-prose li + li { margin-top: .3em; } .loom-prose li::marker { color: var(--v-text-2); }
+.loom-prose a { text-decoration: underline; text-underline-offset: 3px; }
+.loom-prose code { font-family: var(--font-mono, ui-monospace, monospace); font-size: .88em; background: var(--v-beige); border-radius: 6px; padding: .1em .35em; }
+.loom-prose pre { background: var(--v-beige); border-radius: 14px; padding: 14px 16px; overflow-x: auto; }
+.loom-prose pre code { background: none; padding: 0; }
+.loom-prose blockquote { border-inline-start: 3px solid var(--v-border); padding-inline-start: 1em; color: var(--v-text-2); }
+.loom-prose hr { border: 0; border-top: 1px solid var(--v-border); }
+.loom-prose table { width: 100%; border-collapse: collapse; font-size: .92em; display: block; overflow-x: auto; }
+.loom-prose :is(th, td) { text-align: start; padding: 6px 10px; border-bottom: 1px solid var(--v-border); }
+.loom-prose th { font-weight: 600; }
