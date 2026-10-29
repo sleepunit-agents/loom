@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Input } from '@/components/ui/input';
-import { ActButton, EnvContext, Link, type Env } from './blocks';
+import { ActButton, BlockView, EnvContext, Link, type Env } from './blocks';
 import type { Button as Btn, Chrome, Source, Tone } from './loom';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
@@ -116,13 +116,14 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   );
 }
 
-export function DashboardView({ d, now }: { d: { label: string; title?: string; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string }; now: number }) {
+export function DashboardView({ d, now }: { d: { label: string; title?: string; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
   const { go } = useEnv();
   return (
     <div className="grid gap-4">
       {d.inbox && d.inbox.count > 0 && (
         <Button variant="secondary" className="justify-start" onClick={() => go('/inbox')}>{d.inbox.first ?? `${d.inbox.count} in the Inbox`}</Button>
       )}
+      {d.filters && <BlockView b={{ type: 'filters', ...d.filters }} />}
       <Asks asks={d.asks} />
       <Tiles tiles={d.tiles} />
       {d.thread.length > 0 && (
