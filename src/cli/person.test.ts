@@ -96,6 +96,17 @@ describe('loom person', () => {
     // Seen again as an id it has: no duplicate.
     await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U1', '--label', 'Patrick Kells (@pk)', '--context-dir', dir]);
     expect(JSON.parse((await runCliCaptured(['person', 'show', 'patrick-kells', '--json', '--context-dir', dir])).stdout).card.where.slack.value).toEqual(['U1', 'U2']);
+    // A hand-written note around the id counts as having it: the note stays, the name is added.
+    const s1 = openPeopleStore(dir)!;
+    s1.write({ slug: 'patrick-kells', where: { slack: { value: 'U7 (Onterris), DM D0B', source: 'by hand' } } });
+    s1.close();
+    await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U7', '--label', 'Patrick Kells (@pk)', '--context-dir', dir]);
+    expect(JSON.parse((await runCliCaptured(['person', 'show', 'patrick-kells', '--json', '--context-dir', dir])).stdout).card.where.slack)
+      .toMatchObject({ value: 'U7 (Onterris), DM D0B', label: 'Patrick Kells (@pk)', source: 'by hand' });
+    // ...but an id that only starts the same way is another id.
+    await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U', '--label', 'x', '--context-dir', dir]);
+    expect(JSON.parse((await runCliCaptured(['person', 'show', 'patrick-kells', '--json', '--context-dir', dir])).stdout).card.where.slack.value)
+      .toEqual(['U7 (Onterris), DM D0B', 'U']);
     // Never a new card, never without a name, never a field that isn't a word.
     expect((await runCliCaptured(['person', 'reach', 'nobody', 'slack', 'U9', '--label', 'x', '--context-dir', dir])).code).toBe(3);
     expect((await runCliCaptured(['person', 'reach', 'patrick-kells', 'slack', 'U9', '--context-dir', dir])).code).toBe(2);

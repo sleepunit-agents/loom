@@ -113,7 +113,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const was = (current.card.where ?? {})[field];
     // The id joins what's there: a second account is kept beside the first, never in its place.
     const ids = was === undefined ? [] : Array.isArray(was.value) ? was.value.map(String) : [String(was.value)];
-    const value = ids.includes(id) ? (ids.length === 1 ? ids[0] : ids) : ids.length ? [...ids, id] : id;
+    // A value written by hand may be a note around the id ("U02AYL3QX (Onterris), DM D0…"): the id in it counts as there.
+    const there = ids.some((v) => v === id || new RegExp(`(^|[^A-Za-z0-9])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`).test(v));
+    const value = there ? (ids.length === 1 ? ids[0] : ids) : ids.length ? [...ids, id] : id;
     const source = was?.source ?? parsed.values.source;
     const out = await personWrite(env.contextDir, { slug, where: { [field]: {
       value, label, verified_at: at, ...(source ? { source } : {}), ...(was?.stale_after_days ? { stale_after_days: was.stale_after_days } : {}),
