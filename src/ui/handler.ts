@@ -37,7 +37,10 @@ import { changed, openStream } from './live.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
+import { brotliCompress, brotliCompressSync, constants as zlibConstants, gzip, gzipSync } from 'node:zlib';
+import { promisify } from 'node:util';
+const brotliAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
@@ -312,12 +315,20 @@ function send(res: ServerResponse, status: number, type: string, body: string, e
  * went out as 786 KB); a page's data is compressed quickly, when it's big enough to be worth it.
  */
 const packed = new Map<string, { br: Buffer; gzip: Buffer }>();
-// The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at start.
+// The first visit after a deploy shouldn't pay for packing the script (a second, at brotli's best): pack them at
+// start, off the event loop (zlib's thread pool), so nothing waits on it.
 setTimeout(() => {
-  const dir = WEB_DIR && join(WEB_DIR, 'assets');
-  if (!dir || !existsSync(dir)) return;
-  const fake = { headers: { 'accept-encoding': 'br' } } as IncomingMessage;
-  for (const f of readdirSync(dir)) if (/\.(js|css|svg|json)$/.test(f)) encoded(fake, readFileSync(join(dir, f)), join(dir, f));
+  const dir = join(WEB_DIR, 'assets');
+  if (!existsSync(dir)) return;
+  for (const f of readdirSync(dir)) {
+    const file = join(dir, f);
+    if (!/\.(js|css|svg|json)$/.test(f) || packed.has(file)) continue;
+    const body = readFileSync(file);
+    void Promise.all([
+      brotliAsync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 11, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } }),
+      gzipAsync(body, { level: 9 }),
+    ]).then(([br, gzip]) => { if (!packed.has(file)) packed.set(file, { br, gzip }); }).catch(() => {});
+  }
 }, 1_000).unref();
 function encoded(req: IncomingMessage, body: Buffer, keep?: string): { body: Buffer; headers: Record<string, string> } {
   const accepts = String(req.headers['accept-encoding'] ?? '');
