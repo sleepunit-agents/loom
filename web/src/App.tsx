@@ -3,6 +3,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
+// The More drawer's menu (000h's navigation menu) loads when it opens.
+const MoreMenu = lazy(() => import('./more-menu'));
 // Passkeys' controls (WebAuthn, push) load with that page only.
 const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
 const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
@@ -291,20 +293,10 @@ export default function App() {
       <Drawer open={more} onOpenChange={setMore}>
         <DrawerContent>
           <DrawerHeader><DrawerTitle>More</DrawerTitle>{head && <DrawerDescription>{head.label}'s other pages</DrawerDescription>}</DrawerHeader>
-          <div className="grid grid-cols-2 gap-2">
-            {moreTabs.map((t) => <Button key={t.href} variant="secondary" className="h-14 justify-start gap-3" onClick={() => { setMore(false); go(t.href); }}><AnimatedIcon name={iconFor(icon(t.label))} /> {t.label}</Button>)}
-          </div>
-          {chrome?.shell && chrome.shell.agents.length > 1 && (
-            <div className="grid gap-2">
-              <p className="text-sm opacity-70">Agents</p>
-              {chrome.shell.agents.map((a) => (
-                <Button key={a.id} variant="ghost" className="justify-start gap-3" onClick={() => { setMore(false); go(a.href); }}>
-                  <span className="grid size-7 place-items-center rounded-lg text-xs font-semibold" style={{ background: a.bg, color: a.fg }}>{a.label[0]}</span>{a.label}
-                  {a.asks ? <span className="ml-auto text-xs opacity-70">{a.asks} waiting</span> : null}
-                </Button>
-              ))}
-              <Button variant="ghost" className="justify-start gap-3" onClick={() => { setMore(false); go('/'); }}><AnimatedIcon name={iconFor("house")} /> The household</Button>
-            </div>
+          {more && (
+            <Suspense fallback={<div className="grid place-items-center py-6"><Spinner appearance="orbit" /></div>}>
+              <MoreMenu pages={moreTabs} agents={chrome?.shell?.agents ?? []} here={head?.label} icon={icon} go={(href) => { setMore(false); go(href); }} />
+            </Suspense>
           )}
           <div className="grid gap-2"><p className="text-sm opacity-70">Appearance</p><Appearance mode={mode} setMode={setMode} /></div>
         </DrawerContent>
