@@ -1031,6 +1031,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const pieces = forOwner(allPieces, opts.ownerScope);
   const skippedNames = skipped.map((s) => s.piece);
   const html = (body: string, status = 200) => send(res, status, 'text/html; charset=utf-8', body);
+  // Every page as JSON too (docs/specs/ui-app.md): the data a page is drawn from, for the app, under the
+  // same auth, scoping and same-origin rule (allowedGet, above). A browser's ordinary request gets the HTML.
+  const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
+  const view = (kind: string, data: Record<string, unknown>, render: () => string, status = 200) =>
+    (asJson ? sendJson(res, status, { view: kind, ...data }) : html(render(), status));
 
   // The shell's sheets as pages: they work without script; app.js opens them as sheets.
   const pick = /^\/scope\/([a-z][a-z0-9-]{0,39}|household)$/.exec(pathname);
@@ -1045,7 +1050,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const tab = pathname.slice(1);
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
     const q = (url.searchParams.get('q') ?? '').slice(0, 100);
-    return html(renderSheetPage(tab as 'scope' | 'places' | 'find' | 'setup', ch, q, tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined));
+    { const which = tab as 'scope' | 'places' | 'find' | 'setup'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
+      return view('sheet', { which, chrome: ch, q, found }, () => renderSheetPage(which, ch, q, found)); }
   }
 
   if (pathname === '/passkeys') {
@@ -1083,7 +1089,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const hhAgents = agentsOf(hh);
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf, agents: hhAgents });
     const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead) =>
-      html(renderPage(page, ctx, chrome(req, opts, pieces, skippedNames, current, csrf, flash), undefined, head), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+      { const ch = chrome(req, opts, pieces, skippedNames, current, csrf, flash);
+        return view('page', { page, ctx, chrome: ch, head }, () => renderPage(page, ctx, ch, undefined, head), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
@@ -1101,7 +1108,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         // Home is the agents and what's moving (Jonathan, 2026-10-27): the pieces' tiles live on their own pages.
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
-      return html(renderHouseHome(d, { ...ctxOf(''), agents }, chrome(req, opts, pieces, skippedNames, '', csrf, flash)));
+      { const ctx = { ...ctxOf(''), agents }; const ch = chrome(req, opts, pieces, skippedNames, '', csrf, flash);
+        return view('house-home', { home: d, ctx, chrome: ch }, () => renderHouseHome(d, ctx, ch)); }
     }
     // Activity: everything that happened (the household's thread), what Home was before it showed how the agents are.
     if (pathname === '/activity') {
@@ -1129,7 +1137,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         sinceMs, sinceLabel: clockAt(sinceMs),
         filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
       };
-      return html(renderDashboard(d, { ...ctxOf(at), agents }, chrome(req, opts, pieces, skippedNames, at, csrf, flash), nowMs));
+      { const ctx = { ...ctxOf(at), agents }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
+        return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }, () => renderDashboard(d, ctx, ch, nowMs)); }
     }
     if (pathname === '/inbox') {
       const nowMs = Date.now();
@@ -1159,7 +1168,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       if (open && shown?.key === open.key && ch.shell) {
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
-      return html(renderInbox(items, folder, open?.key, { ...ctxOf('inbox'), agents: agentsOf(hh)! }, ch, nowMs, inline));
+      { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
+        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline }, () => renderInbox(items, folder, open?.key, ctx, ch, nowMs, inline)); }
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {
@@ -1197,7 +1207,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
           thread: t.items.slice(0, HOME_THREAD).map((r) => ({ text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), at: r.created, page: r.page })),
         };
-        return html(renderDashboard(d, { ...ctxOf('', src), agents }, chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash), nowMs));
+        { const ctx = { ...ctxOf('', src), agents }; const ch = chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash);
+          return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }, () => renderDashboard(d, ctx, ch, nowMs)); }
       }
       // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
       const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces) });
@@ -1236,7 +1247,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       ...piecesAsks(opts.env).map((a) => ({ ...a, source: CORE })),
       ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece) }))),
     ];
-    return html(renderHome(home.page, { source: CORE, path: '', query, csrf }, chrome(req, opts, pieces, skippedNames, '', csrf, flash), tiles, asks));
+    { const ctx = { source: CORE, path: '', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, '', csrf, flash);
+      return view('home', { page: home.page, ctx, chrome: ch, tiles, asks }, () => renderHome(home.page, ctx, ch, tiles, asks)); }
   }
 
   if (pathname.startsWith('/p/')) {
@@ -1246,20 +1258,22 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const path = slash === -1 ? '' : decode(rest.slice(slash + 1));
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
-    if (!info || path === null || !validPath(path)) return html(renderPage(notFound, { source: pieceSource(piece), path: '', query: {}, csrf }, ch), 404);
+    if (!info || path === null || !validPath(path)) { const ctx = { source: pieceSource(piece), path: '', query: {}, csrf }; return view('page', { page: notFound, ctx, chrome: ch }, () => renderPage(notFound, ctx, ch), 404); }
     const page = await piecePage(info, path, query, scopedEnv, callerOf(who));
     const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
-      return html(renderPage({ title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${piece} couldn't show this page (${page}).` }] }] }, ctx, ch), 502);
+      { const err = { title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout' as const, tone: 'bad' as const, text: `${piece} couldn't show this page (${page}).` }] }] };
+        return view('page', { page: err, ctx, chrome: ch }, () => renderPage(err, ctx, ch), 502); }
     }
     // A piece that can't narrow to the selected agent says so, once, at the top.
     const unscoped = scopedEnv.LOOM_SCOPE && !info.manifest.scope ? agentName(agentDir(hhScope!, scopedEnv.LOOM_SCOPE)) : undefined;
-    return html(renderPage(page, ctx, ch, unscoped), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+    return view('page', { page, ctx, chrome: ch, unscoped }, () => renderPage(page, ctx, ch, unscoped), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
   }
 
   if (pathname === '/pieces') {
     const page = piecesPage(opts.env, query);
-    return html(renderPage(page, { source: CORE, path: 'pieces', query, csrf }, chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash)));
+    { const ctx = { source: CORE, path: 'pieces', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash);
+      return view('page', { page, ctx, chrome: ch }, () => renderPage(page, ctx, ch)); }
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';
@@ -1267,6 +1281,6 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const ch = chrome(req, opts, pieces, skippedNames, top, csrf, flash);
   const page = validPath(path) ? corePage(opts.contextDir, path, query) : null;
   const ctx = { source: CORE, path: validPath(path) ? path : '', query, csrf };
-  if (!page) return html(renderPage(notFound, ctx, ch), 404);
-  return html(renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
+  if (!page) return view('page', { page: notFound, ctx, chrome: ch }, () => renderPage(notFound, ctx, ch), 404);
+  return view('page', { page, ctx, chrome: ch }, () => renderPage(page, ctx, ch), page.title === 'Not found' && page.sections.length === 0 ? 404 : 200);
 }
