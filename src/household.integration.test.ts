@@ -1486,6 +1486,30 @@ esac
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = async (cookie: string, path: string): Promise<any> => (await page(cookie, path)).json();
 
+  it('an agent owner\'s live stream hears of their agents only: art\'s memory moving is no news to Loren', async () => {
+    const open = async (cookie: string) => {
+      const ac = new AbortController();
+      const r = await fetch(`${base}/events`, { headers: { cookie, accept: 'text/event-stream' }, signal: ac.signal });
+      expect(r.status).toBe(200);
+      const reader = r.body!.getReader();
+      let got = '';
+      void (async () => { try { for (;;) { const x = await reader.read(); if (x.done) break; got += new TextDecoder().decode(x.value); } } catch { /* closed */ } })();
+      return { heard: () => (got.match(/event: change/g) ?? []).length, close: () => ac.abort() };
+    };
+    const jo = await open(await login(jonathan));
+    const lo = await open(await login(loren));
+    await new Promise((r) => setTimeout(r, 300));
+    const [j0, l0] = [jo.heard(), lo.heard()];
+    await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art again', content: 'y', metadata: { where: 'discord:#pond' } });
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(jo.heard()).toBeGreaterThan(j0);
+    expect(lo.heard()).toBe(l0);
+    await remember(join(h.home, 'agents', 'mark'), { category: 'episode', title: 'mark again', content: 'y', metadata: { where: 'letters' } });
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(lo.heard()).toBeGreaterThan(l0);
+    jo.close(); lo.close();
+  }, 15000);
+
   it("Home, the Inbox and Activity are Mark's alone; the household's pages are refused", async () => {
     const cookie = await login(loren);
     const home = await data(cookie, '/');
