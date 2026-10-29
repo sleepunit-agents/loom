@@ -71,7 +71,6 @@ export default function App() {
   const [url, setUrl] = useState(() => location.pathname + location.search);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   // A page with no copy kept yet: the last one dims under Orbit until it lands.
   const [waiting, setWaiting] = useState(false);
   const [savedAt, setSavedAt] = useState<string | undefined>();
@@ -105,7 +104,6 @@ export default function App() {
         if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
         setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
       }
-      setLoading(true);
       setWaiting(!have);
     }
     const r = await fetchView(to, have?.etag).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }));
@@ -114,7 +112,6 @@ export default function App() {
       if (r.data && r.etag && !r.redirect && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
       return;
     }
-    setLoading(false);
     if (r.status === 304) return;   // nothing new: what's shown is current
     if ((quiet || have) && !r.data && !r.redirect) return;   // a refresh that missed keeps what's shown
     if (!r.data && (r.redirect || r.status === 401)) { location.href = r.redirect ?? '/login'; return; }   // signed out: loom's own sign-in page
@@ -245,9 +242,9 @@ export default function App() {
         {ground === 'depth' && <Suspense fallback={null}><Depth /></Suspense>}
         {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} />}
         <div className="min-w-0">
-          {/* A phone's top bar stays put, frosted. A desktop has none (as 000h's own pages): the trail and the page's title
-              head the page and scroll away with it, so nothing slides under a band across the wash. */}
-          <header className="loom-top sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)] lg:static lg:border-0 lg:pt-8">
+          {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
+              with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
+          <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
               {chrome?.shell?.back ? null : accent && chrome?.shell?.household ? (
                 // An agent's own pages: its mark, with a chevron, is the way back to the household.
@@ -261,15 +258,14 @@ export default function App() {
               <div className="min-w-0 flex-1">
                 {chrome?.shell?.back && (
                   // Where this page sits (000h's breadcrumb): the page it's under, then this one.
-                  <Breadcrumb aria-label="You are here" className="[&_[data-slot=breadcrumb-page]]:text-lg [&_[data-slot=breadcrumb-page]]:font-semibold lg:[&_[data-slot=breadcrumb-page]]:text-sm lg:[&_[data-slot=breadcrumb-page]]:font-normal"><BreadcrumbList>
+                  <Breadcrumb aria-label="You are here" className="text-sm"><BreadcrumbList>
                     <BreadcrumbItem><BreadcrumbLink href={chrome.shell.back.href} onClick={(e) => { e.preventDefault(); go(chrome.shell!.back!.href); }}>{chrome.shell.back.label}</BreadcrumbLink></BreadcrumbItem>
                     <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
                   </BreadcrumbList></Breadcrumb>
                 )}
-                <h1 className={`${chrome?.shell?.back ? 'sr-only lg:not-sr-only' : ''} block truncate text-lg font-semibold leading-tight lg:mt-1 lg:font-[family-name:var(--font-display)] lg:text-4xl lg:tracking-tight`}>{title}</h1>
+                <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>
                 {head?.sub && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
-              {loading && <Spinner appearance="relay" aria-label="Loading" />}
               {accent && wide && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
             </div>
           </header>
