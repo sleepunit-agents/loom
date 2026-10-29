@@ -175,6 +175,10 @@ describe('scope', () => {
     }
     const nav = { cookie: owner, 'sec-fetch-dest': 'document' };
     expect(await (await fetch(`${base}/a/mark/p/bridgy`, { headers: nav })).text()).toContain('<div id="root">');
+    // A page load re-sent by a service worker may carry no Sec-Fetch-Dest; it still asks for HTML (Safari's).
+    const safari = { cookie: owner, accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' };
+    expect(await (await fetch(`${base}/a/mark`, { headers: safari })).text()).toContain('<div id="root">');
+    expect(await (await fetch(`${base}/passkeys`, { headers: safari })).text()).not.toContain('<div id="root">');
     // The app asks the same path for its data, and gets it.
     const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { ...nav, accept: 'application/json' } });
     expect(((await data.json()) as { view: string }).view).toBe('page');
