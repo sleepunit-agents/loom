@@ -47,6 +47,8 @@
 @import "@/styles/cojeev/breadcrumb.css";
 @import "@/styles/cojeev/avatar.css";
 @import "@/styles/cojeev/activity-feed.css";
+@import "@/styles/cojeev/table.css";
+@import "@/styles/cojeev/pagination.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -433,7 +435,7 @@
 body { background: var(--v-canvas); }
 /* A phone's top bar keeps a frosted ground; a desktop's sits on the wash with no rule under it. */
 .loom-top { background: color-mix(in oklab, var(--v-canvas) 84%, transparent); }
-@media (min-width: 1024px) { .loom-top { background: transparent; backdrop-filter: none; } }
+@media (min-width: 1024px) { .loom-top { background: color-mix(in oklab, var(--v-canvas) 55%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); } }
 /* The side panel floats on the wash: paper, translucent, a soft shadow, no rule beside it. */
 .loom-side.v-sidebar { background: color-mix(in oklab, var(--v-paper) 72%, transparent); color: var(--v-text); backdrop-filter: blur(18px);
   box-shadow: 0 8px 28px rgb(0 0 0 / .06); border: 1px solid color-mix(in oklab, var(--v-border) 55%, transparent); border-radius: 24px; --sidebar-foreground: var(--v-text); }
