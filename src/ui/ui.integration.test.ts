@@ -519,6 +519,11 @@ describe('loom UI over HTTP', () => {
     // The browser loads the app at that address first; that load must not spend the message the app then asks for.
     expect(await (await get(to, cookie)).text()).toContain('<div id="root">');
     expect((await view(to, cookie)).chrome.flash).toMatchObject({ ok: true, message: 'Stored.' });
+    // Approving from loom's own page (the Inbox, Home) as the piece: the page to come back to goes as loom's link, and
+    // the app stays put. Sent bare, the piece reads it as one of its own pages, and the app went to its Not found.
+    const fetchAct = (back: string) => post('/act/vault', cookie, { _csrf: csrf, _action: 'add', _path: back, name: 'k', value: 'v' }, { 'x-loom-fetch': '1' }).then((r) => r.json());
+    expect(await fetchAct('loom:inbox?i=abc')).not.toHaveProperty('go');
+    expect((await fetchAct('inbox')).go).toMatch(/^\/p\/vault/);   // off loom's page, into the piece's
   });
 
   it('pieces without a ui, with garbage, or too slow are left out, and the page still renders', async () => {

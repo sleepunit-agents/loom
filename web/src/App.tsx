@@ -134,7 +134,12 @@ export default function App() {
   // Pages without a ctx of their own (the household's home, a sheet) act and link as loom itself.
   const baseCtx: Ctx | null = ctx ?? (chrome ? { source: { id: 'loom', base: '/' }, path: url.replace(/^\//, '').split('?')[0], query: {}, csrf: chrome.csrf,
     agents: Object.fromEntries((chrome.shell?.agents ?? []).map((a) => [a.id, { label: a.label, bg: a.bg, fg: a.fg }])) } : null);
-  const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => send(a, f, c), go, wide, withSource: (source) => envFor({ ...c, source }) });
+  // Acting as another source (an ask's or a tile's piece, an Inbox item's), the page to come back to is still this one:
+  // it goes as loom's own link (loom:inbox?i=…), or the piece reads it as one of its pages and lands on its Not found.
+  // (An agent's page is loom's too, under /a/<agent>/: loom:a/art, loom:a/art/mind.)
+  const backAs = (c: Ctx) => (c.source.id !== 'loom' || c.path.startsWith('loom:') ? c.path
+    : `loom:${(c.source.base.slice(1) + c.path).replace(/\/$/, '')}`);
+  const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => send(a, f, c), go, wide, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
   const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
   // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
