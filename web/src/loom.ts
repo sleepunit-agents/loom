@@ -25,7 +25,7 @@ export type Block =
   | { type: string; [k: string]: unknown };
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; page?: string; href?: string; act?: Button }
 export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; level?: string; blocks: Block[] }
-export interface Page { title: string; intro?: string; sections: Section[] }
+export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
 export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; asks?: number; sub?: string }
 export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;

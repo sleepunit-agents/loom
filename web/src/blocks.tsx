@@ -193,6 +193,27 @@ function DetailsBlock({ b }: { b: Extract<Block, { type: 'details' }> }) {
   );
 }
 
+/** Pills that set one query value on this page, and an optional search over them (?q=), the other choices kept. */
+function Filters({ b }: { b: Extract<Block, { type: 'filters' }> }) {
+  const { ctx, go } = useEnv();
+  const here = pageHref(ctx.path, ctx.source);
+  const to = (q: Record<string, string>) => { const s = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== '')).toString(); return here + (s ? `?${s}` : ''); };
+  const [q, setQ] = useState(ctx.query.q ?? '');
+  const current = ctx.query[b.param] ?? '';
+  return (
+    <div className="grid gap-3">
+      {b.search !== undefined && (
+        <form role="search" onSubmit={(e) => { e.preventDefault(); go(to({ ...ctx.query, q })); }}>
+          <Input type="search" placeholder={b.search} aria-label={b.search} value={q} onChange={(e) => setQ(e.target.value)} />
+        </form>
+      )}
+      <nav aria-label="Filter" className="flex flex-wrap gap-2">{b.options.map((o) => (
+        <Button key={o.value || '_'} size="sm" variant={o.value === current ? 'default' : 'outline'} aria-current={o.value === current || undefined}
+          onClick={() => go(to({ ...ctx.query, [b.param]: o.value }))}>{o.label}</Button>))}</nav>
+    </div>
+  );
+}
+
 export function BlockView({ b }: { b: Block }) {
   switch (b.type) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{t.text}</p>; }
@@ -225,6 +246,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
     case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
     case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
+    case 'filters': return <Filters b={b as Extract<Block, { type: 'filters' }>} />;
     default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet: open the classic page to see it)</p>;
   }
 }
