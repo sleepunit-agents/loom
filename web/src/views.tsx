@@ -95,6 +95,10 @@ export function As({ source, children }: { source: Source; children: React.React
   return <EnvContext.Provider value={env.withSource(source)}>{children}</EnvContext.Provider>;
 }
 
+/** An agent's mark as a picture (for a component that takes an image, like the activity feed's avatar): its initial on its colour. */
+const markImage = (a: { label: string; bg: string; fg: string }) => `data:image/svg+xml,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="${a.bg}"/><text x="32" y="43" text-anchor="middle" font-family="Bricolage Grotesque, DM Sans, system-ui, sans-serif" font-size="30" font-weight="600" fill="${a.fg}">${a.label[0].replace(/[<&>"]/g, '')}</text></svg>`)}`;
+
 /** An agent's mark: 000h's avatar (blocks.tsx AgentAvatar). */
 export const Mark = ({ a, size = 40 }: { a: { label: string; bg: string; fg: string }; size?: number }) => <AgentAvatar a={a} size={size} className="shrink-0" />;
 
@@ -181,7 +185,8 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
             id: `${r.at}\0${r.text}`,
             title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{r.text}</Link></Arrive>,
             description: r.meta,
-            ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0] } } : {}),
+            // The feed's avatar wears the agent's own mark (its colour, its initial), so who did what reads at a glance.
+            ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0], avatarSrc: markImage(ctx.agents[r.agent]) } } : {}),
             ...(r.at ? { dateTime: r.at } : {}),   // its age is already in the meta line
           }))} />
         </Suspense>
