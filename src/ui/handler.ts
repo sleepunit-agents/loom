@@ -33,7 +33,7 @@
  * on stdin and are never logged, stored, or put in a URL; the one-time result
  * message is kept in memory under a random id for a minute.
  */
-import { changed, openStream } from './live.js';
+import { changed, openStream, type Sees } from './live.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -927,7 +927,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // The app's live stream (src/ui/live.ts): "something changed", and nothing else.
   if (pathname === '/events') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
-    return openStream(res, scopedEnv, opts.household?.().home ?? opts.contextDir, SECURITY_HEADERS);
+    const hh = opts.household?.();
+    const home = hh?.home ?? opts.contextDir;
+    // Whose a changed file is: under an agent's folder, that agent's; anything else, the household's.
+    const place = (file: string): Sees => {
+      const h = opts.household?.();
+      if (!h) return '*';
+      const abs = join(home, file);
+      const a = h.agents.find((x) => abs.startsWith(agentDir(h, x) + sep));
+      return a ? [a] : '*';
+    };
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: who.kind === 'session' ? who.cookie : `token:${who.kind}`, place });
   }
 
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
@@ -1075,7 +1085,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
     }
-    changed();   // whatever it did, every open app looks again
+    changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
     const from = source.id === 'loom' ? undefined : source.id;
