@@ -267,8 +267,9 @@ describe('loom UI over HTTP', () => {
     expect(html).toContain('<div id="root">');
     expect(html).not.toContain('shipped the ui');
     // Script only by src, from loom: no inline script, and the CSP allows neither inline nor eval.
-    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)];
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)];
     expect(scripts.length).toBeGreaterThan(0);
+    expect(scripts.length, 'every <script opens a closed tag this test reads').toBe((html.match(/<script\b/gi) ?? []).length);
     for (const [, attrs, body] of scripts) {
       expect(attrs).toMatch(/\bsrc="\/app\//);
       expect(body.trim()).toBe('');
