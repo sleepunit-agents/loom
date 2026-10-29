@@ -168,6 +168,12 @@ export default function App() {
               {chrome?.shell?.back ? (
                 <Button size="sm" variant="ghost" aria-label={`Back to ${chrome.shell.back.label}`} onClick={() => go(chrome.shell!.back!.href)}>
                   <AnimatedIcon name={iconFor("chevron-left")} size="sm" />{wide && <span>{chrome.shell.back.label}</span>}</Button>
+              ) : accent && chrome?.shell?.household ? (
+                // An agent's own pages: its mark, with a chevron, is the way back to the household.
+                <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
+                  <AnimatedIcon name={iconFor("chevron-left")} size="sm" />
+                  <span className="grid size-9 place-items-center rounded-xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
+                </button>
               ) : accent ? (
                 <span className="grid size-10 shrink-0 place-items-center rounded-2xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
               ) : null}
