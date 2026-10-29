@@ -1,17 +1,15 @@
 // A desktop's side of the page, as 000h's own docs have it (Jonathan, 2026-10-29): one panel down the whole side,
 // loom's mark and name at the top, Find under it (⌘K), the pages in groups, and who's signed in at the bottom.
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroupLabel, SidebarHeader, SidebarMenuBadge, SidebarMenuButton, SidebarMenuLabel } from '@/components/ui/sidebar';
 import type { AgentHead, AgentView, Chrome } from './loom';
 import { iconFor } from './safe';
-import { Appearance, type Mode } from './views';
 
 type Item = { label: string; href: string; current: boolean; count?: number };
 
-export function LoomSidebar({ chrome, head, agent, go, icon, mode, setMode }: {
+export function LoomSidebar({ chrome, head, agent, go, icon }: {
   chrome: Chrome; head?: AgentHead; agent?: AgentView; go: (href: string) => void; icon: (label: string) => string;
-  mode: Mode; setMode: (m: Mode) => void;
 }) {
   const s = chrome.shell;
   // ⌘K / Ctrl-K: Find, from anywhere.
@@ -67,18 +65,54 @@ export function LoomSidebar({ chrome, head, agent, go, icon, mode, setMode }: {
           </div>
         ))}
       </SidebarContent>
-      <SidebarFooter className="gap-3 border-t pt-3">
-        <Appearance mode={mode} setMode={setMode} />
-        {s && (
-          <div className="flex items-center gap-3 px-1">
-            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--v-pink)] text-sm font-semibold text-[color:var(--v-on-accent)]">{s.owner[0]?.toUpperCase()}</span>
-            <span className="grid min-w-0 flex-1 leading-tight"><span className="truncate text-sm font-medium">{s.owner}</span>
-              <a href="/passkeys" onClick={(e) => { e.preventDefault(); go('/passkeys'); }} className="text-xs opacity-70 no-underline hover:underline">Passkeys</a></span>
-            <form method="post" action="/logout"><input type="hidden" name="_csrf" value={chrome.csrf} />
-              <button type="submit" aria-label="Sign out" title="Sign out" className="grid size-9 place-items-center rounded-full hover:bg-[var(--v-beige)]"><AnimatedIcon name={iconFor('log-out')} size="sm" /></button></form>
-          </div>
-        )}
+      <SidebarFooter className="border-t pt-3">
+        {s && <AccountMenu owner={s.owner} sub={s.household ? 'Owner' : 'Signed in'} csrf={chrome.csrf} go={go} />}
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+/** Who's signed in, at the foot of the side: a button that opens their menu (Setup, Passkeys, Sign out) above it. */
+function AccountMenu({ owner, sub, csrf, go }: { owner: string; sub: string; csrf: string; go: (href: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const out = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    addEventListener('pointerdown', away); addEventListener('keydown', key);
+    box.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    return () => { removeEventListener('pointerdown', away); removeEventListener('keydown', key); };
+  }, [open]);
+  const item = (label: string, iconName: string, run: () => void) => (
+    <button type="button" role="menuitem" className="flex h-11 w-full items-center gap-3 rounded-xl px-3 text-left text-sm hover:bg-[var(--v-beige)] focus-visible:bg-[var(--v-beige)] focus-visible:outline-none"
+      onClick={() => { setOpen(false); run(); }}><AnimatedIcon name={iconFor(iconName)} size="sm" />{label}</button>
+  );
+  return (
+    <div ref={box} className="relative">
+      {open && (
+        <div role="menu" aria-label="Account" className="loom-menu absolute inset-x-0 bottom-[calc(100%+8px)] z-10 grid gap-0.5 rounded-2xl border p-1.5"
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+            e.preventDefault();
+            const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+            const at = items.indexOf(document.activeElement as HTMLElement);
+            items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus();
+          }}>
+          {item('Setup', 'settings', () => go('/setup'))}
+          {item('Passkeys', 'key-round', () => go('/passkeys'))}
+          <div className="my-1 border-t" />
+          {item('Sign out', 'log-out', () => out.current?.submit())}
+        </div>
+      )}
+      <form ref={out} method="post" action="/logout" hidden><input type="hidden" name="_csrf" value={csrf} /></form>
+      <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-3 rounded-2xl p-1.5 text-left hover:bg-[var(--v-beige)]">
+        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--v-pink)] text-sm font-semibold text-[color:var(--v-on-accent)]">{owner[0]?.toUpperCase()}</span>
+        <span className="grid min-w-0 flex-1 leading-tight"><span className="truncate text-sm font-medium">{owner}</span><span className="text-xs opacity-70">{sub}</span></span>
+        <AnimatedIcon name={iconFor('chevrons-up-down')} size="sm" />
+      </button>
+    </div>
   );
 }
