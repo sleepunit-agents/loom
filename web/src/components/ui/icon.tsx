@@ -257,6 +257,12 @@ export function getIconMotionFrame(name:string,progress:number,amplitude=1):Icon
   const p=Number.isFinite(progress)?Math.max(0,Math.min(1,progress)):1;
   const amount=Number.isFinite(amplitude)?Math.max(0,Math.min(3,amplitude)):1;
   if(!amount)return {};
+  // loom: one motion for every icon (Jonathan, 2026-10-29: "why does the passkey do the draw animation and some things
+  // tilt ... let's standardize"). 000h gives each icon its own (a key draws, a bell swings, settings turns); here
+  // every icon lifts a little and swells, then settles, and only a spinner spins.
+  if(name==="loader-circle"||name==="loader"||name==="refresh-cw")return {glyph:{transform:`rotate(${360*p} 12 12)`}};
+  const lift=Math.sin(Math.PI*p)*amount;
+  return {glyph:{transform:`translate(0 ${-1.5*lift}) translate(12 12) scale(${1+.08*lift}) translate(-12 -12)`}};
   if(iconRecipes[name])return recipeFrame(iconRecipes[name],p,amount);
   const pulse=Math.sin(Math.PI*p)*amount;
   const scale=(value:number)=>`translate(12 12) scale(${value}) translate(-12 -12)`;
@@ -446,8 +452,8 @@ function useIconFeedback(host:React.RefObject<SVGSVGElement|null>, enabled:boole
       stop();kind=next;
       const computed=getComputedStyle(svg);baseScale=computed.scale;baseRotate=computed.rotate;
       active=true;svg.dataset.iconFeedback=kind;
-      const seconds=duration!==undefined&&Number.isFinite(duration)?Math.max(.08,Math.min(duration,10)):next==="press"?.48:.62;
-      const timing=ease==="gentle"?[.22,.72,.22,1] as const:ease==="settle"?[...motionTokens.ease.settle] as const:ease??"linear";
+      const seconds=duration!==undefined&&Number.isFinite(duration)?Math.max(.08,Math.min(duration,10)):.7;   // loom: the same pace and curve as AnimatedIcon's
+      const timing=ease==="gentle"?[.45,0,.25,1] as const:ease==="settle"?[...motionTokens.ease.settle] as const:ease??"linear";
       lane.jump(0);lane.to(1,{duration:seconds,ease:timing},restore);
     };
     const enter=(event:PointerEvent)=>{if(event.pointerType!=="touch")start("hover")};
