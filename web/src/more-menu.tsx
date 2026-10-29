@@ -3,6 +3,7 @@
 // then the agents and the household. Its own chunk: it loads when the drawer opens.
 import { NavigationMenu, NavigationMenuCount, NavigationMenuItem, NavigationMenuLabel, NavigationMenuLink, NavigationMenuList } from '@/components/ui/navigation-menu';
 import { iconFor } from './safe';
+import { AgentAvatar } from './blocks';
 
 type Tab = { label: string; href: string; current: boolean; count?: number };
 type Agent = { id: string; label: string; bg: string; fg: string; href: string; asks?: number };
@@ -23,7 +24,7 @@ export default function MoreMenu({ pages, agents, here, icon, go }: {
       <span className="truncate">{label}</span><small className="shrink-0 text-[10px] font-medium opacity-70">{n} {n === 1 ? unit : `${unit}s`}</small>
     </NavigationMenuLabel>
   );
-  const mark = (a: Agent) => <span className="grid size-8 shrink-0 place-items-center rounded-xl text-sm font-semibold" style={{ background: a.bg, color: a.fg }}>{a.label[0]}</span>;
+  const mark = (a: Agent) => <AgentAvatar a={a} size={32} className="shrink-0" />;
   return (
     <NavigationMenu appearance="directory" aria-label="More pages">
       <NavigationMenuList>

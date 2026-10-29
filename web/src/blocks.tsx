@@ -2,6 +2,15 @@
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
 import { Arrive } from './arrive';
+import { Alert, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Card } from '@/components/ui/card';
+import { Item, ItemContent, ItemDescription, ItemTitle, ItemTrailing } from '@/components/ui/item';
+// Rare blocks' components load when a page has one: a link block (living link), a meter (progress).
+const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => ({ default: m.LivingLink })));
+const Progress = lazy(() => import('@/components/ui/progress').then((m) => ({ default: m.Progress })));
+const CodeBlock = lazy(() => import('@/components/ui/code-block').then((m) => ({ default: m.CodeBlock })));
+
 import { Checkbox } from '@/components/ui/checkbox';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -153,22 +162,25 @@ function EditorButton({ label, title, form, variant = 'outline' }: { label: stri
 
 function Row({ i }: { i: ListItem }) {
   const env = useEnv();
+  const agent = i.agent ? env.ctx.agents?.[i.agent] : undefined;
+  // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
   const body = (
-    <span className="min-w-0 flex-1">
-      <span className="flex items-center gap-2">
+    <ItemContent className="min-w-0 flex-1">
+      <ItemTitle className="flex min-w-0 items-center gap-2">
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
-        {i.agent && env.ctx.agents?.[i.agent] && <span className="grid size-5 shrink-0 place-items-center rounded-md text-[10px] font-semibold"
-          style={{ background: env.ctx.agents[i.agent].bg, color: env.ctx.agents[i.agent].fg }}>{env.ctx.agents[i.agent].label[0]}</span>}
+        {agent && <AgentAvatar a={agent} size={20} />}
         <span className="truncate font-medium">{i.text}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
-      </span>
-      {i.meta && <span className="block truncate text-sm opacity-70">{i.meta}</span>}
-    </span>
+      </ItemTitle>
+      {i.meta && <ItemDescription className="truncate">{i.meta}</ItemDescription>}
+    </ItemContent>
   );
   return (
-    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="flex min-h-11 min-w-0 items-center gap-3 py-2.5">
-      {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
-      {i.act && <ActButton b={i.act} />}
+    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0">
+      <Item as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
+        {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
+        {i.act && <ItemTrailing><ActButton b={i.act} /></ItemTrailing>}
+      </Item>
     </Arrive>
   );
 }
@@ -288,6 +300,25 @@ function Filters({ b }: { b: Extract<Block, { type: 'filters' }> }) {
   );
 }
 
+/** A link block (000h's living link): one of the page's own, or another site's. */
+function PageLink({ l }: { l: Extract<Block, { type: 'link' }> }) {
+  const { ctx, go } = useEnv();
+  const plain = <Link page={l.page} href={l.href} className="underline underline-offset-4">{l.text}</Link>;
+  if (l.href) return <Suspense fallback={plain}><LivingLink href={l.href} target="_blank" rel="noopener noreferrer">{l.text}</LivingLink></Suspense>;
+  const to = pageHref(l.page ?? '', ctx.source);
+  return <Suspense fallback={plain}><LivingLink href={to} direction="forward" onClick={(e: React.MouseEvent) => { if (e.metaKey || e.ctrlKey || to === '#') return; e.preventDefault(); go(to); }}>{l.text}</LivingLink></Suspense>;
+}
+
+/** An agent's mark as 000h's avatar: its initial on its colour, rounded. */
+export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style }: { a: { label: string; bg: string; fg: string }; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties }) {
+  return (
+    <Avatar shape={shape} className={className} aria-label={a.label}
+      style={{ '--c': a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
+      <AvatarFallback>{a.label[0]}</AvatarFallback>
+    </Avatar>
+  );
+}
+
 /** An empty collection says so (000h's empty), never a blank. */
 export function Nothing({ title, text, children }: { title: string; text?: string; children?: ReactNode }) {
   return (
@@ -302,8 +333,8 @@ export function BlockView({ b }: { b: Block }) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{t.text}</p>; }
     case 'prose': return <div className="prose whitespace-pre-wrap">{(b as { text: string }).text}</div>;
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
-      return <div className={`rounded-2xl border p-4 ${c.tone === 'bad' ? 'border-red-300 bg-red-50 dark:bg-red-950/30' : c.tone === 'warn' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30' : 'opacity-90'}`}>
-        {c.title && <p className="font-medium">{c.title}</p>}<p className="text-sm">{c.text}</p></div>; }
+      return <Alert variant={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'}>
+        <AlertBody>{c.title && <AlertTitle>{c.title}</AlertTitle>}<AlertDescription>{c.text}</AlertDescription></AlertBody></Alert>; }
     case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (
@@ -313,19 +344,21 @@ export function BlockView({ b }: { b: Block }) {
       </dl>);
     case 'stats': return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{(b as Extract<Block, { type: 'stats' }>).items.map((s) => (
-        <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-2xl"><Link page={s.page} className="block rounded-2xl border p-3"><span className="block text-xs opacity-60">{s.label}</span>
-          <span className="block text-xl font-semibold">{s.value}</span>{s.detail && <span className="block text-xs opacity-60">{s.detail}</span>}</Link></Arrive>))}</div>);
+        <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-[var(--r-card)]"><Card lift={s.page !== undefined} className="gap-0 p-0">
+          <Link page={s.page} className="block p-4 no-underline"><span className="block text-xs opacity-60">{s.label}</span>
+          <span className="block text-xl font-semibold">{s.value}</span>{s.detail && <span className="block text-xs opacity-60">{s.detail}</span>}</Link></Card></Arrive>))}</div>);
     case 'meter': return (
       <div className="grid gap-3">{(b as Extract<Block, { type: 'meter' }>).items.map((m) => (
-        <div key={m.label}><div className="flex justify-between text-sm"><span>{m.label}</span><span className="opacity-70">{Math.round(m.value * 100)}%</span></div>
-          <div className="mt-1 h-2 rounded-full bg-black/10 dark:bg-white/10"><div className={`h-2 rounded-full ${m.tone === 'bad' ? 'bg-red-500' : m.tone === 'warn' ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, m.value * 100)}%` }} /></div>
+        <div key={m.label} className="grid gap-1"><div className="flex justify-between text-sm"><span>{m.label}</span><span className="opacity-70">{Math.round(m.value * 100)}%</span></div>
+          <Suspense fallback={<div className="h-2 rounded-full bg-black/10" />}><Progress value={Math.round(Math.min(1, m.value) * 100)} aria-label={m.label} /></Suspense>
           {m.detail && <p className="text-xs opacity-60">{m.detail}</p>}</div>))}</div>);
     case 'status': return (
       <ul className="grid gap-2">{(b as Extract<Block, { type: 'status' }>).items.map((s) => (
         <Arrive as="li" key={s.label} k={`ss:${s.label}\0${s.text ?? ''}\0${s.tone ?? ''}`} className="flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${DOT[s.tone ?? 'muted']}`} /><span className="font-medium">{s.label}</span>
           <span className="opacity-70">{s.text}</span>{s.meta && <span className="ml-auto text-xs opacity-60">{s.meta}</span>}</Arrive>))}</ul>);
-    case 'link': { const l = b as Extract<Block, { type: 'link' }>; return <Link page={l.page} href={l.href} className="underline underline-offset-4">{l.text}</Link>; }
-    case 'code': return <pre className="overflow-x-auto rounded-xl bg-neutral-900 p-3 text-xs text-neutral-100">{(b as { text: string }).text}</pre>;
+    case 'link': return <PageLink l={b as Extract<Block, { type: 'link' }>} />;
+    case 'code': { const text = (b as { text: string }).text;
+      return <Suspense fallback={<pre className="overflow-x-auto rounded-xl p-3 text-xs">{text}</pre>}><CodeBlock code={text} /></Suspense>; }
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
     case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
     case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;

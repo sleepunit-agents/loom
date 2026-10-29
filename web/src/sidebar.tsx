@@ -5,6 +5,9 @@ import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroupLabel, SidebarHeader, SidebarMenuBadge, SidebarMenuButton, SidebarMenuLabel } from '@/components/ui/sidebar';
 import type { AgentHead, AgentView, Chrome } from './loom';
 import { iconFor } from './safe';
+import { AgentAvatar } from './blocks';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Kbd } from '@/components/ui/kbd';
 
 type Item = { label: string; href: string; current: boolean; count?: number };
 
@@ -25,9 +28,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       {t.count ? <SidebarMenuBadge>{t.count}</SidebarMenuBadge> : null}
     </SidebarMenuButton>
   );
-  const mark = (a: { label: string; bg: string; fg: string }) => (
-    <span className="grid size-6 shrink-0 place-items-center rounded-lg text-xs font-semibold" style={{ background: a.bg, color: a.fg }}>{a.label[0]}</span>
-  );
+  const mark = (a: { label: string; bg: string; fg: string }) => <AgentAvatar a={a} size={24} className="shrink-0" />;
   const groups: { label?: string; items: React.ReactNode[] }[] = [];
   if (s) {
     const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox');
@@ -71,7 +72,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       </SidebarHeader>
       <button type="button" onClick={() => go('/find')} className="loom-search mx-1 flex h-11 items-center gap-3 rounded-2xl border px-3 text-left text-sm">
         <AnimatedIcon name={iconFor('search')} size="sm" /><span className="flex-1 opacity-80">Find anything</span>
-        <kbd className="rounded-md border px-1.5 text-[11px] opacity-70">{mac ? '⌘' : 'Ctrl'} K</kbd>
+        <Kbd>{mac ? '⌘' : 'Ctrl'} K</Kbd>
       </button>
       <SidebarContent className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 py-2">
         {groups.map((g, n) => (
@@ -125,7 +126,7 @@ function AccountMenu({ owner, sub, csrf, go }: { owner: string; sub: string; csr
       <form ref={out} method="post" action="/logout" hidden><input type="hidden" name="_csrf" value={csrf} /></form>
       <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-3 rounded-2xl p-1.5 text-left hover:bg-[var(--v-beige)]">
-        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--v-pink)] text-sm font-semibold text-[color:var(--v-on-accent)]">{owner[0]?.toUpperCase()}</span>
+        <Avatar variant="pink" className="size-9 shrink-0"><AvatarFallback>{owner[0]?.toUpperCase()}</AvatarFallback></Avatar>
         <span className="grid min-w-0 flex-1 leading-tight"><span className="truncate text-sm font-medium">{owner}</span><span className="text-xs opacity-70">{sub}</span></span>
         <AnimatedIcon name={iconFor('chevrons-up-down')} size="sm" />
       </button>

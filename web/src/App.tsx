@@ -21,9 +21,12 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } f
 import { Spinner } from '@/components/ui/spinner';
 import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
-import { BlockView, EnvContext, Nothing, type Env } from './blocks';
+import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
+import { Alert, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
-import { type Ground, DashboardView, HouseHomeView, InboxView, SheetView, type Mode } from './views';
+import { type Ground, DashboardView, HouseHomeView, InboxView, type Mode } from './views';
+// The sheets (Scope, Places, Find, Setup) load when one opens.
+const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -75,8 +78,9 @@ export default function App() {
   const [more, setMore] = useState(false);
   // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup, kept in this browser.
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
-  // The ground: the contour field (on trial) or the plain wash; a choice in Setup, kept in this browser.
-  const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'depth' ? g : 'contours'; } catch { return 'contours'; } });
+  // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
+  // are a choice in Setup, kept in this browser.
+  const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
   const setGround = (g: Ground) => { setGroundState(g); try { localStorage.setItem('loom-ground', g); } catch { /* private window */ } };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
@@ -248,10 +252,10 @@ export default function App() {
                 // An agent's own pages: its mark, with a chevron, is the way back to the household.
                 <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
                   <AnimatedIcon name={iconFor("chevron-left")} size="sm" />
-                  <span className="grid size-9 place-items-center rounded-xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
+                  <AgentAvatar a={accent} size={36} />
                 </button>
               ) : accent ? (
-                <span className="grid size-10 shrink-0 place-items-center rounded-2xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
+                <AgentAvatar a={accent} size={40} className="shrink-0" />
               ) : null}
               <div className="min-w-0 flex-1">
                 {chrome?.shell?.back && (
@@ -271,7 +275,8 @@ export default function App() {
 
           {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden><Spinner appearance="orbit" className="scale-[2.2]" /></div>}
           <main aria-busy={waiting || undefined} className={`mx-auto max-w-5xl px-4 pb-44 pt-5 transition-opacity duration-300 lg:pb-10 ${waiting ? 'opacity-35' : ''}`}>
-            {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
+            {savedAt && <Alert variant="warn" role="status" className="mb-4"><AlertBody><AlertTitle>Can’t reach loom</AlertTitle>
+              <AlertDescription>This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</AlertDescription></AlertBody></Alert>}
             {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => location.reload()}>Try again</Button>}</CardContent></Card>}
             {!error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
@@ -282,7 +287,7 @@ export default function App() {
                   : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
                   : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
                     <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
-                  : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} />
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
