@@ -36,6 +36,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
@@ -302,6 +303,29 @@ function sameOrigin(req: IncomingMessage): boolean {
 function send(res: ServerResponse, status: number, type: string, body: string, extra: Record<string, string | string[]> = {}): void {
   res.writeHead(status, { 'content-type': type, ...SECURITY_HEADERS, ...extra });
   res.end(body);
+}
+
+/**
+ * A body in the best encoding the browser takes (br, else gzip), and the headers that say so. The app's built
+ * files are compressed once, at their best, and kept (Jonathan, 2026-10-29: "this site is sloooow": its script
+ * went out as 786 KB); a page's data is compressed quickly, when it's big enough to be worth it.
+ */
+const packed = new Map<string, { br: Buffer; gzip: Buffer }>();
+function encoded(req: IncomingMessage, body: Buffer, keep?: string): { body: Buffer; headers: Record<string, string> } {
+  const accepts = String(req.headers['accept-encoding'] ?? '');
+  const br = /\bbr\b/.test(accepts), gz = /\bgzip\b/.test(accepts);
+  if ((!br && !gz) || body.length < 1024) return { body, headers: { vary: 'accept-encoding' } };
+  let both = keep ? packed.get(keep) : undefined;
+  if (!both) {
+    const quality = keep ? 11 : 4;
+    const make = (which: 'br' | 'gzip') => (which === 'br'
+      ? brotliCompressSync(body, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: quality, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: body.length } })
+      : gzipSync(body, { level: keep ? 9 : 6 }));
+    if (!keep) { const which = br ? 'br' : 'gzip'; return { body: make(which), headers: { 'content-encoding': which, vary: 'accept-encoding' } }; }
+    both = { br: make('br'), gzip: make('gzip') };
+    packed.set(keep, both);
+  }
+  return br ? { body: both.br, headers: { 'content-encoding': 'br', vary: 'accept-encoding' } } : { body: both.gzip, headers: { 'content-encoding': 'gzip', vary: 'accept-encoding' } };
 }
 
 function redirect(res: ServerResponse, to: string, extra: Record<string, string | string[]> = {}): void {
@@ -790,8 +814,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const file = webFile(pathname.slice('/app/'.length));
     if (!file) return send(res, 404, 'text/plain', 'not found');
     const immutable = pathname.startsWith('/app/assets/');
-    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': WEB_TYPES[extname(file)] ?? 'application/octet-stream', 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' });
-    return void res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
+    const type = WEB_TYPES[extname(file)] ?? 'application/octet-stream';
+    // Fonts and images are compressed already; the script and the stylesheet are text, packed once (their names change with them).
+    const out = /^(text|application\/(javascript|json))|svg/.test(type) ? encoded(req, readFileSync(file), immutable ? file : undefined) : { body: readFileSync(file), headers: {} };
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': type, 'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache', ...out.headers });
+    return void res.end(req.method === 'HEAD' ? undefined : out.body);
   }
   if (pathname === '/app.js') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
@@ -1073,8 +1100,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
   const pieces = forOwner(allPieces, opts.ownerScope);
   const skippedNames = skipped.map((s) => s.piece);
-  const view = (kind: string, data: Record<string, unknown>, status = 200) =>
-    (asJson ? sendJson(res, status, { view: kind, ...data }) : app(status));
+  const view = (kind: string, data: Record<string, unknown>, status = 200) => {
+    if (!asJson) return app(status);
+    const text = JSON.stringify({ view: kind, ...data });
+    // The data's fingerprint (without the clock it was drawn at): an app that already has this answer gets a 304.
+    const etag = `W/"${createHash('sha256').update(JSON.stringify({ view: kind, ...data, now: undefined })).digest('base64url').slice(0, 22)}"`;
+    if (status === 200 && String(req.headers['if-none-match'] ?? '') === etag) {
+      res.writeHead(304, { ...SECURITY_HEADERS, etag, vary: 'accept-encoding' });
+      return void res.end();
+    }
+    const out = encoded(req, Buffer.from(text));
+    res.writeHead(status, { 'content-type': 'application/json', ...SECURITY_HEADERS, etag, ...out.headers });
+    res.end(out.body);
+  };
 
   // The shell's sheets (Scope, Places, Find, Setup): the app draws them as pages.
   if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup') {

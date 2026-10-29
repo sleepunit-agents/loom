@@ -747,6 +747,24 @@ describe('loom UI over HTTP', () => {
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  it('a page\'s data and the app\'s files go compressed, and an answer the app already has is a 304', async () => {
+    const cookie = await login();
+    const data = await fetch(`${base}/`, { headers: { cookie, accept: 'application/json', 'accept-encoding': 'br, gzip' } });
+    expect(data.headers.get('content-encoding')).toBe('br');
+    const etag = data.headers.get('etag')!;
+    expect(etag).toMatch(/^W\/"[A-Za-z0-9_-]{22}"$/);
+    expect(((await data.json()) as { view: string }).view).toBe('home');
+    const again = await fetch(`${base}/`, { headers: { cookie, accept: 'application/json', 'if-none-match': etag } });
+    expect([again.status, await again.text()]).toEqual([304, '']);
+    // Someone else's fingerprint is no way in: signed out is still the sign-in page.
+    expect((await fetch(`${base}/`, { headers: { accept: 'application/json', 'if-none-match': etag }, redirect: 'manual' })).status).toBe(303);
+    const js = /src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
+    for (const [enc, want] of [['br', 'br'], ['gzip', 'gzip'], ['identity', null]] as const) {
+      const r = await fetch(`${base}/app/${js}`, { headers: { 'accept-encoding': enc } });
+      expect([r.status, r.headers.get('content-encoding'), r.headers.get('vary')], enc).toEqual([200, want, 'accept-encoding']);
+    }
+  });
+
   it('a burst of page loads runs at most a few pieces at once', async () => {
     const log = join(bin, 'log');
     await piece(bin, 'busy', `case "$1 $2" in
@@ -756,7 +774,8 @@ esac`);
     const cookie = await login();
     await getJson('/p/busy', cookie);
     await writeFile(log, '');
-    await Promise.all(Array.from({ length: 18 }, () => getJson('/p/busy', cookie).then((r) => r.text())));
+    // Each its own query: the same page twice is one run now (a piece's pages are kept briefly), and this is about runs.
+    await Promise.all(Array.from({ length: 18 }, (_, i) => getJson(`/p/busy?n=${i}`, cookie).then((r) => r.text())));
     const events = (await readFile(log, 'utf-8')).trim().split('\n').map((l) => ({ d: l[0] === '+' ? 1 : -1, t: BigInt(l.slice(2)) }))
       .sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.d - b.d));
     let now = 0; let peak = 0;

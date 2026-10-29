@@ -31,6 +31,12 @@ export const ACT_TIMEOUT_MS = 15_000;
 export const PIECE_MAX_BYTES = 512 * 1024;
 /** Longer than the page's 30s refresh, so an open tab doesn't re-run every piece each time. */
 export const CACHE_MS = 45_000;
+/**
+ * Past CACHE_MS a page still gets the last answer at once while a fresh one runs behind it (stale while
+ * revalidating): a page never waits on every piece because a window ran out (Jonathan, 2026-10-29: "this site is
+ * sloooow"; an agent's Today took 2.3s on the load after expiry, 40ms otherwise). Past STALE_MAX_MS it waits.
+ */
+export const STALE_MAX_MS = 10 * 60_000;
 /** After the piece exits, how long to wait for its stdout to close (a background helper may hold it). */
 const DRAIN_MS = 200;
 /** Env loom never hands to a piece. */
@@ -69,14 +75,25 @@ export interface PieceSkip {
 
 type Answer = { ok: true; stdout: string } | { ok: false; reason: string };
 type ManifestResult = PieceInfo | PieceSkip;
-interface CacheEntry { at: number; result: Promise<ManifestResult> }
+interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
 
 export function clearPieceCache(path?: string): void {
-  if (path === undefined) cache.clear();
-  // Every scope's answer for that piece.
-  else for (const k of [...cache.keys()]) if (k.startsWith(`${path}\0`)) cache.delete(k);
+  if (path === undefined) { cache.clear(); pages.clear(); return; }
+  // Every scope's answer for that piece, and every page of it.
+  for (const m of [cache, pages] as Map<string, unknown>[]) for (const k of [...m.keys()]) if (k.startsWith(`${path}\0`)) m.delete(k);
 }
+
+/**
+ * A piece's pages, kept briefly the same way (stale while revalidating): opening one again shows the last copy
+ * at once and asks the piece behind it, instead of starting its process on every visit (0.3-0.8s each). Keyed
+ * by who's looking, the scope, the version, the path and the query; an action on the piece drops them all.
+ */
+export const PAGE_FRESH_MS = 5_000;
+export const PAGE_STALE_MS = 5 * 60_000;
+const PAGES_MAX = 500;
+interface PageEntry { at: number; result: Promise<Page | string>; refreshing?: boolean }
+const pages = new Map<string, PageEntry>();
 
 export function pieceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
@@ -213,6 +230,18 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
   const key = `${path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(path)}`;
   const hit = cache.get(key);
   if (hit && nowMs - hit.at < CACHE_MS) return hit.result;
+  if (hit && nowMs - hit.at < STALE_MAX_MS) {
+    if (!hit.refreshing) {
+      hit.refreshing = true;
+      const next = fetchManifest(piece, path, env);
+      void Promise.all([next, hit.result]).then(([fresh, last]) => {
+        // A piece that fails this once keeps its last good answer (until that's too old); it's asked again next time.
+        if ('manifest' in fresh || !('manifest' in last)) { if (cache.get(key) === hit) cache.set(key, { at: Date.now(), result: next }); }
+        else hit.refreshing = false;
+      });
+    }
+    return hit.result;
+  }
   // Cache the promise itself: concurrent page loads share one run.
   const result = fetchManifest(piece, path, env);
   cache.set(key, { at: nowMs, result });
@@ -250,11 +279,32 @@ export async function piecePage(
   if (info.manifest.legacy) {
     return path === '' ? { title: info.piece, sections: info.manifest.legacy } : { title: 'Not found', sections: [] };
   }
-  const r = await ask(info.path, ['ui', 'page', '--json'], withGrant(env, info.path, undefined), { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }) });
-  if (!r.ok) return r.reason;
-  const parsed = json(r.stdout);
-  if (parsed === undefined) return 'not JSON';
-  return parsePage(parsed);
+  const run = async (): Promise<Page | string> => {
+    const r = await ask(info.path, ['ui', 'page', '--json'], withGrant(env, info.path, undefined), { stdin: JSON.stringify({ path, query, ...(caller ? { caller } : {}) }) });
+    if (!r.ok) return r.reason;
+    const parsed = json(r.stdout);
+    if (parsed === undefined) return 'not JSON';
+    return parsePage(parsed);
+  };
+  const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
+  const now = Date.now();
+  const hit = pages.get(key);
+  if (hit && now - hit.at < PAGE_FRESH_MS) return hit.result;
+  if (hit && now - hit.at < PAGE_STALE_MS) {
+    if (!hit.refreshing) {
+      hit.refreshing = true;
+      const next = run();
+      // Only a page replaces a page: a failed refresh keeps the last one, and is tried again next time.
+      void next.then((fresh) => { if (typeof fresh !== 'string') { if (pages.get(key) === hit) pages.set(key, { at: Date.now(), result: next }); } else hit.refreshing = false; });
+    }
+    return hit.result;
+  }
+  const result = run();
+  pages.set(key, { at: now, result });
+  // A failure isn't kept; and the oldest go first past PAGES_MAX.
+  void result.then((r) => { if (typeof r === 'string' && pages.get(key)?.result === result) pages.delete(key); });
+  if (pages.size > PAGES_MAX) pages.delete(pages.keys().next().value!);
+  return result;
 }
 
 /** Run an action on a piece. Field values go on stdin only. */

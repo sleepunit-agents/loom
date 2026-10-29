@@ -1,6 +1,6 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { PasskeyAdd, PushSwitch } from './passkeys';
@@ -83,13 +83,30 @@ export default function App() {
 
   const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => [...x, { ...n, id: Date.now() + Math.random() }]), []);
 
+  // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
+  // asked behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow").
+  const kept = useRef(new Map<string, { etag?: string; data: View }>());
+  const showing = useRef(url);
   const load = useCallback(async (to: string, push: boolean, quiet = false) => {
-    if (!quiet) setLoading(true);
-    const r = await fetchView(to).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string }));
+    const have = kept.current.get(to);
+    if (!quiet) {
+      showing.current = to;
+      if (have) {
+        if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
+        setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
+      }
+      setLoading(true);
+    }
+    const r = await fetchView(to, have?.etag).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }));
+    if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
+      if (r.data && r.etag && !r.redirect && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
+      return;
+    }
     setLoading(false);
-    if (quiet && !r.data) return;   // a refresh that missed keeps what's shown
+    if (r.status === 304) return;   // nothing new: what's shown is current
+    if ((quiet || have) && !r.data && !r.redirect) return;   // a refresh that missed keeps what's shown
     if (!r.data && (r.redirect || r.status === 401)) { location.href = r.redirect ?? '/login'; return; }   // signed out: loom's own sign-in page
-    if (r.redirect) { to = r.redirect; if (!push) history.replaceState(null, '', to); }   // loom moved it (/mind → an agent's Mind): show where it landed
+    if (r.redirect) { to = r.redirect; if (!push || have) history.replaceState(null, '', to); }   // loom moved it (/mind → an agent's Mind): show where it landed
     if (!r.data) {
       if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
       setSavedAt(undefined); setUrl(to);
@@ -97,12 +114,15 @@ export default function App() {
       return;
     }
     // A one-time message (?_flash=, after a form's post) is shown once, then leaves the address.
-    if (/[?&]_flash=/.test(to)) { const u = new URL(to, location.href); u.searchParams.delete('_flash'); to = u.pathname + u.search; if (!push) history.replaceState(null, '', to); }
+    const once = /[?&]_flash=/.test(to);
+    if (once) { const u = new URL(to, location.href); u.searchParams.delete('_flash'); to = u.pathname + u.search; if (!push) history.replaceState(null, '', to); }
     if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
+    showing.current = to;
     setError(null); setData(r.data); setUrl(to); setSavedAt(r.savedAt);
+    if (r.etag && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
     const flash = r.data.chrome?.flash;
     if (flash) say(flash);
-    if (!quiet) window.scrollTo({ top: 0 });
+    if (!quiet && !have) window.scrollTo({ top: 0 });
   }, [say]);
 
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);

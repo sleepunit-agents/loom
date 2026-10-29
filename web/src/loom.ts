@@ -64,13 +64,14 @@ export function pageHref(link: string, source: Source): string {
 
 /** A view; `savedAt` when loom couldn't be reached and the service worker answered with its kept copy (src/ui/pwa.ts). */
 /** A view; `redirect` when loom sent it elsewhere (the address to show, or the sign-in page to load whole). */
-export async function fetchView(url: string): Promise<{ status: number; data?: View; redirect?: string; savedAt?: string }> {
-  const r = await fetch(url, { headers: { accept: 'application/json' }, credentials: 'same-origin' });
+export async function fetchView(url: string, etag?: string): Promise<{ status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }> {
+  const r = await fetch(url, { headers: { accept: 'application/json', ...(etag ? { 'if-none-match': etag } : {}) }, credentials: 'same-origin' });
+  if (r.status === 304) return { status: 304, etag };
   const landed = r.redirected ? new URL(r.url) : null;
   const redirect = landed && landed.origin === location.origin ? landed.pathname + landed.search : undefined;
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) return { status: r.status, redirect: redirect ?? (landed ? r.url : undefined) };
   if (redirect) return { status: r.status, data: (await r.json()) as View, redirect, savedAt: r.headers.get('x-loom-saved-at') ?? undefined };
-  return { status: r.status, data: (await r.json()) as View, savedAt: r.headers.get('x-loom-saved-at') ?? undefined };
+  return { status: r.status, data: (await r.json()) as View, savedAt: r.headers.get('x-loom-saved-at') ?? undefined, etag: r.headers.get('etag') ?? undefined };
 }
 
 export interface ActResult { ok: boolean; message: string; from?: string; keep?: boolean; undo?: Flash['undo']; go?: string }
