@@ -9,8 +9,9 @@ export type IconMotion = "auto" | "tremor" | "draw" | "spin" | "bounce" | "valid
 export type IconMotionEase="gentle"|"settle"|"linear"|readonly [number,number,number,number];
 export type AnimatedIconProps = Omit<IconProps,"draw"|"feedback"> & { preset?:IconMotion; active?:boolean; amplitude?:number; duration?:number; ease?:IconMotionEase };
 // loom: 000h's .55s with a front-loaded curve drew an icon in ~110ms, which read as a flicker (Jonathan, 2026-10-29:
-// "it flashes like its broken"). Slower, and eased at both ends, so the motion is something you can see.
-const ICON_S=1.1;
+// "it flashes like its broken"). Eased at both ends, and long enough to see; every icon's motion is the same lift
+// (components/ui/icon.tsx getIconMotionFrame).
+const ICON_S=.7;
 export function AnimatedIcon({name,preset="auto",active,amplitude=1,duration,ease="gentle",className,size="default",children,...props}:AnimatedIconProps) {
   const host=React.useRef<HTMLSpanElement>(null);
   const {quiet}=useChoreography();
