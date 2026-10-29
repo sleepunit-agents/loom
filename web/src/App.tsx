@@ -342,7 +342,8 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
     </Card>
   );
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+    // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
+    <div className={`grid grid-cols-[minmax(0,1fr)] gap-4 ${side.length ? 'lg:grid-cols-[minmax(0,1fr)_20rem]' : ''}`}>
       <div className="grid min-w-0 content-start gap-4">
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
         {page.sections.length === 0 && (page.title === 'Not found'
