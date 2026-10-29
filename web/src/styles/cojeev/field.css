@@ -1,0 +1,47 @@
+@layer cojeev-states {
+[data-slot="field"].-invalid .v-help {
+  color: var(--v-danger-ink);
+}
+[data-slot="field"]:has(:disabled) .v-label {
+  color: var(--v-disabled-ink);
+}
+[data-slot="field"].-invalid :is(.v-input, .v-textarea) {
+  box-shadow: inset 0 0 0 2px var(--v-danger);
+  background: color-mix(in oklab, var(--v-danger) 6%, var(--input));
+}
+[data-slot="field"].-ok .v-input {
+  box-shadow: inset 0 0 0 2px var(--v-olive);
+}
+[data-slot="field"].-ok .v-help {
+  color: var(--v-olive-ink);
+}
+:root[data-mode="dark"] [data-slot="field"].-invalid .v-input {
+  background: color-mix(in oklab, var(--v-danger) 14%, var(--v-canvas));
+}
+[data-slot="field"]:is(.-error, [data-invalid]) .v-input {
+  box-shadow: inset 0 0 0 1.5px var(--v-danger-fill);
+  background: var(--v-danger-soft);
+}
+[data-slot="field"]:is(.-error, [data-invalid]) .v-input:focus-within {
+  box-shadow: inset 0 0 0 2px var(--v-danger-fill);
+}
+
+[data-slot="field"].-invalid .v-input { border: 1.5px solid var(--v-danger); }
+[data-slot="field"], [data-slot="field-group"] { min-width:0; }
+[data-slot="field-description"] { overflow-wrap:anywhere; line-height:1.5; }
+
+/* Composition is independent of the control's surface. Existing omissions
+   retain the original vertical field; labels remain native and visible. */
+[data-slot="field"][data-layout="inline"] { grid-template-columns:minmax(120px,.8fr) minmax(0,1.4fr); gap:var(--s-2) var(--s-6); align-items:start; }
+[data-slot="field"][data-layout="inline"] > [data-slot="field-label"] { grid-column:1; grid-row:1; padding-top:var(--s-3); }
+[data-slot="field"][data-layout="inline"] > :is(.v-input,.v-igroup,.v-textarea) { grid-column:2; grid-row:1 / span 2; }
+[data-slot="field"][data-layout="inline"] > [data-slot="field-description"] { grid-column:1; margin:0; }
+[data-slot="field"][data-layout="inline"] > [role="alert"] { grid-column:2; }
+[data-slot="field"][data-layout="integrated"] { padding:var(--s-5); border-radius:min(var(--v-control-radius,20px),20px); border:1px solid var(--v-border); gap:var(--s-2); }
+[data-slot="field"][data-layout="integrated"][data-appearance="editorial"] { border:0; border-radius:0; padding-inline:0; }
+@media(max-width:560px) {
+  [data-slot="field"][data-layout="inline"] { grid-template-columns:minmax(0,1fr); }
+  [data-slot="field"][data-layout="inline"] > :is([data-slot="field-label"],.v-input,.v-igroup,.v-textarea,[data-slot="field-description"]) { grid-column:auto; grid-row:auto; padding-top:0; }
+}
+
+}
