@@ -62,11 +62,12 @@ export function pageHref(link: string, source: Source): string {
 
 // ---- reaching loom --------------------------------------------------------------------------------
 
-export async function fetchView(url: string): Promise<{ status: number; data?: View; redirect?: string }> {
+/** A view; `savedAt` when loom couldn't be reached and the service worker answered with its kept copy (src/ui/pwa.ts). */
+export async function fetchView(url: string): Promise<{ status: number; data?: View; redirect?: string; savedAt?: string }> {
   const r = await fetch(url, { headers: { accept: 'application/json' }, credentials: 'same-origin', redirect: 'manual' });
   if (r.type === 'opaqueredirect' || r.status === 0) return { status: 302, redirect: url };
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) return { status: r.status };
-  return { status: r.status, data: (await r.json()) as View };
+  return { status: r.status, data: (await r.json()) as View, savedAt: r.headers.get('x-loom-saved-at') ?? undefined };
 }
 
 export interface ActResult { ok: boolean; message: string; from?: string; keep?: boolean; undo?: Flash['undo']; go?: string }
@@ -77,7 +78,8 @@ export async function act(ctx: Ctx, csrf: string, action: string, fields: Record
   const r = await fetch(act ?? ctx.source.act ?? `/act/${ctx.source.id}`, {
     method: 'POST', credentials: 'same-origin', body,
     headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
-  });
+  }).catch(() => undefined);
+  if (!r) return { ok: false, message: 'Can’t reach loom: nothing was sent. Try again when there’s a connection.' };
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) {
     return { ok: false, message: r.status === 403 ? 'That form is stale: reload and try again.' : `loom answered ${r.status}` };
   }

@@ -384,7 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator && window.isSecureContext) {
     if (location.pathname.startsWith('/login')) {
       if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('forget');
-      if (window.caches) caches.keys().then((ks) => ks.forEach((k) => { if (k.endsWith('-pages')) caches.delete(k); }));
+      if (window.caches) caches.keys().then((ks) => ks.forEach((k) => { if (k.endsWith('-pages') || k.endsWith('-views')) caches.delete(k); }));
     } else navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
   if (document.body.dataset.offlineFrom) offline(document.body.dataset.offlineFrom);
