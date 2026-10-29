@@ -1,6 +1,6 @@
 # loom's page as an app: React, shadcn and 000h
 
-*2026-10-28. Status: **proposed**. Jonathan, terminal, after a shootout of
+*2026-10-28. Status: **accepted** (Jonathan, terminal, 2026-10-28: "Agreed completely"). Jonathan, terminal, after a shootout of
 three builds of Art's Houses tab on real data (plain shadcn, shadcn with
 Animate UI, shadcn with 000h, then 000h as an app with a bottom dock and
 pop-ups): "this fucks hahaha. I love it so much. Let's do it for real." Earlier
@@ -129,8 +129,10 @@ been used.
 - **Server rendering** for the first paint: not at first (loom is behind a
   sign-in, on a LAN or a tailnet, and the app shell is cached by the service
   worker). Revisit if first loads feel slow on a phone.
-- **loom's own look inside 000h**: agent marks and colors carry over; whether
-  loom keeps any of its current palette (the lime thread) or takes 000h's whole
-  is a call to make on the real pages.
+- **loom's own look inside 000h**: 000h's look, whole. Each agent's pages take
+  their own accent from 000h's palette (Jonathan, accepting: "agents could get
+  different accents if you guys like the 000h options"): an agent's mark color
+  becomes one of 000h's accents, and its pages, its dock and its sheets wear it.
+  Which accent goes to which agent is chosen on its Setup, as its color is now.
 - **Animate UI**, the shootout's runner-up: not used. Its licence is MIT with
   the Commons Clause, and 000h covers the same components, plain MIT.
