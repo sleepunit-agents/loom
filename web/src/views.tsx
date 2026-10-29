@@ -3,6 +3,7 @@
 import { useContext, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
+import { iconFor } from './safe';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,7 +48,7 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
           <AgentState status="needs-input" size="sm" />
           <span className="min-w-0 flex-1"><span className="block font-medium">{home.firstNeed ?? `${home.needs} need${home.needs === 1 ? 's' : ''} you`}</span>
             <span className="block text-sm opacity-70">In the Inbox</span></span>
-          <AnimatedIcon name="chevron-right" size="sm" />
+          <AnimatedIcon name={iconFor("chevron-right")} size="sm" />
         </button>
       )}
       <div className="grid gap-4 md:grid-cols-2">
@@ -200,7 +201,7 @@ export function SheetView({ which, chrome, q, found, mode, setMode }: { which: s
   const [query, setQuery] = useState(q);
   const tile = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
     <button key={p.href} className="grid gap-1 rounded-3xl border p-4 text-left" onClick={() => go(p.href)}>
-      <span className="flex items-center gap-2"><AnimatedIcon name={ICONS[p.label] ?? 'circle'} />{p.tone && <span className={`size-2 rounded-full ${DOT[p.tone]}`} />}</span>
+      <span className="flex items-center gap-2"><AnimatedIcon name={iconFor(ICONS[p.label] ?? 'circle')} />{p.tone && <span className={`size-2 rounded-full ${DOT[p.tone]}`} />}</span>
       <span className="font-medium">{p.label}</span>
       {(p.stat ?? p.count) !== undefined && <span className="text-sm opacity-70">{p.stat ?? p.count}</span>}
     </button>
@@ -245,7 +246,7 @@ export function SheetView({ which, chrome, q, found, mode, setMode }: { which: s
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
-        <button className="flex items-center gap-3 rounded-3xl border p-4 text-left" onClick={() => go('/')}><AnimatedIcon name="house" /><span className="font-medium">The household</span></button>
+        <button className="flex items-center gap-3 rounded-3xl border p-4 text-left" onClick={() => go('/')}><AnimatedIcon name={iconFor("house")} /><span className="font-medium">The household</span></button>
         {s.agents.map((a) => (
           <button key={a.id} className="flex items-center gap-3 rounded-3xl border p-4 text-left" onClick={() => go(a.href)}>
             <Mark a={a} /><span className="min-w-0 flex-1"><span className="block font-medium">{a.label}</span>{a.sub && <span className="block text-sm opacity-70">{a.sub}</span>}</span>
@@ -268,6 +269,6 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
 
 const ICONS: Record<string, string> = {
   Knowledge: 'book-open', People: 'users', Mind: 'brain', Activity: 'activity', Bridges: 'messages-square', Clock: 'alarm-clock', Boxes: 'server',
-  Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'fingerprint', Machine: 'cpu',
+  Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'key-round', Machine: 'cpu',
 };
 export type { Env };

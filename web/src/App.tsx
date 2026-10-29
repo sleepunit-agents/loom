@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
+import { Boundary, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
@@ -119,7 +120,7 @@ export default function App() {
   const phoneTabs = nav.tabs.length > 5 ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <AnimatedIcon name={icon(t.label)} active={t.current} />,
+    value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />,
     ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
@@ -142,7 +143,7 @@ export default function App() {
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
               {chrome?.shell?.back ? (
                 <Button size="sm" variant="ghost" aria-label={`Back to ${chrome.shell.back.label}`} onClick={() => go(chrome.shell!.back!.href)}>
-                  <AnimatedIcon name="chevron-left" size="sm" />{wide && <span>{chrome.shell.back.label}</span>}</Button>
+                  <AnimatedIcon name={iconFor("chevron-left")} size="sm" />{wide && <span>{chrome.shell.back.label}</span>}</Button>
               ) : accent ? (
                 <span className="grid size-10 shrink-0 place-items-center rounded-2xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
               ) : null}
@@ -158,7 +159,7 @@ export default function App() {
           <main className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
             {error && <Card><CardContent className="py-6"><p>{error}</p><Button className="mt-3" variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open the classic page</Button></CardContent></Card>}
             {!error && data && env && (
-              <EnvContext.Provider value={env}>
+              <EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
@@ -166,7 +167,7 @@ export default function App() {
                   : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
                   : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} />
                   : <NotYet kind={data.view} url={url} />}
-              </EnvContext.Provider>
+              </Boundary></EnvContext.Provider>
             )}
             {!error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>
@@ -184,7 +185,7 @@ export default function App() {
         <DrawerContent>
           <DrawerHeader><DrawerTitle>More</DrawerTitle>{head && <DrawerDescription>{head.label}'s other pages</DrawerDescription>}</DrawerHeader>
           <div className="grid grid-cols-2 gap-2">
-            {moreTabs.map((t) => <Button key={t.href} variant="secondary" className="h-14 justify-start gap-3" onClick={() => { setMore(false); go(t.href); }}><AnimatedIcon name={icon(t.label)} /> {t.label}</Button>)}
+            {moreTabs.map((t) => <Button key={t.href} variant="secondary" className="h-14 justify-start gap-3" onClick={() => { setMore(false); go(t.href); }}><AnimatedIcon name={iconFor(icon(t.label))} /> {t.label}</Button>)}
           </div>
           {chrome?.shell && chrome.shell.agents.length > 1 && (
             <div className="grid gap-2">
@@ -195,7 +196,7 @@ export default function App() {
                   {a.asks ? <span className="ml-auto text-xs opacity-70">{a.asks} waiting</span> : null}
                 </Button>
               ))}
-              <Button variant="ghost" className="justify-start gap-3" onClick={() => { setMore(false); go('/'); }}><AnimatedIcon name="house" /> The household</Button>
+              <Button variant="ghost" className="justify-start gap-3" onClick={() => { setMore(false); go('/'); }}><AnimatedIcon name={iconFor("house")} /> The household</Button>
             </div>
           )}
           <div className="grid gap-2"><p className="text-sm opacity-70">Appearance</p><Appearance mode={mode} setMode={setMode} /></div>
