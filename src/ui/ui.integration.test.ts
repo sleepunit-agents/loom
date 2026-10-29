@@ -124,12 +124,13 @@ describe('the vocabulary pieces send', () => {
     expect(splitPage('task/t-1?tab=x')).toEqual({ core: false, path: 'task/t-1', query: { tab: 'x' } });
     expect(splitPage('loom:people/pat')).toEqual({ core: true, path: 'people/pat', query: {} });
     expect(splitPage('?_flash=1')).toBeNull();
-    // Into loom, only loom's own pages.
-    for (const bad of ['loom:p/other/x', 'loom:act/loom', 'loom:login', 'loom:logout', 'loom:pieces.json']) expect(splitPage(bad)).toBeNull();
-    for (const ok of ['loom:', 'loom:mind?category=user', 'loom:people', 'loom:people/pat', 'loom:memory/user/a-1']) expect(splitPage(ok)).not.toBeNull();
+    // Into loom, only pages: loom's own, and another piece's as loom:p/<piece>/<path>.
+    for (const bad of ['loom:p/', 'loom:p/Other/x', 'loom:act/loom', 'loom:act/tasks', 'loom:p/tasks.json', 'loom:login', 'loom:logout', 'loom:pieces.json']) expect(splitPage(bad)).toBeNull();
+    for (const ok of ['loom:p/other/x', 'loom:p/tasks', 'loom:p/tasks/task/t-1682', 'loom:', 'loom:mind?category=user', 'loom:people', 'loom:people/pat', 'loom:memory/user/a-1']) expect(splitPage(ok)).not.toBeNull();
     expect(pageHref('task/t-1', pieceSource('tasks'))).toBe('/p/tasks/task/t-1');
     expect(pageHref('', pieceSource('tasks'))).toBe('/p/tasks');
     expect(pageHref('loom:people/pat', pieceSource('tasks'))).toBe('/people/pat');
+    expect(pageHref('loom:p/tasks/task/t-1682', pieceSource('shuttle'))).toBe('/p/tasks/task/t-1682');
     expect(pageHref('loom:', pieceSource('tasks'))).toBe('/');
   });
 

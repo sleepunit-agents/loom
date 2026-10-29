@@ -148,8 +148,12 @@ that ignores it keeps working. Outside a household there's no `caller`.
   schedule, and loom's own lanes). The household's rule (2026-10-28): what's
   shaped like a list of agents belongs to each agent, not the household. A link on such a page can reach the
   piece's own pages elsewhere: `agent:<id>[/<path>]` (this piece's tab on that
-  agent's pages) and `household:<path>` (this piece's household pages). Never
-  another piece's.
+  agent's pages) and `household:<path>` (this piece's household pages).
+- **Links into loom** are `loom:<page>`: loom's own pages (`loom:inbox`,
+  `loom:people/<slug>`, `loom:knowledge/<slug>`…) and another piece's page,
+  `loom:p/<piece>[/<path>]` (a conversation naming the task it closed). Only
+  pages: never an action, sign-in or a JSON endpoint, and the piece linked to
+  still decides who may see it.
 - **`tile`** is one summary on Home: a label, a value, an optional detail line
   and tone, and the page it opens.
 - **`owners`** (optional, `2`): the piece understands agent owners
