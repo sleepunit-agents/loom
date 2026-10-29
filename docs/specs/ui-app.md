@@ -110,7 +110,8 @@ been used.
    is kind of making me nuts because it's easy for me to do shit on the pwa and
    just lose the cookie. Let's go ahead and swap to this thing full time for now.
    You can remove all back to classic stuff too"). Every browser opening a page
-   (`Sec-Fetch-Dest: document`) gets the app; the `loom_view` cookie and `?ui=`
+   (`Sec-Fetch-Dest: document`, or `Accept` naming `text/html`, which is what a
+   service worker's re-sent page load carries) gets the app; the `loom_view` cookie and `?ui=`
    are gone. Passkeys and the sign-in pages stay loom's HTML; a script, a test or
    curl asking without `Accept: application/json` still gets the old page.
 6. **The old renderer goes** a release later: `render.ts` keeps only the login

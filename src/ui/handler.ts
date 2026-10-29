@@ -1061,10 +1061,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const view = (kind: string, data: Record<string, unknown>, render: () => string, status = 200) =>
     (asJson ? sendJson(res, status, { view: kind, ...data }) : html(render(), status));
   // A browser opening a page gets the app (docs/specs/ui-app.md; the default since Jonathan, 2026-10-29: "swap to
-  // this thing full time"), which asks this same path for the JSON. Only a browser's navigation (Sec-Fetch-Dest:
-  // document) gets it: a script, a test or curl still gets the HTML. Passkeys stays loom's own page (its WebAuthn
-  // and push switch are /login/passkey.js and /app.js), so the app opens it whole.
-  if (req.method === 'GET' && !asJson && req.headers['sec-fetch-dest'] === 'document' && pathname !== '/passkeys') {
+  // this thing full time"), which asks this same path for the JSON. Only a browser's page load gets it: one that
+  // asks for text/html (every browser's navigation does, and loom's service worker passes the request on as it came;
+  // Sec-Fetch-Dest isn't enough, as a worker's re-sent request needn't carry it). A script, a test or curl (Accept
+  // */*) still gets the HTML. Passkeys stays loom's own page (its WebAuthn and push switch are /login/passkey.js and
+  // /app.js), so the app opens it whole.
+  const pageLoad = req.headers['sec-fetch-dest'] === 'document' || /\btext\/html\b/.test(String(req.headers.accept ?? ''));
+  if (req.method === 'GET' && !asJson && pageLoad && pathname !== '/passkeys') {
     const shell = webFile('index.html');
     if (shell) return send(res, 200, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
   }
