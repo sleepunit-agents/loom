@@ -222,7 +222,6 @@ export function SheetView({ which, chrome, q, found, mode, setMode }: { which: s
         <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
           <CardContent><Appearance mode={mode} setMode={setMode} /></CardContent></Card>
         <Card><CardContent className="grid gap-2 py-4">
-          <Button variant="outline" onClick={() => { location.href = `${location.pathname}?ui=classic`; }}>Use the classic page</Button>
           <form method="post" action="/logout"><input type="hidden" name="_csrf" value={chrome.csrf} /><Button type="submit" variant="ghost" className="w-full">Sign out</Button></form>
         </CardContent></Card>
       </div>

@@ -1,5 +1,5 @@
 // Nothing on a page may take the app down: an icon 000h doesn't have becomes a plain one, and a part
-// that fails to draw says so (with the classic page a tap away) instead of blanking everything.
+// that fails to draw says so (with a reload a tap away) instead of blanking everything.
 import { Component, type ReactNode } from 'react';
 import { iconNames } from '@/components/ui/icon';
 
@@ -19,7 +19,7 @@ export class Boundary extends Component<{ children: ReactNode; where: string }, 
       <div className="rounded-3xl border p-5">
         <p className="font-medium">This page couldn't be drawn in the app.</p>
         <p className="text-sm opacity-70">{this.state.error}</p>
-        <a className="mt-3 inline-block underline underline-offset-4" href={`${location.pathname}${location.search ? `${location.search}&` : '?'}ui=classic`}>Open it the classic way</a>
+        <button type="button" className="mt-3 inline-block underline underline-offset-4" onClick={() => location.reload()}>Reload</button>
       </div>
     );
   }

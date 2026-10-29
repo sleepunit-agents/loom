@@ -162,7 +162,7 @@ describe('scope', () => {
     expect((await json('/a/mark', { 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' })).status).toBe(403);
   });
 
-  it('?ui=app gives this browser the app on every page; ?ui=classic takes it back; its files are public, never outside its folder', async () => {
+  it('a browser opening a page gets the app (Passkeys aside); a script gets the HTML; the app\'s files are public, never outside its folder', async () => {
     const owner = await login();
     const shell = await fetch(`${base}/app/index.html`);
     expect(shell.status).toBe(200);
@@ -173,22 +173,19 @@ describe('scope', () => {
     for (const bad of ['/app/../package.json', '/app/%2e%2e/package.json', '/app/assets/../../package.json', '/app/']) {
       expect((await fetch(`${base}${bad}`)).status, bad).toBe(404);
     }
-    const pick = await fetch(`${base}/a/mark?ui=app`, { headers: { cookie: owner }, redirect: 'manual' });
-    expect([pick.status, pick.headers.get('location')]).toEqual([303, '/a/mark']);
-    const ui = (pick.headers.get('set-cookie') ?? '').split(';')[0];
-    expect(ui).toBe('loom_view=app');
-    const page = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: `${owner}; ${ui}` } });
-    expect(await page.text()).toContain('<div id="root">');
+    const nav = { cookie: owner, 'sec-fetch-dest': 'document' };
+    expect(await (await fetch(`${base}/a/mark/p/bridgy`, { headers: nav })).text()).toContain('<div id="root">');
     // The app asks the same path for its data, and gets it.
-    const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: `${owner}; ${ui}`, accept: 'application/json' } });
+    const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { ...nav, accept: 'application/json' } });
     expect(((await data.json()) as { view: string }).view).toBe('page');
-    // Passkeys is loom's own page even here: the app sends the browser to it, and it mustn't send it back.
-    expect(await (await fetch(`${base}/passkeys`, { headers: { cookie: `${owner}; ${ui}` } })).text()).not.toContain('<div id="root">');
-    // Signed out, the app is no way in: loom's sign-in, as before.
-    expect((await fetch(`${base}/a/mark`, { headers: { cookie: ui }, redirect: 'manual' })).headers.get('location')).toBe('/login');
-    const back = await fetch(`${base}/a/mark?ui=classic`, { headers: { cookie: `${owner}; ${ui}` }, redirect: 'manual' });
-    expect((back.headers.get('set-cookie') ?? '').split(';')[0]).toBe('loom_view=classic');
-    expect(await (await fetch(`${base}/a/mark`, { headers: { cookie: `${owner}; loom_view=classic` } })).text()).not.toContain('<div id="root">');
+    // Passkeys is loom's own page: the app sends the browser to it, and it mustn't send it back.
+    expect(await (await fetch(`${base}/passkeys`, { headers: nav })).text()).not.toContain('<div id="root">');
+    // A script that isn't a browser opening a page gets the HTML, as before.
+    expect(await (await fetch(`${base}/a/mark`, { headers: { cookie: owner } })).text()).not.toContain('<div id="root">');
+    // Signed out, the app is no way in: loom's sign-in.
+    const out = await fetch(`${base}/a/mark`, { headers: { 'sec-fetch-dest': 'document' }, redirect: 'manual' });
+    expect(out.headers.get('location')).toBe('/login');
+    expect(await (await fetch(`${base}/login`, { headers: { 'sec-fetch-dest': 'document' } })).text()).not.toContain('<div id="root">');
   });
 
   it('a list row naming an agent carries its mark; an unknown agent gets none', async () => {
