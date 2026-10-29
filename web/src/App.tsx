@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { PasskeyAdd, PushSwitch } from './passkeys';
+import { LoomSidebar } from './sidebar';
 import { Boundary, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -157,16 +158,13 @@ export default function App() {
 
   return (
     <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
-      <div className="min-h-dvh lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]" data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
+      <div className="relative isolate min-h-dvh lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]" data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
-        {wide && chrome && (
-          <aside className="sticky top-0 h-dvh w-60 overflow-y-auto border-r px-3 py-6">
-            <a href="/" onClick={(e) => { e.preventDefault(); go('/'); }} className="mb-4 block px-2 text-lg font-semibold">loom</a>
-            <Dock variant="rail" items={dockItems([...nav.tabs, ...nav.more])} value={current([...nav.tabs, ...nav.more])} onValueChange={pick} aria-label="Pages" />
-          </aside>
-        )}
+        {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
+        <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
+        {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} mode={mode} setMode={setMode} />}
         <div className="min-w-0">
-          <header className="sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)]" style={{ background: 'color-mix(in oklab, var(--v-canvas) 84%, transparent)' }}>
+          <header className="loom-top sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)] lg:border-0 lg:pt-3">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
               {chrome?.shell?.back ? (
                 <Button size="sm" variant="ghost" aria-label={`Back to ${chrome.shell.back.label}`} onClick={() => go(chrome.shell!.back!.href)}>
