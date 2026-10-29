@@ -251,7 +251,7 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
       <TableContainer>
         <Table>
           <TableHeader><TableRow>{b.columns.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-          <TableBody>{rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-top">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
+          <TableBody>{rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-middle">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
         </Table>
       </TableContainer>
       {pager}
