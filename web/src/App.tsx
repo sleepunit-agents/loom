@@ -188,7 +188,7 @@ export default function App() {
 
           <main className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
             {savedAt && <p role="status" className="mb-4 rounded-2xl border px-4 py-3 text-sm">Can’t reach loom: this is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</p>}
-            {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open the classic page</Button>}</CardContent></Card>}
+            {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => location.reload()}>Try again</Button>}</CardContent></Card>}
             {!error && data && env && (
               <EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
@@ -231,7 +231,6 @@ export default function App() {
             </div>
           )}
           <div className="grid gap-2"><p className="text-sm opacity-70">Appearance</p><Appearance mode={mode} setMode={setMode} /></div>
-          <Button variant="ghost" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Back to the classic page</Button>
         </DrawerContent>
       </Drawer>
 
@@ -274,12 +273,12 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   );
 }
 
-/** A kind of page step 3 draws (Home, the Inbox, an agent's Today, the sheets): until then, the classic one. */
+/** A kind of page this version of the app doesn't know (a newer loom): said, not blank. */
 function NotYet({ kind, url }: { kind: string; url: string }) {
   return (
     <Card><CardContent className="grid gap-3 py-6">
       <p>The app doesn't draw this page yet ({kind}).</p>
-      <Button variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open it the classic way</Button>
+      <Button variant="outline" onClick={() => location.reload()}>Reload</Button>{void url}
     </CardContent></Card>
   );
 }

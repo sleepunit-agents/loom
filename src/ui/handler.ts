@@ -147,8 +147,6 @@ function narrowed(h: Household, agents: string[]): Household {
   return { ...h, agents: own, default: own.includes(h.default) ? h.default : own[0] };
 }
 
-// Not loom_ui: that is the session's cookie (COOKIE, above).
-const UI_COOKIE = 'loom_view';
 /** The built app (web/ → dist/web): beside this module's dist/ui, or from src/ui (tests, `npm run dev`) the repo's dist/web. */
 const WEB_DIR = [new URL('../web/', import.meta.url), new URL('../../dist/web/', import.meta.url)]
   .map((u) => fileURLToPath(u)).find((d) => existsSync(join(d, 'index.html'))) ?? fileURLToPath(new URL('../web/', import.meta.url));
@@ -880,13 +878,6 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   const url = new URL(req.url ?? pathname, 'http://loom.invalid');
 
-  // ?ui=app or ?ui=classic: this browser's choice of page, kept in a cookie (docs/specs/ui-app.md step 2).
-  const ui = url.searchParams.get('ui');
-  if (req.method === 'GET' && (ui === 'app' || ui === 'classic')) {
-    url.searchParams.delete('ui');
-    return redirect(res, url.pathname + url.search, { 'set-cookie': `${UI_COOKIE}=${ui}; Path=/; SameSite=Strict; Max-Age=31536000` });
-  }
-
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
   // Push for Your call (push.ts): the key to subscribe with, and this browser's subscription.
   if (pathname === '/push/key' && req.method === 'GET') {
@@ -1069,9 +1060,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
   const view = (kind: string, data: Record<string, unknown>, render: () => string, status = 200) =>
     (asJson ? sendJson(res, status, { view: kind, ...data }) : html(render(), status));
-  // A browser that chose the app gets it for every page; it asks this same path for the JSON. Passkeys stays
-  // loom's own page (its WebAuthn and push switch are /login/passkey.js and /app.js), so the app opens it whole.
-  if (req.method === 'GET' && !asJson && readCookie(req, UI_COOKIE) === 'app' && pathname !== '/passkeys') {
+  // A browser opening a page gets the app (docs/specs/ui-app.md; the default since Jonathan, 2026-10-29: "swap to
+  // this thing full time"), which asks this same path for the JSON. Only a browser's navigation (Sec-Fetch-Dest:
+  // document) gets it: a script, a test or curl still gets the HTML. Passkeys stays loom's own page (its WebAuthn
+  // and push switch are /login/passkey.js and /app.js), so the app opens it whole.
+  if (req.method === 'GET' && !asJson && req.headers['sec-fetch-dest'] === 'document' && pathname !== '/passkeys') {
     const shell = webFile('index.html');
     if (shell) return send(res, 200, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
   }

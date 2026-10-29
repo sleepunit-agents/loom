@@ -247,6 +247,6 @@ export function BlockView({ b }: { b: Block }) {
     case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
     case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
     case 'filters': return <Filters b={b as Extract<Block, { type: 'filters' }>} />;
-    default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet: open the classic page to see it)</p>;
+    default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet)</p>;
   }
 }
