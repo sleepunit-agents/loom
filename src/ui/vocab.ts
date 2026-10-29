@@ -20,7 +20,7 @@ export type Cell = string | { text: string; page?: string };
 export interface Field {
   name: string;
   label: string;
-  kind: 'text' | 'textarea' | 'choice' | 'secret';
+  kind: 'text' | 'textarea' | 'choice' | 'secret' | 'check' | 'checks';
   hint?: string;
   value?: string;
   required?: boolean;
@@ -32,8 +32,8 @@ export interface Button { action: string; label: string; tone?: 'primary' | 'dan
 
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
-  | { type: 'list'; numbered?: boolean; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
-  | { type: 'table'; columns: string[]; rows: Cell[][] }
+  | { type: 'list'; numbered?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
+  | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
@@ -339,8 +339,8 @@ function button(x: unknown): Button {
 function field(v: unknown): Field {
   const o = obj(v, 'field');
   const kind = o.kind;
-  if (kind !== 'text' && kind !== 'textarea' && kind !== 'choice' && kind !== 'secret') {
-    throw new Invalid('field.kind must be text, textarea, choice or secret');
+  if (kind !== 'text' && kind !== 'textarea' && kind !== 'choice' && kind !== 'secret' && kind !== 'check' && kind !== 'checks') {
+    throw new Invalid('field.kind must be text, textarea, choice, secret, check or checks');
   }
   const f: Field = { name: name(o.name, 'field.name'), label: str(o.label, 'field.label'), kind };
   const hint = optStr(o.hint, 'field.hint');
@@ -351,15 +351,38 @@ function field(v: unknown): Field {
     if (value !== undefined) f.value = value;
   }
   if (bool(o.required)) f.required = true;
-  if (kind === 'choice') {
+  // `check`: one box, posted as "on" or "". `checks`: any of its options, posted as their values joined with commas.
+  if (kind === 'check' && f.value !== undefined && f.value !== 'on' && f.value !== '') throw new Invalid('a check field\'s value is "on" or ""');
+  if (kind === 'choice' || kind === 'checks') {
     f.options = arr(o.options, 'field.options', LIMITS.options).map((x) => {
       const opt = obj(x, 'option');
       const swatch = optStr(opt.swatch, 'option.swatch');
       if (swatch !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(swatch)) throw new Invalid('option.swatch is a color like #B8A6FF');
       return { value: str(opt.value, 'option.value'), label: str(opt.label, 'option.label'), detail: optStr(opt.detail, 'option.detail'), ...(swatch ? { swatch } : {}) };
     });
+    if (kind === 'checks' && f.options!.some((x) => x.value.includes(','))) throw new Invalid('a checks option\'s value can\'t hold a comma');
   }
   return f;
+}
+
+/**
+ * A list or table longer than a page sends one page and says where it is (docs/extensions.md, "Pages"): the
+ * query key the piece reads, this page (from 1) and how many there are. loom asks for `?<param>=<n>`, keeping
+ * the page's other query keys.
+ */
+export interface Pages { param: string; at: number; count: number; total?: number }
+function pages(v: unknown): Pages {
+  const o = obj(v, 'pages');
+  const param = str(o.param, 'pages.param');
+  if (!QUERY_KEY.test(param)) throw new Invalid('pages.param must be a query key');
+  const whole = (x: unknown, what: string, max: number) => {
+    if (typeof x !== 'number' || !Number.isInteger(x) || x < 1 || x > max) throw new Invalid(`${what} is a whole number from 1 to ${max}`);
+    return x;
+  };
+  const count = whole(o.count, 'pages.count', 100_000);
+  const at = whole(o.at, 'pages.at', count);
+  const total = o.total === undefined ? undefined : whole(o.total, 'pages.total', 100_000_000);
+  return { param, at, count, ...(total !== undefined ? { total } : {}) };
 }
 
 function block(v: unknown, depth = 0): Block {
@@ -380,6 +403,7 @@ function block(v: unknown, depth = 0): Block {
       return {
         type: 'list',
         ...(b.numbered === true ? { numbered: true } : {}),
+        ...(b.pages !== undefined ? { pages: pages(b.pages) } : {}),
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');
           return {
@@ -398,7 +422,7 @@ function block(v: unknown, depth = 0): Block {
           const p = page(o.page, 'table cell.page');
           return p !== undefined ? { text: str(o.text, 'table cell.text'), page: p } : str(o.text, 'table cell.text');
         }));
-      return { type: 'table', columns, rows };
+      return { type: 'table', columns, rows, ...(b.pages !== undefined ? { pages: pages(b.pages) } : {}) };
     }
     case 'kv':
       return {

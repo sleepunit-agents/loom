@@ -264,10 +264,20 @@ outside the page).
 | `code` | `text`, optional `label`. Monospace, with a Copy button: a command, a link to hand someone |
 | `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
 
+A `list` or `table` longer than a page can send one page at a time and say so with
+`pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
+page (from 1), how many pages there are and, optionally, how many rows in all.
+loom draws the pager and asks for `?<param>=<n>`, keeping the page's other query
+keys (its filters). Without `pages`, loom pages a long list or table itself, 15
+rows at a time, over whatever the piece sent.
+
 Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind
 `text`, `textarea`, `choice` (with `options`: `value`, `label`, optional
-`detail`) or `secret`. A `secret` field never carries a `value` and is drawn
+`detail`), `secret`, `check` (one checkbox: posted as `on`, or empty when it's
+not ticked; `value` `on` starts it ticked) or `checks` (any number of its
+`options`: posted as the ticked values joined with commas, so an option's
+value can't hold one; `value` the same way). A `secret` field never carries a `value` and is drawn
 as a masked input that asks the browser and password managers not to save or
 fill it. Browsers don't promise to honour that, so a secret typed on the page
 may still be offered for saving.

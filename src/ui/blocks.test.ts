@@ -123,6 +123,18 @@ describe('the manifest for Home and the Inbox (t-1618)', () => {
     expect(m.agents?.art).toMatchObject({ state: 'working', readings: [{ label: 'Bridges' }] });
     expect(m.agents?.mark.state).toBeUndefined();
     expect(typeof parseManifest({ v: 2, agents: { art: { state: 'asleep' } } })).toBe('string');
+    // A form's checkboxes: one box ("on" or ""), or any of several options (their values, comma-joined: no commas in one).
+    const form = (f: unknown) => parsePage({ title: 'T', sections: [{ id: 's', blocks: [{ type: 'form', action: 'save', submit: 'Save', fields: [f] }] }] });
+    expect(typeof form({ name: 'ok', label: 'Ok', kind: 'check', value: 'on' })).toBe('object');
+    expect(typeof form({ name: 'ok', label: 'Ok', kind: 'check', value: 'yes' })).toBe('string');
+    expect(form({ name: 'days', label: 'Days', kind: 'checks', value: 'mon,wed', options: [{ value: 'mon', label: 'Mon' }, { value: 'wed', label: 'Wed' }] }))
+      .toMatchObject({ sections: [{ blocks: [{ fields: [{ kind: 'checks', value: 'mon,wed', options: [{ value: 'mon' }, { value: 'wed' }] }] }] }] });
+    expect(typeof form({ name: 'days', label: 'Days', kind: 'checks', options: [{ value: 'a,b', label: 'AB' }] })).toBe('string');
+    expect(typeof form({ name: 'x', label: 'X', kind: 'radio' })).toBe('string');
+    // A list or table that pages itself says where it is: a query key, this page, how many (and how many rows).
+    const paged = (p: unknown) => parsePage({ title: 'T', sections: [{ id: 's', blocks: [{ type: 'list', items: [{ text: 'a' }], pages: p }] }] });
+    expect(paged({ param: 'page', at: 2, count: 11, total: 514 })).toMatchObject({ sections: [{ blocks: [{ pages: { param: 'page', at: 2, count: 11, total: 514 } }] }] });
+    for (const bad of [{ param: '_x', at: 1, count: 2 }, { param: 'page', at: 3, count: 2 }, { param: 'page', at: 0, count: 2 }, { param: 'page', at: 1.5, count: 2 }]) expect(typeof paged(bad), JSON.stringify(bad)).toBe('string');
     // What it has going (its card's summary): a kind from the set, a real time, at most eight.
     const doing = (d: unknown) => parseManifest({ v: 2, agents: { art: { doing: d } } });
     expect(doing([{ text: 'Talking in #pond', kind: 'talk', where: 'Discord', since: '2026-10-29T10:00:00Z', page: '' }])).toMatchObject({ agents: { art: { doing: [{ text: 'Talking in #pond', kind: 'talk', since: '2026-10-29T10:00:00Z' }] } } });
