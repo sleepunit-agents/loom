@@ -89,6 +89,27 @@ because each component brings its whole stylesheet. Budget for the real app:
 under 250 KB of JS and 120 KB of CSS gzipped for the first page, enforced in CI.
 We install only the components we use, and trim their CSS.
 
+## Live, and fast
+
+Jonathan, 2026-10-29: "this site is sloooow. are we doing anything smart here? websocket to send own
+information as it updates, limited page refresh based on what needs to change, anything?" Then, of the push:
+"anything new coming in should look magical as fuck as it happens".
+
+- **Pieces never hold a page up.** A piece's manifest past its 45s window, and a piece's page past 5s, are
+  served from the last answer while a fresh one runs behind it (`src/ui/pieces.ts`). An action on a piece
+  drops its kept pages.
+- **Small on the wire.** The app's files go out br or gzip, packed once at start; a page's data is compressed
+  and carries a fingerprint (`ETag`): asked again with it, an unchanged page is a 304.
+- **Instant back and forth.** The app keeps the last copy of each page it showed and opens it at once on a tap,
+  asking loom behind it.
+- **Live.** One stream per open app (`GET /events`, server-sent events, `src/ui/live.ts`) says `change` when an
+  agent's memory, knowledge or people, or the household file, is written; when a piece's manifest answers
+  differently (asked every 15s while an app is open); and after any action. The app asks again for the page it
+  shows. While the stream is open, the old timer is a 60s fallback.
+- **What's new arrives** (`web/src/arrive.tsx`): a row, a thread line, an Inbox item, an ask, a tile or a
+  reading that wasn't there at this page's last answer resolves out of glyph noise (000h's decode), comes into
+  focus out of a blur, and glows once. A page you open draws still. Reduced motion: it simply appears.
+
 ## Moving there
 
 Each step ships on its own; nothing is taken away until its replacement has

@@ -433,3 +433,19 @@ body { background: var(--v-canvas); }
   box-shadow: 0 8px 28px rgb(0 0 0 / .06); border: 1px solid color-mix(in oklab, var(--v-border) 55%, transparent); border-radius: 24px; --sidebar-foreground: var(--v-text); }
 .loom-search { background: color-mix(in oklab, var(--v-paper) 80%, transparent); border-color: color-mix(in oklab, var(--v-border) 80%, transparent); }
 .loom-menu { background: var(--v-paper); color: var(--v-text); border-color: color-mix(in oklab, var(--v-border) 70%, transparent); box-shadow: 0 12px 32px rgb(0 0 0 / .12); }
+
+/* What's new arrives (arrive.tsx): out of a blur into focus, rising a little, and a pigment glow that fades. */
+@keyframes loom-arrive-in {
+  0% { opacity: 0; filter: blur(10px) saturate(1.6); transform: translateY(10px) scale(.975); }
+  55% { opacity: 1; filter: blur(0) saturate(1.2); }
+  100% { opacity: 1; filter: none; transform: none; }
+}
+@keyframes loom-arrive-glow {
+  0% { box-shadow: 0 0 0 1.5px color-mix(in oklab, var(--v-pink) 85%, transparent), 0 0 36px 4px color-mix(in oklab, var(--v-pink) 55%, transparent);
+       background-color: color-mix(in oklab, var(--v-pink) 18%, transparent); }
+  45% { box-shadow: 0 0 0 1px color-mix(in oklab, var(--v-yellow) 60%, transparent), 0 0 28px 2px color-mix(in oklab, var(--v-blue) 40%, transparent);
+        background-color: color-mix(in oklab, var(--v-blue) 10%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; background-color: transparent; }
+}
+.loom-arrive { animation: loom-arrive-in 900ms cubic-bezier(.2,.8,.2,1) both, loom-arrive-glow 2600ms cubic-bezier(.3,.6,.2,1); border-radius: 14px; }
+@media (prefers-reduced-motion: reduce) { .loom-arrive { animation: none; } }

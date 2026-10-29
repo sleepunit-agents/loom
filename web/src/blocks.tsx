@@ -1,6 +1,7 @@
 // loom's blocks (src/ui/vocab.ts) drawn with 000h's components, by the rules in docs/specs/ui-app.md:
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
+import { Arrive } from './arrive';
 import { createContext, useContext, useState, type ReactNode } from 'react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -140,10 +141,10 @@ function Row({ i }: { i: ListItem }) {
     </span>
   );
   return (
-    <li className="flex min-h-11 items-center gap-3 py-2.5">
+    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="flex min-h-11 items-center gap-3 py-2.5">
       {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
       {i.act && <ActButton b={i.act} />}
-    </li>
+    </Arrive>
   );
 }
 
@@ -153,10 +154,10 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
   if (!wide) {
     return (
       <ul className="divide-y">{b.rows.map((r, n) => (
-        <li key={n} className="grid gap-0.5 py-2.5">
+        <Arrive as="li" key={n} k={`tr:${JSON.stringify(r)}`} className="grid gap-0.5 py-2.5">
           <span className="font-medium">{cell(r[0])}</span>
           <span className="text-sm opacity-70">{r.slice(1).map((c, m) => <span key={m}>{m ? ' · ' : ''}{cell(c)}</span>)}</span>
-        </li>))}
+        </Arrive>))}
       </ul>
     );
   }
@@ -164,7 +165,7 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead><tr className="text-left opacity-60">{b.columns.map((c) => <th key={c} className="py-2 pr-4 font-medium">{c}</th>)}</tr></thead>
-        <tbody className="divide-y">{b.rows.map((r, n) => <tr key={n}>{r.map((c, m) => <td key={m} className="py-2 pr-4 align-top">{cell(c)}</td>)}</tr>)}</tbody>
+        <tbody className="divide-y">{b.rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`}>{r.map((c, m) => <td key={m} className="py-2 pr-4 align-top">{cell(c)}</td>)}</Arrive>)}</tbody>
       </table>
     </div>
   );
@@ -226,12 +227,12 @@ export function BlockView({ b }: { b: Block }) {
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
         {(b as Extract<Block, { type: 'kv' }>).items.map((i) => [<dt key={`${i.label}k`} className="opacity-70">{i.label}</dt>,
-          <dd key={`${i.label}v`} className="min-w-0 [overflow-wrap:anywhere]">{i.page !== undefined ? <Link page={i.page}>{i.value}</Link> : i.value}</dd>])}
+          <Arrive as="dd" key={`${i.label}v`} k={`kv:${i.label}\0${i.value}`} className="min-w-0 [overflow-wrap:anywhere]">{i.page !== undefined ? <Link page={i.page}>{i.value}</Link> : i.value}</Arrive>])}
       </dl>);
     case 'stats': return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{(b as Extract<Block, { type: 'stats' }>).items.map((s) => (
-        <Link key={s.label} page={s.page} className="rounded-2xl border p-3"><span className="block text-xs opacity-60">{s.label}</span>
-          <span className="block text-xl font-semibold">{s.value}</span>{s.detail && <span className="block text-xs opacity-60">{s.detail}</span>}</Link>))}</div>);
+        <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-2xl"><Link page={s.page} className="block rounded-2xl border p-3"><span className="block text-xs opacity-60">{s.label}</span>
+          <span className="block text-xl font-semibold">{s.value}</span>{s.detail && <span className="block text-xs opacity-60">{s.detail}</span>}</Link></Arrive>))}</div>);
     case 'meter': return (
       <div className="grid gap-3">{(b as Extract<Block, { type: 'meter' }>).items.map((m) => (
         <div key={m.label}><div className="flex justify-between text-sm"><span>{m.label}</span><span className="opacity-70">{Math.round(m.value * 100)}%</span></div>
@@ -239,8 +240,8 @@ export function BlockView({ b }: { b: Block }) {
           {m.detail && <p className="text-xs opacity-60">{m.detail}</p>}</div>))}</div>);
     case 'status': return (
       <ul className="grid gap-2">{(b as Extract<Block, { type: 'status' }>).items.map((s) => (
-        <li key={s.label} className="flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${DOT[s.tone ?? 'muted']}`} /><span className="font-medium">{s.label}</span>
-          <span className="opacity-70">{s.text}</span>{s.meta && <span className="ml-auto text-xs opacity-60">{s.meta}</span>}</li>))}</ul>);
+        <Arrive as="li" key={s.label} k={`ss:${s.label}\0${s.text ?? ''}\0${s.tone ?? ''}`} className="flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${DOT[s.tone ?? 'muted']}`} /><span className="font-medium">{s.label}</span>
+          <span className="opacity-70">{s.text}</span>{s.meta && <span className="ml-auto text-xs opacity-60">{s.meta}</span>}</Arrive>))}</ul>);
     case 'link': { const l = b as Extract<Block, { type: 'link' }>; return <Link page={l.page} href={l.href} className="underline underline-offset-4">{l.text}</Link>; }
     case 'code': return <pre className="overflow-x-auto rounded-xl bg-neutral-900 p-3 text-xs text-neutral-100">{(b as { text: string }).text}</pre>;
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
