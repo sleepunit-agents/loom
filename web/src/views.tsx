@@ -229,17 +229,27 @@ export function SheetView({ which, chrome, q, found, mode, setMode }: { which: s
   }
   if (which === 'find') {
     const groups: [string, string][] = [['do', 'Do'], ['knowledge', 'Knowledge'], ['people', 'People'], ['memories', 'Memories']];
+    // Places whose name matches, as the classic Find sheet had them: loom's own, the pieces', the agents', and Setup's.
+    const needle = q.trim().toLowerCase();
+    const places = s ? [...s.core, ...s.pieces, ...s.agents.map((x) => ({ label: x.label, href: x.href })), { label: 'Setup', href: '/setup' }, { label: 'Passkeys', href: '/passkeys' },
+      ...(s.admin ? [{ label: 'Members', href: '/members' }, { label: 'Manage pieces', href: '/pieces' }] : [])] : [];
+    const goTo = needle ? places.filter((p, n) => p.label.toLowerCase().includes(needle) && places.findIndex((x) => x.href === p.href) === n) : [];
     return (
       <div className="grid gap-4">
         <form onSubmit={(e) => { e.preventDefault(); go(`/find?q=${encodeURIComponent(query)}`); }}>
           <Input autoFocus placeholder="Find anything" value={query} onChange={(e) => setQuery(e.target.value)} />
         </form>
+        {goTo.length > 0 && (
+          <Card><CardHeader><CardTitle>Go to</CardTitle></CardHeader>
+            <CardContent><ul className="divide-y">{goTo.map((p) => (
+              <li key={p.href}><button className="w-full py-2.5 text-left" onClick={() => go(p.href)}>{p.label}</button></li>))}</ul></CardContent></Card>
+        )}
         {found && groups.map(([k, l]) => (found[k]?.length ? (
           <Card key={k}><CardHeader><CardTitle>{l}</CardTitle></CardHeader>
             <CardContent><ul className="divide-y">{found[k].map((f) => (
               <li key={f.href}><button className="w-full py-2.5 text-left" onClick={() => go(f.href)}>{f.label}{f.agent ? <span className="opacity-60"> · {f.agent}</span> : null}</button></li>))}</ul></CardContent></Card>
         ) : null))}
-        {found && groups.every(([k]) => !found[k]?.length) && <p className="opacity-70">Nothing found for “{q}”.</p>}
+        {found && !goTo.length && groups.every(([k]) => !found[k]?.length) && <p className="opacity-70">Nothing found for “{q}”.</p>}
       </div>
     );
   }

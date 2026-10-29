@@ -1,7 +1,8 @@
 /**
- * The app shell (Claude Design, 2026-10-26): the bottom bar and rail on every
- * page, and the scope and Places sheets, which are also pages so they work
- * with no script. Choosing a scope sets a cookie and goes to that scope's home.
+ * The app shell (Claude Design, 2026-10-26): every page's chrome carries what
+ * the app draws its bottom bar, rail and sheets from, and the sheets (Scope,
+ * Places, Find, Setup) are pages too. The app is installable, and an old
+ * scope link goes home and clears the old cookie.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -43,28 +44,24 @@ describe('the app shell', () => {
     return (res.headers.get('set-cookie') ?? '').split(';')[0];
   }
   const get = (path: string, cookie: string) => fetch(`${base}${path}`, { headers: { cookie }, redirect: 'manual' });
+  // A page's data, as the app asks for it (docs/specs/ui-app.md): the same path, as JSON.
+  const view = async (path: string, cookie: string) =>
+    (await fetch(`${base}${path}`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' })).json() as Promise<any>;
 
-  it('every page carries the rail, the bottom bar and both sheets; account controls live in the scope sheet', async () => {
+  it('every page carries the shell: the agent, its mark, the places and the account controls\' token', async () => {
     const cookie = await login();
-    const html = await (await get('/', cookie)).text();
-    expect(html).toContain('<aside class="rail"');
-    expect(html).toContain('<nav class="bottom" aria-label="Main">');
-    // The scope lives in the pinned phone header (right), not the bottom bar.
-    expect(html).toMatch(/<div class="phone-top"><a class="wordmark"[\s\S]*?<a class="scope-pill" href="\/scope" data-sheet="scope"/);
-    expect(/<nav class="bottom"[\s\S]*?<\/nav>/.exec(html)![0]).not.toContain('scope');
-    // A slot in that header for the page's title, which the script fills and shows once the title scrolls under it.
-    expect(html).toMatch(/<div class="phone-top">[\s\S]*?<span class="bar-title" aria-hidden="true"><\/span><a class="scope-pill"/);
-    expect(html).toContain('aria-label="Home" aria-current="page"');
-    expect(html).toContain('href="/places" aria-label="Places" data-sheet="places"');
-    expect(html).toContain('<dialog class="sheet" id="sheet-scope"');
-    expect(html).toContain('<dialog class="sheet" id="sheet-places"');
+    const home = await view('/', cookie);
+    expect(home.view).toBe('home');
+    const sh = home.chrome.shell;
+    // The bottom bar's and rail's data: Home is the current tab, and goes home.
+    expect(sh).toMatchObject({ tab: 'home', home: '/', household: false, scope: 'agent' });
     // The agent's mark: its initial on its color.
-    expect(html).toMatch(/<span class="mark" style="[^"]*background:#B8A6FF;color:#1D1240"[^>]*>A<\/span>/);
-    // Passkeys and Sign out are in the sheet, and in the rail's account menu (folded under the owner's name), not the page header.
-    expect(html).not.toContain('<header class="top">');
-    expect(html.match(/action="\/logout"/g)?.length).toBe(2);
-    expect(html).toMatch(/<details class="account"><summary>[\s\S]*?<\/summary><div class="account-menu"><a href="\/passkeys">Passkeys<\/a><a href="\/passkeys#notifications">Notifications<\/a><form class="inline menu-out" method="post" action="\/logout">/);
-    expect(html).not.toContain('class="rail-foot"');
+    expect(sh.agents).toEqual([expect.objectContaining({ label: 'Art E Fish', bg: '#B8A6FF', fg: '#1D1240', href: '/', current: true })]);
+    expect(sh.core.map((c: { label: string }) => c.label)).toEqual(['Mind', 'People']);
+    // Sign out (the app's form posts it with the session's form token) needs that token on every page.
+    expect(home.chrome.csrf).toMatch(/^[0-9a-f]{64}$/);
+    expect((await view('/people', cookie)).chrome.shell).toMatchObject({ tab: '', home: '/' });
+    expect((await view('/places', cookie)).chrome.shell.tab).toBe('places');
   });
 
   it('is an installable app: manifest, icons and a service worker, open to anyone; signing out drops what it kept', async () => {
@@ -86,19 +83,24 @@ describe('the app shell', () => {
     // It never keeps sign-in pages or a page with a one-time message.
     expect(swText).toContain("searchParams.has('_flash')");
     expect(swText).toMatch(/NEVER = .*login\|logout/);
+    // What it keeps changed shape (the app's one page, under one key): a new cache, the old one dropped.
+    expect(swText).toContain("'loom-3-pages'");
+    expect(swText).toContain("const APP = new URL('/__app', location.origin).href");
+    expect(swText).toContain('c.put(APP,');
     // The app's JSON views are kept the same way, and dropped with the pages.
     expect(swText).toContain("caches.delete(VIEWS)");
     expect(swText).toMatch(/startsWith\('application\/json'\) && !NEVER\.test/);
     const cookie = await login();
     const page = await get('/', cookie);
     const html = await page.text();
-    expect(html).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+    expect(html).toContain('<div id="root">');
+    expect(html).toMatch(/<link rel="manifest" href="\/manifest\.webmanifest"\s*\/?>/);
     // The favicon and the apple-touch-icon aren't in the manifest: each one the head names is served.
     const heads = [...html.matchAll(/<link rel="(?:icon|apple-touch-icon)" href="([^"]+)"/g)].map((x) => x[1]);
     expect(heads).toEqual(expect.arrayContaining(['/icons/loom-32.png', '/icons/loom-180.png']));
     for (const src of heads) expect((await fetch(`${base}${src}`)).headers.get('content-type'), src).toBe('image/png');
     expect(page.headers.get('content-security-policy')).toContain("manifest-src 'self'; worker-src 'self'");
-    const csrf = /name="_csrf" value="([0-9a-f]{64})"/.exec(html)![1];
+    const csrf = (await view('/', cookie)).chrome.csrf as string;
     const out = await fetch(`${base}/logout`, { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: `_csrf=${csrf}` });
     expect(out.headers.get('clear-site-data')).toBe('"cache", "storage"');
   });
@@ -108,32 +110,32 @@ describe('the app shell', () => {
     const cookie = await login();
     const key = await (await get('/push/key', cookie)).json() as { publicKey: string };
     expect(key.publicKey).toMatch(/^[A-Za-z0-9_-]{80,}$/);
-    const page = await (await get('/passkeys', cookie)).text();
-    expect(page).toContain('data-push');
-    const csrf = /data-push data-csrf="([0-9a-f]{64})"/.exec(page)![1];
+    // The app draws the push switch on Passkeys, posting with the page's form token.
+    const page = await view('/passkeys', cookie);
+    expect(page.view).toBe('passkeys');
+    const csrf = page.ctx.csrf as string;
+    expect(csrf).toMatch(/^[0-9a-f]{64}$/);
     const post = (body: unknown) => fetch(`${base}/push/subscribe`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
     const good = { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) } };
     expect((await post({ sub: good })).status).toBe(403);                                   // no token
+    expect((await post({ _csrf: '0'.repeat(64), sub: good })).status).toBe(403);            // not this session's token
     expect((await post({ _csrf: csrf, sub: { ...good, endpoint: 'https://10.0.0.5/x' } })).status).toBe(400);   // not a push service
     expect((await post({ _csrf: csrf, sub: good })).status).toBe(200);
   });
 
-  it('the sheets are pages too, and Find filters places by name', async () => {
+  it('the sheets are pages too; Find carries its query as data, never markup', async () => {
     const cookie = await login();
-    for (const [path, title] of [['/scope', 'Show me'], ['/places', 'Places'], ['/find', 'Find']] as const) {
-      const r = await get(path, cookie);
-      expect(r.status).toBe(200);
-      expect(await r.text()).toMatch(new RegExp(`<h1( class="visually-hidden")?>${title}</h1>`));
+    for (const which of ['scope', 'places', 'find', 'setup'] as const) {
+      const r = await fetch(`${base}/${which}`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' });
+      expect(r.status, which).toBe(200);
+      expect(await r.json(), which).toMatchObject({ view: 'sheet', which, chrome: { shell: { tab: which } } });
     }
-    // Find is the palette: the match in bold under Go to; the sheet rides on every page.
-    const page = await (await get('/find?q=pass', cookie)).text();
-    const found = /<main[\s\S]*?<h2 class="label">Go to<\/h2>([\s\S]*?)<\/section>/.exec(page)?.[1] ?? '';
-    expect(found).toContain('<span class="ft"><strong>Pass</strong>keys</span>');
-    expect(found).not.toContain('Manage pieces');
-    expect(page).toContain('<dialog class="sheet find-sheet" id="sheet-find" aria-label="Find">');
-    const odd = await (await get('/find?q=%3Cscript%3E', cookie)).text();
-    expect(odd).toContain('value="&lt;script&gt;"');
-    expect(odd).toContain('Nothing matches “&lt;script&gt;”.');
+    // A search: what it found, by group (a lone agent has no asks to match).
+    const found = await view('/find?q=pass', cookie);
+    expect(found).toMatchObject({ q: 'pass', found: { do: [], knowledge: [], people: [], memories: [] } });
+    // A query that looks like markup reaches the app as the string it is; the app's page carries none of it.
+    expect((await view('/find?q=%3Cscript%3E', cookie)).q).toBe('<script>');
+    expect(await (await get('/find?q=%3Cscript%3E', cookie)).text()).toBe(await (await get('/', cookie)).text());
   });
 
   it('an old scope link goes home (or to the agent) and clears the old cookie', async () => {
