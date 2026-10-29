@@ -62,9 +62,9 @@
 
 
 [data-slot="drawer-content"] { max-height:calc(100dvh - var(--dock-h) - 32px); overflow-y:auto; overscroll-behavior:contain; display:grid; gap:var(--s-4); grid-template-columns:minmax(0,1fr); }
-[data-slot="drawer-description"] { color:var(--v-on-ink); opacity:.85; }
+[data-slot="drawer-description"] { color:var(--v-text-2); }
 [data-slot="drawer-title"], [data-slot="drawer-description"] { overflow-wrap:anywhere; }
 [data-slot="drawer-footer"] { flex-wrap:wrap; }
-:root[data-mode="dark"] .v-drawer[data-slot="drawer-content"] [data-slot="drawer-description"] { color:var(--v-on-ink); }
+:root[data-mode="dark"] .v-drawer[data-slot="drawer-content"] [data-slot="drawer-description"] { color:var(--v-text-2); }
 
 }

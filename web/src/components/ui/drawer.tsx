@@ -42,7 +42,7 @@ export function DrawerOverlay({ className, ref, ...props }: DrawerOverlayProps) 
   );
 }
 export const drawerContentVariants = cva(
-  "v-drawer [position:fixed] [left:var(--s-4)] [right:var(--s-4)] [bottom:calc(var(--dock-h)_+_var(--s-4))] [background:var(--v-ink)] [color:var(--v-on-ink)] [border-radius:var(--r-sheet)] [padding:var(--s-6)_var(--s-5)_var(--s-12)] [z-index:var(--z-sheet)]",
+  "v-drawer [position:fixed] [left:var(--s-4)] [right:var(--s-4)] [bottom:calc(var(--dock-h)_+_var(--s-4))] [background:var(--v-paper)] [color:var(--v-text)] [border:1px_solid_var(--v-border)] [box-shadow:0_-8px_40px_rgb(0_0_0_/_0.25)] [border-radius:var(--r-sheet)] [padding:var(--s-6)_var(--s-5)_var(--s-12)] [z-index:var(--z-sheet)]",
 );
 export type DrawerContentProps = React.ComponentProps<
   typeof Primitive.Content
