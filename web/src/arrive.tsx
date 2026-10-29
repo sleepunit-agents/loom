@@ -13,7 +13,7 @@ const DECODE_MS = 950;
 const STAGGER_MS = 70;
 const MAX_TEXTS = 40;
 
-export function Arrive({ as = 'div', k, className, children }: { as?: string; k: string; className?: string; children: ReactNode }) {
+export function Arrive({ as = 'div', k, className, children, ...rest }: { as?: string; k: string; className?: string; children: ReactNode } & Record<`data-${string}`, string>) {
   const c = useContext(ArrivalContext);
   c?.now.add(k);
   const fresh = !!c?.before && !c.before.has(k);
@@ -22,7 +22,7 @@ export function Arrive({ as = 'div', k, className, children }: { as?: string; k:
   useLayoutEffect(() => {
     if (fresh && ref.current && !matchMedia('(prefers-reduced-motion: reduce)').matches) return arrive(ref.current);
   }, [k]);   // eslint-disable-line react-hooks/exhaustive-deps
-  return createElement(as, { ref, className }, children);
+  return createElement(as, { ref, className, ...rest }, children);
 }
 
 /** The arrival itself: the class runs focus and glow (index.css .loom-arrive); the text resolves here. */

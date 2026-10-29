@@ -2,6 +2,8 @@
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
 import { Arrive } from './arrive';
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 const ChoiceSelect = lazy(() => import('./choice-select'));
 import { Field as UiField, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -150,33 +152,71 @@ function Row({ i }: { i: ListItem }) {
     </span>
   );
   return (
-    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="flex min-h-11 items-center gap-3 py-2.5">
+    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="flex min-h-11 min-w-0 items-center gap-3 py-2.5">
       {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
       {i.act && <ActButton b={i.act} />}
     </Arrive>
   );
 }
 
+/** Long tables and lists a page at a time (000h's pagination): PAGE_ROWS rows, then numbered pages. */
+const PAGE_ROWS = 15;
+function usePaged<T>(all: T[]): { rows: T[]; pager: ReactNode } {
+  const [at, setAt] = useState(0);
+  const pages = Math.ceil(all.length / PAGE_ROWS);
+  const page = Math.min(at, Math.max(0, pages - 1));
+  if (pages <= 1) return { rows: all, pager: null };
+  // The pages around this one, the first and the last; gaps as an ellipsis.
+  const shown = [...new Set([0, page - 1, page, page + 1, pages - 1].filter((p) => p >= 0 && p < pages))].sort((x, y) => x - y);
+  return {
+    rows: all.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS),
+    pager: (
+      <Pagination className="mt-2" aria-label="Pages of this list">
+        <PaginationContent>
+          <PaginationItem><PaginationPrevious disabled={page === 0} onClick={() => setAt(page - 1)} /></PaginationItem>
+          {shown.map((p, i) => [
+            i && p - shown[i - 1] > 1 ? <PaginationItem key={`e${p}`}><PaginationEllipsis /></PaginationItem> : null,
+            <PaginationItem key={p}><PaginationLink isActive={p === page} aria-current={p === page ? 'page' : undefined} onClick={() => setAt(p)}>{p + 1}</PaginationLink></PaginationItem>,
+          ])}
+          <PaginationItem><PaginationNext disabled={page === pages - 1} onClick={() => setAt(page + 1)} /></PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    ),
+  };
+}
+
+function ListBlock({ items }: { items: ListItem[] }) {
+  const { rows, pager } = usePaged(items);
+  if (!items.length) return <Nothing title="Nothing here yet" />;
+  return <>{<ul className="min-w-0 divide-y">{rows.map((i, n) => <Row key={n} i={i} />)}</ul>}{pager}</>;
+}
+
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
   const { wide } = useEnv();
+  const { rows, pager } = usePaged(b.rows);
   const cell = (c: string | { text: string; page?: string }) => (typeof c === 'string' ? c : <Link page={c.page}>{c.text}</Link>);
+  if (!b.rows.length) return <Nothing title="Nothing here yet" />;
   if (!wide) {
     return (
-      <ul className="divide-y">{b.rows.map((r, n) => (
+      <><ul className="divide-y">{rows.map((r, n) => (
         <Arrive as="li" key={n} k={`tr:${JSON.stringify(r)}`} className="grid gap-0.5 py-2.5">
           <span className="font-medium">{cell(r[0])}</span>
           <span className="text-sm opacity-70">{r.slice(1).map((c, m) => <span key={m}>{m ? ' · ' : ''}{cell(c)}</span>)}</span>
         </Arrive>))}
-      </ul>
+      </ul>{pager}</>
     );
   }
+  // A desktop: 000h's table (its ledger look), rows as they come.
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead><tr className="text-left opacity-60">{b.columns.map((c) => <th key={c} className="py-2 pr-4 font-medium">{c}</th>)}</tr></thead>
-        <tbody className="divide-y">{b.rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`}>{r.map((c, m) => <td key={m} className="py-2 pr-4 align-top">{cell(c)}</td>)}</Arrive>)}</tbody>
-      </table>
-    </div>
+    <>
+      <TableContainer>
+        <Table>
+          <TableHeader><TableRow>{b.columns.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
+          <TableBody>{rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-top">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
+        </Table>
+      </TableContainer>
+      {pager}
+    </>
   );
 }
 
@@ -240,8 +280,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
       return <div className={`rounded-2xl border p-4 ${c.tone === 'bad' ? 'border-red-300 bg-red-50 dark:bg-red-950/30' : c.tone === 'warn' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30' : 'opacity-90'}`}>
         {c.title && <p className="font-medium">{c.title}</p>}<p className="text-sm">{c.text}</p></div>; }
-    case 'list': { const items = (b as Extract<Block, { type: 'list' }>).items;
-      return items.length ? <ul className="divide-y">{items.map((i, n) => <Row key={n} i={i} />)}</ul> : <Nothing title="Nothing here yet" />; }
+    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
