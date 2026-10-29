@@ -4,9 +4,9 @@
 import { Arrive } from './arrive';
 // Filters (000h's toggle group) load with a page that has them.
 const Filters = lazy(() => import('./filters'));
-import { Alert, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
+import { Callout } from './safe';
 import { Item, ItemContent, ItemDescription, ItemTitle, ItemTrailing } from '@/components/ui/item';
 // Rare blocks' components load when a page has one: a link block (living link), a meter (progress).
 const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => ({ default: m.LivingLink })));
@@ -316,8 +316,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{t.text}</p>; }
     case 'prose': return <div className="prose whitespace-pre-wrap">{(b as { text: string }).text}</div>;
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
-      return <Alert variant={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'}>
-        <AlertBody>{c.title && <AlertTitle>{c.title}</AlertTitle>}<AlertDescription>{c.text}</AlertDescription></AlertBody></Alert>; }
+      return <Callout tone={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'} title={c.title}>{c.text}</Callout>; }
     case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (

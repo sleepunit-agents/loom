@@ -690,14 +690,15 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value,
       kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place' }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  const asks = pieces.reduce((n, p) => n + p.manifest.asks.length, 0) + piecesAsks(opts.env).length;
-  // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted).
+  // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
+  // same number its Needs you shows, so the badge is never a 1 for something already answered.
   const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
   const tab = current === '' ? 'home' : current === 'places' || current === 'scope' || current === 'find' || current === 'setup' ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
     const marks = agentMarks(h);
+    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length;
     const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
     return {
       agent: h.owner ? `${h.owner}'s household` : 'household',
@@ -720,12 +721,12 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
-          asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a).length, 0),
+          asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0),
           sub: lastActive(agentDir(h, a)) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },
-          { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length },
+          { label: 'Inbox', href: '/inbox', current: current === 'inbox', count: asks },
           ...(opts.ownerScope ? [] : [
             { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
             { label: 'People', href: '/people', current: current.startsWith('people') },
@@ -750,7 +751,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
     flash,
     skipped,
     shell: {
-      owner: 'owner', scope: 'agent', household: false, asks, tab, home: '/', back,
+      owner: 'owner', scope: 'agent', household: false, asks: needs, tab, home: '/', back,
       agents: [{ id: 'agent', label: name, bg: MARKS[0].bg, fg: MARKS[0].fg, href: '/', current: true }],
       core: [
         { label: 'Mind', href: '/mind', current: current === 'mind' },

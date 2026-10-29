@@ -852,6 +852,8 @@ describe('the household page', () => {
       // Needs you: the permission and the reply; the decision nothing waits on is filed, not counted.
       expect(inFolder(needs, 'needs').map((it) => it.text).sort()).toEqual(['Push the fix to onterris/pond', 'Tonight or tomorrow?']);
       expect((needs.chrome.shell.core as Data[]).find((c) => c.href === '/inbox')).toMatchObject({ label: 'Inbox', count: 2 });
+      // The sidebar's and dock's badge is the same 2, not the 3 asks the piece sent.
+      expect(needs.chrome.shell.asks).toBe(2);
       expect(item(needs, 'Keep this memory?')).toMatchObject({ attention: false, kind: 'decision' });
       expect(unread(needs)).toBe(2);
       const keyOf = (text: string) => item(needs, text).key as string;

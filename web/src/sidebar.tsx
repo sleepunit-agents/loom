@@ -75,9 +75,10 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
         <AnimatedIcon name={iconFor('search')} size="sm" /><span className="flex-1 opacity-80">Find anything</span>
         <Kbd>{mac ? '⌘' : 'Ctrl'} K</Kbd>
       </button>
-      <SidebarContent className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1 py-2">
+      {/* Its rows from the top, as tight as 000h's own (a grid that fills the side shares the height out between them); what's left is blank above the account. */}
+      <SidebarContent className="-mx-1 min-h-0 flex-1 content-start overflow-y-auto px-1 py-2">
         {groups.map((g, n) => (
-          <div key={n} className="grid gap-[2px] pb-3">
+          <div key={n} className="grid gap-[2px] pb-1">
             {g.label && <SidebarGroupLabel>{g.label}</SidebarGroupLabel>}
             {g.items}
           </div>
