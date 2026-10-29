@@ -165,6 +165,12 @@ function webFile(rel: string): string | null {
   try { return existsSync(p) && statSync(p).isFile() ? p : null; } catch { return null; }
 }
 
+/** Whose a live stream is, for its per-browser cap: the session, else the very credential presented (never a bucket two principals share). */
+function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
+  if (who.kind === 'session') return `session:${who.cookie}`;
+  return `bearer:${createHash('sha256').update(String(req.headers.authorization ?? '')).digest('base64url')}`;
+}
+
 const PAGE_ROOTS = ['/app', '/events', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
@@ -937,7 +943,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const a = h.agents.find((x) => abs.startsWith(agentDir(h, x) + sep));
       return a ? [a] : '*';
     };
-    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: who.kind === 'session' ? who.cookie : `token:${who.kind}`, place });
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place });
   }
 
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.
