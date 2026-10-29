@@ -163,16 +163,16 @@ function EditorButton({ label, title, form, variant = 'outline' }: { label: stri
 
 // ---- blocks ----------------------------------------------------------------------------------------
 
-function Row({ i }: { i: ListItem }) {
+function Row({ i, wrap }: { i: ListItem; wrap?: boolean }) {
   const env = useEnv();
   const agent = i.agent ? env.ctx.agents?.[i.agent] : undefined;
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
   const body = (
     <ItemContent className="min-w-0 flex-1">
-      <ItemTitle className="flex min-w-0 items-center gap-2">
+      <ItemTitle className={`flex min-w-0 gap-2 ${wrap ? 'items-start' : 'items-center'}`}>
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
         {agent && <AgentAvatar a={agent} size={20} />}
-        <span className="truncate font-medium">{i.text}</span>
+        <span className={wrap ? 'font-medium leading-relaxed [overflow-wrap:anywhere]' : 'truncate font-medium'}>{i.text}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
       {i.meta && <ItemDescription className="truncate">{i.meta}</ItemDescription>}
@@ -224,10 +224,10 @@ function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } 
   };
 }
 
-function ListBlock({ items, pages }: { items: ListItem[]; pages?: Pages }) {
+function ListBlock({ items, pages, wrap }: { items: ListItem[]; pages?: Pages; wrap?: boolean }) {
   const { rows, pager } = usePaged(items, pages);
   if (!items.length) return <Nothing title="Nothing here yet" />;
-  return <>{<ul className="min-w-0 divide-y">{rows.map((i, n) => <Row key={n} i={i} />)}</ul>}{pager}</>;
+  return <>{<ul className="min-w-0 divide-y">{rows.map((i, n) => <Row key={n} i={i} wrap={wrap} />)}</ul>}{pager}</>;
 }
 
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
@@ -319,7 +319,7 @@ export function BlockView({ b }: { b: Block }) {
       return <Suspense fallback={<div className="whitespace-pre-wrap">{text}</div>}><Markdown text={text} /></Suspense>; }
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
       return <Callout tone={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'} title={c.title}>{c.text}</Callout>; }
-    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} />;
+    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} wrap={(b as { wrap?: boolean }).wrap} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">

@@ -10,7 +10,7 @@ export type Block =
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
   | { type: 'callout'; text: string; title?: string; tone?: Tone }
-  | { type: 'list'; items: ListItem[]; numbered?: boolean }
+  | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean }
   | { type: 'table'; columns: string[]; rows: (string | { text: string; page?: string })[][] }
   | { type: 'kv'; items: { label: string; value: string; page?: string }[] }
   | { type: 'stats'; items: { label: string; value: string; detail?: string; tone?: Tone; page?: string }[] }
