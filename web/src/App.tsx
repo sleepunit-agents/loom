@@ -24,7 +24,8 @@ import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, 
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
 import { Alert, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
-import { type Ground, DashboardView, HouseHomeView, InboxView, type Mode } from './views';
+import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
+const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
 // The sheets (Scope, Places, Find, Setup) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
 
@@ -284,7 +285,7 @@ export default function App() {
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
-                  : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} /></Suspense>
                   : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
                     <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
                   : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
