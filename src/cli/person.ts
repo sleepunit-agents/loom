@@ -3,14 +3,18 @@
  *
  *   loom person show <slug> [--include-archived] [--json]
  *   loom person list [--include-archived] [--json]
+ *   loom person reach <slug> <field> <id> --label <name> [--source <s>] [--at <iso>]
  *
- * Read-only: cards are written through the MCP tools. Exit codes for show:
+ * Cards are written through the MCP tools, with one exception: `reach` files where
+ * someone was just seen (a bridge heard them speak as <id> on <field>, named <name>)
+ * on a card that already exists, and nothing else: the id joins the field's value,
+ * its label and check time are set. Name, summary, how and may are out of its reach. Exit codes for show:
  * 0 found, 3 no such card, 4 archived (without --include-archived), 1 error.
  * A bridge can splice `show` output into a prompt and treat any non-zero
  * exit as "no card".
  */
 import { parseArgs } from 'node:util';
-import { readPerson, listPeople, personEvidence } from '../tools/person.js';
+import { readPerson, listPeople, personEvidence, personWrite } from '../tools/person.js';
 import { assertStackVersionCompatible } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import { renderJson } from './io.js';
@@ -24,6 +28,10 @@ Subcommands:
   evidence <slug> [--since <iso>]
                 The memories the card condenses: active, unexpired user and
                 feedback memories tagged to the person, oldest first
+  reach <slug> <field> <id> --label <name> [--source <s>] [--at <iso>]
+                File where someone was seen: <id> joins where.<field>, with the
+                name the service shows and the time it was seen. Only on a card
+                that exists (exit 3 otherwise); nothing else on it changes
 
 Options:
   --include-archived   Show/list archived cards too
@@ -39,7 +47,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     io.stdout(USAGE);
     return sub ? 0 : 2;
   }
-  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence') {
+  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence' && sub !== 'reach') {
     io.stderr(`Unknown person subcommand: ${sub}\n${USAGE}`);
     return 2;
   }
@@ -47,7 +55,8 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   try {
     parsed = parseArgs({
       args: rest.slice(1),
-      options: { 'include-archived': { type: 'boolean' }, since: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
+      options: { 'include-archived': { type: 'boolean' }, since: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+        label: { type: 'string' }, source: { type: 'string' }, at: { type: 'string' } },
       allowPositionals: true,
     });
   } catch (err) {
@@ -89,6 +98,29 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     if (env.json) { renderJson(io, rows); return 0; }
     io.stdout(rows.map((r) => `## ${r.title}\n*${r.category} — ${r.created.slice(0, 10)}*\n\n${r.content}\n`).join('\n'));
     io.stderr(`(${rows.length} memories tagged ${slug})\n`);
+    return 0;
+  }
+
+  if (sub === 'reach') {
+    const [slug, field, id] = parsed.positionals;
+    const label = parsed.values.label;
+    if (!slug || !field || !id || parsed.positionals.length > 3 || !label) { io.stderr(`person reach takes <slug> <field> <id> --label <name>.\n${USAGE}`); return 2; }
+    if (!/^[a-z][a-z0-9_-]{0,39}$/.test(field)) { io.stderr(`person reach: field must be a plain word (discord, slack, ...)\n`); return 2; }
+    const at = parsed.values.at ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    let current;
+    try { current = readPerson(env.contextDir, slug, false); } catch (err) { io.stderr(`${(err as Error).message}\n`); return 1; }
+    if (!current.found || !('card' in current)) { io.stderr(`no card for ${slug}: reach files only on a card that exists\n`); return 3; }
+    const was = (current.card.where ?? {})[field];
+    // The id joins what's there: a second account is kept beside the first, never in its place.
+    const ids = was === undefined ? [] : Array.isArray(was.value) ? was.value.map(String) : [String(was.value)];
+    const value = ids.includes(id) ? (ids.length === 1 ? ids[0] : ids) : ids.length ? [...ids, id] : id;
+    const source = was?.source ?? parsed.values.source;
+    const out = await personWrite(env.contextDir, { slug, where: { [field]: {
+      value, label, verified_at: at, ...(source ? { source } : {}), ...(was?.stale_after_days ? { stale_after_days: was.stale_after_days } : {}),
+    } } });
+    if (out.startsWith('Error')) { io.stderr(`${out}\n`); return 1; }
+    if (env.json) io.stdout(out.endsWith('\n') ? out : `${out}\n`);
+    else io.stdout(`${slug}: ${field} ${Array.isArray(value) ? value.join(', ') : value} (${label})\n`);
     return 0;
   }
 
