@@ -2,6 +2,7 @@
 // a details holding a form opens as an editor, one holding a list or a table as a drawer; danger asks
 // first; a table is rows of label and value on a phone; a block this app doesn't know is shown, not dropped.
 import { Arrive } from './arrive';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 const ChoiceSelect = lazy(() => import('./choice-select'));
@@ -70,6 +71,19 @@ export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; si
 function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: string) => void; id: string }) {
   if (f.kind === 'textarea') return <Textarea id={id} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
   if (f.kind === 'toggle') return <Switch id={id} checked={value === 'on' || value === 'true'} onCheckedChange={(c) => set(c ? 'on' : '')} />;
+  // One box (000h's checkbox): "on" or "". Several: the ticked values, joined with commas.
+  if (f.kind === 'check') return <Checkbox id={id} checked={value === 'on'} onCheckedChange={(c) => set(c === true ? 'on' : '')}>{f.hint ? null : f.label}</Checkbox>;
+  if (f.kind === 'checks') {
+    const on = new Set(value.split(',').filter(Boolean));
+    return (
+      <div id={id} role="group" aria-label={f.label} className="grid gap-2">{f.options?.map((o) => (
+        <Checkbox key={o.value} checked={on.has(o.value)} onCheckedChange={(c) => {
+          const next = new Set(on); if (c === true) next.add(o.value); else next.delete(o.value);
+          set((f.options ?? []).map((x) => x.value).filter((v) => next.has(v)).join(','));
+        }}>{o.label}</Checkbox>))}
+      </div>
+    );
+  }
   // A few choices show at once (000h's radio chips); many go in a select.
   if (f.kind === 'choice' && (f.options?.length ?? 0) <= 5 && !f.options?.some((o) => o.swatch)) {
     return (
@@ -161,39 +175,49 @@ function Row({ i }: { i: ListItem }) {
 
 /** Long tables and lists a page at a time (000h's pagination): PAGE_ROWS rows, then numbered pages. */
 const PAGE_ROWS = 15;
-function usePaged<T>(all: T[]): { rows: T[]; pager: ReactNode } {
+/** Where a list or table that pages itself is (the piece serves one page; loom asks for ?<param>=<n>). */
+type Pages = { param: string; at: number; count: number; total?: number };
+function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } {
+  const { ctx, go } = useEnv();
   const [at, setAt] = useState(0);
-  const pages = Math.ceil(all.length / PAGE_ROWS);
-  const page = Math.min(at, Math.max(0, pages - 1));
+  // The piece's own pages (0-based here), else ours over what it sent.
+  const pages = served ? served.count : Math.ceil(all.length / PAGE_ROWS);
+  const page = served ? served.at - 1 : Math.min(at, Math.max(0, pages - 1));
+  const to = (p: number) => {
+    if (!served) return setAt(p);
+    const q = new URLSearchParams(Object.entries({ ...ctx.query, [served.param]: String(p + 1) }).filter(([, v]) => v !== ''));
+    go(`${pageHref(ctx.path, ctx.source)}?${q}`);
+  };
   if (pages <= 1) return { rows: all, pager: null };
   // The pages around this one, the first and the last; gaps as an ellipsis.
   const shown = [...new Set([0, page - 1, page, page + 1, pages - 1].filter((p) => p >= 0 && p < pages))].sort((x, y) => x - y);
   return {
-    rows: all.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS),
+    rows: served ? all : all.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS),
     pager: (
       <Pagination className="mt-2" aria-label="Pages of this list">
         <PaginationContent>
-          <PaginationItem><PaginationPrevious disabled={page === 0} onClick={() => setAt(page - 1)} /></PaginationItem>
+          <PaginationItem><PaginationPrevious disabled={page === 0} onClick={() => to(page - 1)} /></PaginationItem>
           {shown.map((p, i) => [
             i && p - shown[i - 1] > 1 ? <PaginationItem key={`e${p}`}><PaginationEllipsis /></PaginationItem> : null,
-            <PaginationItem key={p}><PaginationLink isActive={p === page} aria-current={p === page ? 'page' : undefined} onClick={() => setAt(p)}>{p + 1}</PaginationLink></PaginationItem>,
+            <PaginationItem key={p}><PaginationLink isActive={p === page} aria-current={p === page ? 'page' : undefined} onClick={() => to(p)}>{p + 1}</PaginationLink></PaginationItem>,
           ])}
-          <PaginationItem><PaginationNext disabled={page === pages - 1} onClick={() => setAt(page + 1)} /></PaginationItem>
+          <PaginationItem><PaginationNext disabled={page === pages - 1} onClick={() => to(page + 1)} /></PaginationItem>
         </PaginationContent>
+        {served?.total !== undefined && <p className="mt-1 text-xs opacity-60">{served.total.toLocaleString()} in all</p>}
       </Pagination>
     ),
   };
 }
 
-function ListBlock({ items }: { items: ListItem[] }) {
-  const { rows, pager } = usePaged(items);
+function ListBlock({ items, pages }: { items: ListItem[]; pages?: Pages }) {
+  const { rows, pager } = usePaged(items, pages);
   if (!items.length) return <Nothing title="Nothing here yet" />;
   return <>{<ul className="min-w-0 divide-y">{rows.map((i, n) => <Row key={n} i={i} />)}</ul>}{pager}</>;
 }
 
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
   const { wide } = useEnv();
-  const { rows, pager } = usePaged(b.rows);
+  const { rows, pager } = usePaged(b.rows, (b as { pages?: Pages }).pages);
   const cell = (c: string | { text: string; page?: string }) => (typeof c === 'string' ? c : <Link page={c.page}>{c.text}</Link>);
   if (!b.rows.length) return <Nothing title="Nothing here yet" />;
   if (!wide) {
@@ -280,7 +304,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
       return <div className={`rounded-2xl border p-4 ${c.tone === 'bad' ? 'border-red-300 bg-red-50 dark:bg-red-950/30' : c.tone === 'warn' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/30' : 'opacity-90'}`}>
         {c.title && <p className="font-medium">{c.title}</p>}<p className="text-sm">{c.text}</p></div>; }
-    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} />;
+    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
