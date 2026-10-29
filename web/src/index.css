@@ -40,6 +40,7 @@
 @import "@/styles/cojeev/item-adornment.css";
 @import "@/styles/cojeev/empty.css";
 @import "@/styles/cojeev/select.css";
+@import "@/styles/cojeev/sidebar.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -417,3 +418,17 @@
 [data-accent="blue"] { --v-pink: var(--v-blue); --v-pink-soft: var(--v-blue-soft); --v-pink-deep: var(--v-blue-deep); }
 [data-accent="olive"] { --v-pink: var(--v-olive); --v-pink-soft: var(--v-olive-soft); --v-pink-deep: var(--v-olive-deep); --v-accent-ink: var(--v-olive-ink); }
 [data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
+/* The page's ground: 000h's docs wash (three soft pools on the canvas); quieter in the dark. */
+.loom-wash { background: radial-gradient(at 18% 35%, color-mix(in srgb, var(--v-pink) 65%, transparent), transparent 62%),
+  radial-gradient(at 82% 72%, color-mix(in srgb, var(--v-blue) 60%, transparent), transparent 62%),
+  radial-gradient(at 56% 8%, color-mix(in srgb, var(--v-yellow) 40%, transparent), transparent 56%), var(--v-canvas); }
+[data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: .35; }
+[data-mode="dark"] .loom-wash { background-color: var(--v-canvas); }
+body { background: var(--v-canvas); }
+/* A phone's top bar keeps a frosted ground; a desktop's sits on the wash with no rule under it. */
+.loom-top { background: color-mix(in oklab, var(--v-canvas) 84%, transparent); }
+@media (min-width: 1024px) { .loom-top { background: transparent; backdrop-filter: none; } }
+/* The side panel floats on the wash: paper, translucent, a soft shadow, no rule beside it. */
+.loom-side.v-sidebar { background: color-mix(in oklab, var(--v-paper) 72%, transparent); color: var(--v-text); backdrop-filter: blur(18px);
+  box-shadow: 0 8px 28px rgb(0 0 0 / .06); border: 1px solid color-mix(in oklab, var(--v-border) 55%, transparent); border-radius: 24px; --sidebar-foreground: var(--v-text); }
+.loom-search { background: color-mix(in oklab, var(--v-paper) 80%, transparent); border-color: color-mix(in oklab, var(--v-border) 80%, transparent); }
