@@ -87,6 +87,7 @@ export default function App() {
     setLoading(false);
     if (quiet && !r.data) return;   // a refresh that missed keeps what's shown
     if (r.redirect || r.status === 401) { location.href = to; return; }   // signed out: loom's own sign-in page
+    if (!r.data && r.status === 200) { location.href = to; return; }   // a page loom only draws itself (Passkeys)
     if (!r.data) {
       if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
       setSavedAt(undefined); setUrl(to);

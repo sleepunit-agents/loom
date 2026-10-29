@@ -1069,8 +1069,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const asJson = /^application\/json\b/.test(String(req.headers.accept ?? ''));
   const view = (kind: string, data: Record<string, unknown>, render: () => string, status = 200) =>
     (asJson ? sendJson(res, status, { view: kind, ...data }) : html(render(), status));
-  // A browser that chose the app gets it for every page; it asks this same path for the JSON.
-  if (req.method === 'GET' && !asJson && readCookie(req, UI_COOKIE) === 'app') {
+  // A browser that chose the app gets it for every page; it asks this same path for the JSON. Passkeys stays
+  // loom's own page (its WebAuthn and push switch are /login/passkey.js and /app.js), so the app opens it whole.
+  if (req.method === 'GET' && !asJson && readCookie(req, UI_COOKIE) === 'app' && pathname !== '/passkeys') {
     const shell = webFile('index.html');
     if (shell) return send(res, 200, 'text/html; charset=utf-8', readFileSync(shell, 'utf-8'), { 'cache-control': 'no-cache' });
   }
