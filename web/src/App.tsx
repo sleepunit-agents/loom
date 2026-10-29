@@ -13,7 +13,7 @@ const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.Pas
 const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
 import { ArrivalContext, type Arrivals } from './arrive';
 import { LoomSidebar } from './sidebar';
-import { Boundary, iconFor } from './safe';
+import { Boundary, Callout, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
@@ -22,7 +22,6 @@ import { Spinner } from '@/components/ui/spinner';
 import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
-import { Alert, AlertBody, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
@@ -119,7 +118,7 @@ export default function App() {
     if (!r.data) {
       if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
       setSavedAt(undefined); setUrl(to);
-      setError(r.status ? `loom answered ${r.status} for ${to}` : 'Can’t reach loom, and this page isn’t saved on this device. It opens when there’s a connection.');
+      setError(r.status ? `loom answered ${r.status} for ${to}` : 'This page isn’t saved on this device yet. It opens when there’s a connection.');
       return;
     }
     // A one-time message (?_flash=, after a form's post) is shown once, then leaves the address.
@@ -229,12 +228,13 @@ export default function App() {
     icon: <span className="loom-back-mark" aria-hidden>{accent.label[0]}</span>,
     badge: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>,
   } : null;
-  const title = data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
+  // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
+  const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
 
   return (
     <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
-      <div className="relative isolate min-h-dvh lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]" data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
+      <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
@@ -263,7 +263,7 @@ export default function App() {
                     <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
                   </BreadcrumbList></Breadcrumb>
                 )}
-                <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>
+                {title && <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
                 {head?.sub && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
               {accent && wide && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
@@ -272,9 +272,10 @@ export default function App() {
 
           {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden><Spinner appearance="orbit" className="scale-[2.2]" /></div>}
           <main aria-busy={waiting || undefined} className={`mx-auto max-w-5xl px-4 pb-44 pt-5 transition-opacity duration-300 lg:pb-10 ${waiting ? 'opacity-35' : ''}`}>
-            {savedAt && <Alert variant="warn" role="status" className="mb-4"><AlertBody><AlertTitle>Can’t reach loom</AlertTitle>
-              <AlertDescription>This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</AlertDescription></AlertBody></Alert>}
-            {error && <Card><CardContent className="py-6"><p>{error}</p>{navigator.onLine && <Button className="mt-3" variant="outline" onClick={() => location.reload()}>Try again</Button>}</CardContent></Card>}
+            {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
+              This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
+            {error && <Callout tone={/^loom answered/.test(error) ? 'danger' : 'warn'} icon={/^loom answered/.test(error) ? undefined : 'cloud-off'} title={/^loom answered/.test(error) ? 'loom couldn’t open this' : 'Can’t reach loom'}
+              actions={<Button size="sm" variant="outline" onClick={() => void load(location.pathname + location.search, false)}>Try again</Button>}>{error}</Callout>}
             {!error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />

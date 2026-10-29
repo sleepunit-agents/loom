@@ -8,6 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ActButton, EnvContext, Link, Nothing } from './blocks';
 import type { Button as Btn, Chrome, Source } from './loom';
 import { As, Mark } from './views';
+import { plain } from './plain';
 
 const useEnv = () => useContext(EnvContext)!;
 
@@ -15,37 +16,47 @@ type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'fyi
 const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', fyi: 'FYI', answered: 'Answered' };
 
 export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folder: string; chrome: Chrome }) {
-  const { go, ctx } = useEnv();
+  const { ctx } = useEnv();
   const [open, setOpen] = useState<InboxItem | null>(null);
+  // The switch is this page's own: every item came with it, so it filters here, at once.
+  const [show, setShow] = useState(folder === 'needs' ? 'needs' : 'all');
   const agents = ctx.agents ?? {};
+  const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
   const need = items.filter((i) => i.attention);
   const rest = items.filter((i) => !i.attention);
-  const row = (i: InboxItem) => (
-    <Arrive as="li" key={i.key} k={`in:${i.key}\0${i.kind}`}>
-      <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
-        {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <span className="size-7" />}
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
-            <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{i.text}</span></span>
-          <span className="block truncate text-sm opacity-70">{i.outcome ?? i.meta ?? ''}</span>
-        </span>
-        <Badge variant={i.attention ? 'pending' : 'default'}>{KIND[i.kind]}</Badge>
-      </button>
-    </Arrive>
-  );
+  const row = (i: InboxItem) => {
+    const p = plain(i, name(i.agent));
+    return (
+      <Arrive as="li" key={i.key} k={`in:${i.key}\0${i.kind}`} className="min-w-0">
+        <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
+          {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <span className="size-7 shrink-0" />}
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
+              <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
+            {p.why && <span className="block truncate text-sm opacity-70">{p.why}</span>}
+          </span>
+          <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
+        </button>
+      </Arrive>
+    );
+  };
   return (
-    <div className="grid gap-4">
-      <ToggleGroup type="single" className="v-seg self-start" aria-label="Inbox folder" value={folder} onValueChange={(f) => { if (f) go(`/inbox${f === 'needs' ? '' : `?folder=${f}`}`); }}>
-        {[['needs', 'Needs you'], ['all', 'Everything']].map(([f, l]) => <ToggleGroupItem key={f} value={f}>{l}</ToggleGroupItem>)}</ToggleGroup>
-      {need.length > 0 && <Card><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="divide-y">{need.map(row)}</ul></CardContent></Card>}
-      {need.length === 0 && <Nothing title="Nothing needs you" text="Asks from your agents land here." />}
-      {rest.length > 0 && <Card><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="divide-y">{rest.map(row)}</ul></CardContent></Card>}
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
+      <ToggleGroup type="single" className="v-seg self-start justify-self-start" aria-label="Show" value={show} onValueChange={(f) => { if (f) setShow(f); }}>
+        {[['needs', `Needs you${need.length ? ` · ${need.length}` : ''}`], ['all', 'Everything']].map(([f, l]) => <ToggleGroupItem key={f} value={f}>{l}</ToggleGroupItem>)}</ToggleGroup>
+      {need.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{need.map(row)}</ul></CardContent></Card>}
+      {need.length === 0 && show === 'needs' && <Nothing title="Nothing needs you" text={rest.length ? `${rest.length} answered and FYI in Everything.` : 'Asks from your agents land here.'} />}
+      {show === 'all' && rest.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{rest.map(row)}</ul></CardContent></Card>}
       <Drawer open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
         {open && (
           <DrawerContent className="lg:mx-auto lg:max-w-xl">
-            <DrawerHeader><DrawerTitle>{open.text}</DrawerTitle><DrawerDescription>{[open.sourceLabel ?? open.source.id, open.agent].filter(Boolean).join(' · ')}</DrawerDescription></DrawerHeader>
-            {open.meta && <p className="text-sm">{open.meta}</p>}
-            {open.outcome && <p className="text-sm opacity-80">{open.outcome}</p>}
+            {(() => { const p = plain(open, name(open.agent)); return (<>
+              <DrawerHeader><DrawerTitle>{p.title}</DrawerTitle><DrawerDescription>{[open.sourceLabel ?? open.source.id, name(open.agent), KIND[open.kind]].filter(Boolean).join(' · ')}</DrawerDescription></DrawerHeader>
+              {p.why && p.why !== open.outcome && <p className="text-sm">{p.why}</p>}
+              {open.meta && open.meta !== p.why && <p className="text-sm">{open.meta}</p>}
+              {open.outcome && <p className="text-sm opacity-80">{open.outcome}</p>}
+              {p.title !== open.text && <p className="break-words text-xs opacity-60">As asked: {open.text}</p>}
+            </>); })()}
             <As source={open.source}>
               <div className="grid gap-2">
                 {open.actions?.map((b) => <ActButton key={b.action + b.label} b={b} size="default" full onDone={() => setOpen(null)} />)}

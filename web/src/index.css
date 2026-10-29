@@ -456,11 +456,10 @@ body { background: var(--v-canvas); }
   100% { opacity: 1; filter: none; transform: none; }
 }
 @keyframes loom-arrive-glow {
-  0% { box-shadow: 0 0 0 1.5px color-mix(in oklab, var(--v-pink) 85%, transparent), 0 0 36px 4px color-mix(in oklab, var(--v-pink) 55%, transparent);
-       background-color: color-mix(in oklab, var(--v-pink) 18%, transparent); }
-  45% { box-shadow: 0 0 0 1px color-mix(in oklab, var(--v-yellow) 60%, transparent), 0 0 28px 2px color-mix(in oklab, var(--v-blue) 40%, transparent);
-        background-color: color-mix(in oklab, var(--v-blue) 10%, transparent); }
-  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; background-color: transparent; }
+  /* No ring: an edge drawn tight round the words distracts from them resolving (Jonathan, 2026-10-29). A wash and a soft halo. */
+  0% { box-shadow: 0 0 36px 4px color-mix(in oklab, var(--v-pink) 40%, transparent); background-color: color-mix(in oklab, var(--v-pink) 14%, transparent); }
+  45% { box-shadow: 0 0 28px 2px color-mix(in oklab, var(--v-blue) 28%, transparent); background-color: color-mix(in oklab, var(--v-blue) 8%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; }
 }
 .loom-arrive { animation: loom-arrive-in 900ms cubic-bezier(.2,.8,.2,1) both, loom-arrive-glow 2600ms cubic-bezier(.3,.6,.2,1); border-radius: 14px; }
 @media (prefers-reduced-motion: reduce) { .loom-arrive { animation: none; } }
