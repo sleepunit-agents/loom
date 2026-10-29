@@ -17,7 +17,7 @@ import { Appearance, DashboardView, HouseHomeView, InboxView, SheetView, type Mo
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
-  Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis',
+  Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
 };
 const icon = (label: string) => ICON[label] ?? 'circle';
 
@@ -41,7 +41,7 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const tabs: Tab[] = [
     { label: 'Home', href: s.home, current: s.tab === 'home' },
     { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks },
-    ...places,
+    ...places.filter((p) => p.href !== '/inbox'),
     { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) },
   ];
   return { tabs, more: settings };

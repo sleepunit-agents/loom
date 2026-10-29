@@ -141,7 +141,7 @@ function Row({ i }: { i: ListItem }) {
   );
   return (
     <li className="flex min-h-11 items-center gap-3 py-2.5">
-      {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
+      {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
       {i.act && <ActButton b={i.act} />}
     </li>
   );

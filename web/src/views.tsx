@@ -61,10 +61,10 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
             </CardHeader>
             {c.readings && c.readings.length > 0 && (
               <CardContent>
-                <dl className="grid gap-1.5 text-sm">{c.readings.map((r) => (
-                  <div key={r.label} className="flex items-baseline gap-2">
-                    {r.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[r.tone]}`} />}
-                    <dt className="opacity-70">{r.label}</dt><dd className="min-w-0 flex-1 truncate text-right">{r.value}</dd>
+                <dl className="grid min-w-0 gap-1.5 text-sm">{c.readings.map((r) => (
+                  <div key={r.label} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-3">
+                    <dt className="flex items-center gap-2 opacity-70">{r.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[r.tone]}`} />}{r.label}</dt>
+                    <dd className="min-w-0 truncate text-right">{r.value}</dd>
                   </div>))}</dl>
               </CardContent>
             )}
@@ -91,7 +91,7 @@ function Asks({ asks }: { asks: Ask[] }) {
         <Card className={a.tone === 'bad' ? 'ring-1 ring-red-400' : 'ring-1 ring-amber-300'}>
           <CardContent className="grid gap-2 py-4">
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
-            <Link page={a.page} className="font-medium">{a.text}</Link>
+            <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
             {a.meta && <p className="text-sm opacity-70">{a.meta}</p>}
             {a.actions && <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>}
           </CardContent>
@@ -106,7 +106,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{tiles.map((t) => (
       <As key={t.source.id + t.label} source={t.source}>
-        <Link page={t.page} className="grid gap-0.5 rounded-3xl border p-4">
+        <Link page={t.page} className="grid gap-0.5 rounded-3xl border p-4 no-underline hover:border-current">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="text-xl font-semibold">{t.value}</span>
           {t.detail && <span className="line-clamp-2 text-xs opacity-60">{t.detail}</span>}
@@ -132,7 +132,7 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
             return (
               <li key={n} className="relative py-2.5">
                 <span className={`absolute -left-[21px] top-4 size-2.5 rounded-full ${fresh ? 'bg-[var(--loom-accent,#16a34a)]' : 'bg-neutral-300 dark:bg-neutral-600'}`} />
-                <Link page={r.page} className="block">{r.text}</Link>
+                <Link page={r.page} className="block no-underline hover:underline">{r.text}</Link>
                 {r.meta && <span className="block text-xs opacity-60">{r.meta}</span>}
               </li>);
           })}</ol>{void now}</CardContent>
@@ -155,10 +155,10 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
   const rest = items.filter((i) => !i.attention);
   const row = (i: InboxItem) => (
     <li key={i.key}>
-      <button className="flex w-full items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
+      <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <span className="size-7" />}
         <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">{i.unread && <span className="size-2 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
+          <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
             <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{i.text}</span></span>
           <span className="block truncate text-sm opacity-70">{i.outcome ?? i.meta ?? ''}</span>
         </span>
