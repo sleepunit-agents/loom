@@ -16,7 +16,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { pageHref, type Block, type Button as Btn, type Ctx, type Field, type ListItem, type Tone } from './loom';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
-export interface Env { ctx: Ctx; send: (action: string, fields: Record<string, string>) => Promise<boolean>; go: (href: string) => void; wide: boolean }
+export interface Env {
+  ctx: Ctx; send: (action: string, fields: Record<string, string>) => Promise<boolean>; go: (href: string) => void; wide: boolean;
+  /** The same page, but links and actions belong to another source (an ask's or a tile's piece). */
+  withSource: (source: Ctx['source']) => Env;
+}
 export const EnvContext = createContext<Env | null>(null);
 const useEnv = () => useContext(EnvContext)!;
 

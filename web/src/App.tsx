@@ -8,10 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Spinner } from '@/components/ui/spinner';
-import { ThemeToggle, type ThemeMode } from '@/components/ui/theme-toggle';
 import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
 import { BlockView, EnvContext, type Env } from './blocks';
+import { Appearance, DashboardView, HouseHomeView, InboxView, SheetView, type Mode } from './views';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -54,8 +54,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
-  const [mode, setMode] = useState<ThemeMode>(() => (localStorage.getItem('loom-mode') as ThemeMode) || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-  useEffect(() => { document.documentElement.dataset.mode = mode; try { localStorage.setItem('loom-mode', mode); } catch { /* private window */ } }, [mode]);
+  // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup and More, kept in this browser.
+  const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
+  const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
+  useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
+  const effective = mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
+  useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
+  const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem('loom-mode', m); } catch { /* private window */ } };
 
   const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => [...x, { ...n, id: Date.now() + Math.random() }]), []);
 
@@ -88,29 +93,43 @@ export default function App() {
     return agentId ? chrome?.shell?.agents.find((a) => a.id === agentId) : undefined;
   }, [url, chrome]);
 
-  const send = useCallback(async (action: string, fields: Record<string, string>, actUrl?: string): Promise<boolean> => {
-    if (!ctx || !chrome) return false;
-    const r: ActResult = await act(ctx, chrome.csrf, action, fields, actUrl);
+  const send = useCallback(async (action: string, fields: Record<string, string>, on?: Ctx): Promise<boolean> => {
+    const c = on ?? ctx;
+    if (!c || !chrome) return false;
+    const r: ActResult = await act(c, chrome.csrf, action, fields);
     say({ ok: r.ok, message: r.message, from: r.from, undo: r.undo });
     if (r.go) go(r.go); else if (r.ok) void load(url, false);
     return r.ok;
   }, [ctx, chrome, say, go, load, url]);
 
-  const env: Env | null = ctx ? { ctx, send, go, wide } : null;
+  // Pages without a ctx of their own (the household's home, a sheet) act and link as loom itself.
+  const baseCtx: Ctx | null = ctx ?? (chrome ? { source: { id: 'loom', base: '/' }, path: url.replace(/^\//, '').split('?')[0], query: {}, csrf: chrome.csrf,
+    agents: Object.fromEntries((chrome.shell?.agents ?? []).map((a) => [a.id, { label: a.label, bg: a.bg, fg: a.fg }])) } : null);
+  const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => send(a, f, c), go, wide, withSource: (source) => envFor({ ...c, source }) });
+  const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
-  const phoneTabs = nav.tabs.length > 5 ? [...nav.tabs.slice(0, 4), { label: 'More', href: '#more', current: nav.tabs.slice(4).some((t) => t.current) }] : nav.tabs;
-  const moreTabs = [...(nav.tabs.length > 5 ? nav.tabs.slice(4) : []), ...nav.more];
+  // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
+  const onPhone = (() => {
+    if (nav.tabs.length <= 5) return nav.tabs;
+    const cur = nav.tabs.find((t) => t.current);
+    const keep = [nav.tabs[0], ...(cur && cur !== nav.tabs[0] ? [cur] : [])];
+    for (const t of nav.tabs) if (keep.length < 4 && !keep.includes(t)) keep.push(t);
+    return nav.tabs.filter((t) => keep.includes(t));
+  })();
+  const phoneTabs = nav.tabs.length > 5 ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
+  const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
     value: t.href, label: t.label, icon: <AnimatedIcon name={icon(t.label)} active={t.current} />,
     ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const pick = (href: string) => (href === '#more' ? setMore(true) : go(href));
-  const title = data?.view === 'page' ? data.page.title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label : 'loom');
+  const title = data?.view === 'page' ? data.page.title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
 
   return (
     <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
-      <div className="min-h-dvh lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]" data-mode={mode}
+      <div className="min-h-dvh lg:grid lg:grid-cols-[15rem_minmax(0,1fr)]" data-mode={effective}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {wide && chrome && (
           <aside className="sticky top-0 h-dvh w-60 overflow-y-auto border-r px-3 py-6">
@@ -122,7 +141,8 @@ export default function App() {
           <header className="sticky top-0 z-20 border-b backdrop-blur [padding-top:env(safe-area-inset-top)]" style={{ background: 'color-mix(in oklab, var(--v-canvas) 84%, transparent)' }}>
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
               {chrome?.shell?.back ? (
-                <Button size="sm" variant="ghost" onClick={() => go(chrome.shell!.back!.href)}><AnimatedIcon name="chevron-left" size="sm" /> {chrome.shell.back.label}</Button>
+                <Button size="sm" variant="ghost" aria-label={`Back to ${chrome.shell.back.label}`} onClick={() => go(chrome.shell!.back!.href)}>
+                  <AnimatedIcon name="chevron-left" size="sm" />{wide && <span>{chrome.shell.back.label}</span>}</Button>
               ) : accent ? (
                 <span className="grid size-10 shrink-0 place-items-center rounded-2xl text-lg font-semibold" style={{ background: accent.bg, color: accent.fg }}>{accent.label[0]}</span>
               ) : null}
@@ -131,8 +151,7 @@ export default function App() {
                 {head?.sub && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
               {loading && <Spinner />}
-              {accent && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
-              <ThemeToggle mode={mode} onModeChange={setMode} showLabel={false} />
+              {accent && wide && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
             </div>
           </header>
 
@@ -140,7 +159,13 @@ export default function App() {
             {error && <Card><CardContent className="py-6"><p>{error}</p><Button className="mt-3" variant="outline" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Open the classic page</Button></CardContent></Card>}
             {!error && data && env && (
               <EnvContext.Provider value={env}>
-                {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} /> : <NotYet kind={data.view} url={url} />}
+                {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
+                  : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
+                  : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
+                  : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
+                  : data.view === 'inbox' ? <InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} />
+                  : data.view === 'sheet' ? <SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} />
+                  : <NotYet kind={data.view} url={url} />}
               </EnvContext.Provider>
             )}
             {!error && data && !env && <NotYet kind={data.view} url={url} />}
@@ -173,6 +198,7 @@ export default function App() {
               <Button variant="ghost" className="justify-start gap-3" onClick={() => { setMore(false); go('/'); }}><AnimatedIcon name="house" /> The household</Button>
             </div>
           )}
+          <div className="grid gap-2"><p className="text-sm opacity-70">Appearance</p><Appearance mode={mode} setMode={setMode} /></div>
           <Button variant="ghost" onClick={() => { location.href = `${url}${url.includes('?') ? '&' : '?'}ui=classic`; }}>Back to the classic page</Button>
         </DrawerContent>
       </Drawer>
