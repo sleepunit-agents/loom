@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Arrive } from './arrive';
 import { Link, Nothing, useEnv } from './blocks';
 import { clockOf, dayOf, plainThread } from './thread-plain';
+import { tidy } from './tidy';
 
 type ThreadRow = { agent?: string; text: string; meta?: string; where?: string; at?: string; page?: string };
 
@@ -30,8 +31,8 @@ export default function Ledger({ rows, title, now }: { rows: ThreadRow[]; title:
             const where = r.where ?? r.meta?.split(' · ')[0];
             return {
               id: `${r.at}\0${r.text}`,
-              title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{p.title}</Link></Arrive>,
-              ...(p.detail ? { description: p.detail } : {}),
+              title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{tidy(p.title)}</Link></Arrive>,
+              ...(p.detail ? { description: tidy(p.detail) } : {}),
               // The feed's avatar wears the agent's own mark (its colour, its initial), so who did what reads at a glance.
               ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0], avatarSrc: markImage(ctx.agents[r.agent]) } } : {}),
               ...(r.at ? { timestamp: clockOf(r.at), dateTime: r.at, group: dayOf(r.at, now) } : {}),

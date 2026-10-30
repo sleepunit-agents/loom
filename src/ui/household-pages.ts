@@ -481,7 +481,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         const isHouse = (t: { label: string }) => HOUSE.test(t.label);
         const row = (t: typeof live[number]) => ({
           text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
-          meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}${isHouse(t) ? ` · ${/h-\d+/.exec(t.label)![0]}` : ''}`,
+          meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}`,
           act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
         });
         const own = live.filter((t) => !isHouse(t)), houses = live.filter(isHouse);

@@ -10,6 +10,7 @@ import { ActButton, EnvContext, Link, Nothing } from './blocks';
 import type { Button as Btn, Chrome, Source } from './loom';
 import { As, Mark } from './views';
 import { bits, plain } from './plain';
+import { tidy } from './tidy';
 
 const useEnv = () => useContext(EnvContext)!;
 
@@ -35,7 +36,7 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
               <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
-            {(p.why ?? i.outcome) && <span className="block truncate text-sm opacity-70">{p.why ?? i.outcome}</span>}
+            {(p.why ?? i.outcome) && <span className="block truncate text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
           </span>
           <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
         </button>
@@ -79,7 +80,7 @@ function ItemSheet({ i, who, mark, tasks, onDone }: { i: InboxItem; who: string;
   else if (i.outcome) facts.push(['Answer', i.outcome]);
   const left = i.expires ? when(i.expires) : undefined;
   if (left && i.attention) facts.push(['Until', left.split(' · ')[0]]);
-  const why = p.why ?? (i.kind !== 'answered' ? i.meta : undefined);
+  const why = tidy(p.why ?? (i.kind !== 'answered' ? i.meta : undefined) ?? '') || undefined;
   const own = i.page !== undefined && i.page !== '';
   return (
     <DrawerContent className="lg:mx-auto lg:max-w-xl">

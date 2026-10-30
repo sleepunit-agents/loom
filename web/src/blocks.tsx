@@ -7,6 +7,7 @@ const Filters = lazy(() => import('./filters'));
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { Callout } from './safe';
+import { tidy } from './tidy';
 import { Item, ItemContent, ItemDescription, ItemTitle, ItemTrailing } from '@/components/ui/item';
 // Rare blocks' components load when a page has one: a link block (living link), a meter (progress).
 const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => ({ default: m.LivingLink })));
@@ -97,6 +98,26 @@ function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: s
       </div>
     );
   }
+  // A time of day (Jonathan, 2026-10-30: "and the time picker"): the device's own picker, which shows it as its owner
+  // reads time (2:30 PM here); "HH:MM" on the wire. Several: a row each, a way to drop one, and one to add another.
+  if (f.kind === 'time') {
+    const times = value ? value.split(',').map((t) => t.trim()) : [''];
+    const put = (next: string[]) => set(next.filter(Boolean).join(','));
+    return (
+      <div id={id} role="group" aria-label={f.label} className="grid gap-2">
+        {times.map((t, n) => (
+          <div key={n} className="flex items-center gap-2">
+            <Input type="time" aria-label={times.length > 1 ? `${f.label} ${n + 1}` : f.label} value={t} required={f.required && n === 0} className="w-40"
+              onChange={(e) => { const next = [...times]; next[n] = e.target.value; put(next.length ? next : ['']); if (!e.target.value && times.length === 1) set(''); }} />
+            {f.multiple && times.length > 1 && <Button type="button" size="sm" variant="ghost" aria-label={`Remove ${t || 'this time'}`} onClick={() => put(times.filter((_, i) => i !== n))}>Remove</Button>}
+          </div>
+        ))}
+        {f.multiple && times.every(Boolean) && times.length < 12 && (
+          <Button type="button" size="sm" variant="outline" className="justify-self-start" onClick={() => set([...times, ''].join(','))}>Add a time</Button>
+        )}
+      </div>
+    );
+  }
   // A few choices show at once (000h's radio chips); many go in a select.
   if (f.kind === 'choice' && (f.options?.length ?? 0) <= 5 && !f.options?.some((o) => o.swatch)) {
     return (
@@ -136,7 +157,9 @@ export function Form({ form, onDone, inDialog = false }: { form: Extract<Block, 
   return (
     <form className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" onSubmit={async (e) => {
       e.preventDefault(); setBusy(true);
-      const ok = await send(form.action, { ...(form.hidden ?? {}), ...vals });
+      // A time row added and left empty isn't sent: "07:17," is "07:17".
+      const clean = Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, form.fields.find((f) => f.name === k)?.kind === 'time' ? v.split(',').map((t) => t.trim()).filter(Boolean).join(',') : v]));
+      const ok = await send(form.action, { ...(form.hidden ?? {}), ...clean });
       setBusy(false); if (ok) onDone?.();
     }}>
       {!inDialog && form.title && <h4 className="font-medium">{form.title}</h4>}
@@ -173,10 +196,10 @@ function Row({ i, wrap }: { i: ListItem; wrap?: boolean }) {
       <ItemTitle className={`flex min-w-0 gap-2 ${wrap ? 'items-start' : 'items-center'}`}>
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
         {agent && <AgentAvatar a={agent} size={20} />}
-        <span className={wrap ? 'font-medium leading-relaxed [overflow-wrap:anywhere]' : 'truncate font-medium'}>{i.text}</span>
+        <span className={wrap ? 'font-medium leading-relaxed [overflow-wrap:anywhere]' : 'truncate font-medium'}>{tidy(i.text)}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
-      {i.meta && <ItemDescription className="truncate">{i.meta}</ItemDescription>}
+      {i.meta && <ItemDescription className="truncate">{tidy(i.meta)}</ItemDescription>}
     </ItemContent>
   );
   return (
@@ -234,7 +257,7 @@ function ListBlock({ items, pages, wrap }: { items: ListItem[]; pages?: Pages; w
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
   const { wide } = useEnv();
   const { rows, pager } = usePaged(b.rows, (b as { pages?: Pages }).pages);
-  const cell = (c: string | { text: string; page?: string }) => (typeof c === 'string' ? c : <Link page={c.page}>{c.text}</Link>);
+  const cell = (c: string | { text: string; page?: string }) => (typeof c === 'string' ? tidy(c) : <Link page={c.page}>{tidy(c.text)}</Link>);
   if (!b.rows.length) return <Nothing title="Nothing here yet" />;
   if (!wide) {
     return (
@@ -315,7 +338,7 @@ export function Nothing({ title, text, children }: { title: string; text?: strin
 
 export function BlockView({ b }: { b: Block }) {
   switch (b.type) {
-    case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{t.text}</p>; }
+    case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{tidy(t.text)}</p>; }
     case 'prose': { const text = (b as { text: string }).text;
       return <Suspense fallback={<div className="whitespace-pre-wrap">{text}</div>}><Markdown text={text} /></Suspense>; }
     case 'profile': return <Suspense fallback={<div className="min-h-64" />}><Profile p={b as Extract<Block, { type: 'profile' }>} /></Suspense>;
@@ -326,7 +349,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
         {(b as Extract<Block, { type: 'kv' }>).items.map((i) => [<dt key={`${i.label}k`} className="opacity-70">{i.label}</dt>,
-          <Arrive as="dd" key={`${i.label}v`} k={`kv:${i.label}\0${i.value}`} className="min-w-0 [overflow-wrap:anywhere]">{i.page !== undefined ? <Link page={i.page}>{i.value}</Link> : i.value}</Arrive>])}
+          <Arrive as="dd" key={`${i.label}v`} k={`kv:${i.label}\0${i.value}`} className="min-w-0 [overflow-wrap:anywhere]">{i.page !== undefined ? <Link page={i.page}>{tidy(i.value)}</Link> : tidy(i.value)}</Arrive>])}
       </dl>);
     case 'stats': return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{(b as Extract<Block, { type: 'stats' }>).items.map((s) => (
