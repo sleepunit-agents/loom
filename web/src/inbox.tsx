@@ -14,14 +14,17 @@ import { tidy } from './tidy';
 
 const useEnv = () => useContext(EnvContext)!;
 
-type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
-const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', fyi: 'FYI', answered: 'Answered' };
+type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
+const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
+// Each kind its own filter, in this order, shown only when it holds something (Jonathan, 2026-10-30: "make all of our
+// types filterable").
+const KINDS: Array<[InboxItem['kind'], string]> = [['permission', 'Permissions'], ['decision', 'Decisions'], ['reply', 'Replies'], ['alert', 'Alerts'], ['todo', 'To do'], ['fyi', 'FYI'], ['answered', 'Answered']];
 
 export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folder: string; chrome: Chrome }) {
   const { ctx } = useEnv();
   const [open, setOpen] = useState<InboxItem | null>(null);
   // The switch is this page's own: every item came with it, so it filters here, at once.
-  const [show, setShow] = useState(folder === 'needs' ? 'needs' : 'all');
+  const [show, setShow] = useState(folder === 'needs' ? 'needs' : KINDS.some(([k]) => k === folder) ? folder : 'all');
   const agents = ctx.agents ?? {};
   const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
   const tasks = items.find((i) => i.source.id === 'tasks')?.source ?? { id: 'tasks', base: '/p/tasks/' };
@@ -45,11 +48,19 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
   };
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
-      <ToggleGroup type="single" className="self-start justify-self-start" aria-label="Show" value={show} onValueChange={(f) => { if (f) setShow(f); }}>
-        {[['needs', `Needs you${need.length ? ` · ${need.length}` : ''}`], ['all', 'Everything']].map(([f, l]) => <ToggleGroupItem key={f} value={f}>{l}</ToggleGroupItem>)}</ToggleGroup>
-      {need.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{need.map(row)}</ul></CardContent></Card>}
+      <ToggleGroup type="single" className="flex-wrap self-start justify-self-start" aria-label="Show" value={show} onValueChange={(f) => { if (f) setShow(f); }}>
+        {[['needs', `Needs you${need.length ? ` · ${need.length}` : ''}`], ['all', 'Everything'],
+          ...KINDS.filter(([k]) => items.some((i) => i.kind === k)).map(([k, l]) => [k, `${l} · ${items.filter((i) => i.kind === k).length}`])]
+          .map(([f, l]) => <ToggleGroupItem key={f} value={f}>{l}</ToggleGroupItem>)}</ToggleGroup>
+      {(show === 'needs' || show === 'all') && need.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{need.map(row)}</ul></CardContent></Card>}
       {need.length === 0 && show === 'needs' && <Nothing title="Nothing needs you" text={rest.length ? `${rest.length} answered and FYI in Everything.` : 'Asks from your agents land here.'} />}
       {show === 'all' && rest.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{rest.map(row)}</ul></CardContent></Card>}
+      {KINDS.map(([k, l]) => {
+        if (show !== k) return null;
+        const these = items.filter((i) => i.kind === k);
+        return these.length ? <Card key={k} className="min-w-0"><CardHeader><CardTitle>{l} · {these.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{these.map(row)}</ul></CardContent></Card>
+          : <Nothing key={k} title={`No ${l.toLowerCase()}`} text="Nothing of this kind right now." />;
+      })}
       <Drawer open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
         {open && <ItemSheet i={open} who={name(open.agent)} mark={open.agent ? agents[open.agent] : undefined} tasks={tasks} onDone={() => setOpen(null)} />}
       </Drawer>
@@ -75,7 +86,8 @@ function ItemSheet({ i, who, mark, tasks, onDone }: { i: InboxItem; who: string;
   const from = cap(i.sourceLabel ?? i.source.id);
   const facts: [string, React.ReactNode][] = [];
   const asked = when(i.at);
-  if (asked) facts.push([i.kind === 'fyi' ? 'When' : 'Asked', asked]);
+  // Only an ask is asked: news is when it happened, an alert or a task since when it has stood.
+  if (asked) facts.push([i.kind === 'fyi' ? 'When' : i.kind === 'alert' || i.kind === 'todo' ? 'Since' : 'Asked', asked]);
   if (p.answer) facts.push(['Answer', [p.answer.verdict, p.answer.by && `by ${p.answer.by}`, p.answer.for && `for ${p.answer.for}`].filter(Boolean).join(' ')]);
   else if (i.outcome) facts.push(['Answer', i.outcome]);
   const left = i.expires ? when(i.expires) : undefined;
@@ -96,7 +108,7 @@ function ItemSheet({ i, who, mark, tasks, onDone }: { i: InboxItem; who: string;
       <div className="grid gap-5 py-2">
         {why && (
           <section className="grid gap-1.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">{i.kind === 'fyi' ? 'Details' : 'Why'}</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">{i.kind === 'fyi' || i.kind === 'alert' || i.kind === 'todo' ? 'Details' : 'Why'}</h3>
             <p className="break-words leading-relaxed">{bits(why).map((b, n) => b.t === 'text' ? <span key={n}>{b.s}</span>
               : b.t === 'task' ? <As key={n} source={tasks}><Link page={`task/${b.id}`} className="font-medium underline underline-offset-4">{b.id}</Link></As>
               : b.t === 'pr' ? <Link key={n} href={`https://github.com/${b.repo}/pull/${b.n}`} className="font-medium underline underline-offset-4">{b.repo}#{b.n}</Link>

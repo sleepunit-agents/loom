@@ -182,13 +182,13 @@ export function renderLogin(error?: string, passkey: { rp?: string; here: boolea
 
 // ─── The Inbox (t-1621): folders, a list above the open item ─────────────────
 
-export type InboxFolder = 'needs' | 'permission' | 'decision' | 'reply' | 'fyi' | 'answered';
+export type InboxFolder = 'needs' | 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered';
 
 /** One row in the Inbox: an ask (to allow, choose or answer), a notice (FYI) or one already answered. */
 export interface InboxItem {
   key: string;
   /** What it is: an ask's kind, or fyi (a notice), or answered. */
-  kind: 'permission' | 'decision' | 'reply' | 'fyi' | 'answered';
+  kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered';
   /** It needs the owner: counted, and unread until opened. */
   attention: boolean;
   unread: boolean;
@@ -210,6 +210,8 @@ export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint
   { id: 'permission', label: 'Permissions', hint: 'Approvals, secrets, boxes asking to join' },
   { id: 'decision', label: 'Decisions', hint: 'An agent asks you to choose' },
   { id: 'reply', label: 'Replies', hint: 'Someone waits on words, not a button' },
+  { id: 'alert', label: 'Alerts', hint: 'Something is wrong; nothing to choose' },
+  { id: 'todo', label: 'To do', hint: 'A task waiting on you' },
   { id: 'fyi', label: 'FYI', hint: 'News; never unread' },
   { id: 'answered', label: 'Answered', hint: 'What was decided, and what expired' },
 ];

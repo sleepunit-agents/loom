@@ -845,6 +845,11 @@ describe('the household page', () => {
         actions: [{ action: 'allow', label: 'Allow once', tone: 'primary' }, { action: 'deny', label: 'Deny', tone: 'danger' }] },
       { text: 'Tonight or tomorrow?', kind: 'reply', agent: 'mark', page: 'q/1', label: 'Answer' },
       { text: 'Keep this memory?', kind: 'decision', attention: false },
+      // No kind: with nothing to choose it's an alert, not a decision (Jonathan, 2026-10-30: "discord bridge is down ...
+      // says it's got a decision, and well, there's no decision there"); with buttons, still a decision.
+      { text: 'Discord bridge is dark since 9:03 AM', label: 'Look', attention: false },
+      { text: 'Renew the cert?', attention: false, actions: [{ action: 'renew', label: 'Renew', tone: 'primary' }] },
+      { text: 'Set up the rig', kind: 'todo', label: 'Open', attention: false },
     ], notices: [{ text: 'one joined loom', at: new Date(Date.now() - 30 * 60_000).toISOString() }],
     answered: [{ text: 'A box asks to join: evil', outcome: 'Blocked.', at: new Date(Date.now() - 86_400_000).toISOString(), kind: 'permission' }] };
     const qPage = { title: 'Tonight or tomorrow?', sections: [{ id: 'q', title: 'The question', blocks: [{ type: 'text', text: 'Loren is around until 6.' },
@@ -895,6 +900,13 @@ describe('the household page', () => {
       expect(unread(reply)).toBe(0);
       const decisions = await data(cookie, '/inbox?f=decision');
       expect(inFolder(decisions, 'decision').map((it) => it.text)).toContain('Keep this memory?');
+      expect(item(decisions, 'Discord bridge is dark')).toMatchObject({ kind: 'alert' });
+      expect(item(decisions, 'Renew the cert?')).toMatchObject({ kind: 'decision' });
+      expect(item(decisions, 'Set up the rig')).toMatchObject({ kind: 'todo' });
+      const alerts = await data(cookie, '/inbox?f=alert');
+      expect(alerts.folder).toBe('alert');
+      expect(inFolder(alerts, 'alert').map((it) => it.text)).toEqual(['Discord bridge is dark since 9:03 AM']);
+      expect((await data(cookie, '/inbox?f=todo')).folder).toBe('todo');
       expect(inFolder(decisions, 'decision').some((it) => it.unread)).toBe(false);
       const fyi = await data(cookie, '/inbox?f=fyi');
       expect(inFolder(fyi, 'fyi').map((it) => it.text)).toContain('one joined loom');

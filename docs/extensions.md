@@ -178,7 +178,9 @@ that ignores it keeps working. Outside a household there's no `caller`.
 
   For the Inbox (each optional):
   - `kind` files the ask. `"permission"` means something to allow (an approval, a secret, a box
-    asking to join). `"decision"` means a choice, and is the default. `"reply"` means words, not a button.
+    asking to join). `"decision"` means a choice. `"reply"` means words, not a button. `"alert"` means
+    something is wrong and worth a look, with nothing to choose (a bridge gone dark). `"todo"` means a
+    task waiting on the owner. With no `kind`, an ask with `actions` is a decision; one without is an alert.
   - `expires` (an ISO date-time) is when it stops mattering.
   - `attention: false` files the ask without counting it as unread. Use it for a memory proposal
     that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
