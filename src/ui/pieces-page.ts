@@ -17,6 +17,7 @@ import {
 } from '../cli/pieces-managed.js';
 import { unitName } from '../cli/pieces-services.js';
 import type { ActResult, Ask, Block, Page } from './vocab.js';
+import { uiTimeZone, when } from './core.js';
 
 interface Job {
   label: string;
@@ -86,7 +87,7 @@ function managedBlocks(env: NodeJS.ProcessEnv, r: PieceRecord, update?: string):
     { type: 'kv', items: [
       { label: 'version', value: r.version || '—' },
       { label: 'source', value: `${r.source.repo} @ ${r.source.commit.slice(0, 12)}` },
-      { label: 'installed', value: r.installed.slice(0, 16).replace('T', ' ') + ' UTC' },
+      { label: 'installed', value: when(r.installed, uiTimeZone()) },
       ...(r.loom.services.length ? [{ label: 'services', value: r.loom.services.map((s) => unitName(r.name, s.name)).join(', ') }] : []),
     ] },
   ];
@@ -140,7 +141,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
   if (jobs.length) {
     sections.push({ id: 'jobs', title: 'Installs', tone: jobs[0].state === 'running' ? 'warn' : undefined, blocks: [{ type: 'list', items: jobs.map((j) => ({
       text: j.label, badge: j.state, tone: j.state === 'failed' ? 'bad' as const : j.state === 'running' ? 'warn' as const : 'ok' as const,
-      meta: [j.started.slice(0, 16).replace('T', ' ') + ' UTC', j.message].filter(Boolean).join(' · '),
+      meta: [when(j.started, uiTimeZone()), j.message].filter(Boolean).join(' · '),
     })) }] });
   }
   sections.push({ id: 'installed', title: shown ? `Installed · ${shown}` : 'Installed', blocks: installedBlocks.slice(0, 20) });

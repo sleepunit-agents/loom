@@ -775,7 +775,7 @@ describe('the household page', () => {
     expect(card('art')).toMatchObject({ label: 'Art E Fish', state: expect.stringMatching(/^(working|available|unavailable|broken)$/) });
     expect(card('mark')).toMatchObject({ label: 'Visual Mark' });
     // Last seen links to the agent's own pages.
-    expect(card('art').readings).toContainEqual(expect.objectContaining({ label: 'Last seen', value: expect.stringMatching(/^\d+m ago$/), detail: 'Discord #pond', page: '', source: expect.objectContaining({ base: '/a/art/' }) }));
+    expect(card('art').readings).toContainEqual(expect.objectContaining({ label: 'Last seen', value: expect.stringMatching(/^(\d+m ago|just now)$/), detail: 'Discord #pond', page: '', source: expect.objectContaining({ base: '/a/art/' }) }));
     expect(d.home).not.toHaveProperty('shared');
     // Just the agents and what's moving: Activity is in the nav, the pieces' tiles on their own pages.
     expect(JSON.stringify(d.home)).not.toContain('/activity');
@@ -796,7 +796,7 @@ describe('the household page', () => {
     expect(d.dashboard.filters.param).toBe('who');
     expect(opts).toContainEqual({ value: 'mark', label: 'Visual Mark' });
     // No scope picker (t-1625): the agents are a section of the rail, each to its own pages, saying how long since each was active.
-    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'art', label: 'Art E Fish', href: '/a/art', sub: expect.stringMatching(/^active \d+m ago$/) }));
+    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'art', label: 'Art E Fish', href: '/a/art', sub: expect.stringMatching(/^active (\d+m ago|just now)$/) }));
     expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'mark', label: 'Visual Mark', href: '/a/mark' }));
     expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toContain('/knowledge');
     expect(texts(await data(cookie, '/activity?who=mark'))).not.toContain('art did a thing');

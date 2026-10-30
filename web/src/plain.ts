@@ -18,14 +18,16 @@ export type Plain = {
  * shown as written. */
 export function plain(i: { text: string; outcome?: string; meta?: string }, name: string): Plain {
   const who = name || 'An agent';
-  const said = /^\S+ (asked for|asked:)\s*(.*)$/s.exec(i.text);
+  // "art asked for …" (answered) and "art asks for …" (still waiting): the same shape.
+  const said = /^\S+ (ask(?:ed|s) for|ask(?:ed|s):)\s*(.*)$/s.exec(i.text);
   let title = i.text, head = i.text, subject: string | undefined, why: string | undefined = i.meta;
-  if (said?.[1] === 'asked for') {
+  const verb = said && /^asks/.test(said[1]) ? 'asks' : 'asked';
+  if (said && /for$/.test(said[1])) {
     const m = /^([\w.-]+):\s*[“"](.*)[”"]\s*$/s.exec(said[2]);
-    if (m) { head = `${who} asked for ${/token|key$/i.test(m[1]) ? 'a token' : 'a secret'}`; subject = m[1]; title = `${head}: ${m[1]}`; why = m[2]; }
+    if (m) { head = `${who} ${verb} for ${/token|key$/i.test(m[1]) ? 'a token' : 'a secret'}`; subject = m[1]; title = `${head}: ${m[1]}`; why = m[2]; }
   } else if (said) {
     const m = /^run on loom's machine:\s*(.*)$/s.exec(said[2]);
-    title = head = m ? `${who} asked to run something on loom's machine` : `${who} asked for your OK`;
+    title = head = m ? `${who} ${verb} to run something on loom's machine` : `${who} ${verb} for your OK`;
     why = (m ? m[1] : said[2]).trim();
   }
   const o = i.outcome ?? '';

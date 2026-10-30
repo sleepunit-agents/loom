@@ -48,19 +48,20 @@ function parts(iso: string, tz: string) {
     day: f({ year: 'numeric', month: '2-digit', day: '2-digit' }),
     weekday: f({ weekday: 'short' }),
     date: f({ month: 'short', day: 'numeric' }),
-    time: f({ hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(/\s/g, ' '),
-    hour: f({ hour: 'numeric' }).toLowerCase(),
+    // "11:40 PM", as every other time on loom's pages says it.
+    time: f({ hour: 'numeric', minute: '2-digit' }).replace(/\s/g, ' '),
+    hour: f({ hour: 'numeric' }).replace(/\s/g, ' '),
   };
 }
 
-/** "Sat Oct 24, 12:09 pm" */
+/** "Sat Oct 24, 12:09 PM" */
 export function when(iso: string | null, tz: string): string {
   if (!iso || Number.isNaN(Date.parse(iso))) return 'never';
   const p = parts(iso, tz);
   return `${p.weekday} ${p.date}, ${p.time}`;
 }
 
-/** "today 12:09 pm", "yesterday", "Oct 19" */
+/** "today 12:09 PM", "yesterday 9:30 AM", "Oct 19" */
 export function ago(iso: string | null, tz: string, nowMs: number): string {
   if (!iso || Number.isNaN(Date.parse(iso))) return 'never';
   const p = parts(iso, tz);
