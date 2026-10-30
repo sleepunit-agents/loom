@@ -24,6 +24,8 @@ Commands:
                      Browse / clean / find duplicates / health report
   knowledge write|recall|maintain
                      Write / search / health-report the knowledge store
+  note write|read|list|attach|sweep
+                     An agent's notes: held for a while (keep, while, short), swept unless cited
   person show|list   Read person cards (condensed current state per person)
   update-identity    Edit preferences.md / self-model.md sections
   bootstrap          Initialize a fresh agent
@@ -158,6 +160,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     }
     case 'knowledge': {
       const { run } = await import('./knowledge.js');
+      return run(rest, io);
+    }
+    case 'note': {
+      const { run } = await import('./note.js');
       return run(rest, io);
     }
     case 'person': {
