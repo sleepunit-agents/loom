@@ -110,7 +110,8 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
 
 // ─── Home, an agent's Today, and the sign-in pages ───
 
-export interface ThreadRow { agent?: string; text: string; meta: string; at: string; page?: string }
+/** A row of the thread: `meta` is where and how long ago ("Wake · 3h"); `where` alone ("Wake"), for a chip. */
+export interface ThreadRow { agent?: string; text: string; meta: string; where?: string; at: string; page?: string }
 
 /** Everything Home (or an agent's Today) shows, in the design's order. */
 export interface Dashboard {

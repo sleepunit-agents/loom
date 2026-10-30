@@ -4,12 +4,17 @@ import { useContext, lazy, Suspense } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
+import { clockOf, dayOf, plainThread } from './thread-plain';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Arrive } from './arrive';
 import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
 const Profile = lazy(() => import('./profile'));
+// Where a thread row happened, as its chip's colour: a chat by its service, a wake or a lane by itself.
+const WHERE_TONE = (w: string): 'blue-soft' | 'olive-soft' | 'pink-soft' | 'yellow-soft' | 'cream' =>
+  /^Discord/.test(w) ? 'blue-soft' : /^Slack/.test(w) ? 'olive-soft' : /^Lane/.test(w) ? 'yellow-soft' : /^Wake/.test(w) ? 'pink-soft' : 'cream';
 const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
 import type { Button as Btn, Source, Tone } from './loom';
@@ -78,7 +83,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
 }
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
 type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string };
-type ThreadRow = { agent?: string; text: string; meta?: string; at?: string; page?: string };
+type ThreadRow = { agent?: string; text: string; meta?: string; where?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
 /** The page's ground (ground.tsx): the contour field, the depth background's contours, or the plain wash. */
 export type Ground = 'contours' | 'depth' | 'wash';
@@ -190,18 +195,29 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
         <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>
-        <ActivityFeed variant="thread" title={d.title ?? 'Thread'} initialVisible={12} pageSize={12} showMoreLabel="Earlier"
+        {/* 000h's ledger (Jonathan, 2026-10-30): an agent's run of entries under one mark, the time at the right, a day's
+            heading where it changes; each row in plain words (thread-plain.ts), where it happened as its chip, and the
+            bookkeeping (the task, the round, the lane) as small chips under it. */}
+        <ActivityFeed variant="ledger" title={d.title ?? 'Thread'} initialVisible={16} pageSize={16} showMoreLabel="Earlier"
           empty={<Nothing title="Quiet" text="Nothing on the thread yet today." />}
-          entries={d.thread.map((r) => ({
-            id: `${r.at}\0${r.text}`,
-            title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{r.text}</Link></Arrive>,
-            description: r.meta,
-            // The feed's avatar wears the agent's own mark (its colour, its initial), so who did what reads at a glance.
-            ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0], avatarSrc: markImage(ctx.agents[r.agent]) } } : {}),
-            ...(r.at ? { dateTime: r.at } : {}),   // its age is already in the meta line
-          }))} />
+          entries={d.thread.map((r) => {
+            const p = plainThread(r.text);
+            const where = r.where ?? r.meta?.split(' · ')[0];
+            return {
+              id: `${r.at}\0${r.text}`,
+              title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{p.title}</Link></Arrive>,
+              ...(p.detail ? { description: p.detail } : {}),
+              // The feed's avatar wears the agent's own mark (its colour, its initial), so who did what reads at a glance.
+              ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0], avatarSrc: markImage(ctx.agents[r.agent]) } } : {}),
+              ...(r.at ? { timestamp: clockOf(r.at), dateTime: r.at, group: dayOf(r.at, now) } : {}),
+              // Where it happened, when that says something: a chat, a lane, a session (a plain wake is most rows: no chip).
+              ...(where && where !== 'Wake' ? { badge: { label: where, variant: WHERE_TONE(where) } } : {}),
+              ...(p.chips.length ? { content: <span className="flex flex-wrap gap-1.5">{p.chips.map((c) => (
+                <Badge key={c.label} size="sm" variant="dashed">{c.page ? <Link page={c.page} className="no-underline">{c.label}</Link> : c.label}</Badge>
+              ))}</span> } : {}),
+            };
+          })} />
         </Suspense>
-        {void now}
       </div>
     </div>
   );
