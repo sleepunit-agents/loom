@@ -407,6 +407,9 @@ describe('loom UI over HTTP', () => {
       pond: { value: 'field et-livonia' } } })).not.toMatch(/^Error/);
     const pat = await view('/people/pat-lee', cookie);
     expect(section(pat, 'reach')!.blocks[0].items).toEqual([{ text: 'Pat Lee (@plee)', meta: 'Slack' }]);
+    expect(section(pat, 'profile')!.blocks[0]).toMatchObject({ type: 'profile', name: 'Pat Lee', initials: 'PL', summary: 'Ops.', badges: ['Terse'],
+      links: [{ text: 'Household entry', page: 'loom:people/pat-lee' }] });
+    expect(section(pat, 'summary')).toBeUndefined();
     expect(section(pat, 'facts')!.blocks[0].items).toEqual([{ label: 'Pond', value: 'field et-livonia' }]);
     expect(section(pat, 'where')).toBeUndefined();
     expect((pat.page.sections as Array<{ side?: boolean }>).filter((x) => x.side)).toEqual([]);

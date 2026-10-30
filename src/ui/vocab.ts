@@ -32,6 +32,10 @@ export interface Button { action: string; label: string; tone?: 'primary' | 'dan
 
 export type Block =
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
+  // Someone, as a profile (000h's profile card, built from its parts): a cover in their colour (an agent's own, else
+  // `tone`), their avatar, name and summary, badges, a few numbers, and links out.
+  | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: ProfileTone; summary?: string; badges?: string[];
+      stats?: Array<{ label: string; value: string }>; links?: Array<{ text: string } & Target> }
   | { type: 'list'; numbered?: boolean; wrap?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
@@ -156,6 +160,8 @@ export const LIMITS = {
 } as const;
 
 const TONES: ReadonlySet<string> = new Set(['ok', 'warn', 'bad', 'muted']);
+export type ProfileTone = 'pink' | 'yellow' | 'olive' | 'blue';
+const PROFILE_TONES: ReadonlySet<string> = new Set(['pink', 'yellow', 'olive', 'blue']);
 export const ID = /^[a-z][a-z0-9-]{0,39}$/;
 const NAME = /^[a-z][a-z0-9_-]{0,39}$/;
 export const QUERY_KEY = /^[a-z][a-z0-9_-]{0,31}$/;
@@ -400,6 +406,28 @@ function block(v: unknown, depth = 0): Block {
           };
         }),
       };
+    case 'profile': {
+      const badges = b.badges === undefined ? undefined : arr(b.badges, 'profile.badges', 6).map((x) => str(x, 'profile badge'));
+      const stats = b.stats === undefined ? undefined : arr(b.stats, 'profile.stats', 4).map((x) => {
+        const o = obj(x, 'profile stat');
+        return { label: str(o.label, 'profile stat.label'), value: str(o.value, 'profile stat.value') };
+      });
+      const links = b.links === undefined ? undefined : arr(b.links, 'profile.links', 4).map((x) => {
+        const o = obj(x, 'profile link');
+        const t = target(o, 'profile link');
+        if (t.page === undefined && t.href === undefined) throw new Invalid('profile link needs page or href');
+        return { text: str(o.text, 'profile link.text'), ...t };
+      });
+      if (b.tone !== undefined && (typeof b.tone !== 'string' || !PROFILE_TONES.has(b.tone))) throw new Invalid('profile.tone is pink, yellow, olive or blue');
+      return {
+        type: 'profile', name: str(b.name, 'profile.name'),
+        ...(b.initials !== undefined ? { initials: avatarOf(b.initials) } : {}),
+        ...(b.agent !== undefined ? { agent: agentId(b.agent, 'profile.agent') } : {}),
+        ...(b.tone !== undefined ? { tone: b.tone as ProfileTone } : {}),
+        ...(b.summary !== undefined ? { summary: str(b.summary, 'profile.summary') } : {}),
+        ...(badges ? { badges } : {}), ...(stats ? { stats } : {}), ...(links ? { links } : {}),
+      };
+    }
     case 'list':
       return {
         type: 'list',

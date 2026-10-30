@@ -253,12 +253,13 @@ outside the page).
 | Block | Fields |
 |---|---|
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`. One item alone is the page's hero (its number at the top size) |
-| `list` | optional `numbered` (true: a rank before each row), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
+| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
 | `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters. Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
 | `callout` | `text`, optional `title`, `tone`. A boxed note |
+| `profile` | `name`, optional `initials` (one or two letters), `agent` (an agent's id: its mark and colour) or `tone` (`pink`, `yellow`, `olive`, `blue`), `summary`, `badges` (up to 6 words), `stats` (up to 4 `label`/`value`), `links` (up to 4 `text` with `page` or `href`). Someone, as a profile card: a cover in their colour, their avatar, name and summary; when it leads a page, the page's own title gives way to it |
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |

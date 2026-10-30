@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listProposals, rejectProposal, ratifyProposal, UnknownProposalError } from '../backends/proposals.js';
 import { fieldState, type CardValue } from '../backends/people.js';
-import { reachOf } from './reach.js';
+import { initialsOf, profileLinks, profileTone, reachOf, SERVICE } from './reach.js';
 import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
 import { restore } from '../tools/restore.js';
@@ -421,7 +421,20 @@ function personPageFor(contextDir: string, slug: string, tz: string, nowMs: numb
       blocks: [{ type: 'list', items: newer.map((m) => ({ text: m.title, meta: ago(m.created, tz, nowMs), page: memoryPage(m.ref) })) }],
     });
   }
-  if (card.summary) sections.push({ id: 'summary', blocks: [{ type: 'text', text: card.summary }] });
+  // Who they are first, as a profile, as the household's entry has it (Jonathan, 2026-10-29).
+  const ways = Object.keys(card.where).filter((k) => k in SERVICE).length;
+  const remembered = memoriesAbout(contextDir, slug, { nowMs, limit: 10_000 }).length;
+  sections.unshift({ id: 'profile', blocks: [{
+    type: 'profile', name: card.name, tone: profileTone(slug), ...(initialsOf(card.name) ? { initials: initialsOf(card.name) } : {}),
+    ...(card.summary ? { summary: card.summary } : {}),
+    ...(typeof card.how.mode === 'string' ? { badges: [card.how.mode.replace(/^./, (c) => c.toUpperCase())] } : {}),
+    stats: [
+      { label: remembered === 1 ? 'memory of them' : 'memories of them', value: String(remembered) },
+      { label: ways === 1 ? 'way to reach' : 'ways to reach', value: String(ways) },
+      ...(newer.length ? [{ label: 'newer than the card', value: String(newer.length) }] : []),
+    ],
+    links: [{ text: 'Household entry', page: `loom:people/${slug}` }, ...profileLinks(card.where)],
+  }] });
   // As the household's entry has it (Jonathan, 2026-10-29): the ways to reach them in words, one column.
   const { reach, facts } = reachOf(card.where, value, (iso) => ago(iso, tz, nowMs), nowMs);
   if (reach) sections.push(reach);

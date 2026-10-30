@@ -11,6 +11,7 @@ import { Item, ItemContent, ItemDescription, ItemTitle, ItemTrailing } from '@/c
 // Rare blocks' components load when a page has one: a link block (living link), a meter (progress).
 const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => ({ default: m.LivingLink })));
 const Markdown = lazy(() => import('./markdown'));
+const Profile = lazy(() => import('./profile'));
 const Progress = lazy(() => import('@/components/ui/progress').then((m) => ({ default: m.Progress })));
 const CodeBlock = lazy(() => import('@/components/ui/code-block').then((m) => ({ default: m.CodeBlock })));
 
@@ -317,6 +318,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{t.text}</p>; }
     case 'prose': { const text = (b as { text: string }).text;
       return <Suspense fallback={<div className="whitespace-pre-wrap">{text}</div>}><Markdown text={text} /></Suspense>; }
+    case 'profile': return <Suspense fallback={<div className="min-h-64" />}><Profile p={b as Extract<Block, { type: 'profile' }>} /></Suspense>;
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
       return <Callout tone={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'} title={c.title}>{c.text}</Callout>; }
     case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} wrap={(b as { wrap?: boolean }).wrap} />;

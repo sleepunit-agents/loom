@@ -10,6 +10,8 @@ export type Block =
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
   | { type: 'callout'; text: string; title?: string; tone?: Tone }
+  | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: 'pink' | 'yellow' | 'olive' | 'blue'; summary?: string;
+      badges?: string[]; stats?: Array<{ label: string; value: string }>; links?: Array<{ text: string; page?: string; href?: string }> }
   | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean }
   | { type: 'table'; columns: string[]; rows: (string | { text: string; page?: string })[][] }
   | { type: 'kv'; items: { label: string; value: string; page?: string }[] }
