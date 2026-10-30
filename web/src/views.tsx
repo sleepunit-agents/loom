@@ -4,18 +4,13 @@ import { useContext, lazy, Suspense } from 'react';
 import { AgentState } from '@/components/ui/agent-state';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
-import { clockOf, dayOf, plainThread } from './thread-plain';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Arrive } from './arrive';
 import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
 const Profile = lazy(() => import('./profile'));
-// Where a thread row happened, as its chip's colour: a chat by its service, a wake or a lane by itself.
-const WHERE_TONE = (w: string): 'blue-soft' | 'olive-soft' | 'pink-soft' | 'yellow-soft' | 'cream' =>
-  /^Discord/.test(w) ? 'blue-soft' : /^Slack/.test(w) ? 'olive-soft' : /^Lane/.test(w) ? 'yellow-soft' : /^Wake/.test(w) ? 'pink-soft' : 'cream';
-const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
+const Ledger = lazy(() => import('./ledger'));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
 import type { Button as Btn, Source, Tone } from './loom';
 
@@ -101,10 +96,6 @@ export function As({ source, children }: { source: Source; children: React.React
   return <EnvContext.Provider value={env.withSource(source)}>{children}</EnvContext.Provider>;
 }
 
-/** An agent's mark as a picture (for a component that takes an image, like the activity feed's avatar): its initial on its colour. */
-const markImage = (a: { label: string; bg: string; fg: string }) => `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="${a.bg}"/><text x="32" y="43" text-anchor="middle" font-family="Bricolage Grotesque, DM Sans, system-ui, sans-serif" font-size="30" font-weight="600" fill="${a.fg}">${a.label[0].replace(/[<&>"]/g, '')}</text></svg>`)}`;
-
 /** An agent's mark: 000h's avatar (blocks.tsx AgentAvatar). */
 export const Mark = ({ a, size = 40 }: { a: { label: string; bg: string; fg: string }; size?: number }) => <AgentAvatar a={a} size={size} className="shrink-0" />;
 
@@ -173,7 +164,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
 }
 
 export function DashboardView({ d, now }: { d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
-  const { go, ctx } = useEnv();
+  const { go } = useEnv();
   return (
     <div className="grid gap-4">
       {d.inbox && d.inbox.count > 0 && (
@@ -195,28 +186,7 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
         <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>
-        {/* 000h's ledger (Jonathan, 2026-10-30): an agent's run of entries under one mark, the time at the right, a day's
-            heading where it changes; each row in plain words (thread-plain.ts), where it happened as its chip, and the
-            bookkeeping (the task, the round, the lane) as small chips under it. */}
-        <ActivityFeed variant="ledger" title={d.title ?? 'Thread'} initialVisible={16} pageSize={16} showMoreLabel="Earlier"
-          empty={<Nothing title="Quiet" text="Nothing on the thread yet today." />}
-          entries={d.thread.map((r) => {
-            const p = plainThread(r.text);
-            const where = r.where ?? r.meta?.split(' · ')[0];
-            return {
-              id: `${r.at}\0${r.text}`,
-              title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{p.title}</Link></Arrive>,
-              ...(p.detail ? { description: p.detail } : {}),
-              // The feed's avatar wears the agent's own mark (its colour, its initial), so who did what reads at a glance.
-              ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0], avatarSrc: markImage(ctx.agents[r.agent]) } } : {}),
-              ...(r.at ? { timestamp: clockOf(r.at), dateTime: r.at, group: dayOf(r.at, now) } : {}),
-              // Where it happened, when that says something: a chat, a lane, a session (a plain wake is most rows: no chip).
-              ...(where && where !== 'Wake' ? { badge: { label: where, variant: WHERE_TONE(where) } } : {}),
-              ...(p.chips.length ? { content: <span className="flex flex-wrap gap-1.5">{p.chips.map((c) => (
-                <Badge key={c.label} size="sm" variant="dashed">{c.page ? <Link page={c.page} className="no-underline">{c.label}</Link> : c.label}</Badge>
-              ))}</span> } : {}),
-            };
-          })} />
+        <Ledger rows={d.thread} title={d.title ?? 'Thread'} now={now} />
         </Suspense>
       </div>
     </div>
