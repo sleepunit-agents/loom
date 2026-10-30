@@ -109,6 +109,9 @@ describe('createLoomServer', () => {
     person_history: { readOnlyHint: true, openWorldHint: false },
     person_evidence: { readOnlyHint: true, openWorldHint: false },
     knowledge_list: { readOnlyHint: true, openWorldHint: false },
+    note_write: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    note_read: { readOnlyHint: true, openWorldHint: false },
+    note_list: { readOnlyHint: true, openWorldHint: false },
     person_revision_restore: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   };
 

@@ -36,6 +36,7 @@ flowchart LR
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
       PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
+      NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end
@@ -58,6 +59,7 @@ flowchart LR
     MD["IDENTITY.md · preferences.md · self-model.md<br/>projects/ · roles/ · harnesses/ · models/"]
     MEMDB[("memories.db")]
     KDB[("knowledge.db")]
+    NOTEDB[("notes.db (notes · note_revisions · note_files)<br/>+ note-files/ by sha256")]
     TEL["telemetry/recall.jsonl<br/>recorder-health.json"]
     GAPS["gaps dir<br/>recall-miss.jsonl"]
   end
@@ -73,7 +75,7 @@ flowchart LR
   P -. mesh .-> G
   G --> HTTPF --> FULL
   G --> HTTPK --> KONLY
-  CLI -- "wake · recall · remember · memory · knowledge · person<br/>call the same tool functions" --> wings
+  CLI -- "wake · recall · remember · memory · knowledge · note · person<br/>call the same tool functions" --> wings
   CLI -- "inject · install" --> DOT
   CLI -. "--url / LOOM_URL: the store verbs<br/>ship argv to POST /cli" .-> G
   HTTPF -- "POST /cli · cli-endpoint.ts<br/>the same CLI, the server's stack" --> CLI
@@ -187,6 +189,7 @@ have fallen behind.
 | Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
 | Telemetry | `telemetry/recall.jsonl`, `recorder-health.json` | `recall-log.ts`, `recorder-health.ts` |
 | Gaps dir (optional) | `recall-miss.jsonl` | knowledge recall misses, input for the expansion lane |
+| `<agent dir>/notes.db` + `note-files/` | `notes`, `note_revisions`, `note_files`: the agent's notes, each with a lifespan (keep, while, short); the files stored once by sha256 | `notes.ts`; the `note` verb (loom note write · read · list · attach · sweep), `note_write` · `note_read` · `note_list` |
 | `commons/stores/<piece>.db` | `docs`, `revisions`: a piece's own collections (docs/specs/piece-storage.md) | `stores.ts`; `loom store`, `POST /api/loom/store/…` |
 
 ## The pieces, by file

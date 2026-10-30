@@ -115,6 +115,14 @@ an agent's persistent state:
   accessed), and misfile audit (pages that belong in memory instead).
 - **`knowledge_list`** — every active page's freshness fields (no bodies): what
   a verification sweep picks from, as `loom knowledge list` gives it.
+- **`note_write`** — write one of the agent's notes, whole: a plan, a brief, a
+  write-up, a run's findings. A new note needs its lifespan: `keep` (never
+  expires), `while` (60 days after its last change) or `short` (14 days). An
+  expired note goes at the next sweep (`loom note sweep`) unless a live memory
+  or knowledge page cites it (`note:<path>`) or it's pinned. Files attach with
+  `loom note attach`, stored once by their bytes beside `notes.db`.
+- **`note_read`** — a note's text, lifespan, expiry and files.
+- **`note_list`** — the notes under a prefix, newest first (no text).
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.

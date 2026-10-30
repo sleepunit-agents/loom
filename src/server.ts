@@ -42,6 +42,7 @@ import { registerHelloApp } from './transport/mcp-app-hello.js';
 import { registerKnowledgeTools } from './transport/knowledge-tools.js';
 import { memoryHistory } from './tools/memory-history.js';
 import { memoryRevisionRestore } from './tools/memory-revision-restore.js';
+import { LIFESPANS, NoteError, Notes, type Lifespan } from './notes.js';
 import {
   personWrite,
   personVerify,
@@ -1043,6 +1044,57 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ domain }) => ({ content: [{ type: 'text' as const, text: JSON.stringify(await knowledgeFreshness(contextDir, domain)) }] }),
+  );
+
+  // ─── Notes (src/notes.ts): what the agent holds on to for a while ───────────
+
+  const notePath = z.string().min(1).max(300).describe('The note\'s path: up to six segments, e.g. homelab/2026-10-30-dns-health');
+  const withNotes = <T>(f: (n: Notes) => T): T => { const n = new Notes(contextDir); try { return f(n); } finally { n.close(); } };
+  const noteText = (f: () => unknown) => {
+    try { return { content: [{ type: 'text' as const, text: JSON.stringify(f()) }] }; }
+    catch (err) { if (err instanceof NoteError) return { content: [{ type: 'text' as const, text: err.message }], isError: true }; throw err; }
+  };
+
+  server.registerTool(
+    'note_write',
+    {
+      description:
+      'Write a note, whole: a plan, a brief, a write-up, a run\'s findings. Not memory (a lesson goes there) and not ' +
+      'knowledge (facts about the world): something held on to for a while, with some words about it. A new note ' +
+      'needs its lifespan: keep (a ruling, a write-up; never expires), while (a lane\'s journal; 60 days after its last ' +
+      'change) or short (evidence, scratch worth a look; 14 days). An expired note goes unless a memory or knowledge ' +
+      'page cites it (note:<path>) or it\'s pinned. Files attach with the CLI: loom note attach <path> <file>.',
+      inputSchema: z.object({
+        path: notePath,
+        body: z.string().describe('Markdown, at most 1 MB'),
+        lifespan: z.enum(['keep', 'while', 'short']).optional().describe('Required for a new note; an existing one keeps its own'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ path, body, lifespan }) => noteText(() => withNotes((n) => n.write(path, body, { by: 'mcp', ...(lifespan && LIFESPANS.has(lifespan) ? { lifespan: lifespan as Lifespan } : {}) }))),
+  );
+
+  server.registerTool(
+    'note_read',
+    {
+      description: 'A note: its text, lifespan, when it expires (null for keep or pinned) and its files (names and sizes).',
+      inputSchema: z.object({ path: notePath }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ path }) => noteText(() => withNotes((n) => n.read(path) ?? { error: `no note ${path}` })),
+  );
+
+  server.registerTool(
+    'note_list',
+    {
+      description: 'The notes under a prefix (a folder like planning/), newest first: path, lifespan, expiry, file count. No text.',
+      inputSchema: z.object({
+        prefix: z.string().max(300).optional().describe('A folder or note path; omit for all'),
+        limit: z.number().int().positive().max(500).optional(),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ prefix, limit }) => noteText(() => withNotes((n) => n.list({ ...(prefix ? { prefix } : {}), ...(limit ? { limit } : {}) }))),
   );
 
   server.registerTool(
