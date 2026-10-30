@@ -4,7 +4,7 @@
     {
       "name": "box",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "073005372b11b3b2a13281b00907c72ecda7a8ab",
+      "commit": "d2a1152e96f8f79ebea006782fc48bbae49d0bcc",
       "version": "0.1.0",
       "label": "Boxes",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -12,7 +12,7 @@
     {
       "name": "secrets",
       "repo": "sleepunit-agents/loom-secrets",
-      "commit": "7c1396572a1d424de824f94e170d831128c7cf78",
+      "commit": "aa0727bda7b8a2a4c25d4893b1144567f0bb30b1",
       "version": "0.1.0",
       "label": "Secrets",
       "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
@@ -20,7 +20,7 @@
     {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
-      "commit": "eb5c7915fe3cc5c8c9cdfe61cff4c9ce355e4e9f",
+      "commit": "ac4f43f459e499861b03b52e891c89f56efa231b",
       "version": "0.1.0",
       "label": "Shuttle",
       "description": "Chat bridges (Discord, Slack) and the household's model subscriptions: accounts, sign-ins, usage."
