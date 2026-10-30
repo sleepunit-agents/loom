@@ -125,6 +125,78 @@ export async function describeHarness(
   return { key: targetKey, path, action: exists ? 'overwritten' : 'created' };
 }
 
+export interface PatchResult {
+  key: string;
+  path: string;
+  action: 'patched';
+  beforeLength: number;
+  afterLength: number;
+}
+
+/**
+ * Patch an existing harness manifest by exact string replacement, without
+ * requiring the caller to round-trip the full manifest body through
+ * identity()'s combined payload first — which truncates silently once the
+ * payload grows past the transport's size cap (t-1674), making a
+ * read-then-overwrite via describeHarness unsafe on any manifest already
+ * near or past that cap. The server applies the replacement against its
+ * own on-disk copy, which is always complete, so the caller's `find` and
+ * `replace` strings only need to be as long as the edit itself.
+ *
+ * `find` must match the current body exactly once — zero or multiple
+ * matches is refused rather than guessed at, the same discipline an
+ * editor's find/replace uses. Frontmatter other than `version`/`updated`
+ * (e.g. `answersTo`) is preserved untouched.
+ */
+export async function patchHarness(
+  contextDir: string,
+  targetKey: string,
+  find: string,
+  replace: string,
+  opts: { version?: string } = {},
+): Promise<PatchResult> {
+  assertSafePathSegment(targetKey, 'harness name');
+  const existing = await read(contextDir, targetKey);
+  if (!existing) {
+    throw new Error(
+      `harness_patch: no existing manifest for "${targetKey}" — use harness_describe or ` +
+      `harness_init to create one first.`,
+    );
+  }
+  const occurrences = countOccurrences(existing.body, find);
+  if (occurrences === 0) {
+    throw new Error(`harness_patch: find string not found in the current "${targetKey}" manifest body.`);
+  }
+  if (occurrences > 1) {
+    throw new Error(
+      `harness_patch: find string matches ${occurrences} times in the current "${targetKey}" ` +
+      `manifest body — it must match exactly once. Include more surrounding context to disambiguate.`,
+    );
+  }
+  // Replacement via a function callback: a literal substitution, so a `$1`/`$&` etc.
+  // in `replace` is never reinterpreted as a regex backreference by String.replace.
+  const newBody = existing.body.replace(find, () => replace);
+  const path = resolve(contextDir, DIR, `${targetKey}.md`);
+  const version = opts.version ?? existing.frontmatter.version ?? '0.1';
+  const frontmatter = { ...existing.frontmatter, harness: targetKey, version, updated: new Date().toISOString() };
+  const frontmatterText = Object.entries(frontmatter).map(([k, v]) => `${k}: ${v}`).join('\n');
+  const manifest = `---\n${frontmatterText}\n---\n\n${newBody.trim()}\n`;
+  await writeFile(path, manifest, 'utf-8');
+  return { key: targetKey, path, action: 'patched', beforeLength: existing.body.length, afterLength: newBody.length };
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle === '') return 0;
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return count;
+    count++;
+    from = at + needle.length;
+  }
+}
+
 export function template(key: string): string {
   return `---
 harness: ${key}

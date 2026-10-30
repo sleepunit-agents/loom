@@ -9,7 +9,7 @@
  * when it was missing or corrupted.
  */
 import { realpathSync } from 'node:fs';
-import { initHarness, describeHarness, resolvePeerToHarness, normalizePeer } from '../blocks/harness.js';
+import { initHarness, describeHarness, patchHarness, resolvePeerToHarness, normalizePeer } from '../blocks/harness.js';
 import { renderBlock } from '../injection/render.js';
 import { writeManagedBlock } from '../injection/writer.js';
 import { HARNESSES, isHarnessKey } from '../injection/harnesses.js';
@@ -106,4 +106,46 @@ export async function harnessDescribe(
     version: input.version,
   });
   return `Harness manifest ${result.key}: ${result.path} (${result.action})`;
+}
+
+/**
+ * MCP tool handler for a safe partial edit of the CONNECTED harness's own
+ * manifest. Same peer-scoping as harnessDescribe (SCOPING GUARD above) — a
+ * harness can only patch its own manifest, never another's.
+ *
+ * Unlike harnessDescribe, this never needs the caller to hold the full
+ * current body: the server reads its own on-disk copy, applies the
+ * find/replace, and writes the result back. That sidesteps identity()'s
+ * combined-payload truncation (t-1674) entirely for small edits.
+ */
+export async function harnessPatch(
+  contextDir: string,
+  input: { find: string; replace: string; version?: string },
+  peerName?: string,
+): Promise<string> {
+  if (!peerName) {
+    return (
+      'Error: harness_patch could not identify the connected peer — no MCP ' +
+      'clientInfo.name on this connection. A harness may only patch itself, ' +
+      'so there is no target to write.'
+    );
+  }
+  const target = (await resolvePeerToHarness(contextDir, peerName)) ?? normalizePeer(peerName);
+  if (!target) {
+    return (
+      `Error: harness_patch could not derive a manifest key from peer ` +
+      `${JSON.stringify(peerName)}.`
+    );
+  }
+  try {
+    const result = await patchHarness(contextDir, target, input.find, input.replace, {
+      version: input.version,
+    });
+    return (
+      `Harness manifest ${result.key}: ${result.path} (patched, ` +
+      `${result.beforeLength} -> ${result.afterLength} chars)`
+    );
+  } catch (err) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`;
+  }
 }
