@@ -429,7 +429,7 @@ function since(iso: string | undefined, nowMs: number): string {
   const t = iso ? Date.parse(iso) : NaN;
   if (Number.isNaN(t)) return 'never';
   const m = Math.max(0, Math.round((nowMs - t) / 60000));
-  return m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)} days ago`;
+  return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 2880 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)} days ago`;
 }
 
 export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ownerTokens?: boolean } = {}): Page {
@@ -474,19 +474,31 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         return [say, { type: 'form' as const, action: 'relay-set', submit: 'Save', hidden: { agent }, fields: [
           { name: 'to', label: 'Agents', kind: 'text' as const, ...(to.length ? { value: to.join(', ') } : {}), hint: `comma separated: ${others.join(', ')}` }] }];
       })() },
-      { id: 'tokens', title: 'Tokens', blocks: [
-        live.length
-          ? { type: 'list', items: live.slice(0, 50).map((t) => ({
-              text: t.label, meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}`,
-              act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
-            })) }
-          : { type: 'text', text: 'No tokens yet.', tone: 'muted' },
-        ...(tokens.length > live.length ? [{ type: 'details' as const, summary: `${tokens.length - live.length} revoked`, blocks: [{ type: 'list' as const, items: tokens.filter((t) => t.revoked).slice(0, 200).map((t) => ({
-          text: t.label, meta: `revoked ${when(t.revoked!, tz)}`, tone: 'muted' as const })) }] }] : []),
+      { id: 'tokens', title: 'Tokens', blocks: (() => {
+        // A house's own token ("art · house h-123 on loom"): one per house, revoked when the house ends, so hundreds of
+        // them. Folded to a line each way (Jonathan, 2026-10-30: plain words over ids); the rest are a row each.
+        const HOUSE = /^(.+?) · house h-\d+ on (.+)$/;
+        const isHouse = (t: { label: string }) => HOUSE.test(t.label);
+        const row = (t: typeof live[number]) => ({
+          text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
+          meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}${isHouse(t) ? ` · ${/h-\d+/.exec(t.label)![0]}` : ''}`,
+          act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
+        });
+        const own = live.filter((t) => !isHouse(t)), houses = live.filter(isHouse);
+        const gone = tokens.filter((t) => t.revoked), goneHouses = gone.filter(isHouse).length, goneOwn = gone.filter((t) => !isHouse(t));
+        return [
+          own.length ? { type: 'list' as const, items: own.slice(0, 50).map(row) } : { type: 'text' as const, text: 'No tokens of its own yet.', tone: 'muted' as const },
+          ...(houses.length ? [{ type: 'details' as const, summary: `${houses.length} house${houses.length === 1 ? '' : 's'} running`, meta: 'each holds its own token, revoked when it ends',
+            blocks: [{ type: 'list' as const, items: houses.slice(0, 50).map(row) }] }] : []),
+          ...(gone.length ? [{ type: 'details' as const, summary: `${gone.length} revoked`, blocks: [
+            ...(goneOwn.length ? [{ type: 'list' as const, items: goneOwn.slice(0, 200).map((t) => ({ text: t.label, meta: `revoked ${when(t.revoked!, tz)}`, tone: 'muted' as const })) }] : []),
+            ...(goneHouses ? [{ type: 'text' as const, tone: 'muted' as const, text: `And ${goneHouses} house token${goneHouses === 1 ? '' : 's'}, revoked as their houses ended.` }] : []),
+          ] }] : []),
         { type: 'details', summary: 'Create token', blocks: [{ type: 'form', action: 'create-token', submit: 'Create token', hidden: { agent },
           note: 'Shown once. Give it to the harness or house that will be this agent; loom keeps only its fingerprint.',
           fields: [{ name: 'label', label: 'Label', kind: 'text', hint: 'Where it goes, e.g. "Art · laptop".', required: true }] }] },
-      ] },
+        ];
+      })() },
     ],
   };
 }

@@ -21,6 +21,10 @@ describe('the Inbox in plain words', () => {
     expect(p.ended).toBe('Expired unused');
     expect(p.answer).toEqual({ verdict: 'Allowed' });
   });
+  it('a waiting ask reads like an answered one, in the present tense', () => {
+    expect(plain({ text: "art asks: run on loom's machine: Read-only DNS health check of pihole" }, 'Art').title).toBe("Art asks to run something on loom's machine");
+    expect(plain({ text: 'art asks for slack-onterris.env: “reply to Pat”' }, 'Art')).toMatchObject({ head: 'Art asks for a secret', subject: 'slack-onterris.env', why: 'reply to Pat' });
+  });
   it('anything else is left as written', () => {
     expect(plain({ text: 'one joined loom', meta: 'os:linux' }, '')).toMatchObject({ title: 'one joined loom', head: 'one joined loom', why: 'os:linux', ended: undefined, answer: undefined });
   });

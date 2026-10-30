@@ -60,7 +60,7 @@ import { agentBio, agentSetup, householdAct, householdHome, householdMembers, ho
 import { agentDir, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
-import { agentSource, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -557,7 +557,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
-    if (last) readings.push({ label: 'Last seen', value: `${age(last.created, nowMs)} ago`, detail: whereLabel(last.where), source: agentSource(a), page: '' });
+    if (last) readings.push({ label: 'Last seen', value: agoText(last.created, nowMs), detail: whereLabel(last.where), source: agentSource(a), page: '' });
     // What it has going, newest first; and only what's wrong (a reading marked bad or warn): no news is good news.
     const doing = reports.flatMap((x) => (x.r.doing ?? []).map((d) => ({ ...d, source: pieceSource(x.p.piece) })))
       .sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0)).slice(0, 8);
@@ -661,8 +661,7 @@ function firstRun(names: string[]): NonNullable<Dashboard['firstRun']> {
 function lastActive(dir: string, nowMs = Date.now()): string {
   const last = tapeRows(dir, 72, nowMs)[0];
   if (!last) return 'quiet for 3 days';
-  const m = Math.max(0, Math.round((nowMs - Date.parse(last.created)) / 60_000));
-  return `active ${m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`} ago`;
+  return `active ${agoText(last.created, nowMs)}`;
 }
 
 function clockAt(ms: number): string {

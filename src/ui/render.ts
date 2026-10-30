@@ -139,13 +139,16 @@ export interface Dashboard {
   firstRun?: { line: string; starters: Array<{ name: string; label: string; what: string }> };
 }
 
-/** "40m", "2h", "3d": how long ago, short. */
+/** "now", "40m", "2h", "3d": how long ago, short (under a minute is "now", never "0m"). */
 export function age(iso: string | undefined, nowMs = Date.now()): string {
   const t = iso ? Date.parse(iso) : Number.NaN;
   if (Number.isNaN(t)) return '';
   const m = Math.max(0, Math.round((nowMs - t) / 60_000));
-  return m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+  return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 60 * 48 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
 }
+
+/** "just now", "40m ago": an age in a sentence. */
+export const agoText = (iso: string | undefined, nowMs = Date.now()): string => { const a = age(iso, nowMs); return a === 'now' ? 'just now' : a ? `${a} ago` : ''; };
 
 export type AgentHead = NonNullable<Dashboard['agent']>;
 
