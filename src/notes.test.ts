@@ -65,8 +65,8 @@ describe('notes', () => {
     n.write('teardowns/thing', 'judgment', { lifespan: 'short', by: 'art' });
     n.pin('teardowns/thing', true);
     now += 15 * DAY;
-    // Cited three ways: the old notes/ prefix with .md, a file inside the note, note: with a folder.
-    const cited = ['notes/r0210/run.md', 'notes/making/after-sunday/frame-12.png', 'note:planning/'];
+    // Cited two ways (the old notes/ prefix with .md, a file inside the note); a folder named in passing cites nothing.
+    const cited = ['notes/r0210/run.md', 'notes/making/after-sunday/frame-12.png', 'note:evals/'];
     const dry = n.sweep(cited, { dryRun: true });
     expect(dry).toEqual({ gone: ['evals/old'], keptCited: ['r0210/run', 'making/after-sunday'] });
     expect(n.read('evals/old')).not.toBeNull();

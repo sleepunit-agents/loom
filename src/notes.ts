@@ -16,7 +16,8 @@
  * and `sweep` lets the expired ones go, except what's still cited: a note a live memory or a knowledge page points
  * at stays (Jonathan: "I'm assuming a lot of this is basically scratch stuff. none of it is keep forever"). A pinned
  * note stays too. A citation is the note's path after `note:` or after the old `notes/` prefix, with or without
- * `.md`, or a path inside it (one of its files); one ending in `/` keeps everything under it.
+ * `.md`, or a path inside it (one of its files). A folder named in passing ("lanes write to notes/planning/") cites
+ * nothing under it: that would keep a whole folder of scratch for one mention.
  */
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readSync, renameSync, rmSync, statSync } from 'node:fs';
@@ -235,25 +236,21 @@ function sha256File(path: string): string {
   return h.digest('hex');
 }
 
-/** `notes/homelab/x.md`, `note:homelab/x`, `homelab/x/` → the paths and folders they name. */
-function normaliseRefs(cited: Iterable<string>): { exact: Set<string>; folders: string[] } {
+/** `notes/homelab/x.md`, `note:homelab/x` → the paths they name; a folder (ending in `/`) names none. */
+function normaliseRefs(cited: Iterable<string>): Set<string> {
   const exact = new Set<string>();
-  const folders: string[] = [];
   for (const raw of cited) {
-    let r = raw.trim().replace(/^note:/, '').replace(/^notes\//, '').replace(/[)\].,;:`'"*>]+$/, '');
-    if (!r) continue;
-    if (r.endsWith('/')) { folders.push(r); continue; }
-    r = r.replace(/\.md$/, '');
-    exact.add(r);
+    const r = raw.trim().replace(/^note:/, '').replace(/^notes\//, '').replace(/[)\].,;:`'"*>]+$/, '');
+    if (r && !r.endsWith('/')) exact.add(r.replace(/\.md$/, ''));
   }
-  return { exact, folders };
+  return exact;
 }
 
-/** A note is cited by its own path, by a path inside it (one of its files), or by a folder it's under. */
-function isCited(path: string, refs: { exact: Set<string>; folders: string[] }): boolean {
-  if (refs.exact.has(path)) return true;
-  for (const r of refs.exact) if (r.startsWith(`${path}/`)) return true;
-  return refs.folders.some((f) => path.startsWith(f));
+/** A note is cited by its own path, or by a path inside it (one of its files). */
+function isCited(path: string, refs: Set<string>): boolean {
+  if (refs.has(path)) return true;
+  for (const r of refs) if (r.startsWith(`${path}/`)) return true;
+  return false;
 }
 
 const CITE = /(?:\bnote:|\bnotes\/)[A-Za-z0-9][A-Za-z0-9._\/-]*/g;
