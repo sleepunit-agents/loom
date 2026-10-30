@@ -8,7 +8,7 @@
  * same bearer gate and payload cap as /mcp, and grants nothing /mcp doesn't:
  *
  *   - only REMOTE_VERBS (the store verbs, all of which have MCP tools),
- *     minus the memory subcommands that have none
+ *     minus the memory subcommands that have none, and the note subcommands that name a file
  *   - never --context-dir or --url: the stack is the server's, full stop
  *   - a fixed env: the server's HOME and stack, plus the caller's
  *     LOOM_CLIENT / LOOM_MODEL hints and nothing else
@@ -17,7 +17,7 @@
 import { Readable } from 'node:stream';
 import { runCliLocal } from '../cli/index.js';
 import { extractGlobalFlags, firstNonGlobalIndex } from '../cli/args.js';
-import { LOCAL_MEMORY_SUBCOMMANDS, REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
+import { LOCAL_MEMORY_SUBCOMMANDS, LOCAL_NOTE_SUBCOMMANDS, REMOTE_VERBS, type CliRequest, type CliResponse } from '../cli/remote.js';
 import type { IOStreams } from '../cli/io.js';
 
 const MAX_ARGV = 256;
@@ -63,6 +63,13 @@ export function parseCliRequest(body: unknown): CliRequest | string {
     const sub = extractGlobalFlags(after).rest[0];
     if (sub !== undefined && LOCAL_MEMORY_SUBCOMMANDS.has(sub)) {
       return `refused: memory ${sub} has no MCP tool, so it doesn't run remotely`;
+    }
+  }
+  if (verb === 'note') {
+    const after = [...args.slice(0, verbIdx), ...args.slice(verbIdx + 1)];
+    const sub = extractGlobalFlags(after).rest[0];
+    if (sub !== undefined && LOCAL_NOTE_SUBCOMMANDS.has(sub)) {
+      return `refused: note ${sub} names a file on the machine it runs on, so it runs only on loom's own`;
     }
   }
   return { argv: args, stdin: stdin as string | undefined, env: hints };

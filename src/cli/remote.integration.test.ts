@@ -81,6 +81,15 @@ describe('loom CLI remote mode', () => {
     expect(JSON.parse(mine.stdout)).toEqual([]);
   });
 
+  it('note write takes its text from stdin to the SERVER stack (a lane in a house), and note read gives it back', async () => {
+    const w = await remote(['note', 'write', 'brief/2026-10-30', '--lifespan', 'while'], '# Morning brief');
+    expect(w.code).toBe(0);
+    expect(w.stdout).toMatch(/^brief\/2026-10-30 \(while, until /);
+    expect((await local(['note', 'read', 'brief/2026-10-30'])).stdout).toBe('# Morning brief\n');
+    expect((await remote(['note', 'read', 'brief/2026-10-30'])).stdout).toBe('# Morning brief\n');
+    expect((await runCliCaptured(['note', 'list'], { contextDir: elsewhere })).stdout).toBe('');
+  });
+
   it('an empty body is refused the same way it is locally', async () => {
     const r = await remote(['remember', 'empty', '--category', 'project'], '');
     expect(r.code).toBe(2);
@@ -220,6 +229,10 @@ describe('POST /cli refusals (the server half)', () => {
     [{ argv: ['inject', '--all'] }, /doesn't run remotely/],
     [{ argv: ['--json', 'memory', 'recall-stats'] }, /no MCP tool/],
     [{ argv: ['memory', '--json', 'recall-stats'] }, /no MCP tool/],
+    // A note's file is a path on the machine it runs on: over /cli that's loom's, so a house could read loom's files.
+    [{ argv: ['note', 'attach', 'x', '/home/art/.config/loom/tokens.json'] }, /runs only on loom's own/],
+    [{ argv: ['--json', 'note', 'file', 'x', 'tokens.json'] }, /runs only on loom's own/],
+    [{ argv: ['note', 'sweep', '--cited', '/etc/passwd'] }, /runs only on loom's own/],
     [{ argv: ['recall', 'x', '--context-dir', '/etc'] }, /only serves its own/],
     [{ argv: ['recall', 'x', '--context-dir=/etc'] }, /only serves its own/],
     [{ argv: ['recall', 'x'], env: { HOME: '/tmp' } }, /only carry LOOM_CLIENT and LOOM_MODEL/],
