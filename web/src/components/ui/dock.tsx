@@ -115,37 +115,15 @@ export function Dock({
     [ref],
   );
 
-  const scaleForDistance = React.useCallback(
-    (distance: number, reach: number) => {
-      if (quiet || distance >= reach) return 1;
-      const influence = (Math.cos((Math.PI * distance) / reach) + 1) / 2;
-      return 1 + (magnification - 1) * influence;
-    },
-    [magnification, quiet],
-  );
-
-  // loom: on a touch screen a tap focuses the tile, and the neighbours swelling with it read as two tiles picked
-  // (Jonathan, 2026-10-30: "when I click inbox, both inbox and places icons swell"). The tapped tile alone, there.
-  const [touch, setTouch] = React.useState(false);
-  React.useEffect(() => {
-    if (typeof matchMedia === "undefined") return;
-    const m = matchMedia("(hover: none), (pointer: coarse)");
-    const read = () => setTouch(m.matches);
-    read();
-    m.addEventListener("change", read);
-    return () => m.removeEventListener("change", read);
-  }, []);
+  // loom: one tile swells, the one you're on (Jonathan, 2026-10-30: "when I click inbox, both inbox and places icons
+  // swell"). 000h's dock is macOS's, every tile near the pointer growing by its distance; here the neighbours stay
+  // still, under a mouse, a tap or the keyboard.
   const focusScales = React.useCallback(
     (index: number | null) => {
       if (index === null || quiet) return items.map(() => 1);
-      return items.map((_, candidate) => {
-        const distance = Math.abs(candidate - index);
-        if (distance === 0) return magnification;
-        if (distance === 1 && !touch) return 1 + (magnification - 1) * 0.34;
-        return 1;
-      });
+      return items.map((_, candidate) => (candidate === index ? magnification : 1));
     },
-    [items, magnification, quiet, touch],
+    [items, magnification, quiet],
   );
 
   const select = (item: DockItem) => {
@@ -209,8 +187,8 @@ export function Dock({
     const pointer = axis === "x" ? event.clientX : event.clientY;
     const reach = itemSize * 1.7;
     let closest = { index: -1, distance: Number.POSITIVE_INFINITY };
-    const next = items.map((item, index) => {
-      if (item.disabled) return 1;
+    items.forEach((item, index) => {
+      if (item.disabled) return;
       const bounds = buttons.current[index]?.getBoundingClientRect();
       const center = bounds
         ? axis === "x"
@@ -219,10 +197,10 @@ export function Dock({
         : Number.POSITIVE_INFINITY;
       const distance = Math.abs(pointer - center);
       if (distance < closest.distance) closest = { index, distance };
-      return scaleForDistance(distance, reach);
     });
-    setPointerIndex(closest.distance <= reach ? closest.index : null);
-    setScales(next);
+    const over = closest.distance <= reach ? closest.index : null;
+    setPointerIndex(over);
+    setScales(focusScales(over));
   };
 
   const handlePointerLeave = (event: React.PointerEvent<HTMLElement>) => {
