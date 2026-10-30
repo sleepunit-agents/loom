@@ -20,8 +20,10 @@ export type Cell = string | { text: string; page?: string };
 export interface Field {
   name: string;
   label: string;
-  kind: 'text' | 'textarea' | 'choice' | 'secret' | 'check' | 'checks';
+  kind: 'text' | 'textarea' | 'choice' | 'secret' | 'check' | 'checks' | 'time';
   hint?: string;
+  /** `time`: more than one time, posted joined with commas ("07:17,19:17"). */
+  multiple?: boolean;
   value?: string;
   required?: boolean;
   options?: Array<{ value: string; label: string; detail?: string; swatch?: string }>;
@@ -346,8 +348,8 @@ function button(x: unknown): Button {
 function field(v: unknown): Field {
   const o = obj(v, 'field');
   const kind = o.kind;
-  if (kind !== 'text' && kind !== 'textarea' && kind !== 'choice' && kind !== 'secret' && kind !== 'check' && kind !== 'checks') {
-    throw new Invalid('field.kind must be text, textarea, choice, secret, check or checks');
+  if (kind !== 'text' && kind !== 'textarea' && kind !== 'choice' && kind !== 'secret' && kind !== 'check' && kind !== 'checks' && kind !== 'time') {
+    throw new Invalid('field.kind must be text, textarea, choice, secret, check, checks or time');
   }
   const f: Field = { name: name(o.name, 'field.name'), label: str(o.label, 'field.label'), kind };
   const hint = optStr(o.hint, 'field.hint');
@@ -358,6 +360,14 @@ function field(v: unknown): Field {
     if (value !== undefined) f.value = value;
   }
   if (bool(o.required)) f.required = true;
+  // `time`: a time of day, "HH:MM" (24-hour on the wire; the page shows it as people read it, and picks it with the
+  // device's own picker); `multiple`, several, joined with commas.
+  if (kind === 'time') {
+    if (bool(o.multiple)) f.multiple = true;
+    const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (f.value && !f.value.split(',').every((t) => TIME.test(t.trim()))) throw new Invalid('a time field\'s value is HH:MM, or several joined with commas');
+    if (!f.multiple && f.value?.includes(',')) throw new Invalid('one time field holds one time; set multiple for several');
+  }
   // `check`: one box, posted as "on" or "". `checks`: any of its options, posted as their values joined with commas.
   if (kind === 'check' && f.value !== undefined && f.value !== 'on' && f.value !== '') throw new Invalid('a check field\'s value is "on" or ""');
   if (kind === 'choice' || kind === 'checks') {
