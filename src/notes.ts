@@ -33,7 +33,12 @@ export const NOTE_PATH = /^(?!.*(^|\/)\.)[A-Za-z0-9][A-Za-z0-9._-]{0,99}(\/[A-Za
 /** A file's name inside its note: one segment, the same letters. */
 export const FILE_NAME = /^(?!\.)[A-Za-z0-9][A-Za-z0-9._ -]{0,149}$/;
 export const MAX_NOTE_BYTES = 1024 * 1024;
-export const MAX_FILE_BYTES = 512 * 1024 * 1024;
+/**
+ * Notes travel in the household bundle, which is pushed nightly to a git host that refuses a file over 100 MB
+ * (art's art-loom-bundle: 97.8 MB on 2026-10-30). So a note's file is small: a screenshot, a bench script, a log.
+ * Audio, video and big renders live outside loom, and a note links to them.
+ */
+export const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const KEEP_REVISIONS = 20;
 
 export class NoteError extends Error {
