@@ -417,6 +417,25 @@ function identitySections(md: string): Block[] {
   });
 }
 
+/**
+ * What an agent's profile says about it: its entry in People when it has a summary there (written about it, in the
+ * third person: "the household's second agent…"), else another agent's card about it, else its identity's opening
+ * paragraph (written to it: "You are…").
+ */
+export function agentBio(h: Household, agent: string): string | undefined {
+  const dir = directory(h);
+  let summary: string | undefined;
+  try { summary = dir?.getRow(agent)?.card.summary?.trim() || undefined; } catch { /* no entry */ } finally { dir?.close(); }
+  // Else another agent's word for it (how Art knows Mark): about it, as the entry would be.
+  if (!summary) summary = relationships(h, agent).find((r) => r.agent !== agent && r.row.card.summary?.trim())?.row.card.summary?.trim();
+  if (!summary) {
+    let md = '';
+    try { md = readFileSync(join(agentDir(h, agent), 'IDENTITY.md'), 'utf-8'); } catch { /* none */ }
+    summary = identityFacts(md).bio;
+  }
+  return summary ? gist(summary, 400) : undefined;
+}
+
 /** An identity's bio (the paragraph under its title) and voice (its Voice or Communication section's first paragraph). */
 export function identityFacts(md: string): { bio?: string; voice?: string } {
   const para = (body: string) => body.trim().split(/\n\s*\n/)[0]?.replace(/\s+/g, ' ').trim() || undefined;
