@@ -1104,6 +1104,9 @@ describe('the household page', () => {
     expect(mark.dashboard.agent.label).toBe('Visual Mark');
     // Its Today opens on a profile: what it needs is in its head (its id, today's count, what waits, when it was last active).
     expect(mark.dashboard.agent).toMatchObject({ id: 'mark', today: expect.any(Number), waiting: expect.any(Number), active: expect.any(String) });
+    // What its profile says: its People entry when it has a summary there (about it), else its creed's opening (to it).
+    expect(await personWrite(join(h.home, 'agents', 'art'), { slug: 'mark', name: 'Visual Mark', summary: 'The household\'s second agent; reviews PRs.' })).not.toMatch(/^Error/);
+    expect((await data(cookie, '/a/mark')).dashboard.agent.bio).toBe('The household\'s second agent; reviews PRs.');
     // Mind and Setup wear the same head and tabs, the current one marked.
     const mind = await page(cookie, '/a/mark/mind');
     expect(mind.status).toBe(200);
