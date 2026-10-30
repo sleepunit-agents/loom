@@ -1069,6 +1069,11 @@ describe('the household page', () => {
     expect(reach.items).toEqual([
       { text: '@loren', meta: 'Discord', href: 'https://discord.com/users/216348202406772736' },
       { text: 'Loren Clawitter (@lclawitter)', meta: 'Slack' }]);
+    // A where field that isn't a way to reach them is a fact: their role on pond sits under Facts, not Reach.
+    expect(await personWrite(join(h.home, 'agents', 'art'), { slug: 'loren', where: { pond: { value: 'field et-livonia' } } })).not.toMatch(/^Error/);
+    const d2 = await data(await login(), '/people/loren');
+    expect(JSON.stringify(sectionOf(d2, 'reach'))).not.toContain('et-livonia');
+    expect((sectionOf(d2, 'facts').blocks as Data[])[0].items).toContainEqual({ label: 'Pond', value: 'field et-livonia' });
     // No side column: the change log is gone, and what's left is the page's width.
     expect((d.page.sections as Data[]).filter((s) => s.side)).toEqual([]);
     expect((d.page.sections as Data[]).map((s) => s.id)).not.toContain('changes');
