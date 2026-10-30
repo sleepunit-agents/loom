@@ -569,6 +569,26 @@ export function setMark(h: Household, agent: string, mark: { bg: string; fg: str
   });
 }
 
+/** What the household says an agent is, on its profile (its owner's words, set on its Setup), if anything. */
+export function aboutOf(h: Household, agent: string): string | undefined {
+  const a = rawHousehold(h.home).about;
+  const v = a && typeof a === 'object' && !Array.isArray(a) ? (a as Record<string, unknown>)[agent] : undefined;
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/** Set (or, empty, clear) what the household says an agent is. At most 600 characters. */
+export function setAbout(h: Household, agent: string, text: string): void {
+  if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length > 600) throw new HouseholdError('A description is at most 600 characters.');
+  withLock(h.home, () => {
+    const raw = rawHousehold(h.home);
+    const about = raw.about && typeof raw.about === 'object' && !Array.isArray(raw.about) ? { ...(raw.about as Record<string, unknown>) } : {};
+    if (t) about[agent] = t; else delete about[agent];
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, about }, null, 2) + '\n');
+  });
+}
+
 /**
  * The context dir a household names when nothing else does: with LOOM_HOME
  * set and a household.json there, `agents/<LOOM_AGENT or the default>`.

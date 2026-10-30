@@ -1194,6 +1194,38 @@ describe('the household page', () => {
     expect(raw().marks.mark.bg).toBe('#2F6B5A');
   });
 
+  it('an agent\'s creed is edited on its Setup, a part at a time; what it keeps itself is there to read, not to change', async () => {
+    const dir = join(h.home, 'agents', 'mark');
+    writeFileSync(join(dir, 'self-model.md'), '## Strengths\n\nReviewing PRs.\n');
+    const cookie = await login();
+    const d = await data(cookie, '/a/mark/setup');
+    const who = sectionOf(d, 'who').blocks as Data[];
+    const form = who.find((b) => b.type === 'form' && b.action === 'identity-set')!;
+    expect((form.fields as Data[]).map((f) => f.name)).toEqual(['about', 'purpose', 'voice', 'rules', 'ask']);
+    expect((form.fields as Data[]).find((f) => f.name === 'purpose')!.value).toBe('I am Visual Mark.');
+    // Its own: read, never a form.
+    const own = JSON.stringify(sectionOf(d, 'own'));
+    expect(own).toContain('Reviewing PRs.');
+    expect(own).not.toContain('"form"');
+    const csrf = csrfOf(d);
+    const ok = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-set', _path: 'a/mark/setup', agent: 'mark',
+      about: 'Reviews Art\'s PRs.', purpose: 'You are Visual Mark, the reviewer.', voice: 'Dry.', rules: 'Never merge your own PR.', ask: '' });
+    expect(ok.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
+    const md = () => readFileSync(join(dir, 'IDENTITY.md'), 'utf-8');
+    expect(md()).toBe('# Visual Mark\n\nYou are Visual Mark, the reviewer.\n\n## Voice\n\nDry.\n\n## Rules\n\nNever merge your own PR.\n');
+    expect(JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')).about).toEqual({ mark: 'Reviews Art\'s PRs.' });
+    expect((await data(cookie, '/a/mark')).dashboard.agent.bio).toBe('Reviews Art\'s PRs.');
+    // Another section, on its own; then a new one; an empty purpose is refused and changes nothing.
+    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-section-add', _path: 'a/mark/setup', agent: 'mark', heading: 'Hobbies', body: 'Birding.' });
+    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-section-set', _path: 'a/mark/setup', agent: 'mark', section: 'Hobbies', body: 'Crows.' });
+    expect(md()).toContain('## Hobbies\n\nCrows.\n');
+    const before = md();
+    const bad = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-set', _path: 'a/mark/setup', agent: 'mark', purpose: ' ' });
+    expect(flashOf(await data(cookie, bad.headers.get('location')!))).toContain('can\'t be empty');
+    expect(md()).toBe(before);
+    expect(readFileSync(join(dir, 'self-model.md'), 'utf-8')).toBe('## Strengths\n\nReviewing PRs.\n');   // never touched
+  });
+
   it('a token is made on the page, shown once, works, and is revoked on the page', async () => {
     const cookie = await login();
     const csrf = csrfOf(await data(cookie, '/a/mark/setup'));
@@ -1206,11 +1238,12 @@ describe('the household page', () => {
     const c = await connect(handle.port, token!);
     expect(textOf(await c.callTool({ name: 'identity', arguments: {} }))).toContain('Visual Mark');
     await c.close();
-    // The board's Setup: Health first, then Identity, then each live token a row with an inline Revoke that asks first.
+    // The board's Setup: Health first, then who it is, its creed and its own, then each live token a row with an inline
+    // Revoke that asks first.
     const setup = await data(cookie, '/a/mark/setup');
     const ids = (setup.page.sections as Data[]).map((s) => s.id);
-    expect(ids.indexOf('health')).toBeGreaterThanOrEqual(0);
-    expect(ids.indexOf('health')).toBeLessThan(ids.indexOf('identity'));
+    expect(ids.indexOf('health')).toBe(0);
+    expect(ids.slice(1, 4)).toEqual(['who', 'creed', 'own']);
     const row = (sectionOf(setup, 'tokens').blocks.filter((b: Data) => b.type === 'list').flatMap((b: Data) => b.items) as Data[]).find((i) => i.text === 'Mark · laptop');
     expect(row.act).toMatchObject({ action: 'revoke-token', label: 'Revoke', tone: 'danger', confirm: expect.any(String) });
     const rev = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'revoke-token', _path: 'a/mark/setup', label: 'Mark · laptop' });
