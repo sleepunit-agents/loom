@@ -26,8 +26,15 @@ import { readBody } from './io.js';
 import type { IOStreams } from './io.js';
 
 export const REMOTE_VERBS: ReadonlySet<string> = new Set([
-  'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person',
+  'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person', 'note',
 ]);
+
+/**
+ * `note` subcommands that name a file on the machine they run on (attach, file, sweep --cited): over /cli that would
+ * be loom's machine, so a house could attach loom's own files to a note and read them back. They run only where the
+ * stack is; a house writes a note's text (note_write, `loom note write`), and links big files.
+ */
+export const LOCAL_NOTE_SUBCOMMANDS: ReadonlySet<string> = new Set(['attach', 'file', 'sweep']);
 
 /**
  * `memory` subcommands with no MCP equivalent: recall-stats returns other
@@ -75,6 +82,8 @@ function readsBody(sub: string, argv: string[]): boolean {
   if (argv.includes('--help') || argv.includes('-h')) return false;
   if (sub === 'remember') return true;
   if (sub === 'update') return !argv.some((a) => /^--(confirm|contradict)(=|$)/.test(a));
+  // note write takes its text from stdin unless --body gives it.
+  if (sub === 'note') return argv.includes('write') && !argv.some((a) => /^--body(=|$)/.test(a));
   return false;
 }
 
