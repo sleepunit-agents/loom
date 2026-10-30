@@ -22,6 +22,7 @@ import {
   relayOf, setRelay, markIndexOf,
 } from '../household.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
+import { reachOf } from './reach.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { bootstrap } from '../tools/bootstrap.js';
@@ -326,9 +327,6 @@ function gist(text: string, n: number): string {
   return end > n / 2 ? cut.slice(0, end + 1) : `${cut.slice(0, cut.lastIndexOf(' '))}…`;
 }
 
-const SERVICE: Record<string, string> = { discord: 'Discord', slack: 'Slack', email: 'Email', phone: 'Phone', github: 'GitHub', telegram: 'Telegram', signal: 'Signal' };
-const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
-
 export function householdPerson(h: Household, slug: string, opts: CoreOptions = {}): Page {
   const tz = opts.timeZone ?? uiTimeZone();
   const nowMs = opts.nowMs ?? Date.now();
@@ -337,8 +335,6 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
   try {
     const d = dir.getRow(slug);
     if (!d) return { title: 'Not found', sections: [] };
-    const where = Object.entries(d.card.where ?? {}).sort(([a], [b]) => a.localeCompare(b));
-    // kind: person is the default, so a person's entry doesn't say it.
     const facts = Object.entries(d.card.how ?? {}).filter(([k, v]) => !(k === 'kind' && v === 'person'));
     const sections: Section[] = [];
     // The board's order: how each agent knows them (every agent, met or not), then how to reach them.
@@ -365,33 +361,12 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
         return { agent: a, text: known, meta: `${newer}updated ${ago(r.row.updated, tz, nowMs)}`, tone: r.memories ? 'warn' as const : undefined, page: agentLink(a, `people/${slug}`) };
       }),
     }] });
-    if (where.length) {
-      // In words (Jonathan, 2026-10-29: "on where to reach them, lets humanize that"): the name the service shows,
-      // the service under it, and a Discord profile a tap away; the raw id only when there's no name for it.
-      sections.push({ id: 'reach', title: 'Reach', blocks: [
-        { type: 'list', items: where.map(([k, env]) => {
-          const st = fieldState(env, nowMs);
-          const id = typeof env.value === 'string' ? env.value : '';
-          const profile = k === 'discord' && /^\d{5,25}$/.test(id) ? `https://discord.com/users/${id}` : undefined;
-          return {
-            text: env.label ? oneLine(env.label) : value(env.value),
-            meta: [SERVICE[k] ?? k.replace(/^./, (c) => c.toUpperCase()), st.kind === 'stale' ? `not checked in ${st.days} days` : st.kind === 'ok' ? '' : 'not checked'].filter(Boolean).join(' · '),
-            ...(st.kind === 'ok' ? {} : { tone: 'warn' as const }),
-            ...(profile ? { href: profile } : {}),
-          };
-        }) },
-        { type: 'details', summary: 'Where this came from', blocks: [{
-          type: 'table', columns: ['where', 'id', 'from', 'checked'],
-          rows: where.map(([k, env]) => {
-            const st = fieldState(env, nowMs);
-            return [SERVICE[k] ?? k, value(env.value), env.source ?? '', st.kind === 'ok' ? `ok, ${ago(env.verified_at ?? null, tz, nowMs)}` : st.kind === 'stale' ? `stale ${st.days}d` : 'unverified'];
-          }),
-        }] },
-      ] });
-    }
-    // One column (Jonathan, 2026-10-29: ditch the right column): facts under the rest; the entry's change log is
-    // the directory's, not the page's.
-    if (facts.length) sections.push({ id: 'facts', title: 'Facts', blocks: [{ type: 'kv', items: facts.map(([k, v]) => ({ label: k, value: value(v) })) }] });
+    const { reach, facts: placed } = reachOf(d.card.where, value, (iso) => ago(iso, tz, nowMs), nowMs);
+    if (reach) sections.push(reach);
+    if (facts.length || placed.length) sections.push({ id: 'facts', title: 'Facts', blocks: [{ type: 'kv', items: [
+      ...placed,
+      ...facts.map(([k, v]) => ({ label: k, value: value(v) })),
+    ] }] });
     const role = d.card.how?.role;
     return { title: d.card.name, intro: d.card.summary ? gist(d.card.summary, 220) : (role ? value(role) : undefined), sections };
   } finally {

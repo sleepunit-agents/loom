@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listProposals, rejectProposal, ratifyProposal, UnknownProposalError } from '../backends/proposals.js';
 import { fieldState, type CardValue } from '../backends/people.js';
+import { reachOf } from './reach.js';
 import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
 import { restore } from '../tools/restore.js';
@@ -421,28 +422,16 @@ function personPageFor(contextDir: string, slug: string, tz: string, nowMs: numb
     });
   }
   if (card.summary) sections.push({ id: 'summary', blocks: [{ type: 'text', text: card.summary }] });
-  const where = Object.entries(card.where).sort(([a], [b]) => a.localeCompare(b));
-  if (where.length) {
-    sections.push({
-      id: 'where',
-      title: 'Where to reach them',
-      blocks: [{
-        type: 'table',
-        columns: ['where', 'value', 'from', 'checked'],
-        rows: where.map(([k, env]) => {
-          const s = fieldState(env, nowMs);
-          return [k, value(env.value), env.source ?? '', s.kind === 'ok' ? `ok, ${ago(env.verified_at ?? null, tz, nowMs)}` : s.kind === 'stale' ? `stale ${s.days}d` : 'unverified'];
-        }),
-      }],
-    });
-  }
+  // As the household's entry has it (Jonathan, 2026-10-29): the ways to reach them in words, one column.
+  const { reach, facts } = reachOf(card.where, value, (iso) => ago(iso, tz, nowMs), nowMs);
+  if (reach) sections.push(reach);
+  if (facts.length) sections.push({ id: 'facts', title: 'Facts', blocks: [{ type: 'kv', items: facts }] });
   const how = Object.entries(card.how);
-  if (how.length) sections.push({ id: 'how', title: 'How to talk to them', side: true, blocks: [{ type: 'kv', items: how.map(([k, v]) => ({ label: k, value: value(v) })) }] });
+  if (how.length) sections.push({ id: 'how', title: 'How to talk to them', blocks: [{ type: 'kv', items: how.map(([k, v]) => ({ label: k, value: value(v) })) }] });
   if (card.may.length) {
     sections.push({
       id: 'may',
       title: 'What they\'re cleared for',
-      side: true,
       blocks: [
         { type: 'list', items: card.may.map((m) => ({ text: m.text, meta: `said by ${m.source}` })) },
         { type: 'text', text: 'A description of what was agreed. Actual access is set where it\'s enforced, not here.', tone: 'muted' },
@@ -452,11 +441,6 @@ function personPageFor(contextDir: string, slug: string, tz: string, nowMs: numb
   if (recent.length) {
     sections.push({ id: 'memories', title: 'What I remember about them', blocks: [{ type: 'list', items: recent.map((m) => ({ text: m.title, meta: ago(m.created, tz, nowMs), page: memoryPage(m.ref) })) }] });
   }
-  sections.push({ id: 'record', side: true, blocks: [{ type: 'kv', items: [
-    { label: 'slug', value: card.slug },
-    { label: 'card updated', value: when(read.updated, tz) },
-    { label: 'summary written', value: when(read.synthesized_at, tz) },
-  ] }] });
   return { title: card.name, sections };
 }
 

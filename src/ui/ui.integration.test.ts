@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { request as httpRequest } from 'node:http';
+import { personWrite } from '../tools/person.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { sessionStore } from './sessions.js';
@@ -400,6 +401,15 @@ describe('loom UI over HTTP', () => {
     expect(items[items.length - 1].meta).toMatch(/· first written/);
     expect((await getJson('/memory/nope/none', cookie)).status).toBe(404);
     expect((await getJson('/people', cookie)).status).toBe(200);
+    // An agent's own view of someone: Reach in words, a role under Facts, one column (no slug or card dates beside it).
+    expect(await personWrite(stack, { slug: 'pat-lee', name: 'Pat Lee', summary: 'Ops.', how: { mode: 'terse' }, where: {
+      slack: { value: 'U2', label: 'Pat Lee (@plee)', verified_at: new Date(Date.now() - 60_000).toISOString() },
+      pond: { value: 'field et-livonia' } } })).not.toMatch(/^Error/);
+    const pat = await view('/people/pat-lee', cookie);
+    expect(section(pat, 'reach')!.blocks[0].items).toEqual([{ text: 'Pat Lee (@plee)', meta: 'Slack' }]);
+    expect(section(pat, 'facts')!.blocks[0].items).toEqual([{ label: 'Pond', value: 'field et-livonia' }]);
+    expect(section(pat, 'where')).toBeUndefined();
+    expect((pat.page.sections as Array<{ side?: boolean }>).filter((x) => x.side)).toEqual([]);
     // A piece may link to someone with no card: a page that says so, not an error.
     const nobody = await getJson('/people/no-such-person', cookie);
     expect(nobody.status).toBe(200);
