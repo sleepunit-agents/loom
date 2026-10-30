@@ -426,6 +426,13 @@
 
   @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
 /* loom: an icon in a dock tile is the tile's size, not the SVG default (300px). */
+/* A phone's dock labels sit under their tiles (dock.css's touch block), but the hover popup's own rules still applied
+   over it: an engaged middle label kept translate(-50%) and slid half its width left until the tap went stale, and the
+   end ones sat 5px low until engaged (Jonathan, 2026-10-30: "the inbox text moves to the left", "home and More start
+   low"). On touch, a label never moves: every one on the same line, tapped or not. */
+@media (hover: none), (pointer: coarse) {
+  .v-dock:not([data-variant="rail"]) [data-part="lane"] [data-part="label"] { transform: none !important; }
+}
 .v-dock [data-part="visual"] [data-slot="animated-icon"],
 .v-dock [data-part="visual"] [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 26px; height: 26px; }
 .v-dock [data-part="visual"] svg { width: 26px !important; height: 26px !important; }
