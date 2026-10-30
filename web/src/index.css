@@ -510,7 +510,7 @@ body { background: var(--v-canvas); }
 .loom-profile__cover.-pink { --cover-def: var(--v-pink); } .loom-profile__cover.-yellow { --cover-def: var(--v-yellow); }
 .loom-profile__cover.-olive { --cover-def: var(--v-olive); } .loom-profile__cover.-blue { --cover-def: var(--v-blue); }
 .loom-profile__cover:not([style]) { background: var(--cover-def); }
-.loom-profile__shape { position: absolute; color: rgb(255 255 255 / .42); }
+.loom-profile__shape { position: absolute; --c: rgb(255 255 255 / .42); }
 .loom-profile__shape.-a { width: 120px; height: 120px; right: 6%; top: -22px; animation: loom-profile-drift 14s ease-in-out infinite; }
 .loom-profile__shape.-b { width: 70px; height: 70px; right: 24%; bottom: -14px; animation: loom-profile-drift 18s ease-in-out infinite reverse; }
 .loom-profile__shape.-c { width: 46px; height: 46px; right: 38%; top: 18px; animation: loom-profile-drift 11s ease-in-out infinite; }

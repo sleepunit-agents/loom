@@ -11,7 +11,8 @@ export type Block =
   | { type: 'prose'; text: string }
   | { type: 'callout'; text: string; title?: string; tone?: Tone }
   | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: 'pink' | 'yellow' | 'olive' | 'blue'; summary?: string;
-      badges?: string[]; stats?: Array<{ label: string; value: string }>; links?: Array<{ text: string; page?: string; href?: string }> }
+      badges?: string[]; stats?: Array<{ label: string; value: string; detail?: string; page?: string; source?: Source; tone?: Tone }>;
+      links?: Array<{ text: string; page?: string; href?: string }> }
   | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean }
   | { type: 'table'; columns: string[]; rows: (string | { text: string; page?: string })[][] }
   | { type: 'kv'; items: { label: string; value: string; page?: string }[] }
@@ -38,7 +39,8 @@ export interface Shell {
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
 export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell }
-export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[] }
+export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];
+  id?: string; bio?: string; today?: number; waiting?: number; active?: string }
 
 export type View =
   | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string }

@@ -56,7 +56,7 @@ import { catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
-import { agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { agentSetup, identityFacts, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { agentDir, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
@@ -1324,7 +1324,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const scoped = pieces.filter((p) => p.manifest.scope);
         const d: Dashboard = {
           label: agents[agent].label,
-          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces) },
+          agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces),
+            id: agent, today: t.items.length, active: lastActive(agentDir(hh, agent)),
+            waiting: pendingProposals(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0),
+            ...(() => {
+              let md = '';
+              try { md = readFileSync(join(agentDir(hh, agent), 'IDENTITY.md'), 'utf-8'); } catch { /* none */ }
+              const { bio } = identityFacts(md);
+              return bio ? { bio: bio.length > 400 ? `${bio.slice(0, bio.lastIndexOf(' ', 400))}…` : bio } : {};
+            })() },
           asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
