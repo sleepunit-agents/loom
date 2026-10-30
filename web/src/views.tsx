@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Arrive } from './arrive';
 import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
+const Profile = lazy(() => import('./profile'));
 const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
 import type { Button as Btn, Source, Tone } from './loom';
@@ -166,7 +167,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   );
 }
 
-export function DashboardView({ d, now }: { d: { label: string; title?: string; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
+export function DashboardView({ d, now }: { d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
   const { go, ctx } = useEnv();
   return (
     <div className="grid gap-4">
@@ -174,8 +175,18 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
         <Button variant="secondary" className="justify-start" onClick={() => go('/inbox')}>{d.inbox.first ?? `${d.inbox.count} in the Inbox`}</Button>
       )}
       {d.filters && <BlockView b={{ type: 'filters', ...d.filters }} />}
+      {/* An agent's Today opens on its profile (Jonathan, 2026-10-29: "lets do this to the agent pages too. we can merge
+          the memory and clock and shit into it"): its colour, its identity's opening, how it is, and its tiles as stats. */}
+      {d.agent?.id ? (
+        <Suspense fallback={<div className="min-h-64" />}><Profile p={{
+          type: 'profile', name: d.agent.label, agent: d.agent.id, ...(d.agent.bio ? { summary: d.agent.bio } : {}),
+          badges: [d.agent.waiting ? `${d.agent.waiting} waiting on you` : 'Ready', ...(d.agent.active ? [d.agent.active] : [])],
+          stats: [...(d.agent.today !== undefined ? [{ label: 'today', value: d.agent.today.toLocaleString() }] : []),
+            ...d.tiles.slice(0, 3).map((t) => ({ label: t.label.toLowerCase(), value: t.value, detail: t.detail, page: t.page, source: t.source, tone: t.tone }))],
+        }} /></Suspense>
+      ) : null}
       <Asks asks={d.asks} />
-      <Tiles tiles={d.tiles} />
+      {!d.agent?.id && <Tiles tiles={d.tiles} />}
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
         <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>

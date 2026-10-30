@@ -1102,6 +1102,8 @@ describe('the household page', () => {
     expect(tabs[0]).toEqual({ label: 'Today', href: '/a/mark', current: true });
     expect(tabs[1]).toEqual({ label: 'Mind', href: '/a/mark/mind', current: false });
     expect(mark.dashboard.agent.label).toBe('Visual Mark');
+    // Its Today opens on a profile: what it needs is in its head (its id, today's count, what waits, when it was last active).
+    expect(mark.dashboard.agent).toMatchObject({ id: 'mark', today: expect.any(Number), waiting: expect.any(Number), active: expect.any(String) });
     // Mind and Setup wear the same head and tabs, the current one marked.
     const mind = await page(cookie, '/a/mark/mind');
     expect(mind.status).toBe(200);

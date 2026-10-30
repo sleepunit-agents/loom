@@ -119,7 +119,9 @@ export interface Dashboard {
   /** A headline in place of "N need you" (Activity's). */
   title?: string;
   /** An agent's Today: its mark, and Today · Mind · People · Setup. */
-  agent?: { label: string; bg: string; fg: string; sub?: string; tabs: Array<{ label: string; href: string; current: boolean }> };
+  agent?: { label: string; bg: string; fg: string; sub?: string; tabs: Array<{ label: string; href: string; current: boolean }>;
+    /** Its Today opens on a profile (Jonathan, 2026-10-29): its id, the identity's opening paragraph, today's count. */
+    id?: string; bio?: string; today?: number; waiting?: number; active?: string };
   asks: HomeAsk[];
   /** A household's Home: what needs the owner is in the Inbox; Home says how much, and links there, instead of the cards. */
   inbox?: { count: number; first?: string };
