@@ -1074,6 +1074,14 @@ describe('the household page', () => {
     const d2 = await data(await login(), '/people/loren');
     expect(JSON.stringify(sectionOf(d2, 'reach'))).not.toContain('et-livonia');
     expect((sectionOf(d2, 'facts').blocks as Data[])[0].items).toContainEqual({ label: 'Pond', value: 'field et-livonia' });
+    // Who they are first, as a profile: their colour, name, what they are, how many agents know them, a way out.
+    const prof = (sectionOf(d, 'profile').blocks as Data[])[0];
+    expect((d.page.sections as Data[])[0].id).toBe('profile');
+    expect(prof).toMatchObject({ type: 'profile', name: 'Loren', initials: 'L', badges: ['Person'],
+      links: [{ text: 'Discord profile', href: 'https://discord.com/users/216348202406772736' }] });
+    expect(['pink', 'yellow', 'olive', 'blue']).toContain(prof.tone);
+    expect(prof.stats).toContainEqual({ label: 'ways to reach', value: '2' });
+    expect(d.page.intro).toBeUndefined();
     // No side column: the change log is gone, and what's left is the page's width.
     expect((d.page.sections as Data[]).filter((s) => s.side)).toEqual([]);
     expect((d.page.sections as Data[]).map((s) => s.id)).not.toContain('changes');

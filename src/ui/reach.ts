@@ -4,7 +4,7 @@
  * role on pond) as a fact.
  */
 import { fieldState, type CardValue, type WhereEnvelope } from '../backends/people.js';
-import type { Block, Section } from './vocab.js';
+import type { Block, ProfileTone, Section } from './vocab.js';
 
 export const SERVICE: Record<string, string> = {
   discord: 'Discord', slack: 'Slack', email: 'Email', phone: 'Phone', github: 'GitHub', telegram: 'Telegram', signal: 'Signal',
@@ -49,4 +49,27 @@ export function reachOf(
     }] },
   ];
   return { reach: { id: 'reach', title: 'Reach', blocks }, facts };
+}
+
+const PROFILE_TONES: ProfileTone[] = ['pink', 'yellow', 'olive', 'blue'];
+
+/** A person's colour on their profile: always the same one for the same slug. */
+export function profileTone(slug: string): ProfileTone {
+  let h = 0;
+  for (const c of slug) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return PROFILE_TONES[h % PROFILE_TONES.length];
+}
+
+/** One or two letters for an avatar: "Loren Clawitter" → "LC". */
+export function initialsOf(name: string): string | undefined {
+  const words = name.split(/[\s-]+/).filter((w) => /^\p{L}/u.test(w));
+  const out = words.slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+  return /^\p{L}{1,2}$/u.test(out) ? out : undefined;
+}
+
+/** The ways out from a profile: a Discord profile when there's an id for one. */
+export function profileLinks(where: Record<string, WhereEnvelope> | undefined): Array<{ text: string; href: string }> {
+  const d = where?.discord;
+  const id = d && typeof d.value === 'string' ? d.value : '';
+  return /^\d{5,25}$/.test(id) ? [{ text: 'Discord profile', href: `https://discord.com/users/${id}` }] : [];
 }

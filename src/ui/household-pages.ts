@@ -22,7 +22,7 @@ import {
   relayOf, setRelay, markIndexOf,
 } from '../household.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
-import { reachOf } from './reach.js';
+import { initialsOf, profileLinks, profileTone, reachOf, SERVICE } from './reach.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
 import { resolveSqliteDbPath } from '../config.js';
 import { bootstrap } from '../tools/bootstrap.js';
@@ -341,9 +341,27 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
     const rels = new Map(relationships(h, slug).map((r) => [r.agent, r]));
     // An agent's own entry: its pages are a tap away, and it isn't listed as knowing itself.
     const own = h.agents.includes(slug);
-    if (own) sections.push({ id: 'agent', blocks: [{ type: 'list', items: [{ agent: slug, text: `${d.card.name}'s pages`, meta: 'Today, Mind and Setup', page: agentLink(slug) }] }] });
     // A member's entry says what they own (docs/specs/owners.md).
     const member = h.members.find((m) => m.person === slug);
+    // Who they are first, as a profile (Jonathan, 2026-10-29: 000h's profile card "might be rad to do here"): their
+    // colour, name and summary; what they are; how many agents know them and ways there are to reach them.
+    const others = h.agents.filter((a) => a !== slug);
+    const ways = Object.keys(d.card.where ?? {}).filter((k) => k in SERVICE).length;
+    const role = d.card.how?.role;
+    sections.push({ id: 'profile', blocks: [{
+      type: 'profile', name: d.card.name,
+      ...(own ? { agent: slug } : { tone: profileTone(slug), ...(initialsOf(d.card.name) ? { initials: initialsOf(d.card.name) } : {}) }),
+      ...(d.card.summary ? { summary: gist(d.card.summary, 320) } : role ? { summary: value(role) } : {}),
+      badges: [
+        own ? 'Agent in this household' : kindOf(d.card) === 'agent' ? 'Agent' : 'Person',
+        ...(member ? [member.agents === '*' ? 'Household owner' : 'Agent owner'] : []),
+      ],
+      stats: [
+        ...(others.length ? [{ label: own || kindOf(d.card) === 'agent' ? 'agents know it' : 'agents know them', value: `${others.filter((a) => rels.has(a)).length} of ${others.length}` }] : []),
+        { label: ways === 1 ? 'way to reach' : 'ways to reach', value: String(ways) },
+      ],
+      links: [...(own ? [{ text: `${d.card.name}'s pages`, page: agentLink(slug) }] : []), ...profileLinks(d.card.where)],
+    }] });
     if (member) {
       sections.push({ id: 'owns', title: 'Owns', blocks: [{ type: 'list', items: member.agents === '*'
         ? [{ text: 'The household, and every agent in it', meta: 'household owner', page: 'loom:members' }]
@@ -367,8 +385,7 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
       ...placed,
       ...facts.map(([k, v]) => ({ label: k, value: value(v) })),
     ] }] });
-    const role = d.card.how?.role;
-    return { title: d.card.name, intro: d.card.summary ? gist(d.card.summary, 220) : (role ? value(role) : undefined), sections };
+    return { title: d.card.name, sections };
   } finally {
     dir.close();
   }

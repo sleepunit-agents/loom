@@ -228,6 +228,8 @@ export default function App() {
     icon: <span className="loom-back-mark" aria-hidden>{accent.label[0]}</span>,
     badge: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>,
   } : null;
+  // A profile leads with the name itself, big: the page's own title would say it twice (the trail keeps it).
+  const profileLeads = data?.view === 'page' && (data.page as Page).sections[0]?.blocks[0]?.type === 'profile';
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
   const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
@@ -263,7 +265,7 @@ export default function App() {
                     <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
                   </BreadcrumbList></Breadcrumb>
                 )}
-                {title && <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
+                {title && !profileLeads && <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
                 {head?.sub && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
               {accent && wide && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
