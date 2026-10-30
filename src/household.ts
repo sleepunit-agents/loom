@@ -217,11 +217,43 @@ function alive(pid: number): boolean {
  * Serialize every read-modify-write of household.json and tokens.json, so
  * two `loom token` runs can't interleave and drop each other's change (a
  * create racing a revoke must not bring the revoked token back). The lock
- * holds its owner's pid. It is never broken automatically: every way of
- * breaking a stale lock races another waiter doing the same, and these locks
- * are only taken by the owner's own occasional commands, so a lock left by a
- * dead process is reported with what to do instead.
+ * holds its owner's pid.
+ *
+ * A lock whose pid is dead is cleared, never just for being old. It used to be
+ * reported and left, when only the owner's occasional commands took it; now
+ * loom-box mints a token for every house it starts, and on 2026-10-30 a
+ * `loom token create` killed by its caller's timeout left one that failed every
+ * house start until someone removed it by hand. Clearing it would race another
+ * waiter clearing it too, and the second could remove the first's fresh lock.
+ * So it's done under a breaker (`.household.lock.break`, taken the same way):
+ * one at a time, each re-reading the lock and removing it only while it still
+ * names the dead pid. A breaker that died holding its own lock (a second death
+ * inside a few milliseconds) is reported, with what to do.
  */
+/** Remove `lock` if it still names the dead `holder`, under the breaker. False when someone else is clearing it. */
+function clearDead(lock: string, holder: number, mine: string): boolean {
+  const breaker = `${lock}.break`;
+  try {
+    writeFileSync(breaker, mine, { flag: 'wx', mode: 0o600 });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    let b = NaN;
+    try { b = Number.parseInt(readFileSync(breaker, 'utf-8'), 10); } catch { return false; /* just released */ }
+    if (Number.isSafeInteger(b) && b > 0 && !alive(b)) {
+      throw new HouseholdError(`${lock} was left by pid ${holder}, which isn't running, and ${breaker} by pid ${b}, which isn't either; if no loom command is running, remove both files and try again`);
+    }
+    return false;   // being cleared by a live process: wait for it
+  }
+  try {
+    let now = NaN;
+    try { now = Number.parseInt(readFileSync(lock, 'utf-8'), 10); } catch { /* already gone */ }
+    if (now === holder) rmSync(lock, { force: true });
+    return true;
+  } finally {
+    try { if (readFileSync(breaker, 'utf-8') === mine) rmSync(breaker, { force: true }); } catch { /* already gone */ }
+  }
+}
+
 function withLock<T>(home: string, f: () => T): T {
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const lock = join(home, LOCK_FILE);
@@ -236,7 +268,7 @@ function withLock<T>(home: string, f: () => T): T {
       let holder = NaN;
       try { holder = Number.parseInt(readFileSync(lock, 'utf-8'), 10); } catch { continue; /* just released */ }
       if (Number.isSafeInteger(holder) && holder > 0 && !alive(holder)) {
-        throw new HouseholdError(`${lock} was left by pid ${holder}, which isn't running; if no loom command is running, remove that file and try again`);
+        if (clearDead(lock, holder, mine)) continue;
       }
       if (Date.now() > deadline) throw new HouseholdError(`${lock} is held by another loom process (pid ${Number.isNaN(holder) ? '?' : holder}); try again`);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);

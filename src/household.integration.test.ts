@@ -359,7 +359,7 @@ describe('household hardening', () => {
     expect(r.resolve(token)).toBeNull();
   });
 
-  it('a live holder\'s lock makes a second writer wait and refuse; a dead holder\'s is reported, not broken', () => {
+  it('a live holder\'s lock makes a second writer wait and refuse; a dead holder\'s is cleared and the write goes on', () => {
     createToken(h, { role: { kind: 'owner' }, label: 'page' });
     const lock = join(h.home, '.household.lock');
     // A live holder: this test process's parent (always running).
@@ -369,14 +369,27 @@ describe('household hardening', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(4_500);
     expect(loadTokens(h.home)[0].revoked).toBeUndefined();
     expect(readFileSync(lock, 'utf-8')).toBe(String(process.ppid));
-    // A dead holder's lock is reported, never broken automatically (breaking
-    // one races another waiter doing the same).
+    // A dead holder's lock (a `loom token create` killed by its caller's timeout, 2026-10-30: every house start
+    // after it failed until someone removed the file) is cleared under the breaker, and the write goes on.
     writeFileSync(lock, '2147483646');
-    expect(() => revokeToken(h, 'page')).toThrow(/isn't running; if no loom command is running, remove that file/);
-    expect(existsSync(lock)).toBe(true);
-    rmSync(lock);
     expect(revokeToken(h, 'page').revoked).toBeTruthy();
     expect(existsSync(lock)).toBe(false);
+    expect(existsSync(`${lock}.break`)).toBe(false);
+  }, 15_000);
+
+  it('a dead holder\'s lock is left alone while another process is clearing it, and a dead breaker is reported', () => {
+    createToken(h, { role: { kind: 'owner' }, label: 'page' });
+    const lock = join(h.home, '.household.lock');
+    writeFileSync(lock, '2147483646');
+    // Someone else (alive) is clearing it: wait, and refuse when it isn't done in time; never clear it twice.
+    writeFileSync(`${lock}.break`, String(process.ppid));
+    expect(() => revokeToken(h, 'page')).toThrow(/held by another loom process|being cleared/);
+    expect(readFileSync(lock, 'utf-8')).toBe('2147483646');
+    // The one clearing it died too: that's reported, with what to do (two deaths in a row, rare enough to ask).
+    writeFileSync(`${lock}.break`, '2147483645');
+    expect(() => revokeToken(h, 'page')).toThrow(/isn't either; if no loom command is running, remove both files/);
+    rmSync(`${lock}.break`);
+    expect(revokeToken(h, 'page').revoked).toBeTruthy();
   }, 15_000);
 
   it('a lock left by a live process is never broken just for being old', () => {
