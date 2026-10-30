@@ -124,17 +124,28 @@ export function Dock({
     [magnification, quiet],
   );
 
+  // loom: on a touch screen a tap focuses the tile, and the neighbours swelling with it read as two tiles picked
+  // (Jonathan, 2026-10-30: "when I click inbox, both inbox and places icons swell"). The tapped tile alone, there.
+  const [touch, setTouch] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof matchMedia === "undefined") return;
+    const m = matchMedia("(hover: none), (pointer: coarse)");
+    const read = () => setTouch(m.matches);
+    read();
+    m.addEventListener("change", read);
+    return () => m.removeEventListener("change", read);
+  }, []);
   const focusScales = React.useCallback(
     (index: number | null) => {
       if (index === null || quiet) return items.map(() => 1);
       return items.map((_, candidate) => {
         const distance = Math.abs(candidate - index);
         if (distance === 0) return magnification;
-        if (distance === 1) return 1 + (magnification - 1) * 0.34;
+        if (distance === 1 && !touch) return 1 + (magnification - 1) * 0.34;
         return 1;
       });
     },
-    [items, magnification, quiet],
+    [items, magnification, quiet, touch],
   );
 
   const select = (item: DockItem) => {
