@@ -98,6 +98,16 @@ an agent's persistent state:
   write its own manifest, keyed to its MCP `clientInfo.name`. A harness can only
   describe itself, never another — the target is the connected peer, not a
   caller-supplied name.
+- **`harness_patch`** — edit one small piece of the connected harness's own
+  manifest by exact find/replace, applied against the server's own on-disk
+  copy. Unlike `harness_describe`, the caller never has to hold the full
+  current body — which matters once a manifest has grown past the point
+  where `identity()`'s combined payload truncates it (the manifest is
+  normally read back via `identity()`, which bundles it with persona,
+  preferences and self-model into one payload capped by the transport; a
+  `harness_describe` call built from a truncated read would silently drop
+  everything past the cut on the next overwrite). `find` must match the
+  current body exactly once.
 - **`knowledge_write`** — upsert an entity page by slug into the knowledge
   store (a separate `knowledge.db`). On an existing slug the body replaces by
   default (`mode: "append"` adds instead), title/domain follow the write, and
@@ -757,6 +767,14 @@ for, the harness block becomes a self-describe onboarding prompt (call
 `harness_describe` with a manifest covering tool surface, sandbox,
 delegation, scheduling, session search, memory layers, gotchas) instead
 of a bare "(manifest missing)" stub.
+
+**Or patch it in place.** Once a manifest exists, `harness_patch` edits
+one piece of it by exact find/replace against the server's own on-disk
+copy — no need to read the full current body back through `identity()`'s
+combined payload first (which truncates past a size cap, so a
+read-truncated-then-overwrite via `harness_describe` risks silently
+losing whatever was past the cut). `find` must match the current body
+exactly once; zero or multiple matches is refused.
 
 **Resolution is data-driven.** Mapping a connecting `clientInfo.name` to
 a manifest is done from the files on disk, not a hardcoded code table. A

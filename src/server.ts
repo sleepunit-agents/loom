@@ -36,7 +36,7 @@ import {
 } from './backends/proposals.js';
 import { updateIdentity } from './tools/update-identity.js';
 import { bootstrap } from './tools/bootstrap.js';
-import { harnessInit, harnessDescribe } from './tools/harness.js';
+import { harnessInit, harnessDescribe, harnessPatch } from './tools/harness.js';
 import { resolvePeerToHarness, normalizePeer } from './blocks/harness.js';
 import { registerHelloApp } from './transport/mcp-app-hello.js';
 import { registerKnowledgeTools } from './transport/knowledge-tools.js';
@@ -807,6 +807,36 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async ({ content, version }) => {
       const peer = server.server.getClientVersion()?.name;
       const text = await harnessDescribe(contextDir, { content, version }, peer);
+      return { content: [{ type: 'text' as const, text }] };
+    },
+  );
+
+  server.registerTool(
+    'harness_patch',
+    {
+      description:
+      'Safely edit ONE small piece of the CURRENTLY CONNECTED harness\'s own manifest, ' +
+      'without reading back the full current body first. identity() bundles the manifest ' +
+      'into a combined payload that can silently truncate once it grows large (t-1674), ' +
+      'making a read-then-overwrite via harness_describe unsafe past that point. ' +
+      'harness_patch instead applies an exact find/replace against the server\'s own ' +
+      'on-disk copy of the manifest, which is always complete. `find` must match the ' +
+      'current manifest body exactly once — zero or multiple matches is refused rather ' +
+      'than guessed at. To append, make `find` the last line of the section you\'re adding ' +
+      'to and `replace` that same line followed by the new line(s). Requires a manifest to ' +
+      'already exist (harness_describe or harness_init first). Peer-scoped like ' +
+      'harness_describe: a harness can only patch its own manifest.',
+      inputSchema:
+      {
+        find: z.string().describe('Exact text to find in the current manifest body — must match exactly once.'),
+        replace: z.string().describe('Text to replace it with.'),
+        version: z.string().optional().describe('Manifest version stamp to set (default: keep the existing version).'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ find, replace, version }) => {
+      const peer = server.server.getClientVersion()?.name;
+      const text = await harnessPatch(contextDir, { find, replace, version }, peer);
       return { content: [{ type: 'text' as const, text }] };
     },
   );

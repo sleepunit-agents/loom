@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **`harness_patch`: a safe small edit to a harness manifest.** A harness
+  manifest is normally read back through `identity()`, which bundles it into
+  a combined payload capped by the transport — past that cap a read silently
+  truncates mid-sentence, so a `harness_describe` overwrite built from that
+  truncated read risks dropping everything past the cut. `harness_patch`
+  applies an exact find/replace against the server's own on-disk copy
+  instead, so the caller only ever has to hold the text of the edit itself,
+  never the full manifest (t-1674).
+
 - **A door for strangers, where a piece opens one.** A tokenless call reaches a
   managed piece's API only on a path its `loom` block lists in `strangers`, as
   `{kind:'stranger', address}`, 8 KB at most: so a new box can ask to join and

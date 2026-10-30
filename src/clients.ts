@@ -24,7 +24,7 @@ export const TOOLS = [
   'memory_list', 'memory_prune', 'find_similar', 'memory_audit', 'memory_recompute_salience', 'episodes', 'relay',
   'memory_archive', 'memory_restore', 'memory_merge', 'memory_history', 'memory_revision_restore',
   'memory_propose', 'memory_proposals', 'memory_ratify', 'memory_reject',
-  'update_identity', 'bootstrap', 'harness_init', 'harness_describe',
+  'update_identity', 'bootstrap', 'harness_init', 'harness_describe', 'harness_patch',
   'knowledge_write', 'knowledge_recall', 'knowledge_maintain',
   'knowledge_archive', 'knowledge_restore', 'knowledge_supersede', 'knowledge_move', 'knowledge_merge',
   'knowledge_purge', 'knowledge_verify', 'knowledge_history',

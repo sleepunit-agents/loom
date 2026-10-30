@@ -87,6 +87,7 @@ describe('createLoomServer', () => {
     bootstrap: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     harness_init: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     harness_describe: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    harness_patch: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     knowledge_write: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     knowledge_recall: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     knowledge_maintain: { readOnlyHint: true, openWorldHint: false },
