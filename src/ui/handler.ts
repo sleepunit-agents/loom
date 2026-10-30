@@ -576,7 +576,8 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
 function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): InboxItem[] {
   const asks = [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...pieceAsks(pieces, env)];
   const items: InboxItem[] = [
-    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? 'decision', attention: a.attention !== false, unread: false,
+    // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
+    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions })),
     ...pieces.flatMap((p) => {
       const source = pieceSource(p.piece);

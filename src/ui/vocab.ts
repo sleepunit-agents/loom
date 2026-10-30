@@ -74,12 +74,16 @@ export interface Page {
 }
 
 export interface Tile { label: string; value: string; detail?: string; tone?: Tone; page?: string }
-/** What an ask is, for the Inbox's folders: something to allow, to choose, or to answer in words. */
-export type AskKind = 'permission' | 'decision' | 'reply';
-export const ASK_KINDS: ReadonlySet<string> = new Set(['permission', 'decision', 'reply']);
+/**
+ * What an ask is, for the Inbox's folders: something to allow, to choose, or to answer in words; something wrong to look
+ * at (an alert: there's no choice in it); or a task waiting on the owner (todo). Jonathan, 2026-10-30: "discord bridge
+ * is down ... says it's got a decision, and well, there's no decision there".
+ */
+export type AskKind = 'permission' | 'decision' | 'reply' | 'alert' | 'todo';
+export const ASK_KINDS: ReadonlySet<string> = new Set(['permission', 'decision', 'reply', 'alert', 'todo']);
 /**
  * A decision only the owner can make. `tone` tints its card; `at` (ISO time) gives its age; `agent` puts that agent's mark on it.
- * `kind` files it (a decision by default). `attention: false` files it without counting it as unread (a memory proposal nothing
+ * `kind` files it (a decision when it has buttons to choose with, else an alert). `attention: false` files it without counting it as unread (a memory proposal nothing
  * waits on); otherwise it needs the owner: it counts, and may push. `expires` (ISO) is when it stops mattering.
  */
 export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; /** Up to two buttons on its card (Ratify and Reject): posted to the piece, like a buttons block's. */ actions?: Button[];
