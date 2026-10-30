@@ -16,9 +16,10 @@ const useEnv = () => useContext(EnvContext)!;
 
 type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
 const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
-// Each kind its own filter, in this order, shown only when it holds something (Jonathan, 2026-10-30: "make all of our
-// types filterable").
-const KINDS: Array<[InboxItem['kind'], string]> = [['permission', 'Permissions'], ['decision', 'Decisions'], ['reply', 'Replies'], ['alert', 'Alerts'], ['todo', 'To do'], ['fyi', 'FYI'], ['answered', 'Answered']];
+// The filters (Jonathan, 2026-10-30): "needs you, to do, fyi, everything is the order and we ditch answered". What
+// was answered is history, in All; a permission, a decision, a reply or an alert needs you, and says which on
+// its own row.
+const KINDS: Array<[InboxItem['kind'], string]> = [['todo', 'To do'], ['fyi', 'FYI']];
 
 export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folder: string; chrome: Chrome }) {
   const { ctx } = useEnv();
@@ -49,11 +50,11 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <ToggleGroup type="single" className="flex-wrap self-start justify-self-start" aria-label="Show" value={show} onValueChange={(f) => { if (f) setShow(f); }}>
-        {[['needs', `Needs you${need.length ? ` · ${need.length}` : ''}`], ['all', 'Everything'],
-          ...KINDS.filter(([k]) => items.some((i) => i.kind === k)).map(([k, l]) => [k, `${l} · ${items.filter((i) => i.kind === k).length}`])]
+        {[['needs', `Needs you${need.length ? ` · ${need.length}` : ''}`],
+          ...KINDS.map(([k, l]) => { const c = items.filter((i) => i.kind === k).length; return [k, `${l}${c ? ` · ${c}` : ''}`]; }), ['all', 'All']]
           .map(([f, l]) => <ToggleGroupItem key={f} value={f}>{l}</ToggleGroupItem>)}</ToggleGroup>
       {(show === 'needs' || show === 'all') && need.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{need.map(row)}</ul></CardContent></Card>}
-      {need.length === 0 && show === 'needs' && <Nothing title="Nothing needs you" text={rest.length ? `${rest.length} answered and FYI in Everything.` : 'Asks from your agents land here.'} />}
+      {need.length === 0 && show === 'needs' && <Nothing title="Nothing needs you" text={rest.length ? `${rest.length} answered and FYI in All.` : 'Asks from your agents land here.'} />}
       {show === 'all' && rest.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{rest.map(row)}</ul></CardContent></Card>}
       {KINDS.map(([k, l]) => {
         if (show !== k) return null;
