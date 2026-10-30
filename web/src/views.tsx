@@ -10,7 +10,7 @@ import { Arrive } from './arrive';
 import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
 const Profile = lazy(() => import('./profile'));
-const ActivityFeed = lazy(() => import('@/components/ui/activity-feed').then((m) => ({ default: m.ActivityFeed })));
+const Ledger = lazy(() => import('./ledger'));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
 import type { Button as Btn, Source, Tone } from './loom';
 
@@ -78,7 +78,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
 }
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
 type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string };
-type ThreadRow = { agent?: string; text: string; meta?: string; at?: string; page?: string };
+type ThreadRow = { agent?: string; text: string; meta?: string; where?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
 /** The page's ground (ground.tsx): the contour field, the depth background's contours, or the plain wash. */
 export type Ground = 'contours' | 'depth' | 'wash';
@@ -95,10 +95,6 @@ export function As({ source, children }: { source: Source; children: React.React
   const env = useEnv();
   return <EnvContext.Provider value={env.withSource(source)}>{children}</EnvContext.Provider>;
 }
-
-/** An agent's mark as a picture (for a component that takes an image, like the activity feed's avatar): its initial on its colour. */
-const markImage = (a: { label: string; bg: string; fg: string }) => `data:image/svg+xml,${encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="${a.bg}"/><text x="32" y="43" text-anchor="middle" font-family="Bricolage Grotesque, DM Sans, system-ui, sans-serif" font-size="30" font-weight="600" fill="${a.fg}">${a.label[0].replace(/[<&>"]/g, '')}</text></svg>`)}`;
 
 /** An agent's mark: 000h's avatar (blocks.tsx AgentAvatar). */
 export const Mark = ({ a, size = 40 }: { a: { label: string; bg: string; fg: string }; size?: number }) => <AgentAvatar a={a} size={size} className="shrink-0" />;
@@ -168,7 +164,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
 }
 
 export function DashboardView({ d, now }: { d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
-  const { go, ctx } = useEnv();
+  const { go } = useEnv();
   return (
     <div className="grid gap-4">
       {d.inbox && d.inbox.count > 0 && (
@@ -190,18 +186,8 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
         <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>
-        <ActivityFeed variant="thread" title={d.title ?? 'Thread'} initialVisible={12} pageSize={12} showMoreLabel="Earlier"
-          empty={<Nothing title="Quiet" text="Nothing on the thread yet today." />}
-          entries={d.thread.map((r) => ({
-            id: `${r.at}\0${r.text}`,
-            title: <Arrive as="span" k={`th:${r.at}\0${r.text}`}><Link page={r.page} className="no-underline hover:underline">{r.text}</Link></Arrive>,
-            description: r.meta,
-            // The feed's avatar wears the agent's own mark (its colour, its initial), so who did what reads at a glance.
-            ...(r.agent && ctx.agents?.[r.agent] ? { actor: { name: ctx.agents[r.agent].label, initials: ctx.agents[r.agent].label[0], avatarSrc: markImage(ctx.agents[r.agent]) } } : {}),
-            ...(r.at ? { dateTime: r.at } : {}),   // its age is already in the meta line
-          }))} />
+        <Ledger rows={d.thread} title={d.title ?? 'Thread'} now={now} />
         </Suspense>
-        {void now}
       </div>
     </div>
   );
