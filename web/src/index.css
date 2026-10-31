@@ -433,6 +433,14 @@
 @media (hover: none), (pointer: coarse) {
   .v-dock:not([data-variant="rail"]) [data-part="lane"] [data-part="label"] { transform: none !important; }
 }
+/* The launcher (sheets.tsx: Places and More): a phone's home screen, its tiles in the dock's colours, in turn. */
+.loom-launch-tile { color: var(--v-text); }
+.loom-launch-tile[data-tint="0"] { background: var(--v-pink); }
+.loom-launch-tile[data-tint="1"] { background: var(--v-blue); }
+.loom-launch-tile[data-tint="2"] { background: var(--v-yellow); }
+.loom-launch-tile[data-tint="3"] { background: var(--v-olive); }
+.loom-launch-tile [data-slot="animated-icon"], .loom-launch-tile [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 28px; height: 28px; }
+.loom-launch-tile svg { width: 28px !important; height: 28px !important; }
 .v-dock [data-part="visual"] [data-slot="animated-icon"],
 .v-dock [data-part="visual"] [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 26px; height: 26px; }
 .v-dock [data-part="visual"] svg { width: 26px !important; height: 26px !important; }

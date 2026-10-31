@@ -56,12 +56,14 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
   const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
   const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) };
-  // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, and More (Setup and every place). A desktop's rail: all of it.
+  // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, More. Places is where you go regularly; More is the
+  // house's settings and Setup (Jonathan, 2026-10-31: "places holds the things you actually go to regularly, ... the
+  // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
   const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
-    { label: 'Find', href: '/find', current: s.tab === 'find' }];
+    { label: 'Find', href: '/find', current: s.tab === 'find' }, { label: 'More', href: '/setup', current: setup.current }];
   return matchMedia('(min-width: 1024px)').matches
     ? { tabs: [home, inbox, ...places.filter((p) => p.href !== '/inbox'), setup], more: settings }
-    : { tabs: phone, more: [setup, ...places.filter((p) => p.href !== '/inbox'), ...settings] };
+    : { tabs: phone, more: [] };
 }
 
 export default function App() {
@@ -234,7 +236,7 @@ export default function App() {
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
   const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
-    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   return (
     <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
