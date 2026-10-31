@@ -317,8 +317,10 @@ something then *enforces* has granted itself authority. So:
   one row's JSON does not parse, fails the stored-card schema, or throws
   while rendering, only that slug is affected: it renders
   `_(card for <slug> is unreadable)_` and the other cards still render. Each
-  failure is logged and passed to `recordFailure`. Identity never fails because
-  of cards.
+  failure is logged and passed to `recordFailure(contextDir, 'cards', err)`
+  (recorder-health.ts, t-1382) — its own ledger component, separate from the
+  episode recorder's, so a card-read failure streak is not reset by an
+  unrelated successful episode write. Identity never fails because of cards.
 
 **Synthesis**
 - The agent writes `summary`, normally in a consolidation pass. loom does not
