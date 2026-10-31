@@ -18,15 +18,26 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
   const { go } = useEnv();
   const s = chrome.shell;
   const [query, setQuery] = useState(q);
-  const tile = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
-    <PressCard key={p.href} className="grid gap-1" onPress={() => go(p.href)}>
-      <span className="flex items-center gap-2"><AnimatedIcon name={iconFor(ICONS[p.label] ?? 'circle')} />{p.tone && <span className={`size-2 rounded-full ${DOT[p.tone]}`} />}</span>
-      <span className="font-medium">{p.label}</span>
-      {(p.stat ?? p.count) !== undefined && <span className="text-sm opacity-70">{p.stat ?? p.count}</span>}
-    </PressCard>
+  // A launcher, as a phone's home screen (Jonathan, 2026-10-31: "we look like a phone os screen ... let's make both
+  // screens a kind of click here to go to the place you want to go thing"): a tile in the dock's colours, its name
+  // under it, a badge for what's waiting, and the piece's own word (22 in progress) small beneath.
+  const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }, i: number) => (
+    <button key={p.href} type="button" onClick={() => go(p.href)} className="loom-launch group grid min-w-0 content-start justify-items-center gap-1.5 text-center">
+      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[22%] shadow-sm transition-transform group-active:scale-95" data-tint={i % 4}>
+        <AnimatedIcon name={iconFor(ICONS[p.label] ?? 'circle')} />
+        {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-[var(--v-red,#e5484d)] px-1.5 text-[11px] font-semibold text-white">{p.count}</span> : null}
+        {p.tone && p.tone !== 'ok' && <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-[var(--v-paper)] ${DOT[p.tone]}`} />}
+      </span>
+      <span className="w-full truncate text-sm font-medium">{p.label}</span>
+      {p.stat && <span className="-mt-1 w-full truncate text-[11px] opacity-60">{p.stat}</span>}
+    </button>
   );
+  const grid = (items: Array<{ label: string; href: string; stat?: string; tone?: Tone; count?: number }>) => (
+    <div className="grid grid-cols-4 gap-x-3 gap-y-6 sm:grid-cols-6">{items.map(launch)}</div>
+  );
+  // Places: where you go regularly (Activity, Knowledge, People, Tasks). The Inbox has its own tab.
   if (which === 'places' && s) {
-    return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{[...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].map(tile)}</div>;
+    return grid([...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox'));
   }
   if (which === 'setup' && s) {
     const admin = s.admin !== false;
@@ -36,7 +47,7 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
     ];
     return (
       <div className="grid gap-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{[...s.pieces.filter((p) => p.kind === 'setting'), ...own].map(tile)}</div>
+        {grid([...s.pieces.filter((p) => p.kind === 'setting'), ...own])}
         <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
           <CardContent className="grid gap-4"><Appearance mode={mode} setMode={setMode} />
             <div className="grid gap-2"><p className="text-sm opacity-70">Background</p>
@@ -100,5 +111,5 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
 
 const ICONS: Record<string, string> = {
   Knowledge: 'book-open', People: 'users', Mind: 'brain', Activity: 'activity', Bridges: 'messages-square', Clock: 'alarm-clock', Boxes: 'server',
-  Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'key-round', Machine: 'cpu',
+  Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'fingerprint-pattern', Machine: 'cpu',
 };
