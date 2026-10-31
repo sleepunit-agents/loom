@@ -21,7 +21,7 @@ import { tapeForContext } from '../backends/episodes.js';
 import { PeopleStore, roomBlock } from '../backends/people.js';
 import { commonsPeoplePath } from '../backends/people-household.js';
 import { householdOf } from '../household.js';
-import { readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
+import { RECORDER_COMPONENTS, readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
 
 async function readOptional(path: string): Promise<string | null> {
   try {
@@ -178,19 +178,21 @@ export async function loadIdentity(
     // The tape must never block identity load, but a failure here means the
     // episode store may be broken — log it and record it so the next body sees a warning.
     console.error('[loom:identity] tape read failed:', tapeErr);
-    recordFailure(contextDir, tapeErr);
+    recordFailure(contextDir, 'episodes', tapeErr);
   }
 
   // The room (person cards, docs/specs/person-cards.md) — after the tape and
   // before Top of Mind, so the body knows who it is talking to before it reads
   // anything ranked. Best-effort like the tape: no store, an unmigrated store or
   // no people gives no block; one unreadable card only affects its own slug.
+  // Recorded under the 'cards' component (t-1382) so a card-read streak isn't
+  // reset by an unrelated episode-write success sharing the same ledger.
   try {
-    const room = roomBlock(contextDir, people, { onFailure: (e) => recordFailure(contextDir, e) });
+    const room = roomBlock(contextDir, people, { onFailure: (e) => recordFailure(contextDir, 'cards', e) });
     if (room) parts.push(room);
   } catch (roomErr) {
     console.error('[loom:identity] room block failed:', roomErr);
-    recordFailure(contextDir, roomErr);
+    recordFailure(contextDir, 'cards', roomErr);
   }
 
   // Boot digest — the salience-tiered view of episodic memory, so a fresh sleeve
@@ -278,14 +280,17 @@ export async function loadIdentity(
     }
   }
 
-  // Recorder health warning (t-562) — appended LAST so it is closest to the
-  // model's first reply. Only shown when the episode recorder has failed
-  // FAILURE_THRESHOLD consecutive times. Best-effort: ledger read errors are
-  // silently ignored so the health check never blocks identity load.
+  // Recorder health warning (t-562, component split t-1382) — appended LAST so
+  // it is closest to the model's first reply. One block per component (episodes,
+  // cards) that has failed FAILURE_THRESHOLD consecutive times; each component's
+  // streak is independent so one's success can't mask another's failures.
+  // Best-effort: ledger read errors are silently ignored so the health check
+  // never blocks identity load.
   try {
-    const health = readHealth(contextDir);
-    const warning = warningBlock(health);
-    if (warning) parts.push(warning);
+    const warnings = RECORDER_COMPONENTS
+      .map((component) => warningBlock(component, readHealth(contextDir, component)))
+      .filter((w): w is string => w !== null);
+    if (warnings.length > 0) parts.push(...warnings);
   } catch {
     // health ledger read must never block identity load
   }

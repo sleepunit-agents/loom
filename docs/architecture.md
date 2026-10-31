@@ -134,7 +134,7 @@ flowchart TB
   G --> H2["# Harness · # Model<br/>blocks/harness.ts · blocks/model.ts<br/>client from param › MCP peer › LOOM_CLIENT"]
   H2 --> I["# Memories<br/>memories/INDEX.md summary, legacy"]
   I --> J["Runtime adapter<br/>clients.ts"]
-  J --> K["Recorder warning, last<br/>recorder-health.ts, only when episode writes keep failing"]
+  J --> K["Recorder warning(s), last<br/>recorder-health.ts, one per component (episodes, cards) that keeps failing"]
 ```
 
 `dossier` is the worker-body version. It returns preferences and
@@ -234,7 +234,7 @@ have fallen behind.
 | `src/backends/glob.ts` | Title patterns for bulk forget |
 | `src/backends/retry.ts` | Retry on SQLITE_BUSY |
 | `src/backends/recall-log.ts` | Local recall observation log |
-| `src/backends/recorder-health.ts` | Episode-write failure ledger |
+| `src/backends/recorder-health.ts` | Per-component failure ledger (episodes, cards) |
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,

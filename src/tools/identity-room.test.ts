@@ -101,7 +101,36 @@ describe('identity people param — # In the room', () => {
         expect(id).toContain('_(card for bad is unreadable)_');
         expect(id).toContain('## Good (good)');
         expect(err).toHaveBeenCalledTimes(1);
-        expect(readHealth(dir).consecutiveFailures).toBe(1);
+        expect(readHealth(dir, 'cards').consecutiveFailures).toBe(1);
+      } finally {
+        err.mockRestore();
+      }
+    });
+
+    it('a card-read failure streak is not reset by a later episode-write success (t-1382)', async () => {
+      // Regression for Mark's loom#143 review: before the component split, a
+      // card-read failure and an episode write shared one ledger, so a
+      // successful episode write silently reset a real card-failure streak.
+      write('bad', 'Bad');
+      const db = new BetterSqlite3(resolveSqliteDbPath(dir));
+      db.prepare("UPDATE people SET card_json = '{not json' WHERE slug = 'bad'").run();
+      db.close();
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        // Three unreadable-card reads build a failing streak under 'cards'.
+        await load(['bad']);
+        await load(['bad']);
+        await load(['bad']);
+        expect(readHealth(dir, 'cards').consecutiveFailures).toBe(3);
+
+        // An unrelated, successful episode write must not touch that streak.
+        await remember(dir, { category: 'episode', title: 'ep', content: 'x', metadata: { where: 'test' } });
+        expect(readHealth(dir, 'cards').consecutiveFailures).toBe(3);
+        expect(readHealth(dir, 'episodes').consecutiveFailures).toBe(0);
+
+        // The warning for the still-failing cards component survives.
+        const id = await load(['bad']);
+        expect(id).toContain('Recorder Health Warning: person-card reader');
       } finally {
         err.mockRestore();
       }
