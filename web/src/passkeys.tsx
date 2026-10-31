@@ -53,8 +53,11 @@ export function PasskeyAdd({ add, reload }: { add: { csrf: string } | { note: st
   );
 }
 
-/** Push for Your call on this device: a notification when something new needs you; a tap opens it on Home. */
-export function PushSwitch({ csrf }: { csrf: string }) {
+/**
+ * This device's push for Your call: can it (a secure page with a service worker and PushManager), is it on, and the
+ * switch. Shared by the Passkeys page's switch and the ask on every page (PushAsk).
+ */
+function usePush(csrf: string) {
   const can = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && window.isSecureContext;
   const [sub, setSub] = useState<PushSubscription | null | undefined>(undefined);
   const [msg, setMsg] = useState<string | null>(null);
@@ -74,6 +77,12 @@ export function PushSwitch({ csrf }: { csrf: string }) {
       setSub(s);
     } catch (e) { setMsg(`That failed: ${why(e)}`); } finally { setBusy(false); }
   };
+  return { can, sub, msg, busy, flip };
+}
+
+/** Push for Your call on this device: a notification when something new needs you; a tap opens it on Home. */
+export function PushSwitch({ csrf }: { csrf: string }) {
+  const { can, sub, msg, busy, flip } = usePush(csrf);
   return (
     <Card><CardHeader><CardTitle>Notifications</CardTitle><CardDescription>Your call, on this device: a notification when something new needs you, and a tap opens it on Home.</CardDescription></CardHeader>
       <CardContent className="grid gap-3">
@@ -84,6 +93,41 @@ export function PushSwitch({ csrf }: { csrf: string }) {
           </>
         )}
         {msg && <p role="status" className="text-sm">{msg}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+const ASKED = 'loom.push-asked';
+const ASK_AGAIN_MS = 30 * 86_400_000;
+/** An iPhone or iPad in a browser tab: web push needs loom added to the Home Screen and opened from there. */
+const iosTab = () => typeof navigator !== 'undefined' && /iPhone|iPad|iPod/.test(navigator.userAgent)
+  && !(navigator as Navigator & { standalone?: boolean }).standalone && !matchMedia('(display-mode: standalone)').matches;
+
+/**
+ * The ask (Jonathan, 2026-10-31: "I've never been asked afaik"): the switch lived on the Passkeys page, so no device
+ * ever turned push on, and an alert in loom reached nobody. On any page, a device that could get Your call and
+ * doesn't is asked once (Not now: again in 30 days); an iPhone in a Safari tab is told how to make it able to.
+ */
+export function PushAsk({ csrf }: { csrf: string }) {
+  const { can, sub, msg, busy, flip } = usePush(csrf);
+  const [hidden, setHidden] = useState(() => {
+    try { return Date.now() - Number(localStorage.getItem(ASKED) || 0) < ASK_AGAIN_MS; } catch { return false; }
+  });
+  const later = () => { try { localStorage.setItem(ASKED, String(Date.now())); } catch { /* private mode */ } setHidden(true); };
+  if (hidden) return null;
+  const denied = typeof Notification !== 'undefined' && Notification.permission === 'denied';
+  if (can && (sub === undefined || sub || denied)) return null;
+  if (!can && !(iosTab() && window.isSecureContext)) return null;
+  return (
+    <Card className="mb-4 min-w-0">
+      <CardHeader><CardTitle>Get alerts on this {/iPhone|Android|Mobile/.test(navigator.userAgent) ? 'phone' : 'device'}</CardTitle>
+        <CardDescription>{can ? 'A notification when something needs you: an alert, a permission, a to-do. A tap opens it here.'
+          : 'An iPhone sends notifications only for an app on the Home Screen: tap Share, then Add to Home Screen, and open loom from its icon. This card asks again there.'}</CardDescription></CardHeader>
+      <CardContent className="flex flex-wrap gap-2">
+        {can && <Button disabled={busy} onClick={() => void flip()}>Turn on</Button>}
+        <Button variant="outline" onClick={later}>{can ? 'Not now' : 'Got it'}</Button>
+        {msg && <p role="status" className="w-full text-sm">{msg}</p>}
       </CardContent>
     </Card>
   );

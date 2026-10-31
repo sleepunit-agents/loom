@@ -11,6 +11,7 @@ const MoreMenu = lazy(() => import('./more-menu'));
 // Passkeys' controls (WebAuthn, push) load with that page only.
 const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
 const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
+const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
 import { ArrivalContext, type Arrivals } from './arrive';
 import { LoomSidebar } from './sidebar';
 import { Boundary, Callout, iconFor } from './safe';
@@ -279,6 +280,10 @@ export default function App() {
               This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
             {error && <Callout tone={/^loom answered/.test(error) ? 'danger' : 'warn'} icon={/^loom answered/.test(error) ? undefined : 'cloud-off'} title={/^loom answered/.test(error) ? 'loom couldn’t open this' : 'Can’t reach loom'}
               actions={<Button size="sm" variant="outline" onClick={() => void load(location.pathname + location.search, false)}>Try again</Button>}>{error}</Callout>}
+            {/* Home and the Inbox ask a device that could get Your call and doesn't (passkeys.tsx PushAsk). */}
+            {!error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
+              <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
+            )}
             {!error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
