@@ -21,6 +21,15 @@ export const WATCH_S = 60;
 const SEEDED = '~seeded';
 
 /** An ask's stable key: where it comes from and what it says. */
+/**
+ * A push's title says what it is (Jonathan, 2026-10-30: alerts go to loom and push like everything else): an alert,
+ * a permission, a to-do; a decision or a reply is Your call.
+ */
+export function pushTitle(kind: string | undefined, from: string): string {
+  const what = kind === 'alert' ? 'Alert' : kind === 'permission' ? 'Permission' : kind === 'todo' ? 'To do' : 'Your call';
+  return `${what} · ${from}`;
+}
+
 export function askKey(a: { source: { id: string }; text: string; page?: string }): string {
   return createHash('sha256').update(`${a.source.id}\0${a.text}\0${a.page ?? ''}`).digest('hex').slice(0, 16);
 }

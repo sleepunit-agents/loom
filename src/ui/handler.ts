@@ -46,7 +46,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { sessionStore, signinLink } from './sessions.js';
 import { APP_JS } from './app.js';
-import { askKey, publicKey, pushSub, watch } from './push.js';
+import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
@@ -509,7 +509,7 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
     return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
   return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
-    key: askKey(a), title: `Your call · ${a.sourceLabel ?? a.source.id}`, body: a.text, ...(a.agent ? { agent: a.agent } : {}),
+    key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
   })), subject, undefined, hears);
 }
