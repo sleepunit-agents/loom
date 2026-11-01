@@ -22,7 +22,8 @@ export default function FoldCard({ s }: { s: Page['sections'][number] }) {
   return (
     <Card className={ring(s)}>
       <Collapsible open={open} onOpenChange={toggle}>
-        <CardHeader className={open ? undefined : 'pb-6'}>
+        {/* Folded, the title is all there is: no room kept below it for a body that isn't there. */}
+        <CardHeader className={open ? undefined : 'mb-0'}>
           <CollapsibleTrigger className="-my-2 flex w-full justify-between text-left" style={{ color: "var(--v-text)" }}>
             <CardTitle>{s.title}</CardTitle>
           </CollapsibleTrigger>
