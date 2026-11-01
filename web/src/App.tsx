@@ -8,12 +8,13 @@ const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contour
 const Depth = lazy(() => import('./ground').then((m) => ({ default: m.Depth })));
 // The More drawer's menu (000h's navigation menu) loads when it opens.
 const MoreMenu = lazy(() => import('./more-menu'));
+// The rail is a desktop's alone: a phone never draws it, so never loads it.
+const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
 // Passkeys' controls (WebAuthn, push) load with that page only.
 const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
 const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
 const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
 import { ArrivalContext, type Arrivals } from './arrive';
-import { LoomSidebar } from './sidebar';
 import { Boundary, Callout, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -246,7 +247,7 @@ export default function App() {
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
         {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
         {ground === 'depth' && <Suspense fallback={null}><Depth /></Suspense>}
-        {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} />}
+        {wide && chrome && <Suspense fallback={null}><LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} /></Suspense>}
         <div className="min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
@@ -342,15 +343,22 @@ export default function App() {
 const ACCENT: Record<string, string> = { '#b8a6ff': 'blue', '#7a2e4f': 'pink', '#2f6b5a': 'olive', '#e3b341': 'yellow', '#3d5a99': 'blue', '#f09a7a': 'pink' };
 const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
+const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined);
+
+const FoldCard = lazy(() => import('./fold'));
+
 function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const main = page.sections.filter((s) => !s.side);
   const side = page.sections.filter((s) => s.side);
-  const card = (s: Page['sections'][number]) => (
-    <Card key={s.id} className={s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined}>
+  const card = (s: Page['sections'][number]) => (s.fold ? (
+    // Its title while its chunk loads, so the page doesn't jump.
+    <Suspense key={s.id} fallback={<Card className={ring(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
+  ) : (
+    <Card key={s.id} className={ring(s)}>
       {s.title && <CardHeader><CardTitle>{s.title}</CardTitle></CardHeader>}
       <CardContent className="grid min-w-0 gap-4">{s.blocks.map((b, n) => <BlockView key={n} b={b} />)}</CardContent>
     </Card>
-  );
+  ));
   return (
     // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
     <div className={`grid grid-cols-[minmax(0,1fr)] gap-4 ${side.length ? 'lg:grid-cols-[minmax(0,1fr)_20rem]' : ''}`}>
