@@ -235,7 +235,9 @@ A page may set `"refresh"`: whole seconds from 2 to 300. It then reloads itself
 that often, even with a form on it. Use it only while something is changing
 (an install running, a session starting), and drop it once it's settled.
 
-A section with `"side": true` goes in the side column. `tone` gives the whole
+A section with `"side": true` goes in the side column. One with `"fold": "open"` or
+`"closed"` folds under its title (it needs one), starting that way; the viewer's
+last open or close on that page sticks, on that device. `tone` gives the whole
 section that tone's look, such as amber for "needs you".
 
 Paths are lowercase letters, digits and `. _ ~ / -`, at most 200 characters,
@@ -255,7 +257,7 @@ outside the page).
 | Block | Fields |
 |---|---|
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`. One item alone is the page's hero (its number at the top size) |
-| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
+| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
@@ -270,6 +272,7 @@ outside the page).
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |
 | `code` | `text`, optional `label`. Monospace, with a Copy button: a command, a link to hand someone |
 | `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
+| `chart` | `kind` (`bar`, `area` or `line`), `series` (1 to 5: `key`, lowercase letters, digits and `_`; `label`; optional `color`: `pink`, `blue`, `olive`, `yellow`, `ink`), `data` (up to 60 points: `label`, and a number or `null` per series key). Optional `variant` (bar: `grouped`, the default, or `stacked`; area: `smooth` or `stacked`; line: `smooth` or `step`), `caption` (what it shows, for a screen reader too), `summary` (`label`, `value`, optional `detail`: the one number it adds up to). 000h's chart: hover or tap a point to read it; a missing value stays missing, never a zero |
 
 A `list` or `table` longer than a page can send one page at a time and say so with
 `pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
@@ -277,6 +280,11 @@ page (from 1), how many pages there are and, optionally, how many rows in all.
 loom draws the pager and asks for `?<param>=<n>`, keeping the page's other query
 keys (its filters). Without `pages`, loom pages a long list or table itself, 15
 rows at a time, over whatever the piece sent.
+
+A list row says who with `agent`, `person` or `avatar`, and `agent: "loom"` is loom's own
+mark (its icon) for something loom or the system did. When any row of a list says who,
+a row that doesn't is drawn as nobody's yet (a dashed circle), never a gap. A list with
+`"who": true` draws that lead on every row even when none says who (a queue of unassigned work).
 
 Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind

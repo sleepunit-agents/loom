@@ -13,7 +13,7 @@ export type Block =
   | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: 'pink' | 'yellow' | 'olive' | 'blue'; summary?: string;
       badges?: string[]; stats?: Array<{ label: string; value: string; detail?: string; page?: string; source?: Source; tone?: Tone }>;
       links?: Array<{ text: string; page?: string; href?: string }> }
-  | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean }
+  | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean; who?: boolean }
   | { type: 'table'; columns: string[]; rows: (string | { text: string; page?: string })[][] }
   | { type: 'kv'; items: { label: string; value: string; page?: string }[] }
   | { type: 'stats'; items: { label: string; value: string; detail?: string; tone?: Tone; page?: string }[] }
@@ -25,9 +25,11 @@ export type Block =
   | { type: 'status'; items: { label: string; tone?: Tone; text?: string; meta?: string }[] }
   | { type: 'code'; text: string }
   | { type: 'filters'; param: string; options: { value: string; label: string }[]; search?: string }
+  | { type: 'chart'; kind: 'bar' | 'area' | 'line'; variant?: 'grouped' | 'stacked' | 'smooth' | 'step'; caption?: string; summary?: { label: string; value: string; detail?: string };
+      series: { key: string; label: string; color?: 'pink' | 'blue' | 'olive' | 'yellow' | 'ink' }[]; data: ({ label: string } & Record<string, number | string | null>)[] }
   | { type: string; [k: string]: unknown };
-export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; page?: string; href?: string; act?: Button }
-export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; level?: string; blocks: Block[] }
+export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
+export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
 export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; asks?: number; sub?: string }
 export interface Shell {

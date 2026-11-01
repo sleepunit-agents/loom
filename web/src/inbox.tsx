@@ -6,7 +6,7 @@ import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, Dr
 import { Button } from '@/components/ui/button';
 import { Arrive } from './arrive';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { ActButton, EnvContext, Link, Nothing } from './blocks';
+import { ActButton, EnvContext, Link, LoomMark, Nothing } from './blocks';
 import type { Button as Btn, Chrome, Source } from './loom';
 import { As, Mark } from './views';
 import { bits, plain } from './plain';
@@ -36,7 +36,8 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
     return (
       <Arrive as="li" key={i.key} k={`in:${i.key}\0${i.kind}`} className="min-w-0">
         <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
-          {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <span className="size-7 shrink-0" />}
+          {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
+          {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
               <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
@@ -99,7 +100,7 @@ function ItemSheet({ i, who, mark, tasks, onDone }: { i: InboxItem; who: string;
     <DrawerContent className="lg:mx-auto lg:max-w-xl">
       <DrawerHeader className="flex-col items-stretch gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          {mark ? <Mark a={mark} size={36} /> : null}
+          {mark ? <Mark a={mark} size={36} /> : <LoomMark size={36} />}
           <DrawerDescription className="min-w-0 truncate text-sm">{[who, from].filter(Boolean).join(' · ')}</DrawerDescription>
           <Badge variant={i.attention ? 'pending' : 'default'} className="ml-auto shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
         </div>

@@ -4,7 +4,7 @@
 import { Arrive } from './arrive';
 // Filters (000h's toggle group) load with a page that has them.
 const Filters = lazy(() => import('./filters'));
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { Callout } from './safe';
 import { tidy } from './tidy';
@@ -13,6 +13,7 @@ import { Item, ItemContent, ItemDescription, ItemTitle, ItemTrailing } from '@/c
 const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => ({ default: m.LivingLink })));
 const Markdown = lazy(() => import('./markdown'));
 const Profile = lazy(() => import('./profile'));
+const ChartBlock = lazy(() => import('./chart'));
 const Progress = lazy(() => import('@/components/ui/progress').then((m) => ({ default: m.Progress })));
 const CodeBlock = lazy(() => import('@/components/ui/code-block').then((m) => ({ default: m.CodeBlock })));
 
@@ -187,15 +188,13 @@ function EditorButton({ label, title, form, variant = 'outline' }: { label: stri
 
 // ---- blocks ----------------------------------------------------------------------------------------
 
-function Row({ i, wrap }: { i: ListItem; wrap?: boolean }) {
-  const env = useEnv();
-  const agent = i.agent ? env.ctx.agents?.[i.agent] : undefined;
+function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolean }) {
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
   const body = (
     <ItemContent className="min-w-0 flex-1">
       <ItemTitle className={`flex min-w-0 gap-2 ${wrap ? 'items-start' : 'items-center'}`}>
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
-        {agent && <AgentAvatar a={agent} size={20} />}
+        {marked && <Who agent={i.agent} person={i.person} avatar={i.avatar} size={20} />}
         <span className={wrap ? 'font-medium leading-relaxed [overflow-wrap:anywhere]' : 'truncate font-medium'}>{tidy(i.text)}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
@@ -248,10 +247,13 @@ function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } 
   };
 }
 
-function ListBlock({ items, pages, wrap }: { items: ListItem[]; pages?: Pages; wrap?: boolean }) {
+function ListBlock({ items, pages, wrap, who }: { items: ListItem[]; pages?: Pages; wrap?: boolean; who?: boolean }) {
   const { rows, pager } = usePaged(items, pages);
+  // Every row of a list that says who says it on each row: one without is nobody's yet, not a gap (Jonathan, 2026-10-31:
+  // "everything should have one ... otherwise the ones without that are confusing as shit").
+  const marked = who || items.some((i) => i.agent || i.person || i.avatar);
   if (!items.length) return <Nothing title="Nothing here yet" />;
-  return <>{<ul className="min-w-0 divide-y">{rows.map((i, n) => <Row key={n} i={i} wrap={wrap} />)}</ul>}{pager}</>;
+  return <>{<ul className="min-w-0 divide-y">{rows.map((i, n) => <Row key={n} i={i} wrap={wrap} marked={marked} />)}</ul>}{pager}</>;
 }
 
 function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
@@ -327,6 +329,42 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style 
   );
 }
 
+/** A person (a People slug) in 000h's colours: the same person, the same colour, everywhere. */
+const PERSON_TINTS = ['pink', 'blue', 'olive', 'yellow'];
+const tintOf = (slug: string) => PERSON_TINTS[[...slug].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % PERSON_TINTS.length];
+// One letter, as the account button draws its owner.
+const initialsOf = (slug: string) => slug.slice(0, 1).toUpperCase();
+
+/** loom itself (a system row, an alert): its app icon, so it reads as loom and not as an agent. */
+export function LoomMark({ size = 40, className }: { size?: number; className?: string }) {
+  return (
+    <Avatar shape="rounded" className={`shrink-0 ${className ?? ''}`} aria-label="loom" style={{ width: size, height: size, boxShadow: 'none' } as React.CSSProperties}>
+      <AvatarImage src="/icons/loom-180.png" alt="" /><AvatarFallback>l</AvatarFallback>
+    </Avatar>
+  );
+}
+
+/**
+ * Who a row is: an agent's mark (rounded), loom's own, a person's avatar (round, their initials), initials the piece
+ * gave, or nobody's yet (a dashed circle).
+ */
+export function Who({ agent, person, avatar, size = 20 }: { agent?: string; person?: string; avatar?: string; size?: number }) {
+  const { ctx } = useEnv();
+  const a = agent ? ctx.agents?.[agent] : undefined;
+  if (a) return <AgentAvatar a={a} size={size} className="shrink-0" />;
+  if (agent === 'loom') return <LoomMark size={size} />;
+  const letters = avatar ?? (person ? initialsOf(person) : undefined);
+  if (letters) {
+    return (
+      <Avatar shape="circle" className="shrink-0" aria-label={person ?? letters}
+        style={{ '--c': `var(--v-${tintOf(person ?? letters)})`, color: 'var(--v-text)', width: size, height: size, fontSize: Math.round(size * (letters.length > 1 ? 0.36 : 0.42)), boxShadow: 'none' } as React.CSSProperties}>
+        <AvatarFallback>{letters}</AvatarFallback>
+      </Avatar>
+    );
+  }
+  return <span role="img" aria-label="Nobody yet" className="shrink-0 rounded-full border-[1.5px] border-dashed border-current opacity-35" style={{ width: size, height: size }} />;
+}
+
 /** An empty collection says so (000h's empty), never a blank. */
 export function Nothing({ title, text, children }: { title: string; text?: string; children?: ReactNode }) {
   return (
@@ -344,7 +382,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'profile': return <Suspense fallback={<div className="min-h-64" />}><Profile p={b as Extract<Block, { type: 'profile' }>} /></Suspense>;
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
       return <Callout tone={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'} title={c.title}>{c.text}</Callout>; }
-    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} wrap={(b as { wrap?: boolean }).wrap} />;
+    case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} wrap={(b as { wrap?: boolean }).wrap} who={(b as { who?: boolean }).who} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
@@ -371,6 +409,7 @@ export function BlockView({ b }: { b: Block }) {
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
     case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
     case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
+    case 'chart': return <Suspense fallback={<div className="h-64" />}><ChartBlock b={b as Extract<Block, { type: 'chart' }>} /></Suspense>;
     case 'filters': return <Suspense fallback={null}><Filters b={b as Extract<Block, { type: 'filters' }>} /></Suspense>;
     default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet)</p>;
   }
