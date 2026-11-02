@@ -46,10 +46,11 @@ import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
-import { AGENT_ROUTES, ROLE_ROUTES, roleReaches } from './role-routes.js';
+import { AGENT_ROUTES, DELIVER_ROUTE, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
+import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
-import { syncVenuesQuietly } from '../household-store.js';
+import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
@@ -443,6 +444,26 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    * piece, as its subject; a peer never.
    */
   async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
+    // GET /api/loom/venues (role-routes.ts, RUNTIME_GET_ROUTES): the runtime's view of every venue.
+    if (piece === 'loom' && RUNTIME_GET_ROUTES.includes(subpath)) {
+      if (req.method !== 'GET') return sendError(res, 405, `method-not-allowed: GET /api/loom/${subpath}`);
+      if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+      if (req.headers['authorization'] === undefined) return sendError(res, 401, 'unauthorized: a bearer token is required');
+      const role = roleFor(req.headers['authorization']);
+      if ('status' in role) return sendError(res, role.status, role.error);
+      if (role.kind !== 'runtime') return sendError(res, 403, `forbidden: GET /api/loom/${subpath} takes the runtime's token`);
+      // The body first, then the head: a failure to read is the 503, never a 200 cut short.
+      let body: string;
+      try {
+        body = JSON.stringify({ venues: venueDirectory(process.env) });
+      } catch (e) {
+        process.stderr.write(`loom: couldn't list venues: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t list venues; see the daemon log');
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(body);
+      return;
+    }
     if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);
     // No token at all: only a path the piece declared open to strangers (its loom block, fixed at
     // install), with a small body, as {kind:'stranger', address}. Everything else still needs a token.
@@ -453,6 +474,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
+    // POST /api/loom/deliver (docs/specs/agent-runtime.md, "Delivery"): the one core route every
+    // piece credential reaches, as its piece, beside its own API; and the runtime's own token.
+    if (piece === 'loom' && subpath === DELIVER_ROUTE) {
+      if (role.kind !== 'piece' && role.kind !== 'runtime') return sendError(res, 403, `forbidden: /api/loom/${DELIVER_ROUTE} takes a piece's own token (a source delivering), or the runtime's`);
+      return deliverApi(req, res, role.piece);
+    }
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -486,6 +513,29 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */
+  async function deliverApi(req: IncomingMessage, res: ServerResponse, piece: string): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    // A declared length over the cap is refused before reading (as pieceCall does), so the caller gets the 413.
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > DELIVER_MAX_BYTES) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
+    const raw = await collectBody(req, DELIVER_MAX_BYTES);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    let out;
+    try {
+      out = await deliver(process.env, live!(), { piece }, body);
+    } catch (e) {
+      // Keep the details (paths) out of the response.
+      process.stderr.write(`loom: couldn't deliver: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t deliver; see the daemon log');
+    }
+    if (out.status !== 200) return sendError(res, out.status, (out.body as { error: string }).error);
+    return sendJson(res, 200, out.body);
   }
 
   const reachList = (kind: 'runtime' | 'review') =>

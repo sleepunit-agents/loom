@@ -139,7 +139,7 @@ built: see "Offers" below.
 ### Offers
 
 A managed piece (specs/pieces-install.md) declares in its package's `loom`
-block what it offers through core. These are four sibling keys, each with its
+block what it offers through core. These are five sibling keys, each with its
 own schema:
 
 | Key | What core does with it | Its schema |
@@ -148,6 +148,7 @@ own schema:
 | `venues` | keeps the piece's venues, and runs each one's `render` and `send` | [specs/conversations.md](specs/conversations.md), "Venues" (`send` from [specs/agent-runtime.md](specs/agent-runtime.md)) |
 | `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
 | `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
+| `delivery` | forwards [`POST /api/loom/deliver`](#deliver-anything-addressed-to-an-agent) to this piece | [specs/agent-runtime.md](specs/agent-runtime.md), "Delivery" |
 
 ```jsonc
 "loom": {
@@ -156,7 +157,8 @@ own schema:
   "venues":    { "relay": { "label": "Relay", "kind": "agent", "send": ["loom-runtime", "send"] } },
   "mcp_tools": { "house": { "description": "Ask for a house", "input_schema": { "type": "object" },
                             "argv": ["loom-runtime", "house", "--json"] } },
-  "grants":    true
+  "grants":    true,
+  "delivery":  ["loom-runtime", "deliver", "--json"]
 }
 ```
 
@@ -171,6 +173,12 @@ own schema:
   `loom_*`.
 - **`grants`:** `true` (or `{}`) makes the piece the grants authority; `false`
   offers nothing.
+- **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
+  may declare it, and a second installed piece offering it is refused.
+- **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
+  delivers on it (the clock) declares an empty entry for it, which defines
+  nothing and only lets it [deliver](#deliver-anything-addressed-to-an-agent)
+  there. Any number of pieces may.
 - **`venues`:** core keeps a copy of every installed piece's venues in
   `$LOOM_HOME/household.db` (`src/household-store.ts`). Install and update
   replace the piece's rows; removing it (even with `--purge`) keeps them,
@@ -179,7 +187,7 @@ own schema:
   section-feed schema; without one, or once orphaned, core's generic render
   shows the conversation.
 - **Against what's installed:** a venue or tool name another installed piece
-  declares is refused, and so is a second piece offering `grants`. A piece's
+  declares is refused, and so is a second piece offering `grants` or `delivery`. A piece's
   own update, or a rollback, is checked the same way.
 - **One runner.** Core runs an offer's argv, plus that offer's arguments (and
   stdin, where it has one), in the piece's own environment, through the
@@ -187,11 +195,17 @@ own schema:
   pieces at once. The answer is one JSON value on stdout (64 KB unless an
   offer says otherwise), checked against the offer's output schema. A
   timeout, a non-zero exit, or an answer that isn't valid is an error for that
-  piece alone (`src/offers-registry.ts`, `runOffer`).
+  piece alone (`src/offers-registry.ts`, `runOffer`). Each kind has its own
+  limits (`OFFER_LIMITS`): `delivery` and `mcp_tools` have 120 s and 64 KB,
+  and each has a pool of its own, apart from the page's pieces and from each
+  other: `mcp_tools` four at once and sixteen waiting, `delivery` eight at
+  once and thirty-two waiting (more than one calling piece's share, so one
+  piece at its cap leaves room for the rest). `grants` has 2 s. A non-zero exit keeps its
+  code and its stdout, so an offer can say why it failed.
 - **Only a managed piece offers.** A piece found on `PATH` has no package for
   loom to read, so it is never run as an offer. piece.json keeps a copy of the
   declarations, and core reads them from there (`offersOf`, `piecesOffering`,
-  `grantsAuthority`).
+  `grantsAuthority`, `deliveryPiece`).
 
 ### Sections
 
@@ -494,7 +508,8 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
   with the role `piece:<piece>/<subject>` (`loom token create --piece
   box/thor`). A piece credential reaches its own piece's API and nothing
-  else: no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
+  else, but for one core route, [`deliver`](#deliver-anything-addressed-to-an-agent):
+  no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
   get nothing. The piece decides what each caller may do.
 - **Strangers, only where a piece says.** A call with no token at all reaches
   a managed piece only on a path its package's `loom` block lists in
@@ -539,6 +554,70 @@ installed there ([above](#how-loom-piece-finds-a-piece)).
   writes loom's machine (a file path there, its own `api` and `ui` verbs). A
   refusal is the piece's own 4xx with `{"error": "..."}`, which the caller
   prints. A piece that doesn't want remote use doesn't answer `run`.
+
+### `deliver`: anything addressed to an agent
+
+One core route every piece credential reaches, as its own piece: **`POST
+/api/loom/deliver`** ([specs/agent-runtime.md](specs/agent-runtime.md),
+"Delivery"). A source (a venue adapter, the clock, the runtime relaying) calls
+it with its own token; the runtime's `runtime:<piece>` token reaches it too.
+Owner, agent, peer and review tokens get a 403. Core checks the call, then
+forwards it to the piece offering [`delivery`](#offers) (the runtime) and
+passes its answer back (`src/delivery.ts`).
+
+```bash
+# POST /api/loom/deliver
+{"id": "1730551200.000100", "agent": "art", "venue": "slack", "place": "dm:U123",
+ "label": "Loren (DM)", "from": {"kind": "person", "slug": "loren"},
+ "kind": "message", "at": "2026-11-02T12:00:00Z", "text": "..."}
+# core runs the delivery argv with {"source": "<calling piece>", ...that body} on stdin
+# and answers what the runtime answered:
+{"conversation": "cv-3f9a0c12d4e5", "seq": 4, "body": "started"}
+```
+
+- **The body:** `id` (the source's own id for the message, at most 200,
+  required); `agent`, `venue`, `place` (conversations.md's key); `from`,
+  `kind` (`message` or `wake`: a `note` is the agent's own turn, which a
+  source doesn't write), `at` (ISO-8601 UTC); `label`
+  (optional, at most 80); `text` (1-40,000 characters). Any other key, or a
+  field out of bounds, is a 400. The body is 256 KB at most.
+- **Who may deliver what,** each refused with a 403 and the reason before
+  anything runs, so nothing is written:
+  - the calling piece is an installed managed piece;
+  - the `venue` is one it declares (`venues`). `wake` is core's, so a piece
+    knocks on it only if it declares `"wake": {}`, and only with
+    `from: {kind: schedule}`. Nothing is delivered into `session`;
+  - the `agent` is the household's and granted to the piece. With no grants
+    authority installed, the piece's own agent list decides (the source
+    applied it before calling). With one, core must ask it, and until the
+    `grants` offer says how, a call from any other piece is refused with a
+    503 (fail closed);
+  - `from: {kind: person}` comes only from a venue adapter on a venue it
+    declares (not `relay`); `from: {kind: agent}` only from the runtime, the
+    installed piece offering `delivery` (a block's `role` alone isn't it).
+    A second `role: runtime` piece is refused at install.
+- **No delivery piece installed:** a 503 with the reason.
+- **Idempotent:** the same calling piece and `id` within 24 hours,
+  whichever of the piece's credentials calls (the runtime has two), gets the
+  first answer back verbatim, and the runtime isn't called. The same pair with a
+  different body is a 409. The answers are kept in `$LOOM_HOME/household.db`
+  (`deliveries`, with a SHA-256 of the body, never its text), swept past 24
+  hours.
+- **Fair:** one piece has at most 2 forwards running and 4 waiting; past
+  that, it gets a 503, and other pieces aren't held back. It keeps at most
+  10,000 answers in 24 hours; past that, a 429.
+- **The runtime's answer** is `{conversation, seq, body, reason?}`, `body`
+  one of `fed`, `resumed`, `started`, `queued` or `failed` (which carries a
+  `reason`). Its limits are 120 s and 64 KB. A runtime that fails says so by
+  exiting 1 with `{"status": 5xx, "error": "..."}` on stdout, and the caller
+  gets that status and error. Any other failure, or an answer that isn't the
+  contract's, is a 502, a timeout a 504, the delivery pool full a 503. None of them is
+  kept, so the source may retry with the same `id`.
+- **`GET /api/loom/venues`,** for the runtime's token only: every venue,
+  `{"venues": [{name, label, kind, piece, send?, orphaned?}]}`. Core's own
+  (`session`, `wake`) come first, with piece `loom`. `send` is the venue's
+  declared argv while its piece is installed, so the runtime never reads
+  another piece's piece.json.
 
 ## Storage: a piece's data in loom
 

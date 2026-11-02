@@ -286,6 +286,38 @@ describe('managed pieces', () => {
       expect((await runCliCaptured(['pieces', 'remove', 'runtime'], { env })).code).toBe(0);
       expect((await installFrom('x/rival')).code).toBe(0);
     });
+
+    it('delivery (agent-runtime.md, Seams 2): only from a runtime-role piece, and only one installed piece offers it', async () => {
+      await fixture('x/runtime', SHA1, { name: 'runtime', loom: { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'] } }, { 'loom-runtime': 'true' });
+      await fixture('x/runtime', SHA2, { name: 'runtime', loom: { role: 'runtime', delivery: ['loom-runtime', 'deliver'] } }, { 'loom-runtime': 'true' });
+      expect((await installFrom('x/runtime')).code).toBe(0);
+      expect(JSON.parse(await readFile(join(loomHome, 'pieces', 'runtime', 'piece.json'), 'utf-8')).loom.delivery).toEqual(['loom-runtime', 'deliver', '--json']);
+      // Its own update is no rival.
+      expect((await installFrom('x/runtime', SHA2)).code).toBe(0);
+
+      await fixture('x/adapter', SHA1, { name: 'adapter', loom: { delivery: ['loom-adapter', 'deliver'] } }, { 'loom-adapter': 'true' });
+      const notRuntime = await installFrom('x/adapter');
+      expect(notRuntime.code).not.toBe(0);
+      expect(notRuntime.stderr).toContain('loom.delivery is declared only by the runtime');
+      await fixture('x/second', SHA1, { name: 'second', loom: { role: 'runtime', delivery: ['loom-second', 'deliver'] } }, { 'loom-second': 'true' });
+      expect((await installFrom('x/second')).stderr).toContain('the runtime piece already offers delivery: there is only one');
+      for (const p of ['adapter', 'second']) expect(existsSync(join(loomHome, 'pieces', p, 'piece.json'))).toBe(false);
+
+      expect((await runCliCaptured(['pieces', 'remove', 'runtime'], { env })).code).toBe(0);
+      expect((await installFrom('x/second')).code).toBe(0);
+    });
+
+    it('a second role:runtime piece is refused at install; the runtime itself may update', async () => {
+      await fixture('x/runtime', SHA1, { name: 'runtime', loom: { role: 'runtime' } }, { 'loom-runtime': 'true' });
+      await fixture('x/runtime', SHA2, { name: 'runtime', loom: { role: 'runtime', label: 'Runtime' } }, { 'loom-runtime': 'true' });
+      expect((await installFrom('x/runtime')).code).toBe(0);
+      expect((await installFrom('x/runtime', SHA2)).code).toBe(0);
+      await fixture('x/pretender', SHA1, { name: 'pretender', loom: { role: 'runtime' } }, { 'loom-pretender': 'true' });
+      const r = await installFrom('x/pretender');
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain('the runtime piece is already the runtime: a household has one');
+      expect(existsSync(join(loomHome, 'pieces', 'pretender', 'piece.json'))).toBe(false);
+    });
   });
 
   it('remove keeps settings and data unless --purge, and never takes another piece\'s links', async () => {
