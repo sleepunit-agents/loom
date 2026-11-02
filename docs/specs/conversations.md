@@ -148,6 +148,15 @@ Without it, audit writes are refused (`503`) and turns still record.
 place's display name, last one wins), and for the agent's own turns `run`, `model`, `harness` and `outcome`. Core
 computes the rest. Any other key, text included, is rejected.
 
+**An idempotency key.** The runtime, and only the runtime, may also send `key` (1-240 printable characters; the
+runtime sends `<source>:<id>`, its delivery's source piece and id). Core keeps `(agent, key)` with the
+`{conversation, seq}` it answered for 24 hours, in `household.db` (`turn_keys`, with a SHA-256 of agent, venue, place,
+`from`, `kind` and `at`):
+- the same key with the same turn answers that first `{conversation, seq}` and writes nothing;
+- the same key with a different turn is refused with `409`;
+- after 24 hours the key is forgotten, and the same key writes a new turn;
+- a `key` from an agent token is refused with `403`.
+
 | Field | Value |
 |---|---|
 | `seq` | assigned by core, increasing per conversation; the turn write answers `{conversation, seq}` |
@@ -377,6 +386,8 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
    - Two places are two conversations.
    - An agent token may write only venue `session`, for itself.
    - Any other role is refused.
+   - A runtime turn with a `key` already used in the last 24 hours answers the first `{conversation, seq}` and writes
+     nothing; the same key on a different turn is a `409`; an agent token's `key` is a `403`.
    - A turn with text, an unknown key, or a `place` over 200 is refused.
    - `latency_ms` is computed by core.
 2. **The audit order.** An audit write for a missing `(conversation, seq)`, or from a different writer, is refused.
