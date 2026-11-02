@@ -35,13 +35,15 @@ The owner's other rulings shape everything below:
    venue says how to show it and what "good" means for it. Core can always show any record generically, even after
    its venue is gone.
 3. **No transcripts in the record.** The durable record holds who, where, when, per-turn metadata, the agent's own
-   digests and links. The words people said are not in it.
+   digests and links. The words people said are not in it, and core checks that a digest doesn't quote them.
 4. **Raw text is in the audit log only, and no identity ever reads it.** The log is encrypted at rest, deleted once
    processed, and gone after 7 days regardless. Its only reader is grading: bare models with no identity, no memory and
    no tools, whose output is checked so it cannot carry the text out.
-5. **Review has two halves.** *Grading*: bare models, blind to which model, agent and person is involved, score
-   samples household-wide, and their scores feed model choice. *Introspection*: each agent, as itself, learns from its
-   own records and its grades. It never sees raw text.
+5. **Review has two halves.**
+   - *Grading:* bare models, blind to which model, agent and person is involved, score samples household-wide, and
+     their scores feed model choice.
+   - *Introspection:* each agent, as itself, learns from its own records and the checked findings on them. It never
+     sees raw text.
 
 ## The test for every piece (added to extensions.md)
 
@@ -49,15 +51,15 @@ The owner's other rulings shape everything below:
 >
 > Life (who, what was said or decided, what happened) must outlive the piece, in one of two ways:
 > - it is a core record; or
-> - the piece's role contract gives it a portable export that a replacement implementation imports.
+> - the piece's role contract gives it a portable export that a replacement implementation imports. For tasks, that's
+>   the tasks role's contract, `spec/taskstore-core` in the public taskstore repo.
 >
 > Mechanism (tokens, queues, timers, session-resume state, caches) is the piece's, and may die with it.
 
 Applied today:
 - **Conversations from the bridges piece and the clock's relay threads become core records** (this doc).
-- **Tasks stay the tasks piece's.** Work tracking is a piece's job, and tasks survive a swap through the tasks role's
-  contract (its export).
-- **Secrets, box, subscriptions and machine are mechanism.**
+- **Tasks stay the tasks piece's,** under that contract.
+- **Secrets, box and the model subscriptions are mechanism.** The subscriptions currently ship inside the bridges piece.
 
 ## Vocabulary (to be added to CONTEXT.md)
 
@@ -83,7 +85,7 @@ _Avoid_: message (that's the venue's object), event
 
 **Digest**:
 A body's own summary of its run in a conversation: what was asked, decided and done, and whether the owner is needed.
-One per body run.
+One per body run. Not a memory: recall doesn't search it, and `conversations` reads it.
 _Avoid_: summary (that's a field), episode (a digest replaces one where a conversation exists)
 
 **Audit log**:
@@ -96,9 +98,26 @@ The household's daily pass. **Grading** is household-wide, by bare models, blind
 that agent, without raw text.
 _Avoid_: retro, reflection (that's an agent's own lane), evaluation
 
+**Finding**:
+A grader's one-line note on one turn, checked so it doesn't quote. Kept on the turn's agent's side.
+_Avoid_: comment, feedback (that's a memory category)
+
 **Scorecard**:
-Grades per model, harness and venue kind, aggregated across the household. Numbers and fixed labels only.
+Grades per model, family, harness and venue kind, aggregated across the household. Numbers and fixed labels only.
 _Avoid_: leaderboard, benchmark
+
+## Where it lives
+
+| Store | Holds | Why there |
+|---|---|---|
+| each agent's memory database (`resolveSqliteDbPath`) | `conversations`, `conversation_turns`, `conversation_days`, `conversation_digests`, `findings` | an agent's life, per agent, as memories and person cards |
+| the household store, `$LOOM_HOME/household.db` (new) | `venues`, `scorecards`, `audit_reads`, review runs | household-wide |
+| `$LOOM_HOME/audit.db` (new) | the audit log | its own file, so deleting it is a complete purge |
+| `$LOOM_HOME/review.key`, `review.pub` | the review identity and its recipient | made with `age-keygen` at first use, mode 0600 |
+
+`src/bundle.ts` copies `household.db` and leaves out `audit.db`, `review.key` and `review.pub` (the bundle and export
+never carry raw text or its key). Encryption uses the `age` binary loom already finds for bundles (`findProgram`).
+Without it, audit writes are refused (`503`) and turns still record.
 
 ## The conversation record
 
@@ -107,261 +126,282 @@ _Avoid_: leaderboard, benchmark
   "id": "cv-3f9a0c12d4e5",          // "cv-" + first 12 hex of SHA-256 over "agent\0venue\0place"
   "agent": "art",
   "venue": "slack",
-  "place": "dm:U123",               // the venue's address; opaque to core, ≤ 200 chars
-  "label": "Loren (DM)",            // the venue's display name for the place, ≤ 80; may change
-  "with": ["loren"],                // person slugs and agent ids seen in it, ≤ 32; grows as turns arrive
-  "projects": ["pond"],             // the union of its digests' projects (computed)
+  "place": "dm:U123",               // opaque, 1–200 chars; a longer one rejects the turn
+  "label": "Loren (DM)",            // ≤ 80; each turn may update it, the last one wins
+  "people": ["loren"],              // person slugs seen, ≤ 32; past 32 they aren't added (counts still are)
+  "agents": [],                     // agent ids seen, ≤ 16, likewise
+  "projects": ["pond"],             // the union of its digests' resolved projects (computed)
   "started": "…", "last": "…"
 }
 ```
 
-**Turns** (`conversation_turns`), metadata only:
+**Turns** (`conversation_turns`), metadata only. The writer sends `at`, `from`, `kind`, and for the agent's own turns
+`model`, `harness` and `outcome`. Core computes the rest. Any other key, text included, is rejected.
 
 | Field | Value |
 |---|---|
-| `seq` | assigned by core on write, increasing per conversation: the turn's index everywhere |
+| `seq` | assigned by core, increasing per conversation; the turn write answers `{conversation, seq}` |
 | `at` | ISO-8601 UTC |
-| `from` | a person slug, an agent id, `schedule`, or `unknown` |
-| `kind` | `message` (someone else), `reply` (the agent answers), `action` (the agent did something visible), `wake` (a schedule fired), `note` (a mid-turn note in a live venue) |
-| `latency_ms` | on a `reply`: time since the earliest `message` after the agent's previous `reply` |
-| `model`, `harness` | on the agent's turns |
+| `from` | `{kind: person, slug}`, `{kind: agent, id}`, `{kind: schedule}` or `{kind: unknown}` |
+| `kind` | `message` (someone else), `reply` (the agent answers), `action` (the agent did something visible), `wake` (a schedule fired), `note` (a mid-turn note in a live venue), `refused` (a relay refused as a repeat) |
+| `latency_ms` | computed by core on a `reply`: time since the earliest `message` after the agent's previous `reply` |
+| `model`, `harness` | strings, on the agent's turns |
 | `outcome` | on the agent's turns: `answered`, `progressed`, `deferred`, `failed` or `none` |
 
-A turn is one delivered message or action; a venue never merges messages into one turn. A turn write carrying any
-other key, text included, is rejected.
+What a turn is (one delivered message or action, never merged) is the venue adapters' obligation, stated in their doc.
 
 **Digests** (`conversation_digests`), one per body run:
 
 ```jsonc
 { "id": "dg-…",                     // "dg-" + 12 hex of SHA-256 over "conversation id\0run id"
-  "conversation": "cv-…", "run": "…",  // the body run's id, given by the runtime
-  "at": "…", "summary": "… ≤ 600", "asks": [], "decisions": [], "tasks": [], "projects": [],
+  "conversation": "cv-…", "run": "…", "at": "…",
+  "summary": "… ≤ 600", "asks": [], "decisions": [], "tasks": [], "projects": [],
   "needs_owner": null }              // or a one-line reason ≤ 200
 ```
 
+- **Keys:** exactly these; unknown keys are rejected.
 - **Caps (as projects.md):** projects ≤ 4 names; asks and decisions ≤ 8 strings of ≤ 200 each; task refs ≤ 16 strings
   of ≤ 64 each.
-- **One digest per run.** A second write in the same run replaces that run's digest. A digest is never written for
-  another run, or for another agent's conversation.
-- **`projects`** are names (projects.md's slugs or aliases), stored resolved to slugs. When a digest names no project,
-  a project whose `links.venues` contains `<venue>:<place>` is used.
+- **One per run.** A second write in the same run replaces that run's digest. A digest is never written for another
+  run, or for another agent's conversation.
+- **No quotes.** At write, core compares every text field with the conversation's audit entries still in the log. A
+  digest sharing any 8-word sequence with them is rejected. (Words are maximal runs of letters and digits, compared
+  lowercased.)
+- **Projects.** `projects` are names (projects.md's slugs or aliases), stored resolved to slugs. When a digest names
+  none, the one live project whose `links.venues` contains `<venue>:<place>` is used. If none or several match, none is.
 
-**Retention:** a sweep runs daily and at daemon start. It folds turns older than 90 days into `conversation_days` (per
-conversation per UTC day: turn counts by kind, median `latency_ms`, outcomes by model) and deletes them. The
-conversation itself and its digests are kept for good.
+**Retention.** A sweep runs daily and at daemon start. It folds each UTC day whose every turn is older than 90 days into
+one `conversation_days` row per conversation and day: turn counts by `kind`, median `latency_ms`, and
+`{model: {outcome: count}}`. It then deletes those turns. A folded day is never folded again. The conversation and its
+digests are kept for good.
+
+**Reading.**
+- **Who sees what.** An agent's token sees its own agent's conversations; an owner's sees every agent's.
+- **`conversations`** returns up to 100, newest `last` first.
+- **`conversation({id})`** returns the record, its digests, its findings (as introspection reads them), and its render:
+  the venue's when the venue has a live `render`, else core's generic render. loom's page shows it at
+  `loom:conversation/<id>`. That's a new page target, added to extensions.md's list.
 
 ## Who writes what
 
 | Write | Who | How |
 |---|---|---|
-| A turn in a venue the runtime carries (discord, slack, wake, relay) | the runtime | `POST /api/loom/conversations/turn`, role `runtime` |
-| A turn in venue `session` | the harness, as the agent | the same path, agent role, venue `session` only, its own agent only |
+| A turn in discord, slack, wake or relay | the runtime | `POST /api/loom/conversations/turn`, role `runtime` |
+| A turn in venue `session` | the harness, as the agent | the same path, agent token, venue `session`, its own agent only |
 | A digest | the agent | `conversation_digest`, MCP |
-| Raw text | the runtime | `POST /api/loom/audit`, role `runtime`, for a turn it has already written |
+| Raw text | the turn's writer (the runtime, or the harness for `session`) | `POST /api/loom/audit` `{conversation, seq, text}`, for a turn it has already written |
 
-- **The `runtime` role is new:** a fifth token role beside `agent`, `owner`, `peer` and `piece` (`src/household.ts`).
-  It is minted for the runtime piece and reaches only the paths in this doc that name it.
-- **The order is fixed:** the turn first, then its audit entry, keyed by the turn's `seq`. An audit write for a
-  `(conversation, seq)` that doesn't exist is rejected. When the turn succeeds and the audit write fails, the turn
-  stands without text: the review has less input, and nothing is misattributed.
+- **The new roles.** `runtime` and `review` join `agent`, `owner`, `peer` and `piece` (`src/household.ts`).
+  - A `runtime` token is minted for the one installed piece whose `loom` block has `"role": "runtime"`. It reaches
+    only the paths in this doc that name it.
+  - A token record gains an optional `expires` (ISO-8601). `validRecord` accepts it, and an expired token is refused.
+- **The order is fixed:** the turn first, then its audit entry, keyed by the `seq` the turn write answered. An audit
+  write for a `(conversation, seq)` that doesn't exist, or by a different writer, is rejected. When the turn succeeds
+  and the audit write fails, the turn stands without text.
 - **The body's conversation:** the runtime passes `conversation: "<id>"` and `run: "<id>"` to `identity()` when it
-  starts or resumes a body. That gives the body the ids `conversation_digest` takes. A harness session uses venue
-  `session`, with place `<harness>:<session id>`.
-- **The boot tape gains digests:** digests from the tape's window (CONTEXT.md, Tape) are interleaved with episodes by
-  time and rendered `digest · <venue> <label>: <summary>`. A body in a conversation writes a digest instead of an
-  episode. Bodies without one still write episodes. "Tape" now means "recent episodes and digests".
+  starts or resumes a body. A harness session uses venue `session`, with place `<harness>:<session id>`, and its own
+  run id.
+- **The boot tape gains digests:** digests from the tape's window are interleaved with episodes by time and rendered
+  `digest · <venue> <label>: <summary>`. A body in a conversation writes a digest instead of an episode; bodies without
+  one still write episodes. A digest is not a memory, so recall doesn't find it: `conversations` does. Episode and Tape
+  in CONTEXT.md change to say so.
 
 ## Venues
 
 A venue adapter, as a managed piece, declares its venues in its `loom` block. Core keeps a copy of each declaration
-in its `venues` table.
+in `venues`.
 
 ```jsonc
 "loom": { "venues": { "slack": { "label": "Slack", "kind": "live", "render": ["loom-slack", "render", "--json"] } } }
 ```
 
-**The declaration's schema** (rejected whole at install if any rule fails, as projects.md's `sections`):
-- A venue name is `[a-z][a-z0-9-]*`, ≤ 32 chars. A piece declares ≤ 8 of them.
-- `label` is required, ≤ 40.
-- `kind` is `live`, `scheduled` or `agent`.
+**The declaration's schema** (rejected whole at install if any rule fails):
+- A name is `[a-z][a-z0-9-]*`, ≤ 32 chars. A piece declares ≤ 8.
+- `label` is required, ≤ 40. `kind` is required: `live`, `scheduled` or `agent`.
 - `render` is optional: 1–16 strings of ≤ 200, and `argv[0]` must be one of the piece's own `bin` names.
 - Unknown keys are rejected.
-- `session` and `wake` are core's own names. `relay` belongs to the runtime.
+- `session` (`live`) and `wake` (`scheduled`) are core's own and may not be declared.
+- `relay` (`agent`) may be declared only by a piece whose `loom` block has `"role": "runtime"`.
 - A name another installed piece already declares is rejected.
 
 **The registry:**
 - **Update:** replaces the piece's rows.
-- **Removal:** keeps them, marked `orphaned`. The name, label and kind stay for display, and `render` is dropped.
-  Reinstalling the same piece clears the mark.
+- **Removal:** keeps them, marked `orphaned`. The name, label and kind stay, and `render` is dropped.
+- **Reinstall:** reinstalling the same piece clears the mark.
 - **Rendering:** `render` runs through the section-feed runner (projects.md, "Section feeds"): `--conversation <id>`,
-  3 s, the same output schema. An orphaned venue, or a venue with no `render`, uses core's **generic render**: label,
-  venue label, with, started, last, the digests newest first, and turn counts and outcomes.
+  3 s, the same output schema. An orphaned venue, or one with no `render`, uses core's **generic render**: label,
+  venue label, people, agents, started, last, digests newest first, and turn counts and outcomes.
 
-**What each kind is measured on.** The metric names here are the scorecard's `measure` values:
+**What each kind is measured on.** The names are the scorecard's `measure` values, computed per UTC day over that day's
+conversations of that kind:
 
-| Kind | Measures from metadata | Graded question (1–5) |
+| Kind | Measures (from metadata) | Graded question, 1–5 |
 |---|---|---|
-| `live` | `first_reply_s` (median `latency_ms` of replies ÷ 1000), `abandoned` (conversations with a `message` left unanswered 24h) | "Did the agent answer what was actually asked, well, the first time?" |
-| `scheduled` | `due_to_progress_s` (from the `wake` turn to the first `progressed` outcome), `done_rate` (share of runs ending `answered` or `progressed`) | "Did the run move its work forward, without busywork?" |
-| `agent` | `round_trips` (turns to a resolved reply), `loops_refused` | "Did the exchange resolve what was asked?" |
+| `live` | `first_reply_s`: median `latency_ms` ÷ 1000 of `reply` turns. `abandoned`: share of conversations with a `message` that had no `reply` within 24h | "Did the agent answer what was actually asked, well, the first time?" |
+| `scheduled` | `due_to_progress_s`: median time from a `wake` turn to the run's first `progressed` or `answered` turn. `done_rate`: share of runs whose last agent turn is `answered` or `progressed` | "Did the run move its work forward, without busywork?" |
+| `agent` | `round_trips`: median turns from a relay's first `message` to the first `reply` with outcome `answered`. `loops_refused`: count of `refused` turns | "Did the exchange resolve what was asked?" |
 
 ## The audit log
 
-| | |
-|---|---|
-| **What** | `(conversation, seq)`, venue, and the turn's text: one age-encrypted blob per entry, nothing else in plaintext |
-| **Key** | Encrypted with age to the household's **review recipient**. Its identity (private key) is held on loom's machine at `$LOOM_HOME/review.key`, mode 0600, made at first use. It is never in the bundle, an export or an API answer |
-| **Who writes** | Only the `runtime` role, after the turn exists |
-| **Who reads** | Only a grading run, through `POST /api/loom/audit/take`, with a `review` token (below). Never the page, the search, an agent's MCP tools, an introspection session, or `loom export` |
-| **Read log** | Each take is recorded in `audit_reads` in the memory database: run id, time, the `(conversation, seq)` pairs. Never text. It outlives the log, so who read what survives a purge |
-| **Deleted** | On `POST /api/loom/audit/done` for taken entries, and by a sweep at 7 days whatever happened. The sweep runs hourly and at daemon start |
-| **File** | `audit.db` beside the memory database. Deleting the file is a complete purge of its text |
+- **Each entry:** `agent`, `conversation`, `seq`, `venue`, `kind` and `at` in plaintext (they're metadata the record
+  already holds), and `text` as an age-encrypted blob to `review.pub`. Nothing else.
+- **Who writes:** the turn's writer only, after the turn exists.
+- **Who reads:** only a grading run, through `POST /api/loom/audit/take`, with a `review` token. The audit module
+  exports one decrypt function, and the take handler is its only caller.
+- **Read log:** each take writes `audit_reads` rows (run id, time, `(agent, conversation, seq)`), never text.
+- **Deletion:** on `POST /api/loom/audit/done`, and by a sweep at 7 days whatever happened. The sweep runs hourly and
+  at daemon start.
 
-**Review tokens.** The runtime asks core for one per grading run: `POST /api/loom/review/token`, role `runtime`. Core
-mints a token with role `review`, valid for 2 hours. It reaches only `audit/take`, `audit/done` and `scorecards`.
+**Review tokens.** The runtime asks core for one per run: `POST /api/loom/review/token`, role `runtime`. The answer is a
+token with role `review` and `expires` 2 hours out. It reaches only `audit/take`, `audit/done`, `scorecards` and
+`findings`.
 
-- **`audit/take`:** `{limit ≤ 500}`. Answers `{entries: [{conversation, seq, venue, kind, text}]}`, decrypted by core,
-  oldest first, entries not yet taken. Text is redacted before it leaves: every person slug, person name, agent id,
-  model and harness name core knows is replaced by `P1…`, `A1…`, `M1…`, `H1…`, consistently within one take.
-- **`audit/done`:** `{pairs: [[conversation, seq], …]}` deletes them.
+- **`audit/take`:** `{limit ≤ 500}`. Answers `{entries: [{ref, agent, venue, kind, text}]}`, oldest first, across the
+  household's agents, entries not yet taken. `ref` is an opaque handle standing for `(agent, conversation, seq)`.
+- **Redaction before it leaves**, case-insensitive and whole-word:
+  - every person card's `name` and `slug` becomes `P1`, `P2`…;
+  - every agent id becomes `A1`…;
+  - every model and harness string seen in any turn becomes `M1`… or `H1`…;
+  - numbering is by first appearance, consistent within the take.
+  The `agent` field itself is given as its `A…` placeholder.
+- **`audit/done`:** `{refs: […]}` deletes them.
 
 ## Review
 
 A daily household job. **Core defines the contract; the runtime runs it**, because running a model needs the runtime.
-It's on by default. The owner sets `review: on | off | <argv>` in household.json (`<argv>` replaces the runtime's job
-with their own command, given the same token). It runs at 04:00 in the household's time zone.
+
+- **The schedule:** 04:00 in the household's time zone. household.json gains `tz` (IANA name, default `UTC`).
+- **The setting:** household.json gains `review`: `"on"` (the default), `"off"`, or a JSON array of 1–16 strings of
+  ≤ 200, a command that replaces the runtime's job. The runtime reads it with `GET /api/loom/review/config` (role
+  `runtime`), never from the file, and passes the review token to a replacement command on stdin.
 
 **Grading, household-wide, blind:**
-1. **Families.** The runtime takes entries with `audit/take`. For each sample, it picks graders from the household's
-   model accounts, never another service. A **model family** is a provider (`anthropic`, `openai`, …) in the runtime's
-   model list. Each sample is graded by:
+1. **Picking graders.** The runtime takes entries and picks graders among the models it can run. It labels each model
+   with a **family**, its provider (`anthropic`, `openai`, …), and records the family on every scorecard row; the
+   runtime spec says how it knows them. Each sample is graded by:
    - two graders from families other than the producer's, where the household has them;
    - one, where it has one other family;
-   - only a single-family household falls back to a different model of the same family, and its scorecard rows say
+   - only a single-family household falls back to a different model of the same family, and its rows say
      `same_family: true`.
 
    A model never grades its own turns.
 2. **A bare grader** gets the redacted sample, the venue kind's graded question, and nothing else: no identity, no
    memory, no tools. It answers a score of 1–5, and optionally one finding of ≤ 200 chars.
-3. **Checked before kept.** A finding that shares any 8 consecutive words with the sample it graded is dropped. That's
-   how raw text is kept from leaving through a finding.
-4. **Scorecards.** The runtime writes the scores and the metadata measures as scorecard rows: `POST
-   /api/loom/scorecards` with the review token. The audit entries are then `done`.
+3. **Findings are checked.** The runtime posts each finding with the sample's `ref`: `POST /api/loom/findings`. Core
+   rejects one that shares an 8-word sequence with that entry's text (same word rule as digests). It stores the
+   accepted ones in the turn's agent's `findings` table: `ref`'s turn, the measure, the score and the text.
+4. **Scorecards.** `POST /api/loom/scorecards`. A row is:
+   - `day`, `model`, `family`, `harness`, `kind`;
+   - `measure`: a name from the table, or `graded`;
+   - `value` (a number), `n` (a count), `same_family` (a boolean).
 
-**Introspection, per agent, after grading:** each agent, as itself, reads its own conversations' metadata, its
-digests, and the findings on its own turns (never text). It writes what it learned through the normal tools: feedback
-memories, proposed tasks, fixes to its briefs. An identity session can't reach the audit log, so it has nothing raw to
-copy.
+   Any other key, an unknown `measure`, or a non-numeric `value` is rejected. Rows are kept for good. They're shown
+   in a Models section of the Mind page (a page PR), and the runtime's model choice reads them through
+   `GET /api/loom/scorecards`.
+5. **Done.** The taken entries are marked `done`. A run that fails leaves them; the 7-day sweep still applies.
 
-**A scorecard row** has:
-- `day`, `model`, `harness`, `kind` (the venue kind);
-- `measure`: one of the names in the measures table, or `graded`;
-- `value` (a number), `n` (the sample count), `same_family` (a boolean);
-- `findings`: ≤ 20 strings of ≤ 200, the checked findings on the `graded` row.
-
-Any other key, or a `value` that isn't a number, is rejected. Rows are kept for good. They're shown on loom's page
-under Mind, Models. The runtime's model resolver reads them; how it weighs them is the runtime spec's.
-
-**Failure.** A run that fails leaves its taken entries un-done. The 7-day sweep still applies, so a broken review loses
-input instead of keeping text.
+**Introspection, per agent, after grading.** Each agent, as itself, reads its own conversations, digests and findings
+through `conversations`, `conversation` and `conversation_findings({since?})` (its own agent's only). It writes what
+it learned through the normal tools: feedback memories, proposed tasks, fixes to its briefs. No identity can reach the
+audit log, so it has no raw text to copy.
 
 ## Surfaces
 
 **MCP**
 - `conversation_digest({summary, asks?, decisions?, tasks?, projects?, needs_owner?})`: for the conversation and run
   given at identity. Without them, rejected.
-- `conversations({with?, project?, venue?, since?})` lists records, newest `last` first.
-- `conversation({id})` returns one, with the generic render.
+- `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
+  above.
 
-**Needs you.** A digest with `needs_owner` appears in loom's Inbox as an ask from core, linking to the conversation,
-until a later digest in that conversation clears it.
+**Needs you.** A digest with `needs_owner` appears in loom's Inbox as an ask from core, linking to
+`loom:conversation/<id>`, until a later digest in that conversation has none.
 
-**Projects.** A project's hub gets a core section, `conversations`, which replaces the shuttle feed in projects.md:
-- **What's in it:** conversations whose `projects` include the project, with a digest after `since`. Up to 20, newest
-  `last` first.
-- **Each item:** id, venue label, label, with, last, the newest digest's summary, any open `needs_owner`, and `new`.
-
-**People.** A person card can list the conversations they're `with` in. That's computed, not stored on the card.
-
-## Storage
-
-The memory database gets `conversations`, `conversation_turns`, `conversation_days`, `conversation_digests`, `venues`,
-`scorecards` and `audit_reads`. The audit log is its own file, `audit.db`.
+**Projects.** A project's hub gets a core section, `conversations`, after `people`. It replaces the shuttle feed in
+projects.md and follows projects.md's core-section rule: `since` marks `new`, it doesn't filter.
+- **What's in it:** the 20 conversations with the newest `last` whose `projects` include the project.
+- **Each item:** id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new`
+  (`last` after `since`).
 
 ## Edits this forces elsewhere
 
 - **projects.md:** `conversations` becomes a core section. The shuttle feed and "shuttle's side" are replaced by this
   doc, and the `dg-` id is defined here.
-- **extensions.md:** the core line gains "conversations". It also gains the life/mechanism test, and a `venues` key in
-  the `loom` block.
+- **extensions.md:**
+  - the core line gains "conversations";
+  - it gains the life/mechanism test and a `venues` key in the `loom` block;
+  - its page targets gain `conversation/<id>`.
 - **pieces-install.md:** the block schema gains `venues`.
-- **src/household.ts:** the role set gains `runtime` and `review`.
+- **src/household.ts:** the roles `runtime` and `review`, an optional token `expires`, and household.json's `tz` and
+  `review`.
+- **src/bundle.ts:** `household.db` is copied; `audit.db` and the review key pair are left out.
 - **bridges.md:** the conversation as the unit stays, and its record moves here. bridges.md becomes the venue adapters'
-  and the runtime's doc.
-- **CONTEXT.md:** the vocabulary above, and Tape's definition includes digests.
+  doc, with the one-message-one-turn obligation.
+- **CONTEXT.md:** the vocabulary above, and Episode and Tape as changed above.
 
 ## Acceptance criteria (loom vitest)
 
-1. **Turn writes.** A turn with the `runtime` role creates or extends the record for agent · venue · place. Each key
-   is pinned:
-   - two places in one venue are two conversations;
-   - an agent token may write only venue `session`, and only for itself;
-   - any other role is refused;
-   - a turn with a text key or an unknown key is refused.
-2. **`seq` and the audit order.** `seq` is assigned by core and increases. An audit write for a missing
-   `(conversation, seq)` is refused.
+1. **Turn writes.**
+   - A `runtime` turn creates or extends agent · venue · place, and answers `{conversation, seq}`.
+   - Two places are two conversations.
+   - An agent token may write only venue `session`, for itself.
+   - Any other role is refused.
+   - A turn with text, an unknown key, or a `place` over 200 is refused.
+   - `latency_ms` is computed by core.
+2. **The audit order.** An audit write for a missing `(conversation, seq)`, or from a different writer, is refused.
 3. **Digests.**
-   - The digest is written to the identity's conversation and run.
-   - A second write in the same run replaces it; another run adds one.
-   - The caps reject.
-   - A digest naming no project takes the project whose `links.venues` has `<venue>:<place>`.
-4. **Retention.** The sweep folds turns older than 90 days into `conversation_days` with the stated counts. Digests are
-   untouched.
+   - It goes to the identity's conversation and run; the same run replaces, another run adds.
+   - Unknown keys and the caps reject.
+   - A digest sharing 8 words with the conversation's audit text is rejected.
+   - The project falls back to the single matching `links.venues`, and to none when several match.
+4. **Retention.** The fold makes `conversation_days` rows with the stated fields for whole days only, deletes their
+   turns, and never refolds a day.
 5. **Venues.**
-   - Every declaration rule rejects at install.
-   - A name collision rejects.
-   - Removing the piece orphans its rows, and the conversation still lists and renders generically.
+   - Every declaration rule rejects at install, including `kind` missing, core names, and `relay` from a non-runtime
+     piece.
+   - Removal orphans the rows, and the conversation still renders generically.
    - Reinstalling clears the mark.
-6. **The audit log is encrypted.** An entry in `audit.db` starts with the age header. Decrypting it with a different
-   identity fails, and with `review.key` it gives the text back.
+   - With a live `render`, `conversation` returns the venue's render.
+6. **Encryption.** An audit entry's `text` is an age file (it starts with `age-encryption.org/v1`). It decrypts with
+   `review.key` and fails with another identity. With no `age` binary, audit writes answer 503 and turns still record.
 7. **Reading the audit log.**
-   - Only a `review` token can `take`. An agent, owner, piece or `runtime` token is refused.
-   - A `review` token expires after 2 hours.
+   - Only an unexpired `review` token can `take`. An expired one, and agent, owner, piece and `runtime` tokens, are
+     refused.
    - Each take writes `audit_reads` rows with no text.
    - `done` deletes.
-   - An entry older than 7 days is gone after the sweep, taken or not.
-   - `loom export` contains neither `audit.db` nor `review.key`.
-8. **Redaction.** A taken entry naming a person slug, a person's name, an agent id, a model and a harness comes back
-   with each replaced by its placeholder, consistently within the take.
-9. **No identity reads raw text.** No MCP tool, and nothing reachable with an agent or owner token, answers with audit
-   text.
-10. **Scorecard rows.** Unknown keys, non-numeric values and an unknown `measure` are rejected. A finding sharing 8
-    consecutive words with its taken entry is rejected.
-11. **Needs you.** A digest with `needs_owner` makes an Inbox ask; a later digest without one in the same conversation
-    clears it.
-12. **Projects.** The project hub's `conversations` section returns the stated items, caps and order.
+   - Past 7 days, entries are gone after the sweep.
+   - A bundle and `loom export` contain no `audit.db` and no review key.
+8. **Redaction.** A take of an entry naming a person's name and slug, an agent id, a model and a harness returns each
+   as its placeholder, consistently within the take.
+9. **One decrypt path.** An import-graph test finds the audit module's decrypt function called only from the take
+   handler.
+10. **Findings and scorecards.**
+    - A finding sharing 8 words with its entry is rejected; an accepted one lands in the turn's agent's `findings`.
+    - Scorecard rows reject unknown keys, unknown measures and non-numeric values.
+    - An agent's `conversation_findings` returns only its own.
+11. **Needs you.** A `needs_owner` digest makes an Inbox ask, and a later digest without one clears it.
+12. **Projects.** The `conversations` section's contents, caps, order and `new` are as stated.
 13. **The boot tape** interleaves digests in its window with episodes by time.
+14. **Scoping.** An agent's `conversations` lists only its own; an owner's lists all.
 
 ## First slice
 
-1. Records, turns, digests, venues, the generic render, the MCP tools, Needs you, the tape: criteria 1–5 and 11–13.
-2. The audit log, review tokens, redaction and the sweep (6–9).
-3. Scorecards and the review contract (10). The review job itself lands with the runtime piece.
+1. Records, turns, digests, venues, renders, the MCP tools, Needs you, the tape and scoping: criteria 1–5 and 11–14.
+2. The household store, the audit log, review tokens, redaction and the sweep (6–9).
+3. Findings and scorecards (10). The review job itself lands with the runtime piece.
 
 ## Open questions
 
 - **People who don't know.** Colleagues on a venue talk to an agent whose household grades a week of their raw words,
   redacted and by machines. Is a line owed in the agent's profile, or in its first message to someone new?
-- **Model names inside text.** Redaction covers the names core knows. A model describing itself ("as an AI from…") can
-  still leak its family to a grader: blind as far as we can make it.
+- **Model names inside text.** Redaction covers the names core knows. A model describing itself can still leak its
+  family to a grader: blind as far as we can make it.
 - **Harness transcripts.** A harness's own local transcript files (outside loom) still hold raw text. The runtime spec
-  decides whether the runtime deletes them once their turns are in the audit log.
+  decides whether they're deleted once their turns are in the audit log.
 
 ## Sources
 
-The owner's rulings, quoted above, come from a conversation with the agent on 2026-11-02. They and a review of how loom
-and its pieces are cut are recorded in the agent's operations repo. They're provenance only, and nothing here needs
-them to be built.
+The owner's rulings, quoted above, come from a conversation with the agent on 2026-11-02. They're recorded in the
+agent's operations repo as provenance only, and nothing here needs them to be built.
 
 ## Review gate
 
