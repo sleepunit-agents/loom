@@ -38,7 +38,7 @@ flowchart LR
       PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
       NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
-      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings<br/>turns arrive on POST /api/loom/conversations/turn"]
+      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings<br/>turns arrive on POST /api/loom/conversations/turn<br/>raw text on POST /api/loom/audit (audit.db, encrypted)<br/>review: audit/take · audit/done · scores · findings"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end
@@ -198,8 +198,9 @@ have fallen behind.
 |---|---|---|
 | `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
 | `memories.db` (people) | `people`, `person_revisions` | `people.ts`, created by the `people_cards` migration |
-| `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md) | `src/backends/conversations.ts`, created by the `conversations` migration |
-| `$LOOM_HOME/household.db` | `venues`: core's copy of every installed piece's venues, orphaned when the piece goes | `src/household-store.ts`, synced at install, update, remove and daemon start |
+| `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md), `findings` (a grader's one line per conversation per UTC day, made by the first) | `src/backends/conversations.ts`, created by the `conversations` migration (`findings` by its first write) |
+| `$LOOM_HOME/household.db` | `venues`: core's copy of every installed piece's venues, orphaned when the piece goes; `audit_reads` (who took which audit entry, never text), `review_scores` and `scorecards` | `src/household-store.ts`, synced at install, update, remove and daemon start; `src/audit.ts` and `src/review.ts` write the review's tables |
+| `$LOOM_HOME/audit.db` | `audit_entries`: raw turn text, age-encrypted to `review.pub`, deleted on `audit/done` and 7 days after its turn. Never in a bundle or an export, nor are `review.key` and `review.pub` | `src/audit.ts` |
 | `memories.db` (projects) | `projects`, `project_revisions`, `project_names` (every live project's slug and aliases: the primary key is the uniqueness rule) | `projects.ts`, created by the `project_cards` migration |
 | `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access` | `sqlite-knowledge.ts` |
 | Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
@@ -255,7 +256,11 @@ have fallen behind.
 | `src/backends/recorder-health.ts` | Episode-write failure ledger |
 | `src/backends/conversations.ts` | Conversations as core records: turns (metadata only, `seq` and `latency_ms` by core), digests, the retention fold, the hub's section and the tape's digests |
 | `src/conversations.ts` | Who may write a turn, the venue's render or core's generic one, and who reads which agent's conversations |
-| `src/household-store.ts` | `$LOOM_HOME/household.db`: the venues registry |
+| `src/household-store.ts` | `$LOOM_HOME/household.db`: the venues registry, and the review's tables |
+| `src/audit.ts` | The audit log: writes by a turn's writer, the review key pair, claims, `done`, the 7-day sweep, and the one decrypt function |
+| `src/audit-take.ts` | `POST /api/loom/audit/take`: the only caller of the decrypt function, and redaction (P…, A…, M…, H…) |
+| `src/review.ts` | Model families, scores by ref, findings, the scorecards and their metadata measures |
+| `src/programs.ts` | Finding `age`, `age-keygen` and `tar` (LOOM_<NAME>, else PATH) |
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,

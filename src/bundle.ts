@@ -9,7 +9,7 @@
  *                                                  compare with the live household
  *
  * Inside (a gzipped tar, then age-encrypted): manifest.json, household.json, the token
- * files, household.db (the venues registry), the commons, every agent's directory (SQLite through the backup API,
+ * files, household.db (the venues registry and the scorecards), the commons, every agent's directory (SQLite through the backup API,
  * never a raw copy of a live file), and each installed piece's own part, which
  * the piece encrypts itself (`loom-<piece> bundle export`): core never sees inside
  * it. A plain context dir exports as a household of one.
@@ -33,6 +33,8 @@ import {
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
 import { HOUSEHOLD_DB } from './household-store.js';
+import { findProgram as findProgramPath } from './programs.js';
+import { AUDIT_FILES } from './audit.js';
 import { listPieces } from './cli/pieces.js';
 import { installPiece, managedPieces, pieceEnvFor, readCatalog, readRecord, readSettings, syncServices, type CatalogEntry } from './cli/pieces-managed.js';
 
@@ -69,23 +71,9 @@ function loomVersion(): string {
   try { return (JSON.parse(readFileSync(join(resolveRepoRoot(), 'package.json'), 'utf-8')) as { version: string }).version; } catch { return 'unknown'; }
 }
 
-/**
- * The `age` or `tar` program: LOOM_AGE / LOOM_TAR when set (an absolute path
- * to a file), else the first on PATH. Always run without a shell, with
- * absolute paths as arguments (so nothing can be read as an option).
- */
+/** The `age` or `tar` program (src/programs.ts), as a BundleError when it's missing. */
 function findProgram(name: string, env: NodeJS.ProcessEnv): string {
-  const override = env[`LOOM_${name.toUpperCase()}`];
-  if (override) {
-    if (!override.startsWith('/') || !existsSync(override) || !statSync(override).isFile()) {
-      throw new BundleError(`LOOM_${name.toUpperCase()} must be the absolute path of the ${name} program`);
-    }
-    return override;
-  }
-  for (const dir of (env.PATH ?? '').split(delimiter)) {
-    if (dir && existsSync(join(dir, name))) return join(dir, name);
-  }
-  throw new BundleError(`${name} isn't installed (or on PATH); the bundle needs it. Set LOOM_${name.toUpperCase()} to its path if it lives elsewhere.`);
+  try { return findProgramPath(name, env, 'the bundle'); } catch (e) { throw new BundleError((e as Error).message); }
 }
 
 function run(cmd: string, args: string[], what: string): void {
@@ -214,6 +202,9 @@ export async function exportBundle(opts: {
       household: { agents: h.agents, default: h.default, ...(h.owner ? { owner: h.owner } : {}) }, pieces,
     };
     writeFileSync(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
+    // Never the audit log or its key (docs/specs/conversations.md, "Where it lives"): nothing
+    // above copies them, and this makes sure nothing ever does.
+    assertNoAuditFiles(stage);
     // tar and gzip, then encrypt; only the encrypted file leaves the temp dir.
     const plain = join(work, 'household.tar.gz');
     run(tar, ['-C', stage, '-czf', plain, '.'], 'tar');
@@ -225,6 +216,15 @@ export async function exportBundle(opts: {
     return manifest;
   } finally {
     rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/** Refuse a staged bundle holding any file of the audit log or the review key pair, at any depth. */
+function assertNoAuditFiles(dir: string): void {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (AUDIT_FILES.includes(name)) throw new BundleError(`the bundle would carry ${name}; the audit log and its key never leave this machine`);
+    if (lstatSync(p).isDirectory()) assertNoAuditFiles(p);
   }
 }
 

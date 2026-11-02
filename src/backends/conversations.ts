@@ -367,6 +367,112 @@ export function turnWriter(contextDir: string, conversation: string, seq: number
     (db.prepare('SELECT writer FROM conversation_turns WHERE conversation = ? AND seq = ?').get(conversation, seq) as { writer: string } | undefined)?.writer);
 }
 
+/** One held turn with its conversation's agent, venue and place, and its writer: what the audit log and review read. */
+export interface TurnRecord extends Turn { agent: string; writer: string }
+
+/** Turn (conversation, seq) as held, or undefined when there's no such turn (never written, or folded). */
+export function turnRecord(contextDir: string, conversation: string, seq: number): TurnRecord | undefined {
+  if (!isConversationId(conversation) || !Number.isSafeInteger(seq) || seq < 1) return undefined;
+  return withReadonly(contextDir, undefined, (db) => {
+    const c = db.prepare('SELECT agent, venue, place FROM conversations WHERE id = ?').get(conversation) as { agent: string; venue: string; place: string } | undefined;
+    if (!c) return undefined;
+    const r = db.prepare('SELECT * FROM conversation_turns WHERE conversation = ? AND seq = ?').get(conversation, seq) as TurnRow | undefined;
+    return r ? { ...turnOf(r, c), agent: c.agent, writer: r.writer } : undefined;
+  });
+}
+
+/** Conversations with a held turn in [from, to): id, venue, people. The scorecard pass reads them per UTC day. */
+export function conversationsActive(contextDir: string, from: string, to: string): Array<{ id: string; venue: string; people: string[] }> {
+  return withReadonly(contextDir, [], (db) => (db.prepare(`SELECT c.id, c.venue, c.people_json FROM conversations c
+      WHERE EXISTS (SELECT 1 FROM conversation_turns t WHERE t.conversation = c.id AND t.at >= ? AND t.at < ?) ORDER BY c.id`).all(from, to) as Array<{ id: string; venue: string; people_json: string }>)
+    .map((r) => ({ id: r.id, venue: r.venue, people: JSON.parse(r.people_json) as string[] })));
+}
+
+/** Every model and harness string this store has seen, held or folded: what redaction replaces. */
+export function modelsSeen(contextDir: string): { models: string[]; harnesses: string[] } {
+  return withReadonly(contextDir, { models: [], harnesses: [] }, (db) => {
+    const models = new Set<string>();
+    const harnesses = new Set<string>();
+    for (const r of db.prepare('SELECT DISTINCT model, harness FROM conversation_turns').all() as Array<{ model: string | null; harness: string | null }>) {
+      if (r.model) models.add(r.model);
+      if (r.harness) harnesses.add(r.harness);
+    }
+    for (const r of db.prepare('SELECT outcomes_json FROM conversation_days').all() as Array<{ outcomes_json: string }>) {
+      try { for (const m of Object.keys(JSON.parse(r.outcomes_json) as Record<string, unknown>)) if (m !== 'unknown') models.add(m); } catch { /* a bad row names nothing */ }
+    }
+    return { models: [...models], harnesses: [...harnesses] };
+  });
+}
+
+/** Every agent id this store's conversations have seen (beyond its own agent). */
+export function agentsSeen(contextDir: string): string[] {
+  return withReadonly(contextDir, [], (db) => {
+    const out = new Set<string>();
+    for (const r of db.prepare('SELECT agent, agents_json FROM conversations').all() as Array<{ agent: string; agents_json: string }>) {
+      out.add(r.agent);
+      try { for (const a of JSON.parse(r.agents_json) as string[]) out.add(a); } catch { /* skip */ }
+    }
+    return [...out];
+  });
+}
+
+// ─── Findings (conversations.md, "Review", step 3) ──────────────────────────
+
+/** A finding is one line of at most this many characters. */
+export const MAX_FINDING = 200;
+
+export interface Finding {
+  id: string;
+  conversation: string;
+  seq: number;
+  /** The UTC day of the turn it's on: at most one finding per conversation and day. */
+  day: string;
+  measure: string;
+  score: number | null;
+  text: string;
+  at: string;
+}
+
+function createFindingsTable(db: Database): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS findings (
+      id           TEXT PRIMARY KEY,
+      conversation TEXT NOT NULL,
+      seq          INTEGER NOT NULL,
+      day          TEXT NOT NULL,
+      measure      TEXT NOT NULL,
+      score        REAL,
+      text         TEXT NOT NULL,
+      at           TEXT NOT NULL,
+      UNIQUE (conversation, day)
+    );
+    CREATE INDEX IF NOT EXISTS idx_findings_at ON findings(at);`);
+}
+
+/**
+ * Keep a grader's finding on turn (conversation, seq) of this agent's store. At most one per
+ * conversation per UTC day (the turn's day): a second is a 409, so findings can't add up to
+ * a transcript. The text is one printable line of at most 200 characters.
+ */
+export function writeFinding(contextDir: string, f: { conversation: string; seq: number; measure: string; score: number | null; text: string }, now: Date = new Date()): Finding {
+  if (typeof f.text !== 'string' || !f.text.trim().length || f.text.length > MAX_FINDING || !PRINTABLE.test(f.text)) fail(`a finding's text is one line of 1-${MAX_FINDING} printable characters`);
+  return withDb(contextDir, (db) => db.transaction(() => {
+    createFindingsTable(db);
+    const t = db.prepare('SELECT at FROM conversation_turns WHERE conversation = ? AND seq = ?').get(f.conversation, f.seq) as { at: string } | undefined;
+    if (!t) fail('no such turn in this agent\'s store', 404);
+    const day = dayOf(t!.at);
+    if (db.prepare('SELECT 1 FROM findings WHERE conversation = ? AND day = ?').get(f.conversation, day)) {
+      fail(`this conversation already has its finding for ${day}: one per conversation per UTC day`, 409);
+    }
+    const out: Finding = {
+      id: `fd-${createHash('sha256').update(`${f.conversation}\0${day}`).digest('hex').slice(0, 12)}`,
+      conversation: f.conversation, seq: f.seq, day, measure: f.measure, score: f.score, text: f.text.trim(), at: now.toISOString(),
+    };
+    db.prepare('INSERT INTO findings (id, conversation, seq, day, measure, score, text, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+      out.id, out.conversation, out.seq, out.day, out.measure, out.score, out.text, out.at);
+    return out;
+  }).immediate());
+}
+
 // ─── Digests ────────────────────────────────────────────────────────────────
 
 const DIGEST_KEYS = ['summary', 'asks', 'decisions', 'tasks', 'projects', 'needs_owner'] as const;
@@ -585,8 +691,8 @@ export function daysOf(contextDir: string, conversation: string): DayRow[] {
 }
 
 /**
- * Findings on this agent's turns, newest first (conversations.md, "Introspection"). The review
- * job writes them, in a later task, into a `findings` table; until it exists this reads none.
+ * Findings on this agent's turns, newest first (conversations.md, "Introspection"): what
+ * POST /api/loom/findings kept (writeFinding). A store with no finding yet has no table, and reads none.
  */
 export function findingsOf(contextDir: string, opts: { conversation?: string; since?: string } = {}): Array<Record<string, unknown>> {
   return withReadonly(contextDir, [], (db) => {

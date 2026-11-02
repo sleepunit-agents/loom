@@ -1,7 +1,7 @@
 /**
  * The household store, `$LOOM_HOME/household.db` (docs/specs/conversations.md, "Where it
- * lives"): what's household-wide rather than one agent's. This slice keeps the `venues`
- * registry in it; scorecards, audit reads and review runs join it with the review work.
+ * lives"): what's household-wide rather than one agent's: the `venues` registry, and the
+ * review's `audit_reads` (src/audit.ts), `review_scores` and `scorecards` (src/review.ts).
  *
  * The registry is core's copy of every installed piece's `venues` declaration (src/offers.ts
  * checked it at install), so a conversation can always be shown, even once the piece that
@@ -59,6 +59,41 @@ export function openHouseholdDb(home: string): Database {
     orphaned    TEXT,
     updated     TEXT NOT NULL
   )`);
+  // The review's household-wide records (src/audit.ts, src/review.ts): who took which audit
+  // entry (never its text), the scores graders posted by ref, and the scorecard rows core
+  // aggregates from them and from turn metadata.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_reads (
+      ref          TEXT PRIMARY KEY,
+      run          TEXT NOT NULL,
+      at           TEXT NOT NULL,
+      agent        TEXT NOT NULL,
+      conversation TEXT NOT NULL,
+      seq          INTEGER NOT NULL,
+      UNIQUE (agent, conversation, seq)
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_reads_run ON audit_reads(run);
+    CREATE TABLE IF NOT EXISTS review_scores (
+      ref           TEXT NOT NULL,
+      grader_family TEXT NOT NULL,
+      score         INTEGER NOT NULL,
+      at            TEXT NOT NULL,
+      PRIMARY KEY (ref, grader_family)
+    );
+    CREATE TABLE IF NOT EXISTS scorecards (
+      day         TEXT NOT NULL,
+      model       TEXT NOT NULL,
+      family      TEXT NOT NULL,
+      harness     TEXT NOT NULL,
+      kind        TEXT NOT NULL,
+      measure     TEXT NOT NULL,
+      same_family INTEGER NOT NULL,
+      value       REAL NOT NULL,
+      n           INTEGER NOT NULL,
+      total       REAL NOT NULL,
+      PRIMARY KEY (day, model, family, harness, kind, measure, same_family)
+    );
+  `);
   return db;
 }
 

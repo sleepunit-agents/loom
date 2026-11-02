@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The audit log and review's records** (docs/specs/conversations.md, slices 2-3).
+  `$LOOM_HOME/audit.db` holds raw turn text, age-encrypted to a review key made
+  at first use (`review.key`/`review.pub`, 0600), written by the turn's writer
+  (`POST /api/loom/audit`) and deleted on `audit/done` or 7 days after its
+  turn (an hourly sweep, also at start). A review token takes entries
+  (`audit/take`), redacted (people P…, agents A…, models M…, harnesses H…),
+  posts `scores` by ref and at most one `findings` line per conversation per
+  UTC day. Core aggregates `scorecards` (graded, plus the metadata measures),
+  which the runtime reads with `GET /api/loom/scorecards`. household.json gains
+  `families` (model → family). Bundles and exports never carry the audit log
+  or its key.
+
 - **Offers.** A managed piece's `loom` block may declare what it offers through
   core: `sections` (a project section feed), `venues`, `mcp_tools` and
   `grants`. Each is checked at install (a bad one rejects the whole block; a

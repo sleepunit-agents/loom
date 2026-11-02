@@ -42,6 +42,12 @@ export interface Household {
    * from `members`, else the legacy `owner` as the one household owner.
    */
   members: Member[];
+  /**
+   * Model name → family (its provider: anthropic, openai, …), household.json's `families`
+   * (docs/specs/conversations.md, "Review"): a key is a model name, or a prefix ending in `*`.
+   * It adds to and overrides the built-in prefixes in src/review.ts (`familyOf`).
+   */
+  families?: Record<string, string>;
 }
 
 export interface Member {
@@ -170,7 +176,24 @@ export function loadHousehold(home: string): Household | null {
     default: def,
     owner: typeof raw.owner === 'string' ? raw.owner : undefined,
     members: parseMembers(raw, agents as string[], path),
+    ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
   };
+}
+
+/** A model family's name: lowercase letters, digits and dashes, at most 32. */
+export const FAMILY_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+function parseFamilies(v: unknown, path: string): Record<string, string> {
+  const bad = () => new HouseholdError(`${path}: families maps up to 64 model names (or prefixes ending in *) of at most 120 printable characters to family names (lowercase letters, digits, dashes)`);
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw bad();
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (entries.length > 64) throw bad();
+  const out: Record<string, string> = {};
+  for (const [k, f] of entries) {
+    if (!k.length || k.length > 120 || !/^[^\x00-\x1f\x7f]+$/.test(k) || typeof f !== 'string' || !FAMILY_NAME.test(f) || f === 'unknown') throw bad();
+    out[k.toLowerCase()] = f;
+  }
+  return out;
 }
 
 /**

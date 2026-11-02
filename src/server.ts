@@ -1447,8 +1447,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     'conversation_findings',
     {
       description:
-      'Graders\' findings on this agent\'s own turns, newest first: one checked line per conversation per day at most, ' +
-      'never a quote. For introspection: what to learn from. Empty until the household\'s review has run.',
+      'Graders\' findings on this agent\'s own turns, newest first: one line per conversation per UTC day at most, ' +
+      'from a grader that saw only redacted text. For introspection: what to learn from. Empty until the household\'s review has run.',
       inputSchema: z.object({ since: isoTime.optional().describe('Only findings after this time.') }).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

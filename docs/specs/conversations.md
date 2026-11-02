@@ -449,6 +449,49 @@ Slice 1 settled these points the doc left open:
 - **The Needs you ask.** It comes from core and has no buttons (the Inbox files it as an alert). It links to
   `loom:conversation/<id>`; the same page is also at `/a/<agent>/conversation/<id>`.
 
+### As built: slices 2 and 3 (t-1742)
+
+These slices settled these points the doc left open:
+
+- **Families.** A model's family comes from household.json's `families` (a model name, or a prefix ending in `*`,
+  to a family name) and then built-in prefixes in `src/review.ts` (`claude`, `opus`… → `anthropic`; `gpt`, `o3`… →
+  `openai`; …), and a `provider/` or `provider:` lead naming a family. A model none of them knows has no family (`null`
+  in a take; `unknown` on a scorecard row). When the runtime spec lands its model list, it can feed this setting.
+- **The audit write.** `{conversation, seq, text}`, text 1–40,000 characters; any other key is refused. The writer is
+  compared with the turn's recorded writer exactly (a house token is its own writer). Refused besides: an entry
+  already written (409), one already taken (409: it is never written again), and a turn more than 10 minutes in the
+  future or older than 7 days (409), since the sweep goes by the turn's `at`.
+- **The key pair.** The recipient is always derived from `review.key` (`age-keygen -y`); `review.pub` is rewritten to
+  match, never trusted. `age-keygen` is found as `age` is (`LOOM_AGE_KEYGEN`, else PATH, else beside `age`).
+- **The store.** `audit.db` holds exactly the six plaintext fields and the blob. "Taken" lives in household.db's
+  `audit_reads` (ref, run, at, agent, conversation, seq), whose rows also map a `ref` to its turn for scores and
+  findings. `audit.db` runs in rollback-journal mode with `secure_delete`, so a deleted entry's pages are zeroed.
+- **Runs.** A review run is its token: its id is a digest of the token. A take's refs answer only that run's
+  `scores`, `findings` and `done`; another run's are a 404 (done ignores them).
+- **Take.** `limit` defaults to 100. `kind` is the turn's kind. An entry from a conversation with someone other than
+  the owner also carries `only_families`: the families that may grade it, so the runtime knows before it sends a word
+  anywhere (core still refuses any other family's score). Without `age`, a take is a 503 and claims nothing. An entry
+  that doesn't decrypt is left out and stays claimed, so the sweep removes it.
+- **"Someone other than the owner."** A conversation whose `people` include anyone who isn't a household member
+  owning that agent, or with any turn `from` `unknown`.
+- **Redaction.** Beyond each card's name and slug, each word of the name of three letters or more is that person too
+  (a first name alone is still a name). A card whose slug is an agent id is that agent (A…). Agent ids are the
+  household's and every agent its conversations have seen. Whitespace inside a name matches any whitespace. A term
+  that matches more than one thing goes to agent, then person, model, harness.
+- **Scores.** One per ref and grader family (a second is 409). Only an agent turn with a model is scored (409
+  otherwise). A row's `day` is the turn's UTC day; `value` is the mean, `n` the count.
+- **Findings.** One per conversation per UTC day of the turn it's on. One printable line of at most 200
+  characters, not checked for quotes. It stores the turn, the measure `graded`, the mean score posted for its ref
+  (or null), and the text.
+- **Measures.** `computeMeasures(h, day)` replaces that day's metadata rows; the hourly sweep runs it for the last
+  three days, so `abandoned` settles after its 24 hours. Each sample is attributed to the model and harness of the
+  agent turn it measures (the reply, the run's first turn, or the latest agent turn before it), else `unknown`.
+  `round_trips` counts turns as the seq distance from the first message to the first answered reply.
+- **Scorecards.** `GET /api/loom/scorecards?since=YYYY-MM-DD` (default 30 days back), runtime only, at most 10,000
+  rows oldest first.
+- **Bundles.** On top of copying only what it names, an export refuses to write a bundle whose staging holds any
+  file named like the audit log or the review key pair.
+
 ## Open questions
 
 - **People who don't know.** Settled: no notice. The agent was present, as a coworker is. It doesn't lie when asked,
