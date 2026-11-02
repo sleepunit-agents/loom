@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bits, duration, plain } from '../../web/src/plain';
+import { bits, duration, opensTo, plain } from '../../web/src/plain';
 
 // The texts as the approvals and secrets pieces write them (live Inbox, 2026-10-29).
 describe('the Inbox in plain words', () => {
@@ -35,5 +35,24 @@ describe('the Inbox in plain words', () => {
     expect(bits('verify onterris/on-pond#178 for t-1099 round 4. Brief: ~/Art/notes/x.md.')).toEqual([
       { t: 'text', s: 'verify ' }, { t: 'pr', repo: 'onterris/on-pond', n: '178' }, { t: 'text', s: ' for ' }, { t: 'task', id: 't-1099' },
       { t: 'text', s: ' round 4. Brief: ' }, { t: 'path', s: '~/Art/notes/x.md' }, { t: 'text', s: '.' }]);
+  });
+});
+
+// Where an item opens, from the Inbox's row and from Home's banner alike (Jonathan, 2026-11-02: the banner went to the
+// Inbox, and the task's sheet said nothing he didn't know).
+describe('an item opens to the item itself', () => {
+  const key = '0123456789abcdef';
+  it('a task opens on its own page (the tasks piece\'s t-1273), not the Inbox', () => {
+    expect(opensTo({ key, kind: 'todo', page: 'task/t-1273' })).toEqual({ page: 'task/t-1273' });
+  });
+  it('an item with buttons opens on them: its sheet, at its own address in the Inbox', () => {
+    expect(opensTo({ key, kind: 'decision', page: 'loom:a/art/mind', actions: [{ action: 'ratify' }] })).toEqual({ sheet: `/inbox?i=${key}` });
+  });
+  it('an item with no page of its own, or only its piece\'s front page, opens its sheet', () => {
+    expect(opensTo({ key, kind: 'alert' })).toEqual({ sheet: `/inbox?i=${key}` });
+    expect(opensTo({ key, kind: 'alert', page: '' })).toEqual({ sheet: `/inbox?i=${key}` });
+  });
+  it('an answered one is history, told in its sheet', () => {
+    expect(opensTo({ key, kind: 'answered', page: 'request/r-1' })).toEqual({ sheet: `/inbox?i=${key}` });
   });
 });

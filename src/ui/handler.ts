@@ -1249,6 +1249,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
       const waiting = inboxItems(hh, pieces, opts.env).filter((it) => it.attention);
+      // Unread as the Inbox says it: Home's banner is the first one's row there.
+      if (waiting[0]) waiting[0].unread = !storeFor(opts).openedKeys(readerFor(opts, who)).has(waiting[0].key);
       const cards = agentCards(hh, pieces, agents, nowMs);
       const down = (st: AgentState) => cards.filter((c) => c.state === st).map((c) => c.label);
       const say = (names: string[], what: string) => `${names.join(' and ')} ${names.length === 1 ? 'is' : 'are'} ${what}`;
@@ -1258,7 +1260,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const moving = pieces.flatMap((p) => Object.entries(p.manifest.agents ?? {}).filter(([a, r]) => hh.agents.includes(a) && r.state === 'working')
         .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
       const d: HouseHome = {
-        headline, needs: waiting.length, firstNeed: waiting[0]?.text, cards, moving,
+        headline, needs: waiting.length, need: waiting[0], cards, moving,
         // Home is the agents and what's moving (Jonathan, 2026-10-27): the pieces' tiles live on their own pages.
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };

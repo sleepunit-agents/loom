@@ -1155,13 +1155,17 @@ describe('the household page', () => {
     const cookie = await login();
     const front = await data(cookie, '/');
     expect(front.home.needs).toBeGreaterThanOrEqual(1);
-    expect(front.home.firstNeed).toBe('Art E Fish wants to remember something');
-    // Home only links to the Inbox: no buttons of its own.
-    expect(JSON.stringify(front.home)).not.toContain('ratify');
+    // Home's banner is the item's Inbox row, so it carries the item itself: what opens it (its key) and how.
+    expect(front.home.need).toMatchObject({ text: 'Art E Fish wants to remember something', kind: 'decision', attention: true, unread: true });
     expect((front.chrome.shell.core as Data[]).find((c) => c.href === '/inbox')).toMatchObject({ label: 'Inbox', count: expect.any(Number) });
     const inbox = await data(cookie, '/inbox');
     const it = (inbox.items as Data[]).find((i) => i.text === 'Art E Fish wants to remember something');
+    // The same item as the Inbox's row: it has buttons, so the banner opens its sheet (/inbox?i=<key>), not the Inbox.
+    expect(front.home.need.key).toBe(it.key);
     expect(it).toMatchObject({ unread: true, attention: true });
+    // That address names the item, so the Inbox opens it there; and opened, it's read, on Home too.
+    expect((await data(cookie, `/inbox?i=${it.key}`)).open).toBe(it.key);
+    expect((await data(cookie, '/')).home.need).toMatchObject({ key: it.key, unread: false });
     expect(it.key).toMatch(/^[0-9a-f]{16}$/);
     expect(inbox.items[0].key).toBe(it.key);
     expect(JSON.stringify(it)).toContain('“Jonathan builds DnB on the Push 3 first”');
