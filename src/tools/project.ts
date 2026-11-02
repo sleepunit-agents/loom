@@ -13,8 +13,10 @@
  * A section whose store doesn't exist yet is absent; one whose source throws
  * becomes `{key, error}`; every other section still returns.
  *
- * Piece sections (`piece:<name>`, the section-feed seam) are a later slice:
- * `HubOptions.pieceSections` is the hook. The default contributes nothing.
+ * Piece sections (`piece:<name>`, the section-feed seam) come through
+ * `HubOptions.pieceSections`. `projectHubOf`'s default contributes nothing, so
+ * a caller that wants the installed pieces' feeds says so: the MCP tool and
+ * the CLI pass `managedPieceSections` (src/project-feeds.ts).
  */
 import { existsSync } from 'node:fs';
 import { conversationsSection } from '../conversations.js';
@@ -41,6 +43,7 @@ import {
   type HubMemory,
 } from '../backends/projects.js';
 import { openPeople } from './person.js';
+import { managedPieceSections } from '../project-feeds.js';
 
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 const DAY_MS = 86_400_000;
@@ -215,7 +218,7 @@ export type HubSection =
   | { key: 'notes'; items: HubNote[]; total: number }
   | { key: 'people'; items: HubPerson[] }
   | { key: 'conversations'; items: HubConversation[] }
-  | { key: string; groups: unknown[] }
+  | { key: string; label?: string; groups: unknown[] }
   | { key: string; error: string };
 
 /**
@@ -225,9 +228,9 @@ export type HubSection =
  * `piece:<name>` and turn its own failure into `{key, error}`; the hub orders
  * them by key after the core sections.
  */
-export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard; since: string }) => Promise<HubSection[]>;
+export type PieceSectionSource = (args: { contextDir: string; card: ProjectCard; since: string; nowMs: number }) => Promise<HubSection[]>;
 
-/** No section feeds yet: the seam's later slice (docs/specs/projects.md, criteria 10–11) plugs in here. */
+/** No piece sections: `projectHubOf`'s default. The installed pieces' feeds are `managedPieceSections`. */
 export const noPieceSections: PieceSectionSource = async () => [];
 
 export interface HubOptions {
@@ -389,7 +392,7 @@ export async function projectHubOf(
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {
-      pieces = await (opts.pieceSections ?? noPieceSections)({ contextDir, card: row.card, since });
+      pieces = await (opts.pieceSections ?? noPieceSections)({ contextDir, card: row.card, since, nowMs });
     } catch {
       pieces = [];
     }
@@ -437,8 +440,12 @@ export async function projectList(contextDir: string, input: { status?: string; 
   return text(() => listProjects(contextDir, input));
 }
 
-export async function projectHub(contextDir: string, input: { slug: string; since?: string; include_archived?: boolean }): Promise<string> {
-  return text(() => projectHubOf(contextDir, input));
+export async function projectHub(
+  contextDir: string,
+  input: { slug: string; since?: string; include_archived?: boolean },
+  opts: HubOptions = { pieceSections: managedPieceSections() },
+): Promise<string> {
+  return text(() => projectHubOf(contextDir, input, opts));
 }
 
 export async function projectOrphansText(contextDir: string): Promise<string> {
