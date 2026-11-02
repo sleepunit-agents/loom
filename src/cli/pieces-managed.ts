@@ -178,6 +178,15 @@ export function managedPieces(env: NodeJS.ProcessEnv): PieceRecord[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * The managed pieces whose loom block says `"role": "runtime"`. A runtime token is minted
+ * for, and reaches as, only the one such piece (docs/specs/conversations.md, "Who writes
+ * what"); with none or several, there's no runtime to be.
+ */
+export function runtimePieces(env: NodeJS.ProcessEnv): string[] {
+  return managedPieces(env).filter((r) => r.loom.role === 'runtime').map((r) => r.name);
+}
+
 export function readSettings(env: NodeJS.ProcessEnv, name: string): Record<string, string> {
   const root = piecesRoot(env);
   const s = root ? readJson(join(root, name, 'settings.json')) : undefined;
