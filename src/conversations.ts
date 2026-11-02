@@ -5,7 +5,7 @@
  */
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
-  ConversationError, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
+  ConversationError, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
   type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
 import { CORE_VENUE_ROWS, storeHome, venueLabel, venueOf } from './household-store.js';
@@ -182,7 +182,11 @@ export function conversationOwner(h: Household, v: Viewer, id: string): string |
  * label, people, last, the newest digest's summary, any open needs_owner, and `new` (last after
  * `since`). `since` marks, it doesn't filter. project_hub calls this with the project's slug.
  */
-export function conversationsSection(contextDir: string, slug: string, since: string, env: NodeJS.ProcessEnv = process.env): { key: 'conversations'; items: HubConversation[] } {
+export function conversationsSection(contextDir: string, slug: string, since: string, env: NodeJS.ProcessEnv = process.env): { key: 'conversations'; items: HubConversation[] } | null {
+  // No conversations store yet: the section is absent, as projects.md has it for a missing store.
+  const db = openConversationsReadonly(contextDir);
+  if (!db) return null;
+  db.close();
   const home = homeFor(contextDir, env);
   return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v)) };
 }

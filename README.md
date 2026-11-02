@@ -186,6 +186,21 @@ an agent's persistent state:
   CLI: `loom person show <slug>` / `loom person list`. Design:
   `docs/specs/person-cards.md`.
 
+- **Project cards** — `project_write`, `project_verify`, `project_archive`,
+  `project_restore`, `project_history`, `project_revision_restore`, `project`,
+  `project_list`, `project_hub`, `project_orphans`. A project card is the
+  condensed current state of an ongoing body of work (what it is, its goal,
+  where it stands, with freshness markers) plus `links`, the selectors its hub
+  reads with: aliases (other memory tags that mean this project), note
+  prefixes, an epic, repos, venues. The hub is computed at read, never stored:
+  memories tagged with any of the project's names, notes under its prefixes,
+  and person cards with a `where` field for it. A project's names (slug and
+  aliases) are unique across live projects, and recall scoped to any of them
+  sees memories tagged with any of them; `forget` and `memory_list` stay exact.
+  `identity({project})` adds a `# This project` block with the card.
+  `project_orphans` lists memory tags no project answers to. CLI:
+  `loom project show|list|hub|orphans`. Design: `docs/specs/projects.md`.
+
 Everything lives on disk as plain markdown plus a single SQLite file.
 No daemon, no external service, no GPU.
 

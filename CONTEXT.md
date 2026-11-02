@@ -203,6 +203,33 @@ _Avoid_: comment, feedback (that's a memory category)
 Grades per model, family, harness and venue kind, aggregated across the
 household. Numbers and fixed labels only.
 _Avoid_: leaderboard, benchmark
+## Projects
+
+**Project**:
+An ongoing body of work with a goal, identified by a stable slug (`pond`). Its card is the condensed current state;
+its hub is everything filed under it, read live.
+_Avoid_: epic (a task-store row), workspace, repo, initiative
+
+**Project card**:
+The condensed current state of a project: what it is, its goal, where it stands, and the selectors its hub reads with.
+_Avoid_: project page (that's the hub as shown), brief, charter
+
+**Hub**:
+A project's sections, computed at read: its memories, notes, people and conversations, and what pieces contribute.
+_Avoid_: dashboard, feed, timeline
+
+**Project name**:
+A slug or an alias. Every project name resolves to exactly one live project. **Live** means not archived, whatever its
+`status`: a paused or done project keeps its names.
+_Avoid_: tag (that's the memory field a name matches), key
+
+**Section feed** (seam):
+A managed piece's contribution to a hub: a command loom runs that returns grouped items for one project.
+_Avoid_: plugin, integration, widget
+
+**Conversation digest**:
+A body run's own summary of its conversation, a core record: see **Digest** under Conversations.
+_Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
 
 ## Knowledge
 

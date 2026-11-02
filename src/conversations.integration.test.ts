@@ -24,6 +24,10 @@ import { listVenues, syncVenues, venueOf } from './household-store.js';
 import { coreAsks, conversationAsks } from './ui/handler.js';
 import { tapeForContext } from './backends/episodes.js';
 import { remember } from './tools/remember.js';
+import { projectHubOf } from './tools/project.js';
+import { openProjectsStore } from './backends/projects.js';
+import { openPeopleStore } from './backends/people.js';
+import { closeAllBackends } from './backends/index.js';
 import { ROLE_ROUTES, AGENT_ROUTES } from './transport/role-routes.js';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
@@ -566,6 +570,49 @@ describe('criterion 12: the projects hub\'s conversations section', () => {
     expect(s.items[1].needs_owner).toBeNull();
     expect(conversationsSection(dir, 'hockey', since).items).toHaveLength(3);
     expect(conversationsSection(dir, 'mud', since).items).toEqual([]);
+  });
+});
+
+describe('criterion 12, end to end: project_hub carries the conversations core section after people', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'loom-conv-hub-e2e-')); });
+  afterEach(() => { closeAllBackends(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('real project cards: an alias resolves to the slug, links.venues is the fallback, the hub lists, orders, caps and marks new', async () => {
+    // The memory store, migrated (the project and conversation tables with it), and a person store.
+    await remember(dir, { category: 'project', title: 'unrelated', content: 'x', project: 'elsewhere' });
+    openPeopleStore(dir)!.close();
+    const store = openProjectsStore(dir)!;
+    store.write({ slug: 'pond', name: 'Pond', links: { aliases: ['on-pond'], venues: ['slack:C0POND'] } });
+    store.write({ slug: 'hockey', name: 'Hockey' });
+    store.close();
+
+    // 22 conversations named by the alias, one by the venue fallback, one in hockey, one in none.
+    for (let i = 1; i <= 22; i++) {
+      const { conversation } = recordTurn(dir, 'art', { ...msg(`p${i}`, i * 60, `person-${i}`), label: `Pond ${i}` }, 'runtime:shuttle');
+      expect(writeDigest(dir, { conversation, run: 'r' }, { summary: `pond ${i}`, projects: ['on-pond'] }).projects).toEqual(['pond']);
+    }
+    const chan = recordTurn(dir, 'art', { ...msg('C0POND', 30 * 60), label: 'Pond channel' }, 'runtime:shuttle').conversation;
+    expect(writeDigest(dir, { conversation: chan, run: 'r' }, { summary: 'standup', needs_owner: 'pick a date' }).projects).toEqual(['pond']);
+    const hk = recordTurn(dir, 'art', msg('h1', 40 * 60), 'runtime:shuttle').conversation;
+    writeDigest(dir, { conversation: hk, run: 'r' }, { summary: 'hockey', projects: ['hockey'] });
+    const none = recordTurn(dir, 'art', msg('n1', 50 * 60), 'runtime:shuttle').conversation;
+    writeDigest(dir, { conversation: none, run: 'r' }, { summary: 'nothing filed' });
+    expect(() => writeDigest(dir, { conversation: none, run: 'r2' }, { summary: 'x', projects: ['mud'] })).toThrow(/no live project/);
+
+    const since = at(20 * 60 - 1);
+    const r = await projectHubOf(dir, { slug: 'on-pond', since });
+    if (!('sections' in r)) throw new Error('no sections');
+    expect(r.resolved_from).toBe('on-pond');
+    const keys = r.sections.map((x) => x.key);
+    expect(keys.indexOf('conversations')).toBe(keys.indexOf('people') + 1);
+    const conv = r.sections.find((x) => x.key === 'conversations') as { items: Array<{ label: string | null; new: boolean; needs_owner: string | null; venue: string }> };
+    expect(conv.items).toHaveLength(20);
+    expect(conv.items.map((i) => i.label)).toEqual(['Pond channel', ...Array.from({ length: 19 }, (_, k) => `Pond ${22 - k}`)]);
+    expect(conv.items[0]).toMatchObject({ needs_owner: 'pick a date', new: true, venue: 'slack' });
+    expect(conv.items.filter((i) => i.new).length).toBe(4);   // the channel, 22, 21, 20
+    const hockey = await projectHubOf(dir, { slug: 'hockey', since });
+    expect(('sections' in hockey) && (hockey.sections.find((x) => x.key === 'conversations') as { items: unknown[] }).items).toHaveLength(1);
   });
 });
 

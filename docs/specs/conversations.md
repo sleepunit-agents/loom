@@ -440,8 +440,11 @@ Slice 1 settled these points the doc left open:
   - `remove --purge` orphans too.
   - An orphaned name may be declared by another piece later, which then takes it over.
   - The daemon reconciles the registry at start (`syncVenues`).
-- **Digest projects.** A name that resolves to no live project is rejected. Until the projects store exists (no
-  `project_names` table), names are kept as written and there's no `links.venues` fallback.
+- **Digest projects.** Names resolve through `project_names` (projects.md), so an alias is stored as its slug, and
+  a name that is no live project's is rejected. The fallback reads the live cards' `links.venues`. A store from
+  before the projects migration has no names to resolve: names are kept as written, with no fallback.
+- **The hub section.** `project_hub` puts `conversations` after `people` (`conversationsSection`, called with the
+  project's slug). It's absent when the agent has no conversations store.
 - **Findings.** `conversation_findings` reads a `findings` table when there is one; slice 3 creates it.
 - **The Needs you ask.** It comes from core and has no buttons (the Inbox files it as an alert). It links to
   `loom:conversation/<id>`; the same page is also at `/a/<agent>/conversation/<id>`.

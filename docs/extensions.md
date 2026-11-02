@@ -7,6 +7,7 @@ program that works with loom without becoming part of it.
 
 ```
 core       loom: identity, memory, knowledge, person cards, conversations. Nothing else.
+core       loom: identity, memory, knowledge, person cards, project cards. Nothing else.
 piece      a swappable extension: its own program, its own store, reached as `loom <piece>`.
 instance   glue for one agent: its routines, hooks, which pieces it installs and how they're set up.
 ```
