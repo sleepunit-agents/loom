@@ -80,7 +80,8 @@ export interface PieceSkip {
   reason: string;
 }
 
-type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?: number | null };
+/** A non-zero exit keeps what the piece printed (`stdout`): an offer may say why it failed there. */
+type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?: number | null; stdout?: string };
 type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
@@ -161,7 +162,6 @@ const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
  * pool of their own, so a slow runtime can't hold the page's pieces: four at once, sixteen
  * waiting, and past that a call is refused as busy.
  */
-export const LONG_OFFER_TIMEOUT_MS = 120_000;
 export const MAX_LONG_RUNNING = 4;
 export const MAX_LONG_WAITING = 16;
 const longPool = new Pool(MAX_LONG_RUNNING, MAX_LONG_WAITING);
@@ -208,7 +208,7 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
-      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code });
+      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
       drain = setTimeout(done, DRAIN_MS);
@@ -222,20 +222,21 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
  * MAX_RUNNING at once, in the page's pool. In the piece's own environment, and
  * with a store grant when there's a caller. The runner for offers
  * (src/offers-registry.ts, runOffer): a failure says why, an exit says its code.
- * `long` runs it in the long offers' pool instead, for LONG_OFFER_TIMEOUT_MS
- * (a full pool answers `busy`).
+ * `long` runs it in the long offers' pool instead, for `timeoutMs` (a full
+ * pool answers `busy`). A non-zero exit says its code and keeps the stdout.
  */
 export async function runPieceBin(
   path: string, args: string[], env: NodeJS.ProcessEnv,
-  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; long?: boolean } = {},
-): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; long?: boolean; timeoutMs?: number } = {},
+): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
   const env1 = withGrant(env, path, opts.caller);
   const r = opts.long
-    ? await longPool.run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: LONG_OFFER_TIMEOUT_MS }))
-    : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes });
+    ? await longPool.run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs }))
+    : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs });
   if (r === null) return { ok: false, reason: 'busy' };
   if (r.ok) return r;
-  return { ok: false, reason: r.reason === 'no ui' ? `exit ${r.code ?? 'by signal'}` : r.reason };
+  if (r.reason !== 'no ui') return { ok: false, reason: r.reason };
+  return { ok: false, reason: `exit ${r.code ?? 'by signal'}`, ...(typeof r.code === 'number' ? { exit: r.code } : {}), ...(r.stdout !== undefined ? { stdout: r.stdout } : {}) };
 }
 
 function json(stdout: string): unknown {

@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   runtime), each refused with a 403 that writes nothing; then forwards it to
   the one piece offering the new `delivery` offer key (a runtime-role piece
   only, one per household) under 120 s and 64 KB, and passes its answer
-  back. Idempotent on (calling piece, id) for 24 hours, kept in
-  `household.db`; a failed forward isn't kept (t-1744).
+  back (a runtime's own `{status: 5xx, error}` passes through). Idempotent on
+  (calling piece, id) for 24 hours, kept in `household.db`; a failed forward
+  isn't kept. `GET /api/loom/venues` gives the runtime every venue with its
+  `send` argv. Offer lookups by name use own keys only (t-1744).
 
 - **Offers.** A managed piece's `loom` block may declare what it offers through
   core: `sections` (a project section feed), `venues`, `mcp_tools` and

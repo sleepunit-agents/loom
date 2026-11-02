@@ -6,7 +6,8 @@
  *
  * The stub runtime appends every stdin it gets to $LOOM_HOME/runtime-calls.jsonl, so a test
  * can see whether core called it, and how often. $LOOM_HOME/runtime-mode picks its answer:
- * ok (the default), fail (exit 1), bad (an answer that isn't the contract's), slow.
+ * ok (the default), fail (exit 1, nothing said), said (exit 1 with {status: 503, error}),
+ * bad (an answer that isn't the contract's), slow.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -45,6 +46,8 @@ process.stdin.on('end', () => {
   const n = fs.readFileSync(home + '/runtime-calls.jsonl', 'utf-8').trim().split('\\n').length;
   const mode = fs.existsSync(home + '/runtime-mode') ? fs.readFileSync(home + '/runtime-mode', 'utf-8').trim() : 'ok';
   if (mode === 'fail') { process.exit(1); }
+  if (mode === 'said') { console.log(JSON.stringify({ status: 503, error: 'no house free for art' })); process.exit(1); }
+  if (mode === 'said-badly') { console.log(JSON.stringify({ status: 404, error: 'not a 5xx' })); process.exit(1); }
   if (mode === 'bad') { console.log(JSON.stringify({ conversation: 'nope', seq: 0, body: 'eaten' })); return; }
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
   if (mode === 'slow') setTimeout(answer, 400); else answer();
@@ -65,8 +68,8 @@ function piece(home: string, name: string, loom: Record<string, unknown>, body =
   symlinkSync(bin, join(home, 'pieces', 'bin', `loom-${name}`));
 }
 
-const RUNTIME_LOOM = { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { relay: { label: 'Relay', kind: 'agent' } } };
-const SLACK_LOOM = { venues: { slack: { label: 'Slack', kind: 'live' } } };
+const RUNTIME_LOOM = { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } };
+const SLACK_LOOM = { venues: { slack: { label: 'Slack', kind: 'live', send: ['loom-slack', 'send'] }, 'slack-huddle': { label: 'Huddle', kind: 'live' } } };
 
 const AT = '2026-11-02T12:00:00.000Z';
 /** A person's Slack message to art: the venue adapter's delivery. */
@@ -91,7 +94,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'bad' | 'slow') => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'slow') => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -149,9 +152,9 @@ describe('POST /api/loom/deliver', () => {
       expect(calls().map((c) => c.stdin.source)).toEqual(['clock', 'runtime', 'runtime']);
     });
 
-    it('a note (mid-turn) and a label-less message are deliveries too', async () => {
-      const { label: _l, ...noLabel } = slackMsg('m-note');
-      expect((await post(tok.slack, { ...noLabel, kind: 'note' })).status).toBe(200);
+    it('a label-less message is a delivery too', async () => {
+      const { label: _l, ...noLabel } = slackMsg('m-nolabel');
+      expect((await post(tok.slack, noLabel)).status).toBe(200);
     });
   });
 
@@ -195,6 +198,19 @@ describe('POST /api/loom/deliver', () => {
       expect(calls()).toHaveLength(3);
     });
 
+    it('a runtime that says it failed (exit 1, {status: 5xx, error}) is that status, and isn\'t kept', async () => {
+      mode('said');
+      expect(await post(tok.slack, slackMsg('m-said'))).toEqual({ status: 503, body: { error: 'no house free for art' } });
+      // Saying a status outside 5xx is no contract answer: core's 502.
+      mode('said-badly');
+      const r = await post(tok.slack, slackMsg('m-said'));
+      expect(r.status).toBe(502);
+      expect(r.body.error).toMatch(/failed \(exit 1\)/);
+      mode('ok');
+      expect((await post(tok.slack, slackMsg('m-said'))).status).toBe(200);
+      expect(calls()).toHaveLength(3);
+    });
+
     it('the table is in household.db; an answer over 24 hours old is neither replayed nor kept', () => {
       const t0 = Date.parse(AT);
       keepAnswer(h.home, 'slack', 'old', { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' }, t0);
@@ -224,6 +240,20 @@ describe('POST /api/loom/deliver', () => {
       await refused(tok.clock, slackMsg('x-1'), /clock doesn't declare venue slack/);
       await refused(tok.slack, relay('x-2'), /slack doesn't declare venue relay/);
       await refused(tok.slack, slackMsg('x-3', { venue: 'discord' }), /slack doesn't declare venue discord/);
+    });
+
+    it('a venue named after an inherited key (constructor, toString…) is no declared venue', async () => {
+      // slack declares venues, so a prototype lookup on its map would find Object's members.
+      for (const venue of ['constructor', 'tostring', 'hasownproperty', 'valueof']) {
+        await refused(tok.slack, slackMsg(`p-${venue}`, { venue }), new RegExp(`slack doesn't declare venue ${venue}`));
+      }
+      // Not a venue name at all: refused at the body, and nothing runs either.
+      for (const venue of ['__proto__', 'toString']) {
+        const r = await post(tok.slack, slackMsg(`p-${venue}`, { venue }));
+        expect(r.status).toBe(400);
+        expect(r.body.error).toMatch(/venue is a venue name/);
+      }
+      expect(calls()).toHaveLength(0);
     });
 
     it('session is no one\'s to deliver into; wake carries only a schedule\'s knock', async () => {
@@ -261,7 +291,8 @@ describe('POST /api/loom/deliver', () => {
       ['an id over 200', { id: 'i'.repeat(201) }, /id is required/],
       ['text over 40,000', { text: 't'.repeat(40_001) }, /text is required: the message, 1-40000/],
       ['no text', { text: undefined }, /text is required/],
-      ['a reply (the runtime records those, not a source)', { kind: 'reply' }, /kind is one of message, wake, note/],
+      ['a reply (the runtime records those, not a source)', { kind: 'reply' }, /kind is one of message, wake/],
+      ['a note (the agent\'s own turn)', { kind: 'note' }, /a note is the agent's own turn/],
       ['an unknown key', { extra: 1 }, /no key "extra"/],
       ['a place over 200', { place: 'p'.repeat(201) }, /place is 1-200/],
       ['a local time', { at: '2026-11-02T12:00:00' }, /at is an ISO-8601 UTC time/],
@@ -282,6 +313,31 @@ describe('POST /api/loom/deliver', () => {
 
     it('a browser request is refused', async () => {
       expect((await post(tok.slack, slackMsg('b-2'), { origin: 'https://evil.example' })).status).toBe(403);
+    });
+  });
+
+  describe('GET /api/loom/venues (the runtime\'s view of every venue)', () => {
+    const get = async (token: string | undefined, method = 'GET') => {
+      const r = await fetch(`${base}/api/loom/venues`, { method, headers: token ? { authorization: `Bearer ${token}` } : {} });
+      return { status: r.status, body: await r.json() as Record<string, unknown> };
+    };
+
+    it('answers core\'s venues and each declared one with its kind, piece and send argv', async () => {
+      const r = await get(tok.runtime);
+      expect(r.status).toBe(200);
+      expect(r.body).toEqual({ venues: [
+        { name: 'session', label: 'Session', kind: 'live', piece: 'loom' },
+        { name: 'wake', label: 'Wake', kind: 'scheduled', piece: 'loom' },
+        { name: 'relay', label: 'Relay', kind: 'agent', piece: 'runtime', send: ['loom-runtime', 'relay-send'] },
+        { name: 'slack', label: 'Slack', kind: 'live', piece: 'slack', send: ['loom-slack', 'send'] },
+        { name: 'slack-huddle', label: 'Huddle', kind: 'live', piece: 'slack' },
+      ] });
+    });
+
+    it('only the runtime\'s token, and only GET', async () => {
+      for (const t of [tok.owner, tok.art, tok.slack, tok.runtimePiece, tok.peer]) expect((await get(t)).status).toBe(403);
+      expect((await get(undefined)).status).toBe(401);
+      expect((await get(tok.runtime, 'POST')).status).toBe(405);
     });
   });
 

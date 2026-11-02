@@ -153,6 +153,17 @@ describe('offerConflicts (against the other installed pieces)', () => {
     expect(offerConflicts('other', { venues: { relay: { label: 'R', kind: 'agent' } } }, others)).toMatch(/venue relay is already the runtime piece's/);
   });
 
+  it('an inherited key is no other piece\'s name: own keys only', () => {
+    for (const name of ['constructor', 'tostring', 'valueof']) {
+      expect(offerConflicts('other', { venues: { [name]: { label: 'X', kind: 'live' } } }, others)).toBeUndefined();
+      expect(offerConflicts('other', { mcp_tools: { [name]: tool as never } }, others)).toBeUndefined();
+    }
+    // The parsers' maps have no prototype either.
+    const b = parse({ venues: { constructor: venue } }) as Offers;
+    expect(Object.getPrototypeOf(b.venues)).toBeNull();
+    expect(b.venues?.toString).toBeUndefined();
+  });
+
   it('refuses a second delivery piece; the piece itself may update', () => {
     const withDelivery = [{ name: 'runtime', loom: { delivery: ['loom-runtime', 'deliver'] } }];
     expect(offerConflicts('rival', { delivery: ['loom-rival', 'deliver'] }, withDelivery)).toMatch(/the runtime piece already offers delivery: there is only one/);

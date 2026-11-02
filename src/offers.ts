@@ -84,6 +84,18 @@ export const RUNTIME_VENUE = 'relay';
  */
 export const isCoreMcpTool = (name: string): boolean => (TOOLS as readonly string[]).includes(name) || name.startsWith('loom_');
 
+/**
+ * A declared name in an offer map (venues, mcp_tools), looked up as the map's own key only: a
+ * name like `constructor` or `toString` must never find what an object inherits. The maps read
+ * back from piece.json are plain objects, so every lookup goes through this.
+ */
+export function ownEntry<T>(map: Record<string, T> | undefined, name: string): T | undefined {
+  return map !== undefined && Object.hasOwn(map, name) ? map[name] : undefined;
+}
+
+/** A fresh map with no prototype, for the offer maps the parsers build. */
+const ownMap = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 
@@ -122,7 +134,7 @@ function parseVenues(raw: unknown, bins: readonly string[], role: string | undef
   if (!isObject(raw)) return 'loom.venues is not an object';
   const names = Object.keys(raw);
   if (names.length > MAX_VENUES) return `loom.venues declares at most ${MAX_VENUES} venues`;
-  const out: Record<string, VenueOffer> = {};
+  const out = ownMap<VenueOffer>();
   for (const name of names) {
     if (!VENUE_NAME.test(name)) return `a venue's name is lowercase letters, digits and dashes, starting with a letter, at most 32: ${JSON.stringify(name)}`;
     if (CORE_VENUES.includes(name)) return `venue ${name} is core's own`;
@@ -149,7 +161,7 @@ function parseMcpTools(raw: unknown, bins: readonly string[]): Record<string, Mc
   if (!isObject(raw)) return 'loom.mcp_tools is not an object';
   const names = Object.keys(raw);
   if (names.length > MAX_MCP_TOOLS) return `loom.mcp_tools offers at most ${MAX_MCP_TOOLS} tools`;
-  const out: Record<string, McpToolOffer> = {};
+  const out = ownMap<McpToolOffer>();
   for (const name of names) {
     if (!TOOL_NAME.test(name)) return `a tool's name is lowercase letters, digits and underscores, starting with a letter, at most 64: ${JSON.stringify(name)}`;
     if (isCoreMcpTool(name)) return `tool ${name} is core's own`;
@@ -222,10 +234,10 @@ export function offerConflicts(name: string, offers: Offers, installed: readonly
   for (const other of installed) {
     if (other.name === name) continue;
     for (const v of Object.keys(offers.venues ?? {})) {
-      if (other.loom.venues?.[v]) return `venue ${v} is already the ${other.name} piece's`;
+      if (ownEntry(other.loom.venues, v)) return `venue ${v} is already the ${other.name} piece's`;
     }
     for (const t of Object.keys(offers.mcp_tools ?? {})) {
-      if (other.loom.mcp_tools?.[t]) return `tool ${t} is already the ${other.name} piece's`;
+      if (ownEntry(other.loom.mcp_tools, t)) return `tool ${t} is already the ${other.name} piece's`;
     }
     if (offers.grants && other.loom.grants) return `the ${other.name} piece is already the grants authority: there is only one`;
     if (offers.delivery && other.loom.delivery) return `the ${other.name} piece already offers delivery: there is only one`;

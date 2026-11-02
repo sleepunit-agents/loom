@@ -30,6 +30,12 @@ export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
  */
 export const AGENT_ROUTES: readonly string[] = ['conversations/turn'];
 
+/**
+ * GET /api/loom/<path>: what core tells the runtime (the only GET under /api). `venues`: every
+ * venue with its kind, piece and `send` argv (household-store.ts, venueDirectory).
+ */
+export const RUNTIME_GET_ROUTES: readonly string[] = ['venues'];
+
 /** Whether `role` may call POST /api/loom/<path>. */
 export function roleReaches(role: NarrowRole, path: string): boolean {
   return ROLE_ROUTES[role].includes(path);

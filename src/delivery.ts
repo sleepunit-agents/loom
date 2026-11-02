@@ -22,7 +22,7 @@ import { ConversationError, parseTurn, type From } from './backends/conversation
 import { readRecord } from './cli/pieces-managed.js';
 import type { Household } from './household.js';
 import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
-import { RUNTIME_VENUE, offersIn } from './offers.js';
+import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
 import { deliveryPiece, grantsAuthority, runOffer } from './offers-registry.js';
 
 export const MAX_DELIVERY_ID = 200;
@@ -31,11 +31,13 @@ export const MAX_DELIVERY_TEXT = 40_000;
 export const DELIVERY_REPLAY_MS = 24 * 60 * 60 * 1000;
 /** The deliver body's cap: 40,000 characters of text can be 160 KB of UTF-8, plus the rest. */
 export const DELIVER_MAX_BYTES = 256 * 1024;
-/** The runtime's answer's cap (the mcp_tools limit). */
-export const DELIVERY_ANSWER_MAX_BYTES = 64 * 1024;
 
-export type DeliverKind = 'message' | 'wake' | 'note';
-const DELIVER_KINDS: readonly DeliverKind[] = ['message', 'wake', 'note'];
+/**
+ * A source delivers a `message` or a `wake`. Not a `note`: in core's record that's the agent's
+ * own mid-turn turn (conversations.md), which a source can't write.
+ */
+export type DeliverKind = 'message' | 'wake';
+const DELIVER_KINDS: readonly DeliverKind[] = ['message', 'wake'];
 const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text'] as const;
 
 /** A checked deliver body (agent-runtime.md, "The deliver contract"). */
@@ -84,13 +86,12 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   if (typeof raw.id !== 'string' || !raw.id.length || raw.id.length > MAX_DELIVERY_ID) return `id is required: the source's own id for the message, 1-${MAX_DELIVERY_ID} characters`;
   if (typeof raw.agent !== 'string' || !raw.agent.length) return 'agent is required: one of the household\'s agents';
   if (typeof raw.text !== 'string' || !raw.text.length || raw.text.length > MAX_DELIVERY_TEXT) return `text is required: the message, 1-${MAX_DELIVERY_TEXT} characters`;
+  if (raw.kind === 'note') return 'kind is message or wake: a note is the agent\'s own turn, which a source doesn\'t write';
   if (!DELIVER_KINDS.includes(raw.kind as DeliverKind)) return `kind is one of ${DELIVER_KINDS.join(', ')}`;
   // The key and turn fields are conversations.md's: the turn parser checks them the same way.
-  // It reads a `note` as the agent's own turn (with a run and an outcome); a delivered note is
-  // someone's mid-turn word to the body, so its other fields are checked as a message's.
   let turn;
   try {
-    turn = parseTurn({ venue: raw.venue, place: raw.place, at: raw.at, from: raw.from, kind: raw.kind === 'note' ? 'message' : raw.kind, ...(raw.label !== undefined ? { label: raw.label } : {}) }, raw.agent);
+    turn = parseTurn({ venue: raw.venue, place: raw.place, at: raw.at, from: raw.from, kind: raw.kind, ...(raw.label !== undefined ? { label: raw.label } : {}) }, raw.agent);
   } catch (e) {
     if (e instanceof ConversationError) return e.message;
     throw e;
@@ -138,7 +139,8 @@ export function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: De
   const rec = readRecord(env, caller.piece);
   if (!rec) return refuse(403, `forbidden: ${caller.piece} isn't an installed managed piece`);
   const isRuntime = rec.loom.role === 'runtime';
-  const declared = offersIn(rec.loom).venues?.[d.venue];
+  // Own keys only: a venue named `constructor` must not find Object's.
+  const declared = ownEntry(offersIn(rec.loom).venues, d.venue);
   // The venue. `session` is the harness's own; `wake` is core's (conversations.md: it may not be
   // declared), so any piece may deliver a schedule's knock on it; any other, only its declarer.
   if (d.venue === 'session') return refuse(403, 'forbidden: venue session is a harness\'s own session; nothing is delivered into it');
@@ -205,6 +207,18 @@ export function sweepDeliveries(home: string, nowMs = Date.now()): number {
 
 // ─── The route ──────────────────────────────────────────────────────────────
 
+/**
+ * The runtime saying it failed (loom-box's side of the contract): exit 1 with
+ * `{status: 500-599, error}` on stdout. Anything else from a failed run is core's 502.
+ */
+export function runtimeFailure(exit: number | undefined, answer: unknown): { status: number; error: string } | undefined {
+  if (exit !== 1 || !isObject(answer)) return undefined;
+  const { status, error } = answer;
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 500 || status > 599) return undefined;
+  if (typeof error !== 'string' || !error.length) return undefined;
+  return { status, error: error.slice(0, 500) };
+}
+
 /** Deliveries in flight, by piece and id: a repeat that arrives meanwhile waits for the first. */
 const inFlight = new Map<string, Promise<DeliverResult>>();
 
@@ -212,7 +226,8 @@ const inFlight = new Map<string, Promise<DeliverResult>>();
  * POST /api/loom/deliver as `caller` (the route already resolved its token to a piece).
  * 400 for a body that isn't the contract's; 403 for a delivery the caller may not make; 503
  * with no delivery piece; then the kept answer for a repeat, or the runtime's answer. A
- * runtime that fails, times out or is busy is a 5xx (502, 504, 503), never kept.
+ * runtime that says it failed is its own 5xx; one that fails otherwise or answers something
+ * else is a 502, a timeout a 504, a full pool a 503. None of those is kept.
  */
 export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, raw: unknown, nowMs: () => number = Date.now): Promise<DeliverResult> {
   const d = parseDeliver(raw);
@@ -234,10 +249,12 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
     const r = await runOffer(env, target.piece, target.argv, {
       stdin: JSON.stringify({ source: caller.piece, ...d }),
       parse: parseDeliverAnswer,
-      maxBytes: DELIVERY_ANSWER_MAX_BYTES,
-      long: true,
+      kind: 'delivery',
     });
     if (!r.ok) {
+      // The runtime's own failure: exit 1 with {status: 5xx, error} on stdout, passed through as that status.
+      const said = runtimeFailure(r.exit, r.answer);
+      if (said) return refuse(said.status, said.error);
       if (r.error === 'busy') return refuse(503, `unavailable: the delivery piece (${target.piece}) is busy; try again shortly`);
       if (r.error === 'timed out') return refuse(504, `timeout: the delivery piece (${target.piece}) didn't answer within 120 s`);
       return refuse(502, `bad-gateway: the delivery piece (${target.piece}) failed (${r.error})`);

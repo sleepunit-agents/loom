@@ -46,11 +46,11 @@ import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
-import { AGENT_ROUTES, DELIVER_ROUTE, ROLE_ROUTES, roleReaches } from './role-routes.js';
+import { AGENT_ROUTES, DELIVER_ROUTE, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
-import { syncVenuesQuietly } from '../household-store.js';
+import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
@@ -444,6 +444,23 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    * piece, as its subject; a peer never.
    */
   async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
+    // GET /api/loom/venues (role-routes.ts, RUNTIME_GET_ROUTES): the runtime's view of every venue.
+    if (piece === 'loom' && RUNTIME_GET_ROUTES.includes(subpath)) {
+      if (req.method !== 'GET') return sendError(res, 405, `method-not-allowed: GET /api/loom/${subpath}`);
+      if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+      if (req.headers['authorization'] === undefined) return sendError(res, 401, 'unauthorized: a bearer token is required');
+      const role = roleFor(req.headers['authorization']);
+      if ('status' in role) return sendError(res, role.status, role.error);
+      if (role.kind !== 'runtime') return sendError(res, 403, `forbidden: GET /api/loom/${subpath} takes the runtime's token`);
+      try {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ venues: venueDirectory(process.env) }));
+      } catch (e) {
+        process.stderr.write(`loom: couldn't list venues: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t list venues; see the daemon log');
+      }
+      return;
+    }
     if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);
     // No token at all: only a path the piece declared open to strangers (its loom block, fixed at
     // install), with a small body, as {kind:'stranger', address}. Everything else still needs a token.

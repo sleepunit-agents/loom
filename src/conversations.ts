@@ -114,7 +114,7 @@ export async function conversationView(contextDir: string, agent: string, id: st
   const label = venueLabel(home, c.venue);
   let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label) };
   let v;
-  try { v = CORE_VENUE_ROWS[c.venue] ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
+  try { v = Object.hasOwn(CORE_VENUE_ROWS, c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
     const out = await runOffer(env, v.piece, v.render, { args: ['--conversation', id], parse: parseFeed, caller: { kind: 'agent', agent } });
     render = out.ok ? { by: 'venue', feed: out.value } : { ...render, error: `${v.piece}: ${out.error}` };

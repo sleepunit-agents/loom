@@ -122,7 +122,8 @@ export function listVenues(home: string): VenueRow[] {
 
 /** A venue by name: core's own, or the registry's row (orphaned or not); undefined when unknown. */
 export function venueOf(home: string | undefined, name: string): VenueRow | undefined {
-  if (CORE_VENUE_ROWS[name]) return CORE_VENUE_ROWS[name];
+  // Own keys only: a venue named `constructor` is no core venue.
+  if (Object.hasOwn(CORE_VENUE_ROWS, name)) return CORE_VENUE_ROWS[name];
   if (!home || !existsSync(join(home, HOUSEHOLD_DB))) return undefined;
   const db = openHouseholdDb(home);
   try {
@@ -141,4 +142,38 @@ export function venueLabel(home: string | undefined, name: string): string {
 /** Sync after a piece change, never failing it: a failed sync is said, and the daemon's next start repairs it. */
 export function syncVenuesQuietly(env: NodeJS.ProcessEnv, say: (s: string) => void = (s) => process.stderr.write(s)): void {
   try { syncVenues(env); } catch (e) { say(`loom: couldn't update the venues registry (${(e as Error).message}); the daemon's next start does\n`); }
+}
+
+/** A venue as the runtime is told it (GET /api/loom/venues): where to send an agent's words. */
+export interface VenueEntry {
+  name: string;
+  label: string;
+  kind: VenueKind;
+  /** The piece that declares it, or `loom` for core's own (session, wake). */
+  piece: string;
+  /** Its declared `send` argv (agent-runtime.md, "Delivery", Outbound), while its piece is installed. */
+  send?: string[];
+  /** When its piece was removed; an orphaned venue has no send. */
+  orphaned?: string;
+}
+
+/**
+ * Every venue the household has, for the runtime (GET /api/loom/venues, role runtime): core's
+ * own, then the registry's, each with its piece and, while that piece is installed and still
+ * declares it, its `send`, read from the piece's checked loom block. So the runtime never reads
+ * another piece's piece.json itself.
+ */
+export function venueDirectory(env: NodeJS.ProcessEnv): VenueEntry[] {
+  const home = storeHome(env);
+  const sends = new Map<string, { piece: string; send?: string[] }>();
+  for (const p of managedPieces(env)) {
+    for (const [name, v] of Object.entries(p.loom.venues ?? {})) sends.set(name, { piece: p.name, ...(v.send ? { send: [...v.send] } : {}) });
+  }
+  const core = Object.values(CORE_VENUE_ROWS).map((v): VenueEntry => ({ name: v.name, label: v.label, kind: v.kind, piece: v.piece }));
+  const rows = home ? listVenues(home) : [];
+  return [...core, ...rows.map((v): VenueEntry => {
+    const live = sends.get(v.name);
+    const send = !v.orphaned && live?.piece === v.piece ? live.send : undefined;
+    return { name: v.name, label: v.label, kind: v.kind, piece: v.piece, ...(send ? { send } : {}), ...(v.orphaned ? { orphaned: v.orphaned } : {}) };
+  })];
 }

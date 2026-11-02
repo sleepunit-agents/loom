@@ -191,9 +191,11 @@ own schema:
   pieces at once. The answer is one JSON value on stdout (64 KB unless an
   offer says otherwise), checked against the offer's output schema. A
   timeout, a non-zero exit, or an answer that isn't valid is an error for that
-  piece alone (`src/offers-registry.ts`, `runOffer`). `delivery` (and, when
-  it's run, `mcp_tools`) has longer limits: 120 s, in a pool of its own (four
-  at once, sixteen waiting), so a slow runtime never holds the page's pieces.
+  piece alone (`src/offers-registry.ts`, `runOffer`). Each kind has its own
+  limits (`OFFER_LIMITS`): `delivery` and `mcp_tools` have 120 s and 64 KB,
+  in a pool of their own (four at once, sixteen waiting), so a slow runtime
+  never holds the page's pieces. `grants` has 2 s. A non-zero exit keeps its
+  code and its stdout, so an offer can say why it failed.
 - **Only a managed piece offers.** A piece found on `PATH` has no package for
   loom to read, so it is never run as an offer. piece.json keeps a copy of the
   declarations, and core reads them from there (`offersOf`, `piecesOffering`,
@@ -569,7 +571,8 @@ passes its answer back (`src/delivery.ts`).
 
 - **The body:** `id` (the source's own id for the message, at most 200,
   required); `agent`, `venue`, `place` (conversations.md's key); `from`,
-  `kind` (`message`, `wake` or `note`), `at` (ISO-8601 UTC); `label`
+  `kind` (`message` or `wake`: a `note` is the agent's own turn, which a
+  source doesn't write), `at` (ISO-8601 UTC); `label`
   (optional, at most 80); `text` (1-40,000 characters). Any other key, or a
   field out of bounds, is a 400. The body is 256 KB at most.
 - **Who may deliver what,** each refused with a 403 and the reason before
@@ -591,9 +594,16 @@ passes its answer back (`src/delivery.ts`).
   kept in `$LOOM_HOME/household.db` (`deliveries`), swept past 24 hours.
 - **The runtime's answer** is `{conversation, seq, body, reason?}`, `body`
   one of `fed`, `resumed`, `started`, `queued` or `failed` (which carries a
-  `reason`). Its limits are 120 s and 64 KB. A runtime that fails or answers
-  something else is a 502, a timeout a 504, a full pool a 503; none of them
-  is kept, so the source may retry with the same `id`.
+  `reason`). Its limits are 120 s and 64 KB. A runtime that fails says so by
+  exiting 1 with `{"status": 5xx, "error": "..."}` on stdout, and the caller
+  gets that status and error. Any other failure, or an answer that isn't the
+  contract's, is a 502, a timeout a 504, a full pool a 503. None of them is
+  kept, so the source may retry with the same `id`.
+- **`GET /api/loom/venues`,** for the runtime's token only: every venue,
+  `{"venues": [{name, label, kind, piece, send?, orphaned?}]}`. Core's own
+  (`session`, `wake`) come first, with piece `loom`. `send` is the venue's
+  declared argv while its piece is installed, so the runtime never reads
+  another piece's piece.json.
 
 ## Storage: a piece's data in loom
 
