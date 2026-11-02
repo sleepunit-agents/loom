@@ -26,7 +26,7 @@ import { readRecord } from './cli/pieces-managed.js';
 import type { Household } from './household.js';
 import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
 import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
-import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer } from './offers-registry.js';
+import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer, type OfferResult } from './offers-registry.js';
 
 export const MAX_DELIVERY_ID = 200;
 export const MAX_DELIVERY_TEXT = 40_000;
@@ -246,7 +246,7 @@ export function sweepDeliveries(home: string, nowMs = Date.now()): number {
 // ─── Fairness ───────────────────────────────────────────────────────────────
 
 /**
- * Each calling piece's own gate in front of the shared long pool: at most `perPieceRunning`
+ * Each calling piece's own gate in front of the delivery pool (8 running, 32 waiting): at most `perPieceRunning`
  * of its forwards running and `perPieceWaiting` waiting; past that, that piece alone is refused.
  * The limits are read on each call, so a test can lower them.
  */
@@ -280,6 +280,19 @@ export function runtimeFailure(exit: number | undefined, answer: unknown): { sta
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 500 || status > 599) return undefined;
   if (typeof error !== 'string' || !error.length) return undefined;
   return { status, error: error.slice(0, 500) };
+}
+
+/**
+ * Run the delivery piece's argv with `d` on stdin, and core's `source` (the calling piece) on top:
+ * core's value is written last, so nothing in `d` can name another piece as the source.
+ */
+export function forwardDelivery(env: NodeJS.ProcessEnv, target: { piece: string; argv: string[] }, caller: DeliverCaller, d: DeliverBody): Promise<OfferResult<DeliverAnswer>> {
+  return runOffer(env, target.piece, target.argv, {
+    stdin: JSON.stringify({ ...d, source: caller.piece }),
+    parse: parseDeliverAnswer,
+    kind: 'delivery',
+    limits: { timeoutMs: DELIVERY_LIMITS.timeoutMs },
+  });
 }
 
 /** Deliveries in flight, by caller and id: a repeat that arrives meanwhile waits for the first. */
@@ -319,12 +332,7 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
     }
     let gate = gates.get(k.piece);
     if (!gate) { gate = new PieceGate(); gates.set(k.piece, gate); }
-    const r = await gate.run(() => runOffer(env, target.piece!, target.argv, {
-      stdin: JSON.stringify({ source: caller.piece, ...d }),
-      parse: parseDeliverAnswer,
-      kind: 'delivery',
-      limits: { timeoutMs: DELIVERY_LIMITS.timeoutMs },
-    }));
+    const r = await gate.run(() => forwardDelivery(env, { piece: target.piece!, argv: target.argv }, caller, d));
     if (gate.idle) gates.delete(k.piece);
     if (r === null) return refuse(503, `unavailable: ${k.piece} has too many deliveries in flight (${DELIVERY_LIMITS.perPieceRunning} running, ${DELIVERY_LIMITS.perPieceWaiting} waiting); try again shortly`);
     if (!r.ok) {

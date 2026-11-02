@@ -158,13 +158,22 @@ export const MAX_API_RUNNING = 4;
 export const MAX_API_WAITING = 8;
 const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
 /**
- * Offers that may run long (agent-runtime.md: `delivery` and `mcp_tools`, 120 s each) have a
- * pool of their own, so a slow runtime can't hold the page's pieces: four at once, sixteen
- * waiting, and past that a call is refused as busy.
+ * The offers that may run long (agent-runtime.md: 120 s each) each have a pool of their own, so
+ * neither holds the page's pieces nor the other: an agent's MCP tools can't starve delivery, and
+ * a flood of deliveries can't starve the tools. Past a pool's queue, a call is refused as busy.
+ *  - `mcp_tools`: four at once, sixteen waiting;
+ *  - `delivery`: eight at once, thirty-two waiting, larger than one calling piece's share
+ *    (src/delivery.ts: 2 running, 4 waiting), so one piece at its cap leaves room for others.
  */
-export const MAX_LONG_RUNNING = 4;
-export const MAX_LONG_WAITING = 16;
-const longPool = new Pool(MAX_LONG_RUNNING, MAX_LONG_WAITING);
+export const MAX_TOOLS_RUNNING = 4;
+export const MAX_TOOLS_WAITING = 16;
+export const MAX_DELIVERY_RUNNING = 8;
+export const MAX_DELIVERY_WAITING = 32;
+export type OfferPool = 'page' | 'tools' | 'delivery';
+const offerPools: Record<Exclude<OfferPool, 'page'>, Pool> = {
+  tools: new Pool(MAX_TOOLS_RUNNING, MAX_TOOLS_WAITING),
+  delivery: new Pool(MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING),
+};
 
 async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Answer> {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
@@ -222,16 +231,17 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
  * MAX_RUNNING at once, in the page's pool. In the piece's own environment, and
  * with a store grant when there's a caller. The runner for offers
  * (src/offers-registry.ts, runOffer): a failure says why, an exit says its code.
- * `long` runs it in the long offers' pool instead, for `timeoutMs` (a full
- * pool answers `busy`). A non-zero exit says its code and keeps the stdout.
+ * `pool` runs it in a long offer's own pool instead (`tools`, `delivery`), for
+ * `timeoutMs` (a full pool answers `busy`). A non-zero exit says its code and
+ * keeps the stdout.
  */
 export async function runPieceBin(
   path: string, args: string[], env: NodeJS.ProcessEnv,
-  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; long?: boolean; timeoutMs?: number } = {},
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number } = {},
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
   const env1 = withGrant(env, path, opts.caller);
-  const r = opts.long
-    ? await longPool.run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs }))
+  const r = opts.pool && opts.pool !== 'page'
+    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs }))
     : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs });
   if (r === null) return { ok: false, reason: 'busy' };
   if (r.ok) return r;

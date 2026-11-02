@@ -19,7 +19,8 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { createConversationTables } from './backends/conversations.js';
-import { DELIVER_MAX_BYTES, DELIVERY_LIMITS, DELIVERY_REPLAY_MS, deliveryHash, keepAnswer, parseDeliver, replayOf, sweepDeliveries, type DeliverBody } from './delivery.js';
+import { DELIVER_MAX_BYTES, DELIVERY_LIMITS, DELIVERY_REPLAY_MS, deliveryHash, forwardDelivery, keepAnswer, parseDeliver, replayOf, sweepDeliveries, type DeliverBody } from './delivery.js';
+import { MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING, MAX_TOOLS_RUNNING } from './ui/pieces.js';
 import { clearPieceCache } from './ui/pieces.js';
 
 function household(prefix: string): Household {
@@ -157,6 +158,20 @@ describe('POST /api/loom/deliver', () => {
       const r = await post(tok.slack, slackMsg('m-1'));
       expect(r).toEqual({ status: 200, body: { conversation: 'cv-0123456789ab', seq: 1, body: 'started' } });
       expect(calls()).toEqual([{ argv: ['deliver', '--json'], stdin: { source: 'slack', ...slackMsg('m-1') } }]);
+    });
+
+    it('a caller can\'t name its own source: a body with `source` is a 400, and the runtime isn\'t called', async () => {
+      const r = await post(tok.slack, { ...slackMsg('m-src'), source: 'clock' });
+      expect(r.status).toBe(400);
+      expect(r.body.error).toMatch(/no key "source"/);
+      expect(calls()).toHaveLength(0);
+    });
+
+    it('core\'s source wins over one in the body, even past the parser', async () => {
+      const d = { ...(parseDeliver(slackMsg('m-src2')) as DeliverBody), source: 'clock' } as DeliverBody;
+      const r = await forwardDelivery(process.env, { piece: 'runtime', argv: ['loom-runtime', 'deliver', '--json'] }, { piece: 'slack', credential: 'piece:slack/bot' }, d);
+      expect(r.ok).toBe(true);
+      expect(calls().map((c) => c.stdin.source)).toEqual(['slack']);
     });
 
     it('the clock knocks on core\'s wake venue; the runtime relays as an agent with its piece token or its runtime token', async () => {
@@ -390,13 +405,21 @@ describe('POST /api/loom/deliver', () => {
       expect(calls()).toHaveLength(2);
     }, 15_000);
 
-    it('one piece past 2 running and 4 waiting gets a 503; another piece isn\'t held back', async () => {
+    it('delivery has a pool of its own, larger than one piece\'s share, apart from mcp_tools', () => {
+      expect([MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING]).toEqual([8, 32]);
+      expect(MAX_DELIVERY_RUNNING).toBeGreaterThan(DELIVERY_LIMITS.perPieceRunning);
+      expect(MAX_DELIVERY_WAITING).toBeGreaterThan(DELIVERY_LIMITS.perPieceWaiting);
+      expect(MAX_TOOLS_RUNNING).toBe(4);
+    });
+
+    it('piece A at its cap (2 running, 4 waiting) gets a 503; piece B, at the same time, gets 200s', async () => {
       mode('sleep:600');
       const flood = Promise.all([1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(tok.w1, wake(`f-${i}`))));
       await new Promise((r) => setTimeout(r, 150));
-      const other = await post(tok.w2, wake('f-other'));
+      // B sends as much as A's share while A is full: none of B's waits on A, none is refused.
+      const others = await Promise.all([1, 2, 3, 4, 5, 6].map((i) => post(tok.w2, wake(`f-other-${i}`))));
       const rs = await flood;
-      expect(other.status).toBe(200);
+      expect(others.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
       expect(rs.filter((r) => r.status === 200)).toHaveLength(6);
       const refusedRs = rs.filter((r) => r.status === 503);
       expect(refusedRs).toHaveLength(2);
@@ -404,19 +427,19 @@ describe('POST /api/loom/deliver', () => {
       // Refused ones weren't kept: they go through once the flood is over.
       mode('ok');
       for (const i of [1, 2, 3, 4, 5, 6, 7, 8]) expect((await post(tok.w1, wake(`f-${i}`))).status).toBe(200);
-      expect(calls()).toHaveLength(6 + 1 + 2);
+      expect(calls()).toHaveLength(6 + 6 + 2);
     }, 20_000);
 
-    it('the long pool full (4 running, 16 waiting, across pieces) is a 503 busy, not kept', async () => {
-      // Each piece may run 6 here, so five pieces (30 at once) overrun the shared pool's 20.
-      Object.assign(DELIVERY_LIMITS, { perPieceRunning: 6, perPieceWaiting: 0 });
-      mode('sleep:400');
-      const rs = await Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6].map((i) => post(tok[w], wake(`busy-${i}`)))));
+    it('the delivery pool full (8 running, 32 waiting, across pieces) is a 503 busy, not kept', async () => {
+      // Each piece may run 9 here, so five pieces (45 at once) overrun the pool's 40.
+      Object.assign(DELIVERY_LIMITS, { perPieceRunning: 9, perPieceWaiting: 0 });
+      mode('sleep:300');
+      const rs = await Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => post(tok[w], wake(`busy-${i}`)))));
       const busy = rs.filter((r) => r.status === 503);
-      expect(rs.filter((r) => r.status === 200)).toHaveLength(20);
-      expect(busy).toHaveLength(10);
+      expect(rs.filter((r) => r.status === 200)).toHaveLength(40);
+      expect(busy).toHaveLength(5);
       expect(busy.every((r) => /delivery piece \(runtime\) is busy/.test(String(r.body.error)))).toBe(true);
-      expect(calls()).toHaveLength(20);
+      expect(calls()).toHaveLength(40);
     }, 30_000);
 
     it('a body over DELIVER_MAX_BYTES is a 413, and nothing runs', async () => {
@@ -449,6 +472,29 @@ describe('POST /api/loom/deliver', () => {
       for (const t of [tok.owner, tok.art, tok.slack, tok.runtimePiece, tok.peer]) expect((await get(t)).status).toBe(403);
       expect((await get(undefined)).status).toBe(401);
       expect((await get(tok.runtime, 'POST')).status).toBe(405);
+    });
+  });
+
+  describe('GET /api/loom/venues when the venues can\'t be read', () => {
+    it('is a 503 with the documented error, not a 200 cut short', async () => {
+      // Its own household, whose household.db is then made unreadable.
+      const h2 = household('loom-deliver-venues-');
+      const savedHome = process.env.LOOM_HOME;
+      process.env.LOOM_HOME = h2.home;
+      piece(h2.home, 'runtime', RUNTIME_LOOM, RUNTIME_BIN);
+      const token = createToken(h2, { role: { kind: 'runtime', piece: 'runtime' }, label: 'runtime', runtimePieces: runtimePieces(process.env) }).token;
+      const handle2 = await startHttpServer({ contextDir: agentDir(h2, 'art'), host: '127.0.0.1', port: 0, household: h2 });
+      try {
+        for (const f of ['household.db', 'household.db-wal', 'household.db-shm']) rmSync(join(h2.home, f), { force: true });
+        writeFileSync(join(h2.home, 'household.db'), 'not a database, '.repeat(512));
+        const r = await fetch(`http://127.0.0.1:${handle2.port}/api/loom/venues`, { headers: { authorization: `Bearer ${token}` } });
+        expect(r.status).toBe(503);
+        expect(await r.json()).toEqual({ error: "unavailable: couldn't list venues; see the daemon log" });
+      } finally {
+        await handle2.close();
+        process.env.LOOM_HOME = savedHome;
+        rmSync(h2.home, { recursive: true, force: true });
+      }
     });
   });
 

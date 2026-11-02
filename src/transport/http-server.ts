@@ -452,13 +452,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       const role = roleFor(req.headers['authorization']);
       if ('status' in role) return sendError(res, role.status, role.error);
       if (role.kind !== 'runtime') return sendError(res, 403, `forbidden: GET /api/loom/${subpath} takes the runtime's token`);
+      // The body first, then the head: a failure to read is the 503, never a 200 cut short.
+      let body: string;
       try {
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-        res.end(JSON.stringify({ venues: venueDirectory(process.env) }));
+        body = JSON.stringify({ venues: venueDirectory(process.env) });
       } catch (e) {
         process.stderr.write(`loom: couldn't list venues: ${(e as Error).message}\n`);
         return sendError(res, 503, 'unavailable: couldn\'t list venues; see the daemon log');
       }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(body);
       return;
     }
     if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);

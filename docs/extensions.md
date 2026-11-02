@@ -197,8 +197,10 @@ own schema:
   timeout, a non-zero exit, or an answer that isn't valid is an error for that
   piece alone (`src/offers-registry.ts`, `runOffer`). Each kind has its own
   limits (`OFFER_LIMITS`): `delivery` and `mcp_tools` have 120 s and 64 KB,
-  in a pool of their own (four at once, sixteen waiting), so a slow runtime
-  never holds the page's pieces. `grants` has 2 s. A non-zero exit keeps its
+  and each has a pool of its own, apart from the page's pieces and from each
+  other: `mcp_tools` four at once and sixteen waiting, `delivery` eight at
+  once and thirty-two waiting (more than one calling piece's share, so one
+  piece at its cap leaves room for the rest). `grants` has 2 s. A non-zero exit keeps its
   code and its stdout, so an offer can say why it failed.
 - **Only a managed piece offers.** A piece found on `PATH` has no package for
   loom to read, so it is never run as an offer. piece.json keeps a copy of the
@@ -607,7 +609,7 @@ passes its answer back (`src/delivery.ts`).
   `reason`). Its limits are 120 s and 64 KB. A runtime that fails says so by
   exiting 1 with `{"status": 5xx, "error": "..."}` on stdout, and the caller
   gets that status and error. Any other failure, or an answer that isn't the
-  contract's, is a 502, a timeout a 504, a full pool a 503. None of them is
+  contract's, is a 502, a timeout a 504, the delivery pool full a 503. None of them is
   kept, so the source may retry with the same `id`.
 - **`GET /api/loom/venues`,** for the runtime's token only: every venue,
   `{"venues": [{name, label, kind, piece, send?, orphaned?}]}`. Core's own

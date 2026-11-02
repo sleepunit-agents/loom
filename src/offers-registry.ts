@@ -11,7 +11,7 @@
 import { join } from 'node:path';
 import { managedBinDir, managedPieces, readRecord, type PieceRecord } from './cli/pieces-managed.js';
 import { offersIn, type OfferKind, type Offers } from './offers.js';
-import { PIECE_TIMEOUT_MS } from './ui/pieces.js';
+import { PIECE_TIMEOUT_MS, type OfferPool } from './ui/pieces.js';
 import { runPieceBin, type ApiCaller } from './ui/pieces.js';
 
 export interface PieceOffers {
@@ -57,15 +57,16 @@ export function deliveryPiece(env: NodeJS.ProcessEnv): { piece: string; argv: st
 /**
  * Each offer kind's limits (docs/extensions.md, "Offers"): the section feed's 3 s for a feed or
  * a venue's render, and the mcp_tools limits (agent-runtime.md, "Seams", 2: 120 s, an answer of
- * at most 64 KB, in the long offers' own pool) for `delivery` and `mcp_tools`. `grants` has 2 s.
+ * at most 64 KB) for `delivery` and `mcp_tools`, each in a pool of its own (src/ui/pieces.ts).
+ * `grants` has 2 s.
  */
-export interface OfferLimits { timeoutMs: number; maxBytes: number; long: boolean }
+export interface OfferLimits { timeoutMs: number; maxBytes: number; pool: OfferPool }
 export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
-  sections: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, long: false },
-  venues: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, long: false },
-  grants: { timeoutMs: 2_000, maxBytes: 64 * 1024, long: false },
-  mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, long: true },
-  delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, long: true },
+  sections: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
+  venues: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
+  grants: { timeoutMs: 2_000, maxBytes: 64 * 1024, pool: 'page' },
+  mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
+  delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
 };
 
 /**
@@ -93,7 +94,7 @@ export interface RunOfferOptions<T> {
  * Run an offer: `argv` (one the piece declared) plus `args`, with `stdin`,
  * in the piece's environment, under its kind's limits (OFFER_LIMITS: 3 s for a
  * feed, 120 s for delivery and tools; the process group killed afterwards; at
- * most 6 at once, or the long pool's 4). The answer is
+ * most 6 at once, or the kind's own pool). The answer is
  * one JSON value on stdout, checked by `parse`. Every failure (not managed,
  * argv[0] not its bin, a non-zero exit, a timeout, too large, not JSON,
  * invalid) is `{ok: false, error}`, never a throw, so a caller showing many
@@ -109,7 +110,7 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
   if (!dir) return { ok: false, error: 'no managed pieces directory' };
   const limits = { ...OFFER_LIMITS[opts.kind ?? 'sections'], ...opts.limits };
   const r = await runPieceBin(join(dir, bin), [...rest, ...(opts.args ?? [])], env, {
-    stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, long: limits.long, caller: opts.caller,
+    stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, pool: limits.pool, caller: opts.caller,
   });
   if (!r.ok) {
     if (r.exit === undefined) return { ok: false, error: r.reason };

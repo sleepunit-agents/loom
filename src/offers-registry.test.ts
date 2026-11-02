@@ -86,10 +86,10 @@ describe('offers registry and runner', () => {
     expect(await run('big')).toEqual({ ok: false, error: 'answer too large' });
   });
 
-  it('each kind has its limits: delivery and mcp_tools 120 s in their own pool, a feed 3 s', async () => {
-    expect(OFFER_LIMITS.delivery).toEqual({ timeoutMs: 120_000, maxBytes: 64 * 1024, long: true });
-    expect(OFFER_LIMITS.mcp_tools).toEqual({ timeoutMs: 120_000, maxBytes: 64 * 1024, long: true });
-    expect(OFFER_LIMITS.sections).toMatchObject({ timeoutMs: 3_000, long: false });
+  it('each kind has its limits: delivery and mcp_tools 120 s, each in a pool of its own, a feed 3 s', async () => {
+    expect(OFFER_LIMITS.delivery).toEqual({ timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' });
+    expect(OFFER_LIMITS.mcp_tools).toEqual({ timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' });
+    expect(OFFER_LIMITS.sections).toMatchObject({ timeoutMs: 3_000, pool: 'page' });
     await piece('runtime', { role: 'runtime' }, { 'loom-runtime': 'sleep 3.5; echo \'{"groups":[]}\'' });
     // Past the feed's 3 s, inside delivery's 120.
     expect(await runOffer(env, 'runtime', ['loom-runtime'], { parse: parseFeed })).toEqual({ ok: false, error: 'timed out' });
