@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "37cc43dc80ef6a4c24e9b80c97e36f01f18c254b",
+      "commit": "a9e2a642370e11c0657c47a376cf7e9398d0ee1e",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -20,10 +20,10 @@
     {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
-      "commit": "663ea1a9533a798ad69d500bae3e1e07c35d8300",
+      "commit": "ebad82b0d5d4f5c8bfcc07b9ce5a579e41e85d34",
       "version": "0.1.0",
       "label": "Shuttle",
-      "description": "Chat bridges (Discord, Slack) and the household's model subscriptions: accounts, sign-ins, usage."
+      "description": "Chat bridges (Discord, Slack)."
     },
     {
       "name": "tasks",
