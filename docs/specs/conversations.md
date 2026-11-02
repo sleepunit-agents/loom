@@ -474,8 +474,10 @@ These slices settled these points the doc left open:
   that doesn't decrypt is left out and stays claimed, so the sweep removes it.
 - **"Someone other than the owner."** A conversation whose `people` include anyone who isn't a household member
   owning that agent, or with any turn `from` `unknown`.
-- **Redaction.** Beyond each card's name and slug, each word of the name of three letters or more is that person too
-  (a first name alone is still a name). A card whose slug is an agent id is that agent (A…). Agent ids are the
+- **Redaction.** Beyond each card's name and slug, every person slug a conversation has seen (its `people`, and every
+  turn `from` a person) is redacted, card or not. Each part of a name or slug is that person too: each whitespace
+  word ("O'Brien", "Mary-Kate") and each piece of it split on hyphens and apostrophes ("Brien", "Kate"), from three
+  letters (so "Al" or "Jo" doesn't blank common words). An apostrophe in a name matches ' or ’. A card whose slug is an agent id is that agent (A…). Agent ids are the
   household's and every agent its conversations have seen. Whitespace inside a name matches any whitespace. A term
   that matches more than one thing goes to agent, then person, model, harness.
 - **Scores.** One per ref and grader family (a second is 409). Only an agent turn with a model is scored (409

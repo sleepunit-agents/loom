@@ -338,6 +338,23 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       await post('audit/done', tok.review, { refs: entries.map((e) => e.ref) });
     });
 
+    it('a person with no card is redacted by slug, whether seen in a conversation\'s people or only as a turn\'s from', async () => {
+      const place = 'dm:NOCARD';
+      const m = await turn(tok.runtime, { agent: 'art', venue: 'slack', place, at: at(13), from: { kind: 'person', slug: 'zephyr-quill' }, kind: 'message' });
+      await audit(tok.runtime, m.conversation, m.seq, 'zephyr-quill here; Zephyr says Quill is fine. Ask Zephyr.');
+      const e = (await take(tok.review)).find((x) => /here;/.test(x.text as string))!;
+      expect(e.text).toBe('P1 here; P1 says P1 is fine. Ask P1.');
+      expect(JSON.stringify(e)).not.toMatch(/zephyr|quill/i);
+      await post('audit/done', tok.review, { refs: [e.ref] });
+    });
+
+    it('hyphenated and apostrophe names are redacted whole and by part; parts under 3 letters are not', () => {
+      const r = redactor({ agents: [], people: [{ slug: 'mary-kate', name: 'Mary-Kate Al-Fayed' }, { slug: 'obrien', name: "Siobhan O'Brien" }], models: [], harnesses: [] });
+      expect(r.text("Mary-Kate Al-Fayed met Siobhan O'Brien (O\u2019Brien), then Mary, Kate, Fayed and Brien. Al and O stay, as does Jo.")).toBe(
+        'P1 met P2 (P2), then P1, P1, P1 and P2. Al and O stay, as does Jo.');
+      expect(r.text('mary-kate and obrien')).toBe('P1 and P2');
+    });
+
     it('the redactor: longest match first, whole words only, whitespace inside a name, numbering by first appearance', () => {
       const r = redactor({ agents: ['art'], people: [{ slug: 'mary-ann', name: 'Mary Ann Lee' }, { slug: 'art', name: 'Art' }], models: ['gpt-5.1'], harnesses: ['codex'] });
       expect(r.text('Mary\nAnn  Lee said gpt-5.1, not gpt-5.12 or codexes; mary-ann and ART agree. Lee too.')).toBe('P1 said M1, not gpt-5.12 or codexes; P1 and A1 agree. P1 too.');

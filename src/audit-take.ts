@@ -4,7 +4,8 @@
  * (src/audit.ts, `claimEntries`, which writes audit_reads), decrypts each with the review key
  * (`decryptAuditText`: this handler is its only caller, criterion 9), and redacts before
  * anything leaves:
- *  - every person card's name and slug (and each word of the name) becomes P1, P2, …;
+ *  - every person card's name and slug, every person slug a conversation has seen (card or
+ *    not), and each part of a name or slug of 3 letters or more, becomes P1, P2, …;
  *  - every agent id becomes A1, …;
  *  - every model and harness string seen in any turn becomes M1, … or H1, …;
  * case-insensitive and whole-word, numbered by first appearance, consistent within the take.
@@ -16,7 +17,7 @@ import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveSqliteDbPath } from './config.js';
 import { agentDir, commonsDir, type Household } from './household.js';
-import { agentsSeen, hasTable, modelsSeen, turnRecord } from './backends/conversations.js';
+import { agentsSeen, hasTable, modelsSeen, peopleSeen, turnRecord } from './backends/conversations.js';
 import { assertAgeAvailable, AuditError, claimEntries, decryptAuditText, TAKE_MAX } from './audit.js';
 import { familyOf, processedFamilies, withNonOwner } from './review.js';
 
@@ -47,7 +48,15 @@ export interface Vocabulary {
   harnesses: string[];
 }
 
-const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+const norm = (s: string) => s.trim().replace(/\s+/g, ' ').replace(/\u2019/g, "'").toLowerCase();
+/** A part of a name is redacted from this many letters: shorter ones ("Al", "Jo", "O") would blank common words. */
+export const NAME_PART_MIN = 3;
+/**
+ * A name's (or slug's) parts: each whitespace word ("O'Brien", "Mary-Kate"), and each piece of
+ * those split on hyphens and apostrophes ("Brien", "Mary", "Kate"), of NAME_PART_MIN letters or more.
+ */
+const nameParts = (s: string) => s.split(/\s+/).flatMap((w) => [w, ...w.split(/[-\u2010\u2011'\u2019]+/)])
+  .filter((w) => w.replace(/[^\p{L}]/gu, '').length >= NAME_PART_MIN);
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
@@ -70,11 +79,13 @@ export function redactor(v: Vocabulary): { agent(id: string): string; text(s: st
     const cls: Cls = isAgent ? 'A' : 'P';
     const id = p.slug.toLowerCase();
     put(p.slug, cls, id);
-    if (p.name) {
-      put(p.name, cls, id);
-      // Each word of the name too (a first name alone is still a name), from three letters.
-      for (const w of p.name.split(/\s+/)) if (w.replace(/[^\p{L}]/gu, '').length >= 3) put(w, cls, id);
-    }
+    if (p.name) put(p.name, cls, id);
+  }
+  // Then each part of every name and slug (a first name alone is still a name; "O'Brien" is
+  // caught whole above and as "Brien" here), after every whole term, so a whole term wins.
+  for (const p of v.people) {
+    const cls: Cls = agentIds.has(p.slug.toLowerCase()) ? 'A' : 'P';
+    for (const w of [...nameParts(p.name), ...nameParts(p.slug)]) put(w, cls, p.slug.toLowerCase());
   }
   for (const m of v.models) put(m, 'M', m.toLowerCase());
   for (const x of v.harnesses) put(x, 'H', x.toLowerCase());
@@ -87,7 +98,7 @@ export function redactor(v: Vocabulary): { agent(id: string): string; text(s: st
   };
   const keys = [...terms.keys()].sort((a, b) => b.length - a.length);
   const re = keys.length
-    ? new RegExp(`(?<![\\p{L}\\p{N}_])(?:${keys.map((k) => escape(k).replace(/ /g, '\\s+')).join('|')})(?![\\p{L}\\p{N}_])`, 'giu')
+    ? new RegExp(`(?<![\\p{L}\\p{N}_])(?:${keys.map((k) => escape(k).replace(/ /g, '\\s+').replace(/'/g, "['\u2019]")).join('|')})(?![\\p{L}\\p{N}_])`, 'giu')
     : null;
   return {
     agent: (id) => placeholder(terms.get(norm(id)) ?? { cls: 'A', id: `A:${id.toLowerCase()}` }),
@@ -96,9 +107,14 @@ export function redactor(v: Vocabulary): { agent(id: string): string; text(s: st
   };
 }
 
-/** Every person card's slug and name: the commons directory and each agent's own store. */
+/**
+ * Every person redaction knows: each card's slug and name (the commons directory and each
+ * agent's own store), and every person slug a conversation has seen (its `people`, and each
+ * turn `from` a person), so someone with no card is redacted by slug all the same.
+ */
 function peopleOf(h: Household): Array<{ slug: string; name: string }> {
   const out: Array<{ slug: string; name: string }> = [];
+  for (const a of h.agents) for (const slug of peopleSeen(agentDir(h, a))) out.push({ slug, name: '' });
   const read = (path: string) => {
     if (!existsSync(path)) return;
     const db = new BetterSqlite3(path, { readonly: true });

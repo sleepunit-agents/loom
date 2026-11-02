@@ -404,6 +404,20 @@ export function modelsSeen(contextDir: string): { models: string[]; harnesses: s
   });
 }
 
+/** Every person slug this store's conversations have seen: their `people`, and every turn `from` a person (past the people cap too). */
+export function peopleSeen(contextDir: string): string[] {
+  return withReadonly(contextDir, [], (db) => {
+    const out = new Set<string>();
+    for (const r of db.prepare('SELECT people_json FROM conversations').all() as Array<{ people_json: string }>) {
+      try { for (const p of JSON.parse(r.people_json) as string[]) out.add(p); } catch { /* skip */ }
+    }
+    for (const r of db.prepare("SELECT DISTINCT json_extract(from_json, '$.slug') AS s FROM conversation_turns WHERE json_extract(from_json, '$.kind') = 'person'").all() as Array<{ s: string | null }>) {
+      if (r.s) out.add(r.s);
+    }
+    return [...out];
+  });
+}
+
 /** Every agent id this store's conversations have seen (beyond its own agent). */
 export function agentsSeen(contextDir: string): string[] {
   return withReadonly(contextDir, [], (db) => {
