@@ -83,6 +83,8 @@ export interface RunOfferOptions<T> {
   parse: (v: unknown) => T | string;
   /** Which kind of offer this is: its limits (OFFER_LIMITS). The section feed's, unless said. */
   kind?: OfferKind;
+  /** Overrides of the kind's limits, for one call (delivery's DELIVERY_LIMITS). */
+  limits?: Partial<OfferLimits>;
   /** Who the call is for: the process gets that caller's store grant (as for a piece's API). */
   caller?: ApiCaller;
 }
@@ -105,7 +107,7 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
   if (!bin || !rec.bins.includes(bin)) return { ok: false, error: `${JSON.stringify(bin)} isn't one of ${piece}'s bins` };
   const dir = managedBinDir(env);
   if (!dir) return { ok: false, error: 'no managed pieces directory' };
-  const limits = OFFER_LIMITS[opts.kind ?? 'sections'];
+  const limits = { ...OFFER_LIMITS[opts.kind ?? 'sections'], ...opts.limits };
   const r = await runPieceBin(join(dir, bin), [...rest, ...(opts.args ?? [])], env, {
     stdin: opts.stdin, maxBytes: limits.maxBytes, timeoutMs: limits.timeoutMs, long: limits.long, caller: opts.caller,
   });

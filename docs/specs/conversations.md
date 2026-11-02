@@ -227,7 +227,8 @@ in `venues`.
 - `label` is required, ≤ 40. `kind` is required: `live`, `scheduled` or `agent`.
 - `render` is optional: 1–16 strings of ≤ 200, and `argv[0]` must be one of the piece's own `bin` names.
 - Unknown keys are rejected.
-- `session` (`live`) and `wake` (`scheduled`) are core's own and may not be declared.
+- `session` (`live`) and `wake` (`scheduled`) are core's own and may not be declared. A piece that delivers on `wake`
+  (the clock) says so with an empty entry, `"wake": {}`, which defines nothing (agent-runtime.md, "Delivery").
 - `relay` (`agent`) may be declared only by a piece whose `loom` block has `"role": "runtime"`.
 - A name another installed piece already declares is rejected.
 

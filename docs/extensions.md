@@ -175,6 +175,10 @@ own schema:
   offers nothing.
 - **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
   may declare it, and a second installed piece offering it is refused.
+- **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
+  delivers on it (the clock) declares an empty entry for it, which defines
+  nothing and only lets it [deliver](#deliver-anything-addressed-to-an-agent)
+  there. Any number of pieces may.
 - **`venues`:** core keeps a copy of every installed piece's venues in
   `$LOOM_HOME/household.db` (`src/household-store.ts`). Install and update
   replace the piece's rows; removing it (even with `--purge`) keeps them,
@@ -578,9 +582,9 @@ passes its answer back (`src/delivery.ts`).
 - **Who may deliver what,** each refused with a 403 and the reason before
   anything runs, so nothing is written:
   - the calling piece is an installed managed piece;
-  - the `venue` is one it declares (`venues`). `wake` is core's, so any
-    piece may knock on it, with `from: {kind: schedule}` only; nothing is
-    delivered into `session`;
+  - the `venue` is one it declares (`venues`). `wake` is core's, so a piece
+    knocks on it only if it declares `"wake": {}`, and only with
+    `from: {kind: schedule}`. Nothing is delivered into `session`;
   - the `agent` is the household's and granted to the piece. With no grants
     authority installed, the piece's own agent list decides (the source
     applied it before calling). With one, core must ask it, and until the
@@ -589,9 +593,15 @@ passes its answer back (`src/delivery.ts`).
   - `from: {kind: person}` comes only from a venue adapter on a venue it
     declares (not `relay`); `from: {kind: agent}` only from the runtime.
 - **No delivery piece installed:** a 503 with the reason.
-- **Idempotent:** the same calling piece and `id` within 24 hours gets the
-  first answer back verbatim, and the runtime isn't called. The answers are
-  kept in `$LOOM_HOME/household.db` (`deliveries`), swept past 24 hours.
+- **Idempotent:** the same calling credential (`piece:<piece>/<subject>`,
+  or the runtime's token) and `id` within 24 hours gets the first answer
+  back verbatim, and the runtime isn't called. The same pair with a
+  different body is a 409. The answers are kept in `$LOOM_HOME/household.db`
+  (`deliveries`, with a SHA-256 of the body, never its text), swept past 24
+  hours.
+- **Fair:** one piece has at most 2 forwards running and 4 waiting; past
+  that, it gets a 503, and other pieces aren't held back. It keeps at most
+  10,000 answers in 24 hours; past that, a 429.
 - **The runtime's answer** is `{conversation, seq, body, reason?}`, `body`
   one of `fed`, `resumed`, `started`, `queued` or `failed` (which carries a
   `reason`). Its limits are 120 s and 64 KB. A runtime that fails says so by

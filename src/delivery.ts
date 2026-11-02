@@ -7,23 +7,26 @@
  * runtime's answer back.
  *
  *  - Every refusal (403, 503, 400) happens before anything runs, so it writes nothing.
- *  - Idempotent on (calling piece, id) for 24 hours: the first good answer is kept in the
- *    household store (`$LOOM_HOME/household.db`, table `deliveries`) and a repeat gets it
- *    back verbatim without the runtime being called. A forward that failed (the runtime's
- *    error, a timeout, a busy pool) isn't kept, so the source may retry it.
+ *  - Idempotent on (calling credential, id) for 24 hours: the first good answer is kept in the
+ *    household store (`$LOOM_HOME/household.db`, table `deliveries`, with a hash of the body)
+ *    and a repeat gets it back verbatim without the runtime being called; the same id with
+ *    another body is a 409. A forward that failed (the runtime's error, a timeout, a busy
+ *    pool) isn't kept, so the source may retry it.
+ *  - Fair: one piece runs at most 2 forwards with 4 waiting, and keeps at most 10,000
+ *    answers a day; past either, that piece alone is refused.
  *
  * Core never names the runtime: it finds it as the piece whose block offers `delivery`
  * (offers-registry.ts, deliveryPiece).
  */
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Database } from 'better-sqlite3';
 import { ConversationError, parseTurn, type From } from './backends/conversations.js';
 import { readRecord } from './cli/pieces-managed.js';
 import type { Household } from './household.js';
 import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
 import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
-import { deliveryPiece, grantsAuthority, runOffer } from './offers-registry.js';
+import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer } from './offers-registry.js';
 
 export const MAX_DELIVERY_ID = 200;
 export const MAX_DELIVERY_TEXT = 40_000;
@@ -73,7 +76,22 @@ export interface DeliverResult {
 /** Who is delivering: the calling piece, as its piece token or its runtime token resolved. */
 export interface DeliverCaller {
   piece: string;
+  /** The whole credential (`piece:<piece>/<subject>`, `runtime:<piece>`): what a replay is keyed on. */
+  credential: string;
 }
+
+/**
+ * The delivery limits, mutable so a test can lower them (they're read on each call):
+ *  - `timeoutMs`: the `delivery` offer's (OFFER_LIMITS, the mcp_tools limit, 120 s);
+ *  - `perPieceRunning`, `perPieceWaiting`: one calling piece's share of the long pool;
+ *  - `keptPerPiece`: the answers one piece may have kept in 24 hours; past it, a 429.
+ */
+export const DELIVERY_LIMITS = {
+  timeoutMs: OFFER_LIMITS.delivery.timeoutMs,
+  perPieceRunning: 2,
+  perPieceWaiting: 4,
+  keptPerPiece: 10_000,
+};
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const refuse = (status: number, error: string): DeliverResult => ({ status, body: { error } });
@@ -141,10 +159,12 @@ export function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: De
   const isRuntime = rec.loom.role === 'runtime';
   // Own keys only: a venue named `constructor` must not find Object's.
   const declared = ownEntry(offersIn(rec.loom).venues, d.venue);
-  // The venue. `session` is the harness's own; `wake` is core's (conversations.md: it may not be
-  // declared), so any piece may deliver a schedule's knock on it; any other, only its declarer.
+  // The venue. `session` is the harness's own; `wake` is core's, delivered on only by a piece that
+  // says so (`"wake": {}` in its venues, the clock) and only as a schedule's knock; any other
+  // venue, only by the piece that declares it.
   if (d.venue === 'session') return refuse(403, 'forbidden: venue session is a harness\'s own session; nothing is delivered into it');
   if (d.venue === 'wake') {
+    if (rec.loom.delivers_wake !== true) return refuse(403, `forbidden: ${caller.piece} doesn't declare that it delivers on core's wake (venues: {"wake": {}})`);
     if (d.from.kind !== 'schedule') return refuse(403, 'forbidden: on venue wake, from is {kind: schedule}');
   } else if (!declared) {
     return refuse(403, `forbidden: ${caller.piece} doesn't declare venue ${d.venue} (its loom block's venues)`);
@@ -161,37 +181,55 @@ export function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: De
 
 // ─── The replay table ───────────────────────────────────────────────────────
 
-function deliveriesDb(home: string): Database {
-  const db = openHouseholdDb(home);
-  db.exec(`CREATE TABLE IF NOT EXISTS deliveries (
-    piece       TEXT NOT NULL,
-    id          TEXT NOT NULL,
-    at          INTEGER NOT NULL,
-    answer_json TEXT NOT NULL,
-    PRIMARY KEY (piece, id)
-  )`);
-  return db;
+/**
+ * A delivery's body as a hash: the checked fields in a fixed order, so the same message hashes
+ * the same however its JSON was written. The table keeps this, never the text.
+ */
+export function deliveryHash(d: DeliverBody): string {
+  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text];
+  return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
-/** The kept answer for (piece, id), if one is younger than 24 hours. */
-export function replayOf(home: string, piece: string, id: string, nowMs = Date.now()): DeliverAnswer | undefined {
+/** What a kept answer is keyed by: the calling credential (its whole role) and the id. */
+export interface ReplayKey {
+  /** `piece:<piece>/<subject>`, or `runtime:<piece>`. */
+  caller: string;
+  piece: string;
+  id: string;
+  hash: string;
+}
+
+/** The kept answer for (caller, id), with its body's hash, if one is younger than 24 hours. */
+export function replayOf(home: string, caller: string, id: string, nowMs = Date.now()): { hash: string; answer: DeliverAnswer } | undefined {
   if (!existsSync(join(home, HOUSEHOLD_DB))) return undefined;
-  const db = deliveriesDb(home);
+  const db = openHouseholdDb(home);
   try {
-    const r = db.prepare('SELECT answer_json FROM deliveries WHERE piece = ? AND id = ? AND at > ?').get(piece, id, nowMs - DELIVERY_REPLAY_MS) as { answer_json: string } | undefined;
-    return r ? JSON.parse(r.answer_json) as DeliverAnswer : undefined;
+    const r = db.prepare('SELECT body_sha256, answer_json FROM deliveries WHERE caller = ? AND id = ? AND at > ?').get(caller, id, nowMs - DELIVERY_REPLAY_MS) as { body_sha256: string; answer_json: string } | undefined;
+    return r ? { hash: r.body_sha256, answer: JSON.parse(r.answer_json) as DeliverAnswer } : undefined;
   } finally {
     db.close();
   }
 }
 
-/** Keep an answer for (piece, id), and sweep the entries over 24 hours old. */
-export function keepAnswer(home: string, piece: string, id: string, answer: DeliverAnswer, nowMs = Date.now()): void {
-  const db = deliveriesDb(home);
+/** How many answers `piece` has kept in the last 24 hours (all its credentials together). */
+export function keptCount(home: string, piece: string, nowMs = Date.now()): number {
+  if (!existsSync(join(home, HOUSEHOLD_DB))) return 0;
+  const db = openHouseholdDb(home);
+  try {
+    return (db.prepare('SELECT COUNT(*) AS n FROM deliveries WHERE piece = ? AND at > ?').get(piece, nowMs - DELIVERY_REPLAY_MS) as { n: number }).n;
+  } finally {
+    db.close();
+  }
+}
+
+/** Keep an answer, and sweep the entries over 24 hours old. */
+export function keepAnswer(home: string, k: ReplayKey, answer: DeliverAnswer, nowMs = Date.now()): void {
+  const db = openHouseholdDb(home);
   try {
     db.transaction(() => {
       db.prepare('DELETE FROM deliveries WHERE at <= ?').run(nowMs - DELIVERY_REPLAY_MS);
-      db.prepare('INSERT OR REPLACE INTO deliveries (piece, id, at, answer_json) VALUES (?, ?, ?, ?)').run(piece, id, nowMs, JSON.stringify(answer));
+      db.prepare('INSERT OR REPLACE INTO deliveries (caller, id, piece, at, body_sha256, answer_json) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(k.caller, k.id, k.piece, nowMs, k.hash, JSON.stringify(answer));
     })();
   } finally {
     db.close();
@@ -201,9 +239,34 @@ export function keepAnswer(home: string, piece: string, id: string, answer: Deli
 /** Drop every kept answer over 24 hours old (also done on each write); answers how many went. */
 export function sweepDeliveries(home: string, nowMs = Date.now()): number {
   if (!existsSync(join(home, HOUSEHOLD_DB))) return 0;
-  const db = deliveriesDb(home);
+  const db = openHouseholdDb(home);
   try { return db.prepare('DELETE FROM deliveries WHERE at <= ?').run(nowMs - DELIVERY_REPLAY_MS).changes; } finally { db.close(); }
 }
+
+// ─── Fairness ───────────────────────────────────────────────────────────────
+
+/**
+ * Each calling piece's own gate in front of the shared long pool: at most `perPieceRunning`
+ * of its forwards running and `perPieceWaiting` waiting; past that, that piece alone is refused.
+ * The limits are read on each call, so a test can lower them.
+ */
+class PieceGate {
+  private running = 0;
+  private readonly waiting: Array<() => void> = [];
+  async run<T>(f: () => Promise<T>): Promise<T | null> {
+    if (this.running >= DELIVERY_LIMITS.perPieceRunning) {
+      if (this.waiting.length >= DELIVERY_LIMITS.perPieceWaiting) return null;
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    this.running++;
+    try { return await f(); } finally {
+      this.running--;
+      this.waiting.shift()?.();
+    }
+  }
+  get idle(): boolean { return this.running === 0 && this.waiting.length === 0; }
+}
+const gates = new Map<string, PieceGate>();
 
 // ─── The route ──────────────────────────────────────────────────────────────
 
@@ -219,15 +282,19 @@ export function runtimeFailure(exit: number | undefined, answer: unknown): { sta
   return { status, error: error.slice(0, 500) };
 }
 
-/** Deliveries in flight, by piece and id: a repeat that arrives meanwhile waits for the first. */
-const inFlight = new Map<string, Promise<DeliverResult>>();
+/** Deliveries in flight, by caller and id: a repeat that arrives meanwhile waits for the first. */
+const inFlight = new Map<string, { hash: string; result: Promise<DeliverResult> }>();
+
+const conflict = (id: string): DeliverResult =>
+  refuse(409, `conflict: ${id} was already delivered with a different body; a new message takes a new id`);
 
 /**
  * POST /api/loom/deliver as `caller` (the route already resolved its token to a piece).
  * 400 for a body that isn't the contract's; 403 for a delivery the caller may not make; 503
- * with no delivery piece; then the kept answer for a repeat, or the runtime's answer. A
- * runtime that says it failed is its own 5xx; one that fails otherwise or answers something
- * else is a 502, a timeout a 504, a full pool a 503. None of those is kept.
+ * with no delivery piece; then the kept answer for a repeat (409 when the same id came with
+ * another body), or the runtime's answer. A piece over its share is a 503 (in flight) or 429
+ * (kept in a day). A runtime that says it failed is its own 5xx; one that fails otherwise or
+ * answers something else is a 502, a timeout a 504, a full pool a 503. None of those is kept.
  */
 export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, raw: unknown, nowMs: () => number = Date.now): Promise<DeliverResult> {
   const d = parseDeliver(raw);
@@ -240,28 +307,37 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
       ? `unavailable: more than one piece offers delivery (${target.conflict.join(', ')}); there's none to forward to`
       : 'unavailable: no installed piece offers delivery (the runtime), so nothing can reach a body');
   }
-  const key = `${caller.piece}\0${d.id}`;
+  const k: ReplayKey = { caller: caller.credential, piece: caller.piece, id: d.id, hash: deliveryHash(d) };
+  const key = `${k.caller}\0${k.id}`;
   const pending = inFlight.get(key);
-  if (pending) return pending;
-  const run = (async (): Promise<DeliverResult> => {
-    const kept = replayOf(h.home, caller.piece, d.id, nowMs());
-    if (kept) return { status: 200, body: kept };
-    const r = await runOffer(env, target.piece, target.argv, {
+  if (pending) return pending.hash === k.hash ? pending.result : conflict(d.id);
+  const result = (async (): Promise<DeliverResult> => {
+    const kept = replayOf(h.home, k.caller, k.id, nowMs());
+    if (kept) return kept.hash === k.hash ? { status: 200, body: kept.answer } : conflict(d.id);
+    if (keptCount(h.home, k.piece, nowMs()) >= DELIVERY_LIMITS.keptPerPiece) {
+      return refuse(429, `too-many: ${k.piece} has delivered ${DELIVERY_LIMITS.keptPerPiece} messages in 24 hours, as many as core keeps for one piece`);
+    }
+    let gate = gates.get(k.piece);
+    if (!gate) { gate = new PieceGate(); gates.set(k.piece, gate); }
+    const r = await gate.run(() => runOffer(env, target.piece!, target.argv, {
       stdin: JSON.stringify({ source: caller.piece, ...d }),
       parse: parseDeliverAnswer,
       kind: 'delivery',
-    });
+      limits: { timeoutMs: DELIVERY_LIMITS.timeoutMs },
+    }));
+    if (gate.idle) gates.delete(k.piece);
+    if (r === null) return refuse(503, `unavailable: ${k.piece} has too many deliveries in flight (${DELIVERY_LIMITS.perPieceRunning} running, ${DELIVERY_LIMITS.perPieceWaiting} waiting); try again shortly`);
     if (!r.ok) {
       // The runtime's own failure: exit 1 with {status: 5xx, error} on stdout, passed through as that status.
       const said = runtimeFailure(r.exit, r.answer);
       if (said) return refuse(said.status, said.error);
       if (r.error === 'busy') return refuse(503, `unavailable: the delivery piece (${target.piece}) is busy; try again shortly`);
-      if (r.error === 'timed out') return refuse(504, `timeout: the delivery piece (${target.piece}) didn't answer within 120 s`);
+      if (r.error === 'timed out') return refuse(504, `timeout: the delivery piece (${target.piece}) didn't answer within ${DELIVERY_LIMITS.timeoutMs / 1000} s`);
       return refuse(502, `bad-gateway: the delivery piece (${target.piece}) failed (${r.error})`);
     }
-    keepAnswer(h.home, caller.piece, d.id, r.value, nowMs());
+    keepAnswer(h.home, k, r.value, nowMs());
     return { status: 200, body: r.value };
   })();
-  inFlight.set(key, run);
-  try { return await run; } finally { inFlight.delete(key); }
+  inFlight.set(key, { hash: k.hash, result });
+  try { return await result; } finally { inFlight.delete(key); }
 }

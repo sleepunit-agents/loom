@@ -2,12 +2,13 @@
  * Delivery, core's half (docs/specs/agent-runtime.md, "5. Delivery"; "Seams this needs from
  * core", 2; t-1744): POST /api/loom/deliver through the real HTTP server, with a stub runtime
  * piece (role runtime, offering `delivery`, declaring `relay`) and stub sources (a venue
- * adapter declaring `slack`, a clock declaring nothing, since `wake` is core's).
+ * adapter declaring `slack`; a clock declaring `"wake": {}`, that it delivers on core's wake;
+ * a piece declaring nothing). Each piece's block goes through the installer's own check.
  *
  * The stub runtime appends every stdin it gets to $LOOM_HOME/runtime-calls.jsonl, so a test
  * can see whether core called it, and how often. $LOOM_HOME/runtime-mode picks its answer:
  * ok (the default), fail (exit 1, nothing said), said (exit 1 with {status: 503, error}),
- * bad (an answer that isn't the contract's), slow.
+ * bad (an answer that isn't the contract's), slow (400 ms), sleep:<ms>.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -16,9 +17,9 @@ import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
-import { runtimePieces } from './cli/pieces-managed.js';
+import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { createConversationTables } from './backends/conversations.js';
-import { DELIVERY_REPLAY_MS, keepAnswer, parseDeliver, replayOf, sweepDeliveries } from './delivery.js';
+import { DELIVER_MAX_BYTES, DELIVERY_LIMITS, DELIVERY_REPLAY_MS, deliveryHash, keepAnswer, parseDeliver, replayOf, sweepDeliveries, type DeliverBody } from './delivery.js';
 import { clearPieceCache } from './ui/pieces.js';
 
 function household(prefix: string): Household {
@@ -50,12 +51,16 @@ process.stdin.on('end', () => {
   if (mode === 'said-badly') { console.log(JSON.stringify({ status: 404, error: 'not a 5xx' })); process.exit(1); }
   if (mode === 'bad') { console.log(JSON.stringify({ conversation: 'nope', seq: 0, body: 'eaten' })); return; }
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
-  if (mode === 'slow') setTimeout(answer, 400); else answer();
+  if (mode === 'slow') setTimeout(answer, 400);
+  else if (mode.startsWith('sleep:')) setTimeout(answer, Number(mode.slice(6)));
+  else answer();
 });
 `;
 
-/** A managed piece record and its bin, as an install leaves them: `loom` is the checked block. */
-function piece(home: string, name: string, loom: Record<string, unknown>, body = '#!/bin/sh\nexit 3\n'): void {
+/** A managed piece record and its bin, as an install leaves them: `loom` checked as the installer checks it. */
+function piece(home: string, name: string, raw: Record<string, unknown>, body = '#!/bin/sh\nexit 3\n'): void {
+  const loom = parseLoomBlock(raw, name, [`loom-${name}`]);
+  if (typeof loom === 'string') throw new Error(`${name}: ${loom}`);
   const dir = join(home, 'pieces', name);
   mkdirSync(join(dir, 'current'), { recursive: true });
   writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name, source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: name, version: '1', installed: 'x',
@@ -70,6 +75,9 @@ function piece(home: string, name: string, loom: Record<string, unknown>, body =
 
 const RUNTIME_LOOM = { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } };
 const SLACK_LOOM = { venues: { slack: { label: 'Slack', kind: 'live', send: ['loom-slack', 'send'] }, 'slack-huddle': { label: 'Huddle', kind: 'live' } } };
+/** The clock delivers on core's wake: it says so, and defines no venue. */
+const CLOCK_LOOM = { venues: { wake: {} } };
+const LIMITS0 = { ...DELIVERY_LIMITS };
 
 const AT = '2026-11-02T12:00:00.000Z';
 /** A person's Slack message to art: the venue adapter's delivery. */
@@ -94,7 +102,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'slow') => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -114,11 +122,16 @@ describe('POST /api/loom/deliver', () => {
     process.env.LOOM_HOME = h.home;
     piece(h.home, 'runtime', RUNTIME_LOOM, RUNTIME_BIN);
     piece(h.home, 'slack', SLACK_LOOM);
-    piece(h.home, 'clock', {});
+    piece(h.home, 'clock', CLOCK_LOOM);
+    piece(h.home, 'plain', {});
+    for (const n of ['w1', 'w2', 'w3', 'w4', 'w5']) piece(h.home, n, CLOCK_LOOM);
     tok.owner = createToken(h, { role: { kind: 'owner' }, label: 'owner' }).token;
     tok.art = createToken(h, { role: { kind: 'agent', agent: 'art' }, label: 'art' }).token;
     tok.peer = createToken(h, { role: { kind: 'peer', name: 'pal' }, label: 'pal' }).token;
     tok.slack = createToken(h, { role: { kind: 'piece', piece: 'slack', subject: 'bot' }, label: 'slack' }).token;
+    tok.slack2 = createToken(h, { role: { kind: 'piece', piece: 'slack', subject: 'bot2' }, label: 'slack, another bot' }).token;
+    tok.plain = createToken(h, { role: { kind: 'piece', piece: 'plain', subject: 'x' }, label: 'plain' }).token;
+    for (const n of ['w1', 'w2', 'w3', 'w4', 'w5']) tok[n] = createToken(h, { role: { kind: 'piece', piece: n, subject: 'tick' }, label: n }).token;
     tok.clock = createToken(h, { role: { kind: 'piece', piece: 'clock', subject: 'tick' }, label: 'clock' }).token;
     tok.ghost = createToken(h, { role: { kind: 'piece', piece: 'ghost', subject: 'x' }, label: 'not installed' }).token;
     tok.runtimePiece = createToken(h, { role: { kind: 'piece', piece: 'runtime', subject: 'relay' }, label: 'runtime piece' }).token;
@@ -132,6 +145,7 @@ describe('POST /api/loom/deliver', () => {
     rmSync(h.home, { recursive: true, force: true });
   });
   beforeEach(() => {
+    Object.assign(DELIVERY_LIMITS, LIMITS0);
     rmSync(join(h.home, 'runtime-calls.jsonl'), { force: true });
     mode('ok');
     piece(h.home, 'runtime', RUNTIME_LOOM, RUNTIME_BIN);
@@ -161,10 +175,32 @@ describe('POST /api/loom/deliver', () => {
   describe('idempotent on (calling piece, id) for 24 hours', () => {
     it('a repeat returns the first answer verbatim and calls the runtime once', async () => {
       const first = await post(tok.slack, slackMsg('m-dup'));
-      const again = await post(tok.slack, slackMsg('m-dup', { text: 'a different text, same id' }));
+      const again = await post(tok.slack, slackMsg('m-dup'));
       expect(first.status).toBe(200);
       expect(again).toEqual(first);
       expect(calls()).toHaveLength(1);
+    });
+
+    it('the same id with a different body is a 409, not the old answer', async () => {
+      expect((await post(tok.slack, slackMsg('m-changed'))).status).toBe(200);
+      const r = await post(tok.slack, slackMsg('m-changed', { text: 'a different text, same id' }));
+      expect(r.status).toBe(409);
+      expect(r.body.error).toMatch(/m-changed was already delivered with a different body/);
+      expect(r.body).not.toHaveProperty('conversation');
+      expect(calls()).toHaveLength(1);
+    });
+
+    it('keyed on the calling credential\'s whole subject: another subject of the same piece is another delivery', async () => {
+      await post(tok.slack, slackMsg('m-subject'));
+      await post(tok.slack2, slackMsg('m-subject'));
+      expect(calls()).toHaveLength(2);
+      // The replay table keeps the subject, and a hash of the body, never the text.
+      const db = new BetterSqlite3(join(h.home, 'household.db'));
+      const rows = db.prepare("SELECT * FROM deliveries WHERE id = 'm-subject' ORDER BY caller").all() as Array<Record<string, unknown>>;
+      db.close();
+      expect(rows.map((r) => r.caller)).toEqual(['piece:slack/bot', 'piece:slack/bot2']);
+      expect(rows[0].body_sha256).toBe(deliveryHash(parseDeliver(slackMsg('m-subject')) as DeliverBody));
+      expect(JSON.stringify(rows)).not.toContain('hi art');
     });
 
     it('the same id from another piece is another delivery', async () => {
@@ -213,16 +249,30 @@ describe('POST /api/loom/deliver', () => {
 
     it('the table is in household.db; an answer over 24 hours old is neither replayed nor kept', () => {
       const t0 = Date.parse(AT);
-      keepAnswer(h.home, 'slack', 'old', { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' }, t0);
-      expect(replayOf(h.home, 'slack', 'old', t0 + DELIVERY_REPLAY_MS - 1)).toEqual({ conversation: 'cv-0123456789ab', seq: 9, body: 'fed' });
-      expect(replayOf(h.home, 'slack', 'old', t0 + DELIVERY_REPLAY_MS)).toBeUndefined();
+      const k = { caller: 'piece:slack/bot', piece: 'slack', id: 'old', hash: 'h1' };
+      keepAnswer(h.home, k, { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' }, t0);
+      expect(replayOf(h.home, k.caller, 'old', t0 + DELIVERY_REPLAY_MS - 1)).toEqual({ hash: 'h1', answer: { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' } });
+      expect(replayOf(h.home, k.caller, 'old', t0 + DELIVERY_REPLAY_MS)).toBeUndefined();
       const before = kept();
       expect(sweepDeliveries(h.home, t0 + DELIVERY_REPLAY_MS)).toBeGreaterThanOrEqual(1);
       expect(kept()).toBeLessThan(before);
       // A write sweeps too.
-      keepAnswer(h.home, 'slack', 'old2', { conversation: 'cv-0123456789ab', seq: 1, body: 'fed' }, t0);
-      keepAnswer(h.home, 'slack', 'new', { conversation: 'cv-0123456789ab', seq: 2, body: 'fed' }, t0 + DELIVERY_REPLAY_MS + 1);
-      expect(replayOf(h.home, 'slack', 'old2', t0)).toBeUndefined();
+      keepAnswer(h.home, { ...k, id: 'old2' }, { conversation: 'cv-0123456789ab', seq: 1, body: 'fed' }, t0);
+      keepAnswer(h.home, { ...k, id: 'new' }, { conversation: 'cv-0123456789ab', seq: 2, body: 'fed' }, t0 + DELIVERY_REPLAY_MS + 1);
+      expect(replayOf(h.home, k.caller, 'old2', t0)).toBeUndefined();
+    });
+
+    it('a piece keeps at most DELIVERY_LIMITS.keptPerPiece answers a day: past that, 429 and nothing runs', async () => {
+      DELIVERY_LIMITS.keptPerPiece = 2;
+      expect((await post(tok.w1, wake('cap-1'))).status).toBe(200);
+      expect((await post(tok.w1, wake('cap-2'))).status).toBe(200);
+      const r = await post(tok.w1, wake('cap-3'));
+      expect(r.status).toBe(429);
+      expect(r.body.error).toMatch(/w1 has delivered 2 messages in 24 hours/);
+      // A repeat is still answered from what's kept; another piece isn't held back.
+      expect((await post(tok.w1, wake('cap-1'))).status).toBe(200);
+      expect((await post(tok.w2, wake('cap-3'))).status).toBe(200);
+      expect(calls()).toHaveLength(3);
     });
   });
 
@@ -258,7 +308,13 @@ describe('POST /api/loom/deliver', () => {
 
     it('session is no one\'s to deliver into; wake carries only a schedule\'s knock', async () => {
       await refused(tok.runtime, slackMsg('x-4', { venue: 'session' }), /venue session is a harness's own/);
-      await refused(tok.slack, wake('x-5', { from: { kind: 'person', slug: 'loren' } }), /on venue wake, from is \{kind: schedule\}/);
+      await refused(tok.clock, wake('x-5', { from: { kind: 'person', slug: 'loren' } }), /on venue wake, from is \{kind: schedule\}/);
+    });
+
+    it('wake only from a piece that declares it delivers there ("wake": {})', async () => {
+      await refused(tok.plain, wake('x-w1'), /plain doesn't declare that it delivers on core's wake \(venues: \{"wake": \{\}\}\)/);
+      await refused(tok.slack, wake('x-w2'), /slack doesn't declare that it delivers on core's wake/);
+      await refused(tok.runtime, wake('x-w3'), /runtime doesn't declare that it delivers on core's wake/);
     });
 
     it('an agent the calling piece isn\'t granted: not one of the household\'s', async () => {
@@ -274,7 +330,7 @@ describe('POST /api/loom/deliver', () => {
     });
 
     it('a piece token for a piece that isn\'t installed', async () => {
-      await refused(tok.ghost, wake('x-9'), /ghost isn't an installed managed piece/);
+      await refused(tok.ghost, slackMsg('x-9'), /ghost isn't an installed managed piece/);
     });
 
     it('owner, agent and peer tokens don\'t deliver; no token at all is a 401', async () => {
@@ -313,6 +369,61 @@ describe('POST /api/loom/deliver', () => {
 
     it('a browser request is refused', async () => {
       expect((await post(tok.slack, slackMsg('b-2'), { origin: 'https://evil.example' })).status).toBe(403);
+    });
+  });
+
+  describe('the delivery limits: 120 s, a pool of its own, at most 2 running and 4 waiting per piece', () => {
+    it('an answer after 4 s is still a 200: it isn\'t the section feed\'s 3 s', async () => {
+      mode('sleep:4000');
+      expect(await post(tok.slack, slackMsg('l-4s'))).toEqual({ status: 200, body: { conversation: 'cv-0123456789ab', seq: 1, body: 'started' } });
+    }, 15_000);
+
+    it('a timeout is a 504 and isn\'t kept', async () => {
+      DELIVERY_LIMITS.timeoutMs = 500;
+      mode('sleep:2000');
+      const r = await post(tok.slack, slackMsg('l-timeout'));
+      expect(r.status).toBe(504);
+      expect(r.body.error).toMatch(/didn't answer within 0.5 s/);
+      Object.assign(DELIVERY_LIMITS, LIMITS0);
+      mode('ok');
+      expect((await post(tok.slack, slackMsg('l-timeout'))).status).toBe(200);
+      expect(calls()).toHaveLength(2);
+    }, 15_000);
+
+    it('one piece past 2 running and 4 waiting gets a 503; another piece isn\'t held back', async () => {
+      mode('sleep:600');
+      const flood = Promise.all([1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(tok.w1, wake(`f-${i}`))));
+      await new Promise((r) => setTimeout(r, 150));
+      const other = await post(tok.w2, wake('f-other'));
+      const rs = await flood;
+      expect(other.status).toBe(200);
+      expect(rs.filter((r) => r.status === 200)).toHaveLength(6);
+      const refusedRs = rs.filter((r) => r.status === 503);
+      expect(refusedRs).toHaveLength(2);
+      expect(refusedRs[0].body.error).toMatch(/w1 has too many deliveries in flight/);
+      // Refused ones weren't kept: they go through once the flood is over.
+      mode('ok');
+      for (const i of [1, 2, 3, 4, 5, 6, 7, 8]) expect((await post(tok.w1, wake(`f-${i}`))).status).toBe(200);
+      expect(calls()).toHaveLength(6 + 1 + 2);
+    }, 20_000);
+
+    it('the long pool full (4 running, 16 waiting, across pieces) is a 503 busy, not kept', async () => {
+      // Each piece may run 6 here, so five pieces (30 at once) overrun the shared pool's 20.
+      Object.assign(DELIVERY_LIMITS, { perPieceRunning: 6, perPieceWaiting: 0 });
+      mode('sleep:400');
+      const rs = await Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6].map((i) => post(tok[w], wake(`busy-${i}`)))));
+      const busy = rs.filter((r) => r.status === 503);
+      expect(rs.filter((r) => r.status === 200)).toHaveLength(20);
+      expect(busy).toHaveLength(10);
+      expect(busy.every((r) => /delivery piece \(runtime\) is busy/.test(String(r.body.error)))).toBe(true);
+      expect(calls()).toHaveLength(20);
+    }, 30_000);
+
+    it('a body over DELIVER_MAX_BYTES is a 413, and nothing runs', async () => {
+      const r = await post(tok.slack, { ...slackMsg('l-big'), pad: 'x'.repeat(DELIVER_MAX_BYTES) });
+      expect(r.status).toBe(413);
+      expect(r.body.error).toMatch(/a delivery is 256 KB at most/);
+      expect(calls()).toHaveLength(0);
     });
   });
 

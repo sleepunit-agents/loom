@@ -111,6 +111,30 @@ describe('grants', () => {
   });
 });
 
+describe('venues: delivering into core\'s wake', () => {
+  it('"wake": {} says the piece delivers on core\'s wake venue; it defines no venue', () => {
+    const b = parse({ venues: { wake: {}, slack: venue } }) as Record<string, unknown>;
+    expect(b).toMatchObject({ delivers_wake: true });
+    expect(Object.keys(b.venues as object)).toEqual(['slack']);
+    const only = parse({ venues: { wake: {} } }) as Record<string, unknown>;
+    expect(only).toMatchObject({ delivers_wake: true });
+    expect(only).not.toHaveProperty('venues');
+    expect(parse({ venues: { slack: venue } })).not.toHaveProperty('delivers_wake');
+  });
+
+  it.each<[string, unknown, RegExp]>([
+    ['a wake that defines a venue', { wake: venue }, /wake is core's own: a piece that delivers on it declares "wake": \{\}/],
+    ['a wake with a send', { wake: { send: ['loom-tasks', 'send'] } }, /"wake": \{\}/],
+    ['session, even empty', { session: {} }, /venue session is core's own/],
+  ])('rejects %s', (_w, venues, re) => {
+    expect(parse({ venues })).toMatch(re);
+  });
+
+  it('two pieces may both deliver on wake: it is core\'s, no one\'s name', () => {
+    expect(offerConflicts('clock2', { delivers_wake: true }, [{ name: 'clock', loom: { delivers_wake: true } }])).toBeUndefined();
+  });
+});
+
 describe('delivery', () => {
   it('a runtime-role piece declares an argv of its own bins, kept as declared', () => {
     expect(parse({ role: 'runtime', delivery: ['loom-tasks', 'deliver', '--json'] })).toMatchObject({ delivery: ['loom-tasks', 'deliver', '--json'] });

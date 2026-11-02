@@ -24,7 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   back (a runtime's own `{status: 5xx, error}` passes through). Idempotent on
   (calling piece, id) for 24 hours, kept in `household.db`; a failed forward
   isn't kept. `GET /api/loom/venues` gives the runtime every venue with its
-  `send` argv. Offer lookups by name use own keys only (t-1744).
+  `send` argv. Offer lookups by name use own keys only. A piece delivers on
+  core's `wake` only if it declares `"wake": {}` in its venues. Replays are
+  keyed on the calling credential and a hash of the body (a changed body is a
+  409), and one piece gets at most 2 running and 4 waiting forwards and
+  10,000 kept answers a day (t-1744).
 
 - **Offers.** A managed piece's `loom` block may declare what it offers through
   core: `sections` (a project section feed), `venues`, `mcp_tools` and

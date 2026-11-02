@@ -45,12 +45,17 @@ export function storeHome(env: NodeJS.ProcessEnv): string | undefined {
   return env.HOME ? join(env.HOME, '.config', 'loom') : undefined;
 }
 
-export function openHouseholdDb(home: string): Database {
-  mkdirSync(home, { recursive: true, mode: 0o700 });
-  const db = new BetterSqlite3(join(home, HOUSEHOLD_DB));
-  db.pragma('busy_timeout = 5000');
-  db.pragma('journal_mode = WAL');
-  db.exec(`CREATE TABLE IF NOT EXISTS venues (
+/** The db files whose schema this process has made sure of: it runs once per file, not per open. */
+const schemaDone = new Set<string>();
+
+/**
+ * household.db's schema:
+ *  - `venues`: the registry above;
+ *  - `deliveries`: POST /api/loom/deliver's replay table (src/delivery.ts). One row per calling
+ *    credential (`piece:<piece>/<subject>`, or `runtime:<piece>`) and id, for 24 hours: the
+ *    piece, when, a SHA-256 of the body (never the text) and the runtime's answer.
+ */
+const SCHEMA = `CREATE TABLE IF NOT EXISTS venues (
     name        TEXT PRIMARY KEY,
     piece       TEXT NOT NULL,
     label       TEXT NOT NULL,
@@ -58,7 +63,30 @@ export function openHouseholdDb(home: string): Database {
     render_json TEXT,
     orphaned    TEXT,
     updated     TEXT NOT NULL
-  )`);
+  );
+  CREATE TABLE IF NOT EXISTS deliveries (
+    caller      TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    piece       TEXT NOT NULL,
+    at          INTEGER NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    answer_json TEXT NOT NULL,
+    PRIMARY KEY (caller, id)
+  );
+  CREATE INDEX IF NOT EXISTS deliveries_piece_at ON deliveries (piece, at);`;
+
+export function openHouseholdDb(home: string): Database {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const path = join(home, HOUSEHOLD_DB);
+  // A file made since (a test's fresh home, a deleted db) gets its schema again.
+  const fresh = !existsSync(path);
+  const db = new BetterSqlite3(path);
+  db.pragma('busy_timeout = 5000');
+  db.pragma('journal_mode = WAL');
+  if (fresh || !schemaDone.has(path)) {
+    db.exec(SCHEMA);
+    schemaDone.add(path);
+  }
   return db;
 }
 

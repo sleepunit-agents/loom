@@ -475,7 +475,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // piece credential reaches, as its piece, beside its own API; and the runtime's own token.
     if (piece === 'loom' && subpath === DELIVER_ROUTE) {
       if (role.kind !== 'piece' && role.kind !== 'runtime') return sendError(res, 403, `forbidden: /api/loom/${DELIVER_ROUTE} takes a piece's own token (a source delivering), or the runtime's`);
-      return deliverApi(req, res, role.piece);
+      return deliverApi(req, res, role.piece, roleString(role));
     }
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
@@ -513,16 +513,19 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   }
 
   /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */
-  async function deliverApi(req: IncomingMessage, res: ServerResponse, piece: string): Promise<void> {
+  async function deliverApi(req: IncomingMessage, res: ServerResponse, piece: string, credential: string): Promise<void> {
     if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    // A declared length over the cap is refused before reading (as pieceCall does), so the caller gets the 413.
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > DELIVER_MAX_BYTES) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
     const raw = await collectBody(req, DELIVER_MAX_BYTES);
     if (raw === OVERSIZED) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
     let body: unknown;
     try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
     let out;
     try {
-      out = await deliver(process.env, live!(), { piece }, body);
+      out = await deliver(process.env, live!(), { piece, credential }, body);
     } catch (e) {
       // Keep the details (paths) out of the response.
       process.stderr.write(`loom: couldn't deliver: ${(e as Error).message}\n`);

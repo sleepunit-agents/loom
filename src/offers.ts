@@ -60,9 +60,15 @@ export interface Offers {
    * block says `"role": "runtime"` declares it, and only one installed piece may.
    */
   delivery?: string[];
+  /**
+   * The piece delivers on core's `wake` venue (POST /api/loom/deliver): declared in `venues` as
+   * `"wake": {}`, which references core's venue rather than defining one. The clock does.
+   */
+  delivers_wake?: true;
 }
 
-export type OfferKind = keyof Offers;
+/** The offers core runs or lists by kind (`delivers_wake` is a permission, not an offer it runs). */
+export type OfferKind = 'sections' | 'venues' | 'mcp_tools' | 'grants' | 'delivery';
 export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants', 'delivery'];
 
 export const MAX_ARGV = 16;
@@ -130,13 +136,23 @@ function parseSections(raw: unknown, bins: readonly string[]): SectionsOffer | u
   return { project: { label: p.label, argv: [...(p.argv as string[])], unfiled: p.unfiled === true } };
 }
 
-function parseVenues(raw: unknown, bins: readonly string[], role: string | undefined): Record<string, VenueOffer> | string {
+/** Core's venue a piece may say it delivers on, with an empty entry (agent-runtime.md, "Delivery"). */
+export const DELIVERABLE_CORE_VENUE = 'wake';
+
+function parseVenues(raw: unknown, bins: readonly string[], role: string | undefined): { venues: Record<string, VenueOffer>; wake: boolean } | string {
   if (!isObject(raw)) return 'loom.venues is not an object';
   const names = Object.keys(raw);
   if (names.length > MAX_VENUES) return `loom.venues declares at most ${MAX_VENUES} venues`;
   const out = ownMap<VenueOffer>();
+  let wake = false;
   for (const name of names) {
     if (!VENUE_NAME.test(name)) return `a venue's name is lowercase letters, digits and dashes, starting with a letter, at most 32: ${JSON.stringify(name)}`;
+    if (name === DELIVERABLE_CORE_VENUE) {
+      const v = raw[name];
+      if (!isObject(v) || Object.keys(v).length) return `venue ${name} is core's own: a piece that delivers on it declares "${name}": {} (and defines nothing)`;
+      wake = true;
+      continue;
+    }
     if (CORE_VENUES.includes(name)) return `venue ${name} is core's own`;
     if (name === RUNTIME_VENUE && role !== 'runtime') return `venue ${RUNTIME_VENUE} is declared only by the runtime (a loom block with "role": "runtime")`;
     const v = raw[name];
@@ -154,7 +170,7 @@ function parseVenues(raw: unknown, bins: readonly string[], role: string | undef
     }
     out[name] = venue;
   }
-  return out;
+  return { venues: out, wake };
 }
 
 function parseMcpTools(raw: unknown, bins: readonly string[]): Record<string, McpToolOffer> | string {
@@ -197,7 +213,8 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
   if (b.venues !== undefined) {
     const v = parseVenues(b.venues, bins, ctx.role);
     if (typeof v === 'string') return v;
-    if (Object.keys(v).length) out.venues = v;
+    if (Object.keys(v.venues).length) out.venues = v.venues;
+    if (v.wake) out.delivers_wake = true;
   }
   if (b.mcp_tools !== undefined) {
     const t = parseMcpTools(b.mcp_tools, bins);
@@ -222,6 +239,7 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
 export function offersIn(loom: Offers): Offers {
   const out: Offers = {};
   for (const k of OFFER_KINDS) if (loom[k] !== undefined) (out as Record<string, unknown>)[k] = loom[k];
+  if (loom.delivers_wake === true) out.delivers_wake = true;
   return out;
 }
 
