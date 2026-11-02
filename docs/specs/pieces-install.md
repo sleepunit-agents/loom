@@ -60,6 +60,23 @@ The package's `package.json` must have:
 }
 ```
 
+The block may also declare what the piece **offers** through core: the keys
+`sections`, `venues`, `mcp_tools` and `grants` (extensions.md, "Offers", for each
+one's schema and the spec it comes from). They are checked at install with the
+rest of the block, against the package's own `bin` names and against the other
+installed pieces, and a block that fails any rule is rejected whole. piece.json
+keeps a copy of the checked block (`loom`), offers included, and that copy is
+what core reads.
+
+```json
+"loom": {
+  "sections": { "project": { "label": "Tasks", "argv": ["loom-tasks", "project-feed", "--json"], "unfiled": true } },
+  "venues": { "slack": { "label": "Slack", "kind": "live", "render": ["loom-slack", "render", "--json"], "send": ["loom-slack", "send"] } },
+  "mcp_tools": { "house": { "description": "…", "input_schema": { "type": "object" }, "argv": ["loom-runtime", "house"] } },
+  "grants": true
+}
+```
+
 A setting's `name` is the environment variable it becomes (uppercase letters,
 digits and `_`). It can't be one of loom's own (`LOOM_*`), apart from the
 piece's own prefix (the box piece may have `LOOM_BOX_PUBLIC_URL`), or `PATH`,

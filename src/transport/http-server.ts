@@ -45,14 +45,15 @@ import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../
 import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
-import { readRecord } from '../cli/pieces-managed.js';
+import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
+import { ROLE_ROUTES, roleReaches } from './role-routes.js';
 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
-import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
   assertSafeBind,
@@ -235,7 +236,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (wrote.length) process.stderr.write(`loom: made directory entries for ${wrote.join(', ')} (People entries for the household's agents and members)\n`);
   }) : undefined;
   live?.();
-  const resolver = live ? new TokenResolver(live) : undefined;
+  // The runtime piece is read per request, so removing it (or installing a second) ends its tokens at once.
+  const resolver = live ? new TokenResolver(live, { runtimePieces: () => runtimePieces(process.env) }) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
   /** An owner's caller for a piece: who, and what they own (docs/specs/owners.md). */
   const ownerCaller = (member: string | undefined): ApiCaller => {
@@ -272,6 +274,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if ('status' in role) return role;
     // Every kind is handled by name: an unlisted one must never fall through to the owner's branch.
     if (role.kind === 'piece') return { status: 403, error: `forbidden: a piece credential reaches only /api/${role.piece}/` };
+    if (role.kind === 'runtime' || role.kind === 'review') return { status: 403, error: `forbidden: a ${role.kind} token reaches only its own /api/loom/ routes` };
     const h = live!();
     if (role.kind === 'peer') {
       if (target) return { status: 403, error: 'forbidden: a peer token reaches the commons only' };
@@ -433,6 +436,15 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
+    // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
+    if (role.kind === 'runtime' || role.kind === 'review') {
+      if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
+      return loomApi(req, res, subpath, role);
+    }
+    // Core's own routes for those roles refuse everyone else by name, before the store's 404.
+    if (piece === 'loom' && Object.values(ROLE_ROUTES).some((paths) => paths.includes(subpath))) {
+      return sendError(res, 403, `forbidden: /api/loom/${subpath} takes a runtime or review token`);
+    }
     // A piece's own store in loom (docs/specs/piece-storage.md): its credential, or a household owner.
     if (piece === 'loom') return storeApi(req, res, subpath, role);
     let caller: ApiCaller;
@@ -455,6 +467,37 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  const reachList = (kind: 'runtime' | 'review') =>
+    ROLE_ROUTES[kind].length ? ROLE_ROUTES[kind].map((p) => `POST /api/loom/${p}`).join(', ') : 'nothing yet';
+
+  /**
+   * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
+   * the caller already passed roleReaches. Like /api: JSON only, no Origin.
+   */
+  async function loomApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Extract<Role, { kind: 'runtime' | 'review' }>): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 4 * 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: this call is 4 KB at most');
+    try { if (raw !== '') JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // POST /api/loom/review/token (docs/specs/conversations.md, "Review tokens"): one per run.
+    if (subpath === 'review/token' && role.kind === 'runtime') {
+      try {
+        const { token, record } = mintReviewToken(live!(), role.piece);
+        // A credential: never cached.
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ token, expires: record.expires }));
+        return;
+      } catch (e) {
+        if (e instanceof TokenLimitError) return sendError(res, 429, `too-many: ${e.message}`);
+        // Keep the details (paths) out of the response, as roleFor does.
+        process.stderr.write(`loom: couldn't mint a review token: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t mint a review token; see the daemon log');
+      }
+    }
+    return sendError(res, 404, `not-found: /api/loom/${subpath}`);
   }
 
   /**

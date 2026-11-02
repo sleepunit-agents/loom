@@ -96,6 +96,16 @@ one has a **label** ("Art · house on wunder", "Jonathan · page") and a
 | `owner` | the default agent, or `/agents/<name>/mcp` for another | everything, including every agent's relationships, and the page | Jonathan |
 | `peer:<name>` | nobody's stack | commons knowledge only (today's `--scope knowledge`) | another household's agent |
 | `piece:<piece>/<subject>` | nobody | only `POST /api/<piece>/…`, as `<subject>` (docs/extensions.md, "The API") | a box, enrolled by the runtime piece |
+| `runtime:<piece>` | nobody | only core's `POST /api/loom/…` routes that name the runtime (docs/specs/conversations.md, "Who writes what"); minted only for the one managed piece whose `loom` block says `"role": "runtime"`, and live only while it still is | the runtime piece |
+| `review:<piece>` | nobody | only core's `POST /api/loom/…` routes that name review (docs/specs/conversations.md, "Review tokens"); minted by the runtime through `POST /api/loom/review/token`, never by `loom token create`, and always expiring 2 hours out | one review run |
+
+Which `/api/loom/` routes `runtime` and `review` reach is one allowlist,
+`src/transport/role-routes.ts`; every route it doesn't name refuses them
+(MCP, `/cli`, the page, a piece's API and store).
+
+A token record may carry **`expires`** (ISO-8601). Past it the token is
+refused everywhere (401), like a revoked one, and the next write to
+`tokens.json` drops the record. Records without it never expire.
 
 - **The daemon resolves the token on every request** and builds the session's
   server for that agent's directory: the same `contextDir` threading as
@@ -109,6 +119,8 @@ one has a **label** ("Art · house on wunder", "Jonathan · page") and a
   claims.
 - **Tokens are managed in core:**
   - `loom token create --agent art --label "…"` prints the token once.
+    `--runtime <piece>` mints the runtime's, and refuses a piece that isn't
+    the household's one runtime.
   - `loom token list` shows labels, roles and when each was last used.
   - `loom token revoke <label>`.
   - The page lists and revokes them too.

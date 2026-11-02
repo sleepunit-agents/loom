@@ -80,7 +80,7 @@ export interface PieceSkip {
   reason: string;
 }
 
-type Answer = { ok: true; stdout: string } | { ok: false; reason: string };
+type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?: number | null };
 type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
@@ -157,7 +157,7 @@ export const MAX_API_RUNNING = 4;
 export const MAX_API_WAITING = 8;
 const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
 
-async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number } = {}): Promise<Answer> {
+async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Answer> {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
 }
 
@@ -199,12 +199,28 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
-      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui' });
+      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code });
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
       drain = setTimeout(done, DRAIN_MS);
     });
   });
+}
+
+/**
+ * Run a piece's bin with `args` (and `stdin`, when given) under the manifest
+ * runner's limits: 3 s, the process group killed afterwards, at most
+ * MAX_RUNNING at once, in the page's pool. In the piece's own environment, and
+ * with a store grant when there's a caller. The runner for offers
+ * (src/offers-registry.ts, runOffer): a failure says why, an exit says its code.
+ */
+export async function runPieceBin(
+  path: string, args: string[], env: NodeJS.ProcessEnv,
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller } = {},
+): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
+  const r = await ask(path, args, withGrant(env, path, opts.caller), { stdin: opts.stdin, maxBytes: opts.maxBytes });
+  if (r.ok) return r;
+  return { ok: false, reason: r.reason === 'no ui' ? `exit ${r.code ?? 'by signal'}` : r.reason };
 }
 
 function json(stdout: string): unknown {

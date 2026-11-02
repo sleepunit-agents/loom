@@ -21,6 +21,7 @@
  * a commit, and update and rollback work the same.
  */
 import { parseStoreDecl, type StoreDecl } from '../stores.js';
+import { offerConflicts, parseOffers, type Offers } from '../offers.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -55,7 +56,11 @@ export interface Service {
   keepChildren?: boolean;
 }
 
-export interface LoomBlock {
+/**
+ * The checked `loom` block. Its offer keys (sections, venues, mcp_tools, grants: src/offers.ts) are
+ * part of it, so piece.json keeps a copy of what the piece declared.
+ */
+export interface LoomBlock extends Offers {
   /** Which loom-<name> bin is the piece, when the package has several. */
   name?: string;
   role?: string;
@@ -178,6 +183,15 @@ export function managedPieces(env: NodeJS.ProcessEnv): PieceRecord[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * The managed pieces whose loom block says `"role": "runtime"`. A runtime token is minted
+ * for, and reaches as, only the one such piece (docs/specs/conversations.md, "Who writes
+ * what"); with none or several, there's no runtime to be.
+ */
+export function runtimePieces(env: NodeJS.ProcessEnv): string[] {
+  return managedPieces(env).filter((r) => r.loom.role === 'runtime').map((r) => r.name);
+}
+
 export function readSettings(env: NodeJS.ProcessEnv, name: string): Record<string, string> {
   const root = piecesRoot(env);
   const s = root ? readJson(join(root, name, 'settings.json')) : undefined;
@@ -268,9 +282,10 @@ const str = (v: unknown, max: number): v is string => typeof v === 'string' && v
 /**
  * The package's `loom` block, checked; a string says what's wrong. A setting
  * may not be one of loom's own variables (LOOM_*), except under the piece's
- * own prefix: the box piece may have LOOM_BOX_PUBLIC_URL.
+ * own prefix: the box piece may have LOOM_BOX_PUBLIC_URL. An offer's argv
+ * must start with one of the package's `bins` (none given: no argv passes).
  */
-export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string {
+export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly string[]): LoomBlock | string {
   const own = piece ? `LOOM_${piece.toUpperCase().replace(/-/g, '_')}_` : undefined;
   if (raw === undefined) return { settings: [], services: [] };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'the loom block is not an object';
@@ -342,7 +357,14 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
     if (typeof d === 'string') return d;
     out.store = d;
   }
-  return out;
+  const offers = parseOffers(b, { bins, role: out.role });
+  if (typeof offers === 'string') return offers;
+  return { ...out, ...offers };
+}
+
+/** Why `loom` can't be piece `name`'s beside the other installed pieces (offers.ts, offerConflicts). */
+export function loomConflicts(env: NodeJS.ProcessEnv, name: string, loom: LoomBlock): string | undefined {
+  return offerConflicts(name, loom, managedPieces(env));
 }
 
 /** npm from PATH (a test puts a stand-in first on it). */
@@ -490,8 +512,10 @@ export async function installPiece(
     if (name && pieceName !== name) throw new PieceError(`${isLocal(source) ? source.path : `the catalog's ${name}`} installs loom-${pieceName}, not loom-${name}`);
     const bad = bins.find((b) => !BIN.test(b));
     if (bad) throw new PieceError(`bin name ${JSON.stringify(bad)} isn't allowed`);
-    const loom = parseLoomBlock(pkg.loom, pieceName);
+    const loom = parseLoomBlock(pkg.loom, pieceName, bins);
     if (typeof loom === 'string') throw new PieceError(`${pkgName}: ${loom}`);
+    const conflict = loomConflicts(env, pieceName, loom);
+    if (conflict) throw new PieceError(`${pkgName}: ${conflict}`);
     for (const other of managedPieces(env)) {
       if (other.name === pieceName) continue;
       const clash = bins.find((b) => other.bins.includes(b));
@@ -554,8 +578,12 @@ export function rollbackPiece(env: NodeJS.ProcessEnv, name: string): PieceRecord
   // The previous version's own bins are read from its package.json.
   const { name: pkgName, pkg } = installedPackage(join(root, name, 'versions', versionKey(back.source)));
   back.bins = binsOf(pkg, pkgName);
-  const loom = parseLoomBlock(pkg.loom, name);
-  if (typeof loom !== 'string') back.loom = loom;
+  const loom = parseLoomBlock(pkg.loom, name, back.bins);
+  if (typeof loom !== 'string') {
+    const conflict = loomConflicts(env, name, loom);
+    if (conflict) throw new PieceError(`${name}'s previous version can't come back: ${conflict}`);
+    back.loom = loom;
+  }
   swapLink(join('versions', versionKey(back.source)), join(root, name, 'current'));
   relink(root, back, rec);
   writeJson(join(root, name, 'piece.json'), back);

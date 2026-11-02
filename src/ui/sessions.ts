@@ -19,7 +19,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import { createToken, firstOwner, HouseholdError, loadTokens, memberOf, type Household } from '../household.js';
+import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, type Household } from '../household.js';
 
 export interface Session { issuedAt: number; secret: Buffer }
 
@@ -383,7 +383,7 @@ export const LINK_TOKEN = 'page sign-in links';
 export function signinLink(h: Household, ttlS: number, member?: string): string {
   const m = member === undefined ? firstOwner(h) : memberOf(h, member);
   if (!m) throw new HouseholdError(`no member named ${member} in this household`);
-  const tokens = loadTokens(h.home).filter((t) => !t.revoked && t.role === 'owner');
+  const tokens = loadTokens(h.home).filter((t) => isLive(t) && t.role === 'owner');
   // The household's link token, if it's still this member's (no member: the first owner's); else one of their own.
   const shared = tokens.find((t) => t.label === LINK_TOKEN);
   const sharedIsTheirs = shared && (shared.member === undefined ? m.person === firstOwner(h).person : shared.member === m.person);
