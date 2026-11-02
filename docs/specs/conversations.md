@@ -35,7 +35,8 @@ The owner's other rulings shape everything below:
    venue says how to show it and what "good" means for it. Core can always show any record generically, even after
    its venue is gone.
 3. **No transcripts in the record.** The durable record holds who, where, when, per-turn metadata, the agent's own
-   digests and links. The words people said are not in it, and core checks that a digest doesn't quote them.
+   digests and links. The words people said are not in it. Grading checks digests for quotes after the fact, and core blanks any field
+   that quotes.
 4. **Raw text is in the audit log only, and no identity ever reads it.** The log is encrypted at rest, deleted once
    processed, and gone after 7 days regardless. Its only reader is grading: bare models with no identity, no memory and
    no tools, whose output is checked so it cannot carry the text out.
@@ -135,8 +136,9 @@ Without it, audit writes are refused (`503`) and turns still record.
 }
 ```
 
-**Turns** (`conversation_turns`), metadata only. The writer sends `at`, `from`, `kind`, and for the agent's own turns
-`model`, `harness` and `outcome`. Core computes the rest. Any other key, text included, is rejected.
+**Turns** (`conversation_turns`), metadata only. The writer sends `at`, `from`, `kind`, `label` (optional, ≤ 80: the
+place's display name, last one wins), and for the agent's own turns `run`, `model`, `harness` and `outcome`. Core
+computes the rest. Any other key, text included, is rejected.
 
 | Field | Value |
 |---|---|
@@ -144,7 +146,8 @@ Without it, audit writes are refused (`503`) and turns still record.
 | `at` | ISO-8601 UTC |
 | `from` | `{kind: person, slug}`, `{kind: agent, id}`, `{kind: schedule}` or `{kind: unknown}` |
 | `kind` | `message` (someone else), `reply` (the agent answers), `action` (the agent did something visible), `wake` (a schedule fired), `note` (a mid-turn note in a live venue), `refused` (a relay refused as a repeat) |
-| `latency_ms` | computed by core on a `reply`: time since the earliest `message` after the agent's previous `reply` |
+| `run` | on the agent's turns: the body run they belong to (the same id as its digest's) |
+| `latency_ms` | computed by core on a `reply`: time since the earliest `message` with no `reply` after it. A `reply` with no such `message` (the agent spoke first, or a wake) has none |
 | `model`, `harness` | strings, on the agent's turns |
 | `outcome` | on the agent's turns: `answered`, `progressed`, `deferred`, `failed` or `none` |
 
@@ -164,9 +167,13 @@ What a turn is (one delivered message or action, never merged) is the venue adap
   of ≤ 64 each.
 - **One per run.** A second write in the same run replaces that run's digest. A digest is never written for another
   run, or for another agent's conversation.
-- **No quotes.** At write, core compares every text field with the conversation's audit entries still in the log. A
-  digest sharing any 8-word sequence with them is rejected. (Words are maximal runs of letters and digits, compared
-  lowercased.)
+- **No quotes, checked afterwards.** Core does not compare a digest with raw text at write: that would decrypt on an
+  agent's request, and a rejection would tell the agent what was said.
+  - Instead, grading takes each digest written since the last run along with the turns it covers.
+  - A digest field that shares any 8-word sequence with those turns' text is blanked by core and replaced with
+    `_(removed: quoted)_`.
+  - Words are maximal runs of letters and digits, compared lowercased.
+  - The agent learns of it only as a finding on its next introspection.
 - **Projects.** `projects` are names (projects.md's slugs or aliases), stored resolved to slugs. When a digest names
   none, the one live project whose `links.venues` contains `<venue>:<place>` is used. If none or several match, none is.
 
@@ -176,7 +183,9 @@ one `conversation_days` row per conversation and day: turn counts by `kind`, med
 digests are kept for good.
 
 **Reading.**
-- **Who sees what.** An agent's token sees its own agent's conversations; an owner's sees every agent's.
+- **Who sees what.** An agent's token sees its own agent's conversations. A household member sees the conversations
+  of the agents their `agents` covers (owners.md: `'*'` or a list), and no others. A request naming another agent is
+  refused, as owners.md has it.
 - **`conversations`** returns up to 100, newest `last` first.
 - **`conversation({id})`** returns the record, its digests, its findings (as introspection reads them), and its render:
   the venue's when the venue has a live `render`, else core's generic render. loom's page shows it at
@@ -238,7 +247,7 @@ conversations of that kind:
 | Kind | Measures (from metadata) | Graded question, 1–5 |
 |---|---|---|
 | `live` | `first_reply_s`: median `latency_ms` ÷ 1000 of `reply` turns. `abandoned`: share of conversations with a `message` that had no `reply` within 24h | "Did the agent answer what was actually asked, well, the first time?" |
-| `scheduled` | `due_to_progress_s`: median time from a `wake` turn to the run's first `progressed` or `answered` turn. `done_rate`: share of runs whose last agent turn is `answered` or `progressed` | "Did the run move its work forward, without busywork?" |
+| `scheduled` | `due_to_progress_s`: median, over runs (agent turns grouped by `run`), of the time from the `wake` turn just before the run's first turn to its first `progressed` or `answered` turn. `done_rate`: share of runs whose last agent turn is `answered` or `progressed` | "Did the run move its work forward, without busywork?" |
 | `agent` | `round_trips`: median turns from a relay's first `message` to the first `reply` with outcome `answered`. `loops_refused`: count of `refused` turns | "Did the exchange resolve what was asked?" |
 
 ## The audit log
@@ -253,11 +262,12 @@ conversations of that kind:
   at daemon start.
 
 **Review tokens.** The runtime asks core for one per run: `POST /api/loom/review/token`, role `runtime`. The answer is a
-token with role `review` and `expires` 2 hours out. It reaches only `audit/take`, `audit/done`, `scorecards` and
+token with role `review` and `expires` 2 hours out. It reaches only `audit/take`, `audit/done`, `scores`, `quoted` and
 `findings`.
 
-- **`audit/take`:** `{limit ≤ 500}`. Answers `{entries: [{ref, agent, venue, kind, text}]}`, oldest first, across the
-  household's agents, entries not yet taken. `ref` is an opaque handle standing for `(agent, conversation, seq)`.
+- **`audit/take`:** `{limit ≤ 500}`. Answers `{entries: [{ref, agent, venue, kind, family, text}]}`, oldest first,
+  across the household's agents, entries not yet taken. A take also returns the digests written since the last run,
+  each with the `ref`s of its run's turns, for the quote check. `ref` is an opaque handle standing for `(agent, conversation, seq)`.
 - **Redaction before it leaves**, case-insensitive and whole-word:
   - every person card's `name` and `slug` becomes `P1`, `P2`…;
   - every agent id becomes `A1`…;
@@ -276,9 +286,14 @@ A daily household job. **Core defines the contract; the runtime runs it**, becau
   `runtime`), never from the file, and passes the review token to a replacement command on stdin.
 
 **Grading, household-wide, blind:**
-1. **Picking graders.** The runtime takes entries and picks graders among the models it can run. It labels each model
-   with a **family**, its provider (`anthropic`, `openai`, …), and records the family on every scorecard row; the
-   runtime spec says how it knows them. Each sample is graded by:
+1. **Picking graders.** The runtime takes entries and picks graders among the models it can run. It knows each model's
+   **family**, its provider (`anthropic`, `openai`, …); the runtime spec defines that list.
+   - A take entry carries the producing turn's `family` (not its model), so the runtime can choose graders without
+     learning who produced it.
+   - Core keeps the mapping from `ref` to model, harness and agent. Scores are posted by `ref`, and core aggregates
+     them into scorecard rows.
+
+   Each sample is graded by:
    - two graders from families other than the producer's, where the household has them;
    - one, where it has one other family;
    - only a single-family household falls back to a different model of the same family, and its rows say
@@ -290,12 +305,14 @@ A daily household job. **Core defines the contract; the runtime runs it**, becau
 3. **Findings are checked.** The runtime posts each finding with the sample's `ref`: `POST /api/loom/findings`. Core
    rejects one that shares an 8-word sequence with that entry's text (same word rule as digests). It stores the
    accepted ones in the turn's agent's `findings` table: `ref`'s turn, the measure, the score and the text.
-4. **Scorecards.** `POST /api/loom/scorecards`. A row is:
+4. **Scores.** `POST /api/loom/scores` `{ref, grader_family, score}` and `POST /api/loom/quoted` `{digest, field}`.
+   Core turns scores into scorecard rows itself, from its `ref` mapping, so no runtime ever learns which model
+   produced a sample. Measures from metadata are computed by core in the same pass. A row is:
    - `day`, `model`, `family`, `harness`, `kind`;
    - `measure`: a name from the table, or `graded`;
    - `value` (a number), `n` (a count), `same_family` (a boolean).
 
-   Any other key, an unknown `measure`, or a non-numeric `value` is rejected. Rows are kept for good. They're shown
+   Rows are written only by core. Rows are kept for good. They're shown
    in a Models section of the Mind page (a page PR), and the runtime's model choice reads them through
    `GET /api/loom/scorecards`.
 5. **Done.** The taken entries are marked `done`. A run that fails leaves them; the 7-day sweep still applies.
@@ -351,7 +368,7 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
 3. **Digests.**
    - It goes to the identity's conversation and run; the same run replaces, another run adds.
    - Unknown keys and the caps reject.
-   - A digest sharing 8 words with the conversation's audit text is rejected.
+   - A digest is never compared with audit text at write. A `quoted` post blanks the field.
    - The project falls back to the single matching `links.venues`, and to none when several match.
 4. **Retention.** The fold makes `conversation_days` rows with the stated fields for whole days only, deletes their
    turns, and never refolds a day.
@@ -376,12 +393,16 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
    handler.
 10. **Findings and scorecards.**
     - A finding sharing 8 words with its entry is rejected; an accepted one lands in the turn's agent's `findings`.
-    - Scorecard rows reject unknown keys, unknown measures and non-numeric values.
+    - Scores are posted by `ref`; the resulting rows carry the producer's model, family and harness, which the
+      runtime never received.
     - An agent's `conversation_findings` returns only its own.
 11. **Needs you.** A `needs_owner` digest makes an Inbox ask, and a later digest without one clears it.
 12. **Projects.** The `conversations` section's contents, caps, order and `new` are as stated.
 13. **The boot tape** interleaves digests in its window with episodes by time.
-14. **Scoping.** An agent's `conversations` lists only its own; an owner's lists all.
+14. **Scoping.** An agent's `conversations` lists only its own. A member whose `agents` is `["pond-bot"]` sees only
+    pond-bot's, and a request naming another agent is refused.
+15. **Latency.** A `reply` after two `message`s measures from the first; a `reply` with none before it has no
+    `latency_ms`. `due_to_progress_s` groups by `run`.
 
 ## First slice
 
