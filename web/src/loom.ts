@@ -100,3 +100,10 @@ function qs(q: Record<string, string>): string {
   const s = new URLSearchParams(q).toString();
   return s ? `?${s}` : '';
 }
+
+/** An Inbox item, read (src/ui/handler.ts /inbox/read): as opening it at /inbox?i=<key> would. */
+export async function markRead(key: string, csrf: string): Promise<boolean> {
+  const r = await fetch('/inbox/read', { method: 'POST', credentials: 'same-origin', body: new URLSearchParams({ _csrf: csrf, i: key }),
+    headers: { 'content-type': 'application/x-www-form-urlencoded' } }).catch(() => undefined);
+  return !!r?.ok;
+}
