@@ -274,6 +274,12 @@ token with role `review` and `expires` 2 hours out. It reaches only `audit/take`
   - every model and harness string seen in any turn becomes `M1`… or `H1`…;
   - numbering is by first appearance, consistent within the take.
   The `agent` field itself is given as its `A…` placeholder.
+
+  **A trade-off: a cardless person behind an opaque slug.** Redaction replaces only the names loom knows. When a
+  venue adapter writes a sender as a slug with no person card behind it, the slug is redacted but the person's name,
+  if it appears in the text, isn't: loom doesn't know it. Adapters should map people to cards (the venue's gates),
+  and write a sender they can't map as `{kind: unknown}`, which also limits grading to the families that already
+  processed the conversation.
 - **`audit/done`:** `{refs: […]}` deletes them.
 
 ## Review
@@ -311,8 +317,11 @@ A daily household job. **Core defines the contract; the runtime runs it**, becau
    can't add up to a transcript. They're stored in the turn's agent's `findings` table: the turn, the measure, the
    score and the text.
 4. **Scores.** `POST /api/loom/scores` `{ref, grader_family, score}`.
-   Core turns scores into scorecard rows itself, from its `ref` mapping, so no runtime ever learns which model
-   produced a sample. Measures from metadata are computed by core in the same pass. A row is:
+   Core turns scores into scorecard rows itself, from its `ref` mapping, so no grader ever learns which model
+   produced a sample. (The runtime is the household's operator: it reads the scorecards by design, and isn't blind.)
+   The grader families core accepts are the families of the models written on turns, by the runtime or a harness;
+   the runtime is trusted here, as it mints the review tokens. Measures from metadata are computed by core in the
+   same pass. A row is:
    - `day`, `model`, `family`, `harness`, `kind`;
    - `measure`: a name from the table, or `graded`;
    - `value` (a number), `n` (a count), `same_family` (a boolean).
@@ -401,7 +410,7 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
       `findings`.
     - A score from a family that didn't process a non-owner conversation is rejected.
     - Scores are posted by `ref`; the resulting rows carry the producer's model, family and harness, which the
-      runtime never received.
+      grader never received.
     - An agent's `conversation_findings` returns only its own.
 11. **Needs you.** A `needs_owner` digest makes an Inbox ask, and a later digest without one clears it.
 12. **Projects.** The `conversations` section's contents, caps, order and `new` are as stated.

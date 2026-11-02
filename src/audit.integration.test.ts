@@ -21,9 +21,9 @@ import { runtimePieces } from './cli/pieces-managed.js';
 import { createConversationTables, findingsOf, foldConversations, getConversation, recordTurn, turnsOf, type TurnInput } from './backends/conversations.js';
 import { writeTurn } from './conversations.js';
 import { PeopleStore } from './backends/people.js';
-import { HOUSEHOLD_DB, syncVenues } from './household-store.js';
-import { AUDIT_DB, REVIEW_KEY, REVIEW_PUB, auditCount, sweepAudit } from './audit.js';
-import { redactor, takeAudit } from './audit-take.js';
+import { HOUSEHOLD_DB, syncVenues, venueOf } from './household-store.js';
+import { AUDIT_DB, REVIEW_KEY, REVIEW_PUB, auditCount, openAuditDb, sweepAudit } from './audit.js';
+import { redactor, takeAudit, vocabularyOf } from './audit-take.js';
 import { commonsPeoplePath } from './backends/people-household.js';
 import { computeMeasures, familyOf, recentDays, scorecards, withNonOwner } from './review.js';
 import { exportBundle } from './bundle.js';
@@ -170,6 +170,35 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       rmSync(other);
     });
 
+    it('a foreign recipient in review.pub is ignored: the entry decrypts with review.key, and review.pub is rewritten', async () => {
+      const pub = join(h.home, REVIEW_PUB);
+      const real = readFileSync(pub, 'utf-8');
+      const other = join(h.home, 'foreign.key');
+      const kg = spawnSync(AGE_KEYGEN, ['-o', other], { encoding: 'utf-8' });
+      const foreign = (kg.stderr + kg.stdout).match(/age1[0-9a-z]+/)![0];
+      writeFileSync(pub, `${foreign}\n`);
+      try {
+        const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:FOREIGN', at: at(0.5), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+        expect((await audit(tok.runtime, t.conversation, t.seq, 'for the review key only')).status).toBe(200);
+        const blob = entryRow(t.conversation, t.seq)!.text as Buffer;
+        expect(spawnSync(AGE, ['-d', '-i', join(h.home, REVIEW_KEY)], { input: blob }).stdout.toString()).toBe('for the review key only');
+        expect(spawnSync(AGE, ['-d', '-i', other], { input: blob }).status).not.toBe(0);
+        expect(readFileSync(pub, 'utf-8')).toBe(real);
+      } finally {
+        rmSync(other, { force: true });
+      }
+    });
+
+    it('audit.db is not WAL, and its connections delete securely', () => {
+      const raw = new BetterSqlite3(join(h.home, AUDIT_DB), { readonly: true });
+      try { expect(String(raw.pragma('journal_mode', { simple: true })).toLowerCase()).not.toBe('wal'); } finally { raw.close(); }
+      const db = openAuditDb(h.home);
+      try {
+        expect(String(db.pragma('journal_mode', { simple: true })).toLowerCase()).toBe('delete');
+        expect(db.pragma('secure_delete', { simple: true })).toBe(1);
+      } finally { db.close(); }
+    });
+
     it('with no age program, audit writes answer 503 and turns still record', async () => {
       const waiting = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:NOAGE', at: at(1), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       expect((await audit(tok.runtime, waiting.conversation, waiting.seq, 'waits for a take')).status).toBe(200);
@@ -199,6 +228,15 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
   // ─── 2. The audit order (HTTP half) ─────────────────────────────────────
 
   describe('criterion 2: the audit order', () => {
+    it('a venue named like a prototype key (constructor, toString, __proto__) is no venue', async () => {
+      for (const venue of ['constructor', 'tostring', 'hasownproperty']) {
+        const r = await post('conversations/turn', tok.runtime, { agent: 'art', venue, place: 'x', at: at(2), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+        expect(r.status, venue).toBe(400);
+      }
+      expect(venueOf(h.home, 'constructor')).toBeUndefined();
+      expect(venueOf(h.home, 'toString')).toBeUndefined();
+    });
+
     it('a missing (conversation, seq), or a different writer, is refused; the turn\'s writer is accepted once', async () => {
       const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:ORDER', at: at(2), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       expect((await audit(tok.runtime, t.conversation, t.seq + 1, 'x')).status).toBe(404);
@@ -351,6 +389,11 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
 
     it('no plaintext at rest: after writes and takes, the secret is in no file under the home', async () => {
       const secret = 'periwinkle-axolotl-7731';
+      // Whatever a write or a take might spill to temp goes here, and is walked too.
+      const tmp = mkdtempSync(join(tmpdir(), 'loom-rest-tmp-'));
+      const savedTmp = process.env.TMPDIR;
+      process.env.TMPDIR = tmp;
+      try {
       const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:REST', at: at(8.5), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       const s2 = await turn(tok.art, { venue: 'session', place: 'claude-code:rest', at: at(8.6), from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'r-rest', outcome: 'none' });
       expect((await audit(tok.runtime, t.conversation, t.seq, `the word is ${secret}`)).status).toBe(200);
@@ -359,13 +402,17 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
         const p = join(dir, e.name);
         return e.isDirectory() ? walk(p) : e.isFile() ? [p] : [];
       });
-      const holding = () => walk(h.home).filter((f) => readFileSync(f).includes(Buffer.from(secret))).map((f) => relative(h.home, f));
+      const holding = () => [...walk(h.home), ...walk(tmp)].filter((f) => readFileSync(f).includes(Buffer.from(secret))).map((f) => relative(h.home, f));
       expect(holding()).toEqual([]);
       const es = (await take(tok.review)).filter((x) => (x.text as string).includes(secret));
       expect(es).toHaveLength(2);
       expect(holding()).toEqual([]);
       await post('audit/done', tok.review, { refs: es.map((x) => x.ref) });
       expect(holding()).toEqual([]);
+      } finally {
+        if (savedTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmp;
+        rmSync(tmp, { recursive: true, force: true });
+      }
     });
 
     it('the daemon\'s start sweep computes the metadata measures', async () => {
@@ -543,7 +590,7 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       expect(JSON.stringify(entries)).not.toMatch(/gpt-5|codex-cli|claude-sonnet/);
     });
 
-    it('scores are posted by ref; the rows carry the producer\'s model, family and harness, which the runtime never received', async () => {
+    it('scores are posted by ref; the rows carry the producer\'s model, family and harness, which the grader never received', async () => {
       // The household's families: art runs anthropic and openai models, pond-bot google and mistral ones.
       // google and mistral also grade the gpt-5 (openai) turn: two scores at most per ref.
       expect((await post('scores', tok.review, { ref: refs.owner, grader_family: 'anthropic', score: 4 })).status).toBe(200);
@@ -574,7 +621,8 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:OWNER', at: at(24), from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r-own2', outcome: 'answered', model: 'gpt-5', harness: 'codex-cli' });
       await audit(tok.runtime, t.conversation, t.seq, 'text of fresh');
       const e = (await take(tok.review)).find((x) => x.text === 'text of fresh')!;
-      // meta and xai: no household agent runs them. Fifty made-up names can't inflate a row.
+      // meta and xai: no model on any household turn resolves to them, so a made-up or absent
+      // family is refused. (Families come from the models the runtime wrote on turns; the runtime is trusted.)
       for (const f of ['meta', 'xai', 'zzz', 'made-up']) expect((await post('scores', tok.review, { ref: e.ref, grader_family: f, score: 5 })).status, f).toBe(403);
       // openai produced it.
       expect((await post('scores', tok.review, { ref: e.ref, grader_family: 'openai', score: 5 })).status).toBe(403);
@@ -848,6 +896,46 @@ describe('a conversation with a non-owner stays one', () => {
       // The people list is full: the outsider isn't in it, but the conversation is theirs too.
       expect(getConversation(agentDir(h, 'art'), conv)!.people).not.toContain('outsider');
       expect(withNonOwner(h, 'art', conv)).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a conversation from before the mark (no conversation_strangers row) is judged by its people and turns', () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-strangers-old-'));
+    try {
+      mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+      writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+      const h = loadHousehold(home)!;
+      const dir = agentDir(h, 'art');
+      // Written straight to the store, as slice 1 did: no mark.
+      const now = Date.now();
+      const iso = (s: number) => new Date(now - 3600_000 + s * 1000).toISOString();
+      const viaPeople = recordTurn(dir, 'art', { venue: 'session', place: 'h:1', at: iso(0), from: { kind: 'person', slug: 'loren' }, kind: 'message' }, 'agent:art').conversation;
+      const viaUnknown = recordTurn(dir, 'art', { venue: 'session', place: 'h:2', at: iso(1), from: { kind: 'unknown' }, kind: 'message' }, 'agent:art').conversation;
+      const owners = recordTurn(dir, 'art', { venue: 'session', place: 'h:3', at: iso(2), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'agent:art').conversation;
+      expect(existsSync(join(home, HOUSEHOLD_DB))).toBe(false);
+      expect(withNonOwner(h, 'art', viaPeople)).toBe(true);
+      expect(withNonOwner(h, 'art', viaUnknown)).toBe(true);
+      expect(withNonOwner(h, 'art', owners)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('a harness and model whose turns were all folded are still redacted', () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-vocab-fold-'));
+    try {
+      mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+      writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+      const h = loadHousehold(home)!;
+      const old = new Date(Date.now() - 100 * 86_400_000).toISOString();
+      writeTurn(h, asArt, { venue: 'session', place: 'claude-code:old', at: old, from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'r-old', outcome: 'none', model: 'quokka-7b', harness: 'zebra-harness' });
+      expect(foldConversations(agentDir(h, 'art')).turns).toBe(1);
+      const v = vocabularyOf(h);
+      expect(v.harnesses).toContain('zebra-harness');
+      expect(v.models).toContain('quokka-7b');
+      expect(redactor(v).text('zebra-harness ran quokka-7b')).toBe('H1 ran M1');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

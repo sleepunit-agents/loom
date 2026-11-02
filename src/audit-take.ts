@@ -13,13 +13,13 @@
  * never the model, so the runtime can choose graders without learning who produced it.
  */
 import { existsSync } from 'node:fs';
-import BetterSqlite3 from 'better-sqlite3';
 import { join } from 'node:path';
 import { resolveSqliteDbPath } from './config.js';
 import { agentDir, type Household } from './household.js';
 import { commonsPeoplePath } from './backends/people-household.js';
 import { PeopleStore } from './backends/people.js';
-import { agentsSeen, hasTable, modelsSeen, peopleSeen, turnRecord } from './backends/conversations.js';
+import { agentsSeen, modelsSeen, peopleSeen, turnRecord } from './backends/conversations.js';
+import { modelsNoted } from './household-store.js';
 import { AUDIT_DB, assertDecryptReady, AuditError, claimEntries, decryptAuditText, releaseClaims, TAKE_MAX, UndecryptableEntry } from './audit.js';
 import { familyOf, processedFamilies, withNonOwner } from './review.js';
 
@@ -127,7 +127,7 @@ function peopleOf(h: Household): Array<{ slug: string; name: string }> {
     try { store = new PeopleStore({ dbPath: path, readonly: true }); } catch { throw unreadable(); }
     try {
       if (!store.migrated) {
-        if (!optional || hasPeopleTable(path)) throw unreadable();
+        if (!optional || store.holdsPeople) throw unreadable();
         return;
       }
       for (const e of store.list(true)) out.push({ slug: e.slug, name: e.name ?? '' });
@@ -142,17 +142,13 @@ function peopleOf(h: Household): Array<{ slug: string; name: string }> {
   return out;
 }
 
-/** Whether a store has a `people` table (it was a people store once, whatever its schema now). */
-function hasPeopleTable(path: string): boolean {
-  const db = new BetterSqlite3(path, { readonly: true });
-  try { return hasTable(db, 'people'); } finally { db.close(); }
-}
-
 /** What redaction replaces in this household, read fresh for each take. */
 export function vocabularyOf(h: Household): Vocabulary {
   const agents = new Set(h.agents);
-  const models = new Set<string>();
-  const harnesses = new Set<string>();
+  // The household's kept names first (they outlive the fold), then whatever the stores hold.
+  const noted = modelsNoted(h.home);
+  const models = new Set<string>(noted.models);
+  const harnesses = new Set<string>(noted.harnesses);
   for (const a of h.agents) {
     const dir = agentDir(h, a);
     for (const x of agentsSeen(dir)) agents.add(x);

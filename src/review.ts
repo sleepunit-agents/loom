@@ -12,12 +12,12 @@
  */
 import { agentDir, FAMILY_NAME, type Household } from './household.js';
 import {
-  AGENT_TURN_KINDS, ConversationError, conversationsActive, dueToProgressSeconds, getConversation, modelsSeen, turnRecord, turnsOf, writeFinding,
+  AGENT_TURN_KINDS, ConversationError, conversationsActive, dueToProgressSeconds, getConversation, median, modelsSeen, turnRecord, turnsOf, writeFinding,
   type Finding, type From, type Turn,
 } from './backends/conversations.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { CORE_VENUE_ROWS, HOUSEHOLD_DB, hasStrangers, listVenues, openHouseholdDb, venueOf } from './household-store.js';
+import { CORE_VENUE_ROWS, HOUSEHOLD_DB, hasStrangers, listVenues, modelsNoted, venueOf, withHouseholdDb } from './household-store.js';
 import { AuditError, refOf } from './audit.js';
 
 const fail = (m: string, status = 400): never => { throw new AuditError(m, status); };
@@ -88,10 +88,15 @@ export function isStranger(h: Household, agent: string, from: From): boolean {
   return !h.members.some((m) => m.person === from.slug && (m.agents === '*' || m.agents.includes(agent)));
 }
 
-/** The families some household agent's model resolves to: the only families that may grade. */
+/**
+ * The families some household agent's model resolves to: the only families that may grade.
+ * The models are the ones the runtime (or a harness) wrote on turns, kept household-wide by
+ * noteModels: the runtime is trusted here, as it mints the review tokens.
+ */
 export function householdFamilies(h: Household): string[] {
   const out = new Set<string>();
-  for (const a of h.agents) for (const m of modelsSeen(agentDir(h, a)).models) { const f = familyOf(m, h); if (f) out.add(f); }
+  const models = [...modelsNoted(h.home).models, ...h.agents.flatMap((a) => modelsSeen(agentDir(h, a)).models)];
+  for (const m of models) { const f = familyOf(m, h); if (f) out.add(f); }
   return [...out].sort();
 }
 
@@ -178,9 +183,7 @@ export function postScore(h: Household, run: string, raw: unknown, now: Date = n
     sameFamily = grader === family;
   }
   const day = s.turn.at.slice(0, 10);
-  const db = openHouseholdDb(h.home);
-  try {
-    db.transaction(() => {
+  withHouseholdDb(h.home, (db) => db.transaction(() => {
       if (db.prepare('SELECT 1 FROM review_scores WHERE ref = ? AND grader_family = ?').get(b.ref, grader)) fail(`${grader} already scored that ref`, 409);
       const scored = (db.prepare('SELECT COUNT(*) AS n FROM review_scores WHERE ref = ?').get(b.ref) as { n: number }).n;
       if (scored >= MAX_SCORES_PER_REF) fail(`that ref already has its ${MAX_SCORES_PER_REF} scores`, 409);
@@ -189,10 +192,7 @@ export function postScore(h: Household, run: string, raw: unknown, now: Date = n
                   ON CONFLICT(day, model, family, harness, kind, measure, same_family) DO UPDATE SET
                     n = n + 1, total = total + excluded.total, value = (total + excluded.total) / (n + 1)`).run(
         day, s.turn.model, family, s.turn.harness ?? UNKNOWN, s.kind, sameFamily ? 1 : 0, score, score);
-    }).immediate();
-  } finally {
-    db.close();
-  }
+  }).immediate());
   return { ok: true };
 }
 
@@ -209,13 +209,7 @@ export function postFinding(h: Household, run: string, raw: unknown, now: Date =
   if (bad !== undefined) fail(`a finding has no key ${JSON.stringify(bad)} (it has ref, text)`);
   const s = sampleOf(h, run, b.ref);
   ownTurn(s.turn);
-  const db = openHouseholdDb(h.home);
-  let score: number | null;
-  try {
-    score = (db.prepare('SELECT AVG(score) AS s FROM review_scores WHERE ref = ?').get(b.ref) as { s: number | null }).s;
-  } finally {
-    db.close();
-  }
+  const score = withHouseholdDb(h.home, (db) => (db.prepare('SELECT AVG(score) AS s FROM review_scores WHERE ref = ?').get(b.ref) as { s: number | null }).s);
   try {
     return writeFinding(agentDir(h, s.agent), { conversation: s.conversation, seq: s.seq, measure: 'graded', score, text: b.text as string }, now);
   } catch (e) {
@@ -227,24 +221,14 @@ export function postFinding(h: Household, run: string, raw: unknown, now: Date =
 /** GET /api/loom/scorecards: rows from `since` (a UTC day, default 30 days back), oldest first, at most 10000. */
 export function scorecards(home: string, since?: string, now: Date = new Date()): ScorecardRow[] {
   const from = since && /^\d{4}-\d{2}-\d{2}$/.test(since) ? since : new Date(now.getTime() - 30 * DAY_MS).toISOString().slice(0, 10);
-  const db = openHouseholdDb(home);
-  try {
-    return (db.prepare('SELECT * FROM scorecards WHERE day >= ? ORDER BY day, kind, model, measure, same_family LIMIT 10000').all(from) as Array<Record<string, unknown>>).map((r) => ({
-      day: r.day as string, model: r.model as string, family: r.family as string, harness: (r.harness as string) || UNKNOWN,
-      kind: r.kind as string, measure: r.measure as string, value: r.value as number, n: r.n as number, same_family: r.same_family === 1,
-    }));
-  } finally {
-    db.close();
-  }
+  return withHouseholdDb(home, (db) => (db.prepare('SELECT * FROM scorecards WHERE day >= ? ORDER BY day, kind, model, measure, same_family LIMIT 10000').all(from) as Array<Record<string, unknown>>).map((r) => ({
+    day: r.day as string, model: r.model as string, family: r.family as string, harness: (r.harness as string) || UNKNOWN,
+    kind: r.kind as string, measure: r.measure as string, value: r.value as number, n: r.n as number, same_family: r.same_family === 1,
+  })));
 }
 
 // ─── Measures from metadata ─────────────────────────────────────────────────
 
-function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
 
 type Agg = 'median' | 'mean' | 'count';
 
@@ -319,21 +303,16 @@ export function computeMeasures(h: Household, day: string): number {
   }
   // Nothing measured and no household store yet: no file is made for it.
   if (!groups.size && !existsSync(join(h.home, HOUSEHOLD_DB))) return 0;
-  const db = openHouseholdDb(h.home);
-  try {
-    return db.transaction(() => {
-      db.prepare(`DELETE FROM scorecards WHERE day = ? AND measure IN (${METADATA_MEASURES.map(() => '?').join(', ')})`).run(day, ...METADATA_MEASURES);
-      const ins = db.prepare('INSERT INTO scorecards (day, model, family, harness, kind, measure, same_family, value, n, total) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
-      for (const g of groups.values()) {
-        const total = g.xs.reduce((a, b) => a + b, 0);
-        const value = g.agg === 'median' ? median(g.xs) : g.agg === 'mean' ? total / g.xs.length : total;
-        ins.run(day, g.model, g.model === UNKNOWN ? UNKNOWN : familyOf(g.model, h) ?? UNKNOWN, g.harness, g.kind, g.measure, value, g.xs.length, total);
-      }
-      return groups.size;
-    }).immediate();
-  } finally {
-    db.close();
-  }
+  return withHouseholdDb(h.home, (db) => db.transaction(() => {
+    db.prepare(`DELETE FROM scorecards WHERE day = ? AND measure IN (${METADATA_MEASURES.map(() => '?').join(', ')})`).run(day, ...METADATA_MEASURES);
+    const ins = db.prepare('INSERT INTO scorecards (day, model, family, harness, kind, measure, same_family, value, n, total) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)');
+    for (const g of groups.values()) {
+      const total = g.xs.reduce((a, b) => a + b, 0);
+      const value = g.agg === 'median' ? median(g.xs)! : g.agg === 'mean' ? total / g.xs.length : total;
+      ins.run(day, g.model, g.model === UNKNOWN ? UNKNOWN : familyOf(g.model, h) ?? UNKNOWN, g.harness, g.kind, g.measure, value, g.xs.length, total);
+    }
+    return groups.size;
+  }).immediate());
 }
 
 /** The days the sweep recomputes: `now`'s UTC day and the three before it. */

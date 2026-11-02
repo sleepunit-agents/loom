@@ -779,11 +779,12 @@ export function tapeDigests(contextDir: string, sinceIso: string, nowIso: string
 
 // ─── Retention ──────────────────────────────────────────────────────────────
 
-function median(xs: number[]): number | null {
+/** The median of `xs` (the mean of the middle two for an even count), or null for none. The one median core's measures use. */
+export function median(xs: readonly number[]): number | null {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
   const m = s.length >> 1;
-  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 /**
@@ -813,7 +814,9 @@ export function foldConversations(contextDir: string, now: Date = new Date()): {
           m[r.outcome] = (m[r.outcome] ?? 0) + 1;
         }
       }
-      const lat = median(rows.filter((r) => r.kind === 'reply' && r.latency_ms !== null).map((r) => r.latency_ms!));
+      const mid = median(rows.filter((r) => r.kind === 'reply' && r.latency_ms !== null).map((r) => r.latency_ms!));
+      // Stored as whole milliseconds.
+      const lat = mid === null ? null : Math.round(mid);
       db.prepare('INSERT INTO conversation_days (conversation, day, counts_json, median_latency_ms, outcomes_json) VALUES (?, ?, ?, ?, ?)').run(
         g.conversation, g.day, JSON.stringify(counts), lat, JSON.stringify(outcomes));
       turns += db.prepare('DELETE FROM conversation_turns WHERE conversation = ? AND substr(at, 1, 10) = ?').run(g.conversation, g.day).changes;
@@ -842,10 +845,7 @@ export function dueToProgressSeconds(turns: readonly Pick<Turn, 'seq' | 'at' | '
     const done = rs.find((t) => t.outcome === 'progressed' || t.outcome === 'answered');
     if (wake && done) spans.push((Date.parse(done.at) - Date.parse(wake.at)) / 1000);
   }
-  if (!spans.length) return null;
-  const s = spans.sort((a, b) => a - b);
-  const m = s.length >> 1;
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  return median(spans);
 }
 
 /** A project name as the read tools take it: its slug when the projects store resolves it, else the name as given. */

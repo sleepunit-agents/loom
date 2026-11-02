@@ -141,6 +141,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** The error envelope's leading word for a status: the one cascade core's /api/loom routes use. */
+function statusWord(status: number): string {
+  switch (status) {
+    case 403: return 'forbidden';
+    case 404: return 'not-found';
+    case 409: return 'conflict';
+    case 410: return 'gone';
+    case 503: return 'unavailable';
+    default: return status >= 500 ? 'error' : 'bad-input';
+  }
+}
+
 function sendError(res: ServerResponse, status: number, message: string): void {
   // A typed error ENVELOPE, never a raw throw across the boundary.
   if (res.headersSent) return;
@@ -521,10 +533,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
-    if (e instanceof AuditError || e instanceof ConversationError) {
-      const word = e.status === 403 ? 'forbidden' : e.status === 404 ? 'not-found' : e.status === 409 ? 'conflict' : e.status === 410 ? 'gone' : e.status === 503 ? 'unavailable' : e.status >= 500 ? 'error' : 'bad-input';
-      return sendError(res, e.status, `${word}: ${e.message}`);
-    }
+    if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
     // Never the details: an audit error must not carry text or paths into a response.
     process.stderr.write(`loom: couldn't ${what}: ${(e as Error).name}\n`);
     return sendError(res, 503, `unavailable: couldn't ${what}; see the daemon log`);
@@ -560,7 +569,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       try {
         return sendJson(res, 200, writeTurn(live!(), role, body));
       } catch (e) {
-        if (e instanceof ConversationError) return sendError(res, e.status, `${e.status === 403 ? 'forbidden' : e.status === 404 ? 'not-found' : e.status === 409 ? 'conflict' : 'bad-input'}: ${e.message}`);
+        if (e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
         process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
         return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
       }

@@ -24,7 +24,7 @@ import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { findProgram } from './programs.js';
 import { agentDir, roleString, type Household, type Role } from './household.js';
 import { getConversation, isConversationId, turnRecord, type TurnRecord } from './backends/conversations.js';
-import { openHouseholdDb } from './household-store.js';
+import { withHouseholdDb } from './household-store.js';
 
 export const AUDIT_DB = 'audit.db';
 export const REVIEW_KEY = 'review.key';
@@ -186,11 +186,6 @@ function withAudit<T>(home: string, f: (db: Database) => T): T {
   try { return f(db); } finally { db.close(); }
 }
 
-function withHousehold<T>(home: string, f: (db: Database) => T): T {
-  const db = openHouseholdDb(home);
-  try { return f(db); } finally { db.close(); }
-}
-
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /** Which agent's store holds conversation `id`: for the runtime, any of the household's; for an agent, its own. */
@@ -225,7 +220,7 @@ export function writeAudit(h: Household, role: Role, raw: unknown, env: NodeJS.P
   if (atMs > now.getTime() + FUTURE_SLACK_MS) fail('that turn is in the future: its entry would outlive the 7-day sweep', 409);
   if (atMs < now.getTime() - AUDIT_DAYS * DAY_MS) fail(`that turn is older than ${AUDIT_DAYS} days: the audit log no longer keeps it`, 409);
   const home = h.home;
-  const read = withHousehold(home, (db) => db.prepare('SELECT 1 FROM audit_reads WHERE agent = ? AND conversation = ? AND seq = ?').get(agent, conversation, seq));
+  const read = withHouseholdDb(home, (db) => db.prepare('SELECT 1 FROM audit_reads WHERE agent = ? AND conversation = ? AND seq = ?').get(agent, conversation, seq));
   if (read) fail('that turn\'s entry was already taken by a review: it isn\'t written again', 409);
   const blob = encrypt(body.text as string, home, env);
   withAudit(home, (db) => {
@@ -246,7 +241,7 @@ export interface ClaimedEntry { ref: string; agent: string; conversation: string
  */
 export function claimEntries(home: string, run: string, limit: number, now: Date = new Date()): ClaimedEntry[] {
   if (!existsSync(join(home, AUDIT_DB))) return [];
-  return withAudit(home, (adb) => withHousehold(home, (hdb) => hdb.transaction(() => {
+  return withAudit(home, (adb) => withHouseholdDb(home, (hdb) => hdb.transaction(() => {
     const out: ClaimedEntry[] = [];
     const claim = hdb.prepare('INSERT OR IGNORE INTO audit_reads (ref, run, at, agent, conversation, seq) VALUES (?, ?, ?, ?, ?, ?)');
     const rows = adb.prepare('SELECT agent, conversation, seq, venue, kind, at, text FROM audit_entries ORDER BY at, rowid').iterate() as IterableIterator<{ agent: string; conversation: string; seq: number; venue: string; kind: string; at: string; text: Buffer }>;
@@ -263,18 +258,13 @@ export function claimEntries(home: string, run: string, limit: number, now: Date
 /** Undo a take's claims (its audit_reads rows), so the entries wait for a run that can decrypt them. */
 export function releaseClaims(home: string, run: string, refs: readonly string[]): void {
   if (!refs.length) return;
-  const db = openHouseholdDb(home);
-  try {
-    db.transaction(() => { const del = db.prepare('DELETE FROM audit_reads WHERE ref = ? AND run = ?'); for (const r of refs) del.run(r, run); }).immediate();
-  } finally {
-    db.close();
-  }
+  withHouseholdDb(home, (db) => db.transaction(() => { const del = db.prepare('DELETE FROM audit_reads WHERE ref = ? AND run = ?'); for (const r of refs) del.run(r, run); }).immediate());
 }
 
 /** What a ref this run took stands for, or undefined (another run's, or none). */
 export function refOf(home: string, run: string, ref: unknown): { agent: string; conversation: string; seq: number } | undefined {
   if (typeof ref !== 'string' || !/^ar-[0-9a-f]{18}$/.test(ref)) return undefined;
-  return withHousehold(home, (db) => db.prepare('SELECT agent, conversation, seq FROM audit_reads WHERE ref = ? AND run = ?').get(ref, run) as { agent: string; conversation: string; seq: number } | undefined);
+  return withHouseholdDb(home, (db) => db.prepare('SELECT agent, conversation, seq FROM audit_reads WHERE ref = ? AND run = ?').get(ref, run) as { agent: string; conversation: string; seq: number } | undefined);
 }
 
 /** POST /api/loom/audit/done {refs}: delete the entries this run took. Answers how many went. */

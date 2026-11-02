@@ -8,7 +8,7 @@ import {
   ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
   type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
-import { CORE_VENUE_ROWS, markStrangers, storeHome, venueLabel, venueOf } from './household-store.js';
+import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf } from './household-store.js';
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
 import { runOffer } from './offers-registry.js';
@@ -50,6 +50,8 @@ export function writeTurn(h: Household, role: Role, raw: unknown): { conversatio
   // A turn from someone other than the agent's owners marks the conversation for good, before
   // the turn is recorded: a failed mark refuses the turn rather than let it look owner-only.
   if (isStranger(h, agent, turn.from)) markStrangers(h.home, agent, conversationId(agent, turn.venue, turn.place));
+  // Its model and harness, kept household-wide for good: redaction and grader families outlive the fold.
+  noteModels(h.home, { model: turn.model, harness: turn.harness });
   const out = recordTurn(agentDir(h, agent), agent, turn, roleString(role));
   return { conversation: out.conversation, seq: out.seq };
 }
@@ -118,7 +120,7 @@ export async function conversationView(contextDir: string, agent: string, id: st
   const label = venueLabel(home, c.venue);
   let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label) };
   let v;
-  try { v = CORE_VENUE_ROWS[c.venue] ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
+  try { v = coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
     const out = await runOffer(env, v.piece, v.render, { args: ['--conversation', id], parse: parseFeed, caller: { kind: 'agent', agent } });
     render = out.ok ? { by: 'venue', feed: out.value } : { ...render, error: `${v.piece}: ${out.error}` };

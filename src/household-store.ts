@@ -35,10 +35,15 @@ export interface VenueRow {
 }
 
 /** Core's own venues (conversations.md: `session` is live, `wake` scheduled). Never in the table. */
-export const CORE_VENUE_ROWS: Readonly<Record<string, VenueRow>> = {
+export const CORE_VENUE_ROWS: Readonly<Record<string, VenueRow>> = Object.freeze(Object.assign(Object.create(null) as Record<string, VenueRow>, {
   session: { name: 'session', piece: 'loom', label: 'Session', kind: 'live' },
   wake: { name: 'wake', piece: 'loom', label: 'Wake', kind: 'scheduled' },
-};
+}));
+
+/** Core's own venue `name`, by own key only: a venue named "constructor" is no core venue. */
+export function coreVenue(name: string): VenueRow | undefined {
+  return Object.hasOwn(CORE_VENUE_ROWS, name) ? CORE_VENUE_ROWS[name] : undefined;
+}
 
 /** Where a household's home is, for the store: LOOM_HOME, else ~/.config/loom (as pieces' root). */
 export function storeHome(env: NodeJS.ProcessEnv): string | undefined {
@@ -80,6 +85,12 @@ export function openHouseholdDb(home: string): Database {
       at           TEXT NOT NULL,
       PRIMARY KEY (agent, conversation)
     );
+    CREATE TABLE IF NOT EXISTS models_seen (
+      kind  TEXT NOT NULL,
+      name  TEXT NOT NULL,
+      first TEXT NOT NULL,
+      PRIMARY KEY (kind, name)
+    );
     CREATE TABLE IF NOT EXISTS review_scores (
       ref           TEXT NOT NULL,
       grader_family TEXT NOT NULL,
@@ -102,6 +113,12 @@ export function openHouseholdDb(home: string): Database {
     );
   `);
   return db;
+}
+
+/** One household.db connection for `f`, closed after. */
+export function withHouseholdDb<T>(home: string, f: (db: Database) => T): T {
+  const db = openHouseholdDb(home);
+  try { return f(db); } finally { db.close(); }
 }
 
 interface Row { name: string; piece: string; label: string; kind: string; render_json: string | null; orphaned: string | null }
@@ -128,31 +145,26 @@ export function syncVenues(env: NodeJS.ProcessEnv, now: Date = new Date()): stri
   }
   // Nothing declared and no registry yet: nothing to keep, so no file is made for it.
   if (!declared.size && !existsSync(join(home, HOUSEHOLD_DB))) return [];
-  const db = openHouseholdDb(home);
-  try {
-    return db.transaction(() => {
-      const changed: string[] = [];
-      const at = now.toISOString();
-      const rows = new Map((db.prepare('SELECT * FROM venues').all() as Row[]).map((r) => [r.name, r]));
-      for (const v of declared.values()) {
-        const r = rows.get(v.name);
-        const render = v.render ? JSON.stringify(v.render) : null;
-        if (r && r.piece === v.piece && r.label === v.label && r.kind === v.kind && r.render_json === render && r.orphaned === null) continue;
-        db.prepare(`INSERT INTO venues (name, piece, label, kind, render_json, orphaned, updated) VALUES (?, ?, ?, ?, ?, NULL, ?)
-                    ON CONFLICT(name) DO UPDATE SET piece = excluded.piece, label = excluded.label, kind = excluded.kind,
-                      render_json = excluded.render_json, orphaned = NULL, updated = excluded.updated`).run(v.name, v.piece, v.label, v.kind, render, at);
-        changed.push(v.name);
-      }
-      for (const r of rows.values()) {
-        if (declared.has(r.name) || r.orphaned !== null) continue;
-        db.prepare('UPDATE venues SET orphaned = ?, render_json = NULL, updated = ? WHERE name = ?').run(at, at, r.name);
-        changed.push(r.name);
-      }
-      return changed;
-    }).immediate();
-  } finally {
-    db.close();
-  }
+  return withHouseholdDb(home, (db) => db.transaction(() => {
+    const changed: string[] = [];
+    const at = now.toISOString();
+    const rows = new Map((db.prepare('SELECT * FROM venues').all() as Row[]).map((r) => [r.name, r]));
+    for (const v of declared.values()) {
+      const r = rows.get(v.name);
+      const render = v.render ? JSON.stringify(v.render) : null;
+      if (r && r.piece === v.piece && r.label === v.label && r.kind === v.kind && r.render_json === render && r.orphaned === null) continue;
+      db.prepare(`INSERT INTO venues (name, piece, label, kind, render_json, orphaned, updated) VALUES (?, ?, ?, ?, ?, NULL, ?)
+                  ON CONFLICT(name) DO UPDATE SET piece = excluded.piece, label = excluded.label, kind = excluded.kind,
+                    render_json = excluded.render_json, orphaned = NULL, updated = excluded.updated`).run(v.name, v.piece, v.label, v.kind, render, at);
+      changed.push(v.name);
+    }
+    for (const r of rows.values()) {
+      if (declared.has(r.name) || r.orphaned !== null) continue;
+      db.prepare('UPDATE venues SET orphaned = ?, render_json = NULL, updated = ? WHERE name = ?').run(at, at, r.name);
+      changed.push(r.name);
+    }
+    return changed;
+  }).immediate());
 }
 
 /**
@@ -161,35 +173,48 @@ export function syncVenues(env: NodeJS.ProcessEnv, now: Date = new Date()): stri
  * cap nor the 90-day fold can make it look owner-only (conversations.md, "Review", step 2).
  */
 export function markStrangers(home: string, agent: string, conversation: string, now: Date = new Date()): void {
-  const db = openHouseholdDb(home);
-  try { db.prepare('INSERT OR IGNORE INTO conversation_strangers (agent, conversation, at) VALUES (?, ?, ?)').run(agent, conversation, now.toISOString()); } finally { db.close(); }
+  withHouseholdDb(home, (db) => db.prepare('INSERT OR IGNORE INTO conversation_strangers (agent, conversation, at) VALUES (?, ?, ?)').run(agent, conversation, now.toISOString()));
+}
+
+/**
+ * Remember a model and a harness a turn named, household-wide and for good (a turn may be
+ * folded away; the name stays redactable, and its family stays a grader family).
+ */
+export function noteModels(home: string, seen: { model?: string; harness?: string }, now: Date = new Date()): void {
+  if (!seen.model && !seen.harness) return;
+  withHouseholdDb(home, (db) => {
+    const put = db.prepare('INSERT OR IGNORE INTO models_seen (kind, name, first) VALUES (?, ?, ?)');
+    if (seen.model) put.run('model', seen.model, now.toISOString());
+    if (seen.harness) put.run('harness', seen.harness, now.toISOString());
+  });
+}
+
+/** Every model and harness noteModels has kept. */
+export function modelsNoted(home: string): { models: string[]; harnesses: string[] } {
+  if (!existsSync(join(home, HOUSEHOLD_DB))) return { models: [], harnesses: [] };
+  const rows = withHouseholdDb(home, (db) => db.prepare('SELECT kind, name FROM models_seen ORDER BY kind, name').all() as Array<{ kind: string; name: string }>);
+  return { models: rows.filter((r) => r.kind === 'model').map((r) => r.name), harnesses: rows.filter((r) => r.kind === 'harness').map((r) => r.name) };
 }
 
 /** Whether conversation `conversation` (agent's) was ever marked by markStrangers. */
 export function hasStrangers(home: string, agent: string, conversation: string): boolean {
   if (!existsSync(join(home, HOUSEHOLD_DB))) return false;
-  const db = openHouseholdDb(home);
-  try { return db.prepare('SELECT 1 FROM conversation_strangers WHERE agent = ? AND conversation = ?').get(agent, conversation) !== undefined; } finally { db.close(); }
+  return withHouseholdDb(home, (db) => db.prepare('SELECT 1 FROM conversation_strangers WHERE agent = ? AND conversation = ?').get(agent, conversation) !== undefined);
 }
 
 /** Every venue in the registry, by name (core's own not included). */
 export function listVenues(home: string): VenueRow[] {
   if (!existsSync(join(home, HOUSEHOLD_DB))) return [];
-  const db = openHouseholdDb(home);
-  try { return (db.prepare('SELECT * FROM venues ORDER BY name').all() as Row[]).map(rowOf); } finally { db.close(); }
+  return withHouseholdDb(home, (db) => (db.prepare('SELECT * FROM venues ORDER BY name').all() as Row[]).map(rowOf));
 }
 
 /** A venue by name: core's own, or the registry's row (orphaned or not); undefined when unknown. */
 export function venueOf(home: string | undefined, name: string): VenueRow | undefined {
-  if (CORE_VENUE_ROWS[name]) return CORE_VENUE_ROWS[name];
+  const core = coreVenue(name);
+  if (core) return core;
   if (!home || !existsSync(join(home, HOUSEHOLD_DB))) return undefined;
-  const db = openHouseholdDb(home);
-  try {
-    const r = db.prepare('SELECT * FROM venues WHERE name = ?').get(name) as Row | undefined;
-    return r ? rowOf(r) : undefined;
-  } finally {
-    db.close();
-  }
+  const r = withHouseholdDb(home, (db) => db.prepare('SELECT * FROM venues WHERE name = ?').get(name) as Row | undefined);
+  return r ? rowOf(r) : undefined;
 }
 
 /** A venue's label for showing: the registry's (or core's), else its name. */
