@@ -2,11 +2,11 @@
   "v": 1,
   "pieces": [
     {
-      "name": "box",
+      "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "c51df23528ffae1ede8bb1dc0bb9565dd8265422",
+      "commit": "37cc43dc80ef6a4c24e9b80c97e36f01f18c254b",
       "version": "0.1.0",
-      "label": "Boxes",
+      "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
     },
     {
@@ -52,7 +52,7 @@
   ],
   "kinds": {
     "_comment": "A piece's tab kind when its manifest doesn't say (tab.kind): first-party pieces that are setup, not daily places.",
-    "box": "setting",
+    "runtime": "setting",
     "secrets": "setting",
     "subscriptions": "setting"
   }

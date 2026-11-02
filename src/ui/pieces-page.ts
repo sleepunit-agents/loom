@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { listPieces } from '../cli/pieces.js';
 import {
   PieceError, describeSource, installPiece, isLocal, versionKey, managedBinDir, managedPieces, missingSettings, parseSource, piecesRoot, readCatalog, readSettings,
-  removePiece, rollbackPiece, setSettings, type PieceRecord,
+  removePiece, renamedAdvice, rollbackPiece, setSettings, type PieceRecord,
 } from '../cli/pieces-managed.js';
 import { unitName } from '../cli/pieces-services.js';
 import type { ActResult, Ask, Block, Page } from './vocab.js';
@@ -238,6 +238,8 @@ export async function piecesAct(env: NodeJS.ProcessEnv, action: string, fields: 
             return u.unchanged ? `nothing in ${path} changed` : `now ${u.record.version} (${describeSource(u.record.source)})`;
           });
         }
+        const renamed = r ? renamedAdvice(r) : undefined;
+        if (renamed) return { ok: false, message: renamed, page: 'loom:pieces' };
         const repo = r && !isLocal(r.source) ? r.source.repo : undefined;
         const c = readCatalog().find((x) => x.name === name && x.repo === repo);
         if (!r || !c) return { ok: false, message: `${name} has no update in loom's catalog.`, page: 'loom:pieces' };

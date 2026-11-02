@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Old piece names.** `box` is now `runtime`: the catalog lists loom-box's
+  repo as `runtime` (37cc43d), and core's alias table (`PIECE_ALIASES`)
+  maps `box` to `runtime` for `/api/box/…`, `/p/box/…` (a 308), `piece:box/…`
+  credentials, a house's `loom box …` and the starters, while no `box` piece
+  is installed. `loom pieces update box` says how to switch instead of
+  failing.
+
 - **Turn keys.** `POST /api/loom/conversations/turn` takes an optional `key`
   (the runtime's `<source>:<id>`, runtime role only): a repeat within 24
   hours answers the first `{conversation, seq}` and writes nothing, and the
