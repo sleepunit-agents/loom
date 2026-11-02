@@ -149,6 +149,35 @@ The set of people a turn is addressed by. The harness (bridge, lane, voice)
 knows who is in it and passes it as identity's `people`; loom does not guess.
 _Avoid_: audience, channel (a room is people, not a venue)
 
+## Projects
+
+**Project**:
+An ongoing body of work with a goal, identified by a stable slug (`pond`). Its card is the condensed current state;
+its hub is everything filed under it, read live.
+_Avoid_: epic (a task-store row), workspace, repo, initiative
+
+**Project card**:
+The condensed current state of a project: what it is, its goal, where it stands, and the selectors its hub reads with.
+_Avoid_: project page (that's the hub as shown), brief, charter
+
+**Hub**:
+A project's sections, computed at read: its memories, notes and people, and what pieces contribute.
+_Avoid_: dashboard, feed, timeline
+
+**Project name**:
+A slug or an alias. Every project name resolves to exactly one live project. **Live** means not archived, whatever its
+`status`: a paused or done project keeps its names.
+_Avoid_: tag (that's the memory field a name matches), key
+
+**Section feed** (seam):
+A managed piece's contribution to a hub: a command loom runs that returns grouped items for one project.
+_Avoid_: plugin, integration, widget
+
+**Conversation digest**:
+Shuttle's record of one conversation on one day: who, where, what was asked, decided and done, and whether
+the owner is needed. It belongs to shuttle (the bridges piece), not loom.
+_Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
+
 ## Knowledge
 
 **Knowledge page**:

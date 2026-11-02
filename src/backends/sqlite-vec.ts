@@ -53,7 +53,8 @@ import { globToMatcher } from './glob.js';
 import { runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
-import { effectiveScope, isVisibleInProject } from './scope.js';
+import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
+import { projectNameSet } from './projects.js';
 import { FEEDBACK_CATEGORY } from '../categories.js';
 import {
   FEEDBACK_CONFIDENCE_DEFAULT,
@@ -258,13 +259,15 @@ export class SqliteVecBackend implements MemoryBackend {
     const categoryFilter =
       input.category && input.category !== 'all' ? input.category : null;
     const projectFilter = input.project ?? null;
+    // A project's names resolve both ways, read once before filtering (docs/specs/projects.md).
+    const projectNames = recallNameSet(projectFilter, (n) => projectNameSet(this.db, n));
 
     // With diversity on, over-fetch a candidate pool so MMR has something to
     // trade off. At diversity 0 this is exactly the pre-MMR search: pool == limit.
     const poolSize = diversity > 0 ? Math.max(limit * 3, 12) : limit;
     const candidates = this.searchVectors(queryVector, poolSize, poolSize * 4, (mem) => {
       if (categoryFilter && mem.category !== categoryFilter) return false;
-      if (!isVisibleInProject(mem, projectFilter)) return false;
+      if (!isVisibleInProject(mem, projectNames)) return false;
       return true;
     });
 
@@ -619,7 +622,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const limit = input.limit ?? 10;
     const minRelevance = input.minRelevance ?? 0;
     const categoryFilter = input.category ?? null;
-    const projectFilter = input.project ?? null;
+    const projectNames = recallNameSet(input.project ?? null, (n) => projectNameSet(this.db, n));
 
     // Over-fetch so filters + self-exclusion don't starve the result set.
     const startK = Math.max((limit + 1) * 4, 16);
@@ -627,7 +630,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const hits = this.searchVectors(queryVector, limit, startK, (mem, vr) => {
       if (anchorId !== null && vr.rowid === anchorId) return false;
       if (categoryFilter && mem.category !== categoryFilter) return false;
-      if (!isVisibleInProject(mem, projectFilter)) return false;
+      if (!isVisibleInProject(mem, projectNames)) return false;
       if (1 - vr.distance < minRelevance) return false;
       return true;
     });

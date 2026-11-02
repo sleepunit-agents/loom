@@ -104,6 +104,11 @@ function buildCurrentDb(dir: string): string {
     archived_at TEXT, archived_by TEXT, archive_reason TEXT, updated TEXT NOT NULL, synthesized_at TEXT)`).run();
   db.prepare(`CREATE TABLE person_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
     snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL, actor TEXT)`).run();
+  db.prepare(`CREATE TABLE projects (slug TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, card_json TEXT NOT NULL,
+    archived_at TEXT, archived_by TEXT, archive_reason TEXT, updated TEXT NOT NULL, synthesized_at TEXT)`).run();
+  db.prepare(`CREATE TABLE project_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL, actor TEXT)`).run();
+  db.prepare(`CREATE TABLE project_names (name TEXT PRIMARY KEY, slug TEXT NOT NULL, kind TEXT NOT NULL)`).run();
   db.prepare(`
     CREATE TABLE memory_supersessions (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
