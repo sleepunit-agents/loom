@@ -13,6 +13,8 @@
  */
 import { parseArgs } from 'node:util';
 import { readProject, listProjects, projectHubOf, projectOrphans, type HubSection } from '../tools/project.js';
+import { managedPieceSections } from '../project-feeds.js';
+import type { FeedGroup } from '../offers.js';
 import { assertStackVersionCompatible } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import { renderJson } from './io.js';
@@ -24,7 +26,8 @@ Subcommands:
   show <name>   Print the rendered card (or the project result with --json)
   list          List projects, most recent activity first: slug, name, status,
                 activity, freshness counts, memories since synthesis
-  hub <name>    The card and its sections: memories, notes, people
+  hub <name>    The card and its sections: memories, notes, people,
+                conversations, then each managed piece's feed
   orphans       Memory project tags that are no live project's name, with counts
 
 A name is a project's slug or one of its live aliases.
@@ -56,6 +59,16 @@ function sectionText(s: HubSection): string {
     lines.push('### people');
     for (const p of s.items as Array<{ name: string; slug: string; field: string; value: unknown; marker: string }>) {
       lines.push(`- ${p.name} (${p.slug}) ${p.field}: ${Array.isArray(p.value) ? p.value.join(', ') : String(p.value)} ${p.marker}`);
+    }
+  } else if (s.key.startsWith('piece:') && 'groups' in s) {
+    lines.push(`### ${s.label ?? s.key} (${s.key})`);
+    for (const g of s.groups as FeedGroup[]) {
+      lines.push(`#### ${g.title}`);
+      for (const i of g.items) {
+        const meta = [i.ref, i.status, i.when?.slice(0, 10)].filter(Boolean).join(', ');
+        lines.push(`- ${i.title}${meta ? ` (${meta})` : ''}`);
+      }
+      if (!g.items.length) lines.push('_(nothing here)_');
     }
   } else {
     lines.push(`### ${s.key}`, JSON.stringify(s));
@@ -125,7 +138,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     if (!name || parsed.positionals.length > 1) { io.stderr(`project ${sub} takes one name.\n${USAGE}`); return 2; }
     const result = sub === 'show'
       ? readProject(env.contextDir, name, includeArchived)
-      : await projectHubOf(env.contextDir, { slug: name, since: parsed.values.since, include_archived: includeArchived });
+      : await projectHubOf(env.contextDir, { slug: name, since: parsed.values.since, include_archived: includeArchived }, { pieceSections: managedPieceSections() });
     if (!result.found) {
       if (env.json) renderJson(io, result);
       else io.stderr(`no project ${name}\n`);
