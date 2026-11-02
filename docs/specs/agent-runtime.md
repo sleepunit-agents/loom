@@ -146,7 +146,8 @@ runtime that fails exits 1 with `{status: 5xx, error}`, which core passes on wit
 `502`, and a timeout is a `504`. None of these is kept.
 
 The runtime:
-1. writes the turn and its audit text to core;
+1. writes the turn and its audit text to core. It writes the turn with `key: "<source>:<id>"`
+   (conversations.md, turn writes), so a retry after a lost answer finds the first turn instead of writing a second;
 2. tries to reach the body for up to 2 s;
 3. answers `200 {conversation, seq, body}`, where `body` is `fed`, `resumed`, `started`, `queued` or `failed` (with a
    `reason`).

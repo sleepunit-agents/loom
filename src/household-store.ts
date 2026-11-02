@@ -63,8 +63,20 @@ const schemaDone = new Set<string>();
  *  - the review's records (src/audit.ts, src/review.ts): `audit_reads` (who took which audit
  *    entry, never its text), `conversation_strangers` (sticky: a turn came from a non-owner),
  *    `models_seen` (every model and harness a turn named), `review_scores` and `scorecards`.
+ *  - `turn_keys`: POST /api/loom/conversations/turn's idempotency keys (src/conversations.ts):
+ *    (agent, key) for 24 hours, with a hash of the turn and the {conversation, seq} it answered.
  */
-const SCHEMA = `CREATE TABLE IF NOT EXISTS venues (
+const SCHEMA = `CREATE TABLE IF NOT EXISTS turn_keys (
+    agent        TEXT NOT NULL,
+    key          TEXT NOT NULL,
+    at           INTEGER NOT NULL,
+    turn_sha256  TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    PRIMARY KEY (agent, key)
+  );
+  CREATE INDEX IF NOT EXISTS turn_keys_at ON turn_keys (at);
+  CREATE TABLE IF NOT EXISTS venues (
     name        TEXT PRIMARY KEY,
     piece       TEXT NOT NULL,
     label       TEXT NOT NULL,

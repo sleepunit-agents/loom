@@ -206,6 +206,65 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
     expect(turns.map((t) => [t.kind, t.latency_ms])).toEqual([['message', undefined], ['reply', 45_000]]);
   });
 
+  describe('an idempotency key (the runtime\'s, <source>:<id>)', () => {
+    const turnsIn = (place: string) => turnsOf(agentDir(h, 'art'), conversationId('art', 'slack', place));
+
+    it('a repeat with the same key and turn answers the first {conversation, seq} and writes nothing', async () => {
+      const body = { agent: 'art', ...msg('dm:K1', 0), key: 'slack:1730551200.000100' };
+      const r1 = await post(tok.runtime, body);
+      expect(r1.status).toBe(200);
+      const first = await r1.json();
+      expect(first).toEqual({ conversation: conversationId('art', 'slack', 'dm:K1'), seq: 1 });
+      // A label isn't part of what's compared: the same turn, with the place's newer name.
+      const r2 = await post(tok.runtime, { ...body, label: 'Loren (DM)' });
+      expect(r2.status).toBe(200);
+      expect(await r2.json()).toEqual(first);
+      expect(turnsIn('dm:K1')).toHaveLength(1);
+      // Without a key, the same turn is a second turn.
+      const { key: _k, ...noKey } = body;
+      expect((await post(tok.runtime, noKey)).status).toBe(200);
+      expect(turnsIn('dm:K1')).toHaveLength(2);
+    });
+
+    it('the same key with a different turn is a 409, and writes nothing', async () => {
+      const body = { agent: 'art', ...msg('dm:K2', 0), key: 'slack:k2' };
+      expect((await post(tok.runtime, body)).status).toBe(200);
+      for (const changed of [{ at: at(5) }, { place: 'dm:K2b' }, { from: { kind: 'person', slug: 'mark' } }, { kind: 'wake', venue: 'wake', from: { kind: 'schedule' } }]) {
+        const r = await post(tok.runtime, { ...body, ...changed });
+        expect(r.status, JSON.stringify(changed)).toBe(409);
+        expect((await r.json()).error).toMatch(/key slack:k2 was already used for a different turn/);
+      }
+      expect(turnsIn('dm:K2')).toHaveLength(1);
+      expect(turnsIn('dm:K2b')).toHaveLength(0);
+      // Keys are per agent: another agent's same key is its own turn.
+      expect((await post(tok.runtime, { ...body, agent: 'mark' })).status).toBe(200);
+    });
+
+    it('a key is kept 24 hours; after that the same key writes a new turn', () => {
+      const t0 = Date.parse(at(0));
+      const body = { agent: 'art', ...msg('dm:K3', 0), key: 'wake:w-1' };
+      const runtime = { kind: 'runtime', piece: 'shuttle' } as const;
+      const first = writeTurn(h, runtime, body, t0);
+      expect(writeTurn(h, runtime, body, t0 + 24 * 3600 * 1000 - 1)).toEqual(first);
+      expect(turnsIn('dm:K3')).toHaveLength(1);
+      const later = writeTurn(h, runtime, body, t0 + 24 * 3600 * 1000);
+      expect(later).toEqual({ conversation: first.conversation, seq: 2 });
+      expect(turnsIn('dm:K3')).toHaveLength(2);
+    });
+
+    it('only the runtime sends a key: an agent token\'s is refused, and so is a malformed one', async () => {
+      const session = { venue: 'session', place: 'claude-code:k4', at: at(0), from: { kind: 'unknown' }, kind: 'message' };
+      const r = await post(tok.art, { ...session, key: 'session:1' });
+      expect(r.status).toBe(403);
+      expect((await r.json()).error).toMatch(/only the runtime sends a key/);
+      expect(getConversation(agentDir(h, 'art'), conversationId('art', 'session', 'claude-code:k4'))).toBeUndefined();
+      for (const key of ['', 'k'.repeat(241), 'tab\there', 'é', 42]) {
+        expect((await post(tok.runtime, { agent: 'art', ...msg('dm:K5', 0), key })).status, JSON.stringify(key)).toBe(400);
+      }
+      expect((await post(tok.runtime, { agent: 'art', ...msg('dm:K5', 0), key: 'k'.repeat(240) })).status).toBe(200);
+    });
+  });
+
   it('the turn route is POST and JSON, like the rest of /api', async () => {
     const r = await fetch(`${base}/api/loom/conversations/turn`, { method: 'POST', headers: { 'content-type': 'text/plain', authorization: `Bearer ${tok.runtime}` }, body: '{}' });
     expect(r.status).toBe(415);

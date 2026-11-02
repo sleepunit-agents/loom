@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Turn keys.** `POST /api/loom/conversations/turn` takes an optional `key`
+  (the runtime's `<source>:<id>`, runtime role only): a repeat within 24
+  hours answers the first `{conversation, seq}` and writes nothing, and the
+  same key on a different turn is a 409. Kept in `household.db` (`turn_keys`).
+
 - **Delivery, core's half.** `POST /api/loom/deliver`: the one core route every
   piece token reaches (and the runtime's token). Core checks the body and who
   may deliver what (the venue is the caller's, the agent the household's and

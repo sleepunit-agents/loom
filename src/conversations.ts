@@ -3,17 +3,23 @@
  * conversation is shown (its venue's `render`, else core's generic render), and who may read
  * which agent's conversations. The records themselves are src/backends/conversations.ts.
  */
+import { createHash } from 'node:crypto';
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
   ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
-  type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
+  type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
-import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf } from './household-store.js';
+import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf, withHouseholdDb } from './household-store.js';
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
 import { runOffer } from './offers-registry.js';
 
 // ─── Writing a turn ─────────────────────────────────────────────────────────
+
+/** A turn's idempotency key (the runtime's `<source>:<id>`): printable ASCII, kept 24 hours. */
+export const MAX_TURN_KEY = 240;
+const TURN_KEY = /^[\x20-\x7e]{1,240}$/;
+export const TURN_KEY_MS = 24 * 60 * 60 * 1000;
 
 /** The venue a harness writes as the agent: an interactive session. */
 export const SESSION_VENUE = 'session';
@@ -24,9 +30,13 @@ export const SESSION_VENUE = 'session';
  * `wake`, or one an installed piece declares. An agent token writes only venue `session`,
  * for itself. Every other role is refused before this is called (http-server.ts).
  */
-export function writeTurn(h: Household, role: Role, raw: unknown): { conversation: string; seq: number } {
+export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number = Date.now()): { conversation: string; seq: number } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConversationError('a turn is a JSON object');
-  const { agent: named, ...turnRaw } = raw as Record<string, unknown>;
+  const { agent: named, key, ...turnRaw } = raw as Record<string, unknown>;
+  if (key !== undefined) {
+    if (role.kind !== 'runtime') throw new ConversationError('only the runtime sends a key (an idempotency key, <source>:<id>)', 403);
+    if (typeof key !== 'string' || !TURN_KEY.test(key)) throw new ConversationError(`key is 1-${MAX_TURN_KEY} printable characters`);
+  }
   let agent: string;
   if (role.kind === 'runtime') {
     if (typeof named !== 'string' || !h.agents.includes(named)) throw new ConversationError(`agent names one of this household's agents (${h.agents.join(', ')})`);
@@ -47,13 +57,40 @@ export function writeTurn(h: Household, role: Role, raw: unknown): { conversatio
     if (!v) throw new ConversationError(`no venue ${turn.venue}: it's core's wake, or one an installed piece declares`);
     if (v.orphaned) throw new ConversationError(`venue ${turn.venue} is orphaned (its piece was removed): its conversations stay, but no new turns go there`, 409);
   }
+  // A repeat of a key answers the first turn and writes nothing; the same key on another turn is a 409.
+  const hash = key === undefined ? undefined : turnHash(agent, turn);
+  if (key !== undefined) {
+    const kept = withHouseholdDb(h.home, (db) => db.prepare('SELECT turn_sha256, conversation, seq FROM turn_keys WHERE agent = ? AND key = ? AND at > ?')
+      .get(agent, key, nowMs - TURN_KEY_MS) as { turn_sha256: string; conversation: string; seq: number } | undefined);
+    if (kept) {
+      if (kept.turn_sha256 !== hash) throw new ConversationError(`key ${key} was already used for a different turn of ${agent}'s in the last 24 hours`, 409);
+      return { conversation: kept.conversation, seq: kept.seq };
+    }
+  }
   // A turn from someone other than the agent's owners marks the conversation for good, before
   // the turn is recorded: a failed mark refuses the turn rather than let it look owner-only.
   if (isStranger(h, agent, turn.from)) markStrangers(h.home, agent, conversationId(agent, turn.venue, turn.place));
   // Its model and harness, kept household-wide for good: redaction and grader families outlive the fold.
   noteModels(h.home, { model: turn.model, harness: turn.harness });
   const out = recordTurn(agentDir(h, agent), agent, turn, roleString(role));
+  if (key !== undefined) {
+    // writeTurn is synchronous, so nothing in this process writes between the lookup above and here.
+    withHouseholdDb(h.home, (db) => db.transaction(() => {
+      db.prepare('DELETE FROM turn_keys WHERE at <= ?').run(nowMs - TURN_KEY_MS);
+      db.prepare('INSERT OR REPLACE INTO turn_keys (agent, key, at, turn_sha256, conversation, seq) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(agent, key, nowMs, hash, out.conversation, out.seq);
+    })());
+  }
   return { conversation: out.conversation, seq: out.seq };
+}
+
+/**
+ * What a turn's key stands for: a hash of agent, venue, place, from, kind and at. A repeat
+ * (the runtime retrying after a lost answer) matches it; the label and the agent's own fields
+ * aren't compared, so a place's newer name doesn't turn a retry into a conflict.
+ */
+export function turnHash(agent: string, turn: TurnInput): string {
+  return createHash('sha256').update(JSON.stringify([agent, turn.venue, turn.place, turn.from, turn.kind, turn.at])).digest('hex');
 }
 
 // ─── Showing a conversation ─────────────────────────────────────────────────
