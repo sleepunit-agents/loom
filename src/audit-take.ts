@@ -13,10 +13,11 @@
  * never the model, so the runtime can choose graders without learning who produced it.
  */
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveSqliteDbPath } from './config.js';
-import { agentDir, commonsDir, type Household } from './household.js';
+import { agentDir, type Household } from './household.js';
+import { commonsPeoplePath } from './backends/people-household.js';
+import { PeopleStore } from './backends/people.js';
 import { agentsSeen, hasTable, modelsSeen, peopleSeen, turnRecord } from './backends/conversations.js';
 import { assertAgeAvailable, AuditError, claimEntries, decryptAuditText, TAKE_MAX } from './audit.js';
 import { familyOf, processedFamilies, withNonOwner } from './review.js';
@@ -109,25 +110,41 @@ export function redactor(v: Vocabulary): { agent(id: string): string; text(s: st
 
 /**
  * Every person redaction knows: each card's slug and name (the commons directory and each
- * agent's own store), and every person slug a conversation has seen (its `people`, and each
- * turn `from` a person), so someone with no card is redacted by slug all the same.
+ * agent's own store, through the people backend), and every person slug a conversation has
+ * seen (its `people`, and each turn `from` a person), so someone with no card is redacted by
+ * slug all the same. A people store that's there but can't be read fails the take (503): a
+ * schema move must never quietly stop names being redacted.
  */
 function peopleOf(h: Household): Array<{ slug: string; name: string }> {
   const out: Array<{ slug: string; name: string }> = [];
   for (const a of h.agents) for (const slug of peopleSeen(agentDir(h, a))) out.push({ slug, name: '' });
-  const read = (path: string) => {
+  const unreadable = () => new AuditError('a people store can\'t be read, so names couldn\'t be redacted; nothing was taken', 503);
+  // `optional`: an agent's store may never have held a card (no people table at all).
+  const read = (path: string, optional: boolean) => {
     if (!existsSync(path)) return;
-    const db = new BetterSqlite3(path, { readonly: true });
+    let store: PeopleStore;
+    try { store = new PeopleStore({ dbPath: path, readonly: true }); } catch { throw unreadable(); }
     try {
-      if (!hasTable(db, 'people')) return;
-      for (const r of db.prepare('SELECT slug, name FROM people').all() as Array<{ slug: string; name: string | null }>) out.push({ slug: r.slug, name: r.name ?? '' });
+      if (!store.migrated) {
+        if (!optional || hasPeopleTable(path)) throw unreadable();
+        return;
+      }
+      for (const e of store.list(true)) out.push({ slug: e.slug, name: e.name ?? '' });
+    } catch (e) {
+      throw e instanceof AuditError ? e : unreadable();
     } finally {
-      db.close();
+      store.close();
     }
   };
-  read(join(commonsDir(h), 'people.db'));
-  for (const a of h.agents) read(resolveSqliteDbPath(agentDir(h, a)));
+  read(commonsPeoplePath(h), false);
+  for (const a of h.agents) read(resolveSqliteDbPath(agentDir(h, a)), true);
   return out;
+}
+
+/** Whether a store has a `people` table (it was a people store once, whatever its schema now). */
+function hasPeopleTable(path: string): boolean {
+  const db = new BetterSqlite3(path, { readonly: true });
+  try { return hasTable(db, 'people'); } finally { db.close(); }
 }
 
 /** What redaction replaces in this household, read fresh for each take. */
@@ -148,7 +165,8 @@ export function vocabularyOf(h: Household): Vocabulary {
 /**
  * The take handler: `{limit ≤ 500}` (default 100). Answers `{entries}`, oldest first across
  * the household's agents, entries not yet taken, each redacted. An entry that won't decrypt is
- * left out (and stays claimed, so the 7-day sweep removes it); its text is never logged.
+ * left out (and stays claimed, so the 7-day sweep removes it); its text is never logged. So is
+ * an entry of an agent no longer in the household (the vocabulary doesn't know its names).
  */
 export function takeAudit(h: Household, run: string, raw: unknown, env: NodeJS.ProcessEnv = process.env, now: Date = new Date()): { entries: TakenEntry[] } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some((k) => k !== 'limit')) throw new AuditError('a take is {limit}');
@@ -156,16 +174,21 @@ export function takeAudit(h: Household, run: string, raw: unknown, env: NodeJS.P
   if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > TAKE_MAX) throw new AuditError(`limit is 1-${TAKE_MAX}`);
   // Without age nothing could be decrypted: claim nothing, so the entries wait for a run that can.
   assertAgeAvailable(env);
+  // The vocabulary before any claim: a store it can't read fails the take with nothing claimed.
+  const r = redactor(vocabularyOf(h));
   const claimed = claimEntries(h.home, run, limit, now);
   if (!claimed.length) return { entries: [] };
-  const r = redactor(vocabularyOf(h));
   const entries: TakenEntry[] = [];
   let undecryptable = 0;
+  let departed = 0;
   for (const e of claimed) {
+    // An agent no longer in the household isn't in the vocabulary: its names would go out
+    // unredacted. Never handed out; it stays claimed, so the 7-day sweep removes it.
+    if (!h.agents.includes(e.agent)) { departed++; continue; }
     let text: string;
     try { text = decryptAuditText(h.home, e.blob, env); } catch { undecryptable++; continue; }
-    const turn = h.agents.includes(e.agent) ? turnRecord(agentDir(h, e.agent), e.conversation, e.seq) : undefined;
-    const nonOwner = !h.agents.includes(e.agent) || withNonOwner(h, e.agent, e.conversation);
+    const turn = turnRecord(agentDir(h, e.agent), e.conversation, e.seq);
+    const nonOwner = withNonOwner(h, e.agent, e.conversation);
     entries.push({
       ref: e.ref,
       agent: r.agent(e.agent),
@@ -173,9 +196,10 @@ export function takeAudit(h: Household, run: string, raw: unknown, env: NodeJS.P
       kind: e.kind,
       family: familyOf(turn?.model, h),
       text: r.text(text),
-      ...(nonOwner ? { only_families: h.agents.includes(e.agent) ? processedFamilies(h, e.agent, e.conversation) : [] } : {}),
+      ...(nonOwner ? { only_families: processedFamilies(h, e.agent, e.conversation) } : {}),
     });
   }
+  if (departed) process.stderr.write(`loom: ${departed} audit entr${departed === 1 ? 'y' : 'ies'} of agents no longer in the household were left out of the take\n`);
   if (undecryptable) process.stderr.write(`loom: ${undecryptable} audit entr${undecryptable === 1 ? 'y' : 'ies'} didn't decrypt and were left out of the take\n`);
   return { entries };
 }

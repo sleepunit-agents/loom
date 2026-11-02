@@ -18,12 +18,14 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { createLoomServer } from './server.js';
 import { agentDir, commonsDir, createToken, loadHousehold, mintReviewToken, type Household } from './household.js';
 import { runtimePieces } from './cli/pieces-managed.js';
-import { createConversationTables, findingsOf, recordTurn, type TurnInput } from './backends/conversations.js';
+import { createConversationTables, findingsOf, foldConversations, getConversation, recordTurn, turnsOf, type TurnInput } from './backends/conversations.js';
+import { writeTurn } from './conversations.js';
 import { PeopleStore } from './backends/people.js';
 import { HOUSEHOLD_DB, syncVenues } from './household-store.js';
 import { AUDIT_DB, REVIEW_KEY, REVIEW_PUB, auditCount, sweepAudit } from './audit.js';
-import { redactor } from './audit-take.js';
-import { computeMeasures, familyOf, scorecards } from './review.js';
+import { redactor, takeAudit } from './audit-take.js';
+import { commonsPeoplePath } from './backends/people-household.js';
+import { computeMeasures, familyOf, recentDays, scorecards, withNonOwner } from './review.js';
 import { exportBundle } from './bundle.js';
 import { runExport } from './cli/bundle.js';
 import { ROLE_ROUTES, AGENT_ROUTES, GET_ROUTES } from './transport/role-routes.js';
@@ -133,6 +135,12 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
     try { return db.prepare('SELECT * FROM audit_entries WHERE conversation = ? AND seq = ?').get(conversation, seq) as Record<string, unknown> | undefined; } finally { db.close(); }
   };
 
+  const readsCount = () => {
+    if (!existsSync(join(h.home, HOUSEHOLD_DB))) return 0;
+    const db = new BetterSqlite3(join(h.home, HOUSEHOLD_DB), { readonly: true });
+    try { return (db.prepare('SELECT COUNT(*) AS n FROM audit_reads').get() as { n: number }).n; } finally { db.close(); }
+  };
+
   // ─── 6. Encryption ──────────────────────────────────────────────────────
 
   describe('criterion 6: encryption', () => {
@@ -163,17 +171,23 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
     });
 
     it('with no age program, audit writes answer 503 and turns still record', async () => {
+      const waiting = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:NOAGE', at: at(1), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      expect((await audit(tok.runtime, waiting.conversation, waiting.seq, 'waits for a take')).status).toBe(200);
       const empty = mkdtempSync(join(tmpdir(), 'loom-noage-'));
       process.env.PATH = empty;
       delete process.env.LOOM_AGE;
       try {
         const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:NOAGE', at: at(1), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
-        expect(t.seq).toBe(1);
+        expect(t.seq).toBe(2);
         const r = await audit(tok.runtime, t.conversation, t.seq, 'no age here');
         expect(r.status).toBe(503);
         expect(entryRow(t.conversation, t.seq)).toBeUndefined();
-        // A take claims nothing it couldn't decrypt.
+        // A take claims nothing it couldn't decrypt: no audit_reads rows, the log untouched.
+        const count = auditCount(h.home);
+        const reads = readsCount();
         expect((await post('audit/take', tok.review, { limit: 1 })).status).toBe(503);
+        expect(readsCount()).toBe(reads);
+        expect(auditCount(h.home)).toBe(count);
       } finally {
         process.env.PATH = saved.path;
         if (saved.age !== undefined) process.env.LOOM_AGE = saved.age;
@@ -209,9 +223,18 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
   describe('criterion 7: reading the audit log', () => {
     it('the routes: review takes, finishes, scores and finds; runtime writes audit and reads scorecards', () => {
       expect(ROLE_ROUTES.review).toEqual(['audit/take', 'audit/done', 'scores', 'findings']);
-      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'audit', 'scorecards']);
+      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'audit', 'scorecards', 'review/config']);
       expect(AGENT_ROUTES).toEqual(['conversations/turn', 'audit']);
-      expect(GET_ROUTES).toEqual(['scorecards']);
+      expect(GET_ROUTES).toEqual(['scorecards', 'review/config']);
+    });
+
+    it('GET /api/loom/review/config answers the household\'s review setting and time zone, to the runtime only', async () => {
+      const get = (token: string) => fetch(`${base}/api/loom/review/config`, { headers: { authorization: `Bearer ${token}` } });
+      const r = await get(tok.runtime);
+      expect(r.status).toBe(200);
+      expect(await r.json()).toEqual({ review: 'on', tz: 'UTC' });
+      for (const k of ['review', 'owner', 'art', 'box'] as const) expect((await get(tok[k])).status, k).toBe(403);
+      expect((await post('review/config', tok.runtime, {})).status).toBe(405);
     });
 
     it('only an unexpired review token can take: an expired one, and agent, owner, piece and runtime tokens, are refused', async () => {
@@ -266,6 +289,14 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       expect((await audit(tok.runtime, future.conversation, future.seq, 'x')).status).toBe(409);
     });
 
+    it('the sweep goes by the turn\'s time, not the write\'s: a turn 6.9 days old is gone 0.2 days later', async () => {
+      const now = Date.now();
+      const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:SWEEP2', at: new Date(now - 6.9 * 86_400_000).toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      expect((await audit(tok.runtime, t.conversation, t.seq, 'nearly a week old')).status).toBe(200);
+      sweepAudit(h.home, new Date(now + 0.2 * 86_400_000));
+      expect(entryRow(t.conversation, t.seq)).toBeUndefined();
+    });
+
     it('the daemon sweeps at start', async () => {
       const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:START', at: at(6), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       expect((await audit(tok.runtime, t.conversation, t.seq, 'stale')).status).toBe(200);
@@ -312,7 +343,7 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
         rmSync(join(agentDir(h, 'art'), REVIEW_KEY), { force: true });
         rmSync(work, { recursive: true, force: true });
       }
-    });
+    }, 30_000);
   });
 
   // ─── 8. Redaction ───────────────────────────────────────────────────────
@@ -325,17 +356,51 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       const p = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place, at: at(12), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       await audit(tok.runtime, m.conversation, m.seq, 'Loren Ipsum told loren and JONATHAN that Art asked pond-bot, via claude-opus-4 on claude-code.');
       await audit(tok.runtime, r.conversation, r.seq, 'Sure, Jonathan Barket: loren is on it. (art, Claude-Opus-4, start, artful)');
-      await audit(tok.runtime, p.conversation, p.seq, 'pond-bot hears Loren.');
+      // pond-bot's store has never seen art's model or harness: the vocabulary is household-wide.
+      await audit(tok.runtime, p.conversation, p.seq, 'pond-bot hears Loren, on claude-opus-4 via claude-code.');
       const entries = (await take(tok.review)).filter((e) => [m.conversation, p.conversation].length && /told|Sure|hears/.test(e.text as string));
       expect(entries.map((e) => [e.agent, e.text])).toEqual([
         ['A1', 'P1 told P1 and P2 that A1 asked A2, via M1 on H1.'],
         ['A1', 'Sure, P2: P1 is on it. (A1, M1, start, artful)'],
-        ['A2', 'A2 hears P1.'],
+        ['A2', 'A2 hears P1, on M1 via H1.'],
       ]);
       // The reply's family, never its model; someone's message has none.
       expect(entries.map((e) => e.family)).toEqual([null, 'anthropic', null]);
       expect(JSON.stringify(entries)).not.toMatch(/claude|loren|jonathan|pond-bot/i);
       await post('audit/done', tok.review, { refs: entries.map((e) => e.ref) });
+    });
+
+    it('an entry whose agent has left the household is never handed out (its names aren\'t in the vocabulary); it stays claimed for the sweep', async () => {
+      const t = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:LEFT', at: at(14), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      expect((await audit(tok.runtime, t.conversation, t.seq, 'pond-bot secret words')).status).toBe(200);
+      const gone = { ...h, agents: ['art'] };
+      const reads = readsCount();
+      const out = takeAudit(gone, 'rv-leftagent00000', { limit: 500 });
+      expect(JSON.stringify(out)).not.toContain('secret words');
+      expect(readsCount()).toBeGreaterThan(reads);
+      expect(entryRow(t.conversation, t.seq)).toBeDefined();
+      expect((await take(tok.review)).some((e) => /secret words/.test(e.text as string))).toBe(false);
+    });
+
+    it('a people store that exists but can\'t be read fails the take (503) and claims nothing', async () => {
+      const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:BROKEN', at: at(15), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      expect((await audit(tok.runtime, t.conversation, t.seq, 'names would go out')).status).toBe(200);
+      const path = commonsPeoplePath(h);
+      const db = new BetterSqlite3(path);
+      db.exec('ALTER TABLE people RENAME TO people_moved');
+      db.close();
+      try {
+        const reads = readsCount();
+        expect((await post('audit/take', tok.review, { limit: 500 })).status).toBe(503);
+        expect(readsCount()).toBe(reads);
+      } finally {
+        const db2 = new BetterSqlite3(path);
+        db2.exec('ALTER TABLE people_moved RENAME TO people');
+        db2.close();
+      }
+      const e = (await take(tok.review)).find((x) => x.text === 'names would go out')!;
+      expect(e).toBeDefined();
+      await post('audit/done', tok.review, { refs: [e.ref] });
     });
 
     it('a person with no card is redacted by slug, whether seen in a conversation\'s people or only as a turn\'s from', async () => {
@@ -377,6 +442,10 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       owner = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:OWNER', at: at(21), from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r-own', outcome: 'answered', model: 'gpt-5', harness: 'codex-cli' });
       // With Loren, who isn't a member: processed by an anthropic model only.
       await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:LOREN', at: at(22), from: { kind: 'person', slug: 'loren' }, kind: 'message' });
+      // pond-bot runs google and mistral models: the household has four families.
+      for (const [i, model] of [[0, 'gemini-2.5-pro'], [1, 'mistral-large']] as const) {
+        await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:POND', at: at(19 + i / 10), from: { kind: 'agent', id: 'pond-bot' }, kind: 'note', run: `r-p${i}`, outcome: 'none', model, harness: 'opencode' });
+      }
       stranger = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:LOREN', at: at(23), from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r-lor', outcome: 'answered', model: 'claude-sonnet-4', harness: 'claude-code' });
       for (const [k, t] of [['ownerMsg', ownerMsg], ['owner', owner], ['stranger', stranger]] as const) await audit(tok.runtime, t.conversation, t.seq, `text of ${k}`);
       const entries = await take(tok.review);
@@ -390,16 +459,19 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
     });
 
     it('scores are posted by ref; the rows carry the producer\'s model, family and harness, which the runtime never received', async () => {
+      // The household's families: art runs anthropic and openai models, pond-bot google and mistral ones.
+      // google and mistral also grade the gpt-5 (openai) turn: two scores at most per ref.
       expect((await post('scores', tok.review, { ref: refs.owner, grader_family: 'anthropic', score: 4 })).status).toBe(200);
       expect((await post('scores', tok.review, { ref: refs.owner, grader_family: 'google', score: 2 })).status).toBe(200);
+      expect((await post('scores', tok.review, { ref: refs.owner, grader_family: 'mistral', score: 5 })).status).toBe(409);
       // Once per family; only a model's turn; this run's refs; the shape.
       expect((await post('scores', tok.review, { ref: refs.owner, grader_family: 'google', score: 5 })).status).toBe(409);
       expect((await post('scores', tok.review, { ref: refs.ownerMsg, grader_family: 'anthropic', score: 3 })).status).toBe(409);
-      expect((await post('scores', tok.review2, { ref: refs.owner, grader_family: 'meta', score: 3 })).status).toBe(404);
-      for (const bad of [{ ref: refs.owner, grader_family: 'meta', score: 6 }, { ref: refs.owner, grader_family: 'meta', score: 2.5 }, { ref: refs.owner, grader_family: 'Meta', score: 3 }, { ref: refs.owner, grader_family: 'meta', score: 3, model: 'x' }]) {
+      expect((await post('scores', tok.review2, { ref: refs.owner, grader_family: 'mistral', score: 3 })).status).toBe(404);
+      for (const bad of [{ ref: refs.owner, grader_family: 'mistral', score: 6 }, { ref: refs.owner, grader_family: 'mistral', score: 2.5 }, { ref: refs.owner, grader_family: 'Mistral', score: 3 }, { ref: refs.owner, grader_family: 'mistral', score: 3, model: 'x' }]) {
         expect((await post('scores', tok.review, bad)).status, JSON.stringify(bad)).toBe(400);
       }
-      expect((await post('scores', tok.runtime, { ref: refs.owner, grader_family: 'meta', score: 3 })).status).toBe(403);
+      expect((await post('scores', tok.runtime, { ref: refs.owner, grader_family: 'mistral', score: 3 })).status).toBe(403);
       const day = at(21).slice(0, 10);
       const r = await fetch(`${base}/api/loom/scorecards?since=${day}`, { headers: { authorization: `Bearer ${tok.runtime}` } });
       expect(r.status).toBe(200);
@@ -410,6 +482,18 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
         expect((await fetch(`${base}/api/loom/scorecards`, { headers: { authorization: `Bearer ${tok[k]}` } })).status, k).toBe(403);
       }
       expect((await post('scorecards', tok.runtime, {})).status).toBe(405);
+    });
+
+    it('a grader family must be one the household runs, and never the producer\'s own', async () => {
+      // A fresh sample: the gpt-5 turn's two scores are spent.
+      const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:OWNER', at: at(24), from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r-own2', outcome: 'answered', model: 'gpt-5', harness: 'codex-cli' });
+      await audit(tok.runtime, t.conversation, t.seq, 'text of fresh');
+      const e = (await take(tok.review)).find((x) => x.text === 'text of fresh')!;
+      // meta and xai: no household agent runs them. Fifty made-up names can't inflate a row.
+      for (const f of ['meta', 'xai', 'zzz', 'made-up']) expect((await post('scores', tok.review, { ref: e.ref, grader_family: f, score: 5 })).status, f).toBe(403);
+      // openai produced it.
+      expect((await post('scores', tok.review, { ref: e.ref, grader_family: 'openai', score: 5 })).status).toBe(403);
+      expect((await post('scores', tok.review, { ref: e.ref, grader_family: 'mistral', score: 1 })).status).toBe(200);
     });
 
     it('a score from a family that didn\'t process a non-owner conversation is rejected', async () => {
@@ -444,6 +528,22 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       };
       expect((await call('art')).map((x) => x.text)).toEqual(['P1 asked twice before A1 answered.']);
       expect(await call('pond-bot')).toEqual([]);
+    });
+
+    it('two findings for one conversation on different UTC days (the turns\' days) both land; a second the same day doesn\'t', async () => {
+      const now = Date.now();
+      const day1 = new Date(now - 2 * 86_400_000).toISOString();
+      const day2 = new Date(now - 1 * 86_400_000).toISOString();
+      const a = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: day1, from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      const b = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: day2, from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      const c = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: new Date(Date.parse(day2) + 1000).toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      for (const [t, k] of [[a, 'one'], [b, 'two'], [c, 'three']] as const) await audit(tok.runtime, t.conversation, t.seq, `day text ${k}`);
+      const es = (await take(tok.review)).filter((x) => /^day text /.test(x.text as string));
+      const ref = (k: string) => es.find((x) => x.text === `day text ${k}`)!.ref;
+      expect((await post('findings', tok.review, { ref: ref('one'), text: 'first day' })).status).toBe(200);
+      expect((await post('findings', tok.review, { ref: ref('two'), text: 'second day' })).status).toBe(200);
+      expect((await post('findings', tok.review, { ref: ref('three'), text: 'second day again' })).status).toBe(409);
+      expect(findingsOf(agentDir(h, 'pond-bot')).filter((f) => f.conversation === a.conversation).map((f) => f.text).sort()).toEqual(['first day', 'second day']);
     });
   });
 });
@@ -487,6 +587,25 @@ describe('criterion 9: one decrypt path', () => {
       expect(c, relative(srcDir, f)).not.toMatch(/export\s*\*\s*from\s+['"][./]*audit\.js['"]/);
       expect(c, relative(srcDir, f)).not.toMatch(/import\(\s*['"][./]*audit\.js['"]\s*\)/);
     }
+  });
+
+  it('the review key, and decrypting with it, appear only in the audit module', () => {
+    const all = files(srcDir);
+    // The key's name, as a constant or a string, is the audit module's alone.
+    const keyed = all.filter((f) => /\bREVIEW_KEY\b|review\.key/.test(code(f))).map((f) => relative(srcDir, f)).sort();
+    expect(keyed).toEqual(['audit.ts']);
+    // An age decrypt (-d / --decrypt) runs in two places: the bundle's, of a bundle with the owner's
+    // key, which never names the review key; and the audit module's, inside decryptAuditText only.
+    const decrypting = all.filter((f) => /['"](?:-d|--decrypt)['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
+    expect(decrypting).toEqual(['audit.ts', 'bundle.ts']);
+    expect(code(join(srcDir, 'bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|AUDIT_FILES\s*\[/);
+    const audit = code(join(srcDir, 'audit.ts'));
+    const spawns = [...audit.matchAll(/['"](?:-d|--decrypt)['"]/g)].map((m) => m.index!);
+    expect(spawns).toHaveLength(1);
+    const start = audit.indexOf(`export function ${NAME}(`);
+    const next = audit.slice(start + 1).search(/\n(?:export |function |const |let |class |interface |type )/);
+    expect(spawns[0]).toBeGreaterThan(start);
+    expect(spawns[0]).toBeLessThan(start + 1 + next);
   });
 });
 
@@ -565,7 +684,7 @@ describe('the metadata measures (computeMeasures)', () => {
         // b had no agent turn at all: it's the unknown model's.
         expect(v('abandoned').sort((a, b) => a.model.localeCompare(b.model))).toEqual([
           { ...opus, kind: 'live', value: 0, n: 1 },
-          { model: 'unknown', family: 'unknown', harness: null, same_family: false, kind: 'live', value: 1, n: 1 },
+          { model: 'unknown', family: 'unknown', harness: 'unknown', same_family: false, kind: 'live', value: 1, n: 1 },
         ]);
         expect(v('due_to_progress_s')).toEqual([{ ...opus, kind: 'scheduled', value: 120, n: 1 }]);
         expect(v('done_rate')).toEqual([{ ...opus, kind: 'scheduled', value: 0.5, n: 2 }]);
@@ -577,5 +696,80 @@ describe('the metadata measures (computeMeasures)', () => {
     } finally {
       rmSync(h.home, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── Who a conversation is with: sticky (criterion 10's non-owner rule) ─────
+
+describe('a conversation with a non-owner stays one', () => {
+  const asArt = { kind: 'agent' as const, agent: 'art' };
+  const msg = (place: string, at: string, from: Record<string, unknown>) => ({ venue: 'session', place, at, from, kind: 'message' });
+
+  it('the 33rd person, past the people cap, still makes it a non-owner conversation', () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-strangers-cap-'));
+    try {
+      mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+      const members = Array.from({ length: 32 }, (_, i) => ({ person: `m${i}`, role: 'owner', agents: '*' }));
+      writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], members }));
+      const h = loadHousehold(home)!;
+      const base = Date.now() - 3600_000;
+      let conv = '';
+      for (let i = 0; i < 32; i++) conv = writeTurn(h, asArt, msg('claude-code:cap', new Date(base + i * 1000).toISOString(), { kind: 'person', slug: `m${i}` })).conversation;
+      expect(withNonOwner(h, 'art', conv)).toBe(false);
+      writeTurn(h, asArt, msg('claude-code:cap', new Date(base + 40_000).toISOString(), { kind: 'person', slug: 'outsider' }));
+      // The people list is full: the outsider isn't in it, but the conversation is theirs too.
+      expect(getConversation(agentDir(h, 'art'), conv)!.people).not.toContain('outsider');
+      expect(withNonOwner(h, 'art', conv)).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('an unknown sender\'s turn, folded away after 90 days, still marks it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-strangers-fold-'));
+    try {
+      mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+      writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+      const h = loadHousehold(home)!;
+      const old = new Date(Date.now() - 100 * 86_400_000).toISOString();
+      const { conversation } = writeTurn(h, asArt, msg('claude-code:fold', old, { kind: 'unknown' }));
+      writeTurn(h, asArt, msg('claude-code:fold', new Date().toISOString(), { kind: 'person', slug: 'jonathan' }));
+      expect(withNonOwner(h, 'art', conversation)).toBe(true);
+      expect(foldConversations(agentDir(h, 'art')).turns).toBe(1);
+      expect(turnsOf(agentDir(h, 'art'), conversation).some((t) => t.from.kind === 'unknown')).toBe(false);
+      expect(withNonOwner(h, 'art', conversation)).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── The review's settings (conversations.md, "Review") ─────────────────────
+
+describe('household.json tz and review', () => {
+  it('parses tz (IANA, default UTC) and review ("on" default, "off", or a 1-16 string command)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'loom-review-settings-'));
+    try {
+      mkdirSync(join(home, 'agents', 'art'), { recursive: true });
+      const write = (extra: Record<string, unknown>) => writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], ...extra }));
+      write({});
+      expect(loadHousehold(home)).toMatchObject({ tz: 'UTC', review: 'on' });
+      write({ tz: 'America/Chicago', review: 'off' });
+      expect(loadHousehold(home)).toMatchObject({ tz: 'America/Chicago', review: 'off' });
+      write({ review: ['my-review', '--json'] });
+      expect(loadHousehold(home)!.review).toEqual(['my-review', '--json']);
+      for (const bad of [{ tz: 'Mars/Olympus' }, { tz: 3 }, { review: 'maybe' }, { review: [] }, { review: Array(17).fill('x') }, { review: ['x'.repeat(201)] }, { review: [3] }]) {
+        write(bad);
+        expect(() => loadHousehold(home), JSON.stringify(bad)).toThrow(/tz|review/);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the scorecard pass\'s days', () => {
+  it('recentDays includes today', () => {
+    expect(recentDays(new Date('2026-11-02T05:00:00Z'))).toEqual(['2026-11-02', '2026-11-01', '2026-10-31', '2026-10-30']);
   });
 });

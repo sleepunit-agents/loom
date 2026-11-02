@@ -3,19 +3,21 @@
  * the scores graders post by ref, the findings they leave, and the scorecards core builds.
  *
  * Core keeps the mapping from a ref to the turn it stands for (audit_reads in household.db),
- * so a runtime posts a score knowing only the sample's family, and core turns it into
- * scorecard rows naming the producer's model and harness, which the runtime never received.
+ * so a score is posted knowing only the sample's family, and core turns it into scorecard rows
+ * naming the producer's model and harness. The blindness is the grader's: a grader sees only
+ * the redacted sample. The runtime is not blind; it reads the scorecards, and may learn a
+ * ref's model from them.
  * The metadata measures (first_reply_s, abandoned, due_to_progress_s, done_rate,
  * round_trips, loops_refused) come from turns alone, per UTC day (`computeMeasures`).
  */
 import { agentDir, FAMILY_NAME, type Household } from './household.js';
 import {
-  AGENT_TURN_KINDS, ConversationError, conversationsActive, dueToProgressSeconds, getConversation, turnRecord, turnsOf, writeFinding,
-  type Finding, type Turn,
+  AGENT_TURN_KINDS, ConversationError, conversationsActive, dueToProgressSeconds, getConversation, modelsSeen, turnRecord, turnsOf, writeFinding,
+  type Finding, type From, type Turn,
 } from './backends/conversations.js';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { HOUSEHOLD_DB, openHouseholdDb, venueOf } from './household-store.js';
+import { CORE_VENUE_ROWS, HOUSEHOLD_DB, hasStrangers, listVenues, openHouseholdDb, venueOf } from './household-store.js';
 import { AuditError, refOf } from './audit.js';
 
 const fail = (m: string, status = 400): never => { throw new AuditError(m, status); };
@@ -66,11 +68,27 @@ export function familyOf(model: string | null | undefined, h?: Pick<Household, '
  * families that already processed the conversation (Review, step 2).
  */
 export function withNonOwner(h: Household, agent: string, id: string): boolean {
+  // The sticky mark first: set by every turn from a stranger, never cleared.
+  if (hasStrangers(h.home, agent, id)) return true;
   const c = getConversation(agentDir(h, agent), id);
   if (!c) return true;
-  const owners = new Set(h.members.filter((m) => m.agents === '*' || m.agents.includes(agent)).map((m) => m.person));
-  if (c.people.some((p) => !owners.has(p))) return true;
-  return turnsOf(agentDir(h, agent), id).some((t) => t.from.kind === 'unknown');
+  // A conversation from before the mark existed: what its record still shows.
+  if (c.people.some((p) => isStranger(h, agent, { kind: 'person', slug: p }))) return true;
+  return turnsOf(agentDir(h, agent), id).some((t) => isStranger(h, agent, t.from));
+}
+
+/** Whether a turn `from` is someone other than `agent`'s owners: a person who isn't a member owning it, or anyone unknown. */
+export function isStranger(h: Household, agent: string, from: From): boolean {
+  if (from.kind === 'unknown') return true;
+  if (from.kind !== 'person') return false;
+  return !h.members.some((m) => m.person === from.slug && (m.agents === '*' || m.agents.includes(agent)));
+}
+
+/** The families some household agent's model resolves to: the only families that may grade. */
+export function householdFamilies(h: Household): string[] {
+  const out = new Set<string>();
+  for (const a of h.agents) for (const m of modelsSeen(agentDir(h, a)).models) { const f = familyOf(m, h); if (f) out.add(f); }
+  return [...out].sort();
 }
 
 /** The families of the agent turns of conversation `id`: who already processed it. */
@@ -90,7 +108,8 @@ export interface ScorecardRow {
   day: string;
   model: string;
   family: string;
-  harness: string | null;
+  /** `unknown` when the turn named none. */
+  harness: string;
   kind: string;
   measure: string;
   value: number;
@@ -100,6 +119,8 @@ export interface ScorecardRow {
 
 export const METADATA_MEASURES = ['first_reply_s', 'abandoned', 'due_to_progress_s', 'done_rate', 'round_trips', 'loops_refused'] as const;
 const UNKNOWN = 'unknown';
+/** A sample is graded by at most two families (Review, step 1). */
+export const MAX_SCORES_PER_REF = 2;
 
 /** What a sample's ref stands for, with the turn and its venue's kind; refused unless this run took it. */
 function sampleOf(h: Household, run: string, ref: unknown): { agent: string; conversation: string; seq: number; turn: Turn; kind: string } {
@@ -116,9 +137,10 @@ function sampleOf(h: Household, run: string, ref: unknown): { agent: string; con
 /**
  * POST /api/loom/scores {ref, grader_family, score 1-5}, as a review run. Core maps the ref to
  * the producer's model, family and harness and folds the score into that day's `graded` row.
- * Refused: a turn with no model (not the agent's), a second score from the same family, and,
- * for a conversation with someone other than the owner, a family that didn't already process
- * it (its rows say same_family: true).
+ * Refused: a turn with no model (not the agent's); a family no household agent's model
+ * resolves to; the producer's own family while the household has another; a second score
+ * from the same family, or a third for the ref; and, for a conversation with someone other
+ * than the owner, a family that didn't already process it (its rows say same_family: true).
  */
 export function postScore(h: Household, run: string, raw: unknown, now: Date = new Date()): { ok: true } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('a score is {ref, grader_family, score}');
@@ -132,23 +154,33 @@ export function postScore(h: Household, run: string, raw: unknown, now: Date = n
   const s = sampleOf(h, run, b.ref);
   if (!s.turn.model) fail('that turn has no model: only the agent\'s own turns are scored', 409);
   const family = familyOf(s.turn.model, h) ?? UNKNOWN;
-  let sameFamily = grader === family;
+  // Only a family the household actually runs grades: a made-up name can't add a score.
+  const families = householdFamilies(h);
+  if (!families.includes(grader)) fail(`no household agent runs a ${grader} model: only ${families.join(', ') || 'none'} may grade`, 403);
+  let sameFamily: boolean;
   if (withNonOwner(h, s.agent, s.conversation)) {
+    // A person's words go only where they already went (Review, step 2).
     if (!processedFamilies(h, s.agent, s.conversation).includes(grader)) {
       fail('this conversation is with someone other than the owner: only a family that already processed it may grade it', 403);
     }
     sameFamily = true;
+  } else {
+    // Never the producer's own family, unless the household has no other (step 1's fallback).
+    if (grader === family && families.some((f) => f !== family)) fail(`${grader} produced this turn; another of the household's families grades it`, 403);
+    sameFamily = grader === family;
   }
   const day = s.turn.at.slice(0, 10);
   const db = openHouseholdDb(h.home);
   try {
     db.transaction(() => {
-      const r = db.prepare('INSERT OR IGNORE INTO review_scores (ref, grader_family, score, at) VALUES (?, ?, ?, ?)').run(b.ref, grader, score, now.toISOString());
-      if (r.changes === 0) fail(`${grader} already scored that ref`, 409);
+      if (db.prepare('SELECT 1 FROM review_scores WHERE ref = ? AND grader_family = ?').get(b.ref, grader)) fail(`${grader} already scored that ref`, 409);
+      const scored = (db.prepare('SELECT COUNT(*) AS n FROM review_scores WHERE ref = ?').get(b.ref) as { n: number }).n;
+      if (scored >= MAX_SCORES_PER_REF) fail(`that ref already has its ${MAX_SCORES_PER_REF} scores`, 409);
+      db.prepare('INSERT INTO review_scores (ref, grader_family, score, at) VALUES (?, ?, ?, ?)').run(b.ref, grader, score, now.toISOString());
       db.prepare(`INSERT INTO scorecards (day, model, family, harness, kind, measure, same_family, value, n, total) VALUES (?, ?, ?, ?, ?, 'graded', ?, ?, 1, ?)
                   ON CONFLICT(day, model, family, harness, kind, measure, same_family) DO UPDATE SET
                     n = n + 1, total = total + excluded.total, value = (total + excluded.total) / (n + 1)`).run(
-        day, s.turn.model, family, s.turn.harness ?? '', s.kind, sameFamily ? 1 : 0, score, score);
+        day, s.turn.model, family, s.turn.harness ?? UNKNOWN, s.kind, sameFamily ? 1 : 0, score, score);
     }).immediate();
   } finally {
     db.close();
@@ -188,7 +220,7 @@ export function scorecards(home: string, since?: string, now: Date = new Date())
   const db = openHouseholdDb(home);
   try {
     return (db.prepare('SELECT * FROM scorecards WHERE day >= ? ORDER BY day, kind, model, measure, same_family LIMIT 10000').all(from) as Array<Record<string, unknown>>).map((r) => ({
-      day: r.day as string, model: r.model as string, family: r.family as string, harness: (r.harness as string) || null,
+      day: r.day as string, model: r.model as string, family: r.family as string, harness: (r.harness as string) || UNKNOWN,
       kind: r.kind as string, measure: r.measure as string, value: r.value as number, n: r.n as number, same_family: r.same_family === 1,
     }));
   } finally {
@@ -228,18 +260,21 @@ export function computeMeasures(h: Household, day: string): number {
   const groups = new Map<string, { model: string; harness: string; kind: string; measure: string; agg: Agg; xs: number[] }>();
   const add = (kind: string, measure: string, agg: Agg, t: Pick<Turn, 'model' | 'harness'> | undefined, x: number) => {
     const model = t?.model ?? UNKNOWN;
-    const harness = t?.harness ?? '';
+    const harness = t?.harness ?? UNKNOWN;
     const key = [model, harness, kind, measure].join('\0');
     const g = groups.get(key) ?? { model, harness, kind, measure, agg, xs: [] };
     g.xs.push(x);
     groups.set(key, g);
   };
   const inDay = (t: Turn) => t.at >= from && t.at < to;
+  // The venue registry, read once for the pass.
+  const kinds = new Map<string, string>(Object.values(CORE_VENUE_ROWS).map((v) => [v.name, v.kind]));
+  for (const v of listVenues(h.home)) kinds.set(v.name, v.kind);
   const own = (t: Turn) => AGENT_TURN_KINDS.includes(t.kind);
   for (const agent of h.agents) {
     const dir = agentDir(h, agent);
     for (const c of conversationsActive(dir, from, to)) {
-      const kind = venueOf(h.home, c.venue)?.kind;
+      const kind = kinds.get(c.venue);
       if (!kind) continue;
       const turns = turnsOf(dir, c.id);
       const latestOwnBefore = (seq: number) => turns.filter((t) => own(t) && t.seq < seq).pop();
@@ -291,7 +326,7 @@ export function computeMeasures(h: Household, day: string): number {
   }
 }
 
-/** The days the sweep recomputes: the last three UTC days before `now`'s. */
+/** The days the sweep recomputes: `now`'s UTC day and the three before it. */
 export function recentDays(now: Date = new Date()): string[] {
-  return [1, 2, 3].map((d) => new Date(now.getTime() - d * DAY_MS).toISOString().slice(0, 10));
+  return [0, 1, 2, 3].map((d) => new Date(now.getTime() - d * DAY_MS).toISOString().slice(0, 10));
 }

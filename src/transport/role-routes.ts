@@ -11,12 +11,12 @@
 export type NarrowRole = 'runtime' | 'review';
 
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token', 'conversations/turn', 'audit', 'scorecards'],
+  runtime: ['review/token', 'conversations/turn', 'audit', 'scorecards', 'review/config'],
   review: ['audit/take', 'audit/done', 'scores', 'findings'],
 };
 
-/** Of those, the ones that are GET (everything else is POST): GET /api/loom/scorecards. */
-export const GET_ROUTES: readonly string[] = ['scorecards'];
+/** Of those, the ones that are GET (everything else is POST): the scorecards and the review's settings. */
+export const GET_ROUTES: readonly string[] = ['scorecards', 'review/config'];
 
 /**
  * Of those routes, the ones an agent token reaches too: a harness writes its own session's

@@ -460,7 +460,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    * piece, as its subject; a peer never.
    */
   async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
-    // GET /api/loom/scorecards is core's one GET here (a runtime token); everything else is POST.
+    // GET_ROUTES (the scorecards, the review's settings: a runtime token) are GET; everything else is POST.
     const getRoute = piece === 'loom' && GET_ROUTES.includes(subpath);
     if (getRoute ? req.method !== 'GET' : req.method !== 'POST') return sendError(res, 405, `method-not-allowed: ${getRoute ? 'GET' : 'POST'} /api/${piece}/${getRoute ? subpath : ''}`);
     // No token at all: only a path the piece declared open to strangers (its loom block, fixed at
@@ -542,6 +542,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         const since = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since') ?? undefined;
         return sendJson(res, 200, { rows: scorecards(live!().home, since) });
       } catch (e) { return auditFail(res, e, 'read the scorecards'); }
+    }
+    // GET /api/loom/review/config (docs/specs/conversations.md, "Review"): the runtime reads the
+    // setting here, never from the file.
+    if (subpath === 'review/config' && role.kind === 'runtime') {
+      const h = live!();
+      return sendJson(res, 200, { review: h.review ?? 'on', tz: h.tz ?? 'UTC' });
     }
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
     const cap = bodyCap(subpath);

@@ -468,29 +468,40 @@ These slices settled these points the doc left open:
   findings. `audit.db` runs in rollback-journal mode with `secure_delete`, so a deleted entry's pages are zeroed.
 - **Runs.** A review run is its token: its id is a digest of the token. A take's refs answer only that run's
   `scores`, `findings` and `done`; another run's are a 404 (done ignores them).
-- **Take.** `limit` defaults to 100. `kind` is the turn's kind. An entry from a conversation with someone other than
+- **Take.** `limit` defaults to 100. An entry of an agent no longer in the household is never handed out (the
+  vocabulary doesn't know its names); it stays claimed for the sweep. The vocabulary is read before anything is claimed,
+  through the people backend, and a people store that exists but can't be read fails the take (503). `kind` is the turn's kind. An entry from a conversation with someone other than
   the owner also carries `only_families`: the families that may grade it, so the runtime knows before it sends a word
   anywhere (core still refuses any other family's score). Without `age`, a take is a 503 and claims nothing. An entry
   that doesn't decrypt is left out and stays claimed, so the sweep removes it.
-- **"Someone other than the owner."** A conversation whose `people` include anyone who isn't a household member
-  owning that agent, or with any turn `from` `unknown`.
+- **"Someone other than the owner."** A conversation that ever had a turn from a person who isn't a household member
+  owning that agent, or from `unknown`. It's sticky: the turn write marks it in household.db's
+  `conversation_strangers`, never cleared, so neither the 32-person cap nor the 90-day fold hides it. (A conversation
+  from before the mark is judged by its `people` and held turns too.) Both the take's `only_families` and scores read
+  it.
 - **Redaction.** Beyond each card's name and slug, every person slug a conversation has seen (its `people`, and every
   turn `from` a person) is redacted, card or not. Each part of a name or slug is that person too: each whitespace
   word ("O'Brien", "Mary-Kate") and each piece of it split on hyphens and apostrophes ("Brien", "Kate"), from three
   letters (so "Al" or "Jo" doesn't blank common words). An apostrophe in a name matches ' or ’. A card whose slug is an agent id is that agent (A…). Agent ids are the
   household's and every agent its conversations have seen. Whitespace inside a name matches any whitespace. A term
   that matches more than one thing goes to agent, then person, model, harness.
-- **Scores.** One per ref and grader family (a second is 409). Only an agent turn with a model is scored (409
-  otherwise). A row's `day` is the turn's UTC day; `value` is the mean, `n` the count.
+- **Scores.** A grader family must be one some household agent's model resolves to (403 otherwise), and never the
+  producer's own while the household has another (the single-family fallback; for a non-owner conversation, the
+  families that processed it rule instead). At most two per ref, one per family (409 past that). Only an agent turn
+  with a model is scored (409 otherwise). A row's `day` is the turn's UTC day; `value` is the mean, `n` the count.
 - **Findings.** One per conversation per UTC day of the turn it's on. One printable line of at most 200
   characters, not checked for quotes. It stores the turn, the measure `graded`, the mean score posted for its ref
   (or null), and the text.
 - **Measures.** `computeMeasures(h, day)` replaces that day's metadata rows; the hourly sweep runs it for the last
   three days, so `abandoned` settles after its 24 hours. Each sample is attributed to the model and harness of the
   agent turn it measures (the reply, the run's first turn, or the latest agent turn before it), else `unknown`.
-  `round_trips` counts turns as the seq distance from the first message to the first answered reply.
+  `round_trips` counts turns as the seq distance from the first message to the first answered reply. A sample with
+  no harness is `unknown`. The pass covers today and the three days before.
 - **Scorecards.** `GET /api/loom/scorecards?since=YYYY-MM-DD` (default 30 days back), runtime only, at most 10,000
   rows oldest first.
+- **The review's settings.** household.json's `tz` (an IANA name, default `UTC`) and `review` (`on`, `off`, or 1–16
+  strings of ≤ 200) are checked when the household loads; `GET /api/loom/review/config` (runtime) answers
+  `{review, tz}`.
 - **Bundles.** On top of copying only what it names, an export refuses to write a bundle whose staging holds any
   file named like the audit log or the review key pair.
 

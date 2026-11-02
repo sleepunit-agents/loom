@@ -385,7 +385,11 @@ export function turnRecord(contextDir: string, conversation: string, seq: number
 export function conversationsActive(contextDir: string, from: string, to: string): Array<{ id: string; venue: string; people: string[] }> {
   return withReadonly(contextDir, [], (db) => (db.prepare(`SELECT c.id, c.venue, c.people_json FROM conversations c
       WHERE EXISTS (SELECT 1 FROM conversation_turns t WHERE t.conversation = c.id AND t.at >= ? AND t.at < ?) ORDER BY c.id`).all(from, to) as Array<{ id: string; venue: string; people_json: string }>)
-    .map((r) => ({ id: r.id, venue: r.venue, people: JSON.parse(r.people_json) as string[] })));
+    .map((r) => {
+      let people: string[] = [];
+      try { people = JSON.parse(r.people_json) as string[]; } catch { /* a bad row names no one */ }
+      return { id: r.id, venue: r.venue, people };
+    }));
 }
 
 /** Every model and harness string this store has seen, held or folded: what redaction replaces. */

@@ -25,7 +25,7 @@ import {
   renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveRepoRoot, resolveSqliteDbPath } from './config.js';
 import {

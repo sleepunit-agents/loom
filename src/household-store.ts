@@ -1,7 +1,8 @@
 /**
  * The household store, `$LOOM_HOME/household.db` (docs/specs/conversations.md, "Where it
  * lives"): what's household-wide rather than one agent's: the `venues` registry, and the
- * review's `audit_reads` (src/audit.ts), `review_scores` and `scorecards` (src/review.ts).
+ * review's `audit_reads` (src/audit.ts), `conversation_strangers` (markStrangers), and
+ * `review_scores` and `scorecards` (src/review.ts).
  *
  * The registry is core's copy of every installed piece's `venues` declaration (src/offers.ts
  * checked it at install), so a conversation can always be shown, even once the piece that
@@ -73,6 +74,12 @@ export function openHouseholdDb(home: string): Database {
       UNIQUE (agent, conversation, seq)
     );
     CREATE INDEX IF NOT EXISTS idx_audit_reads_run ON audit_reads(run);
+    CREATE TABLE IF NOT EXISTS conversation_strangers (
+      agent        TEXT NOT NULL,
+      conversation TEXT NOT NULL,
+      at           TEXT NOT NULL,
+      PRIMARY KEY (agent, conversation)
+    );
     CREATE TABLE IF NOT EXISTS review_scores (
       ref           TEXT NOT NULL,
       grader_family TEXT NOT NULL,
@@ -146,6 +153,23 @@ export function syncVenues(env: NodeJS.ProcessEnv, now: Date = new Date()): stri
   } finally {
     db.close();
   }
+}
+
+/**
+ * Mark conversation `conversation` (agent's) as one with someone other than its owners: a turn
+ * came from a non-member or an unknown sender. Sticky: never cleared, so neither the people
+ * cap nor the 90-day fold can make it look owner-only (conversations.md, "Review", step 2).
+ */
+export function markStrangers(home: string, agent: string, conversation: string, now: Date = new Date()): void {
+  const db = openHouseholdDb(home);
+  try { db.prepare('INSERT OR IGNORE INTO conversation_strangers (agent, conversation, at) VALUES (?, ?, ?)').run(agent, conversation, now.toISOString()); } finally { db.close(); }
+}
+
+/** Whether conversation `conversation` (agent's) was ever marked by markStrangers. */
+export function hasStrangers(home: string, agent: string, conversation: string): boolean {
+  if (!existsSync(join(home, HOUSEHOLD_DB))) return false;
+  const db = openHouseholdDb(home);
+  try { return db.prepare('SELECT 1 FROM conversation_strangers WHERE agent = ? AND conversation = ?').get(agent, conversation) !== undefined; } finally { db.close(); }
 }
 
 /** Every venue in the registry, by name (core's own not included). */
