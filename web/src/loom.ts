@@ -9,7 +9,7 @@ export interface Field { name: string; label: string; kind: 'text' | 'textarea' 
 export type Block =
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
-  | { type: 'callout'; text: string; title?: string; tone?: Tone }
+  | { type: 'callout'; text: string; title?: string; tone?: Tone; busy?: boolean }
   | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: 'pink' | 'yellow' | 'olive' | 'blue'; summary?: string;
       badges?: string[]; stats?: Array<{ label: string; value: string; detail?: string; page?: string; source?: Source; tone?: Tone }>;
       links?: Array<{ text: string; page?: string; href?: string }> }

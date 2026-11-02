@@ -21,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Spinner } from '@/components/ui/spinner';
+import { refreshEvery, type Showing } from './refresh';
 import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
@@ -156,18 +157,17 @@ export default function App() {
     return () => { es.close(); document.removeEventListener('visibilitychange', back); };
   }, [load]);
 
-  // A page that stays fresh is fetched again in place (the classic page's data-live): page.refresh seconds, or 20 for a
-  // page without a form, and Home, Today and the Inbox; never while a sheet, an editor or a field is in use, or hidden.
-  const every = !data ? 0 : data.view === 'page' ? (data.page.refresh ?? (JSON.stringify(data.page).includes('"type":"form"') ? 0 : 20))
-    : data.view === 'sheet' ? 0 : 20;
+  // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
+  // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
+  const every = refreshEvery(data as Showing | null, live);
   useEffect(() => {
     if (!every) return;
     const t = setInterval(() => {
       const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
       if (!busy) void load(location.pathname + location.search, false, true);
-    }, (live ? Math.max(every, 60) : every) * 1000);
+    }, every * 1000);
     return () => clearInterval(t);
-  }, [every, live]); 
+  }, [every]); 
 
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
   useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps

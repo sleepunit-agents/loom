@@ -381,7 +381,7 @@ export function BlockView({ b }: { b: Block }) {
       return <Suspense fallback={<div className="whitespace-pre-wrap">{text}</div>}><Markdown text={text} /></Suspense>; }
     case 'profile': return <Suspense fallback={<div className="min-h-64" />}><Profile p={b as Extract<Block, { type: 'profile' }>} /></Suspense>;
     case 'callout': { const c = b as Extract<Block, { type: 'callout' }>;
-      return <Callout tone={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'} title={c.title}>{c.text}</Callout>; }
+      return <Callout tone={c.tone === 'bad' ? 'danger' : c.tone === 'warn' ? 'warn' : c.tone === 'ok' ? 'ok' : 'info'} title={c.title} busy={c.busy}>{c.text}</Callout>; }
     case 'list': return <ListBlock items={(b as Extract<Block, { type: 'list' }>).items} pages={(b as { pages?: Pages }).pages} wrap={(b as { wrap?: boolean }).wrap} who={(b as { who?: boolean }).who} />;
     case 'table': return <TableBlock b={b as Extract<Block, { type: 'table' }>} />;
     case 'kv': return (

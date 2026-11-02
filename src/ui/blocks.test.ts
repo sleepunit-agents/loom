@@ -78,6 +78,13 @@ describe('meter, code and status blocks', () => {
     expect(page([{ type: 'status', items: [{ label: 'x', tone: 'purple' }] }])).toMatch(/tone/);
   });
 
+  it('a callout may say something is under way (busy: a spinner in its icon\'s place)', () => {
+    const p = ok(page([{ type: 'callout', text: 'Checking the code with Anthropic…', busy: true }, { type: 'callout', text: 'Done', tone: 'ok', busy: false }]));
+    expect(p.sections[0].blocks[0]).toEqual({ type: 'callout', text: 'Checking the code with Anthropic…', title: undefined, tone: undefined, busy: true });
+    expect(p.sections[0].blocks[1]).not.toHaveProperty('busy');
+    expect(page([{ type: 'callout', text: 'x', busy: 'yes' }])).toMatch(/busy/);
+  });
+
   it('a page may ask to be refreshed, every 2 to 300 seconds, forms or not', () => {
     const p = ok(page([{ type: 'form', action: 'a', submit: 'Go', fields: [{ name: 'n', label: 'N', kind: 'text' }] }], { refresh: 3 }));
     expect(p.refresh).toBe(3);
