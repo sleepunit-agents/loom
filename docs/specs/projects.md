@@ -64,8 +64,8 @@ A managed piece's contribution to a hub: a command loom runs that returns groupe
 _Avoid_: plugin, integration, widget
 
 **Conversation digest**:
-Shuttle's record of one conversation on one day: who, where, what was asked, decided and done, and whether
-the owner is needed. It belongs to shuttle (the bridges piece), not loom.
+A body run's own summary of its conversation: what was asked, decided and done, and whether the owner is needed.
+A core record ([conversations.md](conversations.md), "Digests").
 _Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
 
 ## Shape
@@ -156,7 +156,7 @@ defaults to 7 days ago.
   feeds run too.
 - The result also carries `activity`: the latest of the card's `updated`, its newest matching memory and its newest
   note. It's a field, not a section, and it's what `project_list` sorts by.
-- **Sections** are keyed. The core ones are `memories`, `notes` and `people`; a piece's is `piece:<piece name>`. They
+- **Sections** are keyed. The core ones are `memories`, `notes`, `people` and `conversations`; a piece's is `piece:<piece name>`. They
   are returned in that order: core first, then pieces by piece name. The page may let the owner reorder them; that
   order is page state.
 - **Failures are per section.** A section whose store doesn't exist yet (no notes store) is absent, as a piece that isn't installed is. A section whose source exists but throws, times out or
@@ -173,6 +173,7 @@ to 30 items, returned newest first. Each item: `ref`, category, snippet (≤ 200
 created, updated, `new`. Plus a count per category over all matches |
 | `notes` | notes under any `links.notes` prefix (or the slug), excluding expired ones (`expires` before now, even if not swept yet): path, lifespan, updated, `new`. The 20 most recently `updated`, newest first, plus the total count |
 | `people` | active person cards with a `where` field named by any of the project's **field names**, where a name's field name is the name with `-` replaced by `_`. Each item: the person's slug and name, which field, its value and its marker, ordered by the person's name. Slugs are ≤ 32 chars for this reason: a field name is ≤ 32 |
+| `conversations` | the 20 conversations with the newest `last` whose digests name the project ([conversations.md](conversations.md), "Projects"). Each item: id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new` (`last` after `since`). `conversationsSection` in `src/conversations.ts` |
 
 **Recall resolves names, both ways.** A recall scoped to any name of a project (its slug or an alias) treats a memory
 as in that project when the memory's tag is any name of the same project. The recall reads the project's name set
@@ -230,32 +231,14 @@ copy of that block in the piece's `piece.json`: the installer already writes one
 ≤ 8 groups and ≤ 50 items in total. Keys not listed here are rejected (so a typo fails loudly, not silently). The
 piece decides its own grouping and order; loom renders what it's given.
 
-## Conversation digests (shuttle's side)
+## Conversation digests
 
-The bridges piece is **shuttle** ([bridges.md](bridges.md); piece name `shuttle`, bins `loom-shuttle` and
-`loom-subscriptions`), so its section key is `piece:shuttle`. This part is shuttle's code, not loom's. It is stated
-here so the seam is buildable.
+Conversations and their digests are core records: [conversations.md](conversations.md) defines them, the `dg-` id
+(over the conversation's id and the body run's), the digest's fields and caps, how a digest's projects resolve, and
+the `conversations` core section above. That replaces the shuttle feed this section used to describe: the bridges
+piece no longer keeps digests or offers a section for them. A digest with `needs_owner` is an ask from core in loom's
+Inbox, until a later digest in that conversation has none.
 
-- **A digest's id** is `dg-` plus the first 12 hex digits of SHA-256 over `agent·who·venue·YYYY-MM-DD` (UTC). It is
-  stable for a conversation's day, so anything can cite it.
-- **What a body writes.** At the end of a turn that did something (a request, a decision, a task made or moved), a body
-  writes a digest through shuttle: conversation (agent · who · venue), people (slugs), projects (zero or more
-  names), summary (≤ 600), asks, decisions, task refs, and `needs_owner` (a one-line reason, or nothing). The limits:
-  people ≤ 8 slugs, projects ≤ 4 names, asks and decisions ≤ 8 strings of ≤ 200 each, and task refs ≤ 16 strings of
-  ≤ 64 each. There is one digest per conversation per **UTC** day. A later write that day replaces it: current state,
-  like a card. UTC keeps the boundary the same on every box. The page shows times in the viewer's zone, so a late
-  evening conversation may sit under the next day's heading. That's the trade-off.
-- **Which project.** The body decides. It has two hints: the card's `links.venues`, which shuttle reads with `loom project list --json`, and the person cards' `where.<field>` fields. A digest with no project is still kept.
-- **Its feed.** `sections.project` with `unfiled: true`.
-  - Each group is a day, titled with the date, newest first.
-  - Each item is one conversation: the venue as `title`, people as `who` and `person`, the summary as `body` (≤ 600,
-    as written), the digest's id as `ref`, and `status` "needs you" when `needs_owner` is set. Asks, decisions and task
-    refs stay in shuttle's own page for the digest; the hub shows the summary.
-  - `--unfiled` returns the digests with no project, in the same shape.
-- **Who gets pinged.** A digest with `needs_owner` is listed in shuttle's manifest `asks` (extensions.md:
-  "things only the owner can decide"), which is where loom shows owner decisions. A digest without it reaches the
-  owner only through the project page. A bridge configuration that pinged the owner on every request drops that in
-  favour of this.
 ## The tasks piece's side
 
 - The tasks piece's feed returns the epic's tree in four groups: waiting on the owner, ready, blocked, and
@@ -366,14 +349,14 @@ them or rolls back. Cards belong to the database, as people do.
 
 1. The store, tools, CLI, recall resolution and identity block: criteria 1–9 and 12–15.
 2. The section seam (10–11), with the tasks piece's `project-feed` as the pilot.
-3. Shuttle's digests and feed (its own PR there). An agent whose bodies are told to message the owner on every
-   request drops that instruction in favour of digests (the agent's own configuration, outside loom and shuttle).
+3. Digests are core's ([conversations.md](conversations.md)), and so is the `conversations` section. An agent
+   whose bodies are told to message the owner on every request drops that instruction in favour of digests (the
+   agent's own configuration, outside loom).
 4. The Projects tab and Home's Unfiled list.
 
 **Done**, outside loom's tests:
 - an owner opens a seeded project and sees what's queued (the tasks feed), the week's conversations with their
-  digests (the bridges feed), and the person cards' fields for it;
-- shuttle's own test: a digest without `needs_owner` creates no manifest ask and nothing else addressed to the owner.
+  digests (the `conversations` section), and the person cards' fields for it.
 
 ## Decided, not open
 

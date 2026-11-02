@@ -22,6 +22,7 @@
  */
 import { parseStoreDecl, type StoreDecl } from '../stores.js';
 import { offerConflicts, parseOffers, type Offers } from '../offers.js';
+import { syncVenuesQuietly } from '../household-store.js';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -539,6 +540,8 @@ export async function installPiece(
     relink(root, record, old);
     writeJson(join(home, 'piece.json'), record);
     prune(home, record);
+    // Its venues, in core's registry (docs/specs/conversations.md, "Venues"): update replaces its rows.
+    syncVenuesQuietly(env);
     const services = opts.services === false ? { started: [], notes: ['services not started yet'] } : syncServices(env, pieceName, record);
     return { record, updated: !!old, missing: missingSettings(env, record), services };
   } finally {
@@ -587,6 +590,7 @@ export function rollbackPiece(env: NodeJS.ProcessEnv, name: string): PieceRecord
   swapLink(join('versions', versionKey(back.source)), join(root, name, 'current'));
   relink(root, back, rec);
   writeJson(join(root, name, 'piece.json'), back);
+  syncVenuesQuietly(env);
   syncServices(env, name, back);
   return back;
 }
@@ -603,12 +607,11 @@ export function removePiece(env: NodeJS.ProcessEnv, name: string, purge = false)
   }
   syncServices(env, name, undefined);
   const home = join(root, name);
-  if (purge) {
-    rmSync(home, { recursive: true, force: true });
-    return;
-  }
+  if (purge) rmSync(home, { recursive: true, force: true });
   // Settings and data stay, so installing it again picks up where it was.
-  for (const f of ['versions', 'current', 'piece.json', 'install.log']) rmSync(join(home, f), { recursive: true, force: true });
+  else for (const f of ['versions', 'current', 'piece.json', 'install.log']) rmSync(join(home, f), { recursive: true, force: true });
+  // Its venues stay in core's registry, orphaned, even with --purge: the conversations had there are the agent's.
+  syncVenuesQuietly(env);
 }
 
 /** Set (or with an empty value, clear) declared settings. */

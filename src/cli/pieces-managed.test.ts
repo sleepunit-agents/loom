@@ -17,6 +17,7 @@ import { runCliCaptured } from './test-helpers.js';
 import { findPiece, listPieces } from './pieces.js';
 import { installPiece, parseFrom, parseLoomBlock, parseSource, pieceEnvFor, readCatalog } from './pieces-managed.js';
 import { execFileSync } from 'node:child_process';
+import { listVenues } from '../household-store.js';
 
 const SHA1 = '1'.repeat(40);
 const SHA2 = '2'.repeat(40);
@@ -242,6 +243,21 @@ describe('managed pieces', () => {
         grants: true, sections: { project: { label: 'Houses', argv: ['loom-runtime', 'feed'], unfiled: false } },
         venues: loom.venues, mcp_tools: loom.mcp_tools,
       });
+    });
+
+    it('conversations criterion 5: core\'s venues registry follows install, update and remove; removal orphans, reinstall clears', async () => {
+      const slack = { label: 'Slack', kind: 'live', render: ['loom-slack', 'render'] };
+      await fixture('x/slack', SHA1, { name: 'slack', loom: { venues: { slack } } }, { 'loom-slack': 'true' });
+      await fixture('x/slack', SHA2, { name: 'slack', loom: { venues: { slack: { ...slack, label: 'Slack (work)' }, 'slack-huddle': { label: 'Huddle', kind: 'live' } } } }, { 'loom-slack': 'true' });
+      expect((await installFrom('x/slack')).code).toBe(0);
+      expect(listVenues(loomHome)).toEqual([{ name: 'slack', piece: 'slack', label: 'Slack', kind: 'live', render: ['loom-slack', 'render'] }]);
+      expect((await installFrom('x/slack', SHA2)).code).toBe(0);
+      expect(listVenues(loomHome).map((v) => [v.name, v.label, v.orphaned === undefined])).toEqual([['slack', 'Slack (work)', true], ['slack-huddle', 'Huddle', true]]);
+      expect((await runCliCaptured(['pieces', 'remove', 'slack', '--purge'], { env })).code).toBe(0);
+      const gone = listVenues(loomHome);
+      expect(gone.map((v) => [v.name, v.label, v.kind, typeof v.orphaned, v.render])).toEqual([['slack', 'Slack (work)', 'live', 'string', undefined], ['slack-huddle', 'Huddle', 'live', 'string', undefined]]);
+      expect((await installFrom('x/slack')).code).toBe(0);
+      expect(listVenues(loomHome).map((v) => [v.name, v.orphaned === undefined, v.render])).toEqual([['slack', true, ['loom-slack', 'render']], ['slack-huddle', false, undefined]]);
     });
 
     it('an invalid offer rejects the whole block, and nothing is installed', async () => {

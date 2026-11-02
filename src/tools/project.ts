@@ -7,7 +7,9 @@
  * people.ts, plus the hub: a project's sections, computed at read, never
  * stored. The core sections are `memories` (same database as the card),
  * `notes` (the context's notes.db) and `people` (person cards, through the
- * same opener the person tools use, so a household's directory counts).
+ * same opener the person tools use, so a household's directory counts), then
+ * `conversations` (docs/specs/conversations.md: the 20 newest whose digests
+ * name the project).
  * A section whose store doesn't exist yet is absent; one whose source throws
  * becomes `{key, error}`; every other section still returns.
  *
@@ -15,6 +17,8 @@
  * `HubOptions.pieceSections` is the hook. The default contributes nothing.
  */
 import { existsSync } from 'node:fs';
+import { conversationsSection } from '../conversations.js';
+import type { HubConversation } from '../backends/conversations.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveIdentityName } from '../config.js';
 import { expiresAt, notesDbPath, type Lifespan } from '../notes.js';
@@ -210,6 +214,7 @@ export type HubSection =
   | { key: 'memories'; items: HubMemory[]; total: number; counts: Record<string, number> }
   | { key: 'notes'; items: HubNote[]; total: number }
   | { key: 'people'; items: HubPerson[] }
+  | { key: 'conversations'; items: HubConversation[] }
   | { key: string; groups: unknown[] }
   | { key: string; error: string };
 
@@ -379,6 +384,8 @@ export async function projectHubOf(
       }),
       section('notes', () => notesSection(contextDir, row.card, since, nowMs)),
       section('people', () => peopleSection(contextDir, row.card, nowMs)),
+      // After people (docs/specs/conversations.md, "Projects"): digests store project slugs, resolved at write.
+      section('conversations', () => conversationsSection(contextDir, row.card.slug, since)),
     ].filter((s): s is HubSection => s !== null);
     let pieces: HubSection[];
     try {

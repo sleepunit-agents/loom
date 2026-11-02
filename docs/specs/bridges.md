@@ -76,6 +76,11 @@ Slack socket per app.
 
 ### The conversation is the unit
 
+> **Moved (2026-11-02):** the conversation's *record* (who, where, when, the turns' metadata, the digests) is core's
+> now: [conversations.md](conversations.md). What follows is the adapter's side: routing a message to the
+> conversation's body, and its session state, which is mechanism and stays the piece's. An adapter writes **one turn
+> per delivered message or action, never merged**, through `POST /api/loom/conversations/turn` (as the runtime).
+
 A conversation is keyed by **(agent, who, venue)**: Art · Loren · Slack DM, or
 Mark · #pond · Discord. Its record (owned by the shuttle piece, reached
 through loom) holds the conversation's state, its body if it has one, and its

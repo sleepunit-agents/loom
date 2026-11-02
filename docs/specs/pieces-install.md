@@ -66,7 +66,9 @@ one's schema and the spec it comes from). They are checked at install with the
 rest of the block, against the package's own `bin` names and against the other
 installed pieces, and a block that fails any rule is rejected whole. piece.json
 keeps a copy of the checked block (`loom`), offers included, and that copy is
-what core reads.
+what core reads. Install, update, rollback and remove also bring core's venues
+registry (`$LOOM_HOME/household.db`, conversations.md "Venues") in line with
+what's installed: a removed piece's venues stay there, orphaned.
 
 ```json
 "loom": {

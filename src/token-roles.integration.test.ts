@@ -242,8 +242,8 @@ describe('the runtime and review roles over HTTP', () => {
   });
 
   it('every existing route refuses both roles', async () => {
-    // The allowlist today: runtime mints review tokens, and that's all.
-    expect(ROLE_ROUTES).toEqual({ runtime: ['review/token'], review: [] });
+    // The allowlist today: runtime mints review tokens and writes conversation turns (t-1741), and that's all.
+    expect(ROLE_ROUTES).toEqual({ runtime: ['review/token', 'conversations/turn'], review: [] });
     const mcp = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } };
     for (const k of ['runtime', 'review'] as const) {
       for (const p of ['/', '/mcp', '/agents/art/mcp', '/agents/art/']) {

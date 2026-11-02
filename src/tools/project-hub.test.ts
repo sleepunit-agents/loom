@@ -147,7 +147,7 @@ describe('project_hub', () => {
       seedPond();
       await stores();
       const r = await hub();
-      expect('sections' in r && r.sections.map((s) => s.key)).toEqual(['memories', 'people']);
+      expect('sections' in r && r.sections.map((s) => s.key)).toEqual(['memories', 'people', 'conversations']);
     });
 
     it('a notes store that throws becomes {key, error} and the other sections still return', async () => {
@@ -155,7 +155,7 @@ describe('project_hub', () => {
       await stores();
       writeFileSync(notesDbPath(dir), 'not a database');
       const r = await hub();
-      expect('sections' in r && r.sections.map((s) => s.key)).toEqual(['memories', 'notes', 'people']);
+      expect('sections' in r && r.sections.map((s) => s.key)).toEqual(['memories', 'notes', 'people', 'conversations']);
       expect(sectionOf(r, 'notes')).toMatchObject({ key: 'notes', error: expect.any(String) });
       expect(sectionOf(r, 'memories')).toHaveProperty('items');
     });
@@ -209,7 +209,7 @@ describe('project_hub', () => {
       await stores();
       const feeds: PieceSectionSource = async () => [{ key: 'piece:tasks', groups: [] }, { key: 'piece:shuttle', error: 'timed out' }];
       const r = await hub('pond', {}, { pieceSections: feeds });
-      expect('sections' in r && r.sections.map((s) => s.key)).toEqual(['memories', 'people', 'piece:shuttle', 'piece:tasks']);
+      expect('sections' in r && r.sections.map((s) => s.key)).toEqual(['memories', 'people', 'conversations', 'piece:shuttle', 'piece:tasks']);
     });
 
     it('activity is the latest of updated, the newest memory and the newest note; since defaults to 7 days ago', async () => {

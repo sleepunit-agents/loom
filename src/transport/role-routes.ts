@@ -11,9 +11,16 @@
 export type NarrowRole = 'runtime' | 'review';
 
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token'],
+  runtime: ['review/token', 'conversations/turn'],
   review: [],
 };
+
+/**
+ * Of those routes, the ones an agent token reaches too: a harness writes its own session's
+ * turns as the agent (docs/specs/conversations.md, "Who writes what"). Owner, peer and piece
+ * tokens reach none of them.
+ */
+export const AGENT_ROUTES: readonly string[] = ['conversations/turn'];
 
 /** Whether `role` may call POST /api/loom/<path>. */
 export function roleReaches(role: NarrowRole, path: string): boolean {

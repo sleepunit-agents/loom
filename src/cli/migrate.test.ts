@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createConversationTables } from '../backends/conversations.js';
 import BetterSqlite3 from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { runCliCaptured } from './test-helpers.js';
@@ -134,6 +135,7 @@ function buildCurrentDb(dir: string): string {
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memory_deletions_ref ON memory_deletions(ref)`).run();
+  createConversationTables(db);
   db.prepare(`
     CREATE VIRTUAL TABLE vec_memories USING vec0(embedding float[4] distance_metric=cosine)
   `).run();

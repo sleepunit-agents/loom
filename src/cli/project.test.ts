@@ -69,7 +69,7 @@ describe('loom project', () => {
     expect(r.code).toBe(0);
     const hub = JSON.parse(r.stdout);
     expect(hub.card.slug).toBe('pond');
-    expect(hub.sections.map((s: { key: string }) => s.key)).toEqual(['memories', 'notes', 'people']);
+    expect(hub.sections.map((s: { key: string }) => s.key)).toEqual(['memories', 'notes', 'people', 'conversations']);
     expect(hub.sections[1]).toMatchObject({ key: 'notes', error: expect.any(String) });
     expect(hub.sections[0].items.map((i: { snippet: string }) => i.snippet)).toEqual(['waf — the waf']);
     const text = await cli('hub', 'pond');

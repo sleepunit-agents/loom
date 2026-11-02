@@ -414,6 +414,41 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
 2. The household store, the audit log, review tokens, redaction and the sweep (6–9).
 3. Findings and scorecards (10). The review job itself lands with the runtime piece.
 
+### As built: slice 1 (t-1741)
+
+Slice 1 settled these points the doc left open:
+
+- **The render schema.** A venue's `render` answers the section-feed schema (projects.md, "Output"). Core's
+  generic render uses the same schema, with the groups Conversation, Digests and Turns, so the page draws both the
+  same way. When a live venue's render fails or doesn't validate, `conversation` returns the generic render with
+  `render.error` saying why.
+- **Core venues' labels.** `session` is "Session" (`live`) and `wake` is "Wake" (`scheduled`). They live in code,
+  never in the `venues` table.
+- **Session digests.** A harness passes `conversation` and `run` to `identity` the way the runtime does. The
+  conversation is the agent's `session` · `<harness>:<session id>`, and it exists from its first turn. The harness
+  writes that turn first; until then `conversation_digest` is refused.
+- **`since` on the read tools.** It's exclusive. `conversations({since})` lists conversations whose `last` is after
+  it, and `conversation_findings({since})` lists findings written after it.
+- **Turn writes.**
+  - The agent's own turns are `reply`, `action` and `note`. Each comes `from` the agent itself and carries `run` and
+    `outcome`; `model` and `harness` are optional, ≤ 120 each. Other kinds carry none of the four.
+  - The runtime may write core's `wake` or any venue in the registry, except `session` (that's the harness's).
+  - An unknown venue is a 400. An orphaned venue, or a day already folded, is a 409.
+  - Each turn records its writer's role, for the audit write's check.
+- **Venues.**
+  - A venue a piece stops declaring in an update is orphaned, not deleted.
+  - `remove --purge` orphans too.
+  - An orphaned name may be declared by another piece later, which then takes it over.
+  - The daemon reconciles the registry at start (`syncVenues`).
+- **Digest projects.** Names resolve through `project_names` (projects.md), so an alias is stored as its slug, and
+  a name that is no live project's is rejected. The fallback reads the live cards' `links.venues`. A store from
+  before the projects migration has no names to resolve: names are kept as written, with no fallback.
+- **The hub section.** `project_hub` puts `conversations` after `people` (`conversationsSection`, called with the
+  project's slug). It's absent when the agent has no conversations store.
+- **Findings.** `conversation_findings` reads a `findings` table when there is one; slice 3 creates it.
+- **The Needs you ask.** It comes from core and has no buttons (the Inbox files it as an alert). It links to
+  `loom:conversation/<id>`; the same page is also at `/a/<agent>/conversation/<id>`.
+
 ## Open questions
 
 - **People who don't know.** Settled: no notice. The agent was present, as a coworker is. It doesn't lie when asked,

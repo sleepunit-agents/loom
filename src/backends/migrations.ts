@@ -8,6 +8,7 @@
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
  * existing entries (future migrations may depend on prior state).
  */
+import { CONVERSATION_TABLES, createConversationTables } from './conversations.js';
 import type { Database } from 'better-sqlite3';
 import { rebuildUniqKeys } from './dedup.js';
 
@@ -462,6 +463,17 @@ export const MIGRATIONS: readonly Migration[] = [
         ).run();
         db.prepare('CREATE INDEX IF NOT EXISTS idx_project_names_slug ON project_names(slug)').run();
       }).immediate();
+    },
+  },
+  {
+    id: 'conversations',
+    description:
+      'Add conversations, conversation_turns, conversation_days and conversation_digests: ' +
+      'the agent\'s conversations as core records, metadata only (docs/specs/conversations.md, t-1741). ' +
+      'Additive: dropping the four tables is the whole backout',
+    pending: (db) => CONVERSATION_TABLES.some((t) => !hasTable(db, t)),
+    run: (db) => {
+      db.transaction(() => createConversationTables(db)).immediate();
     },
   },
 ];

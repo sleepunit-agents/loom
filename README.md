@@ -123,6 +123,15 @@ an agent's persistent state:
   `loom note attach`, stored once by their bytes beside `notes.db`.
 - **`note_read`** — a note's text, lifespan, expiry and files.
 - **`note_list`** — the notes under a prefix, newest first (no text).
+- **`conversation_digest`** — a body run's digest of its conversation (what was
+  asked, decided and done; `needs_owner` puts it in the owner's Inbox), for the
+  conversation and run given to `identity`. A conversation is core's record of who,
+  where and when, in any venue, and never holds text (docs/specs/conversations.md).
+- **`conversations`** — the agent's conversations, newest first, filtered by person,
+  project, venue or `since`.
+- **`conversation`** — one conversation: its record, digests, findings and render
+  (the venue's own, else core's generic one).
+- **`conversation_findings`** — graders' findings on the agent's own turns.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.

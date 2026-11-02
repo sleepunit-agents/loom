@@ -123,6 +123,10 @@ describe('createLoomServer', () => {
     project_list: { readOnlyHint: true, openWorldHint: false },
     project_hub: { readOnlyHint: true, openWorldHint: false },
     project_orphans: { readOnlyHint: true, openWorldHint: false },
+    conversation_digest: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    conversations: { readOnlyHint: true, openWorldHint: false },
+    conversation: { readOnlyHint: true, openWorldHint: true },
+    conversation_findings: { readOnlyHint: true, openWorldHint: false },
   };
 
   // t-1597: agent to agent. The household's HTTP server hands a session a

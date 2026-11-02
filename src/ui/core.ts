@@ -14,6 +14,7 @@ import { listPeople, readPerson } from '../tools/person.js';
 import { archive } from '../tools/archive.js';
 import { restore } from '../tools/restore.js';
 import { heatList, memoriesAbout, memoryByRef, memoryHistory, tapeRows, surfaceOf, whereLabel, type MemoryView } from './data.js';
+import { conversationView } from '../conversations.js';
 import { validPath, type ActResult, type Block, type Page, type Section, type Tile, type Tone } from './vocab.js';
 
 const TAPE_HOURS = 24;
@@ -502,4 +503,32 @@ export async function coreAct(contextDir: string, action: string, fields: Record
     }
   }
   return { ok: false, message: `loom has no action "${action}".` };
+}
+
+// ─── A conversation (docs/specs/conversations.md: loom:conversation/<id>) ────
+
+/**
+ * One conversation as a page: its render (the venue's own when its piece offers one and answers,
+ * else core's generic render), drawn group by group. Null when the agent has no such conversation.
+ */
+export async function conversationPage(contextDir: string, agent: string, id: string, opts: { env?: NodeJS.ProcessEnv; timeZone?: string } = {}): Promise<Page | null> {
+  const view = await conversationView(contextDir, agent, id, opts.env ?? process.env);
+  if (!view) return null;
+  const tz = opts.timeZone ?? uiTimeZone();
+  const when = (iso?: string) => (iso ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) : '');
+  const c = view.conversation;
+  const sections: Section[] = view.render.feed.groups.map((g, i) => ({
+    id: `g${i}`, title: g.title,
+    blocks: [{
+      type: 'list' as const, wrap: true,
+      items: g.items.map((it) => ({
+        text: it.title,
+        ...(() => { const meta = [when(it.when), ...(it.who ?? []), it.ref].filter(Boolean).join(' · '); return meta ? { meta } : {}; })(),
+        ...(it.status ? { badge: it.status } : {}),
+        ...(it.person?.[0] ? { person: it.person[0] } : {}),
+      })),
+    }],
+  }));
+  if (view.render.error) sections.push({ id: 'render', blocks: [{ type: 'text', tone: 'muted', text: `Shown by loom: ${view.render.error}.` }] });
+  return { title: c.label ?? c.place, intro: `${c.venue_label} · ${c.turns} turn${c.turns === 1 ? '' : 's'} · last ${when(c.last)}`, sections };
 }

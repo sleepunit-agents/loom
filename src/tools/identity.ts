@@ -168,10 +168,11 @@ export async function loadIdentity(
     if (tape) {
       parts.push(
         '# Last 24h across bodies\n\n' +
-        '_Episodes other sleeves of you left (short-term, 48h TTL). This is the tape, ' +
-        'oldest first — what just happened, not what is important. Write your own before ' +
-        'you end (category `episode`, metadata.where = your surface); the harness writes a ' +
-        'fallback if you forget._\n\n' +
+        '_Episodes other sleeves of you left (short-term, 48h TTL), and the digests of their ' +
+        'conversations. This is the tape, oldest first — what just happened, not what is ' +
+        'important. Write your own before you end: in a conversation (identity was given ' +
+        'conversation and run), a `conversation_digest`; otherwise an episode (category ' +
+        '`episode`, metadata.where = your surface). The harness writes a fallback if you forget._\n\n' +
         tape,
       );
     }
