@@ -111,6 +111,22 @@ describe('grants', () => {
   });
 });
 
+describe('delivery', () => {
+  it('a runtime-role piece declares an argv of its own bins, kept as declared', () => {
+    expect(parse({ role: 'runtime', delivery: ['loom-tasks', 'deliver', '--json'] })).toMatchObject({ delivery: ['loom-tasks', 'deliver', '--json'] });
+  });
+
+  it.each<[string, Record<string, unknown>, RegExp]>([
+    ['a piece with no role', { delivery: ['loom-tasks', 'deliver'] }, /loom.delivery is declared only by the runtime/],
+    ['a piece with another role', { role: 'tasks', delivery: ['loom-tasks', 'deliver'] }, /loom.delivery is declared only by the runtime/],
+    ['not an argv', { role: 'runtime', delivery: 'loom-tasks deliver' }, /loom.delivery is a list of 1-16/],
+    ['an empty argv', { role: 'runtime', delivery: [] }, /loom.delivery is a list of 1-16/],
+    ['another program', { role: 'runtime', delivery: ['sh', '-c', 'x'] }, /loom.delivery\[0\] must be one of the piece's own bins/],
+  ])('rejects %s', (_w, loom, re) => {
+    expect(parse(loom)).toMatch(re);
+  });
+});
+
 describe('a block with an invalid offer is rejected whole', () => {
   it('even when everything else in it is fine', () => {
     expect(parse({ label: 'Tasks', settings: [{ name: 'X', label: 'x' }], sections: { project: feed }, venues: { wake: venue } })).toMatch(/core's own/);
@@ -122,6 +138,7 @@ describe('a block with an invalid offer is rejected whole', () => {
     expect(b).not.toHaveProperty('venues');
     expect(b).not.toHaveProperty('mcp_tools');
     expect(b).not.toHaveProperty('grants');
+    expect(b).not.toHaveProperty('delivery');
   });
 });
 
@@ -134,6 +151,12 @@ describe('offerConflicts (against the other installed pieces)', () => {
     expect(offerConflicts('other', { grants: true }, others)).toMatch(/runtime piece is already the grants authority/);
     expect(offerConflicts('other', { mcp_tools: { house: tool as never } }, others)).toMatch(/tool house is already the runtime piece's/);
     expect(offerConflicts('other', { venues: { relay: { label: 'R', kind: 'agent' } } }, others)).toMatch(/venue relay is already the runtime piece's/);
+  });
+
+  it('refuses a second delivery piece; the piece itself may update', () => {
+    const withDelivery = [{ name: 'runtime', loom: { delivery: ['loom-runtime', 'deliver'] } }];
+    expect(offerConflicts('rival', { delivery: ['loom-rival', 'deliver'] }, withDelivery)).toMatch(/the runtime piece already offers delivery: there is only one/);
+    expect(offerConflicts('runtime', { delivery: ['loom-runtime', 'deliver', '--v2'] }, withDelivery)).toBeUndefined();
   });
 
   it('a piece never conflicts with its own earlier version, and distinct names pass', () => {

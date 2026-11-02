@@ -47,6 +47,8 @@ import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, ROLE_ROUTES, roleReaches } from './role-routes.js';
+import { DELIVER_ROUTE } from './role-routes.js';
+import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly } from '../household-store.js';
@@ -453,6 +455,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
+    // POST /api/loom/deliver (docs/specs/agent-runtime.md, "Delivery"): the one core route every
+    // piece credential reaches, as its piece, beside its own API; and the runtime's own token.
+    if (piece === 'loom' && subpath === DELIVER_ROUTE) {
+      if (role.kind !== 'piece' && role.kind !== 'runtime') return sendError(res, 403, `forbidden: /api/loom/${DELIVER_ROUTE} takes a piece's own token (a source delivering), or the runtime's`);
+      return deliverApi(req, res, role.piece);
+    }
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -486,6 +494,26 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */
+  async function deliverApi(req: IncomingMessage, res: ServerResponse, piece: string): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, DELIVER_MAX_BYTES);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    let out;
+    try {
+      out = await deliver(process.env, live!(), { piece }, body);
+    } catch (e) {
+      // Keep the details (paths) out of the response.
+      process.stderr.write(`loom: couldn't deliver: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t deliver; see the daemon log');
+    }
+    if (out.status !== 200) return sendError(res, out.status, (out.body as { error: string }).error);
+    return sendJson(res, 200, out.body);
   }
 
   const reachList = (kind: 'runtime' | 'review') =>

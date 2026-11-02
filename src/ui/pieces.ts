@@ -156,6 +156,15 @@ const pagePool = new Pool(MAX_RUNNING);
 export const MAX_API_RUNNING = 4;
 export const MAX_API_WAITING = 8;
 const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
+/**
+ * Offers that may run long (agent-runtime.md: `delivery` and `mcp_tools`, 120 s each) have a
+ * pool of their own, so a slow runtime can't hold the page's pieces: four at once, sixteen
+ * waiting, and past that a call is refused as busy.
+ */
+export const LONG_OFFER_TIMEOUT_MS = 120_000;
+export const MAX_LONG_RUNNING = 4;
+export const MAX_LONG_WAITING = 16;
+const longPool = new Pool(MAX_LONG_RUNNING, MAX_LONG_WAITING);
 
 async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Answer> {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
@@ -213,12 +222,18 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
  * MAX_RUNNING at once, in the page's pool. In the piece's own environment, and
  * with a store grant when there's a caller. The runner for offers
  * (src/offers-registry.ts, runOffer): a failure says why, an exit says its code.
+ * `long` runs it in the long offers' pool instead, for LONG_OFFER_TIMEOUT_MS
+ * (a full pool answers `busy`).
  */
 export async function runPieceBin(
   path: string, args: string[], env: NodeJS.ProcessEnv,
-  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller } = {},
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; long?: boolean } = {},
 ): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
-  const r = await ask(path, args, withGrant(env, path, opts.caller), { stdin: opts.stdin, maxBytes: opts.maxBytes });
+  const env1 = withGrant(env, path, opts.caller);
+  const r = opts.long
+    ? await longPool.run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: LONG_OFFER_TIMEOUT_MS }))
+    : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes });
+  if (r === null) return { ok: false, reason: 'busy' };
   if (r.ok) return r;
   return { ok: false, reason: r.reason === 'no ui' ? `exit ${r.code ?? 'by signal'}` : r.reason };
 }

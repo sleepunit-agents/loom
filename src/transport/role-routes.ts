@@ -10,8 +10,16 @@
  */
 export type NarrowRole = 'runtime' | 'review';
 
+/**
+ * POST /api/loom/deliver (docs/specs/agent-runtime.md, "Delivery"): the runtime's, and also
+ * the one core route every piece credential reaches (as its own piece), dispatched before
+ * this table is consulted (http-server.ts, handlePieceApi). Owner, agent, peer and review
+ * tokens never reach it.
+ */
+export const DELIVER_ROUTE = 'deliver';
+
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token', 'conversations/turn'],
+  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE],
   review: [],
 };
 

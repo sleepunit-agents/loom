@@ -1,18 +1,19 @@
 /**
  * Offers: what a managed piece declares, in its package's `loom` block, that it
- * offers through core (docs/extensions.md, "Offers"). Four sibling keys, each
+ * offers through core (docs/extensions.md, "Offers"). Five sibling keys, each
  * with its own schema:
  *
  *   sections   a project section feed           docs/specs/projects.md, "Section feeds (the seam)"
  *   venues     the venues a piece adapts        docs/specs/conversations.md, "Venues" (+ `send`, agent-runtime.md)
  *   mcp_tools  tools core adds to an agent's MCP session   docs/specs/agent-runtime.md, "Seams", 2
  *   grants     "this piece is the grants authority"         docs/specs/agent-runtime.md, "Permissions"
+ *   delivery   the argv core forwards POST /api/loom/deliver to (the runtime's)   agent-runtime.md, "Delivery"
  *
  * This module is the one install-time validation path: `parseOffers` checks a
  * block's own declarations (called from parseLoomBlock, so an invalid offer
  * rejects the whole block), and `offerConflicts` checks them against the other
  * installed pieces (a name another piece already declares, a second grants
- * authority). Both are pure; the registry and the runner, which read what's
+ * authority or delivery piece). Both are pure; the registry and the runner, which read what's
  * installed and run a piece, are in offers-registry.ts.
  */
 import { TOOLS } from './clients.js';
@@ -54,10 +55,15 @@ export interface Offers {
   mcp_tools?: Record<string, McpToolOffer>;
   /** Present (and true) only when the piece is the grants authority. */
   grants?: true;
+  /**
+   * The argv core runs with a `deliver` body on stdin (src/delivery.ts). Only a piece whose
+   * block says `"role": "runtime"` declares it, and only one installed piece may.
+   */
+  delivery?: string[];
 }
 
 export type OfferKind = keyof Offers;
-export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants'];
+export const OFFER_KINDS: readonly OfferKind[] = ['sections', 'venues', 'mcp_tools', 'grants', 'delivery'];
 
 export const MAX_ARGV = 16;
 export const MAX_ARG = 200;
@@ -191,6 +197,12 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
     if (g === true || (isObject(g) && !Object.keys(g).length)) out.grants = true;
     else if (g !== false) return 'loom.grants is true (or {}): this piece is the grants authority';
   }
+  if (b.delivery !== undefined) {
+    if (ctx.role !== 'runtime') return 'loom.delivery is declared only by the runtime (a loom block with "role": "runtime")';
+    const a = argvError(b.delivery, bins, 'loom.delivery');
+    if (a) return a;
+    out.delivery = [...(b.delivery as string[])];
+  }
   return out;
 }
 
@@ -204,7 +216,7 @@ export function offersIn(loom: Offers): Offers {
 /**
  * What stops piece `name` from offering `offers` beside the other installed
  * pieces (its own earlier version is not one of them): a venue or tool name
- * another piece declares, or a second grants authority. Undefined when nothing.
+ * another piece declares, a second grants authority, or a second delivery piece. Undefined when nothing.
  */
 export function offerConflicts(name: string, offers: Offers, installed: readonly { name: string; loom: Offers }[]): string | undefined {
   for (const other of installed) {
@@ -216,6 +228,7 @@ export function offerConflicts(name: string, offers: Offers, installed: readonly
       if (other.loom.mcp_tools?.[t]) return `tool ${t} is already the ${other.name} piece's`;
     }
     if (offers.grants && other.loom.grants) return `the ${other.name} piece is already the grants authority: there is only one`;
+    if (offers.delivery && other.loom.delivery) return `the ${other.name} piece already offers delivery: there is only one`;
   }
   return undefined;
 }

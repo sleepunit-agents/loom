@@ -42,6 +42,17 @@ export function grantsAuthority(env: NodeJS.ProcessEnv): { piece: string } | { p
   return all.length ? { piece: undefined, conflict: all } : { piece: undefined };
 }
 
+/**
+ * The piece offering `delivery`, if one is installed (agent-runtime.md, "Delivery"). Install
+ * refuses a second; were two ever present, there's none to forward to, and that's said.
+ */
+export function deliveryPiece(env: NodeJS.ProcessEnv): { piece: string; argv: string[] } | { piece: undefined; conflict?: string[] } {
+  // Install lets only the runtime declare it; checked again, since piece.json may be edited by hand.
+  const all = managedPieces(env).filter((r) => r.loom.delivery !== undefined && r.loom.role === 'runtime');
+  if (all.length === 1) return { piece: all[0].name, argv: [...all[0].loom.delivery!] };
+  return all.length ? { piece: undefined, conflict: all.map((r) => r.name) } : { piece: undefined };
+}
+
 export type OfferResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 export interface RunOfferOptions<T> {
@@ -55,6 +66,11 @@ export interface RunOfferOptions<T> {
   maxBytes?: number;
   /** Who the call is for: the process gets that caller's store grant (as for a piece's API). */
   caller?: ApiCaller;
+  /**
+   * The long offers' limits (`delivery`, `mcp_tools`: agent-runtime.md, "Seams", 2): 120 s,
+   * in a pool of their own. A full pool is the error `busy`; a timeout, `timed out`.
+   */
+  long?: boolean;
 }
 
 /**
@@ -75,7 +91,7 @@ export async function runOffer<T>(env: NodeJS.ProcessEnv, piece: string, argv: r
   const dir = managedBinDir(env);
   if (!dir) return { ok: false, error: 'no managed pieces directory' };
   const r = await runPieceBin(join(dir, bin), [...rest, ...(opts.args ?? [])], env, {
-    stdin: opts.stdin, maxBytes: opts.maxBytes ?? 64 * 1024, caller: opts.caller,
+    stdin: opts.stdin, maxBytes: opts.maxBytes ?? 64 * 1024, caller: opts.caller, long: opts.long,
   });
   if (!r.ok) return { ok: false, error: r.reason };
   let parsed: unknown;
