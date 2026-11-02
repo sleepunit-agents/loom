@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Offers.** A managed piece's `loom` block may declare what it offers through
+  core: `sections` (a project section feed), `venues`, `mcp_tools` and
+  `grants`. Each is checked at install (a bad one rejects the whole block; a
+  venue or tool name another piece has, or a second grants authority, is
+  refused), kept in piece.json, listed by `src/offers-registry.ts`, and run
+  through the manifest's runner: 3 s, process group killed, 6 at once, the
+  answer checked against a schema (t-1738).
+
 - **Local pieces.** `loom pieces install --from path:/abs/dir` manages a piece
   that will never be public (an agent's homelab wrappers) like any other: a
   snapshot of the directory (`npm pack`), versioned by its sha256, so
