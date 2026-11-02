@@ -6,8 +6,7 @@ that wakes it, a chat bridge, an approval page) is a **piece**: a separate
 program that works with loom without becoming part of it.
 
 ```
-core       loom: identity, memory, knowledge, person cards, conversations. Nothing else.
-core       loom: identity, memory, knowledge, person cards, project cards. Nothing else.
+core       loom: identity, memory, knowledge, person cards, project cards, conversations. Nothing else.
 piece      a swappable extension: its own program, its own store, reached as `loom <piece>`.
 instance   glue for one agent: its routines, hooks, which pieces it installs and how they're set up.
 ```
@@ -193,6 +192,31 @@ own schema:
   loom to read, so it is never run as an offer. piece.json keeps a copy of the
   declarations, and core reads them from there (`offersOf`, `piecesOffering`,
   `grantsAuthority`).
+
+### Sections
+
+A project's hub ([specs/projects.md](specs/projects.md), "The hub") is core's
+sections (memories, notes, people, conversations) and then one section per
+installed managed piece that declares `sections.project`. The piece keeps its
+own data. Core only runs the feed and shows what it answers, keyed
+`piece:<name>`, after the core sections, by piece name.
+
+- **The arguments**, in this order: `--project <slug> --since <iso>`, then
+  `--epic <id>` when the card has one, `--name <alias>` for each alias and
+  `--venue <v>` for each venue, in the card's order. `since` is no earlier than
+  8 days ago and is passed as UTC, `YYYY-MM-DDTHH:MM:SSZ`.
+- **The answer** is `{"groups": [{"title", "items": [{"title", "when", "who",
+  "person", "status", "ref", "body"}]}]}`: at most 8 groups and 50 items, every
+  key known, each string within its cap (projects.md, "Output"). `{"groups": []}`
+  is a present, empty section.
+- **A failure is that section's alone.** An answer that isn't valid, a non-zero
+  exit or a timeout becomes `{key, error}`, and every other section still
+  returns.
+- **`unfiled: true`** says the feed can also be asked `--unfiled --since <iso>`
+  (7 days ago) for items that belong to no project: Home's "Unfiled" list.
+- The feeds run through the one runner above, each time a hub is asked for
+  (`project_hub`, `loom project hub`), never for the project list, and are
+  not cached (`src/project-feeds.ts`).
 
 ## The page: how a piece shows up on loom's page
 

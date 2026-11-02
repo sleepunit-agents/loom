@@ -106,7 +106,8 @@ commit isn't the catalog's shows **Update**. Nothing updates by itself.
 $LOOM_HOME/pieces/
   bin/loom-tasks -> ../tasks/current/node_modules/.bin/loom-tasks   (and every other bin)
   tasks/
-    piece.json        what's installed: source, commit (or hash), version, when, the previous one
+    piece.json        what's installed: source, commit (or hash), version, when, the previous one,
+                      and a copy of the checked `loom` block (offers included), which core reads
     settings.json     the owner's values, 0600
     versions/<sha>/   one npm prefix per installed commit or local hash (the current one and the one before)
     current -> versions/<sha>

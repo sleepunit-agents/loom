@@ -1348,8 +1348,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     {
       description:
       'A project\'s hub: its card and its sections, computed live — memories tagged with any of its names (the ' +
-      '20 newest plus the 10 most salient), notes under its prefixes, and person cards with a where field for ' +
-      'it. Items changed after since (default 7 days ago) are marked new. A section that fails is {key, error}; ' +
+      '20 newest plus the 10 most salient), notes under its prefixes, person cards with a where field for ' +
+      'it, conversations whose digests name it, then each managed piece\'s section feed (piece:<name>). Items changed after since (default 7 days ago) are marked new. A section that fails is {key, error}; ' +
       'the others still return. An archived project gives {found: true, archived: true} unless include_archived.',
       inputSchema: z.object({
         slug: projectSlug,
