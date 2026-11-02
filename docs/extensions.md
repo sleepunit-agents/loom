@@ -402,8 +402,12 @@ a fetch from another site, but a link can still open one.) It answers:
 ```
 
 A page may set `"refresh"`: whole seconds from 2 to 300. It then reloads itself
-that often, even with a form on it. Use it only while something is changing
-(an install running, a session starting), and drop it once it's settled.
+that often, even with a form on it (never while a field in it is in use) and
+even while the app's live stream is open. loom doesn't keep a stale copy of
+such a page: each reload sees the piece's state as it is. Use it only while
+something is changing (an install running, a sign-in being checked), and drop
+it once it's settled. A `callout` with `"busy": true` says what's under way,
+with a spinner in its icon's place.
 
 A section with `"side": true` goes in the side column. One with `"fold": "open"` or
 `"closed"` folds under its title (it needs one), starting that way; the viewer's
@@ -432,7 +436,7 @@ outside the page).
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
 | `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters. Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
-| `callout` | `text`, optional `title`, `tone`. A boxed note |
+| `callout` | `text`, optional `title`, `tone`, `busy` (true: something is under way, drawn with a spinner). A boxed note |
 | `profile` | `name`, optional `initials` (one or two letters), `agent` (an agent's id: its mark and colour) or `tone` (`pink`, `yellow`, `olive`, `blue`), `summary`, `badges` (up to 6 words), `stats` (up to 4 `label`/`value`), `links` (up to 4 `text` with `page` or `href`). Someone, as a profile card: a cover in their colour, their avatar, name and summary; when it leads a page, the page's own title gives way to it |
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |

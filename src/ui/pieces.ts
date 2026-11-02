@@ -99,8 +99,13 @@ export function clearPieceCache(path?: string): void {
  */
 export const PAGE_FRESH_MS = 5_000;
 export const PAGE_STALE_MS = 5 * 60_000;
+/**
+ * A page that set `refresh` is waiting on something that's changing (a sign-in being checked): it's kept only this
+ * long, to share one run between tabs, and never shown stale, so each of its reloads sees the piece's state now.
+ */
+export const PAGE_LIVE_MS = 1_000;
 const PAGES_MAX = 500;
-interface PageEntry { at: number; result: Promise<Page | string>; refreshing?: boolean }
+interface PageEntry { at: number; result: Promise<Page | string>; refreshing?: boolean; live?: boolean }
 const pages = new Map<string, PageEntry>();
 
 export function pieceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -365,13 +370,13 @@ export async function piecePage(
   };
   const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
   const hit = pages.get(key);
-  if (hit && now - hit.at < PAGE_FRESH_MS) return hit.result;
-  if (hit && now - hit.at < PAGE_STALE_MS) {
+  if (hit && now - hit.at < (hit.live ? PAGE_LIVE_MS : PAGE_FRESH_MS)) return hit.result;
+  if (hit && !hit.live && now - hit.at < PAGE_STALE_MS) {
     if (!hit.refreshing) {
       hit.refreshing = true;
       const next = run();
       // Only a page replaces a page: a failed refresh keeps the last one, and is tried again next time.
-      void next.then((fresh) => { if (typeof fresh !== 'string') { if (pages.get(key) === hit) pages.set(key, { at: Date.now(), result: next }); } else hit.refreshing = false; });
+      void next.then((fresh) => { if (typeof fresh !== 'string') { if (pages.get(key) === hit) pages.set(key, { at: Date.now(), result: next, ...(fresh.refresh ? { live: true } : {}) }); } else hit.refreshing = false; });
     }
     return hit.result;
   }
@@ -389,9 +394,11 @@ export async function piecePage(
   pages.set(key, { at: now, result });
   // A failure isn't kept; the oldest go first past PAGES_MAX.
   void result.then((r) => {
-    if (pages.get(key)?.result !== result) return;
+    const entry = pages.get(key);
+    if (entry?.result !== result) return;
     if (typeof r === 'string') pages.delete(key);
     else if (fellBack) pages.set(key, { at: 0, result });
+    else if (r.refresh) entry.live = true;
   });
   if (pages.size > PAGES_MAX) pages.delete(pages.keys().next().value!);
   return result;

@@ -45,7 +45,8 @@ export type Block =
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
-  | { type: 'callout'; text: string; title?: string; tone?: Tone }
+  // busy: something is under way (a sign-in being checked): drawn with a spinner in place of its tone's icon.
+  | { type: 'callout'; text: string; title?: string; tone?: Tone; busy?: boolean }
   | ({ type: 'link'; text: string } & Target)
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
@@ -503,7 +504,8 @@ function block(v: unknown, depth = 0): Block {
       return { type: 'prose', text: b.text };
     }
     case 'callout':
-      return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone) };
+      if (b.busy !== undefined && typeof b.busy !== 'boolean') throw new Invalid('callout.busy must be true or false');
+      return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
     case 'link': {
       const t = target(b, 'link');
       if (t.page === undefined && t.href === undefined) throw new Invalid('link needs page or href');
