@@ -8,7 +8,8 @@ environment by hand.
 The goal: a new owner installs loom, signs in, makes their agent, opens
 **Pieces**, and clicks *Install* next to Tasks. A minute later Tasks has a tab.
 Updating, rolling back and removing are clicks too. A piece from somewhere else
-is a GitHub repo and a commit, with a clear warning.
+is a GitHub repo and a commit, with a clear warning, or a directory on this
+machine ([Local pieces](#local-pieces)).
 
 ## Terms
 
@@ -86,9 +87,9 @@ commit isn't the catalog's shows **Update**. Nothing updates by itself.
 $LOOM_HOME/pieces/
   bin/loom-tasks -> ../tasks/current/node_modules/.bin/loom-tasks   (and every other bin)
   tasks/
-    piece.json        what's installed: source, commit, version, when, the previous commit
+    piece.json        what's installed: source, commit (or hash), version, when, the previous one
     settings.json     the owner's values, 0600
-    versions/<sha>/   one npm prefix per installed commit (the current one and the one before)
+    versions/<sha>/   one npm prefix per installed commit or local hash (the current one and the one before)
     current -> versions/<sha>
     data/             the piece's own store, if it uses LOOM_PIECE_HOME
     install.log       the last install's output
@@ -134,7 +135,8 @@ another system, install says the service has to be started by hand, and how.
 ```
 loom pieces install <name>                         from the catalog
 loom pieces install --from github:<owner>/<repo>#<commit> [--yes]
-loom pieces update <name>                          to the catalog's commit
+loom pieces install --from path:/abs/dir [--yes]   a local piece
+loom pieces update <name>                          to the catalog's commit (a local piece: its directory, again)
 loom pieces rollback <name>                        to the previous commit
 loom pieces remove <name> [--purge]                --purge also deletes data/ and settings.json
 loom pieces set <name> NAME=value…                 settings
@@ -161,13 +163,65 @@ A failed install leaves the previous version current and untouched.
 restarts the services. An update keeps two versions; an older one is deleted
 once the new one is current.
 
+## Local pieces
+
+Some pieces will never be public: an agent's homelab wrappers, an
+instance's glue. They can still be managed, from a directory on the machine:
+
+```
+loom pieces install --from path:/abs/dir [--yes]
+```
+
+The directory holds the same npm package a GitHub piece is: `bin` with
+`loom-<name>`, and an optional `loom` block, checked the same way.
+
+- **The path is absolute.** A relative one would mean something else from
+  wherever loom, or its daemon, runs. It must be a directory with a
+  `package.json`.
+- **What's installed is a snapshot, not a link.** loom runs
+  `npm pack <dir>` into the staging directory, then
+  `npm install --prefix <staging> <staging>/package.tgz`, so the version is
+  a copy, laid down the way a GitHub one is (production dependencies, bins
+  linked). Editing the directory doesn't change the installed piece until
+  the owner asks: a live link would make every edit, and every half-finished
+  one, live at once, and would leave rollback nothing to go back to. The
+  tarball stays in `versions/<hash>/package.tgz`, so the version holds the
+  exact bytes it was installed from.
+- **Its version is the snapshot's sha256.** `npm pack` writes the same
+  tarball for the same files (it fixes their times), so the hash changes
+  exactly when what would be installed does. That's the version's key:
+  `versions/<hash>/`, `current`, and `previous` in `piece.json`, where a
+  GitHub piece has its commit. If the directory is a clean git work tree,
+  the commit it's at is recorded too, as where it came from. It isn't the
+  key, because a package's built files are often ignored by git, and a
+  commit in a monorepo moves with changes outside the package.
+- **`piece.json`** records `source: {path, hash, commit?}`.
+- **`update`** packs the directory again. The same hash is a no-op ("nothing
+  in its directory changed"); a new one installs like any update, keeping the
+  one before, so **`rollback`** goes back to it. **`remove`** works as for any
+  piece, and never touches the directory.
+- **`npm pack` runs the package's `prepare` in the directory itself**, as it
+  always does, so a package with a build step is built there, with that
+  directory's own dev dependencies. Install doesn't run it again.
+- **Trust** is the same as From GitHub: it's arbitrary code that runs as
+  loom's user, so without `--yes` install says so and stops.
+- `loom pieces` lists it as `managed <version> (local)`, and `--json` gives
+  `{local: true, path, hash, commit?}` in place of `{repo, commit}`. The
+  catalog never offers it an update, even if a catalog piece has its name.
+- A piece can move between sources: installing a local `tasks` over the
+  catalog's is an update, and rollback goes back to the catalog's commit.
+- A bundle lists a local piece, but a restore never installs it: the
+  directory isn't in the bundle, and a bundle can't name code to run. The
+  restore says so, and the owner installs it by hand.
+
 ## The Pieces page
 
 The Pieces page is one of loom's own pages, like People, and the owner's only.
 
 - **Installed:** each piece with its version, managed or not, and whether it's
   OK, needs setup, or has an update. Managed pieces have *Update*, *Roll back*,
-  *Remove* and a settings form, drawn from the piece's declared settings.
+  *Remove* and a settings form, drawn from the piece's declared settings. A
+  local piece's *Update* reads its directory again.
 - **Available:** catalog pieces that aren't installed, each with *Install*.
 - **From GitHub:** a form taking a repo and a commit. Its answer is a preview
   (what the package says it is, its settings, its services) plus the warning

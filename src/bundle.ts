@@ -309,6 +309,24 @@ function assertOnlyParts(dir: string, manifest: Manifest): void {
   }
 }
 
+/**
+ * The bundle's local pieces (installed from a directory on the machine it was
+ * made on). A restore never installs one: the directory isn't in the bundle,
+ * and a bundle can't name code to run. It says so, so the owner can.
+ */
+function readBundledLocalPieces(home: string): Array<{ name: string; path: string; hash: string }> {
+  try {
+    const d = JSON.parse(readFileSync(join(home, 'pieces.json'), 'utf-8')) as { v?: number; pieces?: unknown };
+    if (d.v !== 1 || !Array.isArray(d.pieces)) return [];
+    return d.pieces.flatMap((p) => {
+      const x = p as { name?: unknown; source?: { path?: unknown; hash?: unknown } };
+      const path = x?.source?.path, hash = x?.source?.hash;
+      return typeof x?.name === 'string' && PIECE_NAME.test(x.name) && typeof path === 'string' && path.startsWith('/') && path.length <= 500
+        && !/[\0-\x1f]/.test(path) && typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash) ? [{ name: x.name, path, hash }] : [];
+    });
+  } catch { return []; }
+}
+
 function readBundledPieces(home: string): BundledPiece[] {
   try {
     const d = JSON.parse(readFileSync(join(home, 'pieces.json'), 'utf-8')) as { v?: number; pieces?: unknown };
@@ -352,6 +370,10 @@ export async function restoreBundle(opts: {
   assertOnlyParts(join(home, 'pieces'), manifest);
   const installs: RestoreReport['installs'] = [];
   const bundled = readBundledPieces(home);
+  for (const p of readBundledLocalPieces(home)) {
+    installs.push({ name: p.name, commit: p.hash, installed: false,
+      reason: `a local piece, from ${p.path} on the machine the bundle was made on: install it by hand (loom pieces install --from path:<dir>)` });
+  }
   if (bundled.length && opts.install !== false) {
     const install = opts.install ?? ((e, source, name, o) => installPiece(e, source, name, o));
     const catalog = opts.catalog ?? readCatalog();

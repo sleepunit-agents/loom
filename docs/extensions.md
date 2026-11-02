@@ -73,6 +73,20 @@ Or let loom install it: `loom pieces install <name>` from loom's catalog, or
 its own environment (`LOOM_PIECE_NAME`, `LOOM_PIECE_HOME`, and the settings it
 declares). See [specs/pieces-install.md](specs/pieces-install.md).
 
+### Local pieces
+
+A piece that will never be public (an agent's homelab wrappers, say) can still
+be a managed one: `loom pieces install --from path:/abs/dir --yes`, where the
+directory holds the same npm package a GitHub piece would (a `bin` with
+`loom-<name>`, and an optional `loom` block). loom installs a **snapshot** of
+it (`npm pack`), not a link to it, so editing the directory changes nothing
+until `loom pieces update <name>` reads it again. Its version is the
+snapshot's sha256, so update notices a change, and rollback, remove, settings
+and services work as they do for any managed piece. `loom pieces` lists it as
+`managed <version> (local)`. It's arbitrary code like any piece from outside
+the catalog, so install asks for `--yes`. See
+[specs/pieces-install.md](specs/pieces-install.md#local-pieces).
+
 ## Seams: how pieces compose
 
 Two pieces that are both installed should be able to work together. Neither

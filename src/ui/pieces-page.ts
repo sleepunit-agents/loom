@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listPieces } from '../cli/pieces.js';
 import {
-  PieceError, installPiece, managedBinDir, managedPieces, missingSettings, parseSource, piecesRoot, readCatalog, readSettings,
+  PieceError, describeSource, installPiece, isLocal, versionKey, managedBinDir, managedPieces, missingSettings, parseSource, piecesRoot, readCatalog, readSettings,
   removePiece, rollbackPiece, setSettings, type PieceRecord,
 } from '../cli/pieces-managed.js';
 import { unitName } from '../cli/pieces-services.js';
@@ -81,12 +81,14 @@ function managedBlocks(env: NodeJS.ProcessEnv, r: PieceRecord, update?: string):
   const values = readSettings(env, r.name);
   const buttons: { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields: Record<string, string> }[] = [];
   if (update) buttons.push({ action: 'piece-update', label: `Update to ${update.slice(0, 12)}`, tone: 'primary', fields: { name: r.name } });
+  // A local piece can't know it has an update until its directory is read again.
+  else if (isLocal(r.source)) buttons.push({ action: 'piece-update', label: 'Update from its directory', fields: { name: r.name } });
   if (r.previous) buttons.push({ action: 'piece-rollback', label: `Roll back to ${r.previous.version || r.previous.commit.slice(0, 12)}`, fields: { name: r.name } });
   buttons.push({ action: 'piece-remove', label: `Remove ${r.name}`, tone: 'danger', confirm: 'Its program and service go. Its settings and data stay, for a reinstall.', fields: { name: r.name } });
   const blocks: Block[] = [
     { type: 'kv', items: [
       { label: 'version', value: r.version || '—' },
-      { label: 'source', value: `${r.source.repo} @ ${r.source.commit.slice(0, 12)}` },
+      { label: 'source', value: describeSource(r.source).replace('@', ' @ ') },
       { label: 'installed', value: when(r.installed, uiTimeZone()) },
       ...(r.loom.services.length ? [{ label: 'services', value: r.loom.services.map((s) => unitName(r.name, s.name)).join(', ') }] : []),
     ] },
@@ -121,8 +123,9 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
     if (owner && owner.name !== p.name && bin && p.path.startsWith(bin + '/')) return [];
     const r = managed.get(p.name);
     if (r && bin && p.path.startsWith(bin + '/')) {
-      const c = catalog.find((x) => x.name === r.name && x.repo === r.source.repo);
-      const update = c && c.commit !== r.source.commit ? c.commit : undefined;
+      const src = r.source;
+      const c = isLocal(src) ? undefined : catalog.find((x) => x.name === r.name && x.repo === src.repo);
+      const update = c && !isLocal(src) && c.commit !== src.commit ? c.commit : undefined;
       const missing = missingSettings(env, r);
       const also = r.bins.filter((b) => b.startsWith('loom-') && b !== `loom-${r.name}`).map((b) => b.slice('loom-'.length));
       return [{ type: 'details', summary: r.loom.label ?? c?.label ?? r.name,
@@ -228,7 +231,15 @@ export async function piecesAct(env: NodeJS.ProcessEnv, action: string, fields: 
       }
       case 'piece-update': {
         const r = managedPieces(env).find((x) => x.name === name);
-        const c = readCatalog().find((x) => x.name === name && x.repo === r?.source.repo);
+        if (r && isLocal(r.source)) {
+          const path = r.source.path;
+          return startJob(env, `Update ${r.loom.label ?? r.name} from ${path}`, async () => {
+            const u = await installPiece(env, { path }, r.name);
+            return u.unchanged ? `nothing in ${path} changed` : `now ${u.record.version} (${describeSource(u.record.source)})`;
+          });
+        }
+        const repo = r && !isLocal(r.source) ? r.source.repo : undefined;
+        const c = readCatalog().find((x) => x.name === name && x.repo === repo);
         if (!r || !c) return { ok: false, message: `${name} has no update in loom's catalog.`, page: 'loom:pieces' };
         return startJob(env, `Update ${r.loom.label ?? r.name}`, async () => {
           const u = await installPiece(env, { repo: c.repo, commit: c.commit }, r.name);
@@ -237,7 +248,7 @@ export async function piecesAct(env: NodeJS.ProcessEnv, action: string, fields: 
       }
       case 'piece-rollback': {
         const r = rollbackPiece(env, name);
-        return { ok: true, message: `${r.loom.label ?? r.name} is back on ${r.version || r.source.commit.slice(0, 12)}.`, page: 'loom:pieces' };
+        return { ok: true, message: `${r.loom.label ?? r.name} is back on ${r.version || versionKey(r.source).slice(0, 12)}.`, page: 'loom:pieces' };
       }
       case 'piece-remove': {
         removePiece(env, name);

@@ -5,6 +5,8 @@
  *
  * npm is a stand-in, first on PATH: it lays a package from fixtures/ down
  * in the prefix the way `npm install --prefix <dir> github:o/r#<sha>` does.
+ * For a local piece it packs a directory into a "tarball" (its files as JSON:
+ * the same files, the same bytes) and installs one the same way.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -13,7 +15,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { runCliCaptured } from './test-helpers.js';
 import { findPiece, listPieces } from './pieces.js';
-import { installPiece, parseLoomBlock, parseSource, pieceEnvFor, readCatalog } from './pieces-managed.js';
+import { installPiece, parseFrom, parseLoomBlock, parseSource, pieceEnvFor, readCatalog } from './pieces-managed.js';
+import { execFileSync } from 'node:child_process';
 
 const SHA1 = '1'.repeat(40);
 const SHA2 = '2'.repeat(40);
@@ -23,16 +26,37 @@ const SHA3 = '3'.repeat(40);
 const FAKE_NPM = `#!${process.execPath}
 const fs = require('fs'), path = require('path');
 const args = process.argv.slice(2);
+function walk(root, rel = '') {
+  return fs.readdirSync(path.join(root, rel)).sort().filter((f) => f !== 'node_modules' && f !== '.git').flatMap((f) => {
+    const r = path.join(rel, f);
+    return fs.statSync(path.join(root, r)).isDirectory() ? walk(root, r) : [[r, fs.readFileSync(path.join(root, r), 'base64')]];
+  });
+}
+if (args[0] === 'pack') {
+  const src = args[1], dest = args[args.indexOf('--pack-destination') + 1];
+  const p = JSON.parse(fs.readFileSync(path.join(src, 'package.json'), 'utf-8'));
+  const tgz = p.name.replace(/^@/, '').replace('/', '-') + '-' + p.version + '.tgz';
+  fs.writeFileSync(path.join(dest, tgz), JSON.stringify(walk(src)));
+  console.log(tgz);
+  process.exit(0);
+}
 const prefix = args[args.indexOf('--prefix') + 1];
 const spec = args[args.length - 1];
-const m = /^github:([^#]+)#(.+)$/.exec(spec);
-const fixture = path.join(process.env.FAKE_NPM_FIXTURES, m[1].replace('/', '__') + '@' + m[2]);
-if (!fs.existsSync(fixture)) { console.error('npm error 404 ' + spec); process.exit(1); }
-const pkg = JSON.parse(fs.readFileSync(path.join(fixture, 'package.json'), 'utf-8'));
+let files;
+if (spec.endsWith('.tgz')) files = JSON.parse(fs.readFileSync(spec, 'utf-8'));
+else {
+  const m = /^github:([^#]+)#(.+)$/.exec(spec);
+  const fixture = path.join(process.env.FAKE_NPM_FIXTURES, m[1].replace('/', '__') + '@' + m[2]);
+  if (!fs.existsSync(fixture)) { console.error('npm error 404 ' + spec); process.exit(1); }
+  files = walk(fixture);
+}
+const pkg = JSON.parse(Buffer.from(files.find(([r]) => r === 'package.json')[1], 'base64').toString());
 const dir = path.join(prefix, 'node_modules', pkg.name);
-fs.mkdirSync(dir, { recursive: true });
-fs.cpSync(fixture, dir, { recursive: true });
-fs.writeFileSync(path.join(prefix, 'package.json'), JSON.stringify({ dependencies: { [pkg.name]: spec } }));
+for (const [r, b64] of files) {
+  fs.mkdirSync(path.dirname(path.join(dir, r)), { recursive: true });
+  fs.writeFileSync(path.join(dir, r), Buffer.from(b64, 'base64'));
+}
+fs.writeFileSync(path.join(prefix, 'package.json'), JSON.stringify({ dependencies: { [pkg.name]: spec.endsWith('.tgz') ? 'file:' + path.basename(spec) : spec } }));
 fs.mkdirSync(path.join(prefix, 'node_modules', '.bin'), { recursive: true });
 for (const [b, rel] of Object.entries(pkg.bin || {})) {
   fs.chmodSync(path.join(dir, rel), 0o755);
@@ -50,7 +74,11 @@ describe('managed pieces', () => {
 
   /** A package fixture for repo@commit: bins are shell scripts. */
   async function fixture(repo: string, commit: string, pkg: Record<string, unknown>, scripts: Record<string, string>) {
-    const dir = join(fixtures, `${repo.replace('/', '__')}@${commit}`);
+    await packageAt(join(fixtures, `${repo.replace('/', '__')}@${commit}`), pkg, scripts);
+  }
+
+  /** A package in `dir`: bins are shell scripts. */
+  async function packageAt(dir: string, pkg: Record<string, unknown>, scripts: Record<string, string>) {
     await mkdir(join(dir, 'bin'), { recursive: true });
     const bin: Record<string, string> = {};
     for (const [name, body] of Object.entries(scripts)) {
@@ -290,6 +318,116 @@ describe('managed pieces', () => {
     await runCliCaptured(['pieces', 'install', '--from', `github:x/native#${SHA1}`, '--yes'], { env: { ...installEnv, PATH: ['.', join(tmp, 'npmbin'), '/usr/bin', '/bin'].join(delimiter) } });
     const again = JSON.parse(await readFile(join(loomHome, 'pieces', 'native', 'piece.json'), 'utf-8'));
     expect(again.node === undefined || isAbsolute(again.node)).toBe(true);
+  });
+
+  describe('local pieces (--from path:)', () => {
+    let src: string;
+    const hl = (version: string, tag: string) => packageAt(src, { name: '@art/homelab', version, loom: { label: 'Homelab', settings: [{ name: 'HL_HOST', label: 'Host', default: 'nas' }] } },
+      { 'loom-homelab': `echo "${tag} name=$LOOM_PIECE_NAME host=$HL_HOST"` });
+    const installLocal = (dir: string, ...more: string[]) => runCliCaptured(['pieces', 'install', '--from', `path:${dir}`, ...more], { env });
+    beforeEach(async () => { src = join(tmp, 'src', 'homelab'); await hl('1.0.0', 'v1'); });
+
+    it('installs a snapshot of the directory, versioned by its hash, and lists it as local', async () => {
+      const noYes = await installLocal(src);
+      expect(noYes.code).toBe(2);
+      expect(noYes.stderr).toContain(`${src} is a local directory, not loom's catalog`);
+      expect(noYes.stderr).toContain('installing it is running it');
+      expect(existsSync(join(loomHome, 'pieces', 'homelab'))).toBe(false);
+
+      const r = await installLocal(src, '--yes');
+      expect(r.code).toBe(0);
+      const home = join(loomHome, 'pieces', 'homelab');
+      const rec = JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8'));
+      expect(rec.source).toEqual({ path: src, hash: expect.stringMatching(/^[0-9a-f]{64}$/) });
+      expect(r.stdout).toBe(`installed homelab 1.0.0 (local ${src}@${rec.source.hash.slice(0, 12)})\n`);
+      expect(await readlink(join(home, 'current'))).toBe(`versions/${rec.source.hash}`);
+      // The snapshot (the packed tarball) is kept with the version it installed.
+      expect(existsSync(join(home, 'versions', rec.source.hash, 'package.tgz'))).toBe(true);
+      expect((await runCliCaptured(['homelab'], { env })).stdout).toBe('v1 name=homelab host=nas\n');
+      expect((await runCliCaptured(['pieces'], { env })).stdout).toBe(`homelab\t${join(loomHome, 'pieces', 'bin', 'loom-homelab')}\tmanaged 1.0.0 (local)\n`);
+      expect(JSON.parse((await runCliCaptured(['pieces', '--json'], { env })).stdout)[0].managed)
+        .toEqual({ version: '1.0.0', local: true, path: src, hash: rec.source.hash });
+      // Editing the directory doesn't change what's installed: it's a copy, not a link.
+      await hl('1.0.0', 'edited');
+      expect((await runCliCaptured(['homelab'], { env })).stdout).toBe('v1 name=homelab host=nas\n');
+    });
+
+    it('update re-reads the directory: nothing changed is a no-op, a change is a new version; rollback and remove work', async () => {
+      await installLocal(src, '--yes');
+      const home = join(loomHome, 'pieces', 'homelab');
+      const first = JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8'));
+      const same = await runCliCaptured(['pieces', 'update', 'homelab'], { env });
+      expect([same.code, same.stdout]).toEqual([0, `homelab is already 1.0.0 (local ${src}@${first.source.hash.slice(0, 12)}): nothing in its directory changed\n`]);
+      expect(JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8')).installed).toBe(first.installed);
+
+      await hl('1.1.0', 'v2');
+      const up = await runCliCaptured(['pieces', 'update', 'homelab'], { env });
+      expect(up.code).toBe(0);
+      const second = JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8'));
+      expect(second.source.hash).not.toBe(first.source.hash);
+      expect(up.stdout).toBe(`updated homelab to 1.1.0 (local ${src}@${second.source.hash.slice(0, 12)}); loom pieces rollback homelab goes back\n`);
+      expect(second.previous).toEqual({ commit: first.source.hash, version: '1.0.0', source: first.source });
+      expect((await runCliCaptured(['homelab'], { env })).stdout).toBe('v2 name=homelab host=nas\n');
+
+      const back = await runCliCaptured(['pieces', 'rollback', 'homelab'], { env });
+      expect(back.stdout).toBe(`homelab is back on 1.0.0 (${first.source.hash.slice(0, 12)})\n`);
+      expect((await runCliCaptured(['homelab'], { env })).stdout).toBe('v1 name=homelab host=nas\n');
+      expect(JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8')).source).toEqual(first.source);
+      // And forward again: the newer snapshot is still on disk.
+      await runCliCaptured(['pieces', 'rollback', 'homelab'], { env });
+      expect((await runCliCaptured(['homelab'], { env })).stdout).toBe('v2 name=homelab host=nas\n');
+
+      const rm = await runCliCaptured(['pieces', 'remove', 'homelab'], { env });
+      expect(rm.code).toBe(0);
+      expect(findPiece('homelab', env)).toBeUndefined();
+      expect(existsSync(join(home, 'versions'))).toBe(false);
+      // The source directory is the owner's: remove never touches it.
+      expect(existsSync(join(src, 'package.json'))).toBe(true);
+    });
+
+    it('records the git commit when the directory is a clean work tree, and not when it is dirty', async () => {
+      const git = (...a: string[]) => execFileSync('git', ['-C', src, '-c', 'user.email=t@example.com', '-c', 'user.name=t', ...a], { env, encoding: 'utf-8' }).trim();
+      git('init', '-q');
+      git('add', '.');
+      git('commit', '-q', '-m', 'one');
+      const head = git('rev-parse', 'HEAD');
+      await installLocal(src, '--yes');
+      const home = join(loomHome, 'pieces', 'homelab');
+      expect(JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8')).source.commit).toBe(head);
+      expect(JSON.parse((await runCliCaptured(['pieces', '--json'], { env })).stdout)[0].managed.commit).toBe(head);
+      await hl('1.1.0', 'v2');
+      await runCliCaptured(['pieces', 'update', 'homelab'], { env });
+      expect(JSON.parse(await readFile(join(home, 'piece.json'), 'utf-8')).source.commit).toBeUndefined();
+    });
+
+    it('refuses a relative path, a missing directory, and a package with no loom-<name> bin', async () => {
+      expect(() => parseFrom('path:src/homelab')).toThrow(/absolute path/);
+      const rel = await runCliCaptured(['pieces', 'install', '--from', 'path:./homelab', '--yes'], { env });
+      expect([rel.code, rel.stderr]).toEqual([1, 'loom pieces: a local source is an absolute path (path:/absolute/dir), not "./homelab"\n']);
+      const missing = await installLocal(join(tmp, 'nope'), '--yes');
+      expect([missing.code, missing.stderr]).toEqual([1, `loom pieces: ${join(tmp, 'nope')} doesn't exist\n`]);
+      const notPkg = join(tmp, 'empty');
+      await mkdir(notPkg);
+      expect((await installLocal(notPkg, '--yes')).stderr).toBe(`loom pieces: ${notPkg} has no package.json, so it isn't a package\n`);
+      const plain = join(tmp, 'src', 'plain');
+      await packageAt(plain, { name: 'plain' }, { 'not-a-piece': 'true' });
+      const nobin = await installLocal(plain, '--yes');
+      expect([nobin.code, nobin.stderr]).toEqual([1, "loom pieces: plain has no loom-<name> bin, so it isn't a piece\n"]);
+      expect(existsSync(join(loomHome, 'pieces', 'plain'))).toBe(false);
+      expect(parseFrom(`path:${src}/`)).toEqual({ path: src });
+    });
+
+    it('a piece from GitHub can be replaced by a local one, and rolled back to it', async () => {
+      await install(SHA1);
+      const tasksSrc = join(tmp, 'src', 'tasks');
+      await packageAt(tasksSrc, tasksPkg('0.4.1-local'), tasksBins('local'));
+      expect((await installLocal(tasksSrc, '--yes')).stdout).toContain('updated tasks 0.4.1-local (local ');
+      expect((await runCliCaptured(['tasks'], { env })).stdout).toMatch(/^local /);
+      expect((await runCliCaptured(['pieces', 'rollback', 'tasks'], { env })).stdout).toBe(`tasks is back on 0.4.0 (${SHA1.slice(0, 12)})\n`);
+      const rec = JSON.parse(await readFile(join(loomHome, 'pieces', 'tasks', 'piece.json'), 'utf-8'));
+      expect(rec.source).toEqual({ repo: 'sleepunit-agents/taskstore', commit: SHA1 });
+      expect((await runCliCaptured(['tasks'], { env })).stdout).toMatch(/^v1 /);
+    });
   });
 
   it('with no LOOM_HOME and no HOME, there is no managed dir and PATH is all there is', () => {
