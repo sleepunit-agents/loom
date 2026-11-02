@@ -17,7 +17,9 @@ import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { SUBCOMMANDS } from './subcommands.js';
 import type { IOStreams } from './io.js';
-import { managedBinDir, pieceEnvFor } from './pieces-managed.js';
+import { describeSource, managedBinDir, pieceEnvFor, type GithubSource, type PieceRecord, type PieceSource } from './pieces-managed.js';
+
+const unchangedText = (r: PieceRecord) => `${r.name} is already ${r.version} (${describeSource(r.source)}): nothing in its directory changed\n`;
 
 /** A piece name: lowercase, starts with a letter, no dots or slashes. */
 export const PIECE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
@@ -128,15 +130,19 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
       case undefined: {
         const managed = m.managedPieces(io.env);
         const catalog = new Map(m.readCatalog().map((c) => [c.name, c]));
+        // Where it came from: a repo and commit, or (a local piece) a directory, its snapshot's hash, and the clean commit it was at.
+        const from = (s: PieceSource) => m.isLocal(s)
+          ? { local: true as const, path: s.path, hash: s.hash, ...(s.commit ? { commit: s.commit } : {}) }
+          : { commit: s.commit, repo: s.repo };
         const pieces = listPieces(io.env).map((p) => {
           // A managed piece, or a bin that's part of one (a package with several loom-<name> bins).
           const r = managed.find((x) => x.bins.includes(`loom-${p.name}`));
           if (!r || !p.path.startsWith(m.managedBinDir(io.env) + '/')) return p;
-          if (r.name !== p.name) return { ...p, managed: { partOf: r.name, version: r.version, commit: r.source.commit, repo: r.source.repo } };
+          if (r.name !== p.name) return { ...p, managed: { partOf: r.name, version: r.version, ...from(r.source) } };
           const c = catalog.get(p.name);
           const missing = m.missingSettings(io.env, r);
-          return { ...p, managed: { version: r.version, commit: r.source.commit, repo: r.source.repo,
-            ...(c && c.commit !== r.source.commit && c.repo === r.source.repo ? { update: c.commit } : {}),
+          return { ...p, managed: { version: r.version, ...from(r.source),
+            ...(c && !m.isLocal(r.source) && c.commit !== r.source.commit && c.repo === r.source.repo ? { update: c.commit } : {}),
             ...(missing.length ? { needsSetup: missing } : {}) } };
         });
         if (json) { out(pieces, ''); return 0; }
@@ -144,7 +150,9 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
           ? 'no pieces installed (loom pieces catalog lists what loom can install)\n'
           : pieces.map((p) => {
             const g = 'managed' in p ? p.managed : undefined;
-            const note = !g ? '' : 'partOf' in g ? `\tpart of ${g.partOf}` : `\tmanaged ${g.version || g.commit.slice(0, 12)}${g.update ? ', update available' : ''}${g.needsSetup ? `, needs ${g.needsSetup.join(', ')}` : ''}`;
+            const local = g && 'local' in g;
+            const note = !g ? '' : 'partOf' in g ? `\tpart of ${g.partOf}`
+              : `\tmanaged ${g.version || ('hash' in g ? g.hash : g.commit ?? '').slice(0, 12)}${local ? ' (local)' : ''}${'update' in g ? ', update available' : ''}${'needsSetup' in g && g.needsSetup ? `, needs ${g.needsSetup.join(', ')}` : ''}`;
             return `${p.name}\t${p.path}${note}`;
           }).join('\n') + '\n');
         return 0;
@@ -152,29 +160,36 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
       case 'catalog': {
         const installed = new Map(m.managedPieces(io.env).map((r) => [r.name, r]));
         const cat = m.readCatalog();
-        out(cat, cat.map((c) => `${c.name}\t${c.label ?? ''}\t${installed.get(c.name)?.source.commit === c.commit ? 'installed' : installed.has(c.name) ? 'update available' : ''}\n  ${c.description ?? ''}`).join('\n') + '\n');
+        const state = (c: { name: string; commit: string }) => {
+          const r = installed.get(c.name);
+          return !r ? '' : m.isLocal(r.source) ? 'installed locally' : r.source.commit === c.commit ? 'installed' : 'update available';
+        };
+        out(cat, cat.map((c) => `${c.name}\t${c.label ?? ''}\t${state(c)}\n  ${c.description ?? ''}`).join('\n') + '\n');
         return 0;
       }
       case 'install': {
         const from = args.indexOf('--from');
-        let source: { repo: string; commit: string };
+        let source: GithubSource | { path: string };
         let name: string | undefined;
         if (from >= 0) {
           if (args.length !== 2 && !(args.length === 3 && args.includes('--yes'))) throw new m.PieceError('install --from takes one source (and --yes)');
-          source = m.parseSource(args[from + 1] ?? '');
+          source = m.parseFrom(args[from + 1] ?? '');
           if (!args.includes('--yes')) {
-            io.stderr(`${source.repo} isn't in loom's catalog. A piece runs as you, and npm runs its build scripts while it installs: installing it is running it.\nRun again with --yes to install it.\n`);
+            io.stderr(m.isLocal(source)
+              ? `${source.path} is a local directory, not loom's catalog. A piece runs as you, and npm runs its build scripts while it packs and installs it: installing it is running it.\nRun again with --yes to install it.\n`
+              : `${source.repo} isn't in loom's catalog. A piece runs as you, and npm runs its build scripts while it installs: installing it is running it.\nRun again with --yes to install it.\n`);
             return 2;
           }
         } else {
-          if (args.length !== 1) throw new m.PieceError('install takes a catalog name, or --from github:<owner>/<repo>#<commit>');
+          if (args.length !== 1) throw new m.PieceError('install takes a catalog name, or --from github:<owner>/<repo>#<commit> | path:/abs/dir');
           const c = m.readCatalog().find((x) => x.name === args[0]);
           if (!c) throw new m.PieceError(`${args[0]} isn't in the catalog (loom pieces catalog)`);
           source = { repo: c.repo, commit: c.commit };
           name = c.name;
         }
         const r = await m.installPiece(io.env, source, name);
-        out(r, `${r.updated ? 'updated' : 'installed'} ${r.record.name} ${r.record.version} (${r.record.source.repo}@${r.record.source.commit.slice(0, 12)})\n`
+        if (r.unchanged) { out(r, unchangedText(r.record)); return 0; }
+        out(r, `${r.updated ? 'updated' : 'installed'} ${r.record.name} ${r.record.version} (${m.describeSource(r.record.source)})\n`
           + (r.missing.length ? `it needs settings: loom pieces set ${r.record.name} ${r.missing.map((x) => `${x}=…`).join(' ')}\n` : '')
           + (r.services.started.length ? `running: ${r.services.started.join(', ')}\n` : '')
           + r.services.notes.map((n) => n + '\n').join(''));
@@ -184,7 +199,16 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
         if (args.length !== 1) throw new m.PieceError('update takes a piece name');
         const rec = m.readRecord(io.env, args[0]);
         if (!rec) throw new m.PieceError(`${args[0]} isn't a managed piece`);
-        const c = m.readCatalog().find((x) => x.name === rec.name && x.repo === rec.source.repo);
+        if (m.isLocal(rec.source)) {
+          // A local piece updates from its directory: a new snapshot, if anything in it changed.
+          const r = await m.installPiece(io.env, { path: rec.source.path }, rec.name);
+          if (r.unchanged) { out(r, unchangedText(r.record)); return 0; }
+          out(r, `updated ${rec.name} to ${r.record.version} (${m.describeSource(r.record.source)}); loom pieces rollback ${rec.name} goes back\n`
+            + r.services.notes.map((n) => n + '\n').join(''));
+          return 0;
+        }
+        const src = rec.source;
+        const c = m.readCatalog().find((x) => x.name === rec.name && x.repo === src.repo);
         if (!c) throw new m.PieceError(`${rec.name} isn't from the catalog; install the commit you want with --from`);
         if (c.commit === rec.source.commit) { out({ record: rec, updated: false }, `${rec.name} is already the catalog's ${c.commit.slice(0, 12)}\n`); return 0; }
         const r = await m.installPiece(io.env, { repo: c.repo, commit: c.commit }, rec.name);
@@ -194,7 +218,7 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
       case 'rollback': {
         if (args.length !== 1) throw new m.PieceError('rollback takes a piece name');
         const r = m.rollbackPiece(io.env, args[0]);
-        out(r, `${r.name} is back on ${r.version} (${r.source.commit.slice(0, 12)})\n`);
+        out(r, `${r.name} is back on ${r.version} (${m.versionKey(r.source).slice(0, 12)})\n`);
         return 0;
       }
       case 'remove': {
@@ -234,6 +258,7 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
 export const PIECES_USAGE = `Usage: loom pieces [--json]
        loom pieces catalog [--json]
        loom pieces install <name> | --from github:<owner>/<repo>#<commit> [--yes]
+       loom pieces install --from path:/abs/dir [--yes]
        loom pieces update <name>
        loom pieces rollback <name>
        loom pieces remove <name> [--purge]
@@ -242,6 +267,8 @@ export const PIECES_USAGE = `Usage: loom pieces [--json]
 With no verb, list the installed pieces: every executable named loom-<name>
 that answers \`loom <name> ...\`. Managed pieces (installed by loom, under
 $LOOM_HOME/pieces) are found first, then PATH; core commands can't be shadowed.
-The rest install, update, roll back, remove and set up managed pieces. See
+The rest install, update, roll back, remove and set up managed pieces. A
+local piece (path:) is a snapshot of the package in that directory; update
+takes a new one if the directory changed. See
 docs/extensions.md and docs/specs/pieces-install.md.
 `;

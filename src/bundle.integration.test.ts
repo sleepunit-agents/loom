@@ -204,6 +204,19 @@ esac
     expect(r.installs).toEqual([{ name: 'vault', commit: 'a'.repeat(40), installed: false, reason: expect.stringMatching(/not this loom's catalog/) }]);
   });
 
+  it('a local piece is listed in a bundle but never installed from it; the restore says so', async () => {
+    const piece = join(h.home, 'pieces', 'homelab');
+    mkdirSync(piece, { recursive: true });
+    writeFileSync(join(piece, 'piece.json'), JSON.stringify({ v: 1, name: 'homelab', source: { path: '/home/art/homelab', hash: 'c'.repeat(64) }, package: 'homelab', version: '1', installed: 'x', bins: ['loom-homelab'], loom: { settings: [] } }));
+    const file = join(work, 'household.bundle');
+    await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
+    const calls: unknown[] = [];
+    const r = await restoreBundle({ file, identity: owner.identity, home: join(work, 'restored'), env: sealed(),
+      install: async (_e, s) => { calls.push(s); }, catalog: [{ name: 'homelab', repo: 'sleepunit-agents/homelab', commit: 'b'.repeat(40) }] });
+    expect(calls).toEqual([]);
+    expect(r.installs).toEqual([{ name: 'homelab', commit: 'c'.repeat(64), installed: false, reason: expect.stringMatching(/^a local piece, from \/home\/art\/homelab on the machine the bundle was made on/) }]);
+  });
+
   it('a bundle that brings anything but parts into pieces/ (a bin, a link, a directory) is refused before anything runs', async () => {
     const file = join(work, 'household.bundle');
     await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
