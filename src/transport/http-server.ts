@@ -44,7 +44,7 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
-import { findPiece } from '../cli/pieces.js';
+import { findPiece, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
@@ -284,6 +284,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
     }
     if (!role) return { status: 401, error: 'unauthorized: bearer token not recognized' };
+    // A credential minted for an old piece name (piece:box/<id>) acts as the piece it now is, its
+    // subject unchanged, so every check after this (own API, store, grants) sees that piece.
+    if (role.kind === 'piece') {
+      const now = resolvePieceName(process.env, role.piece);
+      if (now !== role.piece) role = { ...role, piece: now };
+    }
     return role;
   }
 
@@ -472,7 +478,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    * An owner or agent token calls as itself; a piece credential only its own
    * piece, as its subject; a peer never.
    */
-  async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
+  async function handlePieceApi(req: IncomingMessage, res: ServerResponse, named: string, subpath: string): Promise<void> {
+    // An old piece name (PIECE_ALIASES: /api/box/… while the runtime is installed and no box is) is its piece.
+    const piece = named === 'loom' ? named : resolvePieceName(process.env, named);
     // GET /api/loom/venues (role-routes.ts, RUNTIME_GET_ROUTES): the runtime's view of every venue.
     if (piece === 'loom' && RUNTIME_GET_ROUTES.includes(subpath)) {
       if (req.method !== 'GET') return sendError(res, 405, `method-not-allowed: GET /api/loom/${subpath}`);
@@ -669,7 +677,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   async function storeApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Role): Promise<void> {
     const m = /^store\/([a-z][a-z0-9-]{0,39})\/(get|list|put|del|history|revert)$/.exec(subpath);
     if (!m) return sendError(res, 404, 'not-found: /api/loom/store/<piece>/<get|list|put|del|history|revert>');
-    const [, storePiece, op] = m;
+    const [, storeNamed, op] = m;
+    const storePiece = resolvePieceName(process.env, storeNamed);
     let grant: Grant;
     if (role.kind === 'piece' && role.piece === storePiece) grant = { piece: storePiece, exp: Number.MAX_SAFE_INTEGER };
     else if (role.kind === 'owner') {

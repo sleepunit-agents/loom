@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { constants as osConstants } from 'node:os';
 import { SUBCOMMANDS } from './subcommands.js';
 import type { IOStreams } from './io.js';
-import { describeSource, managedBinDir, pieceEnvFor, type GithubSource, type PieceRecord, type PieceSource } from './pieces-managed.js';
+import { aliasTarget, describeSource, managedBinDir, pieceEnvFor, pieceOfPath, readRecord, type GithubSource, type PieceRecord, type PieceSource } from './pieces-managed.js';
 
 const unchangedText = (r: PieceRecord) => `${r.name} is already ${r.version} (${describeSource(r.source)}): nothing in its directory changed\n`;
 
@@ -56,6 +56,22 @@ export function findPiece(name: string, env: NodeJS.ProcessEnv): string | undefi
     if (isExecutableFile(candidate)) return candidate;
   }
   return undefined;
+}
+
+/**
+ * The piece a name from outside means (PIECE_ALIASES): `box` is `runtime` while no piece named
+ * `box` is installed (a managed one, or a `loom-box` on PATH that isn't the runtime's own bin)
+ * and the runtime is. Otherwise the name itself. The one place an old name is mapped.
+ */
+export function resolvePieceName(env: NodeJS.ProcessEnv, name: string): string {
+  const target = aliasTarget(name);
+  if (!target) return name;
+  // An installed piece with the old name wins.
+  if (readRecord(env, name)) return name;
+  const path = findPiece(name, env);
+  // A loom-<old name> on PATH counts, unless it's a bin the target's own package ships.
+  if (path && pieceOfPath(env, path)?.name !== target) return name;
+  return readRecord(env, target) || findPiece(target, env) ? target : name;
 }
 
 export interface InstalledPiece {
@@ -208,6 +224,8 @@ export async function runPiecesCommand(argv: string[], io: IOStreams): Promise<n
           return 0;
         }
         const src = rec.source;
+        const renamed = m.renamedAdvice(rec);
+        if (renamed) throw new m.PieceError(renamed);
         const c = m.readCatalog().find((x) => x.name === rec.name && x.repo === src.repo);
         if (!c) throw new m.PieceError(`${rec.name} isn't from the catalog; install the commit you want with --from`);
         if (c.commit === rec.source.commit) { out({ record: rec, updated: false }, `${rec.name} is already the catalog's ${c.commit.slice(0, 12)}\n`); return 0; }

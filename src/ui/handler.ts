@@ -54,7 +54,8 @@ import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } 
 import { getConversation as conversationOf, openNeeds } from '../backends/conversations.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
-import { catalogKinds, readCatalog } from '../cli/pieces-managed.js';
+import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
+import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
@@ -672,7 +673,7 @@ function pendingProposals(h: Household, agent: string): number {
 }
 
 /** Which catalog pieces a fresh loom suggests first: talk in chat, then a work store. */
-const STARTERS = ['shuttle', 'tasks', 'box', 'secrets'];
+export const STARTERS = ['shuttle', 'tasks', 'box', 'secrets'].map((n) => aliasTarget(n) ?? n);
 
 /** A loom with no pieces yet: who's listening, and two pieces to give them hands. */
 function firstRun(names: string[]): NonNullable<Dashboard['firstRun']> {
@@ -827,6 +828,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const rest = '/' + pathname.slice(3).replace(/^[/\\]+/, '');
     res.writeHead(308, { location: rest + to.search, ...SECURITY_HEADERS });
     return void res.end();
+  }
+  // A piece's old name (PIECE_ALIASES): /p/box/… and /a/<agent>/p/box/… are the runtime's pages now.
+  const old = /^((?:\/a\/[^/]+)?\/p\/)([a-z][a-z0-9-]*)(\/.*)?$/.exec(pathname);
+  if (old) {
+    const now = resolvePieceName(opts.env, old[2]);
+    if (now !== old[2]) {
+      const to = new URL(req.url ?? pathname, 'http://loom.invalid');
+      res.writeHead(308, { location: `${old[1]}${now}${old[3] ?? ''}${to.search}`, ...SECURITY_HEADERS });
+      return void res.end();
+    }
   }
   const secure = req.headers['x-forwarded-proto'] === 'https';
 

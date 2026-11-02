@@ -240,6 +240,36 @@ export function pieceOfPath(env: NodeJS.ProcessEnv, path: string): PieceRecord |
   return bin && dirname(path) === bin ? ownerOfBin(env, basename(path)) : undefined;
 }
 
+/**
+ * Old piece names that callers outside loom still use, and the piece each now is: a house's
+ * `loom box …`, a `/p/box/…` link, a joined box's `piece:box/<id>` credential. Applied where a
+ * name comes in from outside (cli/pieces.ts, resolvePieceName), and only while no installed
+ * piece has the old name itself. A piece can't be installed under an old name while the piece
+ * it now names is installed.
+ */
+export const PIECE_ALIASES: Readonly<Record<string, string>> = Object.freeze({ box: 'runtime' });
+
+/** The piece `name` is an old name for, if it is one. */
+export const aliasTarget = (name: string): string | undefined => (Object.hasOwn(PIECE_ALIASES, name) ? PIECE_ALIASES[name] : undefined);
+
+/**
+ * Why an installed piece under an old name doesn't update in place: the catalog now has its repo
+ * under the new name. The swap isn't done for you: the new piece has its own settings (their
+ * names carry the piece's, LOOM_BOX_* becoming LOOM_RUNTIME_*) and its own store, and its install
+ * is refused while the old one holds the runtime role and the bins. So: remove, install, set.
+ * Undefined when `rec` isn't a renamed piece.
+ */
+export function renamedAdvice(rec: PieceRecord, catalog: readonly CatalogEntry[] = readCatalog()): string | undefined {
+  const now = aliasTarget(rec.name);
+  if (!now || isLocal(rec.source)) return undefined;
+  const repo = rec.source.repo;
+  if (!catalog.some((c) => c.name === now && c.repo === repo)) return undefined;
+  return `${rec.name} is now the ${now} piece (the same repo, renamed), so it doesn't update in place. To switch: `
+    + `loom pieces remove ${rec.name} (its settings and data are kept), then loom pieces install ${now}, then set its settings `
+    + `under their new names (loom pieces set ${now} …; the old values stay in pieces/${rec.name}/settings.json). `
+    + `Until then, ${rec.name} keeps working as it is.`;
+}
+
 /** The catalog of first-party pieces that ships with loom (assets/pieces.json). */
 export function readCatalog(path = join(resolveRepoRoot(), 'assets', 'pieces.json')): CatalogEntry[] {
   const c = readJson(path) as { v?: number; pieces?: unknown } | undefined;
@@ -510,6 +540,11 @@ export async function installPiece(
     }
     const pieceName = declared !== undefined ? String(declared) : loomBins[0].slice('loom-'.length);
     if (!PIECE.test(pieceName) || pieceName === 'loom') throw new PieceError(`loom-${pieceName} isn't a piece name`);
+    // An old name (PIECE_ALIASES) can't be installed beside the piece it now names.
+    const renamedTo = aliasTarget(pieceName);
+    if (renamedTo && readRecord(env, renamedTo)) {
+      throw new PieceError(`${pieceName} is an old name for ${renamedTo}, which is installed: a piece can't be installed as ${pieceName} while ${renamedTo} is`);
+    }
     if (name && pieceName !== name) throw new PieceError(`${isLocal(source) ? source.path : `the catalog's ${name}`} installs loom-${pieceName}, not loom-${name}`);
     const bad = bins.find((b) => !BIN.test(b));
     if (bad) throw new PieceError(`bin name ${JSON.stringify(bad)} isn't allowed`);

@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 import { runCliCaptured } from './test-helpers.js';
 import { findPiece, listPieces } from './pieces.js';
-import { installPiece, parseFrom, parseLoomBlock, parseSource, pieceEnvFor, readCatalog } from './pieces-managed.js';
+import { PIECE_ALIASES, installPiece, parseFrom, parseLoomBlock, parseSource, pieceEnvFor, readCatalog } from './pieces-managed.js';
 import { execFileSync } from 'node:child_process';
 import { listVenues } from '../household-store.js';
 
@@ -414,6 +414,50 @@ describe('managed pieces', () => {
     await runCliCaptured(['pieces', 'install', '--from', `github:x/native#${SHA1}`, '--yes'], { env: { ...installEnv, PATH: ['.', join(tmp, 'npmbin'), '/usr/bin', '/bin'].join(delimiter) } });
     const again = JSON.parse(await readFile(join(loomHome, 'pieces', 'native', 'piece.json'), 'utf-8'));
     expect(again.node === undefined || isAbsolute(again.node)).toBe(true);
+  });
+
+  describe('an old piece name (PIECE_ALIASES: box is now runtime)', () => {
+    const installFrom = (repo: string, commit = SHA1) => runCliCaptured(['pieces', 'install', '--from', `github:${repo}#${commit}`, '--yes'], { env });
+    const runtimePkg = { name: 'loom-runtime', loom: { name: 'runtime', role: 'runtime', label: 'Runtime' } };
+    const both = { 'loom-runtime': 'true', 'loom-box': 'true' };
+
+    it('the table is box → runtime, and the catalog lists loom-box\'s repo as runtime at 37cc43d', () => {
+      expect(PIECE_ALIASES).toEqual({ box: 'runtime' });
+      const c = readCatalog();
+      expect(c[0]).toMatchObject({ name: 'runtime', repo: 'sleepunit-agents/loom-box', commit: '37cc43dc80ef6a4c24e9b80c97e36f01f18c254b', label: 'Runtime', version: '0.1.0' });
+      expect(c.find((x) => x.name === 'box')).toBeUndefined();
+    });
+
+    it('a piece can\'t be installed as box while runtime is', async () => {
+      await fixture('x/runtime', SHA1, runtimePkg, both);
+      expect((await installFrom('x/runtime')).code).toBe(0);
+      await fixture('x/oldbox', SHA1, { name: 'loom-box-old', loom: { name: 'box' } }, { 'loom-box': 'true' });
+      const r = await installFrom('x/oldbox');
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("box is an old name for runtime, which is installed: a piece can't be installed as box while runtime is");
+      expect(existsSync(join(loomHome, 'pieces', 'box', 'piece.json'))).toBe(false);
+    });
+
+    it('update box (the old package, from the repo the catalog now calls runtime) says how to switch, and changes nothing', async () => {
+      const repo = 'sleepunit-agents/loom-box';
+      await fixture(repo, SHA1, { name: 'loom-box', loom: { label: 'Boxes', settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'URL' }] } }, { 'loom-box': 'true' });
+      expect((await installFrom(repo)).code).toBe(0);
+      const before = await readFile(join(loomHome, 'pieces', 'box', 'piece.json'), 'utf-8');
+      const r = await runCliCaptured(['pieces', 'update', 'box'], { env });
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain('box is now the runtime piece (the same repo, renamed), so it doesn\'t update in place');
+      expect(r.stderr).toContain('loom pieces remove box (its settings and data are kept), then loom pieces install runtime');
+      expect(await readFile(join(loomHome, 'pieces', 'box', 'piece.json'), 'utf-8')).toBe(before);
+      // Following the advice: the runtime installs once box is gone, and box's settings are still there.
+      await runCliCaptured(['pieces', 'set', 'box', 'LOOM_BOX_PUBLIC_URL=https://loom.example'], { env });
+      await fixture(repo, '37cc43dc80ef6a4c24e9b80c97e36f01f18c254b', runtimePkg, both);
+      expect((await runCliCaptured(['pieces', 'remove', 'box'], { env })).code).toBe(0);
+      const inst = await runCliCaptured(['pieces', 'install', 'runtime'], { env });
+      expect(inst.stderr).toBe('');
+      expect(inst.code).toBe(0);
+      expect(JSON.parse(await readFile(join(loomHome, 'pieces', 'runtime', 'piece.json'), 'utf-8')).bins.sort()).toEqual(['loom-box', 'loom-runtime']);
+      expect(existsSync(join(loomHome, 'pieces', 'box', 'settings.json'))).toBe(true);
+    });
   });
 
   describe('local pieces (--from path:)', () => {

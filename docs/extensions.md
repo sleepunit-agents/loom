@@ -109,6 +109,43 @@ and services work as they do for any managed piece. `loom pieces` lists it as
 the catalog, so install asks for `--yes`. See
 [specs/pieces-install.md](specs/pieces-install.md#local-pieces).
 
+### Old names
+
+A piece that's renamed keeps working under its old name for the callers that
+still use it. Core's alias table, `PIECE_ALIASES` in
+`src/cli/pieces-managed.ts`, holds one entry today: **`box` is `runtime`**
+(loom-box's repo, renamed). The table is applied in one place,
+`resolvePieceName` in `src/cli/pieces.ts`, wherever a piece name comes in from
+outside:
+
+- `POST /api/box/…` (`/api/box/run` included) reaches the runtime;
+- `/p/box/…` and `/a/<agent>/p/box/…` answer a 308 to the runtime's page,
+  with the path and query kept;
+- a `piece:box/<subject>` credential (a joined box's) acts as
+  `piece:runtime/<subject>`, with the subject unchanged, so the own-API, store
+  and grants checks see `runtime`;
+- a house's remote `loom box …` (`LOOM_URL`) is `/api/box/run`, so it runs on
+  the runtime too;
+- the first-run starters name `runtime`.
+
+An alias stands aside while a piece with the old name itself is installed: a
+managed `box`, or a `loom-box` on `PATH` that isn't one of the runtime's own
+bins. A piece can't be installed as `box` while `runtime` is.
+
+**Switching an installed `box`.** `loom pieces update box` (and the page's
+Update) doesn't swap it for you. It refuses, says the piece is now `runtime`,
+and gives the steps:
+
+```bash
+loom pieces remove box        # its settings and data are kept
+loom pieces install runtime
+loom pieces set runtime LOOM_RUNTIME_…=…   # the settings' names carry the piece's; the old values are in pieces/box/settings.json
+```
+
+The swap is left to the owner because the two can't be installed side by side
+(both are `role: runtime`, and both ship `loom-box`). The new piece's settings
+are named after it, and its store is its own.
+
 ## Seams: how pieces compose
 
 Two pieces that are both installed should be able to work together. Neither
