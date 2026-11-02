@@ -61,6 +61,14 @@ Like `git <cmd>`: `loom tasks list` runs the first executable named
   refused, so `--json` must go after the piece name, as the piece's own flag.
 - **`loom pieces` lists what's installed**, each name with the path it
   resolves to.
+- **Not installed here, with `LOOM_URL` set, the loom there runs it.** In a
+  house, `loom tasks ready` with no `loom-tasks` (managed or on `PATH`) sends
+  `POST /api/tasks/run {"argv": ["ready"]}` to the loom `LOOM_URL` names, as
+  the token in `LOOM_TOKEN_FILE`, and prints the answer's stdout and stderr
+  and exits with its exit code (see `run` under [The API](#the-api-a-piece-thats-called-from-elsewhere)).
+  A local piece always wins: managed first, then `PATH`, then the remote
+  loom. An unreachable loom, or an answer that isn't a 200, exits 1 with
+  loom's words; stdin isn't sent.
 
 To install a piece, put an executable named `loom-<name>` on `PATH`. A
 package can ship one as an npm `bin`, as a script, or as a binary. Swapping
@@ -409,6 +417,31 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
   no `.` or `..`.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
+
+### `run`: the piece's CLI, from elsewhere
+
+One path is standard: **`run`**, the piece's own CLI for a caller that isn't
+on loom's machine. `loom <piece> …` in a house sends it when the piece isn't
+installed there ([above](#how-loom-piece-finds-a-piece)).
+
+```bash
+# POST /api/<piece>/run, so the piece gets:
+{"caller": {...}, "path": "run", "body": {"argv": ["ready"]}}
+# and answers:
+{"status": 200, "body": {"exit": 0, "stdout": "...", "stderr": "..."}}
+```
+
+- **Request:** `{"argv": [...]}`, the arguments after the piece's name. No
+  stdin and no environment travel.
+- **Answer:** `{exit, stdout, stderr}`. `exit` is an integer and the
+  command's exit code; an answer without one is never read as success. A
+  stdout too big to send plain may come as `stdoutGz` instead (gzipped, then
+  base64), as the tasks piece's `list` does.
+- **A piece answers `run` only for argv it allows,** for each caller: the
+  same verbs, flags and exit codes as the local CLI, minus whatever reads or
+  writes loom's machine (a file path there, its own `api` and `ui` verbs). A
+  refusal is the piece's own 4xx with `{"error": "..."}`, which the caller
+  prints. A piece that doesn't want remote use doesn't answer `run`.
 
 ## Storage: a piece's data in loom
 
