@@ -61,6 +61,14 @@ Like `git <cmd>`: `loom tasks list` runs the first executable named
   refused, so `--json` must go after the piece name, as the piece's own flag.
 - **`loom pieces` lists what's installed**, each name with the path it
   resolves to.
+- **Not installed here, with `LOOM_URL` set, the loom there runs it.** In a
+  house, `loom tasks ready` with no `loom-tasks` (managed or on `PATH`) sends
+  `POST /api/tasks/run {"argv": ["ready"]}` to the loom `LOOM_URL` names, as
+  the token in `LOOM_TOKEN_FILE`, and prints the answer's stdout and stderr
+  and exits with its exit code (see `run` under [The API](#the-api-a-piece-thats-called-from-elsewhere)).
+  A local piece always wins: managed first, then `PATH`, then the remote
+  loom. An unreachable loom, or an answer that isn't a 200, exits 1 with
+  loom's words; stdin isn't sent.
 
 To install a piece, put an executable named `loom-<name>` on `PATH`. A
 package can ship one as an npm `bin`, as a script, or as a binary. Swapping
@@ -109,9 +117,60 @@ The shape:
 - **Each pairing gets its own test, on top of each piece's solo suite.**
   "Composes" is checked, not assumed.
 
-The seam vocabulary (`ask`, `notify`, …) and how pieces register offers isn't
-built yet. It gets defined the first time two real pieces need it. These
-rules exist so that day doesn't need a redesign.
+The seam vocabulary between pieces (`ask`, `notify`, …) isn't built yet. It
+gets defined the first time two real pieces need it. These rules exist so
+that day doesn't need a redesign. What a piece offers through **core** is
+built: see "Offers" below.
+
+### Offers
+
+A managed piece (specs/pieces-install.md) declares in its package's `loom`
+block what it offers through core. These are four sibling keys, each with its
+own schema:
+
+| Key | What core does with it | Its schema |
+|---|---|---|
+| `sections` | runs `sections.project` as a project's section feed | [specs/projects.md](specs/projects.md), "Section feeds (the seam)" |
+| `venues` | keeps the piece's venues, and runs each one's `render` and `send` | [specs/conversations.md](specs/conversations.md), "Venues" (`send` from [specs/agent-runtime.md](specs/agent-runtime.md)) |
+| `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
+| `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
+
+```jsonc
+"loom": {
+  "role": "runtime",
+  "sections":  { "project": { "label": "Houses", "argv": ["loom-runtime", "project-feed", "--json"] } },
+  "venues":    { "relay": { "label": "Relay", "kind": "agent", "send": ["loom-runtime", "send"] } },
+  "mcp_tools": { "house": { "description": "Ask for a house", "input_schema": { "type": "object" },
+                            "argv": ["loom-runtime", "house", "--json"] } },
+  "grants":    true
+}
+```
+
+- **One validation path, at install.** Each rule in those specs rejects the
+  whole `loom` block, so nothing is installed. Every argv is 1-16 strings of at
+  most 200, and its `argv[0]` must be one of the package's own `bin` names. Unknown keys
+  are rejected.
+- **`mcp_tools`:** each tool's name is `[a-z][a-z0-9_]*` (at most 64), with a
+  `description` (at most 1000), an `input_schema` (a JSON schema with
+  `"type": "object"`, at most 16 KB) and an `argv` that gets the arguments
+  as JSON on stdin. It can't be named after one of core's tools, or anything
+  `loom_*`.
+- **`grants`:** `true` (or `{}`) makes the piece the grants authority; `false`
+  offers nothing.
+- **Against what's installed:** a venue or tool name another installed piece
+  declares is refused, and so is a second piece offering `grants`. A piece's
+  own update, or a rollback, is checked the same way.
+- **One runner.** Core runs an offer's argv, plus that offer's arguments (and
+  stdin, where it has one), in the piece's own environment, through the
+  manifest's runner: 3 s, the process group killed afterwards, at most 6
+  pieces at once. The answer is one JSON value on stdout (64 KB unless an
+  offer says otherwise), checked against the offer's output schema. A
+  timeout, a non-zero exit, or an answer that isn't valid is an error for that
+  piece alone (`src/offers-registry.ts`, `runOffer`).
+- **Only a managed piece offers.** A piece found on `PATH` has no package for
+  loom to read, so it is never run as an offer. piece.json keeps a copy of the
+  declarations, and core reads them from there (`offersOf`, `piecesOffering`,
+  `grantsAuthority`).
 
 ## The page: how a piece shows up on loom's page
 
@@ -409,6 +468,31 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
   no `.` or `..`.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
+
+### `run`: the piece's CLI, from elsewhere
+
+One path is standard: **`run`**, the piece's own CLI for a caller that isn't
+on loom's machine. `loom <piece> …` in a house sends it when the piece isn't
+installed there ([above](#how-loom-piece-finds-a-piece)).
+
+```bash
+# POST /api/<piece>/run, so the piece gets:
+{"caller": {...}, "path": "run", "body": {"argv": ["ready"]}}
+# and answers:
+{"status": 200, "body": {"exit": 0, "stdout": "...", "stderr": "..."}}
+```
+
+- **Request:** `{"argv": [...]}`, the arguments after the piece's name. No
+  stdin and no environment travel.
+- **Answer:** `{exit, stdout, stderr}`. `exit` is an integer and the
+  command's exit code; an answer without one is never read as success. A
+  stdout too big to send plain may come as `stdoutGz` instead (gzipped, then
+  base64), as the tasks piece's `list` does.
+- **A piece answers `run` only for argv it allows,** for each caller: the
+  same verbs, flags and exit codes as the local CLI, minus whatever reads or
+  writes loom's machine (a file path there, its own `api` and `ui` verbs). A
+  refusal is the piece's own 4xx with `{"error": "..."}`, which the caller
+  prints. A piece that doesn't want remote use doesn't answer `run`.
 
 ## Storage: a piece's data in loom
 
