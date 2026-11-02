@@ -20,7 +20,7 @@ Everything about a project is in loom, or next to it, but scattered:
 - **Notes** are grouped by path prefix (`hocket/research/…`), by convention only.
 - **Person cards** already have per-project fields: `where.pond` on a colleague's card is "where is this person on
   pond". Nothing collects them by project.
-- **Bridge conversations** (the bridges piece's unit, keyed agent · who · venue; see [bridges.md](bridges.md)) leave no
+- **Bridge conversations** (shuttle's unit, keyed agent · who · venue; see [bridges.md](bridges.md)) leave no
   readable trace outside the body that had them. Today an agent's bridge briefs can tell a body to flag each
   on-behalf request to the owner in another chat. That's one ping per ask, which is too much noise, and still not a
   digest.
@@ -55,7 +55,8 @@ A project's sections, computed at read: its memories, notes and people, and what
 _Avoid_: dashboard, feed, timeline
 
 **Project name**:
-A slug or an alias. Every project name resolves to exactly one active project.
+A slug or an alias. Every project name resolves to exactly one live project. **Live** means not archived, whatever its
+`status`: a paused or done project keeps its names.
 _Avoid_: tag (that's the memory field a name matches), key
 
 **Section feed** (seam):
@@ -63,8 +64,8 @@ A managed piece's contribution to a hub: a command loom runs that returns groupe
 _Avoid_: plugin, integration, widget
 
 **Conversation digest**:
-The bridges piece's record of one conversation on one day: who, where, what was asked, decided and done, and whether
-the owner is needed. It belongs to the bridges piece, not loom.
+Shuttle's record of one conversation on one day: who, where, what was asked, decided and done, and whether
+the owner is needed. It belongs to shuttle (the bridges piece), not loom.
 _Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
 
 ## Shape
@@ -101,9 +102,9 @@ _Avoid_: transcript (that's the session), summary (that's a card field), episode
   path prefix (`NOTE_PATH` in `src/notes.ts`), stored without a trailing slash. `links.repos` and `links.venues`:
   ≤ 16 strings, each ≤ 200. `links.epic`: one string, ≤ 64.
 - Reserved names: person cards' list (`tier`, `field`, `projects`, `scope`, `trust`) may not be a slug, an alias or a
-  `where` field name, and may not appear as a key inside any value.
-- **Every project name is unique across active projects.** A write that would make a slug or alias resolve to a
-  second active project is rejected, naming the project that holds it.
+  `where` field name.
+- **Every project name is unique across live projects** (not archived; `status` doesn't matter). A write that would
+  make a slug or alias resolve to a second live project is rejected, naming the project that holds it.
 
 **Merge and replace** (person cards' rules, with these keys):
 
@@ -116,22 +117,27 @@ _Avoid_: transcript (that's the session), summary (that's a card field), episode
     `links` themselves.
 - `merge: false`: the card becomes exactly what was passed. `name` is required. An omitted `status` is `active`, and
   omitted sections are empty.
+- **`status` vs archive.** `paused` and `done` are states of a live project: it keeps its names, its hub and its feeds,
+  and the Projects tab lists it under its status. Archiving retires it: hidden, names freed. `done` is "finished,
+  still findable"; archive is "gone".
 - No-op detection, timestamps (`updated`; `synthesized_at`, moved by passing `summary`), staleness markers,
   archive/restore and revisions follow person cards. The implementation shares that code.
 - **Archive and restore with names.** Archiving frees the project's names. Restoring re-checks them: if any is now
-  held by an active project, the restore is rejected whole, naming the conflicting name and holder. Nothing is
+  held by a live project, the restore is rejected whole, naming the conflicting name and holder. Nothing is
   partially restored.
 
 ## Rendering
 
 ```
-## pond (active)
+## <name> (<slug> · <status>)
 <summary, or "_(no summary)_">
 **Goal:** <goal>
 **Where:** next: the remaining sites back online [unverified] · now: dev soak; prod cutover blocked on the WAF [ok]
 ```
 
-Fields are in name order, markers as person cards. A line whose section is empty is left out, and `links` are never
+For the card above: `## pond (pond · active)`, then the summary, then
+`**Goal:** …` and `**Where:** next: the remaining sites back online [unverified] · now: … [ok]`. Fields are in name
+order, markers as person cards. A line whose section is empty is left out, and `links` are never
 rendered. Cap: 2,000 chars at worst-case render (every marker at its widest), checked at write. As with person cards,
 the field maxima can't all be used at once under the cap. That's deliberate: the cap is the rule, and the per-field
 limits only stop one field eating it.
@@ -143,44 +149,57 @@ defaults to 7 days ago.
 
 - A missing project returns `{found: false}`. An archived project without `include_archived` returns
   `{found: true, archived: true}` and no sections.
+- The result also carries `activity`: the latest of the card's `updated`, its newest matching memory and its newest
+  note. It's a field, not a section, and it's what `project_list` sorts by.
 - **Sections** are keyed. The core ones are `memories`, `notes` and `people`; a piece's is `piece:<piece name>`. They
   are returned in that order: core first, then pieces by piece name. The page may let the owner reorder them; that
   order is page state.
-- **Failures are per section.** A section that throws, times out or doesn't validate becomes
-  `{key, error: "<why>"}`, and every other section still returns.
+- **Failures are per section.** A section whose store doesn't exist yet (no notes store, the memory tables not
+  migrated) is absent, as a piece that isn't installed is. A section whose source exists but throws, times out or
+  doesn't validate becomes `{key, error: "<why>"}`. Either way, every other section still returns. A feed that
+  answers `{"groups": []}` is a present, empty section ("nothing here").
 
 **Core sections.** `since` doesn't filter them. It marks items as `new` when they changed after `since`.
 
 | Key | Contents |
 |---|---|
-| `memories` | memories, not archived and not expired, whose `project` tag is one of the project's names: the newest 20 plus the 10 most salient, deduplicated by id. Each item: id, category, snippet (≤ 200), created, updated, `new`. Plus a count per category over all matches |
-| `notes` | notes under any `links.notes` prefix (or the slug): path, lifespan, updated, `new`. The newest 20, plus the total count |
+| `memories` | memories, not archived and not expired, whose `project` tag is one of the project's names: the 20 newest by `created`, plus the 10 with the highest stored
+`salience` column (ties: newer `created` first), deduplicated by `ref`. Each item: `ref`, category, snippet (≤ 200),
+created, updated, `new`. Plus a count per category over all matches |
+| `notes` | notes under any `links.notes` prefix (or the slug), excluding expired ones (`expires` before now, even if not swept yet): path, lifespan, updated, `new`. The newest 20, plus the total count |
 | `people` | active person cards with a `where` field named by any of the project's **field names**, where a name's field name is the name with `-` replaced by `_`. Each item: the person's slug and name, which field, its value and its marker. Slugs are ≤ 32 chars for this reason: a field name is ≤ 32 |
-| `activity` | the latest of: the card's `updated`, its newest memory, its newest note. It's what `project_list` sorts by |
 
-**Recall resolves names.** `isVisibleInProject` (and every recall scoped to a project) treats a memory as in the
-project when its tag is any of that project's names. A tag that belongs to no active project keeps today's exact
-match. No memory is rewritten.
+**Recall resolves names, both ways.** A recall scoped to any name of a project (its slug or an alias) treats a memory
+as in that project when the memory's tag is any name of the same project. The recall reads the project's name set
+from `project_names` once, before filtering, and `isVisibleInProject` takes that set instead of one string. A name
+that belongs to no live project, or a store that can't be read, keeps today's exact match. No memory is rewritten.
 
 ## Section feeds (the seam)
 
 Only a **managed** piece (pieces-install.md) can offer a section. A piece on `PATH` has no package for loom to read,
-so loom never runs a feed from one. The piece declares the feed in its package's `loom` block, and loom reads it from
-the `loom` copy it keeps in `piece.json` at install:
+so loom never runs a feed from one. The piece declares the feed in its package's `loom` block. loom reads it from the
+copy of that block in the piece's `piece.json`: the installer already writes one (`PieceRecord.loom` in
+`src/cli/pieces-managed.ts`), and pieces-install.md is to document it (see "Edits this forces").
 
 ```jsonc
 "loom": { "sections": { "project": { "label": "Tasks", "argv": ["loom-tasks", "project-feed", "--json"],
                                      "unfiled": false } } }
 ```
 
-- `argv[0]` must be one of the piece's own `bin` names. A declaration that fails this, or any other rule here, is
-  rejected at install like any invalid `loom` block, and pieces-install.md's block schema gains `sections`.
+- **The declaration's schema.**
+  - `sections` has exactly one key today: `project`. Any other key is rejected.
+  - `project` has `label` (required, ≤ 40 chars) and `argv` (required: 1–16 strings, each ≤ 200).
+  - `argv[0]` must be one of the piece's own `bin` names.
+  - `unfiled` is an optional boolean, default false.
+  - Unknown keys are rejected.
+
+  A block that fails any rule is rejected at install, like any invalid `loom` block.
 - loom runs `argv` plus `--project <slug> --since <iso>` and, when the card has them, `--epic <id>`, then `--name <n>`
-  for every alias and `--venue <v>` for every venue. It runs in the piece's own environment, through the same runner
+  for every alias and `--venue <v>` for every venue, each in the card's order. It runs in the piece's own environment, through the same runner
   as manifests (extensions.md "Limits"): **3 s**, the process group killed afterwards, at most 6 pieces at once.
   Results are not cached.
 - `"unfiled": true` says the piece can also be asked with `--unfiled --since <iso>`, for items that belong to no
-  project. loom's Home uses that (see Surfaces).
+  project. loom's Home asks it with `since` 7 days ago, through the same runner, and shows the result as "Unfiled".
 
 **Output.** One JSON object on stdout, ≤ 64 KB. Anything else becomes the section's `{key, error}`:
 
@@ -200,26 +219,32 @@ the `loom` copy it keeps in `piece.json` at install:
 ≤ 8 groups and ≤ 50 items in total. Keys not listed here are rejected (so a typo fails loudly, not silently). The
 piece decides its own grouping and order; loom renders what it's given.
 
-## Conversation digests (the bridges piece's side)
+## Conversation digests (shuttle's side)
 
-This part is the bridges piece's code, not loom's. It is stated here so the seam is buildable.
+The bridges piece is **shuttle** ([bridges.md](bridges.md); piece name `shuttle`, bins `loom-shuttle` and
+`loom-subscriptions`), so its section key is `piece:shuttle`. This part is shuttle's code, not loom's. It is stated
+here so the seam is buildable.
 
 - **What a body writes.** At the end of a turn that did something (a request, a decision, a task made or moved), a body
-  writes a digest through its bridges piece: conversation (agent · who · venue), people (slugs), projects (zero or more
-  names), summary (≤ 600), asks, decisions, task refs, and `needs_owner` (a one-line reason, or nothing). There is one
-  digest per conversation per day. A later write that day replaces it: current state, like a card.
-- **Which project.** The body decides. It has two hints: the card's `links.venues`, which the bridges piece can read
-  with `loom project list --json`, and the person cards' `where.<field>` fields. A digest with no project is still kept.
+  writes a digest through shuttle: conversation (agent · who · venue), people (slugs), projects (zero or more
+  names), summary (≤ 600), asks, decisions, task refs, and `needs_owner` (a one-line reason, or nothing). The limits:
+  people ≤ 8 slugs, projects ≤ 4 names, asks and decisions ≤ 8 strings of ≤ 200 each, and task refs ≤ 16 strings of
+  ≤ 64 each. There is one digest per conversation per **UTC** day. A later write that day replaces it: current state,
+  like a card. UTC keeps the boundary the same on every box. The page shows times in the viewer's zone, so a late
+  evening conversation may sit under the next day's heading. That's the trade-off.
+- **Which project.** The body decides. It has two hints: the card's `links.venues`, which shuttle reads with `loom project list --json`, and the person cards' `where.<field>` fields. A digest with no project is still kept.
 - **Its feed.** `sections.project` with `unfiled: true`.
   - Each group is a day, titled with the date, newest first.
   - Each item is one conversation: the venue as `title`, people as `who` and `person`, the summary and asks as
     `body`, the task refs as `ref`, and `status` "needs you" when `needs_owner` is set.
   - `--unfiled` returns the digests with no project, in the same shape.
-- **Who gets pinged.** A digest with `needs_owner` is listed in the bridges piece's manifest `asks` (extensions.md:
+- **Who gets pinged.** A digest with `needs_owner` is listed in shuttle's manifest `asks` (extensions.md:
   "things only the owner can decide"), which is where loom shows owner decisions. A digest without it reaches the
   owner only through the project page. A bridge configuration that pinged the owner on every request drops that in
   favour of this.
-- **Tasks.** The tasks piece's feed returns the epic's tree in four groups: waiting on the owner, ready, blocked, and
+## The tasks piece's side
+
+- The tasks piece's feed returns the epic's tree in four groups: waiting on the owner, ready, blocked, and
   done since `since`. It also matches tasks outside the tree that name the project in their text, and marks those in
   `status`. A task made from a conversation cites the digest in its description, so the sections cross-reference.
 
@@ -231,18 +256,22 @@ This part is the bridges piece's code, not loom's. It is stated here so the seam
 **Read**:
 - `project({slug, include_archived?})`: the card, its render, `archived`, `updated` and `synthesized_at`, as `person`.
   A slug that is an *alias* resolves to its project, with `resolved_from: "<alias>"`.
-- `project_list({status?, include_archived?})`: per project, slug, name, status, activity, stale and unverified
-  counts, and `memories_since_synthesis`. That's the memories tagged with any of its names created after
-  `synthesized_at` (all of them while it's null), which is how a consolidation lane finds summaries that have fallen
+- `project_list({status?, include_archived?})`: per project, slug, name, status, `links`, activity, stale and
+  unverified counts, and `memories_since_synthesis`. That's the non-archived, non-expired memories tagged with any of
+  its names whose `created` is after `synthesized_at` (all of them while it's null), which is how a consolidation lane finds summaries that have fallen
   behind. Without `status`, every non-archived project is listed.
 - `project_hub`: as above.
-- `project_orphans()`: memory tags that are no project's name, with counts, most first. That's where a lane finds
+- `project_orphans()`: tags on non-archived, non-expired memories (any scope) that are no live project's name, with
+  counts, most first. An archived project's names come back here, which is deliberate: they're tags with nothing
+  behind them again. That's where a lane finds
   projects that ought to have a card.
 - CLI: `loom project show|list|hub|orphans [<slug>] [--json]`. Exit codes: 0 found (for `hub`, even with failed
   sections; the failures are in the output), 3 no such project, 4 archived without `--include-archived`.
 
 **Identity**: `identity({..., project: "<name>"})` adds a `# This project` block with the rendered card. It goes after
-the tape and before Top of Mind, and before `# In the room` when that is present too. It is capped at 2,000 chars,
+the tape and before Top of Mind, and before `# In the room` when that is present too. The block is the heading line
+`# This project` and the rendered card, so it is at most 2,016 chars and never needs truncating (the card's cap is
+checked at write),
 best-effort as person cards: a missing, archived or unreadable card gives a placeholder line, never a failure. A body
 working in a project's repo or conversation passes it, the way a bridge passes `people`.
 
@@ -258,7 +287,7 @@ The `projects`, `project_revisions` and `project_names` tables live in the memor
 a new migration entry. A project, like a person, is about the agent's work, so it sits on memory's side of the
 memory/knowledge line.
 
-`project_names` has `name` (PK), `slug` and `kind` (`slug` or `alias`). It holds every active project's slug and
+`project_names` has `name` (PK), `slug` and `kind` (`slug` or `alias`). It holds every live project's slug and
 aliases, so "every project name is unique" is a primary-key constraint, not a check. A write updates `projects` and
 `project_names` in one transaction. Archiving deletes the project's rows from `project_names`; restoring re-inserts
 them or rolls back. Cards belong to the database, as people do.
@@ -267,51 +296,62 @@ them or rolls back. Cards belong to the database, as people do.
 
 - **extensions.md:** the core line becomes "identity, memory, knowledge, person cards, project cards". It gains a
   "Sections" subsection pointing here.
-- **pieces-install.md:** the `loom` block schema gains `sections`.
+- **pieces-install.md:** the `loom` block schema gains `sections`, and `piece.json`'s description lists the `loom` copy
+  it already keeps.
+- **src/backends/scope.ts:** its header comment ("loom has no cross-project id") is updated: projects are that id.
 - **CONTEXT.md:** the vocabulary above.
 
 ## Acceptance criteria (loom vitest)
 
 1. `project_write` creates, merges and replaces by the rules above. A test passes `links.epic` alone and keeps
    `links.aliases`, removes a key with `null`, and rejects each schema violation naming its field.
-2. Name uniqueness: a second project claiming a slug or alias is rejected naming the holder. Archiving frees the
-   names. A restore whose names are taken is rejected whole and changes nothing.
+2. Name uniqueness: a second project claiming a slug or alias is rejected, naming the holder. A `done` or `paused`
+   project keeps its names and its aliases still resolve. Archiving frees the names. A restore whose names are taken
+   is rejected whole and changes nothing.
 3. No-op detection, revisions, archive/restore and revision restore behave as person cards.
-4. The worst-case render is ≤ 2,000 chars; a write over it is rejected.
+4. The render: a project named "Pond Rebuild" with slug `pond` renders `## Pond Rebuild (pond · active)` first, then
+   the summary, goal and where lines by the grammar above. The worst-case render is ≤ 2,000 chars, and a write over
+   it is rejected.
 5. Staleness markers on `where`, as person cards.
-6. `memories`: tagged with the slug or any alias, archived and expired excluded, newest 20 ∪ salient 10 deduplicated,
-   `new` against `since`.
-7. `notes`: under each prefix, the slug by default, `new` against `since`.
+6. `memories`: tagged with the slug or any alias, archived and expired excluded; the 20 newest plus the 10 highest by
+   stored `salience` (ties by newer `created`), deduplicated by `ref`; `new` against `since`. With 25 matching
+   memories whose salience order differs from their age order, the test checks the exact set.
+7. `notes`: under each prefix, the slug by default; an expired but unswept note is excluded; `new` against `since`. A
+   missing notes store means the section is absent, not an error.
 8. `people`: a person card with `where.on_pond` appears in the hub of a project aliased `on-pond`. A card with
    `where.pond` appears in project `pond`'s hub. An archived card does not.
 9. Recall scoped to `pond` returns a project-scoped memory tagged `on-pond` when `on-pond` is an alias of `pond`, and
-   doesn't when it isn't.
+   recall scoped to `on-pond` returns one tagged `pond`. Neither does when the alias is removed.
 10. Feeds:
     - A managed piece with `sections.project` is run with exactly the documented arguments, in its environment.
     - Its output is validated by every rule above, each tested.
     - Invalid output, a timeout over 3 s, or a non-zero exit gives `{key: "piece:<name>", error}`, and the other
       sections still return.
-11. A piece without `sections.project`, or one found only on `PATH`, is never run. An `argv[0]` that isn't one of the
-    piece's bins is rejected at install.
+11. A piece without `sections.project`, or one found only on `PATH`, is never run. Each declaration rule rejects at
+    install: an unknown section key, a missing or over-long `label`, an empty or over-long `argv`, an `argv[0]` that
+    isn't the piece's bin, an unknown key. The flags are passed in the card's order. With `unfiled: true`, Home's call
+    gets `--unfiled --since` 7 days ago. A feed answering `{"groups": []}` gives a present, empty section.
 12. `project_hub` on a missing project gives `{found: false}`; on an archived one without `include_archived`, gives
     `{found: true, archived: true}` and runs no feed.
 13. `identity({project})` puts the block after the tape and before Top of Mind, before `# In the room` when both are
     present, within its cap, and never fails identity.
-14. `project` resolves an alias with `resolved_from`. `project_orphans` lists the tags of no project with counts.
+14. `project` resolves an alias with `resolved_from`. `project_orphans` counts only non-archived, non-expired memories,
+    lists an archived project's former names, and leaves out a live project's. `project_list` returns `links`, and
+    its `memories_since_synthesis` excludes archived, expired and older memories.
 15. The CLI's four verbs with `--json` and the exit codes above.
 
 ## First slice
 
 1. The store, tools, CLI, recall resolution and identity block: criteria 1–9 and 12–15.
 2. The section seam (10–11), with the tasks piece's `project-feed` as the pilot.
-3. The bridges piece's digests and feed (its own PR in that piece), and the agent's bridge briefs replace
-   per-request flags with digests.
+3. Shuttle's digests and feed (its own PR there). An agent whose bodies are told to message the owner on every
+   request drops that instruction in favour of digests (the agent's own configuration, outside loom and shuttle).
 4. The Projects tab and Home's Unfiled list.
 
 **Done**, outside loom's tests:
 - an owner opens a seeded project and sees what's queued (the tasks feed), the week's conversations with their
   digests (the bridges feed), and the person cards' fields for it;
-- a bridge request without `needs_owner` no longer reaches the owner anywhere but that page.
+- shuttle's own test: a digest without `needs_owner` creates no manifest ask and nothing else addressed to the owner.
 
 ## Decided, not open
 
