@@ -125,6 +125,16 @@ runner. The body:
 
 **Idempotent:** the same `(source piece, id)` within 24 hours returns the first call's answer and writes nothing.
 
+**Who may deliver what.** Core checks before forwarding:
+- the `venue` must be one the calling piece declares (`venues`). The clock declares `wake`, and the runtime declares
+  `relay`;
+- the `agent` must be one the calling piece is granted (section 6), checked like any piece call;
+- `from: {kind: person, slug}` is accepted only from a venue adapter, and the runtime checks it against its gates:
+  a platform id that resolves to no person becomes `{kind: unknown}`;
+- `from: {kind: agent}` only comes from the runtime itself (a relay).
+
+A delivery failing any check is refused with `403` and the reason, and writes nothing.
+
 The runtime:
 1. writes the turn and its audit text to core;
 2. tries to reach the body for up to 2 s;
@@ -141,7 +151,8 @@ Where it comes from:
   - another agent's relay, from the runtime itself.
 - **Outbound:** an agent's reply, or a message it starts. The runtime runs the venue adapter's declared `send`:
   - conversations.md's venue declaration gains `send`, an argv like `render`'s, given `--place <place>` with the text
-    on stdin;
+    on stdin, plus `--agent <agent>` so the adapter posts as that agent's own bot (bridges.md: one bot per agent per
+    platform). An adapter without that agent's bot answers `{ok: false, reason}`;
   - it has 15 s, and answers `{ok, id?}`;
   - it's sent first, then the agent's turn is recorded with outcome `answered` (`failed` if `send` failed after one
     retry), and the body is told of a failure.
@@ -215,12 +226,19 @@ These are core changes this doc depends on, each small:
 2. **Offers.** A managed piece declares in its `loom` block what it offers through core. These are sibling keys in
    the `loom` block, each with its own schema: projects.md's `sections`, conversations.md's `venues`, and two more
    here. They share one runner (the section-feed runner) and one install-time validation path:
+   - `delivery`: an argv. Core runs it with the `deliver` body on stdin, under the `mcp_tools` limits below, and passes
+     its answer back. Only a piece whose `loom` block role is `runtime` may declare it, and only one installed piece
+     may.
    - `mcp_tools`: up to 8 tools core adds to an agent's MCP session. They have their own limits, not the section feed's:
      120 s, an answer of `{text ≤ 64 KB, isError?}`. A long job (`house`) answers at once with the id of what it
      started. Each has a name, a description and a JSON
      schema, plus the argv that runs it with the arguments on stdin. Core calls it as the session's agent. The
      runtime offers `relay` and `house`. A name another piece or core already uses is refused at install.
-   - `grants`: the runtime is the authority core asks before running a piece call for an agent.
+   - `grants`: an argv. Core runs it with `{agent, piece, path}` on stdin before an agent's call to a piece, with 2 s to
+     answer `{allow: true}` or `{allow: false, reason}`.
+     - **Fail closed:** when the authority times out, errors, or is uninstalled while a call is in flight, the call is
+       refused with `503` and the reason. Owner calls never ask it.
+     - **Fallback:** a household with no authority installed uses each piece's own list, as section 6 says.
 3. **A `runtime` role:** the token role conversations.md defines.
 
 ## What moves where
@@ -241,23 +259,36 @@ If anything of shuttle is left once this is done, it's named `loom-shuttle` (the
 
 ## Order
 
-1. **Core seams:** remote pieces, offers (with `sections`, `venues` and `mcp_tools`), and the `runtime` role.
-2. **Conversations in core** (conversations.md, first slice).
-3. **The runtime** (loom-box renamed):
-   - model accounts and runners move in, then delivery;
+Each step leaves a working household, and each has its own "done".
+
+1. **Core seams:** remote pieces, offers (`sections`, `venues`, `mcp_tools`, `delivery`, `grants`), and the `runtime`
+   and `review` roles. **Done:** each merged with its tests, and a stub piece in core's suite declares every offer key
+   and is installed, refused and run as the specs say.
+2. **Conversations in core** (conversations.md, first slice). **Done:** its criteria 1–5 and 11–15 pass, and a
+   harness `session` writes turns and a digest on loom's machine.
+3. **The runtime** (loom-box renamed), in this order:
+   - model accounts and runners move in;
+   - delivery is added;
    - the clock and the bridges piece switch to `deliver`;
    - relay moves.
+
+   **Done:** tests 1–6 and 8 pass in the runtime's suite. For a week of real traffic, every wake and every bridge
+   message reaches a body through `deliver`. No session is started by the clock's or the bridges piece's own code
+   (their spawn code is deleted).
 4. **The adapters:** `loom-discord` and `loom-slack` split out of the bridges piece. Each adapter runs in shadow beside
-   the old bridge for 24 hours: it receives and routes, records nothing, and posts nothing. Agreement is checked like this:
+   the old bridge for 24 hours: it receives and routes, records nothing, and posts nothing. Agreement is checked
+   like this:
    - The adapter logs `(platform message id, agent, place)` for each message it would deliver. The old bridge logs the
      same from its routing.
    - A comparison script, part of the adapter's repo, matches the two logs by message id.
    - The adapter switches over when every message in the window has the same agent and place in both (at least 20
      messages; else the window extends).
-5. **Permissions:** grants replace the per-piece lists, and secrets takes over the grant.
-6. **The review job.**
 
-Each step leaves a working household. A step that can't is split until it can.
+   **Done:** both adapters switched, and the old bridges' units removed.
+5. **Permissions:** grants, the gates import, and secrets' `may`. **Done:** section 6's "Done" holds, test 5 and test 9
+   pass, and box no longer reads secrets with an environment flag.
+6. **The review job.** **Done:** a daily run takes audit entries, posts scores and findings, marks them done, and the
+   7-day sweep finds nothing older on a normal day.
 
 ## What the tests must pin
 
