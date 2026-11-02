@@ -49,25 +49,33 @@ be edited to match:
 - **"Without the runtime, a bridge spawns bodies locally as today"** no longer holds. A source with no runtime can't
   start a body. A household that wants Discord installs the runtime. A one-machine household's runtime is just loom's
   own machine as its only box (runtime.md, "Boxes", rule 1), so that costs no configuration.
-- **"Core knows neither"** still holds for *names*: core never names the runtime or a source. Core does know the
-  generic offers mechanism (below), through which the runtime offers grants and tools.
+- **"Core knows neither"** is reworded to "core names neither": core never names the runtime or a source, but it does
+  run the generic offers (below), through which the runtime offers delivery, grants and tools.
+
+household.md's sentence becomes: "The dependency only points one way. Sources need the runtime, the runtime uses core,
+and core names neither. It reaches them only through offers."
 
 **Words.** A **body** here is the agent itself in one conversation: it loads identity and writes the agent's memory
 and digests. A runtime body is not CONTEXT.md's *Worker body*, which serves the agent without being it. CONTEXT.md
-gains "Body: the agent running in one conversation (a session in a house)".
+gains "Body: the agent running in one conversation (a session in a house)". Its "Harness" entry, which calls the harness
+"the runtime the agent runs in", is reworded to "the program a body runs in (Claude Code, Codex)", so "runtime" means
+only this piece.
 
 ## What the runtime holds
 
 ### 1. Boxes and houses (from runtime.md)
 
 Enrollment, primaries, vacation homes, box and house credentials, and "a box only ever runs containers" all stand as
-runtime.md decided them, except who decides secret grants (section 6). The piece that built them (loom-box) becomes the runtime piece.
+runtime.md decided them, except who decides secret grants (section 6). The piece that built them (loom-box) becomes the runtime piece. Its piece name becomes `runtime` (bin
+`loom-runtime`, with `loom-box` kept as a second bin through the move). It keeps owners.md's `"owners": 2` opt-in,
+and every page and action that was box's, subscriptions' or the bridges piece's keeps its owner rules.
 
 ### 2. Model accounts (from subscriptions)
 
 The household's model accounts move here: sign-ins, credentials, usage, and issuing a credential into a house
 (`sub:<provider>`, which box already uses). The runtime keeps a **model list**: each model it can run, its harness,
-and its **family** (its provider: `anthropic`, `openai`, …). Grading reads the families (conversations.md, Review).
+and its **family**. Families are fixed strings: `anthropic`, `openai`, `google`, `mistral`, or `local:<name>` for a
+model the household runs itself. Grading reads the families (conversations.md, Review).
 
 ### 3. Runners
 
@@ -77,7 +85,13 @@ runners both go. Whoever needs a body asks the runtime for one.
 
 ### 4. Model choice
 
-One resolver picks the model for a body. Its inputs:
+One resolver picks the model for a body. In order:
+1. **Hard limits:** models the agent may use, with quota left.
+2. **The agent's preference** among those.
+3. **Scorecards** demote the preference when another allowed model's `graded` value for the venue kind is at least
+   1.0 higher (conversations.md).
+
+Its inputs:
 - the agent's preference;
 - the venue kind;
 - what each account has left;
@@ -96,35 +110,55 @@ a source ──► deliver {agent, venue, place, label?, from, text}
              the conversation's body:  live → feed it;  ended → resume it;  none → start one with the brief
 ```
 
-**The `deliver` contract.** `POST /api/runtime/deliver`, called with the source's piece token. The fields:
-- `agent`, `venue` and `place` together are conversations.md's key (agent · venue · place);
-- `from` is conversations.md's typed `from`;
-- `text` is the message (≤ 40,000 chars);
-- `label` is optional.
+**The `deliver` contract.** A source calls `POST /api/loom/deliver` with its own piece token. This is one new core
+route that every piece token may reach (extensions.md's "a piece credential reaches its own piece's API and nothing
+else" gains this exception). Core forwards the call to the piece offering `delivery` (the runtime), through the offers
+runner. The body:
+
+| Field | Value |
+|---|---|
+| `id` | the source's own id for the message (a platform message id, a wake id), ≤ 200; required |
+| `agent`, `venue`, `place` | conversations.md's key |
+| `from`, `kind`, `at` | conversations.md's turn fields (`kind` is `message`, `wake` or `note`) |
+| `label` | optional |
+| `text` | the message, ≤ 40,000 chars |
+
+**Idempotent:** the same `(source piece, id)` within 24 hours returns the first call's answer and writes nothing.
 
 The runtime:
-1. writes the turn to core (`POST /api/loom/conversations/turn`) and its text to core's audit log (conversations.md,
-   "The audit log");
-2. answers `{conversation, seq, body: "fed" | "resumed" | "started" | "queued"}`;
-3. reaches the body.
+1. writes the turn and its audit text to core;
+2. tries to reach the body for up to 2 s;
+3. answers `200 {conversation, seq, body}`, where `body` is `fed`, `resumed`, `started`, `queued` or `failed` (with a
+   `reason`).
 
-If step 1 fails, nothing reaches a body and the source gets the error. If step 3 fails, the turn stands and the answer
-says why.
+If step 1 fails, it answers `5xx`, nothing reaches a body, and no turn exists. A body that fails to start is
+`body: "failed"`: the turn stands.
 
 Where it comes from:
 - **Inbound:**
   - a Slack or Discord message, from a venue adapter;
   - "it's 03:13, run the knowledge lane", from the clock;
   - another agent's relay, from the runtime itself.
-- **Outbound:** an agent's reply, or a message it starts. The runtime runs the venue adapter's declared `send`
-  (conversations.md's venue declaration gains `send`: an argv like `render`'s, given `--place <place>` and the text on
-  stdin), and records the agent's turn.
+- **Outbound:** an agent's reply, or a message it starts. The runtime runs the venue adapter's declared `send`:
+  - conversations.md's venue declaration gains `send`, an argv like `render`'s, given `--place <place>` with the text
+    on stdin;
+  - it has 15 s, and answers `{ok, id?}`;
+  - it's sent first, then the agent's turn is recorded with outcome `answered` (`failed` if `send` failed after one
+    retry), and the body is told of a failure.
+- **Continuity slots hold raw session state** (a harness needs its history to resume). So, alongside the audit log:
+  - slots are encrypted at rest to the runtime's own key;
+  - each is kept only for its venue's continuity window, at most 14 days, then deleted;
+  - after that, a conversation resumes from its digests (bridges.md's summary handoff).
+  - **Harness transcripts:** this decides conversations.md's open question. The runtime deletes a harness's own
+    local transcript files for a body when its slot is deleted.
 - **Bodies, capacity and continuity:** as bridges.md has them. Warm houses with sessions as bodies, capacity counted in
   busy bodies, a new conversation taking a warm idle body's place, and continuity through slots with a summary
   handoff. The difference is that bridges.md's "shuttle service" is now the runtime, and the conversation record is
   core's.
 - **Agent-to-agent relay** is delivery whose `from` is an agent, on the venue `relay` the runtime declares. Pairing
-  rules (who may relay to whom) move out of household.json into the runtime's permissions. The `relay` MCP tool
+  rules (who may relay to whom) move out of household.json into the runtime's permissions. An unpaired relay is
+  delivered only with an allowed approval from the approvals piece (`loom approvals use`), and is refused when no
+  approvals piece is installed. The `relay` MCP tool
   becomes an offer the runtime makes (below), so core no longer names a piece.
 
 ### 6. Permissions
@@ -133,16 +167,20 @@ Who may do what, in one place:
 
 - **Gates** (from bridges.md, "Who someone is"): who a platform id is, and what each person may do with each agent
   (tiers, grants, restricts). They're kept in the runtime's owner-written collection.
-- **Agent grants:** which agents may use which pieces. These replace each piece's own environment list. Today those
-  are `TASKSTORE_AGENTS` (taskstore, `src/loom-api.ts`) and `WAKE_AGENTS` (the clock), plus the agent lists in the
-  approvals, machine and packages pieces. The step is done when no installed piece reads its own agent list. Core
-  enforces a grant before a piece call:
-  - with exactly one installed piece offering `grants` (the runtime), core asks it;
-  - with none, core does what it does today: the piece decides, by its own list;
-  - with two, the install of the second is refused.
+- **Agent grants:** which agents may use which pieces.
+  - **Who decides.** With one installed piece offering `grants` (the runtime), core asks it before any call an agent
+    makes to a piece: `/api/<piece>/…`, `/api/<piece>/run`, and an offered MCP tool. Running a piece's binary
+    directly inside a house isn't a call through loom, and isn't covered.
+  - **Without a grants authority,** each piece decides by its own agent list, as today. A second piece offering grants
+    is refused at install.
+  - **Pieces keep their lists** (taskstore's `TASKSTORE_AGENTS`, the clock's `WAKE_AGENTS`, and the lists in agent-made
+    pieces) as the fallback for a household without a runtime.
+  - **Done** means: with the runtime installed, no piece's own list is consulted. Core's grant check runs first, and a
+    piece sees only granted calls.
 - **Relay pairing,** as above.
 - **Secrets:** the runtime says *where* a secret lands in a house (the repo's house description). The secrets piece
-  decides *whether* an agent may have it. Box's own map of which agent gets which secret goes, and so does reading
+  decides *whether* an agent may have it, through its own `run` path: `may <agent> <name>` answers allowed, denied or
+  ask. Without a secrets piece, no secret reaches a house. Box's own map of which agent gets which secret goes, and so does reading
   secrets with an environment flag. This changes runtime.md's "The control plane still decides which secrets an
   agent's houses get". The rest of runtime.md's credential rules stand.
 
@@ -170,15 +208,16 @@ own Inbox page is unaffected.
 These are core changes this doc depends on, each small:
 
 1. **Remote pieces.** When `LOOM_URL` is set and the piece isn't installed locally, `loom <piece> …` sends
-   `POST /api/<piece>/run` `{argv}` with the house's token (`LOOM_TOKEN_FILE`). It answers with the piece's stdout,
-   stderr and exit code. Core's own verbs already reach a remote loom this way, through `POST /cli` in
+   `POST /api/<piece>/run` `{argv}` with the house's token (`LOOM_TOKEN_FILE`). It answers `{body: {exit, stdout, stderr}}` within extensions.md's limits (15 s, 8 MB). Core's own verbs already reach a remote loom this way, through `POST /cli` in
    `src/cli/remote.ts`. `run` becomes a documented standard path in extensions.md "The API", answered by any piece
-   that wants remote use. The forwarding code that goes: Art's `bin/piece-call` and the in-house forwarding in the
-   clock, approvals and the bridges piece's gates.
+   that wants remote use. The forwarding code that goes: the in-house forwarding in the clock, approvals and the bridges
+   piece's gates, and any agent's own forwarding script.
 2. **Offers.** A managed piece declares in its `loom` block what it offers through core. These are sibling keys in
    the `loom` block, each with its own schema: projects.md's `sections`, conversations.md's `venues`, and two more
    here. They share one runner (the section-feed runner) and one install-time validation path:
-   - `mcp_tools`: up to 8 tools core adds to an agent's MCP session. Each has a name, a description and a JSON
+   - `mcp_tools`: up to 8 tools core adds to an agent's MCP session. They have their own limits, not the section feed's:
+     120 s, an answer of `{text ≤ 64 KB, isError?}`. A long job (`house`) answers at once with the id of what it
+     started. Each has a name, a description and a JSON
      schema, plus the argv that runs it with the arguments on stdin. Core calls it as the session's agent. The
      runtime offers `relay` and `house`. A name another piece or core already uses is refused at install.
    - `grants`: the runtime is the authority core asks before running a piece call for an agent.
@@ -192,7 +231,7 @@ These are core changes this doc depends on, each small:
 | shuttle | subscriptions, sign-in, runners, spawn, model resolver, gates, relay queue, now board | runtime |
 | shuttle | the Discord adapter, the Slack adapter | `loom-discord`, `loom-slack` |
 | shuttle | the conversation store, and the digests feed (projects.md's `piece:shuttle` section) | core (conversations.md; its `conversations` section replaces the feed) |
-| shuttle | gates and identities (its owner-written collection) | the runtime's owner-written collection, copied by a one-time migration the runtime runs on install, reading shuttle's store through loom's piece-store API as the owner |
+| shuttle | gates and identities (its owner-written collection) | the runtime's owner-written collection. The owner runs `loom shuttle gates export --json | loom runtime gates import`: each piece touches only its own store, as piece-storage.md requires |
 | clock | session command, model, relay, approval-spending for relays | runtime |
 | core | relay pairing in household.json (`relayOf`/`setRelay` in `src/household.ts`); the HTTP server's relay function that finds the clock by name (`src/transport/http-server.ts`) | runtime; the `mcp_tools` offer |
 | each piece | its own agent list | the runtime's grants |
@@ -209,9 +248,12 @@ If anything of shuttle is left once this is done, it's named `loom-shuttle` (the
    - the clock and the bridges piece switch to `deliver`;
    - relay moves.
 4. **The adapters:** `loom-discord` and `loom-slack` split out of the bridges piece. Each adapter runs in shadow beside
-   the old bridge for 24 hours: it receives and routes, records nothing, and posts nothing. It switches over when its
-   routing agreed with the old bridge's on every message in that window (at least 20 messages, else the window
-   extends).
+   the old bridge for 24 hours: it receives and routes, records nothing, and posts nothing. Agreement is checked like this:
+   - The adapter logs `(platform message id, agent, place)` for each message it would deliver. The old bridge logs the
+     same from its routing.
+   - A comparison script, part of the adapter's repo, matches the two logs by message id.
+   - The adapter switches over when every message in the window has the same agent and place in both (at least 20
+     messages; else the window extends).
 5. **Permissions:** grants replace the per-piece lists, and secrets takes over the grant.
 6. **The review job.**
 
@@ -219,15 +261,22 @@ Each step leaves a working household. A step that can't is split until it can.
 
 ## What the tests must pin
 
-1. **One way to start a body.** With the runtime installed, a delivery from each of a test adapter, a test clock and a
-   relay starts a body through the runner interface, which is observed with a fake runner. The test adapter and test
-   clock have no code that starts a session; they only call `deliver`.
-2. **Delivery records first.** A delivered message writes its turn to core before any body sees it. With the body
-   failing to start, the turn is still recorded and the source gets an error.
-3. **Capacity and continuity:** bridges.md's "What the tests must pin" bullets 1–4 (the same key reaches the same
-   conversation, which is now conversations.md's; capacity counts busy bodies; a new conversation over the limit takes
-   an idle body's place; continuity through slots) move to the runtime's suite. Its gates and migration bullets are
-   replaced by tests 5 and 9 here.
+1. **One way to start a body.**
+   - With the runtime installed, a delivery from a test source and a relay starts a body through the runner interface,
+     observed with a fake runner.
+   - In each source's own repo (loom-discord, loom-slack, loom-clock), a test fails if the source's code names a
+     harness binary or a session command. Sources only call `deliver`.
+2. **Delivery records first, and once.** A delivered message writes its turn to core before any body sees it. With the body
+   failing to start, the turn is still recorded and the answer is `body: "failed"`. A repeated `(source, id)` within
+   24h writes no second turn.
+3. **Capacity and continuity** (from bridges.md, now the runtime's):
+   - the same key reaches the same conversation's body;
+   - capacity counts busy bodies;
+   - over the limit, a new conversation takes a warm idle body's place;
+   - only busy bodies make a message wait;
+   - a resumed body restores its slot.
+
+   DM/mention routing and per-bot de-duplication are the adapters' (their own suites).
 4. **Model choice:** given two models of which one has no quota left, the resolver picks the other. Given two models
    with quota, and a scorecard giving one a `graded` value at least 1.0 lower for a venue kind, the resolver picks the
    higher one for that kind. Venue kinds are conversations.md's: `live`, `scheduled`, `agent`.
@@ -247,8 +296,8 @@ Each step leaves a working household. A step that can't is split until it can.
 8. **Remote pieces:** with `LOOM_URL` set and no local piece, `loom <piece> list` posts `{argv: ["list"]}` to
    `/api/<piece>/run` with the token file's token, and returns the answer's stdout and exit code. This is tested in core
    against a stub piece.
-9. **Gates migration:** after install, the runtime's gates collection equals shuttle's, entry for entry, and shuttle's
-   is untouched.
+9. **Gates migration:** a test export from a stub shuttle, imported, gives the runtime's collection entry for entry.
+   The import refuses anything but an owner's run, and never reads another piece's store.
 
 ## Open questions
 
