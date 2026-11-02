@@ -67,3 +67,22 @@ export function bits(s: string): Bit[] {
   if (at < s.length) out.push({ t: 'text', s: s.slice(at) });
   return out;
 }
+
+/** Where an item opens (Jonathan, 2026-11-02: "it should go to the item itself"): its own page when it has one (a
+ * task's, t-1273's), else its sheet in the Inbox. Its own page is a page its piece links that isn't the piece's front
+ * page (that says nothing of the item); an item with buttons opens on them (the sheet), and an answered one is
+ * history, told in its sheet. The Inbox's row and Home's banner both open this way. */
+export function opensTo(i: { key: string; kind: string; page?: string; actions?: unknown[] }): { page: string } | { sheet: string } {
+  return i.page && i.kind !== 'answered' && !i.actions?.length ? { page: i.page } : { sheet: `/inbox?i=${i.key}` };
+}
+
+/** Opening an item: an unread one is read first, wherever it opens (its own page, or its sheet here), the way
+ * /inbox?i=<key> reads it; then it opens. Its sheet from elsewhere is that address, which reads it itself. */
+export async function openItem(i: { key: string; kind: string; page?: string; actions?: unknown[]; unread?: boolean },
+  to: { read: (key: string) => Promise<unknown>; page: (page: string) => void; sheet?: () => void; go: (href: string) => void }): Promise<void> {
+  const where = opensTo(i);
+  if (i.unread && ('page' in where || to.sheet)) await to.read(i.key).catch(() => undefined);
+  if ('page' in where) to.page(where.page);
+  else if (to.sheet) to.sheet();
+  else to.go(where.sheet);
+}
