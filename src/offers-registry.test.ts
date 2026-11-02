@@ -12,7 +12,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { grantsAuthority, offersOf, piecesOffering, runOffer } from './offers-registry.js';
+import { grantsAuthority, OFFER_LIMITS, offersOf, piecesOffering, runOffer } from './offers-registry.js';
 import { parseFeed } from './offers.js';
 import { clearPieceCache } from './ui/pieces.js';
 
@@ -81,9 +81,20 @@ describe('offers registry and runner', () => {
     const run = (verb: string) => runOffer(env, 'tasks', ['loom-tasks', verb], { parse: parseFeed });
     expect(await run('bad')).toEqual({ ok: false, error: 'invalid: groups[0].title is required, at most 80 characters' });
     expect(await run('text')).toEqual({ ok: false, error: 'invalid: not JSON' });
-    expect(await run('fail')).toEqual({ ok: false, error: 'exit 3' });
+    // A non-zero exit keeps its code and what it said, so an offer can say why it failed.
+    expect(await run('fail')).toEqual({ ok: false, error: 'exit 3', exit: 3, answer: { groups: [] } });
     expect(await run('big')).toEqual({ ok: false, error: 'answer too large' });
   });
+
+  it('each kind has its limits: delivery and mcp_tools 120 s, each in a pool of its own, a feed 3 s', async () => {
+    expect(OFFER_LIMITS.delivery).toEqual({ timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' });
+    expect(OFFER_LIMITS.mcp_tools).toEqual({ timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' });
+    expect(OFFER_LIMITS.sections).toMatchObject({ timeoutMs: 3_000, pool: 'page' });
+    await piece('runtime', { role: 'runtime' }, { 'loom-runtime': 'sleep 3.5; echo \'{"groups":[]}\'' });
+    // Past the feed's 3 s, inside delivery's 120.
+    expect(await runOffer(env, 'runtime', ['loom-runtime'], { parse: parseFeed })).toEqual({ ok: false, error: 'timed out' });
+    expect(await runOffer(env, 'runtime', ['loom-runtime'], { parse: parseFeed, kind: 'delivery' })).toEqual({ ok: true, value: { groups: [] } });
+  }, 15_000);
 
   it('times out at 3 s, and kills the piece\'s process group', async () => {
     const child = join(tmp, 'child-lived');

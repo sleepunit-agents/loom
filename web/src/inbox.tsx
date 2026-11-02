@@ -4,26 +4,24 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Button } from '@/components/ui/button';
-import { Arrive } from './arrive';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ActButton, EnvContext, Link, LoomMark, Nothing } from './blocks';
-import type { Button as Btn, Chrome, Source } from './loom';
-import { As, Mark } from './views';
+import type { Chrome, Source } from './loom';
+import { As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
 import { bits, plain } from './plain';
 import { tidy } from './tidy';
 
 const useEnv = () => useContext(EnvContext)!;
 
-type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
-const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
 // The filters (Jonathan, 2026-10-30): "needs you, to do, fyi, everything is the order and we ditch answered". What
 // was answered is history, in All; a permission, a decision, a reply or an alert needs you, and says which on
 // its own row.
 const KINDS: Array<[InboxItem['kind'], string]> = [['todo', 'To do'], ['fyi', 'FYI']];
 
-export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folder: string; chrome: Chrome }) {
+export function InboxView({ items, folder, open: opened, chrome }: { items: InboxItem[]; folder: string; open?: string; chrome: Chrome }) {
   const { ctx } = useEnv();
-  const [open, setOpen] = useState<InboxItem | null>(null);
+  // An item asked for by its address (/inbox?i=…: Home's banner, a push) opens at once.
+  const [open, setOpen] = useState<InboxItem | null>(() => items.find((i) => i.key === opened) ?? null);
   // The switch is this page's own: every item came with it, so it filters here, at once.
   const [show, setShow] = useState(folder === 'needs' ? 'needs' : KINDS.some(([k]) => k === folder) ? folder : 'all');
   const agents = ctx.agents ?? {};
@@ -31,23 +29,9 @@ export function InboxView({ items, folder, chrome }: { items: InboxItem[]; folde
   const tasks = items.find((i) => i.source.id === 'tasks')?.source ?? { id: 'tasks', base: '/p/tasks/' };
   const need = items.filter((i) => i.attention);
   const rest = items.filter((i) => !i.attention);
-  const row = (i: InboxItem) => {
-    const p = plain(i, name(i.agent));
-    return (
-      <Arrive as="li" key={i.key} k={`in:${i.key}\0${i.kind}`} className="min-w-0">
-        <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => setOpen(i)}>
-          {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
-          {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
-              <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
-            {(p.why ?? i.outcome) && <span className="block truncate text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
-          </span>
-          <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
-        </button>
-      </Arrive>
-    );
-  };
+  // A row opens the item: its own page (a task's), else its sheet here.
+  const openItem = useOpenItem(setOpen);
+  const row = (i: InboxItem) => <InboxRow key={i.key} i={i} onOpen={openItem} />;
   return (
     <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
       <ToggleGroup type="single" className="flex-wrap self-start justify-self-start" aria-label="Show" value={show} onValueChange={(f) => { if (f) setShow(f); }}>

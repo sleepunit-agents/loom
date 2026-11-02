@@ -51,12 +51,20 @@ export function storeHome(env: NodeJS.ProcessEnv): string | undefined {
   return env.HOME ? join(env.HOME, '.config', 'loom') : undefined;
 }
 
-export function openHouseholdDb(home: string): Database {
-  mkdirSync(home, { recursive: true, mode: 0o700 });
-  const db = new BetterSqlite3(join(home, HOUSEHOLD_DB));
-  db.pragma('busy_timeout = 5000');
-  db.pragma('journal_mode = WAL');
-  db.exec(`CREATE TABLE IF NOT EXISTS venues (
+/** The db files whose schema this process has made sure of: it runs once per file, not per open. */
+const schemaDone = new Set<string>();
+
+/**
+ * household.db's schema:
+ *  - `venues`: the registry above;
+ *  - `deliveries`: POST /api/loom/deliver's replay table (src/delivery.ts). One row per calling
+ *    piece (whichever of its credentials called) and id, for 24 hours: when, a SHA-256 of the
+ *    body (never the text) and the runtime's answer;
+ *  - the review's records (src/audit.ts, src/review.ts): `audit_reads` (who took which audit
+ *    entry, never its text), `conversation_strangers` (sticky: a turn came from a non-owner),
+ *    `models_seen` (every model and harness a turn named), `review_scores` and `scorecards`.
+ */
+const SCHEMA = `CREATE TABLE IF NOT EXISTS venues (
     name        TEXT PRIMARY KEY,
     piece       TEXT NOT NULL,
     label       TEXT NOT NULL,
@@ -64,54 +72,71 @@ export function openHouseholdDb(home: string): Database {
     render_json TEXT,
     orphaned    TEXT,
     updated     TEXT NOT NULL
-  )`);
-  // The review's household-wide records (src/audit.ts, src/review.ts): who took which audit
-  // entry (never its text), the scores graders posted by ref, and the scorecard rows core
-  // aggregates from them and from turn metadata.
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS audit_reads (
-      ref          TEXT PRIMARY KEY,
-      run          TEXT NOT NULL,
-      at           TEXT NOT NULL,
-      agent        TEXT NOT NULL,
-      conversation TEXT NOT NULL,
-      seq          INTEGER NOT NULL,
-      UNIQUE (agent, conversation, seq)
-    );
-    CREATE INDEX IF NOT EXISTS idx_audit_reads_run ON audit_reads(run);
-    CREATE TABLE IF NOT EXISTS conversation_strangers (
-      agent        TEXT NOT NULL,
-      conversation TEXT NOT NULL,
-      at           TEXT NOT NULL,
-      PRIMARY KEY (agent, conversation)
-    );
-    CREATE TABLE IF NOT EXISTS models_seen (
-      kind  TEXT NOT NULL,
-      name  TEXT NOT NULL,
-      first TEXT NOT NULL,
-      PRIMARY KEY (kind, name)
-    );
-    CREATE TABLE IF NOT EXISTS review_scores (
-      ref           TEXT NOT NULL,
-      grader_family TEXT NOT NULL,
-      score         INTEGER NOT NULL,
-      at            TEXT NOT NULL,
-      PRIMARY KEY (ref, grader_family)
-    );
-    CREATE TABLE IF NOT EXISTS scorecards (
-      day         TEXT NOT NULL,
-      model       TEXT NOT NULL,
-      family      TEXT NOT NULL,
-      harness     TEXT NOT NULL,
-      kind        TEXT NOT NULL,
-      measure     TEXT NOT NULL,
-      same_family INTEGER NOT NULL,
-      value       REAL NOT NULL,
-      n           INTEGER NOT NULL,
-      total       REAL NOT NULL,
-      PRIMARY KEY (day, model, family, harness, kind, measure, same_family)
-    );
-  `);
+  );
+  CREATE TABLE IF NOT EXISTS deliveries (
+    piece       TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    at          INTEGER NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    answer_json TEXT NOT NULL,
+    PRIMARY KEY (piece, id)
+  );
+  CREATE INDEX IF NOT EXISTS deliveries_piece_at ON deliveries (piece, at);
+  CREATE TABLE IF NOT EXISTS audit_reads (
+    ref          TEXT PRIMARY KEY,
+    run          TEXT NOT NULL,
+    at           TEXT NOT NULL,
+    agent        TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    UNIQUE (agent, conversation, seq)
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_reads_run ON audit_reads(run);
+  CREATE TABLE IF NOT EXISTS conversation_strangers (
+    agent        TEXT NOT NULL,
+    conversation TEXT NOT NULL,
+    at           TEXT NOT NULL,
+    PRIMARY KEY (agent, conversation)
+  );
+  CREATE TABLE IF NOT EXISTS models_seen (
+    kind  TEXT NOT NULL,
+    name  TEXT NOT NULL,
+    first TEXT NOT NULL,
+    PRIMARY KEY (kind, name)
+  );
+  CREATE TABLE IF NOT EXISTS review_scores (
+    ref           TEXT NOT NULL,
+    grader_family TEXT NOT NULL,
+    score         INTEGER NOT NULL,
+    at            TEXT NOT NULL,
+    PRIMARY KEY (ref, grader_family)
+  );
+  CREATE TABLE IF NOT EXISTS scorecards (
+    day         TEXT NOT NULL,
+    model       TEXT NOT NULL,
+    family      TEXT NOT NULL,
+    harness     TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    measure     TEXT NOT NULL,
+    same_family INTEGER NOT NULL,
+    value       REAL NOT NULL,
+    n           INTEGER NOT NULL,
+    total       REAL NOT NULL,
+    PRIMARY KEY (day, model, family, harness, kind, measure, same_family)
+  );`;
+
+export function openHouseholdDb(home: string): Database {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const path = join(home, HOUSEHOLD_DB);
+  // A file made since (a test's fresh home, a deleted db) gets its schema again.
+  const fresh = !existsSync(path);
+  const db = new BetterSqlite3(path);
+  db.pragma('busy_timeout = 5000');
+  db.pragma('journal_mode = WAL');
+  if (fresh || !schemaDone.has(path)) {
+    db.exec(SCHEMA);
+    schemaDone.add(path);
+  }
   return db;
 }
 
@@ -225,4 +250,38 @@ export function venueLabel(home: string | undefined, name: string): string {
 /** Sync after a piece change, never failing it: a failed sync is said, and the daemon's next start repairs it. */
 export function syncVenuesQuietly(env: NodeJS.ProcessEnv, say: (s: string) => void = (s) => process.stderr.write(s)): void {
   try { syncVenues(env); } catch (e) { say(`loom: couldn't update the venues registry (${(e as Error).message}); the daemon's next start does\n`); }
+}
+
+/** A venue as the runtime is told it (GET /api/loom/venues): where to send an agent's words. */
+export interface VenueEntry {
+  name: string;
+  label: string;
+  kind: VenueKind;
+  /** The piece that declares it, or `loom` for core's own (session, wake). */
+  piece: string;
+  /** Its declared `send` argv (agent-runtime.md, "Delivery", Outbound), while its piece is installed. */
+  send?: string[];
+  /** When its piece was removed; an orphaned venue has no send. */
+  orphaned?: string;
+}
+
+/**
+ * Every venue the household has, for the runtime (GET /api/loom/venues, role runtime): core's
+ * own, then the registry's, each with its piece and, while that piece is installed and still
+ * declares it, its `send`, read from the piece's checked loom block. So the runtime never reads
+ * another piece's piece.json itself.
+ */
+export function venueDirectory(env: NodeJS.ProcessEnv): VenueEntry[] {
+  const home = storeHome(env);
+  const sends = new Map<string, { piece: string; send?: string[] }>();
+  for (const p of managedPieces(env)) {
+    for (const [name, v] of Object.entries(p.loom.venues ?? {})) sends.set(name, { piece: p.name, ...(v.send ? { send: [...v.send] } : {}) });
+  }
+  const core = Object.values(CORE_VENUE_ROWS).map((v): VenueEntry => ({ name: v.name, label: v.label, kind: v.kind, piece: v.piece }));
+  const rows = home ? listVenues(home) : [];
+  return [...core, ...rows.map((v): VenueEntry => {
+    const live = sends.get(v.name);
+    const send = !v.orphaned && live?.piece === v.piece ? live.send : undefined;
+    return { name: v.name, label: v.label, kind: v.kind, piece: v.piece, ...(send ? { send } : {}), ...(v.orphaned ? { orphaned: v.orphaned } : {}) };
+  })];
 }

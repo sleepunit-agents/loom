@@ -1,7 +1,7 @@
 // The kinds of page that aren't a piece's Page (src/ui/handler.ts views): the household's home, an agent's
 // Today, the Inbox, and the Places, Setup, Find and Scope sheets. Same data the classic page draws.
 import { useContext, lazy, Suspense } from 'react';
-import { AgentState } from '@/components/ui/agent-state';
+import { Badge } from '@/components/ui/badge';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
 import { Button } from '@/components/ui/button';
@@ -11,8 +11,10 @@ import { Spinner } from '@/components/ui/spinner';
 // The activity feed loads on its own (it and its motion are heavy); the first page doesn't wait for it.
 const Profile = lazy(() => import('./profile'));
 const Ledger = lazy(() => import('./ledger'));
-import { ActButton, AgentAvatar, BlockView, EnvContext, Link, Nothing, type Env } from './blocks';
-import type { Button as Btn, Source, Tone } from './loom';
+import { ActButton, AgentAvatar, BlockView, EnvContext, Link, LoomMark, Nothing, type Env } from './blocks';
+import { markRead, pageHref, type Button as Btn, type Source, type Tone } from './loom';
+import { openItem, plain } from './plain';
+import { tidy } from './tidy';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
 type Doing = { text: string; kind?: 'talk' | 'lane' | 'task' | 'session' | 'other'; where?: string; since?: string; page?: string; source: Source };
@@ -106,18 +108,23 @@ export function PressCard({ onPress, className, children }: { onPress: () => voi
 
 // ---- the household's home ----------------------------------------------------------------------
 
-export function HouseHomeView({ home }: { home: { headline: string; needs: number; firstNeed?: string; cards: AgentCard[]; moving: { agent?: string; text: string; meta?: string }[] } }) {
+export function HouseHomeView({ home }: { home: { headline: string; needs: number; need?: InboxItem; cards: AgentCard[]; moving: { agent?: string; text: string; meta?: string }[] } }) {
   const { go } = useEnv();
+  const open = useOpenItem();
   return (
     <div className="grid gap-4">
       <h2 className="text-2xl font-semibold">{home.headline}</h2>
-      {home.needs > 0 && (
-        <PressCard className="flex items-center gap-3" onPress={() => go('/inbox')}>
-          <AgentState status="needs-input" size="sm" />
-          <span className="min-w-0 flex-1"><span className="block font-medium">{home.firstNeed ?? `${home.needs} need${home.needs === 1 ? 's' : ''} you`}</span>
-            <span className="block text-sm opacity-70">In the Inbox</span></span>
-          <AnimatedIcon name={iconFor("chevron-right")} size="sm" />
-        </PressCard>
+      {/* What needs you is its Inbox row (Jonathan, 2026-11-02: "effectively the same thing as that item's row"), under
+          a small Needs you, and it opens as it does there: to the item, not to the Inbox. The rest are a tap away. */}
+      {home.need && (
+        <Card className="gap-0 px-4 py-3">
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.08em]">
+            <span className="size-2 rounded-full bg-amber-500" />
+            <span className="opacity-70">Needs you{home.needs > 1 ? ` · ${home.needs}` : ''}</span>
+            {home.needs > 1 && <button type="button" className="ml-auto normal-case tracking-normal opacity-70 hover:opacity-100" onClick={() => go('/inbox')}>All in the Inbox</button>}
+          </div>
+          <ul className="min-w-0"><InboxRow i={home.need} onOpen={open} /></ul>
+        </Card>
       )}
       {home.cards.length === 0 && <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one.">
         <Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>}
@@ -125,6 +132,44 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
         {home.cards.map((c) => <AgentIdentity key={c.id} c={c} />)}
       </div>
     </div>
+  );
+}
+
+// ---- an Inbox item's row (the Inbox's, and Home's banner) ---------------------------------------
+
+export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
+export const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
+
+/** Opening an item (plain.ts opensTo): its own page when it has one; else its sheet, here (`sheet`, in the Inbox) or
+ * in the Inbox (from anywhere else). */
+export function useOpenItem(sheet?: (i: InboxItem) => void) {
+  const { go, ctx } = useEnv();
+  return (i: InboxItem) => void openItem(i, {
+    read: (key) => markRead(key, ctx.csrf), page: (page) => go(pageHref(page, i.source)), go,
+    ...(sheet ? { sheet: () => sheet({ ...i, unread: false }) } : {}),
+  });
+}
+
+/** An item in a line: who (their mark, or loom's), what, why, and its kind. */
+export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
+  const { ctx } = useEnv();
+  const agents = ctx.agents ?? {};
+  const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
+  const p = plain(i, name(i.agent));
+  return (
+    <Arrive as="li" k={`in:${i.key}\0${i.kind}`} className="min-w-0">
+      <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => onOpen(i)}>
+        {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
+        {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
+        <span className="min-w-0 flex-1">
+          {/* The whole title, mostly (Jonathan liked reading it): two lines before it's cut. */}
+          <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
+            <span className={`line-clamp-2 break-words ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
+          {(p.why ?? i.outcome) && <span className="block truncate text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
+        </span>
+        <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
+      </button>
+    </Arrive>
   );
 }
 

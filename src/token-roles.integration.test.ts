@@ -242,9 +242,9 @@ describe('the runtime and review roles over HTTP', () => {
   });
 
   it('every existing route refuses both roles', async () => {
-    // The allowlist: runtime mints review tokens, writes conversation turns (t-1741), their audit
-    // entries, and reads the scorecards; review takes, finishes, scores and finds (t-1742).
-    expect(ROLE_ROUTES).toEqual({ runtime: ['review/token', 'conversations/turn', 'audit', 'scorecards', 'review/config'], review: ['audit/take', 'audit/done', 'scores', 'findings'] });
+    // The allowlist: runtime mints review tokens, writes conversation turns (t-1741), delivers (t-1744),
+    // writes audit entries and reads the scorecards and review settings; review takes, finishes, scores and finds (t-1742).
+    expect(ROLE_ROUTES).toEqual({ runtime: ['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config'], review: ['audit/take', 'audit/done', 'scores', 'findings'] });
     const mcp = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } };
     for (const k of ['runtime', 'review'] as const) {
       for (const p of ['/', '/mcp', '/agents/art/mcp', '/agents/art/']) {

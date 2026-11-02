@@ -119,21 +119,31 @@ runner. The body:
 |---|---|
 | `id` | the source's own id for the message (a platform message id, a wake id), ≤ 200; required |
 | `agent`, `venue`, `place` | conversations.md's key |
-| `from`, `kind`, `at` | conversations.md's turn fields (`kind` is `message`, `wake` or `note`) |
+| `from`, `kind`, `at` | conversations.md's turn fields (`kind` is `message` or `wake`: a `note` is the agent's own turn, and comes only through its session) |
 | `label` | optional |
 | `text` | the message, ≤ 40,000 chars |
+| `source` | the calling piece's name: added by core when it forwards, never sent by the caller |
 
-**Idempotent:** the same `(source piece, id)` within 24 hours returns the first call's answer and writes nothing.
+**Idempotent:** the same calling piece and `id` within 24 hours, whichever of the piece's credentials calls, returns
+the first call's answer and writes nothing. The same pair with a different body is refused with `409`.
+Core keeps a hash of the body, never its text.
 
 **Who may deliver what.** Core checks before forwarding:
-- the `venue` must be one the calling piece declares (`venues`). The clock declares `wake`, and the runtime declares
-  `relay`;
+- the `venue` must be one the calling piece declares (`venues`). The runtime declares `relay`. `wake` is core's own
+  venue, so a piece that delivers on it says so with an empty entry, `"wake": {}`, which references core's venue rather
+  than defining one. The clock declares that. A `wake` delivery's `from` is `{kind: schedule}`;
 - the `agent` must be one the calling piece is granted (section 6), checked like any piece call;
 - `from: {kind: person, slug}` is accepted only from a venue adapter, and the runtime checks it against its gates:
   a platform id that resolves to no person becomes `{kind: unknown}`;
 - `from: {kind: agent}` only comes from the runtime itself (a relay).
 
 A delivery failing any check is refused with `403` and the reason, and writes nothing.
+
+**Limits.** Core forwards under the `mcp_tools` limits (120 s, an answer ≤ 64 KB), in delivery's own pool (8 running,
+32 waiting), apart from `mcp_tools`' and the page's. One calling piece has at most 2 forwards running and 4 waiting; past that it's refused with `503`, and other pieces aren't held
+back. Core keeps at most 10,000 answers per piece in 24 hours; past that, `429`. The body is ≤ 256 KB (`413`). A
+runtime that fails exits 1 with `{status: 5xx, error}`, which core passes on with that status. Any other failure is a
+`502`, and a timeout is a `504`. None of these is kept.
 
 The runtime:
 1. writes the turn and its audit text to core;
@@ -298,8 +308,8 @@ Each step leaves a working household, and each has its own "done".
    - In each source's own repo (loom-discord, loom-slack, loom-clock), a test fails if the source's code names a
      harness binary or a session command. Sources only call `deliver`.
 2. **Delivery records first, and once.** A delivered message writes its turn to core before any body sees it. With the body
-   failing to start, the turn is still recorded and the answer is `body: "failed"`. A repeated `(source, id)` within
-   24h writes no second turn.
+   failing to start, the turn is still recorded and the answer is `body: "failed"`. A repeated `(calling piece, id)`
+   within 24h writes no second turn; the same pair with a different body is refused with `409`.
 3. **Capacity and continuity** (from bridges.md, now the runtime's):
    - the same key reaches the same conversation's body;
    - capacity counts busy bodies;

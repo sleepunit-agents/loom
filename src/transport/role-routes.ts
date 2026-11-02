@@ -10,12 +10,23 @@
  */
 export type NarrowRole = 'runtime' | 'review';
 
+/**
+ * POST /api/loom/deliver (docs/specs/agent-runtime.md, "Delivery"): the runtime's, and also
+ * the one core route every piece credential reaches (as its own piece), dispatched before
+ * this table is consulted (http-server.ts, handlePieceApi). Owner, agent, peer and review
+ * tokens never reach it.
+ */
+export const DELIVER_ROUTE = 'deliver';
+
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token', 'conversations/turn', 'audit', 'scorecards', 'review/config'],
+  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config'],
   review: ['audit/take', 'audit/done', 'scores', 'findings'],
 };
 
-/** Of those, the ones that are GET (everything else is POST): the scorecards and the review's settings. */
+/**
+ * Of ROLE_ROUTES, the ones that are GET (the rest are POST): the scorecards and the review's
+ * settings. (GET /api/loom/venues is RUNTIME_GET_ROUTES, answered before this table.)
+ */
 export const GET_ROUTES: readonly string[] = ['scorecards', 'review/config'];
 
 /**
@@ -25,7 +36,13 @@ export const GET_ROUTES: readonly string[] = ['scorecards', 'review/config'];
  */
 export const AGENT_ROUTES: readonly string[] = ['conversations/turn', 'audit'];
 
-/** Whether `role` may call /api/loom/<path>. */
+/**
+ * GET /api/loom/<path>, answered before ROLE_ROUTES is read: what core tells the runtime. `venues`: every
+ * venue with its kind, piece and `send` argv (household-store.ts, venueDirectory).
+ */
+export const RUNTIME_GET_ROUTES: readonly string[] = ['venues'];
+
+/** Whether `role` may call /api/loom/<path> (POST, or GET for GET_ROUTES). */
 export function roleReaches(role: NarrowRole, path: string): boolean {
   return ROLE_ROUTES[role].includes(path);
 }

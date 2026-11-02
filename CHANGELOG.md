@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Delivery, core's half.** `POST /api/loom/deliver`: the one core route every
+  piece token reaches (and the runtime's token). Core checks the body and who
+  may deliver what (the venue is the caller's, the agent the household's and
+  granted, a person only from a venue adapter, an agent only from the
+  runtime), each refused with a 403 that writes nothing; then forwards it to
+  the one piece offering the new `delivery` offer key (a runtime-role piece
+  only, one per household) under 120 s and 64 KB, and passes its answer
+  back (a runtime's own `{status: 5xx, error}` passes through). Idempotent on
+  (calling piece, id) for 24 hours, kept in `household.db`; a failed forward
+  isn't kept. `GET /api/loom/venues` gives the runtime every venue with its
+  `send` argv. Offer lookups by name use own keys only. A piece delivers on
+  core's `wake` only if it declares `"wake": {}` in its venues. Replays are
+  keyed on (calling piece, id) with a hash of the body (a changed body is a
+  409), and one piece gets at most 2 running and 4 waiting forwards and
+  10,000 kept answers a day (t-1744).
 - **The audit log and review's records** (docs/specs/conversations.md, slices 2-3).
   `$LOOM_HOME/audit.db` holds raw turn text, age-encrypted to a review key made
   at first use (`review.key`/`review.pub`, 0600), written by the turn's writer
