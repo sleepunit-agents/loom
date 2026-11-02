@@ -27,7 +27,7 @@ import { readBody } from './io.js';
 import type { IOStreams } from './io.js';
 
 export const REMOTE_VERBS: ReadonlySet<string> = new Set([
-  'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person', 'note',
+  'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person', 'project', 'note',
 ]);
 
 /**

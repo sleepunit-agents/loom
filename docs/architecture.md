@@ -35,6 +35,7 @@ flowchart LR
       MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit · memory_recompute_salience<br/>relay (household HTTP)<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
       PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence"]
+      PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
       NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
     end
@@ -51,6 +52,8 @@ flowchart LR
     EPI["episodes.ts<br/>the 24h tape"]
     PROP["proposals.ts"]
     PPL["people.ts<br/>PeopleStore · renderCard · roomBlock"]
+    PRJ["projects.ts<br/>ProjectsStore · renderProjectCard · projectBlock"]
+    CARDS["cards.ts<br/>what both kinds of card share"]
     OBS["recall-log.ts · recorder-health.ts"]
     MIG["migrations.ts"]
   end
@@ -75,7 +78,7 @@ flowchart LR
   P -. mesh .-> G
   G --> HTTPF --> FULL
   G --> HTTPK --> KONLY
-  CLI -- "wake · recall · remember · memory · knowledge · note · person<br/>call the same tool functions" --> wings
+  CLI -- "wake · recall · remember · memory · knowledge · note · person · project<br/>call the same tool functions" --> wings
   CLI -- "inject · install" --> DOT
   CLI -. "--url / LOOM_URL: the store verbs<br/>ship argv to POST /cli" .-> G
   HTTPF -- "POST /cli · cli-endpoint.ts<br/>the same CLI, the server's stack" --> CLI
@@ -89,14 +92,18 @@ flowchart LR
   MEMW --> FACT
   PROPW --> PROP
   PEOW --> PPL
+  PROJW --> PRJ & PPL
+  IDW -- "project param:<br/># This project" --> PRJ
+  PPL & PRJ --> CARDS
+  VEC -- "recall resolves project names" --> PRJ
   KW --> KB
   KW --> GAPS
   FACT --> VEC
   VEC --> EMB --> CACHE
   VEC --> HELP & MIG
   VEC --> MEMDB
-  SAL & EPI & PROP & PPL --> MEMDB
-  PPL --> MIG
+  SAL & EPI & PROP & PPL & PRJ --> MEMDB
+  PPL & PRJ --> MIG
   OBS --> TEL
   KB --> KDB
 ```
@@ -112,6 +119,9 @@ Two things this picture says that are easy to miss:
   condense, never in `knowledge.db`. A card is current state (one value
   per field, overwritten; the past only in revisions) and is descriptive,
   never a gate: the harness keeps tiers and scopes in its own file.
+  Project cards sit beside them (`projects`, `project_revisions`,
+  `project_names`), under the same rules; a project's hub is computed at
+  read from the memories, notes and person cards already there.
 - **The knowledge-only server is smaller, not just locked down.** A peer
   on `--scope knowledge` never sees identity or memory tools in its tool
   list, and the knowledge wing pins `created_by` to the identity its
@@ -126,7 +136,8 @@ parts, in this order. `loom wake` prints the same thing without MCP.
 flowchart TB
   A["# Identity<br/>IDENTITY.md, the terminal creed"] --> B["# Preferences<br/>preferences.md"]
   B --> C["# Last 24h across bodies<br/>episodes.ts: the tape, time-ordered, never ranked"]
-  C --> R2["# In the room<br/>people.ts roomBlock: person cards for the people param<br/>only when people is passed; best-effort, ≤ 4 cards, 6,500 chars"]
+  C --> P2["# This project<br/>projects.ts projectBlock: the card for the project param<br/>only when project is passed; a placeholder line, never a failure"]
+  P2 --> R2["# In the room<br/>people.ts roomBlock: person cards for the people param<br/>only when people is passed; best-effort, ≤ 4 cards, 6,500 chars"]
   R2 --> D["# Top of Mind<br/>salience.ts: hottest memories first, to a token budget"]
   D --> E["# Self-Model<br/>self-model.md"]
   E --> F["# Mode: role<br/>roles/&lt;role&gt;.md, if a role was passed"]
@@ -185,6 +196,7 @@ have fallen behind.
 |---|---|---|
 | `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
 | `memories.db` (people) | `people`, `person_revisions` | `people.ts`, created by the `people_cards` migration |
+| `memories.db` (projects) | `projects`, `project_revisions`, `project_names` (every live project's slug and aliases: the primary key is the uniqueness rule) | `projects.ts`, created by the `project_cards` migration |
 | `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access` | `sqlite-knowledge.ts` |
 | Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
 | Telemetry | `telemetry/recall.jsonl`, `recorder-health.json` | `recall-log.ts`, `recorder-health.ts` |
@@ -205,7 +217,7 @@ have fallen behind.
 | `src/ui/*` | loom's page, at the daemon's root. `core.ts` (loom's own pages and actions), `data.ts` (their queries), `pieces.ts` (running `loom-<piece> ui …`), `vocab.ts` (the page vocabulary and its validation), `render.ts` (the page data's types and the sign-in pages), `handler.ts` (routes, sessions, the guards on actions: every page answers the app's shell, or its data as JSON). The app that draws the pages is `web/` (React, built into `dist/web/`, docs/specs/ui-app.md) |
 | `src/transport/cli-endpoint.ts` | `POST /cli`: runs a store verb's argv through `runCliLocal` (no remote mode on its path) on the server's stack (full scope only) |
 | `src/transport/mcp-app-hello.ts` | Env-gated MCP-App widget probes |
-| `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`); the CLI calls these too |
+| `src/tools/*` | One file per MCP tool (the eight person tools share `person.ts`, the ten project tools `project.ts`, which also computes the hub); the CLI calls these too |
 | `src/cli/*` | One file per subcommand |
 | `src/cli/pieces.ts` | `loom <piece>`: git-style dispatch to `loom-<piece>` on PATH; `loom pieces` lists them |
 | `src/ui/household-pages.ts` | The owner's household page: Home across every agent, the commons' knowledge, People with every agent's relationship, each agent's Setup (identity, tokens, health), adding an agent |
@@ -226,6 +238,8 @@ have fallen behind.
 | `src/backends/episodes.ts` | The episode tape |
 | `src/backends/proposals.ts` | Capture-propose queue |
 | `src/backends/people.ts` | Person cards: validation, render, store, the identity room block |
+| `src/backends/projects.ts` | Project cards: validation, render, store, names (project_names), the hub's memory reads, the identity project block |
+| `src/backends/cards.ts` | What person and project cards share: validation primitives, where envelopes and staleness markers, merge one level deep, no-op detection, the row store (revisions, archive/restore, revision restore, BEGIN IMMEDIATE) |
 | `src/backends/people-household.ts` | Person cards in a household: the commons directory (name, handles, facts) plus each agent's relationship (summary, how it talks to them, may), merged on read, split on write, and the one-time split of an existing agent's cards |
 | `src/backends/dedup.ts` | Write-time exact-restatement key |
 | `src/backends/scope.ts` | Project vs global visibility |
@@ -237,6 +251,6 @@ have fallen behind.
 | `src/backends/recorder-health.ts` | Episode-write failure ledger |
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
-`memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,
+`memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,
 `harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`, `store`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).

@@ -27,6 +27,8 @@ Commands:
   note write|read|list|attach|sweep
                      An agent's notes: held for a while (keep, while, short), swept unless cited
   person show|list   Read person cards (condensed current state per person)
+  project show|list|hub|orphans
+                     Read project cards and their hubs (everything filed under a project)
   update-identity    Edit preferences.md / self-model.md sections
   bootstrap          Initialize a fresh agent
   serve              Explicit MCP stdio startup (same as no args)
@@ -53,7 +55,7 @@ Global flags:
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
                          http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person; other commands stay local.
+                         memory, knowledge, person, project; other commands stay local.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -172,6 +174,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     }
     case 'person': {
       const { run } = await import('./person.js');
+      return run(rest, io);
+    }
+    case 'project': {
+      const { run } = await import('./project.js');
       return run(rest, io);
     }
     case 'forget': {

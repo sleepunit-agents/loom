@@ -41,7 +41,7 @@ function errorText(e: unknown): string {
  * this agent's relationships (backends/people-household.ts). Otherwise the
  * one store in the agent's memories.db, as before.
  */
-function openPeople(contextDir: string, opts: { readonly?: boolean } = {}): PeopleStore | HouseholdPeople | null {
+export function openPeople(contextDir: string, opts: { readonly?: boolean } = {}): PeopleStore | HouseholdPeople | null {
   const hh = householdOf(contextDir);
   if (hh) return openHouseholdPeople(hh.household, hh.agent, contextDir, opts);
   return openPeopleStore(contextDir, opts);
