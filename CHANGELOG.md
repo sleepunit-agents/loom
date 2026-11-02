@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Local pieces.** `loom pieces install --from path:/abs/dir` manages a piece
+  that will never be public (an agent's homelab wrappers) like any other: a
+  snapshot of the directory (`npm pack`), versioned by its sha256, so
+  `update` notices a change and `rollback` and `remove` work. `loom pieces`
+  lists it as `managed <version> (local)` (t-1728).
+
 - **A door for strangers, where a piece opens one.** A tokenless call reaches a
   managed piece's API only on a path its `loom` block lists in `strangers`, as
   `{kind:'stranger', address}`, 8 KB at most: so a new box can ask to join and
