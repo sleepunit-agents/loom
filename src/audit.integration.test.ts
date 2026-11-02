@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -297,6 +297,91 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       expect(entryRow(t.conversation, t.seq)).toBeUndefined();
     });
 
+    it('a missing or non-regular review key is a 503 before anything is claimed', async () => {
+      const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:NOKEY', at: at(8), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      expect((await audit(tok.runtime, t.conversation, t.seq, 'key trouble')).status).toBe(200);
+      const key = join(h.home, REVIEW_KEY);
+      const aside = `${key}.aside`;
+      renameSync(key, aside);
+      try {
+        const reads = readsCount();
+        expect((await post('audit/take', tok.review, { limit: 500 })).status).toBe(503);
+        symlinkSync(aside, key);
+        expect((await post('audit/take', tok.review, { limit: 500 })).status).toBe(503);
+        expect(readsCount()).toBe(reads);
+      } finally {
+        rmSync(key, { force: true });
+        renameSync(aside, key);
+      }
+      const e = (await take(tok.review)).find((x) => x.text === 'key trouble')!;
+      expect(e).toBeDefined();
+      await post('audit/done', tok.review, { refs: [e.ref] });
+    });
+
+    it('age failing mid-take releases this take\'s claims and answers 503; only a blob age rejects stays claimed', async () => {
+      const t1 = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:MID', at: at(8.1), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      const t2 = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:MID', at: at(8.2), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      const t3 = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:MID', at: at(8.3), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      for (const [t, k] of [[t1, 'one'], [t2, 'two'], [t3, 'three']] as const) expect((await audit(tok.runtime, t.conversation, t.seq, `mid ${k}`)).status).toBe(200);
+      // An age that decrypts once, then breaks (not a bad blob: age itself failing).
+      const dir = mkdtempSync(join(tmpdir(), 'loom-flaky-age-'));
+      const counter = join(dir, 'n');
+      const flaky = join(dir, 'age');
+      writeFileSync(flaky, `#!/bin/sh\nn=$(cat '${counter}' 2>/dev/null || echo 0)\necho $((n+1)) > '${counter}'\nif [ "$1" = "-d" ] && [ "$n" -ge 1 ]; then echo 'age: error: out of memory' >&2; exit 1; fi\nexec '${AGE}' "$@"\n`);
+      chmodSync(flaky, 0o755);
+      const reads = readsCount();
+      process.env.LOOM_AGE = flaky;
+      try {
+        expect((await post('audit/take', tok.review, { limit: 500 })).status).toBe(503);
+      } finally {
+        if (saved.age === undefined) delete process.env.LOOM_AGE; else process.env.LOOM_AGE = saved.age;
+        rmSync(dir, { recursive: true, force: true });
+      }
+      // Nothing of that take stayed claimed: all three come back.
+      expect(readsCount()).toBe(reads);
+      // Now a blob age rejects: t2's entry, corrupted. It stays claimed; the others are handed out.
+      const db = new BetterSqlite3(join(h.home, AUDIT_DB));
+      db.prepare('UPDATE audit_entries SET text = ? WHERE conversation = ? AND seq = ?').run(Buffer.from('age-encryption.org/v1\n-> X25519 nonsense\n--- garbage\n'), t2.conversation, t2.seq);
+      db.close();
+      const got = (await take(tok.review)).filter((x) => /^mid /.test(x.text as string)).map((x) => x.text).sort();
+      expect(got).toEqual(['mid one', 'mid three']);
+      expect(readsCount()).toBe(reads + 3);
+      expect((await take(tok.review)).some((x) => x.text === 'mid two')).toBe(false);
+    });
+
+    it('no plaintext at rest: after writes and takes, the secret is in no file under the home', async () => {
+      const secret = 'periwinkle-axolotl-7731';
+      const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:REST', at: at(8.5), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      const s2 = await turn(tok.art, { venue: 'session', place: 'claude-code:rest', at: at(8.6), from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'r-rest', outcome: 'none' });
+      expect((await audit(tok.runtime, t.conversation, t.seq, `the word is ${secret}`)).status).toBe(200);
+      expect((await audit(tok.art, s2.conversation, s2.seq, `again ${secret}`)).status).toBe(200);
+      const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        const p = join(dir, e.name);
+        return e.isDirectory() ? walk(p) : e.isFile() ? [p] : [];
+      });
+      const holding = () => walk(h.home).filter((f) => readFileSync(f).includes(Buffer.from(secret))).map((f) => relative(h.home, f));
+      expect(holding()).toEqual([]);
+      const es = (await take(tok.review)).filter((x) => (x.text as string).includes(secret));
+      expect(es).toHaveLength(2);
+      expect(holding()).toEqual([]);
+      await post('audit/done', tok.review, { refs: es.map((x) => x.ref) });
+      expect(holding()).toEqual([]);
+    });
+
+    it('the daemon\'s start sweep computes the metadata measures', async () => {
+      await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:MEASURE', at: new Date(Date.now() - 120_000).toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:MEASURE', at: new Date(Date.now() - 60_000).toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r-m', outcome: 'answered', model: 'claude-opus-4', harness: 'claude-code' });
+      const db = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
+      db.prepare("DELETE FROM scorecards WHERE measure != 'graded'").run();
+      db.close();
+      const second = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
+      await second.close();
+      const today = new Date().toISOString().slice(0, 10);
+      const rows = scorecards(h.home, today).filter((r) => r.day === today && r.measure === 'first_reply_s' && r.model === 'claude-opus-4');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].value).toBeGreaterThan(0);
+    });
+
     it('the daemon sweeps at start', async () => {
       const t = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:START', at: at(6), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
       expect((await audit(tok.runtime, t.conversation, t.seq, 'stale')).status).toBe(200);
@@ -504,9 +589,19 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
     });
 
     it('a second finding for the same conversation and UTC day is rejected; an accepted one lands in the turn\'s agent\'s findings', async () => {
+      // Someone else's words (a message, no model) take no finding: the same rule as a score.
+      const msgOnly = await post('findings', tok.review, { ref: refs.ownerMsg, text: 'on a message' });
+      expect(msgOnly.status).toBe(409);
+      expect((await msgOnly.json() as { error: string }).error).toMatch(/agent's own turns/);
       const r = await post('findings', tok.review, { ref: refs.owner, text: 'P1 asked twice before A1 answered.' });
       expect(r.status).toBe(200);
-      expect((await post('findings', tok.review, { ref: refs.ownerMsg, text: 'a second one, same conversation and day' })).status).toBe(409);
+      // Another agent turn in the same conversation and UTC day: the day cap.
+      const again = await turn(tok.runtime, { agent: 'art', venue: 'slack', place: 'dm:OWNER', at: at(25), from: { kind: 'agent', id: 'art' }, kind: 'reply', run: 'r-own3', outcome: 'answered', model: 'gpt-5', harness: 'codex-cli' });
+      await audit(tok.runtime, again.conversation, again.seq, 'text of again');
+      const e = (await take(tok.review)).find((x) => x.text === 'text of again')!;
+      const capped = await post('findings', tok.review, { ref: e.ref, text: 'a second one, same conversation and day' });
+      expect(capped.status).toBe(409);
+      expect((await capped.json() as { error: string }).error).toMatch(/one per conversation per UTC day/);
       expect((await post('findings', tok.review, { ref: refs.stranger, text: 'x'.repeat(201) })).status).toBe(400);
       expect((await post('findings', tok.review, { ref: refs.stranger, text: 'two\nlines' })).status).toBe(400);
       expect((await post('findings', tok.review2, { ref: refs.stranger, text: 'not this run' })).status).toBe(404);
@@ -534,9 +629,10 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       const now = Date.now();
       const day1 = new Date(now - 2 * 86_400_000).toISOString();
       const day2 = new Date(now - 1 * 86_400_000).toISOString();
-      const a = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: day1, from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
-      const b = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: day2, from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
-      const c = await turn(tok.runtime, { agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: new Date(Date.parse(day2) + 1000).toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+      const reply = (when: string) => ({ agent: 'pond-bot', venue: 'slack', place: 'dm:DAYS', at: when, from: { kind: 'agent', id: 'pond-bot' }, kind: 'reply', run: `r-${when}`, outcome: 'answered', model: 'gemini-2.5-pro', harness: 'opencode' });
+      const a = await turn(tok.runtime, reply(day1));
+      const b = await turn(tok.runtime, reply(day2));
+      const c = await turn(tok.runtime, reply(new Date(Date.parse(day2) + 1000).toISOString()));
       for (const [t, k] of [[a, 'one'], [b, 'two'], [c, 'three']] as const) await audit(tok.runtime, t.conversation, t.seq, `day text ${k}`);
       const es = (await take(tok.review)).filter((x) => /^day text /.test(x.text as string));
       const ref = (k: string) => es.find((x) => x.text === `day text ${k}`)!.ref;
@@ -552,14 +648,31 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
 
 describe('criterion 9: one decrypt path', () => {
   const srcDir = fileURLToPath(new URL('.', import.meta.url));
+  const repoRoot = join(srcDir, '..');
+  const SHIPPED = /\.(ts|mts|cts|js|mjs|cjs)$/;
   const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
-    e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith('.ts') && !e.name.endsWith('.test.ts') ? [join(dir, e.name)] : []);
+    e.isDirectory() ? files(join(dir, e.name)) : SHIPPED.test(e.name) && !/\.test\.[a-z]+$/.test(e.name) && !e.name.endsWith('.d.ts') ? [join(dir, e.name)] : []);
+  /**
+   * Every script the repo ships or runs, outside web/ (the page's own build) and what's built or
+   * installed: src/, scripts/, widgets/, and any other top-level directory or file of code.
+   */
+  const everything = (): string[] => readdirSync(repoRoot, { withFileTypes: true }).flatMap((e) => {
+    if (['web', 'node_modules', 'dist', '.git'].includes(e.name) || e.name.startsWith('.')) return [];
+    const p = join(repoRoot, e.name);
+    return e.isDirectory() ? files(p) : SHIPPED.test(e.name) && !/\.test\.[a-z]+$/.test(e.name) ? [p] : [];
+  });
   /** The source without comments (so a doc comment naming the function doesn't count, and can't hide a call). */
   const code = (path: string) => readFileSync(path, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
   const NAME = 'decryptAuditText';
 
+  it('the scan covers every shipped script outside web/, not only src/', () => {
+    const rel = everything().map((f) => relative(repoRoot, f));
+    for (const f of ['scripts/build-widgets.mjs', 'scripts/smoke-test-mcp.ts', 'widgets/hello.widget.ts', 'vitest.config.ts', 'src/audit.ts']) expect(rel, f).toContain(f);
+    expect(rel.some((f) => f.startsWith('web/') || f.startsWith('node_modules/') || f.startsWith('dist/'))).toBe(false);
+  });
+
   it('the audit module\'s decrypt function is called only from the take handler', () => {
-    const all = files(srcDir);
+    const all = everything();
     expect(all.length).toBeGreaterThan(50);
     const naming = all.filter((f) => code(f).includes(NAME)).map((f) => relative(srcDir, f)).sort();
     // Defined in audit.ts, named in audit-take.ts, and nowhere else.
@@ -590,7 +703,7 @@ describe('criterion 9: one decrypt path', () => {
   });
 
   it('the review key, and decrypting with it, appear only in the audit module', () => {
-    const all = files(srcDir);
+    const all = everything();
     // The key's name, as a constant or a string, is the audit module's alone.
     const keyed = all.filter((f) => /\bREVIEW_KEY\b|review\.key/.test(code(f))).map((f) => relative(srcDir, f)).sort();
     expect(keyed).toEqual(['audit.ts']);
@@ -622,6 +735,11 @@ describe('model families (the mapping core reads)', () => {
     expect(familyOf('olmo-2')).toBeNull();
     expect(familyOf('opusx')).toBeNull();
     expect(familyOf(undefined)).toBeNull();
+    // Prototype keys are no family, with or without household.json's families.
+    for (const m of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', 'constructor/x', '__proto__:y']) {
+      expect(familyOf(m), m).toBeNull();
+      expect(familyOf(m, { families: { 'my-model': 'acme' } }), m).toBeNull();
+    }
     const h = { families: { 'my-model': 'acme', 'loc-*': 'local', 'loc-big-*': 'bigco', 'claude-x': 'imitator' } };
     expect(familyOf('My-Model', h)).toBe('acme');
     expect(familyOf('loc-7b', h)).toBe('local');
@@ -636,6 +754,12 @@ describe('model families (the mapping core reads)', () => {
       const write = (families: unknown) => writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], families }));
       write({ 'local-llm': 'local' });
       expect(loadHousehold(home)!.families).toEqual({ 'local-llm': 'local' });
+      // A __proto__ key is a model name like any other, never the map's prototype.
+      writeFileSync(join(home, 'household.json'), '{"v":1,"agents":["art"],"families":{"__proto__":"acme"}}');
+      const hh = loadHousehold(home)!;
+      expect(familyOf('__proto__', hh)).toBe('acme');
+      expect(familyOf('constructor', hh)).toBeNull();
+      expect(familyOf('x', hh)).toBeNull();
       for (const bad of [[], { x: 'Bad Name' }, { x: 'unknown' }, { x: 3 }]) {
         write(bad);
         expect(() => loadHousehold(home), JSON.stringify(bad)).toThrow(/families/);
@@ -674,13 +798,17 @@ describe('the metadata measures (computeMeasures)', () => {
         w({ venue: 'relay', place: 'pond-bot', at: t(20), from: { kind: 'agent', id: 'pond-bot' }, kind: 'message' });
         w({ venue: 'relay', place: 'pond-bot', at: t(30), kind: 'reply', run: 'x1', outcome: 'answered', ...own });
         w({ venue: 'relay', place: 'pond-bot', at: t(40), from: { kind: 'agent', id: 'pond-bot' }, kind: 'refused' });
+        // A model named like a prototype key is just an unknown family: the pass doesn't fall over.
+        w({ venue: 'slack', place: 'c', at: t(0), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
+        w({ venue: 'slack', place: 'c', at: t(5), kind: 'reply', run: 'r9', outcome: 'answered', ...own, model: 'constructor' });
         // Another day's turns don't count.
         w({ venue: 'slack', place: 'a', at: '2026-10-02T08:00:00.000Z', from: { kind: 'person', slug: 'jonathan' }, kind: 'message' });
         expect(computeMeasures(h, d)).toBeGreaterThan(0);
         const rows = scorecards(h.home, d).filter((r) => r.day === d);
-        const v = (measure: string) => rows.filter((r) => r.measure === measure).map((r) => ({ model: r.model, family: r.family, harness: r.harness, kind: r.kind, value: r.value, n: r.n, same_family: r.same_family }));
+        const v = (measure: string) => rows.filter((r) => r.measure === measure && r.model !== 'constructor').map((r) => ({ model: r.model, family: r.family, harness: r.harness, kind: r.kind, value: r.value, n: r.n, same_family: r.same_family }));
         const opus = { model: 'opus', family: 'anthropic', harness: 'claude-code', same_family: false };
         expect(v('first_reply_s')).toEqual([{ ...opus, kind: 'live', value: 30, n: 1 }]);
+        expect(rows.filter((r) => r.model === 'constructor').map((r) => [r.measure, r.family])).toEqual([['abandoned', 'unknown'], ['first_reply_s', 'unknown']]);
         // b had no agent turn at all: it's the unknown model's.
         expect(v('abandoned').sort((a, b) => a.model.localeCompare(b.model))).toEqual([
           { ...opus, kind: 'live', value: 0, n: 1 },

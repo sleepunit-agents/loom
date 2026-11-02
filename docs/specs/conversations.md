@@ -44,7 +44,8 @@ The owner's other rulings shape everything below:
      only what a decent coworker would keep, and making bulk surveillance inconvenient.
 4. **Raw text is in the audit log only, and no identity ever reads it.** The log is encrypted at rest, deleted once
    processed, and gone after 7 days regardless. Its only reader is grading: bare models with no identity, no memory and
-   no tools, whose output is checked so it cannot carry the text out.
+   no tools, whose output is capped so it cannot carry the text out in bulk: a score, and at most one line of ≤ 200
+   characters per conversation per day.
 5. **Review has two halves.**
    - *Grading:* bare models, blind to which model, agent and person is involved, score samples household-wide, and
      their scores feed model choice.
@@ -105,7 +106,9 @@ that agent, without raw text.
 _Avoid_: retro, reflection (that's an agent's own lane), evaluation
 
 **Finding**:
-A grader's one-line note on one turn, checked so it doesn't quote. Kept on the turn's agent's side.
+A grader's note on one turn: one line of at most 200 printable characters, at most one per conversation per UTC day. A
+meaningful quote is fine; bulk quoting isn't, and the cap is what stops it (nothing machine-checks the words). Kept on
+the turn's agent's side.
 _Avoid_: comment, feedback (that's a memory category)
 
 **Scorecard**:
@@ -456,7 +459,8 @@ These slices settled these points the doc left open:
 - **Families.** A model's family comes from household.json's `families` (a model name, or a prefix ending in `*`,
   to a family name) and then built-in prefixes in `src/review.ts` (`claude`, `opus`… → `anthropic`; `gpt`, `o3`… →
   `openai`; …), and a `provider/` or `provider:` lead naming a family. A model none of them knows has no family (`null`
-  in a take; `unknown` on a scorecard row). When the runtime spec lands its model list, it can feed this setting.
+  in a take; `unknown` on a scorecard row). Lookups are own keys only (a model named `constructor` is no family), and a
+  resolved family must be a family name. When the runtime spec lands its model list, it can feed this setting.
 - **The audit write.** `{conversation, seq, text}`, text 1–40,000 characters; any other key is refused. The writer is
   compared with the turn's recorded writer exactly (a house token is its own writer). Refused besides: an entry
   already written (409), one already taken (409: it is never written again), and a turn more than 10 minutes in the
@@ -473,7 +477,9 @@ These slices settled these points the doc left open:
   through the people backend, and a people store that exists but can't be read fails the take (503). `kind` is the turn's kind. An entry from a conversation with someone other than
   the owner also carries `only_families`: the families that may grade it, so the runtime knows before it sends a word
   anywhere (core still refuses any other family's score). Without `age`, a take is a 503 and claims nothing. An entry
-  that doesn't decrypt is left out and stays claimed, so the sweep removes it.
+  that age rejects (not an age file for the review key) is left out and stays claimed, so the sweep removes it. A
+  missing or non-plain review key is a 503 before anything is claimed; age failing mid-take releases that take's
+  claims and answers 503.
 - **"Someone other than the owner."** A conversation that ever had a turn from a person who isn't a household member
   owning that agent, or from `unknown`. It's sticky: the turn write marks it in household.db's
   `conversation_strangers`, never cleared, so neither the 32-person cap nor the 90-day fold hides it. (A conversation
@@ -489,7 +495,8 @@ These slices settled these points the doc left open:
   producer's own while the household has another (the single-family fallback; for a non-owner conversation, the
   families that processed it rule instead). At most two per ref, one per family (409 past that). Only an agent turn
   with a model is scored (409 otherwise). A row's `day` is the turn's UTC day; `value` is the mean, `n` the count.
-- **Findings.** One per conversation per UTC day of the turn it's on. One printable line of at most 200
+- **Findings.** Only on the agent's own turn with a model, as a score (409 otherwise). One per conversation per UTC
+  day of the turn it's on. One printable line of at most 200
   characters, not checked for quotes. It stores the turn, the measure `graded`, the mean score posted for its ref
   (or null), and the text.
 - **Measures.** `computeMeasures(h, day)` replaces that day's metadata rows; the hourly sweep runs it for the last

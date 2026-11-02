@@ -22,6 +22,8 @@ import { AuditError, refOf } from './audit.js';
 
 const fail = (m: string, status = 400): never => { throw new AuditError(m, status); };
 const DAY_MS = 86_400_000;
+/** A model, family or harness nothing names. */
+const UNKNOWN = 'unknown';
 
 // ─── Families ───────────────────────────────────────────────────────────────
 
@@ -47,12 +49,14 @@ export function familyOf(model: string | null | undefined, h?: Pick<Household, '
   if (!model) return null;
   const m = model.toLowerCase();
   const own = h?.families ?? {};
-  if (own[m]) return own[m];
-  const prefixes = Object.entries(own).filter(([k]) => k.endsWith('*') && m.startsWith(k.slice(0, -1))).sort((a, b) => b[0].length - a[0].length);
+  // Own keys only, never the prototype's ("constructor", "toString"…), and only a well-formed family.
+  const valid = (f: unknown): f is string => typeof f === 'string' && FAMILY_NAME.test(f) && f !== UNKNOWN;
+  if (Object.hasOwn(own, m) && valid(own[m])) return own[m];
+  const prefixes = Object.entries(own).filter(([k, f]) => k.endsWith('*') && m.startsWith(k.slice(0, -1)) && valid(f)).sort((a, b) => b[0].length - a[0].length);
   if (prefixes.length) return prefixes[0][1];
   // "anthropic/claude-…", "openai:gpt-…": a provider prefix that is a family names it.
   const lead = /^([a-z][a-z0-9-]*)[/:]/.exec(m)?.[1];
-  if (lead && FAMILY_PREFIXES[lead]) return lead;
+  if (lead && Object.hasOwn(FAMILY_PREFIXES, lead)) return lead;
   const name = m.slice(m.search(/[^/:]*$/));
   for (const [family, ps] of Object.entries(FAMILY_PREFIXES)) {
     if (ps.some((p) => name === p || (name.startsWith(p) && /^[-._:@0-9]/.test(name.slice(p.length))))) return family;
@@ -118,9 +122,13 @@ export interface ScorecardRow {
 }
 
 export const METADATA_MEASURES = ['first_reply_s', 'abandoned', 'due_to_progress_s', 'done_rate', 'round_trips', 'loops_refused'] as const;
-const UNKNOWN = 'unknown';
 /** A sample is graded by at most two families (Review, step 1). */
 export const MAX_SCORES_PER_REF = 2;
+
+/** Scores and findings are on the agent's own turns, ones that name a model; anything else is a 409. */
+function ownTurn(t: Turn): void {
+  if (!AGENT_TURN_KINDS.includes(t.kind) || !t.model) fail('that turn isn\'t one of the agent\'s own turns with a model: scores and findings are on the agent\'s own turns', 409);
+}
 
 /** What a sample's ref stands for, with the turn and its venue's kind; refused unless this run took it. */
 function sampleOf(h: Household, run: string, ref: unknown): { agent: string; conversation: string; seq: number; turn: Turn; kind: string } {
@@ -152,7 +160,7 @@ export function postScore(h: Household, run: string, raw: unknown, now: Date = n
   const grader = b.grader_family as string;
   const score = b.score as number;
   const s = sampleOf(h, run, b.ref);
-  if (!s.turn.model) fail('that turn has no model: only the agent\'s own turns are scored', 409);
+  ownTurn(s.turn);
   const family = familyOf(s.turn.model, h) ?? UNKNOWN;
   // Only a family the household actually runs grades: a made-up name can't add a score.
   const families = householdFamilies(h);
@@ -189,7 +197,8 @@ export function postScore(h: Household, run: string, raw: unknown, now: Date = n
 }
 
 /**
- * POST /api/loom/findings {ref, text ≤ 200}, as a review run: kept in the turn's agent's
+ * POST /api/loom/findings {ref, text ≤ 200}, as a review run, on the agent's own turn with a
+ * model (as a score; a 409 otherwise): kept in the turn's agent's
  * `findings`, with the measure (`graded`) and the mean score posted for that ref, if any. At
  * most one per conversation per UTC day (the turn's day); a later one is a 409.
  */
@@ -199,6 +208,7 @@ export function postFinding(h: Household, run: string, raw: unknown, now: Date =
   const bad = Object.keys(b).find((k) => !['ref', 'text'].includes(k));
   if (bad !== undefined) fail(`a finding has no key ${JSON.stringify(bad)} (it has ref, text)`);
   const s = sampleOf(h, run, b.ref);
+  ownTurn(s.turn);
   const db = openHouseholdDb(h.home);
   let score: number | null;
   try {

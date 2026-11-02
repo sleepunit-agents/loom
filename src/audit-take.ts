@@ -14,12 +14,13 @@
  */
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
+import { join } from 'node:path';
 import { resolveSqliteDbPath } from './config.js';
 import { agentDir, type Household } from './household.js';
 import { commonsPeoplePath } from './backends/people-household.js';
 import { PeopleStore } from './backends/people.js';
 import { agentsSeen, hasTable, modelsSeen, peopleSeen, turnRecord } from './backends/conversations.js';
-import { assertAgeAvailable, AuditError, claimEntries, decryptAuditText, TAKE_MAX } from './audit.js';
+import { AUDIT_DB, assertDecryptReady, AuditError, claimEntries, decryptAuditText, releaseClaims, TAKE_MAX, UndecryptableEntry } from './audit.js';
 import { familyOf, processedFamilies, withNonOwner } from './review.js';
 
 export interface TakenEntry {
@@ -172,8 +173,11 @@ export function takeAudit(h: Household, run: string, raw: unknown, env: NodeJS.P
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some((k) => k !== 'limit')) throw new AuditError('a take is {limit}');
   const limit = (raw as { limit?: unknown }).limit ?? 100;
   if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > TAKE_MAX) throw new AuditError(`limit is 1-${TAKE_MAX}`);
-  // Without age nothing could be decrypted: claim nothing, so the entries wait for a run that can.
-  assertAgeAvailable(env);
+  // Nothing to take: no log yet (and no key needed).
+  if (!existsSync(join(h.home, AUDIT_DB))) return { entries: [] };
+  // Without age or the review key nothing could be decrypted: claim nothing, so the entries
+  // wait for a run that can.
+  assertDecryptReady(h.home, env);
   // The vocabulary before any claim: a store it can't read fails the take with nothing claimed.
   const r = redactor(vocabularyOf(h));
   const claimed = claimEntries(h.home, run, limit, now);
@@ -186,7 +190,15 @@ export function takeAudit(h: Household, run: string, raw: unknown, env: NodeJS.P
     // unredacted. Never handed out; it stays claimed, so the 7-day sweep removes it.
     if (!h.agents.includes(e.agent)) { departed++; continue; }
     let text: string;
-    try { text = decryptAuditText(h.home, e.blob, env); } catch { undecryptable++; continue; }
+    try {
+      text = decryptAuditText(h.home, e.blob, env);
+    } catch (err) {
+      // A blob age rejects stays claimed (the sweep removes it). Anything else is the decrypt
+      // itself failing: this take's claims are released, and the take answers 503.
+      if (err instanceof UndecryptableEntry) { undecryptable++; continue; }
+      releaseClaims(h.home, run, claimed.map((c) => c.ref));
+      throw err instanceof AuditError ? err : new AuditError('the audit log couldn\'t be decrypted; nothing was taken', 503);
+    }
     const turn = turnRecord(agentDir(h, e.agent), e.conversation, e.seq);
     const nonOwner = withNonOwner(h, e.agent, e.conversation);
     entries.push({

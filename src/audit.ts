@@ -69,11 +69,6 @@ function agePrograms(env: NodeJS.ProcessEnv): { age: string; keygen: string } {
   }
 }
 
-/** Throws the 503 audit writes answer when the age programs aren't here: a take checks before it claims anything. */
-export function assertAgeAvailable(env: NodeJS.ProcessEnv = process.env): void {
-  agePrograms(env);
-}
-
 /** A plain file we made, never a link someone left there. */
 function regularFile(path: string): boolean {
   try { return lstatSync(path).isFile(); } catch { return false; }
@@ -124,18 +119,40 @@ function encrypt(text: string, home: string, env: NodeJS.ProcessEnv): Buffer {
   return out!;
 }
 
+/** A blob age itself rejects (not an age file, or not for this key): only this leaves an entry claimed. */
+export class UndecryptableEntry extends AuditError {
+  constructor() { super('an audit entry isn\'t an age file for the review key', 500); this.name = 'UndecryptableEntry'; }
+}
+
+/** What age says about a blob it rejects, as opposed to age itself failing. */
+const BLOB_REJECTED = /failed to read header|no identity matched|failed to decrypt|payload|malformed|unexpected EOF/i;
+
+/**
+ * Throws the 503 a take answers before claiming anything when it couldn't decrypt: no age
+ * programs, or no review key that is a plain file.
+ */
+export function assertDecryptReady(home: string, env: NodeJS.ProcessEnv = process.env): void {
+  agePrograms(env);
+  if (!regularFile(join(home, REVIEW_KEY))) fail('the review key is missing or isn\'t a plain file; nothing was taken', 503);
+}
+
 /**
  * The one way back to an entry's text: decrypt `blob` with `$LOOM_HOME/review.key`. Only the
- * take handler (src/audit-take.ts) calls this; nothing else may (criterion 9). Throws when the
- * blob isn't an age file for that key.
+ * take handler (src/audit-take.ts) calls this; nothing else may (criterion 9). Throws
+ * UndecryptableEntry when age rejects the blob, and a 503 AuditError for anything else (no
+ * key, age missing or failing), so the caller can tell a bad entry from a broken decrypt.
  */
 export function decryptAuditText(home: string, blob: Buffer, env: NodeJS.ProcessEnv = process.env): string {
   const { age } = agePrograms(env);
   const key = join(home, REVIEW_KEY);
-  if (!regularFile(key)) throw new AuditError('no review key', 503);
+  if (!regularFile(key)) fail('the review key is missing or isn\'t a plain file', 503);
   const r = spawnSync(age, ['-d', '-i', key], { input: blob, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 4 * MAX_AUDIT_TEXT + 65_536 });
-  if (r.status !== 0 || !r.stdout) throw new AuditError('an audit entry didn\'t decrypt', 500);
-  return (r.stdout as Buffer).toString('utf-8');
+  if (r.error || r.signal) fail('age couldn\'t run', 503);
+  if (r.status !== 0) {
+    if (BLOB_REJECTED.test((r.stderr as Buffer | null)?.toString('utf-8') ?? '')) throw new UndecryptableEntry();
+    fail('age failed', 503);
+  }
+  return ((r.stdout as Buffer | null) ?? Buffer.alloc(0)).toString('utf-8');
 }
 
 // ─── The store ──────────────────────────────────────────────────────────────
@@ -241,6 +258,17 @@ export function claimEntries(home: string, run: string, limit: number, now: Date
     }
     return out;
   }).immediate()));
+}
+
+/** Undo a take's claims (its audit_reads rows), so the entries wait for a run that can decrypt them. */
+export function releaseClaims(home: string, run: string, refs: readonly string[]): void {
+  if (!refs.length) return;
+  const db = openHouseholdDb(home);
+  try {
+    db.transaction(() => { const del = db.prepare('DELETE FROM audit_reads WHERE ref = ? AND run = ?'); for (const r of refs) del.run(r, run); }).immediate();
+  } finally {
+    db.close();
+  }
 }
 
 /** What a ref this run took stands for, or undefined (another run's, or none). */
