@@ -7,7 +7,7 @@
  * runtime's answer back.
  *
  *  - Every refusal (403, 503, 400) happens before anything runs, so it writes nothing.
- *  - Idempotent on (calling credential, id) for 24 hours: the first good answer is kept in the
+ *  - Idempotent on (calling piece, id) for 24 hours, whichever of its credentials called: the first good answer is kept in the
  *    household store (`$LOOM_HOME/household.db`, table `deliveries`, with a hash of the body)
  *    and a repeat gets it back verbatim without the runtime being called; the same id with
  *    another body is a 409. A forward that failed (the runtime's error, a timeout, a busy
@@ -25,6 +25,7 @@ import { ConversationError, parseTurn, type From } from './backends/conversation
 import { readRecord } from './cli/pieces-managed.js';
 import type { Household } from './household.js';
 import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
+import { Pool } from './ui/pieces.js';
 import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
 import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer, type OfferResult } from './offers-registry.js';
 
@@ -76,8 +77,6 @@ export interface DeliverResult {
 /** Who is delivering: the calling piece, as its piece token or its runtime token resolved. */
 export interface DeliverCaller {
   piece: string;
-  /** The whole credential (`piece:<piece>/<subject>`, `runtime:<piece>`): what a replay is keyed on. */
-  credential: string;
 }
 
 /**
@@ -156,7 +155,8 @@ export function grantRefusal(env: NodeJS.ProcessEnv, h: Household, agent: string
 export function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody): DeliverResult | undefined {
   const rec = readRecord(env, caller.piece);
   if (!rec) return refuse(403, `forbidden: ${caller.piece} isn't an installed managed piece`);
-  const isRuntime = rec.loom.role === 'runtime';
+  // The runtime is the installed delivery piece, not any piece whose block claims the role.
+  const isRuntime = deliveryPiece(env).piece === caller.piece;
   // Own keys only: a venue named `constructor` must not find Object's.
   const declared = ownEntry(offersIn(rec.loom).venues, d.venue);
   // The venue. `session` is the harness's own; `wake` is core's, delivered on only by a piece that
@@ -190,28 +190,31 @@ export function deliveryHash(d: DeliverBody): string {
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
-/** What a kept answer is keyed by: the calling credential (its whole role) and the id. */
+/**
+ * What a kept answer is keyed by: the calling piece and the id, whichever of the piece's
+ * credentials called (the runtime has two, its piece token and its runtime token, and one relay
+ * id forwards once). The body's hash rides along: the same key with another body is a 409, so
+ * one subject can't quietly pre-seed another's id with a stale answer.
+ */
 export interface ReplayKey {
-  /** `piece:<piece>/<subject>`, or `runtime:<piece>`. */
-  caller: string;
   piece: string;
   id: string;
   hash: string;
 }
 
-/** The kept answer for (caller, id), with its body's hash, if one is younger than 24 hours. */
-export function replayOf(home: string, caller: string, id: string, nowMs = Date.now()): { hash: string; answer: DeliverAnswer } | undefined {
+/** The kept answer for (piece, id), with its body's hash, if one is younger than 24 hours. */
+export function replayOf(home: string, piece: string, id: string, nowMs = Date.now()): { hash: string; answer: DeliverAnswer } | undefined {
   if (!existsSync(join(home, HOUSEHOLD_DB))) return undefined;
   const db = openHouseholdDb(home);
   try {
-    const r = db.prepare('SELECT body_sha256, answer_json FROM deliveries WHERE caller = ? AND id = ? AND at > ?').get(caller, id, nowMs - DELIVERY_REPLAY_MS) as { body_sha256: string; answer_json: string } | undefined;
+    const r = db.prepare('SELECT body_sha256, answer_json FROM deliveries WHERE piece = ? AND id = ? AND at > ?').get(piece, id, nowMs - DELIVERY_REPLAY_MS) as { body_sha256: string; answer_json: string } | undefined;
     return r ? { hash: r.body_sha256, answer: JSON.parse(r.answer_json) as DeliverAnswer } : undefined;
   } finally {
     db.close();
   }
 }
 
-/** How many answers `piece` has kept in the last 24 hours (all its credentials together). */
+/** How many answers `piece` has kept in the last 24 hours. */
 export function keptCount(home: string, piece: string, nowMs = Date.now()): number {
   if (!existsSync(join(home, HOUSEHOLD_DB))) return 0;
   const db = openHouseholdDb(home);
@@ -228,8 +231,8 @@ export function keepAnswer(home: string, k: ReplayKey, answer: DeliverAnswer, no
   try {
     db.transaction(() => {
       db.prepare('DELETE FROM deliveries WHERE at <= ?').run(nowMs - DELIVERY_REPLAY_MS);
-      db.prepare('INSERT OR REPLACE INTO deliveries (caller, id, piece, at, body_sha256, answer_json) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(k.caller, k.id, k.piece, nowMs, k.hash, JSON.stringify(answer));
+      db.prepare('INSERT OR REPLACE INTO deliveries (piece, id, at, body_sha256, answer_json) VALUES (?, ?, ?, ?, ?)')
+        .run(k.piece, k.id, nowMs, k.hash, JSON.stringify(answer));
     })();
   } finally {
     db.close();
@@ -246,27 +249,12 @@ export function sweepDeliveries(home: string, nowMs = Date.now()): number {
 // ─── Fairness ───────────────────────────────────────────────────────────────
 
 /**
- * Each calling piece's own gate in front of the delivery pool (8 running, 32 waiting): at most `perPieceRunning`
- * of its forwards running and `perPieceWaiting` waiting; past that, that piece alone is refused.
- * The limits are read on each call, so a test can lower them.
+ * Each calling piece's own pool in front of the delivery pool (8 running, 32 waiting): at most
+ * `perPieceRunning` of its forwards running and `perPieceWaiting` waiting; past that, that piece
+ * alone is refused. A piece's pool is made with the limits of the moment and dropped once idle,
+ * so a test that lowers DELIVERY_LIMITS gets them on the next one.
  */
-class PieceGate {
-  private running = 0;
-  private readonly waiting: Array<() => void> = [];
-  async run<T>(f: () => Promise<T>): Promise<T | null> {
-    if (this.running >= DELIVERY_LIMITS.perPieceRunning) {
-      if (this.waiting.length >= DELIVERY_LIMITS.perPieceWaiting) return null;
-      await new Promise<void>((resolve) => this.waiting.push(resolve));
-    }
-    this.running++;
-    try { return await f(); } finally {
-      this.running--;
-      this.waiting.shift()?.();
-    }
-  }
-  get idle(): boolean { return this.running === 0 && this.waiting.length === 0; }
-}
-const gates = new Map<string, PieceGate>();
+const gates = new Map<string, Pool>();
 
 // ─── The route ──────────────────────────────────────────────────────────────
 
@@ -295,7 +283,7 @@ export function forwardDelivery(env: NodeJS.ProcessEnv, target: { piece: string;
   });
 }
 
-/** Deliveries in flight, by caller and id: a repeat that arrives meanwhile waits for the first. */
+/** Deliveries in flight, by piece and id: a repeat that arrives meanwhile waits for the first. */
 const inFlight = new Map<string, { hash: string; result: Promise<DeliverResult> }>();
 
 const conflict = (id: string): DeliverResult =>
@@ -320,20 +308,20 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
       ? `unavailable: more than one piece offers delivery (${target.conflict.join(', ')}); there's none to forward to`
       : 'unavailable: no installed piece offers delivery (the runtime), so nothing can reach a body');
   }
-  const k: ReplayKey = { caller: caller.credential, piece: caller.piece, id: d.id, hash: deliveryHash(d) };
-  const key = `${k.caller}\0${k.id}`;
+  const k: ReplayKey = { piece: caller.piece, id: d.id, hash: deliveryHash(d) };
+  const key = `${k.piece}\0${k.id}`;
   const pending = inFlight.get(key);
   if (pending) return pending.hash === k.hash ? pending.result : conflict(d.id);
   const result = (async (): Promise<DeliverResult> => {
-    const kept = replayOf(h.home, k.caller, k.id, nowMs());
+    const kept = replayOf(h.home, k.piece, k.id, nowMs());
     if (kept) return kept.hash === k.hash ? { status: 200, body: kept.answer } : conflict(d.id);
     if (keptCount(h.home, k.piece, nowMs()) >= DELIVERY_LIMITS.keptPerPiece) {
       return refuse(429, `too-many: ${k.piece} has delivered ${DELIVERY_LIMITS.keptPerPiece} messages in 24 hours, as many as core keeps for one piece`);
     }
     let gate = gates.get(k.piece);
-    if (!gate) { gate = new PieceGate(); gates.set(k.piece, gate); }
+    if (!gate) { gate = new Pool(DELIVERY_LIMITS.perPieceRunning, DELIVERY_LIMITS.perPieceWaiting); gates.set(k.piece, gate); }
     const r = await gate.run(() => forwardDelivery(env, { piece: target.piece!, argv: target.argv }, caller, d));
-    if (gate.idle) gates.delete(k.piece);
+    if (gate.idle && gates.get(k.piece) === gate) gates.delete(k.piece);
     if (r === null) return refuse(503, `unavailable: ${k.piece} has too many deliveries in flight (${DELIVERY_LIMITS.perPieceRunning} running, ${DELIVERY_LIMITS.perPieceWaiting} waiting); try again shortly`);
     if (!r.ok) {
       // The runtime's own failure: exit 1 with {status: 5xx, error} on stdout, passed through as that status.

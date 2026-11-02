@@ -306,6 +306,18 @@ describe('managed pieces', () => {
       expect((await runCliCaptured(['pieces', 'remove', 'runtime'], { env })).code).toBe(0);
       expect((await installFrom('x/second')).code).toBe(0);
     });
+
+    it('a second role:runtime piece is refused at install; the runtime itself may update', async () => {
+      await fixture('x/runtime', SHA1, { name: 'runtime', loom: { role: 'runtime' } }, { 'loom-runtime': 'true' });
+      await fixture('x/runtime', SHA2, { name: 'runtime', loom: { role: 'runtime', label: 'Runtime' } }, { 'loom-runtime': 'true' });
+      expect((await installFrom('x/runtime')).code).toBe(0);
+      expect((await installFrom('x/runtime', SHA2)).code).toBe(0);
+      await fixture('x/pretender', SHA1, { name: 'pretender', loom: { role: 'runtime' } }, { 'loom-pretender': 'true' });
+      const r = await installFrom('x/pretender');
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain('the runtime piece is already the runtime: a household has one');
+      expect(existsSync(join(loomHome, 'pieces', 'pretender', 'piece.json'))).toBe(false);
+    });
   });
 
   it('remove keeps settings and data unless --purge, and never takes another piece\'s links', async () => {

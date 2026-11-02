@@ -50,6 +50,7 @@ process.stdin.on('end', () => {
   if (mode === 'fail') { process.exit(1); }
   if (mode === 'said') { console.log(JSON.stringify({ status: 503, error: 'no house free for art' })); process.exit(1); }
   if (mode === 'said-badly') { console.log(JSON.stringify({ status: 404, error: 'not a 5xx' })); process.exit(1); }
+  if (mode === 'huge') { console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started', reason: 'x'.repeat(65 * 1024) })); return; }
   if (mode === 'bad') { console.log(JSON.stringify({ conversation: 'nope', seq: 0, body: 'eaten' })); return; }
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
   if (mode === 'slow') setTimeout(answer, 400);
@@ -103,7 +104,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -169,7 +170,7 @@ describe('POST /api/loom/deliver', () => {
 
     it('core\'s source wins over one in the body, even past the parser', async () => {
       const d = { ...(parseDeliver(slackMsg('m-src2')) as DeliverBody), source: 'clock' } as DeliverBody;
-      const r = await forwardDelivery(process.env, { piece: 'runtime', argv: ['loom-runtime', 'deliver', '--json'] }, { piece: 'slack', credential: 'piece:slack/bot' }, d);
+      const r = await forwardDelivery(process.env, { piece: 'runtime', argv: ['loom-runtime', 'deliver', '--json'] }, { piece: 'slack' }, d);
       expect(r.ok).toBe(true);
       expect(calls().map((c) => c.stdin.source)).toEqual(['slack']);
     });
@@ -187,7 +188,7 @@ describe('POST /api/loom/deliver', () => {
     });
   });
 
-  describe('idempotent on (calling piece, id) for 24 hours', () => {
+  describe('idempotent on (calling piece, id) for 24 hours, with the body\'s hash', () => {
     it('a repeat returns the first answer verbatim and calls the runtime once', async () => {
       const first = await post(tok.slack, slackMsg('m-dup'));
       const again = await post(tok.slack, slackMsg('m-dup'));
@@ -205,17 +206,25 @@ describe('POST /api/loom/deliver', () => {
       expect(calls()).toHaveLength(1);
     });
 
-    it('keyed on the calling credential\'s whole subject: another subject of the same piece is another delivery', async () => {
-      await post(tok.slack, slackMsg('m-subject'));
-      await post(tok.slack2, slackMsg('m-subject'));
-      expect(calls()).toHaveLength(2);
-      // The replay table keeps the subject, and a hash of the body, never the text.
+    it('keyed on the calling piece, whichever of its credentials: another subject\'s same id and body is the replay', async () => {
+      const first = await post(tok.slack, slackMsg('m-subject'));
+      expect(await post(tok.slack2, slackMsg('m-subject'))).toEqual(first);
+      expect(calls()).toHaveLength(1);
+      // Another subject can't pre-seed a different message under that id: it's a 409, not the old answer.
+      expect((await post(tok.slack2, slackMsg('m-subject', { text: 'something else' }))).status).toBe(409);
+      // The replay table keeps the piece, and a hash of the body, never the text.
       const db = new BetterSqlite3(join(h.home, 'household.db'));
-      const rows = db.prepare("SELECT * FROM deliveries WHERE id = 'm-subject' ORDER BY caller").all() as Array<Record<string, unknown>>;
+      const rows = db.prepare("SELECT * FROM deliveries WHERE id = 'm-subject'").all() as Array<Record<string, unknown>>;
       db.close();
-      expect(rows.map((r) => r.caller)).toEqual(['piece:slack/bot', 'piece:slack/bot2']);
+      expect(rows.map((r) => r.piece)).toEqual(['slack']);
       expect(rows[0].body_sha256).toBe(deliveryHash(parseDeliver(slackMsg('m-subject')) as DeliverBody));
       expect(JSON.stringify(rows)).not.toContain('hi art');
+    });
+
+    it('the runtime\'s two credentials (its piece token, its runtime token) forward one relay id once', async () => {
+      const first = await post(tok.runtimePiece, relay('r-once'));
+      expect(await post(tok.runtime, relay('r-once'))).toEqual(first);
+      expect(calls()).toHaveLength(1);
     });
 
     it('the same id from another piece is another delivery', async () => {
@@ -264,17 +273,17 @@ describe('POST /api/loom/deliver', () => {
 
     it('the table is in household.db; an answer over 24 hours old is neither replayed nor kept', () => {
       const t0 = Date.parse(AT);
-      const k = { caller: 'piece:slack/bot', piece: 'slack', id: 'old', hash: 'h1' };
+      const k = { piece: 'slack', id: 'old', hash: 'h1' };
       keepAnswer(h.home, k, { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' }, t0);
-      expect(replayOf(h.home, k.caller, 'old', t0 + DELIVERY_REPLAY_MS - 1)).toEqual({ hash: 'h1', answer: { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' } });
-      expect(replayOf(h.home, k.caller, 'old', t0 + DELIVERY_REPLAY_MS)).toBeUndefined();
+      expect(replayOf(h.home, k.piece, 'old', t0 + DELIVERY_REPLAY_MS - 1)).toEqual({ hash: 'h1', answer: { conversation: 'cv-0123456789ab', seq: 9, body: 'fed' } });
+      expect(replayOf(h.home, k.piece, 'old', t0 + DELIVERY_REPLAY_MS)).toBeUndefined();
       const before = kept();
       expect(sweepDeliveries(h.home, t0 + DELIVERY_REPLAY_MS)).toBeGreaterThanOrEqual(1);
       expect(kept()).toBeLessThan(before);
       // A write sweeps too.
       keepAnswer(h.home, { ...k, id: 'old2' }, { conversation: 'cv-0123456789ab', seq: 1, body: 'fed' }, t0);
       keepAnswer(h.home, { ...k, id: 'new' }, { conversation: 'cv-0123456789ab', seq: 2, body: 'fed' }, t0 + DELIVERY_REPLAY_MS + 1);
-      expect(replayOf(h.home, k.caller, 'old2', t0)).toBeUndefined();
+      expect(replayOf(h.home, k.piece, 'old2', t0)).toBeUndefined();
     });
 
     it('a piece keeps at most DELIVERY_LIMITS.keptPerPiece answers a day: past that, 429 and nothing runs', async () => {
@@ -342,6 +351,18 @@ describe('POST /api/loom/deliver', () => {
 
     it('from an agent only from the runtime', async () => {
       await refused(tok.slack, slackMsg('x-8', { from: { kind: 'agent', id: 'mark' } }), /from \{kind: agent\} comes only from the runtime/);
+    });
+
+    it('a piece calling itself the runtime isn\'t: from an agent only from the installed delivery piece', async () => {
+      // A second `role: runtime` piece (install refuses one; here it's laid down by hand) on a venue of its own.
+      piece(h.home, 'fake', { role: 'runtime', venues: { fakevenue: { label: 'Fake', kind: 'agent' } } });
+      const t = createToken(h, { role: { kind: 'piece', piece: 'fake', subject: 'x' }, label: 'fake' }).token;
+      try {
+        await refused(t, relay('x-fake', { venue: 'fakevenue' }), /from \{kind: agent\} comes only from the runtime/);
+      } finally {
+        rmSync(join(h.home, 'pieces', 'fake'), { recursive: true, force: true });
+        rmSync(join(h.home, 'pieces', 'bin', 'loom-fake'), { force: true });
+      }
     });
 
     it('a piece token for a piece that isn\'t installed', async () => {
@@ -441,6 +462,16 @@ describe('POST /api/loom/deliver', () => {
       expect(busy.every((r) => /delivery piece \(runtime\) is busy/.test(String(r.body.error)))).toBe(true);
       expect(calls()).toHaveLength(40);
     }, 30_000);
+
+    it('an answer over 64 KB is a 502 and isn\'t kept', async () => {
+      mode('huge');
+      const r = await post(tok.slack, slackMsg('l-huge'));
+      expect(r.status).toBe(502);
+      expect(r.body.error).toMatch(/answer too large/);
+      mode('ok');
+      expect((await post(tok.slack, slackMsg('l-huge'))).status).toBe(200);
+      expect(calls()).toHaveLength(2);
+    });
 
     it('a body over DELIVER_MAX_BYTES is a 413, and nothing runs', async () => {
       const r = await post(tok.slack, { ...slackMsg('l-big'), pad: 'x'.repeat(DELIVER_MAX_BYTES) });

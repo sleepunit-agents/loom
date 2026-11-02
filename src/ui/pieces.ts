@@ -126,7 +126,7 @@ export const MAX_RUNNING = 6;
  * of /api (a box, which may be compromised) can never starve the owner's page.
  * The API's queue is bounded too: past it, a call is refused, not parked.
  */
-class Pool {
+export class Pool {
   private running = 0;
   private readonly waiting: Array<() => void> = [];
   constructor(private readonly max: number, private readonly maxWaiting = Infinity) {}
@@ -150,6 +150,9 @@ class Pool {
       this.waiting.shift()?.();
     }
   }
+
+  /** Nothing running and nothing waiting: a caller keeping pools per key may drop this one. */
+  get idle(): boolean { return this.running === 0 && this.waiting.length === 0; }
 }
 
 const pagePool = new Pool(MAX_RUNNING);

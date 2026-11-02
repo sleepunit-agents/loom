@@ -124,8 +124,8 @@ runner. The body:
 | `text` | the message, ≤ 40,000 chars |
 | `source` | the calling piece's name: added by core when it forwards, never sent by the caller |
 
-**Idempotent:** the same calling credential (`piece:<piece>/<subject>`, or the runtime's token) and `id` within 24
-hours returns the first call's answer and writes nothing. The same pair with a different body is refused with `409`.
+**Idempotent:** the same calling piece and `id` within 24 hours, whichever of the piece's credentials calls, returns
+the first call's answer and writes nothing. The same pair with a different body is refused with `409`.
 Core keeps a hash of the body, never its text.
 
 **Who may deliver what.** Core checks before forwarding:
@@ -308,7 +308,7 @@ Each step leaves a working household, and each has its own "done".
    - In each source's own repo (loom-discord, loom-slack, loom-clock), a test fails if the source's code names a
      harness binary or a session command. Sources only call `deliver`.
 2. **Delivery records first, and once.** A delivered message writes its turn to core before any body sees it. With the body
-   failing to start, the turn is still recorded and the answer is `body: "failed"`. A repeated `(calling credential, id)`
+   failing to start, the turn is still recorded and the answer is `body: "failed"`. A repeated `(calling piece, id)`
    within 24h writes no second turn; the same pair with a different body is refused with `409`.
 3. **Capacity and continuity** (from bridges.md, now the runtime's):
    - the same key reaches the same conversation's body;

@@ -188,6 +188,13 @@ describe('offerConflicts (against the other installed pieces)', () => {
     expect(b.venues?.toString).toBeUndefined();
   });
 
+  it('refuses a second role:runtime piece; the runtime itself may update', () => {
+    const rt = [{ name: 'runtime', loom: { role: 'runtime' } }];
+    expect(offerConflicts('pretender', { role: 'runtime' }, rt)).toMatch(/the runtime piece is already the runtime: a household has one/);
+    expect(offerConflicts('runtime', { role: 'runtime' }, rt)).toBeUndefined();
+    expect(offerConflicts('tasks', { role: 'tasks' }, rt)).toBeUndefined();
+  });
+
   it('refuses a second delivery piece; the piece itself may update', () => {
     const withDelivery = [{ name: 'runtime', loom: { delivery: ['loom-runtime', 'deliver'] } }];
     expect(offerConflicts('rival', { delivery: ['loom-rival', 'deliver'] }, withDelivery)).toMatch(/the runtime piece already offers delivery: there is only one/);

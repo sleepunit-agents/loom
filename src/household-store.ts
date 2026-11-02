@@ -52,8 +52,8 @@ const schemaDone = new Set<string>();
  * household.db's schema:
  *  - `venues`: the registry above;
  *  - `deliveries`: POST /api/loom/deliver's replay table (src/delivery.ts). One row per calling
- *    credential (`piece:<piece>/<subject>`, or `runtime:<piece>`) and id, for 24 hours: the
- *    piece, when, a SHA-256 of the body (never the text) and the runtime's answer.
+ *    piece (whichever of its credentials called) and id, for 24 hours: when, a SHA-256 of the
+ *    body (never the text) and the runtime's answer.
  */
 const SCHEMA = `CREATE TABLE IF NOT EXISTS venues (
     name        TEXT PRIMARY KEY,
@@ -65,13 +65,12 @@ const SCHEMA = `CREATE TABLE IF NOT EXISTS venues (
     updated     TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS deliveries (
-    caller      TEXT NOT NULL,
-    id          TEXT NOT NULL,
     piece       TEXT NOT NULL,
+    id          TEXT NOT NULL,
     at          INTEGER NOT NULL,
     body_sha256 TEXT NOT NULL,
     answer_json TEXT NOT NULL,
-    PRIMARY KEY (caller, id)
+    PRIMARY KEY (piece, id)
   );
   CREATE INDEX IF NOT EXISTS deliveries_piece_at ON deliveries (piece, at);`;
 

@@ -246,9 +246,10 @@ export function offersIn(loom: Offers): Offers {
 /**
  * What stops piece `name` from offering `offers` beside the other installed
  * pieces (its own earlier version is not one of them): a venue or tool name
- * another piece declares, a second grants authority, or a second delivery piece. Undefined when nothing.
+ * another piece declares, a second grants authority, a second delivery piece, or a second
+ * `role: runtime` piece. Undefined when nothing.
  */
-export function offerConflicts(name: string, offers: Offers, installed: readonly { name: string; loom: Offers }[]): string | undefined {
+export function offerConflicts(name: string, offers: Offers & { role?: string }, installed: readonly { name: string; loom: Offers & { role?: string } }[]): string | undefined {
   for (const other of installed) {
     if (other.name === name) continue;
     for (const v of Object.keys(offers.venues ?? {})) {
@@ -259,6 +260,8 @@ export function offerConflicts(name: string, offers: Offers, installed: readonly
     }
     if (offers.grants && other.loom.grants) return `the ${other.name} piece is already the grants authority: there is only one`;
     if (offers.delivery && other.loom.delivery) return `the ${other.name} piece already offers delivery: there is only one`;
+    // A household has one runtime (conversations.md: the runtime token is minted for the one piece).
+    if (offers.role === 'runtime' && other.loom.role === 'runtime') return `the ${other.name} piece is already the runtime: a household has one`;
   }
   return undefined;
 }

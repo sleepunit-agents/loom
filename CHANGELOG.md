@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   isn't kept. `GET /api/loom/venues` gives the runtime every venue with its
   `send` argv. Offer lookups by name use own keys only. A piece delivers on
   core's `wake` only if it declares `"wake": {}` in its venues. Replays are
-  keyed on the calling credential and a hash of the body (a changed body is a
+  keyed on (calling piece, id) with a hash of the body (a changed body is a
   409), and one piece gets at most 2 running and 4 waiting forwards and
   10,000 kept answers a day (t-1744).
 

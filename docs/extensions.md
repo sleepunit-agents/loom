@@ -593,11 +593,13 @@ passes its answer back (`src/delivery.ts`).
     `grants` offer says how, a call from any other piece is refused with a
     503 (fail closed);
   - `from: {kind: person}` comes only from a venue adapter on a venue it
-    declares (not `relay`); `from: {kind: agent}` only from the runtime.
+    declares (not `relay`); `from: {kind: agent}` only from the runtime, the
+    installed piece offering `delivery` (a block's `role` alone isn't it).
+    A second `role: runtime` piece is refused at install.
 - **No delivery piece installed:** a 503 with the reason.
-- **Idempotent:** the same calling credential (`piece:<piece>/<subject>`,
-  or the runtime's token) and `id` within 24 hours gets the first answer
-  back verbatim, and the runtime isn't called. The same pair with a
+- **Idempotent:** the same calling piece and `id` within 24 hours,
+  whichever of the piece's credentials calls (the runtime has two), gets the
+  first answer back verbatim, and the runtime isn't called. The same pair with a
   different body is a 409. The answers are kept in `$LOOM_HOME/household.db`
   (`deliveries`, with a SHA-256 of the body, never its text), swept past 24
   hours.
