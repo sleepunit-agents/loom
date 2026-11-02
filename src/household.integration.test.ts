@@ -1163,6 +1163,16 @@ describe('the household page', () => {
     // The same item as the Inbox's row: it has buttons, so the banner opens its sheet (/inbox?i=<key>), not the Inbox.
     expect(front.home.need.key).toBe(it.key);
     expect(it).toMatchObject({ unread: true, attention: true });
+    // Gone to straight (its own page), the app reads it first: the dot clears, on Home and in the Inbox. Only with
+    // the page's csrf, and only a key.
+    const csrf = csrfOf(front);
+    const read = (form: Record<string, string>) => fetch(`${base}/inbox/read`, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() });
+    expect((await read({ _csrf: '0'.repeat(64), i: it.key })).status).toBe(403);
+    expect((await read({ _csrf: csrf, i: 'nope' })).status).toBe(400);
+    expect((await data(cookie, '/')).home.need.unread).toBe(true);
+    expect((await read({ _csrf: csrf, i: it.key })).status).toBe(200);
+    expect((await data(cookie, '/')).home.need).toMatchObject({ key: it.key, unread: false });
+    expect(((await data(cookie, '/inbox')).items as Data[]).find((i) => i.key === it.key).unread).toBe(false);
     // That address names the item, so the Inbox opens it there; and opened, it's read, on Home too.
     expect((await data(cookie, `/inbox?i=${it.key}`)).open).toBe(it.key);
     expect((await data(cookie, '/')).home.need).toMatchObject({ key: it.key, unread: false });

@@ -12,8 +12,8 @@ import { Spinner } from '@/components/ui/spinner';
 const Profile = lazy(() => import('./profile'));
 const Ledger = lazy(() => import('./ledger'));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, LoomMark, Nothing, type Env } from './blocks';
-import { pageHref, type Button as Btn, type Source, type Tone } from './loom';
-import { opensTo, plain } from './plain';
+import { markRead, pageHref, type Button as Btn, type Source, type Tone } from './loom';
+import { openItem, plain } from './plain';
 import { tidy } from './tidy';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
@@ -143,13 +143,11 @@ export const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission
 /** Opening an item (plain.ts opensTo): its own page when it has one; else its sheet, here (`sheet`, in the Inbox) or
  * in the Inbox (from anywhere else). */
 export function useOpenItem(sheet?: (i: InboxItem) => void) {
-  const { go } = useEnv();
-  return (i: InboxItem) => {
-    const to = opensTo(i);
-    if ('page' in to) go(pageHref(to.page, i.source));
-    else if (sheet) sheet(i);
-    else go(to.sheet);
-  };
+  const { go, ctx } = useEnv();
+  return (i: InboxItem) => void openItem(i, {
+    read: (key) => markRead(key, ctx.csrf), page: (page) => go(pageHref(page, i.source)), go,
+    ...(sheet ? { sheet: () => sheet({ ...i, unread: false }) } : {}),
+  });
 }
 
 /** An item in a line: who (their mark, or loom's), what, why, and its kind. */
@@ -164,8 +162,9 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
         {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
         <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-2">{i.unread && <span className="size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
-            <span className={`truncate ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
+          {/* The whole title, mostly (Jonathan liked reading it): two lines before it's cut. */}
+          <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
+            <span className={`line-clamp-2 break-words ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
           {(p.why ?? i.outcome) && <span className="block truncate text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
         </span>
         <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>

@@ -110,7 +110,7 @@ export interface UiOptions {
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup'
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
@@ -1046,6 +1046,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const hh = opts.household?.();
+  // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
+  // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).
+  if (pathname === '/inbox/read' && hh) {
+    if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
+    if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
+    const form = await readForm(req, ACT_MAX_BYTES);
+    if (!form) return send(res, 413, 'text/plain', 'too large');
+    if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) return send(res, 403, 'text/plain', 'forbidden: this form is stale; reload and try again');
+    const key = form.get('i') ?? '';
+    if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
+    storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
+    return sendJson(res, 200, { ok: true });
+  }
   const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/(loom|[a-z][a-z0-9-]{0,39})$/.exec(pathname) : null;
   if (pathname.startsWith('/act/') || agentAct) {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
