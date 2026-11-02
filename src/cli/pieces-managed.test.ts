@@ -224,6 +224,54 @@ describe('managed pieces', () => {
       .toContain('loom.name is nope, which isn\'t one of its bins (loom-a, loom-b)');
   });
 
+  describe('offers (src/offers.ts) at install', () => {
+    const tool = { description: 'A house for a body', input_schema: { type: 'object' }, argv: ['loom-runtime', 'house'] };
+    const installFrom = (repo: string, commit = SHA1) => runCliCaptured(['pieces', 'install', '--from', `github:${repo}#${commit}`, '--yes'], { env });
+
+    it('keeps a copy of the declarations in piece.json, checked against the package\'s own bins', async () => {
+      const loom = {
+        role: 'runtime', grants: {},
+        sections: { project: { label: 'Houses', argv: ['loom-runtime', 'feed'] } },
+        venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'send'] } },
+        mcp_tools: { house: tool },
+      };
+      await fixture('x/runtime', SHA1, { name: 'runtime', loom }, { 'loom-runtime': 'true' });
+      expect((await installFrom('x/runtime')).code).toBe(0);
+      const rec = JSON.parse(await readFile(join(loomHome, 'pieces', 'runtime', 'piece.json'), 'utf-8'));
+      expect(rec.loom).toMatchObject({
+        grants: true, sections: { project: { label: 'Houses', argv: ['loom-runtime', 'feed'], unfiled: false } },
+        venues: loom.venues, mcp_tools: loom.mcp_tools,
+      });
+    });
+
+    it('an invalid offer rejects the whole block, and nothing is installed', async () => {
+      await fixture('x/bad', SHA1, { name: 'bad', loom: { label: 'Bad', sections: { project: { label: 'X', argv: ['sh', '-c', 'x'] } } } }, { 'loom-bad': 'true' });
+      const r = await installFrom('x/bad');
+      expect(r.code).not.toBe(0);
+      expect(r.stderr).toContain("loom.sections.project.argv[0] must be one of the piece's own bins (loom-bad)");
+      expect(existsSync(join(loomHome, 'pieces', 'bad', 'piece.json'))).toBe(false);
+    });
+
+    it('refuses a second grants authority, and a tool or venue name another piece has; the piece itself may update', async () => {
+      await fixture('x/runtime', SHA1, { name: 'runtime', loom: { role: 'runtime', grants: true, mcp_tools: { house: tool }, venues: { relay: { label: 'Relay', kind: 'agent' } } } }, { 'loom-runtime': 'true' });
+      await fixture('x/runtime', SHA2, { name: 'runtime', loom: { role: 'runtime', grants: true, mcp_tools: { house: tool }, venues: { relay: { label: 'Relay', kind: 'agent' } } } }, { 'loom-runtime': 'true' });
+      expect((await installFrom('x/runtime')).code).toBe(0);
+      expect((await installFrom('x/runtime', SHA2)).code).toBe(0);
+
+      await fixture('x/rival', SHA1, { name: 'rival', loom: { grants: true } }, { 'loom-rival': 'true' });
+      expect((await installFrom('x/rival')).stderr).toContain('the runtime piece is already the grants authority: there is only one');
+      await fixture('x/tooly', SHA1, { name: 'tooly', loom: { mcp_tools: { house: { ...tool, argv: ['loom-tooly'] } } } }, { 'loom-tooly': 'true' });
+      expect((await installFrom('x/tooly')).stderr).toContain("tool house is already the runtime piece's");
+      await fixture('x/venuey', SHA1, { name: 'venuey', loom: { role: 'runtime', venues: { relay: { label: 'R', kind: 'agent' } } } }, { 'loom-venuey': 'true' });
+      expect((await installFrom('x/venuey')).stderr).toContain("venue relay is already the runtime piece's");
+      for (const p of ['rival', 'tooly', 'venuey']) expect(existsSync(join(loomHome, 'pieces', p, 'piece.json'))).toBe(false);
+
+      // Once the authority is removed, another piece may be it.
+      expect((await runCliCaptured(['pieces', 'remove', 'runtime'], { env })).code).toBe(0);
+      expect((await installFrom('x/rival')).code).toBe(0);
+    });
+  });
+
   it('remove keeps settings and data unless --purge, and never takes another piece\'s links', async () => {
     await install(SHA1);
     await fixture('x/tasks2', SHA1, { name: 'tasks2' }, { 'loom-tasksx': 'echo x' });
