@@ -44,7 +44,8 @@ The owner's other rulings shape everything below:
      only what a decent coworker would keep, and making bulk surveillance inconvenient.
 4. **Raw text is in the audit log only, and no identity ever reads it.** The log is encrypted at rest, deleted once
    processed, and gone after 7 days regardless. Its only reader is grading: bare models with no identity, no memory and
-   no tools, whose output is checked so it cannot carry the text out.
+   no tools, whose output is capped so it cannot carry the text out in bulk: a score, and at most one line of ≤ 200
+   characters per conversation per day.
 5. **Review has two halves.**
    - *Grading:* bare models, blind to which model, agent and person is involved, score samples household-wide, and
      their scores feed model choice.
@@ -105,7 +106,9 @@ that agent, without raw text.
 _Avoid_: retro, reflection (that's an agent's own lane), evaluation
 
 **Finding**:
-A grader's one-line note on one turn, checked so it doesn't quote. Kept on the turn's agent's side.
+A grader's note on one turn: one line of at most 200 printable characters, at most one per conversation per UTC day. A
+meaningful quote is fine; bulk quoting isn't, and the cap is what stops it (nothing machine-checks the words). Kept on
+the turn's agent's side.
 _Avoid_: comment, feedback (that's a memory category)
 
 **Scorecard**:
@@ -272,6 +275,12 @@ token with role `review` and `expires` 2 hours out. It reaches only `audit/take`
   - every model and harness string seen in any turn becomes `M1`… or `H1`…;
   - numbering is by first appearance, consistent within the take.
   The `agent` field itself is given as its `A…` placeholder.
+
+  **A trade-off: a cardless person behind an opaque slug.** Redaction replaces only the names loom knows. When a
+  venue adapter writes a sender as a slug with no person card behind it, the slug is redacted but the person's name,
+  if it appears in the text, isn't: loom doesn't know it. Adapters should map people to cards (the venue's gates),
+  and write a sender they can't map as `{kind: unknown}`, which also limits grading to the families that already
+  processed the conversation.
 - **`audit/done`:** `{refs: […]}` deletes them.
 
 ## Review
@@ -309,8 +318,11 @@ A daily household job. **Core defines the contract; the runtime runs it**, becau
    can't add up to a transcript. They're stored in the turn's agent's `findings` table: the turn, the measure, the
    score and the text.
 4. **Scores.** `POST /api/loom/scores` `{ref, grader_family, score}`.
-   Core turns scores into scorecard rows itself, from its `ref` mapping, so no runtime ever learns which model
-   produced a sample. Measures from metadata are computed by core in the same pass. A row is:
+   Core turns scores into scorecard rows itself, from its `ref` mapping, so no grader ever learns which model
+   produced a sample. (The runtime is the household's operator: it reads the scorecards by design, and isn't blind.)
+   The grader families core accepts are the families of the models written on turns, by the runtime or a harness;
+   the runtime is trusted here, as it mints the review tokens. Measures from metadata are computed by core in the
+   same pass. A row is:
    - `day`, `model`, `family`, `harness`, `kind`;
    - `measure`: a name from the table, or `graded`;
    - `value` (a number), `n` (a count), `same_family` (a boolean).
@@ -399,7 +411,7 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
       `findings`.
     - A score from a family that didn't process a non-owner conversation is rejected.
     - Scores are posted by `ref`; the resulting rows carry the producer's model, family and harness, which the
-      runtime never received.
+      grader never received.
     - An agent's `conversation_findings` returns only its own.
 11. **Needs you.** A `needs_owner` digest makes an Inbox ask, and a later digest without one clears it.
 12. **Projects.** The `conversations` section's contents, caps, order and `new` are as stated.
@@ -449,6 +461,66 @@ Slice 1 settled these points the doc left open:
 - **Findings.** `conversation_findings` reads a `findings` table when there is one; slice 3 creates it.
 - **The Needs you ask.** It comes from core and has no buttons (the Inbox files it as an alert). It links to
   `loom:conversation/<id>`; the same page is also at `/a/<agent>/conversation/<id>`.
+
+### As built: slices 2 and 3 (t-1742)
+
+These slices settled these points the doc left open:
+
+- **Families.** A model's family comes from household.json's `families` (a model name, or a prefix ending in `*`,
+  to a family name) and then built-in prefixes in `src/review.ts` (`claude`, `opus`… → `anthropic`; `gpt`, `o3`… →
+  `openai`; …), and a `provider/` or `provider:` lead naming a family. A model none of them knows has no family (`null`
+  in a take; `unknown` on a scorecard row). Lookups are own keys only (a model named `constructor` is no family), and a
+  resolved family must be a family name. When the runtime spec lands its model list, it can feed this setting.
+- **The audit write.** `{conversation, seq, text}`, text 1–40,000 characters; any other key is refused. The writer is
+  compared with the turn's recorded writer exactly (a house token is its own writer). Refused besides: an entry
+  already written (409), one already taken (409: it is never written again), and a turn more than 10 minutes in the
+  future or older than 7 days (409), since the sweep goes by the turn's `at`.
+- **The key pair.** The recipient is always derived from `review.key` (`age-keygen -y`); `review.pub` is rewritten to
+  match, never trusted. `age-keygen` is found as `age` is (`LOOM_AGE_KEYGEN`, else PATH, else beside `age`).
+- **The store.** `audit.db` holds exactly the six plaintext fields and the blob. "Taken" lives in household.db's
+  `audit_reads` (ref, run, at, agent, conversation, seq), whose rows also map a `ref` to its turn for scores and
+  findings. `audit.db` runs in rollback-journal mode with `secure_delete`, so a deleted entry's pages are zeroed.
+- **Runs.** A review run is its token: its id is a digest of the token. A take's refs answer only that run's
+  `scores`, `findings` and `done`; another run's are a 404 (done ignores them).
+- **Take.** `limit` defaults to 100. An entry of an agent no longer in the household is never handed out (the
+  vocabulary doesn't know its names); it stays claimed for the sweep. The vocabulary is read before anything is claimed,
+  through the people backend, and a people store that exists but can't be read fails the take (503). `kind` is the turn's kind. An entry from a conversation with someone other than
+  the owner also carries `only_families`: the families that may grade it, so the runtime knows before it sends a word
+  anywhere (core still refuses any other family's score). Without `age`, a take is a 503 and claims nothing. An entry
+  that age rejects (not an age file for the review key) is left out and stays claimed, so the sweep removes it. A
+  missing or non-plain review key is a 503 before anything is claimed; age failing mid-take releases that take's
+  claims and answers 503.
+- **"Someone other than the owner."** A conversation that ever had a turn from a person who isn't a household member
+  owning that agent, or from `unknown`. It's sticky: the turn write marks it in household.db's
+  `conversation_strangers`, never cleared, so neither the 32-person cap nor the 90-day fold hides it. (A conversation
+  from before the mark is judged by its `people` and held turns too.) Both the take's `only_families` and scores read
+  it.
+- **Redaction.** Beyond each card's name and slug, every person slug a conversation has seen (its `people`, and every
+  turn `from` a person) is redacted, card or not. Each part of a name or slug is that person too: each whitespace
+  word ("O'Brien", "Mary-Kate") and each piece of it split on hyphens and apostrophes ("Brien", "Kate"), from three
+  letters (so "Al" or "Jo" doesn't blank common words). An apostrophe in a name matches ' or ’. A card whose slug is an agent id is that agent (A…). Agent ids are the
+  household's and every agent its conversations have seen. Whitespace inside a name matches any whitespace. A term
+  that matches more than one thing goes to agent, then person, model, harness.
+- **Scores.** A grader family must be one some household agent's model resolves to (403 otherwise), and never the
+  producer's own while the household has another (the single-family fallback; for a non-owner conversation, the
+  families that processed it rule instead). At most two per ref, one per family (409 past that). Only an agent turn
+  with a model is scored (409 otherwise). A row's `day` is the turn's UTC day; `value` is the mean, `n` the count.
+- **Findings.** Only on the agent's own turn with a model, as a score (409 otherwise). One per conversation per UTC
+  day of the turn it's on. One printable line of at most 200
+  characters, not checked for quotes. It stores the turn, the measure `graded`, the mean score posted for its ref
+  (or null), and the text.
+- **Measures.** `computeMeasures(h, day)` replaces that day's metadata rows; the hourly sweep runs it for the last
+  three days, so `abandoned` settles after its 24 hours. Each sample is attributed to the model and harness of the
+  agent turn it measures (the reply, the run's first turn, or the latest agent turn before it), else `unknown`.
+  `round_trips` counts turns as the seq distance from the first message to the first answered reply. A sample with
+  no harness is `unknown`. The pass covers today and the three days before.
+- **Scorecards.** `GET /api/loom/scorecards?since=YYYY-MM-DD` (default 30 days back), runtime only, at most 10,000
+  rows oldest first.
+- **The review's settings.** household.json's `tz` (an IANA name, default `UTC`) and `review` (`on`, `off`, or 1–16
+  strings of ≤ 200) are checked when the household loads; `GET /api/loom/review/config` (runtime) answers
+  `{review, tz}`.
+- **Bundles.** On top of copying only what it names, an export refuses to write a bundle whose staging holds any
+  file named like the audit log or the review key pair.
 
 ## Open questions
 

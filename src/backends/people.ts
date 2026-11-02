@@ -326,6 +326,11 @@ export class PeopleStore {
   private readonly now: () => number;
   /** False on a read-only store whose tables do not exist yet. */
   readonly migrated: boolean;
+  /**
+   * Whether the store has a `people` table at all: it was a people store once, whatever its
+   * schema now. A store that holds people but isn't `migrated` is one a reader can't trust.
+   */
+  readonly holdsPeople: boolean;
 
   constructor(config: PeopleStoreConfig) {
     this.now = config.now ?? Date.now;
@@ -340,7 +345,8 @@ export class PeopleStore {
         if (m.pending(this.db)) m.run(this.db);
       }
     }
-    this.migrated = hasTable(this.db, 'people') && hasTable(this.db, 'person_revisions');
+    this.holdsPeople = hasTable(this.db, 'people');
+    this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
     this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null);
   }
 

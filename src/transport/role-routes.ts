@@ -5,7 +5,7 @@
  * add their routes (conversations/turn, audit, audit/take, scores, …) extend this table
  * and dispatch the path in http-server.ts's loomApi.
  *
- * Paths are core's own API, POST /api/loom/<path>. Neither role reaches MCP, /cli, the
+ * Paths are core's own API, POST /api/loom/<path> (GET for GET_ROUTES). Neither role reaches MCP, /cli, the
  * page, a piece's API or a piece's store.
  */
 export type NarrowRole = 'runtime' | 'review';
@@ -19,24 +19,30 @@ export type NarrowRole = 'runtime' | 'review';
 export const DELIVER_ROUTE = 'deliver';
 
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE],
-  review: [],
+  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config'],
+  review: ['audit/take', 'audit/done', 'scores', 'findings'],
 };
 
 /**
- * Of those routes, the ones an agent token reaches too: a harness writes its own session's
- * turns as the agent (docs/specs/conversations.md, "Who writes what"). Owner, peer and piece
- * tokens reach none of them.
+ * Of ROLE_ROUTES, the ones that are GET (the rest are POST): the scorecards and the review's
+ * settings. (GET /api/loom/venues is RUNTIME_GET_ROUTES, answered before this table.)
  */
-export const AGENT_ROUTES: readonly string[] = ['conversations/turn'];
+export const GET_ROUTES: readonly string[] = ['scorecards', 'review/config'];
 
 /**
- * GET /api/loom/<path>: what core tells the runtime (the only GET under /api). `venues`: every
+ * Of those routes, the ones an agent token reaches too: a harness writes its own session's
+ * turns, and their audit entries, as the agent (docs/specs/conversations.md, "Who writes what"). Owner, peer and piece
+ * tokens reach none of them.
+ */
+export const AGENT_ROUTES: readonly string[] = ['conversations/turn', 'audit'];
+
+/**
+ * GET /api/loom/<path>, answered before ROLE_ROUTES is read: what core tells the runtime. `venues`: every
  * venue with its kind, piece and `send` argv (household-store.ts, venueDirectory).
  */
 export const RUNTIME_GET_ROUTES: readonly string[] = ['venues'];
 
-/** Whether `role` may call POST /api/loom/<path>. */
+/** Whether `role` may call /api/loom/<path> (POST, or GET for GET_ROUTES). */
 export function roleReaches(role: NarrowRole, path: string): boolean {
   return ROLE_ROUTES[role].includes(path);
 }

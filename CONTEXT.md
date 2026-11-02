@@ -195,8 +195,10 @@ blind. **Introspection** is per agent, by that agent, without raw text.
 _Avoid_: retro, reflection (that's an agent's own lane), evaluation
 
 **Finding**:
-A grader's one-line note on one turn, checked so it doesn't quote. Kept on the
-turn's agent's side.
+A grader's note on one turn: one line of at most 200 printable characters, at
+most one per conversation per UTC day. A meaningful quote is fine; bulk quoting
+isn't, and the cap is what stops it (nothing machine-checks the words). Kept on
+the turn's agent's side.
 _Avoid_: comment, feedback (that's a memory category)
 
 **Scorecard**:

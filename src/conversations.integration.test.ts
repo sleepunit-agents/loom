@@ -130,7 +130,7 @@ describe('criterion 1: turn writes (POST /api/loom/conversations/turn)', () => {
 
   it('the route is the runtime\'s (allowlisted), and an agent token\'s for its own session', () => {
     expect(ROLE_ROUTES.runtime).toContain('conversations/turn');
-    expect(AGENT_ROUTES).toEqual(['conversations/turn']);
+    expect(AGENT_ROUTES).toEqual(['conversations/turn', 'audit']);
     expect(venueOf(h.home, 'slack')).toMatchObject({ piece: 'shuttle', kind: 'live' });
     // Own keys only: an inherited name is neither core's venue nor a registered one.
     for (const name of ['constructor', 'tostring', 'valueof']) expect(venueOf(h.home, name)).toBeUndefined();

@@ -242,8 +242,9 @@ describe('the runtime and review roles over HTTP', () => {
   });
 
   it('every existing route refuses both roles', async () => {
-    // The allowlist today: runtime mints review tokens, writes conversation turns (t-1741) and delivers (t-1744), and that's all.
-    expect(ROLE_ROUTES).toEqual({ runtime: ['review/token', 'conversations/turn', 'deliver'], review: [] });
+    // The allowlist: runtime mints review tokens, writes conversation turns (t-1741), delivers (t-1744),
+    // writes audit entries and reads the scorecards and review settings; review takes, finishes, scores and finds (t-1742).
+    expect(ROLE_ROUTES).toEqual({ runtime: ['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config'], review: ['audit/take', 'audit/done', 'scores', 'findings'] });
     const mcp = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '0' } } };
     for (const k of ['runtime', 'review'] as const) {
       for (const p of ['/', '/mcp', '/agents/art/mcp', '/agents/art/']) {
@@ -251,9 +252,12 @@ describe('the runtime and review roles over HTTP', () => {
       }
       expect((await call('/cli', tok[k], { argv: ['recall', 'x'] })).status, `${k} /cli`).toBe(403);
       // A piece's API, its own included, and any piece's store.
-      for (const p of ['/api/shuttle/run', '/api/notes/x', '/api/loom/store/shuttle/get', '/api/loom/store/notes/list', '/api/loom/poll', '/api/loom/review/config']) {
+      for (const p of ['/api/shuttle/run', '/api/notes/x', '/api/loom/store/shuttle/get', '/api/loom/store/notes/list', '/api/loom/poll']) {
         expect((await call(p, tok[k], { collection: 'c', key: 'k' })).status, `${k} ${p}`).toBe(403);
       }
+      // review/config is a GET, and the runtime's: POST is 405 for anyone, GET 403 for review.
+      expect((await call('/api/loom/review/config', tok[k], {})).status, `${k} POST review/config`).toBe(405);
+      if (k === 'review') expect((await fetch(`${base}/api/loom/review/config`, { headers: { authorization: `Bearer ${tok[k]}` } })).status).toBe(403);
       // The page: no session from the login form, no page by bearer.
       const login = await fetch(`${base}/login`, {
         method: 'POST', redirect: 'manual',

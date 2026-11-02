@@ -42,7 +42,22 @@ export interface Household {
    * from `members`, else the legacy `owner` as the one household owner.
    */
   members: Member[];
+  /**
+   * Model name → family (its provider: anthropic, openai, …), household.json's `families`
+   * (docs/specs/conversations.md, "Review"): a key is a model name, or a prefix ending in `*`.
+   * It adds to and overrides the built-in prefixes in src/review.ts (`familyOf`).
+   */
+  families?: Record<string, string>;
+  /** household.json's `tz` (an IANA name): the review's 04:00 is in it. loadHousehold defaults it to UTC. */
+  tz?: string;
+  /**
+   * household.json's `review` (docs/specs/conversations.md, "Review"): `on` (the default), `off`,
+   * or a command (1-16 strings of at most 200) that replaces the runtime's job.
+   */
+  review?: ReviewSetting;
 }
+
+export type ReviewSetting = 'on' | 'off' | string[];
 
 export interface Member {
   person: string;
@@ -170,7 +185,42 @@ export function loadHousehold(home: string): Household | null {
     default: def,
     owner: typeof raw.owner === 'string' ? raw.owner : undefined,
     members: parseMembers(raw, agents as string[], path),
+    ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
+    tz: parseTz(raw.tz, path),
+    review: parseReview(raw.review, path),
   };
+}
+
+function parseTz(v: unknown, path: string): string {
+  if (v === undefined) return 'UTC';
+  const bad = new HouseholdError(`${path}: tz is an IANA time zone name (e.g. America/Chicago)`);
+  if (typeof v !== 'string' || !v.length || v.length > 64) throw bad;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: v }); } catch { throw bad; }
+  return v;
+}
+
+function parseReview(v: unknown, path: string): ReviewSetting {
+  if (v === undefined || v === 'on') return 'on';
+  if (v === 'off') return 'off';
+  if (Array.isArray(v) && v.length >= 1 && v.length <= 16 && v.every((x) => typeof x === 'string' && x.length >= 1 && x.length <= 200 && !/[\x00-\x1f\x7f]/.test(x))) return [...v] as string[];
+  throw new HouseholdError(`${path}: review is "on", "off", or a command: 1-16 strings of at most 200 printable characters`);
+}
+
+/** A model family's name: lowercase letters, digits and dashes, at most 32. */
+export const FAMILY_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+function parseFamilies(v: unknown, path: string): Record<string, string> {
+  const bad = () => new HouseholdError(`${path}: families maps up to 64 model names (or prefixes ending in *) of at most 120 printable characters to family names (lowercase letters, digits, dashes)`);
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw bad();
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (entries.length > 64) throw bad();
+  // A null-prototype map: a model named "__proto__" or "constructor" is a key like any other.
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [k, f] of entries) {
+    if (!k.length || k.length > 120 || !/^[^\x00-\x1f\x7f]+$/.test(k) || typeof f !== 'string' || !FAMILY_NAME.test(f) || f === 'unknown') throw bad();
+    out[k.toLowerCase()] = f;
+  }
+  return out;
 }
 
 /**

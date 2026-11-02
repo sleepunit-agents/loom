@@ -46,11 +46,14 @@ import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
-import { AGENT_ROUTES, DELIVER_ROUTE, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
+import { AGENT_ROUTES, DELIVER_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
+import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
+import { takeAudit } from '../audit-take.js';
+import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
@@ -137,6 +140,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   if (res.headersSent) return;
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+/** The error envelope's leading word for a status: the one cascade core's /api/loom routes use. */
+function statusWord(status: number): string {
+  switch (status) {
+    case 403: return 'forbidden';
+    case 404: return 'not-found';
+    case 409: return 'conflict';
+    case 410: return 'gone';
+    case 503: return 'unavailable';
+    default: return status >= 500 ? 'error' : 'bad-input';
+  }
 }
 
 function sendError(res: ServerResponse, status: number, message: string): void {
@@ -338,6 +353,20 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   foldAll();
   const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
   foldTimer.unref();
+  // The audit log's sweep (docs/specs/conversations.md, "The audit log"): every entry older
+  // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
+  // measures on the scorecards. Neither ever stops the daemon.
+  const sweepAll = () => {
+    if (!live) return;
+    const h = live();
+    try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
+    for (const day of recentDays()) {
+      try { computeMeasures(h, day); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
+    }
+  };
+  sweepAll();
+  const sweepTimer = setInterval(sweepAll, 60 * 60 * 1000);
+  sweepTimer.unref();
 
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
@@ -464,7 +493,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       res.end(body);
       return;
     }
-    if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);
+    // GET_ROUTES (the scorecards, the review's settings: a runtime token) are GET; everything else is POST.
+    const getRoute = piece === 'loom' && GET_ROUTES.includes(subpath);
+    if (getRoute ? req.method !== 'GET' : req.method !== 'POST') return sendError(res, 405, `method-not-allowed: ${getRoute ? 'GET' : 'POST'} /api/${piece}/${getRoute ? subpath : ''}`);
     // No token at all: only a path the piece declared open to strangers (its loom block, fixed at
     // install), with a small body, as {kind:'stranger', address}. Everything else still needs a token.
     if (req.headers['authorization'] === undefined) {
@@ -483,10 +514,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
-      return loomApi(req, res, subpath, role);
+      return loomApi(req, res, subpath, role, runOf(req.headers['authorization']));
     }
     // An agent's own session turns (docs/specs/conversations.md): the one core route an agent token reaches.
-    if (piece === 'loom' && role.kind === 'agent' && AGENT_ROUTES.includes(subpath)) return loomApi(req, res, subpath, role);
+    if (piece === 'loom' && role.kind === 'agent' && AGENT_ROUTES.includes(subpath)) return loomApi(req, res, subpath, role, '');
     // Core's own routes for those roles refuse everyone else by name, before the store's 404.
     if (piece === 'loom' && Object.values(ROLE_ROUTES).some((paths) => paths.includes(subpath))) {
       return sendError(res, 403, `forbidden: /api/loom/${subpath} takes a runtime or review token${AGENT_ROUTES.includes(subpath) ? ', or an agent token for its own session' : ''}`);
@@ -539,17 +570,48 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   }
 
   const reachList = (kind: 'runtime' | 'review') =>
-    ROLE_ROUTES[kind].length ? ROLE_ROUTES[kind].map((p) => `POST /api/loom/${p}`).join(', ') : 'nothing yet';
+    ROLE_ROUTES[kind].length ? ROLE_ROUTES[kind].map((p) => `${GET_ROUTES.includes(p) ? 'GET' : 'POST'} /api/loom/${p}`).join(', ') : 'nothing yet';
+
+  /**
+   * A review run's id: a digest of its token (one token per run), so the refs a take hands out
+   * answer only that run's scores, findings and done. A digest, never the token itself.
+   */
+  const runOf = (header: string | undefined): string =>
+    `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
+
+  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
+  const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
+
+  const auditFail = (res: ServerResponse, e: unknown, what: string) => {
+    if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
+    // Never the details: an audit error must not carry text or paths into a response.
+    process.stderr.write(`loom: couldn't ${what}: ${(e as Error).name}\n`);
+    return sendError(res, 503, `unavailable: couldn't ${what}; see the daemon log`);
+  };
 
   /**
    * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
    * the caller already passed roleReaches. Like /api: JSON only, no Origin.
    */
-  async function loomApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Extract<Role, { kind: 'runtime' | 'review' | 'agent' }>): Promise<void> {
+  async function loomApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Extract<Role, { kind: 'runtime' | 'review' | 'agent' }>, run: string): Promise<void> {
     if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    // GET /api/loom/scorecards (docs/specs/conversations.md, "Review", step 4): the runtime's model choice reads it.
+    if (subpath === 'scorecards' && role.kind === 'runtime') {
+      try {
+        const since = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since') ?? undefined;
+        return sendJson(res, 200, { rows: scorecards(live!().home, since) });
+      } catch (e) { return auditFail(res, e, 'read the scorecards'); }
+    }
+    // GET /api/loom/review/config (docs/specs/conversations.md, "Review"): the runtime reads the
+    // setting here, never from the file.
+    if (subpath === 'review/config' && role.kind === 'runtime') {
+      const h = live!();
+      return sendJson(res, 200, { review: h.review ?? 'on', tz: h.tz ?? 'UTC' });
+    }
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
-    const raw = await collectBody(req, 4 * 1024);
-    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: this call is 4 KB at most');
+    const cap = bodyCap(subpath);
+    const raw = await collectBody(req, cap);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
     let body: unknown = {};
     try { if (raw !== '') body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
     // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
@@ -557,10 +619,29 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       try {
         return sendJson(res, 200, writeTurn(live!(), role, body));
       } catch (e) {
-        if (e instanceof ConversationError) return sendError(res, e.status, `${e.status === 403 ? 'forbidden' : e.status === 404 ? 'not-found' : e.status === 409 ? 'conflict' : 'bad-input'}: ${e.message}`);
+        if (e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
         process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
         return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
       }
+    }
+    // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
+    if (subpath === 'audit' && (role.kind === 'runtime' || role.kind === 'agent')) {
+      try { return sendJson(res, 200, writeAudit(live!(), role, body)); } catch (e) { return auditFail(res, e, 'write the audit entry'); }
+    }
+    // The review run's routes (docs/specs/conversations.md, "Review tokens"), all scoped to its run.
+    if (role.kind === 'review') {
+      try {
+        if (subpath === 'audit/take') {
+          // Raw text, redacted: never cached.
+          const out = takeAudit(live!(), run, body);
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        if (subpath === 'audit/done') return sendJson(res, 200, doneEntries(live!().home, run, body));
+        if (subpath === 'scores') return sendJson(res, 200, postScore(live!(), run, body));
+        if (subpath === 'findings') return sendJson(res, 200, postFinding(live!(), run, body));
+      } catch (e) { return auditFail(res, e, `answer ${subpath}`); }
     }
     // POST /api/loom/review/token (docs/specs/conversations.md, "Review tokens"): one per run.
     if (subpath === 'review/token' && role.kind === 'runtime') {
@@ -835,6 +916,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     async close() {
       if (pushTimer) clearInterval(pushTimer);
       clearInterval(foldTimer);
+      clearInterval(sweepTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {
