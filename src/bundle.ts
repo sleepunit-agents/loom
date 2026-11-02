@@ -9,7 +9,7 @@
  *                                                  compare with the live household
  *
  * Inside (a gzipped tar, then age-encrypted): manifest.json, household.json, the token
- * files, the commons, every agent's directory (SQLite through the backup API,
+ * files, household.db (the venues registry), the commons, every agent's directory (SQLite through the backup API,
  * never a raw copy of a live file), and each installed piece's own part, which
  * the piece encrypts itself (`loom-<piece> bundle export`): core never sees inside
  * it. A plain context dir exports as a household of one.
@@ -32,6 +32,7 @@ import {
   AGENT_NAME, agentDir, commonsKnowledgePath, householdOf, loadHousehold, type Household,
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
+import { HOUSEHOLD_DB } from './household-store.js';
 import { listPieces } from './cli/pieces.js';
 import { installPiece, managedPieces, pieceEnvFor, readCatalog, readRecord, readSettings, syncServices, type CatalogEntry } from './cli/pieces-managed.js';
 
@@ -178,6 +179,9 @@ export async function exportBundle(opts: {
       if (managed.length) writeFileSync(join(stage, 'pieces.json'), JSON.stringify({ v: 1, pieces: managed }, null, 2) + '\n', { mode: 0o600 });
     }
     if (!src.plain) for (const f of ['tokens.json', 'tokens.used.json']) if (existsSync(join(h.home, f))) copyFileSync(join(h.home, f), join(stage, f));
+    // The household store (docs/specs/conversations.md, "Where it lives"): the venues registry, so a
+    // restored agent's conversations still show their venues. Never the audit log or the review key.
+    if (!src.plain && existsSync(join(h.home, HOUSEHOLD_DB))) await backupDb(join(h.home, HOUSEHOLD_DB), join(stage, HOUSEHOLD_DB));
     // The commons.
     mkdirSync(join(stage, 'commons'), { mode: 0o700 });
     const knowledge = src.plain ? join(src.contextDir, 'knowledge.db') : commonsKnowledgePath(h);

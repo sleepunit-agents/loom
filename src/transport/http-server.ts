@@ -46,7 +46,10 @@ import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
-import { ROLE_ROUTES, roleReaches } from './role-routes.js';
+import { AGENT_ROUTES, ROLE_ROUTES, roleReaches } from './role-routes.js';
+import { writeTurn } from '../conversations.js';
+import { ConversationError, foldConversations } from '../backends/conversations.js';
+import { syncVenuesQuietly } from '../household-store.js';
 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
@@ -321,6 +324,20 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   if (household) for (const a of household.agents) createBackend(agentDir(household, a));
   else if (!opts.createServer) createBackend(opts.contextDir);
 
+  // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
+  // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
+  // start and daily. Neither ever stops the daemon.
+  const foldAll = () => {
+    const dirs = live ? live().agents.map((a) => agentDir(live(), a)) : opts.createServer ? [] : [opts.contextDir];
+    for (const d of dirs) {
+      try { foldConversations(d); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
+    }
+  };
+  if (household) syncVenuesQuietly(process.env);
+  foldAll();
+  const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
+  foldTimer.unref();
+
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
     ? {
@@ -441,9 +458,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
       return loomApi(req, res, subpath, role);
     }
+    // An agent's own session turns (docs/specs/conversations.md): the one core route an agent token reaches.
+    if (piece === 'loom' && role.kind === 'agent' && AGENT_ROUTES.includes(subpath)) return loomApi(req, res, subpath, role);
     // Core's own routes for those roles refuse everyone else by name, before the store's 404.
     if (piece === 'loom' && Object.values(ROLE_ROUTES).some((paths) => paths.includes(subpath))) {
-      return sendError(res, 403, `forbidden: /api/loom/${subpath} takes a runtime or review token`);
+      return sendError(res, 403, `forbidden: /api/loom/${subpath} takes a runtime or review token${AGENT_ROUTES.includes(subpath) ? ', or an agent token for its own session' : ''}`);
     }
     // A piece's own store in loom (docs/specs/piece-storage.md): its credential, or a household owner.
     if (piece === 'loom') return storeApi(req, res, subpath, role);
@@ -476,12 +495,23 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
    * the caller already passed roleReaches. Like /api: JSON only, no Origin.
    */
-  async function loomApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Extract<Role, { kind: 'runtime' | 'review' }>): Promise<void> {
+  async function loomApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Extract<Role, { kind: 'runtime' | 'review' | 'agent' }>): Promise<void> {
     if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
     if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
     const raw = await collectBody(req, 4 * 1024);
     if (raw === OVERSIZED) return sendError(res, 413, 'oversized: this call is 4 KB at most');
-    try { if (raw !== '') JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    let body: unknown = {};
+    try { if (raw !== '') body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
+    if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {
+      try {
+        return sendJson(res, 200, writeTurn(live!(), role, body));
+      } catch (e) {
+        if (e instanceof ConversationError) return sendError(res, e.status, `${e.status === 403 ? 'forbidden' : e.status === 404 ? 'not-found' : e.status === 409 ? 'conflict' : 'bad-input'}: ${e.message}`);
+        process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
+      }
+    }
     // POST /api/loom/review/token (docs/specs/conversations.md, "Review tokens"): one per run.
     if (subpath === 'review/token' && role.kind === 'runtime') {
       try {
@@ -754,6 +784,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     host: opts.host,
     async close() {
       if (pushTimer) clearInterval(pushTimer);
+      clearInterval(foldTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

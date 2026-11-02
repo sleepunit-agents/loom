@@ -55,6 +55,14 @@ import {
   personEvidence,
 } from './tools/person.js';
 import { knowledgeFreshness } from './tools/knowledge-list.js';
+import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
+import { conversationsList, conversationView } from './conversations.js';
+import { householdOf } from './household.js';
+
+/** The agent a context dir is: its household name, else its directory's name. */
+function agentOfDir(contextDir: string): string {
+  return householdOf(contextDir)?.agent ?? (contextDir.replace(/\/+$/, '').split('/').pop() || 'agent');
+}
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +114,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
 
   // ─── Identity ───────────────────────────────────────────────────────────────
 
+  /** The conversation and run this session's body was given at identity (conversation_digest writes there). */
+  let here: { conversation: string; run: string } | undefined;
+
   server.registerTool(
     'identity',
     {
@@ -134,10 +145,18 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'Slugs of the people this turn is addressed by (the room), e.g. ["patrick-kells"]. ' +
           'Adds an "# In the room" block with their person cards. Omit for no block.',
         ),
+        conversation: z.string().max(64).optional().describe(
+          'The conversation this body is in (cv-…), as the runtime or harness that started it says. ' +
+          'With run, it is where conversation_digest writes.',
+        ),
+        run: z.string().max(128).optional().describe('This body run\'s id, as the runtime or harness that started it says.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role, people }) => {
+    async ({ project, client, model, role, people, conversation, run }) => {
+      // The body's conversation and run (docs/specs/conversations.md): kept for this session's
+      // conversation_digest. Both or neither; a later identity call replaces them.
+      if (conversation !== undefined || run !== undefined) here = { conversation: conversation ?? '', run: run ?? '' };
       // Precedence: explicit param > data-driven manifest resolution > the
       // static code-map seed fallback > LOOM_CLIENT (inside loadIdentity).
       const peer = server.server.getClientVersion()?.name;
@@ -1132,6 +1151,85 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const result = await personRevisionRestore(contextDir, { slug, revision_id, store });
       return { content: [{ type: 'text' as const, text: result }] };
     },
+  );
+
+  // ─── Conversations (docs/specs/conversations.md) ──────────────────────────────
+
+  const convText = (f: () => unknown) => {
+    try {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(f(), null, 2) }] };
+    } catch (e) {
+      if (e instanceof ConversationError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+      throw e;
+    }
+  };
+  const isoTime = z.string().max(40).refine((v) => !Number.isNaN(Date.parse(v)), 'an ISO-8601 time');
+
+  server.registerTool(
+    'conversation_digest',
+    {
+      description:
+      'Write this body run\'s digest of its conversation: what was asked, decided and done, and whether the owner ' +
+      'is needed. For the conversation and run given to identity (rejected without them); a second write in the ' +
+      'same run replaces it. Quote a line only when its words carry the meaning: never a transcript. The test for ' +
+      'anything written about a person: would they be fine reading it? A body in a conversation writes this instead of an episode.',
+      inputSchema: z.object({
+        summary: z.string().max(600).describe('What happened, at most 600 characters.'),
+        asks: z.array(z.string().max(200)).max(8).optional().describe('What was asked of the agent.'),
+        decisions: z.array(z.string().max(200)).max(8).optional().describe('What was decided.'),
+        tasks: z.array(z.string().max(64)).max(16).optional().describe('Task refs made or moved (t-…).'),
+        projects: z.array(z.string().max(80)).max(4).optional().describe('Project names (slugs or aliases); omitted: the project whose links.venues names this conversation\'s place, if exactly one does.'),
+        needs_owner: z.string().max(200).nullable().optional().describe('A one-line reason the owner is needed (it shows in their Inbox until a later digest has none), or null.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => convText(() => writeDigest(contextDir, here ?? { conversation: '', run: '' }, input)),
+  );
+
+  server.registerTool(
+    'conversations',
+    {
+      description:
+      'This agent\'s conversations, newest first (at most 100): venue, place, label, people, agents, projects, ' +
+      'started, last, turn count, the newest digest\'s summary and any open needs_owner. No text: conversations hold none.',
+      inputSchema: z.object({
+        people: z.string().max(80).optional().describe('Only conversations with this person (a slug).'),
+        project: z.string().max(80).optional().describe('Only conversations whose digests name this project (a slug or alias).'),
+        venue: z.string().max(32).optional().describe('Only this venue (slack, session, wake, …).'),
+        since: isoTime.optional().describe('Only conversations active after this time (their last turn is later).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ people, project, venue, since }) => convText(() => ({
+      conversations: conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) }),
+    })),
+  );
+
+  server.registerTool(
+    'conversation',
+    {
+      description:
+      'One of this agent\'s conversations: the record, its digests (newest first), the findings on it, and its ' +
+      'render (the venue\'s own when its piece is installed and offers one, else core\'s generic render).',
+      inputSchema: z.object({ id: z.string().max(64).describe('The conversation id, cv-….') }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ id }) => {
+      const view = await conversationView(contextDir, agentOfDir(contextDir), id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
+    },
+  );
+
+  server.registerTool(
+    'conversation_findings',
+    {
+      description:
+      'Graders\' findings on this agent\'s own turns, newest first: one checked line per conversation per day at most, ' +
+      'never a quote. For introspection: what to learn from. Empty until the household\'s review has run.',
+      inputSchema: z.object({ since: isoTime.optional().describe('Only findings after this time.') }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ since }) => convText(() => ({ findings: findingsOf(contextDir, since ? { since } : {}) })),
   );
 
   // MCP-App render probe — env-gated, throwaway. Not part of the tool surface

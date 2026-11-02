@@ -6,7 +6,7 @@ that wakes it, a chat bridge, an approval page) is a **piece**: a separate
 program that works with loom without becoming part of it.
 
 ```
-core       loom: identity, memory, knowledge, person cards. Nothing else.
+core       loom: identity, memory, knowledge, person cards, conversations. Nothing else.
 piece      a swappable extension: its own program, its own store, reached as `loom <piece>`.
 instance   glue for one agent: its routines, hooks, which pieces it installs and how they're set up.
 ```
@@ -16,6 +16,20 @@ continuity, identity or knowledge?** If yes, it's core. If it's authority
 (secrets, permissions), scheduling, transport, or work tracking, it's a piece
 that sits on top. A shared command namespace doesn't make a piece part of
 loom.
+
+And for every piece, of each thing it keeps: **is this data about the agent's
+life, or about a mechanism?** ([specs/conversations.md](specs/conversations.md))
+
+- Life (who, what was said or decided, what happened) must outlive the piece,
+  in one of two ways: it is a core record, or the piece's role contract gives
+  it a portable export that a replacement implementation imports (for tasks,
+  `spec/taskstore-core` in the public taskstore repo).
+- Mechanism (tokens, queues, timers, session-resume state, caches) is the
+  piece's, and may die with it.
+
+So the bridges' conversations and the clock's relay threads are core records
+(conversations), tasks stay the tasks piece's under its contract, and secrets,
+box and the model subscriptions are mechanism.
 
 ## The rules
 
@@ -157,6 +171,13 @@ own schema:
   `loom_*`.
 - **`grants`:** `true` (or `{}`) makes the piece the grants authority; `false`
   offers nothing.
+- **`venues`:** core keeps a copy of every installed piece's venues in
+  `$LOOM_HOME/household.db` (`src/household-store.ts`). Install and update
+  replace the piece's rows; removing it (even with `--purge`) keeps them,
+  marked orphaned, without `render`, so its conversations still show; reinstalling
+  clears the mark. `render` runs with `--conversation <id>` and answers the
+  section-feed schema; without one, or once orphaned, core's generic render
+  shows the conversation.
 - **Against what's installed:** a venue or tool name another installed piece
   declares is refused, and so is a second piece offering `grants`. A piece's
   own update, or a rollback, is checked the same way.
@@ -222,7 +243,7 @@ that ignores it keeps working. Outside a household there's no `caller`.
   shaped like a list of agents belongs to each agent, not the household. A link on such a page can reach the
   piece's own pages elsewhere: `agent:<id>[/<path>]` (this piece's tab on that
   agent's pages) and `household:<path>` (this piece's household pages).
-- **Links into loom** are `loom:<page>`: loom's own pages (`loom:inbox`,
+- **Links into loom** are `loom:<page>`: loom's own pages (`loom:inbox`, `loom:conversation/<id>`,
   `loom:people/<slug>`, `loom:knowledge/<slug>`…) and another piece's page,
   `loom:p/<piece>[/<path>]` (a conversation naming the task it closed). Only
   pages: never an action, sign-in or a JSON endpoint, and the piece linked to

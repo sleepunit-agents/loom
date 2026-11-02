@@ -37,6 +37,7 @@ flowchart LR
       PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
       NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
+      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings<br/>turns arrive on POST /api/loom/conversations/turn"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end
@@ -51,6 +52,7 @@ flowchart LR
     EPI["episodes.ts<br/>the 24h tape"]
     PROP["proposals.ts"]
     PPL["people.ts<br/>PeopleStore · renderCard · roomBlock"]
+    CONV["conversations.ts<br/>turns · digests · the 90-day fold"]
     OBS["recall-log.ts · recorder-health.ts"]
     MIG["migrations.ts"]
   end
@@ -185,6 +187,8 @@ have fallen behind.
 |---|---|---|
 | `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
 | `memories.db` (people) | `people`, `person_revisions` | `people.ts`, created by the `people_cards` migration |
+| `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md) | `src/backends/conversations.ts`, created by the `conversations` migration |
+| `$LOOM_HOME/household.db` | `venues`: core's copy of every installed piece's venues, orphaned when the piece goes | `src/household-store.ts`, synced at install, update, remove and daemon start |
 | `knowledge.db` | `pages`, `citations`, `supersessions`, `page_revisions`, `verifications`, `knowledge_access` | `sqlite-knowledge.ts` |
 | Context-dir markdown | `IDENTITY.md`, `preferences.md`, `self-model.md`, `projects/`, `roles/`, `harnesses/`, `models/` | read by `identity`; `update_identity` edits preferences and self-model only |
 | Telemetry | `telemetry/recall.jsonl`, `recorder-health.json` | `recall-log.ts`, `recorder-health.ts` |
@@ -235,6 +239,9 @@ have fallen behind.
 | `src/backends/retry.ts` | Retry on SQLITE_BUSY |
 | `src/backends/recall-log.ts` | Local recall observation log |
 | `src/backends/recorder-health.ts` | Episode-write failure ledger |
+| `src/backends/conversations.ts` | Conversations as core records: turns (metadata only, `seq` and `latency_ms` by core), digests, the retention fold, the hub's section and the tape's digests |
+| `src/conversations.ts` | Who may write a turn, the venue's render or core's generic one, and who reads which agent's conversations |
+| `src/household-store.ts` | `$LOOM_HOME/household.db`: the venues registry |
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `update-identity`, `bootstrap`, `serve`, `inject`,
