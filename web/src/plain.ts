@@ -51,22 +51,39 @@ export function duration(min: number): string {
   return Number.isInteger(h) ? `${h} hour${h === 1 ? '' : 's'}` : `${Math.floor(h)}h ${min % 60}m`;
 }
 
-/** The why, cut where it names something openable: a task (t-1682), a pull request (onterris/on-pond#178), a file
- * (~/Art/notes/…md). The drawer links the first two and sets the third as code. */
-export type Bit = { t: 'text'; s: string } | { t: 'task'; id: string } | { t: 'pr'; repo: string; n: string } | { t: 'path'; s: string };
-export function bits(s: string): Bit[] {
+/** The why, cut where it names something openable: a task (t-1682), a pull request or issue (onterris/on-pond#178; a
+ * bare art#68 too, under the household's GitHub owner `owner` when it has one), a conversation (cv-…), a file
+ * (~/Art/notes/…md). The drawer links the first three and sets the last as code. */
+export type Bit = { t: 'text'; s: string } | { t: 'task'; id: string } | { t: 'pr'; repo: string; n: string } | { t: 'conv'; id: string } | { t: 'path'; s: string };
+export function bits(s: string, owner?: string): Bit[] {
   const out: Bit[] = [];
-  const re = /\b(t-\d+)\b|\b([\w.-]+\/[\w.-]+)#(\d+)\b|(~\/[^\s,;)]+)/g;
+  const re = /\b(t-\d+)\b|(?<![\w./-])([\w.-]+\/)?([\w.-]+)#(\d+)\b|\b(cv-[0-9a-f]{12})\b|(~\/[^\s,;)]+)/g;
   let at = 0;
   for (let m; (m = re.exec(s));) {
+    // A bare repo#N is a link only under a known owner; else it's words, as written.
+    if (m[4] && !m[2] && !owner) continue;
     if (m.index > at) out.push({ t: 'text', s: s.slice(at, m.index) });
-    out.push(m[1] ? { t: 'task', id: m[1] } : m[2] ? { t: 'pr', repo: m[2], n: m[3] } : { t: 'path', s: m[4].replace(/[.]$/, '') });
-    if (m[4]?.endsWith('.')) out.push({ t: 'text', s: '.' });
+    out.push(m[1] ? { t: 'task', id: m[1] } : m[4] ? { t: 'pr', repo: `${m[2] ? m[2].slice(0, -1) : owner}/${m[3]}`, n: m[4] }
+      : m[5] ? { t: 'conv', id: m[5] } : { t: 'path', s: m[6].replace(/[.]$/, '') });
+    if (m[6]?.endsWith('.')) out.push({ t: 'text', s: '.' });
     at = re.lastIndex;
   }
   if (at < s.length) out.push({ t: 'text', s: s.slice(at) });
   return out;
 }
+
+/** What an item names that opens, once each, in order: its pull requests and issues, tasks and conversations. */
+export function refsOf(s: string, owner?: string): Bit[] {
+  const seen = new Set<string>();
+  return bits(s, owner).filter((b) => {
+    if (b.t === 'text' || b.t === 'path') return false;
+    const k = b.t === 'pr' ? `${b.repo}#${b.n}` : b.id;
+    return !seen.has(k) && !!seen.add(k);
+  });
+}
+
+/** A pull request's or issue's page: GitHub's /issues/N opens either (a pull request's redirects to its own). */
+export const githubUrl = (repo: string, n: string) => `https://github.com/${repo}/issues/${n}`;
 
 /** Where an item opens (Jonathan, 2026-11-02: "it should go to the item itself"): its own page when it has one (a
  * task's, t-1273's), else its sheet in the Inbox. Its own page is a page its piece links that isn't the piece's front

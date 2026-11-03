@@ -177,7 +177,8 @@ What a turn is (one delivered message or action, never merged) is the venue adap
 { "id": "dg-…",                     // "dg-" + 12 hex of SHA-256 over "conversation id\0run id"
   "conversation": "cv-…", "run": "…", "at": "…",
   "summary": "… ≤ 600", "asks": [], "decisions": [], "tasks": [], "projects": [],
-  "needs_owner": null }              // or a one-line reason ≤ 200
+  "needs_owner": null,               // or a one-line reason ≤ 200
+  "needs_owner_href": null }         // with needs_owner: the exact thing to open, an https:// URL ≤ 500
 ```
 
 - **Keys:** exactly these; unknown keys are rejected.
@@ -356,7 +357,17 @@ audit log, so it has no raw text to copy.
   above.
 
 **Needs you.** A digest with `needs_owner` appears in loom's Inbox as an ask from core, linking to
-`loom:conversation/<id>`, until a later digest in that conversation has none.
+`loom:conversation/<id>`, until a later digest in that conversation has none, or the owner answers it (t-1778). Its
+sheet has the whole of it, its links (`needs_owner_href` first; `owner/repo#N`, and `repo#N` under household.json's
+`github`; `t-N`; the conversation), and three answers, each the agent's own action (`/a/<agent>/act/loom`):
+
+- **Reply to <agent>:** the owner's words go into that conversation as a person's message from them, on its own venue
+  and place (`wake` and `session` too), through the runtime's deliver (`deliverAsOwner`, core delivering as `loom`);
+- **Done:** it's handled; **Dismiss:** it isn't the owner's.
+
+A reply also answers it. `conversation_needs_answers` keeps the digest, how (`replied`, `done`, `dismissed`), who
+and when, never the words. Done and replied ones stay a week in the Inbox's history. A digest rewritten later
+(the same run's, or a later run's) that still needs the owner asks again.
 
 **Projects.** A project's hub gets a core section, `conversations`, after `people`. It replaces the shuttle feed in
 projects.md and follows projects.md's core-section rule: `since` marks `new`, it doesn't filter.
