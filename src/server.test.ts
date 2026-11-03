@@ -130,13 +130,13 @@ describe('createLoomServer', () => {
     conversation_findings: { readOnlyHint: true, openWorldHint: false },
   };
 
-  // t-1597: agent to agent. The household's HTTP server hands a session a
-  // relay that calls the clock piece as that session's own agent; a server
-  // with none (stdio, a lone stack) has no relay tool at all.
-  it('has a relay tool only when it is given a relay, and passes the ask through as the clock\'s argv', async () => {
+  // Offered tools (agent-runtime.md "Seams", 2): a server has a piece's tool only when it's given
+  // one (the household HTTP server passes what the installed pieces offer); a server with none
+  // (stdio, a lone stack) has no relay tool at all, since core has none of its own.
+  it('has an offered tool only when it is given one, with its JSON schema, and passes the call through', async () => {
     const connect = async (config: LoomServerConfig) => {
       const { server } = createLoomServer(config);
-      const client = new Client({ name: 'relay-test', version: '1' });
+      const client = new Client({ name: 'tools-test', version: '1' });
       const [c, s] = InMemoryTransport.createLinkedPair();
       await Promise.all([server.connect(s), client.connect(c)]);
       return client;
@@ -144,22 +144,26 @@ describe('createLoomServer', () => {
     const none = await connect(makeConfig(tmpDir));
     expect((await none.listTools()).tools.map((t) => t.name)).not.toContain('relay');
 
-    const seen: string[][] = [];
+    const seen: unknown[] = [];
     const client = await connect({
       ...makeConfig(tmpDir),
-      relay: async (argv) => { seen.push(argv); return { ok: true, text: 'r-12345678: mark wakes within a minute' }; },
+      tools: [{
+        name: 'relay', description: 'Ask another agent.',
+        inputSchema: { type: 'object', properties: { to: { type: 'string' }, say: { type: 'string' } }, required: ['to', 'say'] },
+        call: async (args) => { seen.push(args); return (args as { to: string }).to === 'fez' ? { text: 'no agent fez', isError: true } : { text: 'r-12345678: mark has it' }; },
+      }],
     });
     const tool = (await client.listTools()).tools.find((t) => t.name === 'relay');
+    expect(tool?.description).toBe('Ask another agent.');
+    expect(tool?.inputSchema).toMatchObject({ type: 'object', properties: { to: { type: 'string' } }, required: ['to', 'say'] });
     expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
-    const r = await client.callTool({ name: 'relay', arguments: { to: 'mark', say: 'review #3?', why: 'w', reply_to: 'r-aaaaaaaa', from: 'discord:#x' } });
-    expect(seen).toEqual([['relay', '--to', 'mark', '--say', 'review #3?', '--why', 'w', '--reply-to', 'r-aaaaaaaa', '--from', 'discord:#x']]);
-    expect((r.content as Array<{ text: string }>)[0].text).toMatch(/mark wakes/);
+    const r = await client.callTool({ name: 'relay', arguments: { to: 'mark', say: 'review #3?' } });
+    expect(seen).toEqual([{ to: 'mark', say: 'review #3?' }]);
+    expect((r.content as Array<{ text: string }>)[0].text).toBe('r-12345678: mark has it');
     expect(r.isError).toBeFalsy();
-
-    const refused = await connect({ ...makeConfig(tmpDir), relay: async () => ({ ok: false, text: 'wake: the household doesn\'t pair art with fez' }) });
-    const e = await refused.callTool({ name: 'relay', arguments: { to: 'fez', say: 'hi' } });
+    const e = await client.callTool({ name: 'relay', arguments: { to: 'fez', say: 'hi' } });
     expect(e.isError).toBe(true);
-    expect((e.content as Array<{ text: string }>)[0].text).toMatch(/doesn't pair/);
+    expect((e.content as Array<{ text: string }>)[0].text).toBe('no agent fez');
   });
 
   it('advertises correct ToolAnnotations for every registered tool', async () => {

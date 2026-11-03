@@ -701,31 +701,6 @@ export const MARKS: ReadonlyArray<{ bg: string; fg: string; name: string }> = [
   { bg: '#E3B341', fg: '#2B1D00', name: 'Mustard' }, { bg: '#3D5A99', fg: '#E6ECFF', name: 'Denim' }, { bg: '#F09A7A', fg: '#3A140A', name: 'Coral' },
 ];
 
-/**
- * Who an agent may relay to without asking (household.json "relay": {sender: [agents]}), the household's
- * other agents only. Each agent's own (its Setup): the household owner's rule, 2026-10-28, that what's
- * shaped like a list of agents belongs to each agent.
- */
-export function relayOf(h: Household, agent: string): string[] {
-  const r = rawHousehold(h.home).relay;
-  const mine = r && typeof r === 'object' && !Array.isArray(r) ? (r as Record<string, unknown>)[agent] : undefined;
-  return Array.isArray(mine) ? mine.filter((a): a is string => typeof a === 'string' && a !== agent && h.agents.includes(a)) : [];
-}
-
-export function setRelay(h: Household, agent: string, to: string[]): string[] {
-  if (!h.agents.includes(agent)) throw new HouseholdError(`no agent ${agent} in this household`);
-  const bad = to.filter((a) => a === agent || !h.agents.includes(a));
-  if (bad.length) throw new HouseholdError(`${bad.join(', ')}: not another agent of this household`);
-  const targets = [...new Set(to)].sort();
-  return withLock(h.home, () => {
-    const raw = rawHousehold(h.home);
-    const relay = raw.relay && typeof raw.relay === 'object' && !Array.isArray(raw.relay) ? { ...(raw.relay as Record<string, unknown>) } : {};
-    if (targets.length) relay[agent] = targets;
-    else delete relay[agent];
-    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, relay }, null, 2) + '\n');
-    return targets;
-  });
-}
 
 function rawHousehold(home: string): Record<string, unknown> {
   try {

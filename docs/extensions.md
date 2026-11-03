@@ -27,7 +27,7 @@ life, or about a mechanism?** ([specs/conversations.md](specs/conversations.md))
 - Mechanism (tokens, queues, timers, session-resume state, caches) is the
   piece's, and may die with it.
 
-So the bridges' conversations and the clock's relay threads are core records
+So the bridges' conversations and the agents' relays are core records
 (conversations), tasks stay the tasks piece's under its contract, and secrets,
 box and the model subscriptions are mechanism.
 
@@ -207,11 +207,16 @@ own schema:
   `description` (at most 1000), an `input_schema` (a JSON schema with
   `"type": "object"`, at most 16 KB) and an `argv` that gets the arguments
   as JSON on stdin. It can't be named after one of core's tools, or anything
-  `loom_*`.
+  `loom_*`. A session has a piece's tools only while the piece offers them
+  (read as the session opens). Core runs one as the session's agent: it asks
+  the grants authority first (path `tools/<name>`), then runs the argv plus
+  `--agent <agent>` (and `--house <id>`, `--service <name>` for a house's token), with that agent's store grant. It answers
+  `{text, isError?}` (text at most 64 KB); a non-zero exit with such an answer
+  is that answer, as an error (`src/offered-tools.ts`).
 - **`grants`:** an argv; it makes the piece the grants authority (`false`
   offers nothing; `true`, the placeholder before core could ask, is refused).
-  Before an agent's call to a piece (`/api/<piece>/…`, `/api/<piece>/run`, the
-  relay tool's call to the clock) and before forwarding a delivery for an
+  Before an agent's call to a piece (`/api/<piece>/…`, `/api/<piece>/run`, an
+  offered MCP tool, `tools/<name>`) and before forwarding a delivery for an
   agent, core runs it with `{agent, piece, path}` on stdin (`path` is what
   follows `/api/<piece>/`, or `deliver`). It has 2 s, in a pool of its own
   (eight at once, thirty-two waiting), to answer `{allow: true}` or

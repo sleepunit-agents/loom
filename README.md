@@ -58,10 +58,12 @@ an agent's persistent state:
   pairs, category breakdown.
 - **`memory_recompute_salience`** — refresh stored salience from timestamps
   (the consolidation lane's step after the audit); derived and idempotent.
-- **`relay`** (a household served over HTTP) — ask another agent something:
-  it wakes a body of theirs in their house, and the answer comes back as a
-  wake of yours. Runs the clock piece's `wake relay` as the calling agent;
-  only between agents `household.json`'s `relay` list pairs.
+- **Tools a piece offers** (a household served over HTTP): an installed piece's
+  `mcp_tools` ([docs/extensions.md](docs/extensions.md), "Offers") are added to
+  an agent's session, called as that agent. The runtime's **`relay`** (ask
+  another agent something; its body gets it on the `relay` venue, and the
+  answer comes back the same way) is one: with no runtime there's no relay
+  tool. Who may relay to whom is the runtime's permissions.
 - **`memory_archive` / `memory_restore`** — soft-retire a memory with a
   tombstone (who/when/why + original body preserved) instead of deleting it.
   Archived memories are excluded from recall and audit but remain recoverable.

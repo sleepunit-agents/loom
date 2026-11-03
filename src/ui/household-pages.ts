@@ -19,8 +19,9 @@ import BetterSqlite3 from 'better-sqlite3';
 import {
   aboutOf, addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
   setMember, type Household, type Member,
-  relayOf, setRelay, markIndexOf,
+  markIndexOf,
 } from '../household.js';
+import { relayOf } from '../relay-pairs.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
 import { initialsOf, profileLinks, profileTone, reachOf, SERVICE } from './reach.js';
 import { BOXES, boxSection, OWN_FILES, readCreed, withPart, withSection, writeCreed, type Box, type Creed } from './identity-edit.js';
@@ -465,16 +466,15 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         ...(born ? { born: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: tz }).format(new Date(born)) } : {}),
         harnesses: harnesses.join(', ') || 'none',
       }),
-      // Who it may relay to without asking: the household owner's to set (an agent owner's Setup shows it read-only).
+      // Who it may relay to without asking: the runtime's permissions (agent-runtime.md, "Agent-to-agent relay"),
+      // read here; the household owner sets them on the runtime's page.
       { id: 'relay', title: 'Who it may write to', side: true, blocks: (() => {
         const others = h.agents.filter((a) => a !== agent);
-        const to = relayOf(h, agent);
-        const say = { type: 'text' as const, tone: 'muted' as const, text: others.length
-          ? `It relays to these without asking (wake relay); to any other, it asks you first. ${to.length ? `Now: ${to.join(', ')}.` : 'Now: nobody.'}`
-          : 'There\'s no other agent to write to.' };
-        if (!others.length || opts.ownerTokens === false) return [say];
-        return [say, { type: 'form' as const, action: 'relay-set', submit: 'Save', hidden: { agent }, fields: [
-          { name: 'to', label: 'Agents', kind: 'text' as const, ...(to.length ? { value: to.join(', ') } : {}), hint: `comma separated: ${others.join(', ')}` }] }];
+        const { authority, to } = relayOf(h.home, h.agents, agent);
+        const text = !others.length ? 'There\'s no other agent to write to.'
+          : !authority ? 'No runtime is installed, so it has no relay tool.'
+          : `It relays to these without asking (the relay tool); to any other, it asks you first. ${to.length ? `Now: ${to.join(', ')}.` : 'Now: nobody.'} Who may relay to whom is set on the ${authority} piece's page (Permissions).`;
+        return [{ type: 'text' as const, tone: 'muted' as const, text }];
       })() },
       { id: 'tokens', title: 'Tokens', blocks: (() => {
         // A house's own token ("art · house h-123 on loom"): one per house, revoked when the house ends, so hundreds of
@@ -725,12 +725,6 @@ export async function householdAct(h: Household, action: string, fields: Record<
       await writeCreed(dir, next);
       return { ok: true, message: action === 'identity-section-add' ? `Added "${(fields.heading ?? '').trim()}" to ${creed.title}'s creed. It reads it from its next session.`
         : `Saved. ${creed.title} reads it from its next session.`, page: `loom:a/${agent}/setup` };
-    }
-    if (action === 'relay-set') {
-      const agent = fields.agent ?? '';
-      const to = (fields.to ?? '').split(',').map((a) => a.trim()).filter(Boolean);
-      const now = setRelay(h, agent, to);
-      return { ok: true, message: now.length ? `${agent} writes to ${now.join(', ')} without asking.` : `${agent} asks you before writing to any agent.`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'member-set') {
       const person = fields.person ?? '';
