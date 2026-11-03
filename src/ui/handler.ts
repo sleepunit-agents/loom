@@ -44,7 +44,7 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { sessionStore, signinLink } from './sessions.js';
+import { sessionStore, signinLink, type Done } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
@@ -604,8 +604,9 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
   });
 }
 
-/** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, newest first. */
-function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): InboxItem[] {
+/** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, and
+ * what the owner's own actions said (their toasts, as FYI), newest first. */
+function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[] = []): InboxItem[] {
   const asks = [...coreAsks(h), ...pieceAsks(pieces, env)];
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
@@ -621,6 +622,9 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): 
           text: a.text, outcome: a.outcome, at: a.at, agent: a.agent, source, sourceLabel, page: a.page })),
       ];
     }),
+    ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', attention: false, unread: false,
+      text: d.text, meta: d.ok ? 'You did this' : 'You tried this; it wasn’t done', at: new Date(d.at * 1000).toISOString(),
+      source: d.source, sourceLabel: d.sourceLabel ?? 'loom', ...(d.page ? { page: d.page } : {}) })),
   ];
   // Newest first; an ask with no time stays where its piece put it, ahead of the dated ones.
   const t = (it: InboxItem) => (it.at ? Date.parse(it.at) : Number.POSITIVE_INFINITY);
@@ -1158,6 +1162,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
     }
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
+    // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
+    // item in the Inbox"): not a line that hands over a secret or a one-time link (keep), and not an empty one.
+    if (hh && result.message?.trim() && !result.keep) {
+      const label = source.id === 'loom' ? undefined : (await pieceManifests(scopedEnv).catch(() => ({ pieces: [] as PieceInfo[] }))).pieces
+        .find((p) => pieceSource(p.piece).id === source.id)?.manifest.tab?.label;
+      storeFor(opts).noteDone({ at: Math.floor(Date.now() / 1000), ok: result.ok, text: result.message.trim().slice(0, 300), source,
+        ...(label ? { sourceLabel: label } : {}), ...(backLink ? { page: backLink } : {}) }, readerFor(opts, who));
+    }
     const to = landing(source, result, backLink);
     // A piece's message is labeled with the piece, so it can't pass as loom's.
     const from = source.id === 'loom' ? undefined : source.id;
@@ -1333,11 +1345,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (pathname === '/inbox') {
       const nowMs = Date.now();
       const store = storeFor(opts);
-      const items = inboxItems(hh, pieces, opts.env);
+      const reader = readerFor(opts, who);
+      const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader));
       const folder = (INBOX_FOLDERS.find((f) => f.id === query.f)?.id ?? 'needs') as InboxFolder;
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
       // Opening an attention item reads it; nothing else is ever unread.
-      const reader = readerFor(opts, who);
       if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000), reader);
       const opened = store.openedKeys(reader);
       for (const it of items) it.unread = it.attention && !opened.has(it.key);
