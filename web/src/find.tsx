@@ -12,18 +12,14 @@ import { AgentAvatar } from './blocks';
 import type { Chrome } from './loom';
 import { ACCOUNT, placesOf, settingsOf } from './nav';
 import { readRecent } from './recent';
+import { AppTile } from './app-header';
+import { tintOf } from './tint';
 
 type Found = Record<string, { label: string; href: string; agent?: string }[]>;
 type Row = { key: string; label: string; href: string; sub?: string; lead: ReactNode };
 type Group = { label: string; rows: Row[] };
 
-const TINTS = ['pink', 'blue', 'yellow', 'olive'];
-/** An app's tint from its name, so it's the same tint wherever Find shows it. */
-const tintOf = (s: string) => TINTS[[...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % TINTS.length];
-
-function Tile({ label, icon }: { label: string; icon: string }) {
-  return <span className="loom-find-tile grid size-9 shrink-0 place-items-center rounded-[28%]" data-tint={tintOf(label)}><AnimatedIcon name={iconFor(icon)} size="sm" /></span>;
-}
+const Tile = ({ label, icon }: { label: string; icon: string }) => <AppTile label={label} icon={icon} size={36} />;
 
 export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
   chrome: Chrome; icon: (label: string) => string; go: (href: string) => void; autoFocus?: boolean; onClose?: () => void;
@@ -65,7 +61,7 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
     const app = (p: { label: string; href: string; stat?: string }): Row => ({ key: p.href, label: p.label, href: p.href, sub: p.stat, lead: <Tile label={p.label} icon={icon(p.label)} /> });
     const agent = (a: (typeof s.agents)[number]): Row => ({ key: a.href, label: a.label, href: a.href, sub: a.sub ?? 'Agent', lead: <AgentAvatar a={a} size={36} className="shrink-0" /> });
     const person = (p: { label: string; href: string }): Row => ({ key: p.href, label: p.label, href: p.href, sub: 'Person',
-      lead: <span className="loom-find-tile grid size-9 shrink-0 place-items-center rounded-full font-semibold" data-tint={tintOf(p.label)}>{p.label[0]?.toUpperCase()}</span> });
+      lead: <span className="loom-app-tile grid size-9 shrink-0 place-items-center rounded-full font-semibold" data-tint={tintOf(p.label)}>{p.label[0]?.toUpperCase()}</span> });
     if (!needle) {
       const recent = readRecent().filter((r) => r.href !== location.pathname + location.search).slice(0, 5).map((r): Row => {
         const ag = s.agents.find((a) => r.href === a.href || r.href.startsWith(`${a.href}/`));

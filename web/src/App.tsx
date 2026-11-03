@@ -27,10 +27,10 @@ const Toasts = lazy(() => import('./toasts'));
 import type { Note } from './toasts';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
-import { placesOf } from './nav';
-import { nameOf } from './account-button';
+import { placesOf, settingsOf } from './nav';
+import { AppHeader, AppTile, oneLine } from './app-header';
+import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
 // The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
@@ -262,6 +262,25 @@ export default function App() {
   const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
+  // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
+  const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
+  const path = url.split('?')[0];
+  const place = shellPlaces.find((p) => path === p.href) ?? shellPlaces.find((p) => p.href !== '/' && path.startsWith(`${p.href}/`));
+  const intro = !error && data?.view === 'page' ? (data.page as Page).intro : undefined;
+  const context = error ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
+    ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
+  const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
+    : path === '/' ? 'Home' : place?.label ?? chrome?.shell?.back?.label ?? title;
+  const headLead = accent && chrome?.shell?.household && !chrome.shell.back ? (
+    // An agent's own pages: its mark, with a chevron, is the way back to the household.
+    <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
+      <AnimatedIcon name={iconFor('chevron-left')} size="sm" />
+      {profileLeads ? <span className="pr-2 text-sm">The household</span> : <AgentAvatar a={accent} size={40} />}
+    </button>
+  ) : accent ? <AgentAvatar a={accent} size={44} className="shrink-0" />
+    : data?.view === 'passkeys' && chrome?.shell ? <MeAvatar name={chrome.shell.owner} size={44} className="shrink-0" />
+    : title || error ? <AppTile label={tileLabel || 'loom'} icon={icon(tileLabel || "")} /> : undefined;
+
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
   const pill = !wide && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
@@ -279,28 +298,10 @@ export default function App() {
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8">
-            <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
-              {chrome?.shell?.back ? null : accent && chrome?.shell?.household ? (
-                // An agent's own pages: its mark, with a chevron, is the way back to the household.
-                <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
-                  <AnimatedIcon name={iconFor("chevron-left")} size="sm" />
-                  {profileLeads ? <span className="pr-2 text-sm">The household</span> : <AgentAvatar a={accent} size={36} />}
-                </button>
-              ) : accent && !profileLeads ? (
-                <AgentAvatar a={accent} size={40} className="shrink-0" />
-              ) : null}
-              <div className="min-w-0 flex-1">
-                {chrome?.shell?.back && (
-                  // Where this page sits (000h's breadcrumb): the page it's under, then this one.
-                  <Breadcrumb aria-label="You are here" className="text-sm"><BreadcrumbList>
-                    <BreadcrumbItem><BreadcrumbLink href={chrome.shell.back.href} onClick={(e) => { e.preventDefault(); go(chrome.shell!.back!.href); }}>{chrome.shell.back.label}</BreadcrumbLink></BreadcrumbItem>
-                    <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
-                  </BreadcrumbList></Breadcrumb>
-                )}
-                {title && !profileLeads && <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
-                {head?.sub && !profileLeads && <p className="truncate text-sm opacity-70">{head.sub}</p>}
-              </div>
-              {accent && wide && !profileLeads && <Suspense fallback={null}><AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} /></Suspense>}
+            <div className="mx-auto max-w-5xl px-4 py-3">
+              <AppHeader where={url} title={title ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
+                lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
+                actions={accent && wide && !profileLeads ? <Suspense fallback={null}><AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} /></Suspense> : undefined} />
             </div>
           </header>
 
@@ -398,7 +399,6 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
         {page.sections.length === 0 && (page.title === 'Not found'
           ? <Nothing title="There’s no page here" text="It may have moved, or it was never there." />
           : <Nothing title={`${page.title} has nothing yet`} text="When there’s something to show, it’ll be here." />)}
-        {page.intro && <p className="opacity-80">{page.intro}</p>}
         {main.map(card)}
       </div>
       {side.length > 0 && <aside className="grid min-w-0 content-start gap-4">{side.map(card)}</aside>}
