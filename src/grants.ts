@@ -3,7 +3,7 @@
  * "6. Permissions", Agent grants; "Seams this needs from core", 2, `grants`).
  *
  * With one installed piece offering `grants` (the runtime), core asks it before an agent's call
- * to any piece (`/api/<piece>/…`, `/api/<piece>/run`, the relay tool's call to the clock) and
+ * to any piece (`/api/<piece>/…`, `/api/<piece>/run`, an offered MCP tool: src/offered-tools.ts) and
  * before forwarding a delivery for an agent (src/delivery.ts). The ask is the offer's argv with
  * `{agent, piece, path}` on stdin, in a pool of its own, with 2 s to answer `{allow: true}` or
  * `{allow: false, reason}`.

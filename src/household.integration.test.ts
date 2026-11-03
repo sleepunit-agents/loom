@@ -1214,21 +1214,18 @@ describe('the household page', () => {
     expect((await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' })).status).not.toBe(303);
   });
 
-  it("who an agent may write to, and its color, are set on its own Setup", async () => {
+  it("who an agent may write to is the runtime's to say, read on its Setup; its color is set there", async () => {
     const cookie = await login();
     const d = await data(cookie, '/a/mark/setup');
     expect(sectionOf(d, 'relay').title).toBe('Who it may write to');
-    expect(JSON.stringify(sectionOf(d, 'relay'))).toContain('Now: nobody.');
+    // No runtime installed: no relay tool, and no pairs in household.json are read any more.
+    expect(JSON.stringify(sectionOf(d, 'relay'))).toContain('No runtime is installed');
+    expect(JSON.stringify(sectionOf(d, 'relay'))).not.toContain('"form"');
     const csrf = csrfOf(d);
-    const ok = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'art' });
-    expect(ok.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
+    const gone = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'art' });
     const raw = () => JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
-    expect(raw().relay).toEqual({ mark: ['art'] });
-    expect(raw().agents).toEqual(['art', 'mark']);   // the rest of the file as it was
-    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'mark, nobody' });
-    expect(raw().relay).toEqual({ mark: ['art'] });   // itself, or no such agent: refused
-    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: '' });
-    expect(raw().relay).toEqual({});
+    expect(gone.headers.get('location')).toMatch(/_flash=/);
+    expect(raw().relay).toBeUndefined();
     await post(cookie, '/act/loom', { _csrf: csrf, _action: 'mark-set', _path: 'a/mark/setup', agent: 'mark', mark: '2' });
     expect(raw().marks.mark.bg).toBe('#2F6B5A');
   });
