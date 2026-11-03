@@ -505,10 +505,9 @@ describe('loom UI over HTTP', () => {
     // A lone agent's owner is an admin: Setup keeps its own links (Pieces, Passkeys) beside the settings.
     expect(v.chrome.shell.admin).not.toBe(false);
     expect((await view('/places', cookie)).which).toBe('places');
-    // Appearance is an app of its own (it was a card on Setup): a sheet the app draws, its tab its own.
-    const look = await view('/appearance', cookie);
-    expect(look).toMatchObject({ view: 'sheet', which: 'appearance' });
-    expect(look.chrome.shell.tab).toBe('appearance');
+    // Appearance is a panel of Setup (Jonathan, 2026-11-03), not an app in Places: its old address lands on Setup.
+    const look = await fetch(`${base}/appearance`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' });
+    expect([look.status, look.headers.get('location')]).toEqual([303, '/setup']);
     // A kind that isn't one is refused with the manifest.
     expect(parseManifest({ v: 2, tab: { label: 'x', kind: 'drawer' } })).toMatch(/tab.kind/);
   });

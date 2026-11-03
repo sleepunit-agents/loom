@@ -1,4 +1,4 @@
-// The shell's sheets as pages (Scope, Places, Setup, Appearance; Find is find.tsx's overlay): their own chunk, loaded when
+// The shell's sheets as pages (Scope, Places, Setup with its Appearance panel; Find is find.tsx's overlay): their own chunk, loaded when
 // one opens (the first page doesn't carry them).
 import { useContext } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -33,15 +33,19 @@ export function SheetView({ which, chrome, mode, setMode, ground, setGround }: {
   const grid = (items: Array<{ label: string; href: string; stat?: string; tone?: Tone; count?: number }>) => (
     <div className="grid grid-cols-4 gap-x-3 gap-y-6 sm:grid-cols-6">{items.map(launch)}</div>
   );
-  // Places: the apps, where you go regularly (Activity, Knowledge, People, Tasks, Appearance). The Inbox has its own tab.
+  // Places: the apps, where you go regularly (Activity, Knowledge, People, Tasks, …). The Inbox has its own tab.
   if (which === 'places' && s) return grid(placesOf(s));
-  // Appearance: an app of its own (it was a card on Setup), this device's look.
-  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} />;
-  // Setup: the household's configuration only (the pieces that are settings, its members, its pieces). What's the
-  // member's own (passkeys, signing out) is the account's: the avatar on a phone's dock, the side's account menu.
+  // Setup: the household's configuration (the pieces that are settings, its members, its pieces), then this device's
+  // look as a panel under them (Jonathan, 2026-11-03: Appearance "goes back into Setup … people don't change their
+  // background often"). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) {
     const settings = settingsOf(s);
-    return settings.length ? grid(settings) : <Nothing title="Nothing to set up" text="The household's settings are its owner's." />;
+    return (
+      <div className="grid gap-8">
+        {settings.length ? grid(settings) : <Nothing title="Nothing to set up" text="The household's settings are its owner's." />}
+        <AppearancePanel mode={mode} setMode={setMode} ground={ground} setGround={setGround} />
+      </div>
+    );
   }
   if (which === 'scope' && s) {
     return (
@@ -66,20 +70,26 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
   );
 }
 
-/** The Appearance app: light or dark, and the ground behind everything. Kept in this browser. */
-function AppearanceApp({ mode, setMode, ground, setGround }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
+/** Setup's Appearance panel: light or dark, and the ground behind every page. Kept in this browser. */
+function AppearancePanel({ mode, setMode, ground, setGround }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
+  const row = (label: string, hint: string, control: React.ReactNode) => (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
+      <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
+      {control}
+    </div>
+  );
   return (
-    <div className="grid gap-4">
-      <Card><CardHeader><CardTitle>Light or dark</CardTitle></CardHeader>
-        <CardContent className="grid gap-2"><Appearance mode={mode} setMode={setMode} />
-          <p className="text-sm opacity-70">Auto follows this device.</p></CardContent></Card>
-      <Card><CardHeader><CardTitle>Background</CardTitle></CardHeader>
-        <CardContent className="grid gap-2">
+    <Card id="appearance">
+      <CardHeader><CardTitle className="flex items-center gap-2"><AnimatedIcon name={iconFor('palette')} size="sm" />Appearance</CardTitle></CardHeader>
+      <CardContent className="grid divide-y">
+        {row('Light or dark', 'Auto follows this device.', <Appearance mode={mode} setMode={setMode} />)}
+        {row('Background', 'What’s behind every page.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
             {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup>
-          <p className="text-sm opacity-70">What’s behind every page.</p></CardContent></Card>
-      <p className="text-sm opacity-60">Kept on this device: another phone or browser keeps its own.</p>
-    </div>
+        ))}
+        <p className="pt-3 text-sm opacity-60">Kept on this device: another phone or browser keeps its own.</p>
+      </CardContent>
+    </Card>
   );
 }
 
