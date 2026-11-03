@@ -66,7 +66,8 @@ The owner's other rulings shape everything below:
 Applied today:
 - **Conversations from the bridges piece and the clock's relay threads become core records** (this doc).
 - **Tasks stay the tasks piece's,** under that contract.
-- **Secrets, box and the model subscriptions are mechanism.** The subscriptions currently ship inside the bridges piece.
+- **Secrets, the runtime's boxes and its model accounts are mechanism.** Model accounts are the runtime's view of what
+  each box reports of its own CLI logins (agent-runtime.md, section 2). loom holds no model credential.
 
 ## Vocabulary (to be added to CONTEXT.md)
 
@@ -217,8 +218,8 @@ digests are kept for good.
 - **The order is fixed:** the turn first, then its audit entry, keyed by the `seq` the turn write answered. An audit
   write for a `(conversation, seq)` that doesn't exist, or by a different writer, is rejected. When the turn succeeds
   and the audit write fails, the turn stands without text.
-- **The body's conversation:** the runtime passes `conversation: "<id>"` and `run: "<id>"` to `identity()` when it
-  starts or resumes a body. A harness session uses venue `session`, with place `<harness>:<session id>`, and its own
+- **The body's conversation:** when the runtime starts or resumes a body, its brief gives the body
+  `conversation: "<id>"` and `run: "<id>"`, and the body passes them to `identity()` first. A harness session uses venue `session`, with place `<harness>:<session id>`, and its own
   run id.
 - **The boot tape gains digests:** digests from the tape's window are interleaved with episodes by time and rendered
   `digest · <venue> <label>: <summary>`. A body in a conversation writes a digest instead of an episode; bodies without

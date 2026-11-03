@@ -14,17 +14,18 @@ which moves the conversation record into core.*
 > Core is an MCP you connect to before that point." "Subscriptions and the core 'how do we launch shit / manage who can
 > do what' is a single piece." — the owner, 2026-11-02
 
-Today three pieces start agent sessions, each its own way:
+When this doc was drawn, three pieces started agent sessions, each its own way:
 
-- **The clock** starts a session locally, or asks box for a house (`loom box up --task -`), and keeps its own model
+- **The clock** started a session locally, or asked box for a house (`loom box up --task -`), and kept its own model
   setting.
-- **The bridges piece (shuttle)** has its own runners (Claude, Codex), its own spawn logic, its own model resolver, and
+- **The bridges piece (shuttle)** had its own runners (Claude, Codex), its own spawn logic, its own model resolver, and
   its own gates for who may do what.
-- **Box** builds and runs houses, and decides which credentials land in them. For model credentials it asks the
-  subscriptions code, which ships inside the bridges piece.
+- **Box** built and ran houses, and decided which credentials landed in them. For model credentials it asked the
+  subscriptions code, which shipped inside the bridges piece. That broker is gone (section 2): no model credential is
+  issued anywhere now.
 
-There are three launchers, two model choosers and one credential source between them. They're checkable in the
-pieces' repos:
+There were three launchers, two model choosers and one credential source between them. They're checkable in the
+pieces' repos as of 2026-11-02:
 - the clock: `dispatch` and the session command in loom-clock's `bin/wake`;
 - the bridges piece: `shuttle/runner.py`, `spawn.py` and `runners/codex.py`;
 - box: `loom box up` and the house runner in loom-box. Every piece keeps its own list
@@ -70,12 +71,40 @@ runtime.md decided them, except who decides secret grants (section 6). The piece
 `loom-runtime`, with `loom-box` kept as a second bin through the move). It keeps owners.md's `"owners": 2` opt-in,
 and every page and action that was box's, subscriptions' or the bridges piece's keeps its owner rules.
 
-### 2. Model accounts (from subscriptions)
+### 2. Model accounts
 
-The household's model accounts move here: sign-ins, credentials, usage, and issuing a credential into a house
-(`sub:<provider>`, which box already uses). The runtime keeps a **model list**: each model it can run, its harness,
-and its **family**. Families are fixed strings: `anthropic`, `openai`, `google`, `mistral`, or `local:<name>` for a
-model the household runs itself. Grading reads the families (conversations.md, Review).
+The household's model accounts live here, and **loom never handles a model login**: it never reads, stores, copies,
+refreshes or issues a token, and never calls a provider's API. The subscriptions broker that did (its sign-ins, and
+issuing a credential into a house as `sub:<provider>`) was deleted on 2026-11-02 (loom-box#49, shuttle#47). The
+runtime's [docs/model-accounts.md](https://github.com/sleepunit-agents/loom-box/blob/main/docs/model-accounts.md) is
+the source for all of this:
+
+- **Each box signs its own CLI in.** A box runs the real `claude` and `codex`, logged in on that box with its owner's
+  own subscription. **Log in** (Boxes, Model logins, or `loom runtime login <box> claude|codex`) runs the CLI's own
+  login on that box, in a throwaway container, and the CLI keeps and refreshes its login in the box's login dir. Only
+  the box's owner can start it.
+- **Accounts are what the boxes report.** Each box asks the CLIs' own status commands whether they're installed and
+  logged in, with the method and plan (and, for Claude, a short hash of the org and account, so boxes on one login
+  share its quota). The runtime keys an account by the box's owner and that hash, so one owner's box never merges into
+  another owner's account. Bodies and agent owners see a label, never the key.
+- **Houses use their box's login.** A house whose house file names the harnesses it runs (`"harnesses": ["claude"]`)
+  gets the box's login for those, mounted at `/run/loom/login/<harness>`, and no other. A box that isn't logged in
+  doesn't start such a house.
+- **Agents run only on boxes their owner owns.** An agent's houses and bodies run only on its owner's boxes, or on a
+  box lent to it by name, which runs its work but never on the box owner's login. On its owner's box it gets only the
+  logins the owner granted it (`loom box agent <agent> --logins`; by default a household owner's agents get both and
+  another member's get none). The resolver (section 4) offers an account by exactly the rule a house's login is
+  mounted by, and a box not seen for 10 minutes offers nothing.
+- **Usage comes from run output.** A house reports how full its account's windows are, from its harness's own output:
+  Claude Code's stream-json `rate_limit_event`, Codex's `token_count` events. It pipes them to
+  `loom runtime usage report --harness claude|codex`, and only for a login it was given. Readings are clamped, and the
+  resolver skips an account whose window is full.
+- **An API key is a plain secret,** mapped into a house as `anthropic-api-key` or `openai-api-key`. It counts as an
+  account for that agent on any box.
+
+The runtime also keeps a **model list**: each model it can run, its harness, and its **family**. Families are fixed
+strings: `anthropic`, `openai`, `google`, `mistral`, or `local:<name>` for a model the household runs itself. Grading
+reads the families (conversations.md, Review).
 
 ### 3. Runners
 
@@ -267,8 +296,9 @@ These are core changes this doc depends on, each small:
 
 | From | What | To |
 |---|---|---|
-| loom-box | boxes, houses, credentials | runtime (the same code, renamed `loom-runtime`) |
-| shuttle | subscriptions, sign-in, runners, spawn, model resolver, gates, relay queue, now board | runtime |
+| loom-box | boxes, houses, box and house credentials | runtime (the same code, renamed `loom-runtime`) |
+| shuttle | subscriptions: the broker, its sign-in pages, issuing a credential into a house (`sub:<provider>`) | nowhere: deleted (2026-11-02, shuttle#47, loom-box#49). Each box signs its own CLI in, and accounts are what the boxes report (section 2) |
+| shuttle | runners, spawn, model resolver, gates, relay queue, now board | runtime |
 | shuttle | the Discord adapter, the Slack adapter | `loom-discord`, `loom-slack` |
 | shuttle | the conversation store, and the digests feed (projects.md's `piece:shuttle` section) | core (conversations.md; its `conversations` section replaces the feed) |
 | shuttle | gates and identities (its owner-written collection) | the runtime's owner-written collection. The owner runs `loom shuttle gates export --json | loom runtime gates import`: each piece touches only its own store, as piece-storage.md requires |
