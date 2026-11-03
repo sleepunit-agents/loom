@@ -227,6 +227,19 @@ describe('mergePeople, one store (no household)', () => {
     expect(again).toMatchObject({ resumed: true, agents: { art: { card: 'none', memories: 0, conversations: 0, turns: 0 } } });
   });
 
+  it('a cardless from: its tags move to into and it redirects; into\'s summary is due a re-read', () => {
+    remember(db, 'user/f', { person: 'patrick' });
+    const out = merge({ from: 'patrick', into: 'patrick-kells' });
+    expect(out).toMatchObject({ cardless: true, agents: { art: { card: 'none', memories: 1 } } });
+    const st = open();
+    try {
+      expect(st.getRow('patrick')).toBeNull();
+      expect(st.resolve('patrick')).toBe('patrick-kells');
+      expect(st.getRow('patrick-kells')!.synthesized_at).toBeNull();
+    } finally { st.close(); }
+    expect(metadataOf(db, 'memories').at(-1)!.person).toBe('patrick-kells');
+  });
+
   it('refuses a merge whose card would break the schema, naming why, and writes nothing', () => {
     const st = new PeopleStore({ dbPath: db, actor: 'art', now });
     try { st.write({ slug: 'patrick-kells', summary: 'x'.repeat(1195) }); } finally { st.close(); }
@@ -349,6 +362,48 @@ describe('mergePeople, in a household with two agents each holding a copy', () =
     expect(metadataOf(dbOf('mark'), 'memories').map((m2) => m2.person)).toEqual(['grace-aquino', 'grace-aquino']);
     const dir = store(commonsPeoplePath(h));
     try { expect(dir.mergeOf('grace')!.counts).toMatchObject({ agents: { art: { memories: 1 }, mark: { memories: 2 } } }); } finally { dir.close(); }
+  });
+
+  it("an agent merges only its own: Art's call leaves Mark's store untouched and unread, and names Mark for the owner", () => {
+    const own = mergePeople({ household: h, viewer: 'art', onlyAgent: 'art', actor: 'art', now }, { from: 'grace', into: 'grace-aquino' });
+    expect(Object.keys(own.agents)).toEqual(['art']);
+    expect(own.agents.art).toMatchObject({ card: 'merged', memories: 1 });
+    expect(JSON.stringify(own)).not.toMatch(/"mark"/);
+    expect(own.projects).toEqual([]);
+    expect(own.not_done[0]).toMatch(/^mark: its own copy, memories and conversations weren't touched or read .*ask the owner to run `loom person merge grace grace-aquino`/);
+    // Mark's store as it was: its memories, its turn, its copy of grace.
+    expect(metadataOf(dbOf('mark'), 'memories').map((m) => m.person)).toEqual(['grace', 'grace']);
+    expect(turnsFrom(dbOf('mark'))).toEqual(['grace']);
+    const mark = store(dbOf('mark'));
+    try { expect(mark.getRow('grace')!.archived_at).toBeNull(); expect(mark.mergeOf('grace')).toBeNull(); } finally { mark.close(); }
+    const dir = store(commonsPeoplePath(h));
+    try { expect(dir.mergeOf('grace')!.counts).toEqual({ agents: { art: expect.anything() }, directory: { relinked: ['fez'] } }); } finally { dir.close(); }
+    // The owner finishes it, Mark included.
+    expect(merge({ from: 'grace', into: 'grace-aquino' })).toMatchObject({ resumed: true, agents: { art: { card: 'none' }, mark: { card: 'moved', memories: 2 } } });
+    expect(metadataOf(dbOf('mark'), 'memories').map((m) => m.person)).toEqual(['grace-aquino', 'grace-aquino']);
+  });
+
+  it("a cardless from (a member's bare tag) merges into the card: re-tags and a redirect, nothing archived", () => {
+    const dir = new PeopleStore({ dbPath: commonsPeoplePath(h), actor: 'owner', now });
+    try { dir.write({ slug: 'jonathan-barket', name: 'Jonathan Barket' }); } finally { dir.close(); }
+    remember(dbOf('art'), 'user/j1', { person: 'jonathan' });
+    remember(dbOf('art'), 'user/j2', { person: 'jonathan' });
+    remember(dbOf('art'), 'user/j3', { person: 'jonathan' });
+    const dry = merge({ from: 'jonathan', into: 'jonathan-barket', dry_run: true });
+    expect(dry).toMatchObject({ cardless: true, where_added: {}, agents: { art: { card: 'none', memories: 3 }, mark: { card: 'none', memories: 0 } } });
+    expect(metadataOf(dbOf('art'), 'memories').filter((m) => m.person === 'jonathan')).toHaveLength(3);
+    const out = merge({ from: 'jonathan', into: 'jonathan-barket' });
+    expect(out).toMatchObject({ cardless: true, agents: { art: { memories: 3 } } });
+    expect(metadataOf(dbOf('art'), 'memories').filter((m) => m.person === 'jonathan')).toHaveLength(0);
+    const d = store(commonsPeoplePath(h));
+    try {
+      expect(d.getRow('jonathan')).toBeNull();
+      expect(d.mergeOf('jonathan')).toMatchObject({ into: 'jonathan-barket' });
+      expect(d.read('jonathan')).toMatchObject({ card: { slug: 'jonathan-barket' }, merged: { from: 'jonathan' } });
+      expect(d.getRow('jonathan-barket')!.card.summary).toBeUndefined();
+    } finally { d.close(); }
+    // A bare tag nothing carries is a typo.
+    expect(() => merge({ from: 'jonathon', into: 'jonathan-barket' })).toThrow(/no card for jonathon, and nothing in reach is tagged jonathon/);
   });
 
   it("refuses a household agent's entry, a member, and an agent merged with a person", () => {

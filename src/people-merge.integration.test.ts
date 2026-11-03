@@ -142,6 +142,9 @@ describe('people/merge: the owner and the runtime over HTTP, the owner at the sh
     const out = JSON.parse(await personMerge(agentDir(h, 'mark'), { from: 'lc', into: 'loren-clawitter' }));
     expect(out).toMatchObject({ merged_by: 'mark', agents: { mark: { card: 'moved' } }, card: { slug: 'loren-clawitter', summary: 'Mark knows them.\nMerged lc (LC) ' + new Date().toISOString().slice(0, 10) } });
     expect(dirRow('lc').merged).toMatchObject({ by: 'mark' });
+    // Mark's call reached only Mark's store: Art's isn't in the answer, and not_done says ask the owner.
+    expect(Object.keys(out.agents)).toEqual(['mark']);
+    expect(out.not_done[0]).toMatch(/^art: .*ask the owner/);
     expect(await personMerge(agentDir(h, 'mark'), { from: 'lc', into: 'jonathan' })).toMatch(/^Error: lc was already merged into loren-clawitter/);
   });
 });

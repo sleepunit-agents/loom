@@ -75,8 +75,10 @@ export interface PersonMergeResult {
   from: string;
   into: string;
   dry_run: boolean;
-  /** The redirect was already there (an earlier merge stopped part-way): this one finished it. */
+  /** The redirect was already there (an earlier merge stopped part-way, or an agent merged only its own): this one finished it. */
   resumed: boolean;
+  /** from had no card, only tags: memories, conversations and links were re-tagged and the redirect written; no card was archived. */
+  cardless: boolean;
   /** Who merged: recorded on the redirect and every revision. */
   merged_by: string;
   /** `where` values into gains, by field. */
@@ -87,7 +89,10 @@ export interface PersonMergeResult {
   may_added: number;
   /** Into's card after the merge, as `viewer` (the calling agent, or the household's default) sees it. */
   card: PersonCard;
-  /** Per agent (one entry for a store outside a household). */
+  /**
+   * Per agent (one entry for a store outside a household). An agent's own merge lists only
+   * itself: other agents' stores are theirs, and `not_done` names them.
+   */
   agents: Record<string, StoreCounts>;
   /** In a household: the shared directory's cards relinked (how.via). */
   directory?: { relinked: string[] };
@@ -318,6 +323,10 @@ function applyStore(st: PeopleStore, from: string, into: string, step: StoreStep
         archived_at: null, archived_by: null, archive_reason: null, updated: at,
         synthesized_at: step.resynthesize ? null : (intoRow?.synthesized_at ?? null),
       });
+    } else if (step.resynthesize && intoRow && intoRow.archived_at === null && intoRow.synthesized_at !== null) {
+      // Memories were re-tagged to into here: its summary no longer condenses them all.
+      table.snapshot(intoRow, 'merge', at);
+      table.store({ ...intoRow, synthesized_at: null, updated: at });
     }
     if (step.archiveFrom && fromRow && fromRow.archived_at === null) {
       // From's card as it was, kept in into's history (person_history(into) lists it; it isn't restorable onto into).
@@ -366,25 +375,44 @@ export interface MergeScope {
   viewer?: string;
   /** Who's merging: recorded on the redirect and every revision. */
   actor: string;
+  /**
+   * In a household, an agent merging: only the commons card, this agent's own copy and its
+   * own memories and conversations. Every other agent's store is left alone and unread (no
+   * counts); `not_done` names them, for the owner to finish. Unset: the owner or the
+   * runtime, across every agent's store.
+   */
+  onlyAgent?: string;
   now?: () => number;
 }
 
 const fail404 = (slug: string) => new PersonMergeError(`no card for ${slug}`, 404);
 
-function refuseRows(from: string, into: string, fromRow: CardRowBase | null, intoRow: CardRowBase | null, already: PersonMergeRecord | null, intoMerged: PersonMergeRecord | null): boolean {
+type Mode = 'card' | 'resumed' | 'cardless';
+
+/**
+ * How this merge goes, or why it can't: `card` (both cards there), `resumed` (from already
+ * redirects to into: finish what's left), `cardless` (from is only a tag on memories and
+ * conversations, into a card: re-tag and redirect, nothing to archive).
+ */
+function modeOf(from: string, into: string, fromRow: CardRowBase | null, intoRow: CardRowBase | null, already: PersonMergeRecord | null, intoMerged: PersonMergeRecord | null): Mode {
   if (already) {
     if (already.into !== into) throw new PersonMergeError(`${from} was already merged into ${already.into}`);
     if (!intoRow) throw fail404(into);
     if (intoRow.archived_at) throw new PersonMergeError(`card for ${into} is archived; restore it before merging into it`);
-    return true;
+    return 'resumed';
   }
-  if (!fromRow) throw fail404(from);
   if (!intoRow) throw fail404(into);
-  if (fromRow.archived_at) throw new PersonMergeError(`card for ${from} is archived; restore it before merging it`);
+  if (fromRow?.archived_at) throw new PersonMergeError(`card for ${from} is archived; restore it before merging it`);
   if (intoRow.archived_at) {
     throw new PersonMergeError(intoMerged ? `${into} was merged into ${intoMerged.into}: merge into ${intoMerged.into}` : `card for ${into} is archived; restore it before merging into it`);
   }
-  return false;
+  return fromRow ? 'card' : 'cardless';
+}
+
+/** A cardless from that nothing in reach is tagged with is a typo, not a person: refused. */
+function refuseUntagged(from: string, counts: Iterable<StoreCounts>): void {
+  for (const c of counts) if (c.memories || c.proposals || c.conversations || c.turns || c.relinked.length) return;
+  throw new PersonMergeError(`no card for ${from}, and nothing in reach is tagged ${from}`, 404);
 }
 
 function parsed(row: CardRowBase): PersonCard {
@@ -401,7 +429,8 @@ function checked(card: PersonCard, nowMs: number, where: string): PersonCard {
   return card;
 }
 
-const NOT_DONE = (from: string, into: string) => [
+const NOT_DONE = (from: string, into: string, others: readonly string[] = []) => [
+  ...(others.length ? [`${others.join(', ')}: ${others.length === 1 ? 'its' : 'their'} own copy, memories and conversations weren't touched or read (an agent merges only its own); ask the owner to run \`loom person merge ${from} ${into}\` to finish them`] : []),
   `gates: rename ${from} to ${into} in every agent's gates (shuttle's people merge, one agent's list at a time); loom doesn't hold them`,
   `text: memory bodies, notes, knowledge pages and conversation digests that write "${from}" in prose are left as written`,
   `pieces' own stores: a piece that keeps person slugs renames them itself`,
@@ -431,22 +460,24 @@ function mergeInStore(contextDir: string, agent: string, actor: string, from: st
   try {
     const fromRow = st.migrated ? st.rawRow(from) : null;
     const intoRow = st.migrated ? st.rawRow(into) : null;
-    const resumed = refuseRows(from, into, fromRow, intoRow, st.mergeOf(from), st.mergeOf(into));
+    const mode = modeOf(from, into, fromRow, intoRow, st.mergeOf(from), st.mergeOf(into));
+    const resumed = mode === 'resumed';
     const intoCard = parsed(intoRow!);
-    const fromCard = parsed(fromRow!);
-    if (!resumed && kindOf(fromCard) !== kindOf(intoCard)) throw new PersonMergeError(`${from} is ${kindOf(fromCard) === 'agent' ? 'an agent' : 'a person'} and ${into} isn't: they aren't one card`);
-    const plan = resumed ? null : mergeCardInto(intoCard, fromCard, mergeLine(from, fromCard.name, at));
+    const fromCard = fromRow ? parsed(fromRow) : null;
+    if (mode === 'card' && kindOf(fromCard!) !== kindOf(intoCard)) throw new PersonMergeError(`${from} is ${kindOf(fromCard!) === 'agent' ? 'an agent' : 'a person'} and ${into} isn't: they aren't one card`);
+    const plan = mode === 'card' ? mergeCardInto(intoCard, fromCard!, mergeLine(from, fromCard!.name, at)) : null;
     if (plan) plan.card = relinkCard(plan.card, from, into) ?? plan.card;
     const next = plan ? checked(plan.card, nowMs, `${agent}'s card`) : null;
-    const counts: StoreCounts = { card: resumed ? 'none' : 'merged', ...retag(st.database, from, into, false), relinked: relinks(st.cardTable, from, into, next).map((r) => r.row.slug) };
-    const projects = hubsListing(st.database, fromCard.where ?? {}, agent);
+    const counts: StoreCounts = { card: plan ? 'merged' : 'none', ...retag(st.database, from, into, false), relinked: relinks(st.cardTable, from, into, next).map((r) => r.row.slug) };
+    if (mode === 'cardless') refuseUntagged(from, [counts]);
+    const projects = hubsListing(st.database, fromCard?.where ?? {}, agent);
     const result = (card: PersonCard, c: StoreCounts): PersonMergeResult => ({
-      from, into, dry_run: dry, resumed, merged_by: actor,
+      from, into, dry_run: dry, resumed, cardless: mode === 'cardless', merged_by: actor,
       where_added: plan?.where_added ?? {}, how_added: plan?.how_added ?? [], may_added: plan?.may_added ?? 0,
       card, agents: { [agent]: c }, projects, not_done: NOT_DONE(from, into),
     });
     if (dry) return result(next ?? intoCard, counts);
-    const done = applyStore(st, from, into, { next, archiveFrom: !resumed, resynthesize: !resumed || counts.memories > 0 }, actor, nowMs);
+    const done = applyStore(st, from, into, { next, archiveFrom: mode === 'card', resynthesize: mode === 'card' || counts.memories > 0 }, actor, nowMs);
     const c: StoreCounts = { card: counts.card, memories: done.memories, proposals: done.proposals, conversations: done.conversations, turns: done.turns, relinked: done.relinked };
     recordCounts(st, from, { [agent]: c });
     return result(st.getRow(into)!.card, c);
@@ -471,27 +502,36 @@ function mergeInHousehold(h: Household, scope: MergeScope, from: string, into: s
   const actor = scope.actor;
   const nowMs = Date.parse(at);
   if (h.agents.includes(from)) throw new PersonMergeError(`${from} is one of this household's agents: its entry isn't merged away`);
-  if (h.members.some((m) => m.person === from)) throw new PersonMergeError(`${from} is a member of this household (its tokens and sign-ins name them): merge ${into} into ${from} instead`);
+  if (scope.onlyAgent !== undefined && !h.agents.includes(scope.onlyAgent)) throw new PersonMergeError(`${scope.onlyAgent} isn't one of this household's agents`, 400);
+  // An agent reaches only its own store; the owner and the runtime reach every agent's.
+  const reach = scope.onlyAgent !== undefined ? [scope.onlyAgent] : h.agents;
+  const others = h.agents.filter((a) => !reach.includes(a));
   const dir = openStore(commonsPeoplePath(h), dry, actor, now);
   if (!dir) throw fail404(from);
   const opened: Array<{ agent: string; st: PeopleStore }> = [];
   try {
     const fromRow = dir.migrated ? dir.rawRow(from) : null;
     const intoRow = dir.migrated ? dir.rawRow(into) : null;
-    const resumed = refuseRows(from, into, fromRow, intoRow, dir.mergeOf(from), dir.mergeOf(into));
+    const mode = modeOf(from, into, fromRow, intoRow, dir.mergeOf(from), dir.mergeOf(into));
+    const resumed = mode === 'resumed';
+    // A member's card stays (tokens and sign-ins name them); a bare tag of the same slug has no card to keep.
+    if (mode === 'card' && h.members.some((m) => m.person === from)) {
+      throw new PersonMergeError(`${from} is a member of this household (its tokens and sign-ins name them): merge ${into} into ${from} instead`);
+    }
     const intoDir = parsed(intoRow!);
-    const fromDir = parsed(fromRow!);
-    if (!resumed && kindOf(fromDir) !== kindOf(intoDir)) throw new PersonMergeError(`${from} is ${kindOf(fromDir) === 'agent' ? 'an agent' : 'a person'} and ${into} isn't: they aren't one card`);
-    const dirPlan = resumed ? null : mergeCardInto(intoDir, fromDir);
+    const fromDir = fromRow ? parsed(fromRow) : null;
+    if (mode === 'card' && kindOf(fromDir!) !== kindOf(intoDir)) throw new PersonMergeError(`${from} is ${kindOf(fromDir!) === 'agent' ? 'an agent' : 'a person'} and ${into} isn't: they aren't one card`);
+    const dirPlan = mode === 'card' ? mergeCardInto(intoDir, fromDir!) : null;
     if (dirPlan) dirPlan.card = relinkCard(dirPlan.card, from, into) ?? dirPlan.card;
     const dirNext = dirPlan ? checked(dirPlan.card, nowMs, 'the directory entry') : null;
-    const line = mergeLine(from, fromDir.name, at);
+    // The line says a card was merged in: a cardless from adds none.
+    const line = fromDir ? mergeLine(from, fromDir.name, at) : null;
     const intoName = (dirNext ?? intoDir).name;
 
     // Every agent's copy: planned (and checked) before anything is written.
     const steps: Array<{ agent: string; st: PeopleStore; step: StoreStep; counts: StoreCounts; plan: CardMerge | null }> = [];
     const projects: PersonMergeResult['projects'] = [];
-    for (const agent of h.agents) {
+    for (const agent of reach) {
       const st = openStore(resolveSqliteDbPath(agentDir(h, agent)), dry, actor, now);
       if (!st) continue;
       opened.push({ agent, st });
@@ -503,9 +543,9 @@ function mergeInHousehold(h: Household, scope: MergeScope, from: string, into: s
       let plan: CardMerge | null = null;
       let card: StoreCounts['card'] = 'none';
       if (relFrom) {
-        plan = mergeCardInto(relInto ?? { slug: into, name: intoName, where: {}, how: {}, may: [] }, relFrom, line);
+        plan = mergeCardInto(relInto ?? { slug: into, name: intoName, where: {}, how: {}, may: [] }, relFrom, line ?? undefined);
         card = relInto ? 'merged' : 'moved';
-      } else if (relInto && !resumed) {
+      } else if (relInto && line && !resumed) {
         plan = { card: { ...relInto, summary: appendLine(relInto.summary, line) }, where_added: {}, how_added: [], may_added: 0 };
         card = 'noted';
       }
@@ -519,9 +559,11 @@ function mergeInHousehold(h: Household, scope: MergeScope, from: string, into: s
         step: { next, archiveFrom: relFrom !== null, resynthesize: relFrom !== null || retags.memories > 0 },
         counts: { card, ...retags, relinked: st.migrated ? relinks(st.cardTable, from, into, next).map((r) => r.row.slug) : [] },
       });
-      projects.push(...hubsListing(st.database, fromDir.where ?? {}, agent));
+      projects.push(...hubsListing(st.database, fromDir?.where ?? {}, agent));
     }
-    const viewer = scope.viewer && h.agents.includes(scope.viewer) ? scope.viewer : h.default;
+    const dirRelinked = dir.migrated ? relinks(dir.cardTable, from, into, dirNext).map((r) => r.row.slug) : [];
+    if (mode === 'cardless') refuseUntagged(from, [...steps.map((x) => x.counts), { card: 'none', memories: 0, proposals: 0, conversations: 0, turns: 0, relinked: dirRelinked }]);
+    const viewer = scope.onlyAgent ?? (scope.viewer && h.agents.includes(scope.viewer) ? scope.viewer : h.default);
     const howAdded = new Set(dirPlan?.how_added ?? []);
     let mayAdded = 0;
     for (const s of steps) {
@@ -534,16 +576,15 @@ function mergeInHousehold(h: Household, scope: MergeScope, from: string, into: s
       return s.step.next ?? (s.st.migrated ? s.st.getRow(into)?.card ?? null : null);
     };
     const answer = (directoryCard: PersonCard, agents: Record<string, StoreCounts>, relinked: string[]): PersonMergeResult => ({
-      from, into, dry_run: dry, resumed, merged_by: actor,
+      from, into, dry_run: dry, resumed, cardless: mode === 'cardless', merged_by: actor,
       where_added: dirPlan?.where_added ?? {}, how_added: [...howAdded], may_added: mayAdded,
       card: mergeCard(directoryCard, viewerRel(steps)),
-      agents, directory: { relinked }, projects, not_done: NOT_DONE(from, into),
+      agents, directory: { relinked }, projects, not_done: NOT_DONE(from, into, others),
     });
-    const dirRelinked = dir.migrated ? relinks(dir.cardTable, from, into, dirNext).map((r) => r.row.slug) : [];
     if (dry) return answer(dirNext ?? intoDir, Object.fromEntries(steps.map((s) => [s.agent, s.counts])), dirRelinked);
 
     // The directory first: card, archive and redirect together. From here on, from reads and writes as into.
-    const d = applyStore(dir, from, into, { next: dirNext, archiveFrom: !resumed, resynthesize: false }, actor, nowMs);
+    const d = applyStore(dir, from, into, { next: dirNext, archiveFrom: mode === 'card', resynthesize: false }, actor, nowMs);
     const done: Record<string, StoreCounts> = {};
     for (const s of steps) {
       const r = applyStore(s.st, from, into, s.step, actor, nowMs);

@@ -328,6 +328,11 @@ loom points at `from`.
 
 - **Surfaces.** The MCP tool, for an agent: in a household its household holds both cards
   (the shared directory), outside one its own store does; the revision names the agent.
+  **An agent merges only its own:** the commons card, its own copy, and its own memories,
+  proposals, conversations and turns. Every other agent's store is left alone and isn't
+  read, so the answer has no counts for it; `not_done` names those agents and says to ask
+  the owner, whose merge then finds the redirect and finishes them. Only the owner and the
+  runtime merge across every agent's store and see per-agent counts.
   `loom person merge <from> <into> [--dry-run] [--json]` for the owner on loom's machine (a
   piece's process is refused, exit 5; exit 3 for a missing card, 1 for any other refusal;
   never over `POST /cli`). `POST /api/loom/people/merge {from, into, dry_run?}` for a
@@ -344,14 +349,20 @@ loom points at `from`.
   has no `into` summary takes `from`'s), and the summary gains one line,
   `Merged <from> (<from's name>) <YYYY-MM-DD>`. The merged card must pass the usual
   schema, or the merge is refused naming why, and nothing is written.
+- **A cardless `from`.** `from` may be a bare tag with no card (memories tagged `jonathan`
+  beside the card `jonathan-barket`) when `into` has one: its memories, proposals,
+  conversations, turns and links are re-tagged and the redirect written, with no card to
+  archive, no merge line and no card fields (`cardless: true`). A bare tag that nothing in
+  reach carries is refused (404): it's a typo, not a person. The member refusal is for a
+  member's card, so a member's slug used only as a bare tag merges.
 - **Every copy.** In a household that's done to the directory entry (name, `where`, facts)
   and to every agent's own copy (summary, the rest of `how`, `may`): an agent that had
   both merges them, one that had only `from`'s now has it as `into`'s, one that had only
   `into`'s gets the line. Where a copy took `from`'s content or memories were re-tagged,
   its `synthesized_at` resets to null, so `memories_since_synthesis` counts every tagged
   memory and the consolidation lane re-reads them.
-- **Re-tags,** in every agent's store the household owner can reach (outside a household,
-  the one store): memories with `metadata.person = from` or `from` in `metadata.people`
+- **Re-tags,** in every agent's store the caller reaches (the owner and the runtime: every
+  agent's; an agent: its own; outside a household, the one store): memories with `metadata.person = from` or `from` in `metadata.people`
   (archived ones too) and memory proposals the same, without touching `updated`;
   `conversations.people_json`; every `conversation_turns.from_json` from the person.
   `how.via` and `how.loop_in` naming `from` on any card, directory or relationship, are
@@ -371,7 +382,7 @@ loom points at `from`.
   another card's. `person_restore` of `from` is refused. `person_list({include_archived:
   true})` marks it `merged_into`. Redirects are followed when `into` is merged on later.
   The redirect lasts until it's purged by hand (there is no purge surface).
-- **Refused:** either card missing (404); either archived (restore it first; an `into` that
+- **Refused:** `into` missing (404), or `from` with no card and no tags (404); either archived (restore it first; an `into` that
   is itself a redirect names its own `into`); `from` equal to `into`; `from` already merged
   elsewhere; `from` one of the household's agents, or a household member (their tokens and
   sign-ins name them: merge the other way); an agent's entry merged with a person's.

@@ -304,7 +304,7 @@ function merge(parsed: Parsed, env: ReturnType<typeof resolveEnv>, io: IOStreams
 
 /** A merge's answer for a person to read. */
 export function mergeReport(out: PersonMergeResult): string {
-  const lines = [`${out.dry_run ? 'would merge' : 'merged'} ${out.from} into ${out.into}${out.resumed ? ' (finishing an earlier merge)' : ''}`];
+  const lines = [`${out.dry_run ? 'would merge' : 'merged'} ${out.from}${out.cardless ? ' (no card: its tags only)' : ''} into ${out.into}${out.resumed ? ' (finishing an earlier merge)' : ''}`];
   const where = Object.entries(out.where_added).map(([f, vs]) => `${f} +${vs.join(', +')}`);
   lines.push(`  where: ${where.length ? where.join('; ') : 'nothing new'}`);
   if (out.how_added.length || out.may_added) lines.push(`  how: ${out.how_added.length ? `+${out.how_added.join(', +')}` : 'nothing new'} · may: +${out.may_added}`);
