@@ -55,6 +55,11 @@ export interface Household {
    * or a command (1-16 strings of at most 200) that replaces the runtime's job.
    */
   review?: ReviewSetting;
+  /**
+   * household.json's `github`: the GitHub owner (a user or an organization) the household's repos are under, so a bare
+   * `repo#12` in what an agent says links to github.com/<github>/repo/issues/12. Absent: only `owner/repo#12` links.
+   */
+  github?: string;
 }
 
 export type ReviewSetting = 'on' | 'off' | string[];
@@ -188,7 +193,14 @@ export function loadHousehold(home: string): Household | null {
     ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
     tz: parseTz(raw.tz, path),
     review: parseReview(raw.review, path),
+    ...(raw.github !== undefined ? { github: parseGithub(raw.github, path) } : {}),
   };
+}
+
+/** A GitHub user or organization name: letters, digits and single dashes, at most 39. */
+function parseGithub(v: unknown, path: string): string {
+  if (typeof v !== 'string' || !/^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}$/.test(v)) throw new HouseholdError(`${path}: github is a GitHub user or organization name (letters, digits, dashes)`);
+  return v;
 }
 
 function parseTz(v: unknown, path: string): string {

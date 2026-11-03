@@ -51,7 +51,8 @@ import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } from './core.js';
-import { getConversation as conversationOf, openNeeds } from '../backends/conversations.js';
+import { answeredNeeds, answerNeeds, ConversationError, getConversation as conversationOf, isConversationId, openNeeds, type NeedsVerdict } from '../backends/conversations.js';
+import { deliverAsOwner } from '../delivery.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
@@ -557,12 +558,76 @@ export function conversationAsks(h: Household): HomeAsk[] {
     let open: ReturnType<typeof openNeeds>;
     try { open = openNeeds(agentDir(h, a)); } catch { return []; }
     const name = agentName(agentDir(h, a));
-    return open.map(({ conversation: c, digest: d }): HomeAsk => ({
-      text: `${name} needs you: ${d.needs_owner}`,
-      meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
-      page: `loom:conversation/${c.id}`, label: 'Open', agent: a, at: d.at, source: CORE, sourceLabel: 'Conversations',
-    }));
+    // An alert you can act on (t-1778): its sheet has the whole of it, its links, a box to answer the agent in, Done
+    // and Dismiss, all posted to the agent's own actions (/a/<agent>/act/loom: needsAct).
+    return open.map(({ conversation: c, digest: d }): HomeAsk => {
+      const fields = { conversation: c.id, digest: d.id };
+      return {
+        kind: 'alert', text: `${name} needs you: ${d.needs_owner}`,
+        meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
+        page: `loom:conversation/${c.id}`, label: 'Open the conversation', agent: a, at: d.at, source: agentSource(a), sourceLabel: 'Conversations',
+        ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}),
+        reply: { action: 'needs-reply', label: `Reply to ${name}`, fields },
+        actions: [{ action: 'needs-done', label: 'Done', tone: 'primary', fields }, { action: 'needs-dismiss', label: 'Dismiss', fields }],
+      };
+    });
   });
+}
+
+/** The Needs you the owner answered done or replied to in the last week: the Inbox's history of them. */
+function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
+  const since = new Date(nowMs - 7 * 86_400_000).toISOString();
+  return h.agents.flatMap((a) => {
+    let done: ReturnType<typeof answeredNeeds>;
+    try { done = answeredNeeds(agentDir(h, a), since); } catch { return []; }
+    const name = agentName(agentDir(h, a));
+    return done.map(({ conversation: c, digest: d, answer }): InboxItem => {
+      const source = agentSource(a);
+      const text = `${name} needs you: ${d.needs_owner}`;
+      return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', attention: false, unread: false, text,
+        outcome: answer.verdict === 'replied' ? 'You replied' : 'Done', meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
+        at: answer.at, agent: a, source, sourceLabel: 'Conversations', page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
+    });
+  });
+}
+
+/** The longest reply the Inbox takes: the deliver contract's text cap. */
+const NEEDS_REPLY_MAX = 40_000;
+
+/**
+ * The Needs you sheet's actions, on one agent (t-1778): `needs-reply` delivers the owner's words to the conversation as
+ * their own message (deliverAsOwner), and then the ask is answered; `needs-done` and `needs-dismiss` answer it.
+ */
+async function needsAct(opts: UiOptions, hh: Household, agent: string, action: string, fields: Record<string, string>, person: string): Promise<ActResult> {
+  const dir = agentDir(hh, agent);
+  const cv = fields.conversation ?? '';
+  const name = agentName(dir);
+  const c = isConversationId(cv) ? conversationOf(dir, cv) : undefined;
+  if (!c) return { ok: false, message: 'That conversation isn\'t one of this agent\'s.' };
+  const page = `loom:conversation/${c.id}`;
+  const answer = (verdict: NeedsVerdict) => answerNeeds(dir, { conversation: c.id, digest: fields.digest ?? '', verdict, by: person });
+  try {
+    if (action === 'needs-done') { answer('done'); return { ok: true, message: `Done: ${name}'s ask is answered.` }; }
+    if (action === 'needs-dismiss') { answer('dismissed'); return { ok: true, message: 'Dismissed.' }; }
+    const text = (fields.text ?? '').trim();
+    if (!text) return { ok: false, message: `Write what to tell ${name} first.` };
+    if (text.length > NEEDS_REPLY_MAX) return { ok: false, message: `That's longer than ${NEEDS_REPLY_MAX.toLocaleString('en-US')} characters.` };
+    // Still open: a reply to an ask the agent has moved past goes nowhere it expects.
+    if (!openNeeds(dir).some((n) => n.conversation.id === c.id && n.digest.id === fields.digest)) {
+      return { ok: false, message: 'That ask isn\'t open any more: the agent wrote since, or it was answered.', page };
+    }
+    // One reply, once: the same words to the same ask are the same delivery.
+    const id = `needs:${fields.digest}:${createHash('sha256').update(text).digest('hex').slice(0, 16)}`;
+    const r = await deliverAsOwner(opts.env, hh, { id, agent, venue: c.venue, place: c.place, label: c.label, person, text });
+    if (r.status !== 200 || 'error' in r.body) return { ok: false, message: `It didn't reach ${name}: ${'error' in r.body ? r.body.error : r.status}`, page };
+    answer('replied');
+    const how = r.body.body === 'failed' ? `It's in the conversation, but ${name} couldn't start (${r.body.reason ?? 'no reason given'}): the runtime tries again.`
+      : r.body.body === 'queued' ? `It waits for ${name}: ${r.body.reason ?? 'its body is busy'}.` : `${name} has it.`;
+    return { ok: true, message: `Sent. ${how}` };
+  } catch (e) {
+    if (e instanceof ConversationError) return { ok: false, message: e.message, page };
+    throw e;
+  }
 }
 
 /** How many of an agent's conversations need the owner. */
@@ -612,7 +677,8 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
-      text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions })),
+      text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
+      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}) })),
     ...pieces.flatMap((p) => {
       const source = pieceSource(p.piece);
       const sourceLabel = p.manifest.tab?.label ?? p.piece;
@@ -623,6 +689,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
           text: a.text, outcome: a.outcome, at: a.at, agent: a.agent, source, sourceLabel, page: a.page })),
       ];
     }),
+    ...answeredAsks(h),
     ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', attention: false, unread: false,
       text: d.text, meta: d.ok ? 'You did this' : 'You tried this; it wasn’t done', at: new Date(d.at * 1000).toISOString(),
       source: d.source, sourceLabel: d.sourceLabel ?? 'loom', ...(d.page ? { page: d.page } : {}) })),
@@ -1105,6 +1172,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (Object.keys(fields).length > LIMITS.fields + LIMITS.hidden) return send(res, 400, 'text/plain', 'too many fields');
     let source: Source;
     let result: ActResult;
+    // An answered Needs you is in the Inbox's history already (answeredAsks): its toast leaves no FYI as well.
+    let quiet = false;
     if (agentAct && agentAct[2] !== 'loom') {
       // A piece's action from its tab on this agent's pages: called with LOOM_SCOPE=<agent>, landing back there.
       const pieces = forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope);
@@ -1114,6 +1183,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+    } else if (agentAct && action.startsWith('needs-')) {
+      // An agent's Needs you, answered from its sheet: replied to, done or dismissed. Who answers is the signed-in member.
+      source = agentSource(agentAct[1]);
+      const person = who?.member?.person ?? firstOwner(hh!).person;
+      result = ['needs-reply', 'needs-done', 'needs-dismiss'].includes(action)
+        ? await needsAct(opts, hh!, agentAct[1], action, fields, person) : { ok: false, message: 'No such action.' };
+      quiet = result.ok;
     } else if (agentAct) {
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
@@ -1166,7 +1242,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
     // item in the Inbox"): not a line that hands over a secret or a one-time link (keep), and not an empty one.
-    if (hh && result.message?.trim() && !result.keep) {
+    if (hh && result.message?.trim() && !result.keep && !quiet) {
       const label = source.id === 'loom' ? undefined : (await pieceManifests(scopedEnv).catch(() => ({ pieces: [] as PieceInfo[] }))).pieces
         .find((p) => pieceSource(p.piece).id === source.id)?.manifest.tab?.label;
       storeFor(opts).noteDone({ at: Math.floor(Date.now() / 1000), ok: result.ok, text: result.message.trim().slice(0, 300), source,
@@ -1374,7 +1450,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
-        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline }); }
+        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {

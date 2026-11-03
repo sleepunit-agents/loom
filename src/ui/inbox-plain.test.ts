@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bits, duration, openItem, opensTo, plain } from '../../web/src/plain';
+import { bits, duration, githubUrl, openItem, opensTo, plain, refsOf } from '../../web/src/plain';
 
 // The texts as the approvals and secrets pieces write them (live Inbox, 2026-10-29).
 describe('the Inbox in plain words', () => {
@@ -35,6 +35,20 @@ describe('the Inbox in plain words', () => {
     expect(bits('verify onterris/on-pond#178 for t-1099 round 4. Brief: ~/Art/notes/x.md.')).toEqual([
       { t: 'text', s: 'verify ' }, { t: 'pr', repo: 'onterris/on-pond', n: '178' }, { t: 'text', s: ' for ' }, { t: 'task', id: 't-1099' },
       { t: 'text', s: ' round 4. Brief: ' }, { t: 'path', s: '~/Art/notes/x.md' }, { t: 'text', s: '.' }]);
+  });
+  // The live alert (2026-11-03): "Review/merge art#68" named its repo bare, and the household's repos are sleepunit-agents'.
+  it('a bare repo#N links under the household\'s GitHub owner, and only then; a conversation id is a link too', () => {
+    const said = 'Art E Fish needs you: Review/merge art#68 (two-way door) t-1735: via t-1734, see cv-cd825b49a554';
+    expect(bits(said, 'sleepunit-agents')).toEqual([
+      { t: 'text', s: 'Art E Fish needs you: Review/merge ' }, { t: 'pr', repo: 'sleepunit-agents/art', n: '68' }, { t: 'text', s: ' (two-way door) ' },
+      { t: 'task', id: 't-1735' }, { t: 'text', s: ': via ' }, { t: 'task', id: 't-1734' }, { t: 'text', s: ', see ' }, { t: 'conv', id: 'cv-cd825b49a554' }]);
+    expect(bits('merge art#68', undefined)).toEqual([{ t: 'text', s: 'merge art#68' }]);
+    // An owner named is the owner, whatever the household's.
+    expect(bits('onterris/on-pond#178', 'sleepunit-agents')).toEqual([{ t: 'pr', repo: 'onterris/on-pond', n: '178' }]);
+    // A URL's own #fragment is no reference.
+    expect(bits('https://x.com/a#12', 'sleepunit-agents').some((b) => b.t === 'pr')).toBe(false);
+    expect(refsOf(`${said} art#68 again`, 'sleepunit-agents')).toEqual([{ t: 'pr', repo: 'sleepunit-agents/art', n: '68' }, { t: 'task', id: 't-1735' }, { t: 'task', id: 't-1734' }, { t: 'conv', id: 'cv-cd825b49a554' }]);
+    expect(githubUrl('sleepunit-agents/art', '68')).toBe('https://github.com/sleepunit-agents/art/issues/68');
   });
 });
 

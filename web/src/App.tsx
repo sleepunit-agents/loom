@@ -359,7 +359,7 @@ export default function App() {
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
-                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} /></Suspense>
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
                   : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <AccountView me={(data.me as { name: string; role: string }) ?? { name: chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>

@@ -299,6 +299,33 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
   if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
   const refused = await deliveryRefusal(env, h, caller, d);
   if (refused) return refused;
+  return forwardKept(env, h, caller, d, nowMs);
+}
+
+/** The piece name core delivers as: the owner's own messages from loom's page (deliverAsOwner). No piece takes it. */
+export const OWNER_SOURCE = 'loom';
+
+/**
+ * The owner's message into one of an agent's conversations, from loom's page (the Inbox's Reply; t-1778): a person's
+ * `message` from the signed-in member, on that conversation's own venue and place, whatever the venue is, `wake` and
+ * `session` among them, so it reaches the body that conversation has, or the one the runtime resumes or starts for
+ * it. It's core's own delivery, as source `loom`: the piece checks (a venue the caller declares, `from: person`
+ * only from an adapter) are for pieces, and the page already knows this is the owner, speaking for themselves.
+ * Idempotent on `id` like any delivery.
+ */
+export async function deliverAsOwner(env: NodeJS.ProcessEnv, h: Household, m: { id: string; agent: string; venue: string; place: string; label?: string | null; person: string; text: string },
+  nowMs: () => number = Date.now): Promise<DeliverResult> {
+  if (!h.agents.includes(m.agent)) return refuse(403, `forbidden: ${m.agent} isn't one of this household's agents`);
+  const d = parseDeliver({
+    id: m.id, agent: m.agent, venue: m.venue, place: m.place, ...(m.label ? { label: m.label } : {}),
+    from: { kind: 'person', slug: m.person }, kind: 'message', at: new Date(nowMs()).toISOString(), text: m.text,
+  });
+  if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
+  return forwardKept(env, h, { piece: OWNER_SOURCE }, d, nowMs);
+}
+
+/** A checked delivery to the runtime: once per (piece, id), within the piece's share, its answer kept. */
+async function forwardKept(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody, nowMs: () => number): Promise<DeliverResult> {
   const target = deliveryPiece(env);
   if (target.piece === undefined) {
     return refuse(503, target.conflict

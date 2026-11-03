@@ -76,6 +76,8 @@ export interface DigestInput {
   tasks?: string[];
   projects?: string[];
   needs_owner?: string | null;
+  /** The exact thing the owner is needed for (a pull request's URL): https only, and only with needs_owner. */
+  needs_owner_href?: string | null;
 }
 
 export interface Digest {
@@ -89,6 +91,7 @@ export interface Digest {
   tasks: string[];
   projects: string[];
   needs_owner: string | null;
+  needs_owner_href: string | null;
 }
 
 export interface DayRow {
@@ -125,6 +128,7 @@ export const MAX_ASK = 200;
 export const MAX_TASKS = 16;
 export const MAX_TASK = 64;
 export const MAX_NEEDS_OWNER = 200;
+export const MAX_NEEDS_HREF = 500;
 /** A run id, a model and a harness: short printable strings. */
 export const MAX_RUN = 128;
 export const MAX_MODEL = 120;
@@ -203,7 +207,8 @@ export function createConversationTables(db: Database): void {
       decisions_json TEXT NOT NULL,
       tasks_json     TEXT NOT NULL,
       projects_json  TEXT NOT NULL,
-      needs_owner    TEXT
+      needs_owner    TEXT,
+      needs_owner_href TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_conversation_digests_conv ON conversation_digests(conversation, at);
     CREATE INDEX IF NOT EXISTS idx_conversation_digests_at ON conversation_digests(at);
@@ -219,6 +224,10 @@ export function openConversations(contextDir: string): Database {
   const db = new BetterSqlite3(resolveSqliteDbPath(contextDir));
   db.pragma('busy_timeout = 5000');
   if (!CONVERSATION_TABLES.every((t) => hasTable(db, t))) createConversationTables(db);
+  // needs_owner_href came after the table (t-1778): a store from before gets the column on its first write.
+  if (!(db.prepare('PRAGMA table_info(conversation_digests)').all() as Array<{ name: string }>).some((c) => c.name === 'needs_owner_href')) {
+    db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_href TEXT');
+  }
   return db;
 }
 
@@ -493,7 +502,7 @@ export function writeFinding(contextDir: string, f: { conversation: string; seq:
 
 // ─── Digests ────────────────────────────────────────────────────────────────
 
-const DIGEST_KEYS = ['summary', 'asks', 'decisions', 'tasks', 'projects', 'needs_owner'] as const;
+const DIGEST_KEYS = ['summary', 'asks', 'decisions', 'tasks', 'projects', 'needs_owner', 'needs_owner_href'] as const;
 
 function stringList(v: unknown, maxItems: number, maxLen: number, what: string): string[] {
   if (v === undefined) return [];
@@ -504,7 +513,7 @@ function stringList(v: unknown, maxItems: number, maxLen: number, what: string):
 }
 
 /** A digest as the agent wrote it, checked: exactly these keys, within the caps. Projects are names, unresolved. */
-export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_owner'>> & { needs_owner: string | null } {
+export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_owner' | 'needs_owner_href'>> & { needs_owner: string | null; needs_owner_href: string | null } {
   if (!isObject(raw)) return fail('a digest is a JSON object');
   const bad = Object.keys(raw).find((k) => !(DIGEST_KEYS as readonly string[]).includes(k));
   if (bad !== undefined) fail(`a digest has no key ${JSON.stringify(bad)} (it has ${DIGEST_KEYS.join(', ')})`);
@@ -512,6 +521,11 @@ export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_own
   const needs = raw.needs_owner;
   if (needs !== undefined && needs !== null && (typeof needs !== 'string' || !needs.trim() || needs.length > MAX_NEEDS_OWNER || /[\r\n]/.test(needs))) {
     fail(`needs_owner is null or a one-line reason of at most ${MAX_NEEDS_OWNER} characters`);
+  }
+  const href = raw.needs_owner_href;
+  if (href !== undefined && href !== null) {
+    if (typeof href !== 'string' || href.length > MAX_NEEDS_HREF || !isHttpsUrl(href)) fail(`needs_owner_href is null or an https:// URL of at most ${MAX_NEEDS_HREF} characters`);
+    if (typeof needs !== 'string') fail('needs_owner_href goes with needs_owner: it is the exact thing the owner is needed for');
   }
   const projects = stringList(raw.projects, MAX_DIGEST_PROJECTS, 80, 'projects');
   const badName = projects.find((p) => !SLUG.test(p));
@@ -523,7 +537,12 @@ export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_own
     tasks: stringList(raw.tasks, MAX_TASKS, MAX_TASK, 'tasks'),
     projects,
     needs_owner: typeof needs === 'string' ? needs.trim() : null,
+    needs_owner_href: typeof href === 'string' ? href : null,
   };
+}
+
+function isHttpsUrl(s: string): boolean {
+  try { const u = new URL(s); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password && !/\s/.test(s); } catch { return false; }
 }
 
 /**
@@ -583,24 +602,25 @@ export function writeDigest(contextDir: string, at: { conversation: string; run:
     const d: Digest = {
       id: digestId(at.conversation, at.run), conversation: at.conversation, run: at.run, at: now.toISOString(),
       summary: input.summary, asks: input.asks, decisions: input.decisions, tasks: input.tasks, projects, needs_owner: input.needs_owner,
+      needs_owner_href: input.needs_owner_href,
     };
-    db.prepare(`INSERT INTO conversation_digests (id, conversation, run, at, summary, asks_json, decisions_json, tasks_json, projects_json, needs_owner)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    db.prepare(`INSERT INTO conversation_digests (id, conversation, run, at, summary, asks_json, decisions_json, tasks_json, projects_json, needs_owner, needs_owner_href)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET at = excluded.at, summary = excluded.summary, asks_json = excluded.asks_json,
                   decisions_json = excluded.decisions_json, tasks_json = excluded.tasks_json, projects_json = excluded.projects_json,
-                  needs_owner = excluded.needs_owner`).run(
-      d.id, d.conversation, d.run, d.at, d.summary, JSON.stringify(d.asks), JSON.stringify(d.decisions), JSON.stringify(d.tasks), JSON.stringify(d.projects), d.needs_owner);
+                  needs_owner = excluded.needs_owner, needs_owner_href = excluded.needs_owner_href`).run(
+      d.id, d.conversation, d.run, d.at, d.summary, JSON.stringify(d.asks), JSON.stringify(d.decisions), JSON.stringify(d.tasks), JSON.stringify(d.projects), d.needs_owner, d.needs_owner_href);
     return d;
   }).immediate());
 }
 
-interface DigestRow { id: string; conversation: string; run: string; at: string; summary: string; asks_json: string; decisions_json: string; tasks_json: string; projects_json: string; needs_owner: string | null }
+interface DigestRow { id: string; conversation: string; run: string; at: string; summary: string; asks_json: string; decisions_json: string; tasks_json: string; projects_json: string; needs_owner: string | null; needs_owner_href?: string | null }
 
 function digestOf(r: DigestRow): Digest {
   return {
     id: r.id, conversation: r.conversation, run: r.run, at: r.at, summary: r.summary,
     asks: JSON.parse(r.asks_json) as string[], decisions: JSON.parse(r.decisions_json) as string[], tasks: JSON.parse(r.tasks_json) as string[],
-    projects: JSON.parse(r.projects_json) as string[], needs_owner: r.needs_owner,
+    projects: JSON.parse(r.projects_json) as string[], needs_owner: r.needs_owner, needs_owner_href: r.needs_owner_href ?? null,
   };
 }
 
@@ -725,16 +745,67 @@ export function findingsOf(contextDir: string, opts: { conversation?: string; si
 
 // ─── Needs you ──────────────────────────────────────────────────────────────
 
-/** Conversations whose newest digest has needs_owner: what core asks the owner, until a later digest has none. */
+/**
+ * Conversations whose newest digest has needs_owner: what core asks the owner, until a later digest has none or the
+ * owner answers it (answerNeeds: done, dismissed, or replied to).
+ */
 export function openNeeds(contextDir: string): Array<{ conversation: Conversation; digest: Digest }> {
   return withReadonly(contextDir, [], (db) => {
+    const answered = hasTable(db, 'conversation_needs_answers');
     const rows = db.prepare(`SELECT d.* FROM conversation_digests d
       WHERE d.rowid = (SELECT d2.rowid FROM conversation_digests d2 WHERE d2.conversation = d.conversation ORDER BY d2.at DESC, d2.rowid DESC LIMIT 1)
         AND d.needs_owner IS NOT NULL
+        ${answered ? 'AND NOT EXISTS (SELECT 1 FROM conversation_needs_answers a WHERE a.digest = d.id AND a.at >= d.at)' : ''}
       ORDER BY d.at DESC`).all() as DigestRow[];
     return rows.flatMap((r) => {
       const c = db.prepare('SELECT * FROM conversations WHERE id = ?').get(r.conversation) as ConvRow | undefined;
       return c ? [{ conversation: conversationOf(db, c), digest: digestOf(r) }] : [];
+    });
+  });
+}
+
+/** How the owner answered a Needs you: done (it's handled), dismissed (not theirs), or replied (their words went to the agent). */
+export type NeedsVerdict = 'done' | 'dismissed' | 'replied';
+export const NEEDS_VERDICTS: readonly NeedsVerdict[] = ['done', 'dismissed', 'replied'];
+
+export interface NeedsAnswer { digest: string; conversation: string; verdict: NeedsVerdict; by: string; at: string }
+
+/**
+ * The owner answers the open Needs you of `conversation` (its newest digest, `digest`): it leaves their Inbox. A
+ * digest the agent rewrites later in the same run (a newer `at`) asks again, and so does a later run's. Kept is who
+ * and how, never words: a reply's text went to the agent's conversation, and conversations hold none.
+ */
+export function answerNeeds(contextDir: string, a: { conversation: string; digest: string; verdict: NeedsVerdict; by: string }, now: Date = new Date()): NeedsAnswer {
+  if (!isConversationId(a.conversation)) fail('conversation is a conversation id (cv-…)');
+  if (!NEEDS_VERDICTS.includes(a.verdict)) fail(`verdict is one of ${NEEDS_VERDICTS.join(', ')}`);
+  return withDb(contextDir, (db) => db.transaction(() => {
+    const open = openNeedsOf(db, a.conversation);
+    if (!open || open.id !== a.digest) fail('that ask isn\'t open any more: the agent wrote since, or it was answered', 409);
+    db.exec(`CREATE TABLE IF NOT EXISTS conversation_needs_answers (
+      digest TEXT PRIMARY KEY, conversation TEXT NOT NULL, verdict TEXT NOT NULL, by TEXT NOT NULL, at TEXT NOT NULL)`);
+    const out: NeedsAnswer = { digest: a.digest, conversation: a.conversation, verdict: a.verdict, by: a.by, at: now.toISOString() };
+    db.prepare('INSERT OR REPLACE INTO conversation_needs_answers (digest, conversation, verdict, by, at) VALUES (?, ?, ?, ?, ?)').run(out.digest, out.conversation, out.verdict, out.by, out.at);
+    return out;
+  }).immediate());
+}
+
+/** The conversation's newest digest when it needs the owner and isn't answered, else undefined. */
+function openNeedsOf(db: Database, conversation: string): DigestRow | undefined {
+  const d = db.prepare('SELECT * FROM conversation_digests WHERE conversation = ? ORDER BY at DESC, rowid DESC LIMIT 1').get(conversation) as DigestRow | undefined;
+  if (!d || d.needs_owner === null) return undefined;
+  if (hasTable(db, 'conversation_needs_answers') && db.prepare('SELECT 1 FROM conversation_needs_answers WHERE digest = ? AND at >= ?').get(d.id, d.at)) return undefined;
+  return d;
+}
+
+/** The asks the owner answered done or replied to since `sinceIso`, newest first: the Inbox's history of them. */
+export function answeredNeeds(contextDir: string, sinceIso: string): Array<{ conversation: Conversation; digest: Digest; answer: NeedsAnswer }> {
+  return withReadonly(contextDir, [], (db) => {
+    if (!hasTable(db, 'conversation_needs_answers')) return [];
+    const rows = db.prepare("SELECT * FROM conversation_needs_answers WHERE at > ? AND verdict != 'dismissed' ORDER BY at DESC LIMIT 50").all(sinceIso) as NeedsAnswer[];
+    return rows.flatMap((a) => {
+      const d = db.prepare('SELECT * FROM conversation_digests WHERE id = ?').get(a.digest) as DigestRow | undefined;
+      const c = db.prepare('SELECT * FROM conversations WHERE id = ?').get(a.conversation) as ConvRow | undefined;
+      return d && c && d.needs_owner !== null ? [{ conversation: conversationOf(db, c), digest: digestOf(d), answer: a }] : [];
     });
   });
 }

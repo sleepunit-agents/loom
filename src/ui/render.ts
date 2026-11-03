@@ -106,7 +106,11 @@ export interface Found {
 }
 
 export interface HomeTile extends Tile { source: Source }
-export interface HomeAsk extends Ask { source: Source; /** The piece's tab label, for the card's source line. */ sourceLabel?: string }
+export interface HomeAsk extends Ask { source: Source; /** The piece's tab label, for the card's source line. */ sourceLabel?: string;
+  /** The exact thing it's about, outside loom (a pull request's URL): its sheet's first button. Core's asks only. */
+  href?: string;
+  /** Its sheet has a box to answer the agent in words: posted as `action` with `fields` and the words as `text`. Core's only. */
+  reply?: { action: string; label: string; fields: Record<string, string> } }
 
 // ─── Home, an agent's Today, and the sign-in pages ───
 
@@ -203,6 +207,8 @@ export interface InboxItem {
   label?: string;
   actions?: Button[];
   outcome?: string;
+  href?: string;
+  reply?: HomeAsk['reply'];
 }
 
 export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [

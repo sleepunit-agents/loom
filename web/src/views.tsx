@@ -137,7 +137,9 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
 
 // ---- an Inbox item's row (the Inbox's, and Home's banner) ---------------------------------------
 
-export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string };
+export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
+  /** The exact thing it's about, outside loom (a pull request's URL); and a box to answer its agent in words (core's Needs you). */
+  href?: string; reply?: { action: string; label: string; fields: Record<string, string> } };
 export const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
 
 /** Opening an item (plain.ts opensTo): its own page when it has one; else its sheet, here (`sheet`, in the Inbox) or
