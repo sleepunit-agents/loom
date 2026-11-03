@@ -327,6 +327,20 @@ that ignores it keeps working. Outside a household there's no `caller`.
   the same `level` when it's about one agent within a household page. Optional `icon`: a
   [lucide](https://lucide.dev/icons) icon's name (`"alarm-clock"`, `"key-round"`) for the
   piece's tile and tab; without one, loom's own for its label, else a plain circle.
+  Optional `accent`: the piece's one colour, used wherever it's drawn: its tile
+  in Places or Setup, its dock tile, its page's header tile, and its page's
+  accents (primary buttons, switches, selection). It must be one of loom's palette
+  tokens: `"pink"`, `"blue"`, `"yellow"` or `"olive"` (the green). A hex value or
+  any other name is refused with the manifest. Each palette and light or dark
+  mode has its own shade of each one, and the ink on it stays readable (at least
+  8.6:1 on every palette). A piece that names none gets loom's own colour when
+  it's one of the catalog's (Boxes blue, Clock olive, Secrets yellow, Tasks olive,
+  …: `APP_TINTS` in `web/src/tint.ts`), else a stable colour from its label. The
+  colour never comes from the tile's position, so installing a piece doesn't move
+  any other piece's colour.
+  ```json
+  { "tab": { "label": "Garden", "icon": "sprout", "accent": "olive" } }
+  ```
 - **`agentTab`** (`{ "label": "Clock" }`) puts a tab on each agent's own pages
   too, beside Today, Mind and Setup: served at `/a/<agent>/p/<piece>/<path>`,
   the piece called with `LOOM_SCOPE=<agent>`, its links and actions staying

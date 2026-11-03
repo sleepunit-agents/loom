@@ -13,7 +13,7 @@ import type { Chrome } from './loom';
 import { ACCOUNT, placesOf, settingsOf } from './nav';
 import { readRecent } from './recent';
 import { AppTile } from './app-header';
-import { tintOf } from './tint';
+import { nameTint } from './tint';
 
 type Found = Record<string, { label: string; href: string; agent?: string }[]>;
 type Row = { key: string; label: string; href: string; sub?: string; lead: ReactNode };
@@ -61,7 +61,7 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
     const app = (p: { label: string; href: string; stat?: string }): Row => ({ key: p.href, label: p.label, href: p.href, sub: p.stat, lead: <Tile label={p.label} icon={icon(p.label)} /> });
     const agent = (a: (typeof s.agents)[number]): Row => ({ key: a.href, label: a.label, href: a.href, sub: a.sub ?? 'Agent', lead: <AgentAvatar a={a} size={36} className="shrink-0" /> });
     const person = (p: { label: string; href: string }): Row => ({ key: p.href, label: p.label, href: p.href, sub: 'Person',
-      lead: <span className="loom-app-tile grid size-9 shrink-0 place-items-center rounded-full font-semibold" data-tint={tintOf(p.label)}>{p.label[0]?.toUpperCase()}</span> });
+      lead: <span className="loom-app-tile grid size-9 shrink-0 place-items-center rounded-full font-semibold" data-tint={nameTint(p.label)}>{p.label[0]?.toUpperCase()}</span> });
     if (!needle) {
       const recent = readRecent().filter((r) => r.href !== location.pathname + location.search).slice(0, 5).map((r): Row => {
         const ag = s.agents.find((a) => r.href === a.href || r.href.startsWith(`${a.href}/`));

@@ -434,11 +434,17 @@
   .v-dock:not([data-variant="rail"]) [data-part="lane"] [data-part="label"] { transform: none !important; }
 }
 /* The launcher (sheets.tsx: Places and More): a phone's home screen, its tiles in the dock's colours, in turn. */
-.loom-launch-tile { color: var(--v-text); }
-.loom-launch-tile[data-tint="0"] { background: var(--v-pink); }
-.loom-launch-tile[data-tint="1"] { background: var(--v-blue); }
-.loom-launch-tile[data-tint="2"] { background: var(--v-yellow); }
-.loom-launch-tile[data-tint="3"] { background: var(--v-olive); }
+/* The ink on an app's colour is the palette's on-accent (dark, in both modes), as the dock's: light text on a pastel tile in dark
+   mode read at 1.6:1. */
+.loom-launch-tile { color: var(--v-on-accent); }
+/* An app's one colour (web/src/tint.ts), by name: its launch tile, its dock tile, its header's tile, the same. Read from
+   the palette as it is at the root, so a page that takes its app's accent ([data-accent] renames --v-pink) doesn't
+   repaint the pink apps' tiles on it. */
+:root { --loom-tint-pink: var(--v-pink); --loom-tint-blue: var(--v-blue); --loom-tint-yellow: var(--v-yellow); --loom-tint-olive: var(--v-olive); }
+.loom-launch-tile[data-tint="pink"], .loom-app-tile[data-tint="pink"], .v-dock[data-variant] [data-part="lane"][data-tint="pink"] [data-part="visual"] { background: var(--loom-tint-pink); }
+.loom-launch-tile[data-tint="blue"], .loom-app-tile[data-tint="blue"], .v-dock[data-variant] [data-part="lane"][data-tint="blue"] [data-part="visual"] { background: var(--loom-tint-blue); }
+.loom-launch-tile[data-tint="yellow"], .loom-app-tile[data-tint="yellow"], .v-dock[data-variant] [data-part="lane"][data-tint="yellow"] [data-part="visual"] { background: var(--loom-tint-yellow); }
+.loom-launch-tile[data-tint="olive"], .loom-app-tile[data-tint="olive"], .v-dock[data-variant] [data-part="lane"][data-tint="olive"] [data-part="visual"] { background: var(--loom-tint-olive); }
 .loom-launch-tile [data-slot="animated-icon"], .loom-launch-tile [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 28px; height: 28px; }
 .loom-launch-tile svg { width: 28px !important; height: 28px !important; }
 .v-dock [data-part="visual"] [data-slot="animated-icon"],
@@ -532,9 +538,7 @@ body { background: var(--v-canvas); }
 .loom-find-row[data-selected] { background: var(--v-beige); }
 .loom-find-esc { background: var(--v-beige); }
 /* An app's tile (app-header.tsx AppTile): its header, Find's rows. */
-.loom-app-tile { color: var(--v-text); box-shadow: 0 6px 12px -8px rgb(17 17 17 / .45), inset 0 1px rgb(255 255 255 / .4); }
-.loom-app-tile[data-tint="pink"] { background: var(--v-pink); } .loom-app-tile[data-tint="blue"] { background: var(--v-blue); }
-.loom-app-tile[data-tint="yellow"] { background: var(--v-yellow); } .loom-app-tile[data-tint="olive"] { background: var(--v-olive); }
+.loom-app-tile { color: var(--v-on-accent); box-shadow: 0 6px 12px -8px rgb(17 17 17 / .45), inset 0 1px rgb(255 255 255 / .4); }
 .loom-head-action { background: color-mix(in oklab, var(--v-canvas) 70%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
 .loom-head-action:hover { background: var(--v-canvas); }
 .loom-head-more { background: color-mix(in oklab, var(--v-canvas) 80%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }

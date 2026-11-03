@@ -10,18 +10,21 @@ import { EnvContext } from './blocks';
 import type { Chrome, Tone } from './loom';
 import { DOT, Mark, PressCard, type Ground, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
+import { useTint } from './tint';
 
 const useEnv = () => useContext(EnvContext)!;
 
 export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
   const { go } = useEnv();
+  const tint = useTint();
   const s = chrome.shell;
   // A launcher, as a phone's home screen (Jonathan, 2026-10-31: "we look like a phone os screen ... let's make both
   // screens a kind of click here to go to the place you want to go thing"): a tile in the dock's colours, its name
-  // under it, a badge for what's waiting, and the piece's own word (22 in progress) small beneath.
-  const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }, i: number) => (
+  // under it, a badge for what's waiting, and the piece's own word (22 in progress) small beneath. Its colour is the
+  // app's own (tint.ts), not its place in the grid, so installing a piece moves no other tile's colour.
+  const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
     <button key={p.href} type="button" onClick={() => go(p.href)} className="loom-launch group grid min-w-0 content-start justify-items-center gap-1.5 text-center">
-      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[22%] shadow-sm transition-transform group-active:scale-95" data-tint={i % 4}>
+      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[22%] shadow-sm transition-transform group-active:scale-95" data-tint={tint(p.label)}>
         <AnimatedIcon name={iconFor(icon(p.label))} />
         {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-[var(--v-red,#e5484d)] px-1.5 text-[11px] font-semibold text-white">{p.count}</span> : null}
         {p.tone && p.tone !== 'ok' && <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-[var(--v-paper)] ${DOT[p.tone]}`} />}
@@ -31,7 +34,7 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
     </button>
   );
   const grid = (items: Array<{ label: string; href: string; stat?: string; tone?: Tone; count?: number }>) => (
-    <div className="grid grid-cols-4 gap-x-3 gap-y-6 sm:grid-cols-6">{items.map(launch)}</div>
+    <div className="grid grid-cols-4 gap-x-3 gap-y-6 sm:grid-cols-6">{items.map((p) => launch(p))}</div>
   );
   // Places: the apps, where you go regularly (Activity, Knowledge, People, Tasks, …). The Inbox has its own tab.
   if (which === 'places' && s) return grid(placesOf(s));

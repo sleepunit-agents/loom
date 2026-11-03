@@ -6,14 +6,16 @@ import type { ReactNode } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
 import { iconFor } from './safe';
-import { tintOf } from './tint';
+import { useTint } from './tint';
 
-export function StateCard({ icon, tint, title, text, action, quiet }: {
-  icon: string; tint?: string; title: string; text?: ReactNode; action?: { label: string; onClick: () => void }; quiet?: boolean;
+export function StateCard({ icon, tint, app, title, text, action, quiet }: {
+  /** app: the app it's about, whose colour the mark wears (tint.ts), when no tint is given. */
+  icon: string; tint?: string; app?: string; title: string; text?: ReactNode; action?: { label: string; onClick: () => void }; quiet?: boolean;
 }) {
+  const tintOf = useTint();
   return (
     <div role={quiet ? undefined : 'status'} className={`loom-state grid justify-items-center gap-3 rounded-[var(--r-card,24px)] px-6 text-center ${quiet ? 'py-8' : 'py-12'}`}>
-      <span aria-hidden className="loom-state-mark loom-app-tile grid size-16 place-items-center rounded-[30%]" data-tint={tint ?? tintOf(title)}>
+      <span aria-hidden className="loom-state-mark loom-app-tile grid size-16 place-items-center rounded-[30%]" data-tint={tint ?? tintOf(app ?? title)}>
         <AnimatedIcon name={iconFor(icon)} />
       </span>
       <p className="font-[family-name:var(--font-display)] text-xl font-semibold leading-tight">{title}</p>
