@@ -514,6 +514,10 @@ body { background: var(--v-canvas); }
 .loom-find-pill { background: color-mix(in oklab, var(--v-canvas) 82%, transparent); backdrop-filter: blur(12px); color: var(--v-text);
   box-shadow: 0 6px 18px -8px rgb(0 0 0 / .35), inset 0 0 0 1px var(--v-border); }
 .loom-find-pill:active { transform: scale(.97); }
+/* A card's title with a line under it (CardHeader is a row, for a title and its action): the two stack, so a narrow
+   card never squeezes the title into a column a few letters wide ("Notif / icati / ons" on a phone's Passkeys). */
+[data-slot="card-header"]:has(> [data-slot="card-description"]) { flex-direction: column; align-items: stretch; gap: var(--s-1, 4px); }
+[data-slot="card-title"] { overflow-wrap: normal; word-break: normal; min-width: 0; }
 .loom-back-mark { font-family: var(--font-display); font-weight: 600; font-size: 21px; line-height: 1; }
 .loom-side .loom-side-back { height: auto; min-height: var(--nav-row); padding-block: 8px; padding-inline-start: 12px; background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 18%, transparent); }
 .loom-side .loom-side-back:hover { background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 30%, transparent); }
