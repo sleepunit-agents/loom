@@ -231,7 +231,7 @@ describe('managed pieces', () => {
 
     it('keeps a copy of the declarations in piece.json, checked against the package\'s own bins', async () => {
       const loom = {
-        role: 'runtime', grants: {},
+        role: 'runtime', grants: ['loom-runtime', 'grants'],
         sections: { project: { label: 'Houses', argv: ['loom-runtime', 'feed'] } },
         venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'send'] } },
         mcp_tools: { house: tool },
@@ -240,7 +240,7 @@ describe('managed pieces', () => {
       expect((await installFrom('x/runtime')).code).toBe(0);
       const rec = JSON.parse(await readFile(join(loomHome, 'pieces', 'runtime', 'piece.json'), 'utf-8'));
       expect(rec.loom).toMatchObject({
-        grants: true, sections: { project: { label: 'Houses', argv: ['loom-runtime', 'feed'], unfiled: false } },
+        grants: ['loom-runtime', 'grants'], sections: { project: { label: 'Houses', argv: ['loom-runtime', 'feed'], unfiled: false } },
         venues: loom.venues, mcp_tools: loom.mcp_tools,
       });
     });
@@ -269,12 +269,12 @@ describe('managed pieces', () => {
     });
 
     it('refuses a second grants authority, and a tool or venue name another piece has; the piece itself may update', async () => {
-      await fixture('x/runtime', SHA1, { name: 'runtime', loom: { role: 'runtime', grants: true, mcp_tools: { house: tool }, venues: { relay: { label: 'Relay', kind: 'agent' } } } }, { 'loom-runtime': 'true' });
-      await fixture('x/runtime', SHA2, { name: 'runtime', loom: { role: 'runtime', grants: true, mcp_tools: { house: tool }, venues: { relay: { label: 'Relay', kind: 'agent' } } } }, { 'loom-runtime': 'true' });
+      await fixture('x/runtime', SHA1, { name: 'runtime', loom: { role: 'runtime', grants: ['loom-runtime', 'grants'], mcp_tools: { house: tool }, venues: { relay: { label: 'Relay', kind: 'agent' } } } }, { 'loom-runtime': 'true' });
+      await fixture('x/runtime', SHA2, { name: 'runtime', loom: { role: 'runtime', grants: ['loom-runtime', 'grants'], mcp_tools: { house: tool }, venues: { relay: { label: 'Relay', kind: 'agent' } } } }, { 'loom-runtime': 'true' });
       expect((await installFrom('x/runtime')).code).toBe(0);
       expect((await installFrom('x/runtime', SHA2)).code).toBe(0);
 
-      await fixture('x/rival', SHA1, { name: 'rival', loom: { grants: true } }, { 'loom-rival': 'true' });
+      await fixture('x/rival', SHA1, { name: 'rival', loom: { grants: ['loom-rival'] } }, { 'loom-rival': 'true' });
       expect((await installFrom('x/rival')).stderr).toContain('the runtime piece is already the grants authority: there is only one');
       await fixture('x/tooly', SHA1, { name: 'tooly', loom: { mcp_tools: { house: { ...tool, argv: ['loom-tooly'] } } } }, { 'loom-tooly': 'true' });
       expect((await installFrom('x/tooly')).stderr).toContain("tool house is already the runtime piece's");

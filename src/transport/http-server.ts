@@ -48,6 +48,7 @@ import { findPiece, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
+import { askGrant } from '../grants.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
@@ -414,6 +415,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     return async (argv: string[]): Promise<{ ok: boolean; text: string }> => {
       const path = findPiece('clock', process.env);
       if (!path) return { ok: false, text: 'relay: this loom has no clock piece' };
+      // A call to a piece as the agent: the grants authority decides first, as for /api (src/grants.ts).
+      const no = await askGrant(process.env, { agent, piece: 'clock', path: 'run' });
+      if (no) return { ok: false, text: `relay: ${no.error}` };
       const out = await pieceApi(path, { caller: { kind: 'agent', agent }, path: 'run', body: { argv } }, process.env);
       const b = (out.body ?? {}) as { exit?: number; stdout?: string; stderr?: string; error?: string };
       const ok = out.status === 200 && b.exit === 0;
@@ -552,7 +556,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           }
         }
         break;
-      case 'agent': caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) }; break;
+      case 'agent': {
+        caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) };
+        // The grants authority, if one is installed, decides before the piece runs (src/grants.ts).
+        // A piece that isn't there is still its 404 below, asked or not.
+        if (piece !== 'loom' && findPiece(piece, process.env)) {
+          const no = await askGrant(process.env, { agent: role.agent, piece, path: subpath });
+          if (no) return sendError(res, no.status, no.error);
+        }
+        break;
+      }
       case 'piece':
         if (role.piece !== piece) return sendError(res, 403, `forbidden: this credential is ${role.piece}'s`);
         caller = { kind: 'piece', subject: role.subject };

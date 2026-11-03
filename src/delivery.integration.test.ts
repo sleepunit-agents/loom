@@ -44,6 +44,13 @@ const home = process.env.LOOM_HOME;
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
+  if (process.argv[2] === 'grants') {
+    // The grants ask (src/grants.ts): $LOOM_HOME/grants-mode is allow, deny or slow.
+    fs.appendFileSync(home + '/grants-calls.jsonl', input + '\\n');
+    const g = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : 'allow';
+    if (g === 'slow') return setTimeout(() => console.log('{"allow":true}'), 3000);
+    return console.log(JSON.stringify(g === 'deny' ? { allow: false, reason: 'clock may not act for art' } : { allow: true }));
+  }
   fs.appendFileSync(home + '/runtime-calls.jsonl', JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(input) }) + '\\n');
   const n = fs.readFileSync(home + '/runtime-calls.jsonl', 'utf-8').trim().split('\\n').length;
   const mode = fs.existsSync(home + '/runtime-mode') ? fs.readFileSync(home + '/runtime-mode', 'utf-8').trim() : 'ok';
@@ -541,13 +548,25 @@ describe('POST /api/loom/deliver', () => {
       expect((await post(tok.slack, slackMsg('n-1'))).status).toBe(200);
     });
 
-    it('a grants authority core can\'t ask yet fails closed for other pieces; its own calls pass', async () => {
-      piece(h.home, 'runtime', { ...RUNTIME_LOOM, grants: true }, RUNTIME_BIN);
-      const r = await post(tok.slack, slackMsg('g-1'));
-      expect(r.status).toBe(503);
-      expect(r.body.error).toMatch(/grants authority \(runtime\) can't be asked yet/);
+    it('with a grants authority, core asks it (path deliver): a no is a 403, a slow one a 503; its own relays aren\'t asked', async () => {
+      piece(h.home, 'runtime', { ...RUNTIME_LOOM, grants: ['loom-runtime', 'grants'] }, RUNTIME_BIN);
+      const asked = () => { const f = join(h.home, 'grants-calls.jsonl'); return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : []; };
+      writeFileSync(join(h.home, 'grants-mode'), 'deny');
+      const no = await post(tok.slack, slackMsg('g-1'));
+      expect(no.status).toBe(403);
+      expect(no.body.error).toBe('forbidden: clock may not act for art');
+      expect(asked()).toEqual([{ agent: 'art', piece: 'slack', path: 'deliver' }]);
       expect(calls()).toHaveLength(0);
+      writeFileSync(join(h.home, 'grants-mode'), 'slow');
+      const slow = await post(tok.slack, slackMsg('g-3'));
+      expect(slow.status).toBe(503);
+      expect(slow.body.error).toMatch(/grants authority \(runtime\) didn't answer \(timed out\)/);
+      expect(calls()).toHaveLength(0);
+      writeFileSync(join(h.home, 'grants-mode'), 'allow');
+      expect((await post(tok.slack, slackMsg('g-4'))).status).toBe(200);
+      const before = asked().length;
       expect((await post(tok.runtime, relay('g-2'))).status).toBe(200);
+      expect(asked()).toHaveLength(before);
     });
   });
 });

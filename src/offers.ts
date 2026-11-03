@@ -6,7 +6,7 @@
  *   sections   a project section feed           docs/specs/projects.md, "Section feeds (the seam)"
  *   venues     the venues a piece adapts        docs/specs/conversations.md, "Venues" (+ `send`, agent-runtime.md)
  *   mcp_tools  tools core adds to an agent's MCP session   docs/specs/agent-runtime.md, "Seams", 2
- *   grants     "this piece is the grants authority"         docs/specs/agent-runtime.md, "Permissions"
+ *   grants     the argv core asks before an agent's piece call   docs/specs/agent-runtime.md, "Permissions"
  *   delivery   the argv core forwards POST /api/loom/deliver to (the runtime's)   agent-runtime.md, "Delivery"
  *
  * This module is the one install-time validation path: `parseOffers` checks a
@@ -53,8 +53,12 @@ export interface Offers {
   sections?: SectionsOffer;
   venues?: Record<string, VenueOffer>;
   mcp_tools?: Record<string, McpToolOffer>;
-  /** Present (and true) only when the piece is the grants authority. */
-  grants?: true;
+  /**
+   * The argv of the grants authority: core runs it with `{agent, piece, path}` on stdin before
+   * an agent's call to a piece (src/grants.ts), and it answers `{allow: true}` or
+   * `{allow: false, reason}` within 2 s. Only one installed piece may declare it.
+   */
+  grants?: string[];
   /**
    * The argv core runs with a `deliver` body on stdin (src/delivery.ts). Only a piece whose
    * block says `"role": "runtime"` declares it, and only one installed piece may.
@@ -200,7 +204,7 @@ function parseMcpTools(raw: unknown, bins: readonly string[]): Record<string, Mc
 /**
  * The offer keys of a raw `loom` block, checked against the piece's own bins
  * and its role; a string says what's wrong. An offer that declares nothing
- * (`venues: {}`, `grants: false`) is left out, so a present key always offers.
+ * (`venues: {}`) is left out, so a present key always offers.
  */
 export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly string[]; role?: string }): Offers | string {
   const bins = ctx.bins ?? [];
@@ -221,10 +225,12 @@ export function parseOffers(b: Record<string, unknown>, ctx: { bins?: readonly s
     if (typeof t === 'string') return t;
     if (Object.keys(t).length) out.mcp_tools = t;
   }
-  if (b.grants !== undefined) {
-    const g = b.grants;
-    if (g === true || (isObject(g) && !Object.keys(g).length)) out.grants = true;
-    else if (g !== false) return 'loom.grants is true (or {}): this piece is the grants authority';
+  if (b.grants !== undefined && b.grants !== false) {
+    // An argv core asks (agent-runtime.md, "Seams", 2). `true` was the placeholder before the ask existed.
+    if (b.grants === true || isObject(b.grants)) return 'loom.grants is an argv core runs with {agent, piece, path} on stdin (["<bin>", ...]), not true';
+    const a = argvError(b.grants, bins, 'loom.grants');
+    if (a) return a;
+    out.grants = [...(b.grants as string[])];
   }
   if (b.delivery !== undefined) {
     if (ctx.role !== 'runtime') return 'loom.delivery is declared only by the runtime (a loom block with "role": "runtime")';

@@ -28,6 +28,7 @@ import { HOUSEHOLD_DB, openHouseholdDb } from './household-store.js';
 import { Pool } from './ui/pieces.js';
 import { RUNTIME_VENUE, offersIn, ownEntry } from './offers.js';
 import { deliveryPiece, grantsAuthority, OFFER_LIMITS, runOffer, type OfferResult } from './offers-registry.js';
+import { askGrant } from './grants.js';
 
 export const MAX_DELIVERY_ID = 200;
 export const MAX_DELIVERY_TEXT = 40_000;
@@ -134,25 +135,21 @@ export function parseDeliverAnswer(v: unknown): DeliverAnswer | string {
 
 /**
  * Whether `piece` may act for `agent` (agent-runtime.md, "6. Permissions", Agent grants).
- * With no grants authority installed, each piece decides by its own agent list, which core
- * can't read: the source applied it when it chose to deliver, so core checks only that the
- * agent is the household's. With an authority, core asks it; the `grants` offer doesn't yet
- * say how to (it's `true`, with no argv), so core fails closed, as the spec says it must when
- * the authority can't answer, unless the caller is the authority itself.
+ * The agent must be the household's. With no grants authority installed, each piece decides by
+ * its own agent list, which core can't read: the source applied it when it chose to deliver.
+ * With one, core asks it (src/grants.ts, path `deliver`), failing closed; the authority's own
+ * deliveries (the runtime's relays) aren't asked of itself.
  */
-export function grantRefusal(env: NodeJS.ProcessEnv, h: Household, agent: string, piece: string): DeliverResult | undefined {
+export async function grantRefusal(env: NodeJS.ProcessEnv, h: Household, agent: string, piece: string): Promise<DeliverResult | undefined> {
   if (!h.agents.includes(agent)) return refuse(403, `forbidden: ${agent} isn't one of this household's agents`);
   const auth = grantsAuthority(env);
-  if (auth.piece === undefined) {
-    if (auth.conflict) return refuse(503, `unavailable: more than one piece offers grants (${auth.conflict.join(', ')}); there's no authority to ask`);
-    return undefined;
-  }
-  if (auth.piece === piece) return undefined;
-  return refuse(503, `unavailable: the grants authority (${auth.piece}) can't be asked yet (its grants offer has no argv), so ${piece}'s call for ${agent} is refused`);
+  if (auth.piece !== undefined && auth.piece === piece) return undefined;
+  const no = await askGrant(env, { agent, piece, path: 'deliver' });
+  return no ? refuse(no.status, no.error) : undefined;
 }
 
 /** Who may deliver what: the reason a delivery is refused before it's forwarded, or undefined. */
-export function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody): DeliverResult | undefined {
+export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody): Promise<DeliverResult | undefined> {
   const rec = readRecord(env, caller.piece);
   if (!rec) return refuse(403, `forbidden: ${caller.piece} isn't an installed managed piece`);
   // The runtime is the installed delivery piece, not any piece whose block claims the role.
@@ -169,7 +166,7 @@ export function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, caller: De
   } else if (!declared) {
     return refuse(403, `forbidden: ${caller.piece} doesn't declare venue ${d.venue} (its loom block's venues)`);
   }
-  const grant = grantRefusal(env, h, d.agent, caller.piece);
+  const grant = await grantRefusal(env, h, d.agent, caller.piece);
   if (grant) return grant;
   // A person comes only through a venue adapter: a piece delivering on a venue it adapts (not relay).
   if (d.from.kind === 'person' && (!declared || d.venue === RUNTIME_VENUE)) {
@@ -300,7 +297,7 @@ const conflict = (id: string): DeliverResult =>
 export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, raw: unknown, nowMs: () => number = Date.now): Promise<DeliverResult> {
   const d = parseDeliver(raw);
   if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
-  const refused = deliveryRefusal(env, h, caller, d);
+  const refused = await deliveryRefusal(env, h, caller, d);
   if (refused) return refused;
   const target = deliveryPiece(env);
   if (target.piece === undefined) {
