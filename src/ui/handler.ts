@@ -725,12 +725,12 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const kinds = catalogKinds();
   const places = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value,
-      kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place' }))
+      kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place', ...(p.manifest.tab?.icon ? { icon: p.manifest.tab.icon } : {}) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
   // same number its Needs you shows, so the badge is never a 1 for something already answered.
   const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
-  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'account'].includes(current) ? current : '';
+  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'appearance', 'account'].includes(current) ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
@@ -1235,15 +1235,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.end(out.body);
   };
 
-  // Appearance is a panel of Setup again (Jonathan, 2026-11-03: "people don't change their background often; Places is
-  // for common things"): its old address lands there.
-  if (pathname === '/appearance') return redirect(res, '/setup');
-  // The shell's sheets (Scope, Places, Find, Setup): the app draws them as pages.
-  if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup') {
+  // The shell's sheets (Scope, Places, Find, Setup, and Appearance, an app in Setup's grid: this device's look; Jonathan,
+  // 2026-11-03: a page of icons with loose controls under them is wrong): the app draws them as pages.
+  if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance') {
     const tab = pathname.slice(1);
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
     const q = (url.searchParams.get('q') ?? '').slice(0, 100);
-    { const which = tab as 'scope' | 'places' | 'find' | 'setup'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
+    { const which = tab as 'scope' | 'places' | 'find' | 'setup' | 'appearance'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
       // Find with nothing typed: who's in the household, for its suggestions (Knowledge and People are the household's).
       const hhNow = opts.household?.();
       const suggest = tab === 'find' && !q.trim() && hhNow && !opts.ownerScope

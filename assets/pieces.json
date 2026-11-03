@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "520dcca590ec598b595dead2926d3976895a19fa",
+      "commit": "317392faf1c3dccbc6876b202b3ed2095c6a9e81",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."

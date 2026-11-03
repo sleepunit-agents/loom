@@ -1,19 +1,19 @@
-// The shell's sheets as pages (Scope, Places, Setup with its Appearance panel; Find is find.tsx's overlay): their own chunk, loaded when
-// one opens (the first page doesn't carry them).
+// The shell's sheets as pages (Scope, Places, Setup, and Appearance, an app in Setup's grid; Find is find.tsx's overlay): their own
+// chunk, loaded when one opens (the first page doesn't carry them).
 import { useContext } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { EnvContext, Nothing } from './blocks';
+import { EnvContext } from './blocks';
 import type { Chrome, Tone } from './loom';
 import { DOT, Mark, PressCard, type Ground, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
+export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
   const { go } = useEnv();
   const s = chrome.shell;
   // A launcher, as a phone's home screen (Jonathan, 2026-10-31: "we look like a phone os screen ... let's make both
@@ -22,7 +22,7 @@ export function SheetView({ which, chrome, mode, setMode, ground, setGround }: {
   const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }, i: number) => (
     <button key={p.href} type="button" onClick={() => go(p.href)} className="loom-launch group grid min-w-0 content-start justify-items-center gap-1.5 text-center">
       <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[22%] shadow-sm transition-transform group-active:scale-95" data-tint={i % 4}>
-        <AnimatedIcon name={iconFor(ICONS[p.label] ?? 'circle')} />
+        <AnimatedIcon name={iconFor(icon(p.label))} />
         {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-[var(--v-red,#e5484d)] px-1.5 text-[11px] font-semibold text-white">{p.count}</span> : null}
         {p.tone && p.tone !== 'ok' && <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-[var(--v-paper)] ${DOT[p.tone]}`} />}
       </span>
@@ -35,18 +35,12 @@ export function SheetView({ which, chrome, mode, setMode, ground, setGround }: {
   );
   // Places: the apps, where you go regularly (Activity, Knowledge, People, Tasks, …). The Inbox has its own tab.
   if (which === 'places' && s) return grid(placesOf(s));
-  // Setup: the household's configuration (the pieces that are settings, its members, its pieces), then this device's
-  // look as a panel under them (Jonathan, 2026-11-03: Appearance "goes back into Setup … people don't change their
-  // background often"). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
-  if (which === 'setup' && s) {
-    const settings = settingsOf(s);
-    return (
-      <div className="grid gap-8">
-        {settings.length ? grid(settings) : <Nothing title="Nothing to set up" text="The household's settings are its owner's." />}
-        <AppearancePanel mode={mode} setMode={setMode} ground={ground} setGround={setGround} />
-      </div>
-    );
-  }
+  // Setup: the household's configuration (the pieces that are settings, its members, its pieces), then Appearance, this
+  // device's look: all tiles, nothing loose under them (Jonathan, 2026-11-03: a page that mixes icons with loose controls
+  // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
+  if (which === 'setup' && s) return grid(settingsOf(s));
+  // Appearance: an app of Setup's, this device's look.
+  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} />;
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
@@ -70,8 +64,8 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
   );
 }
 
-/** Setup's Appearance panel: light or dark, and the ground behind every page. Kept in this browser. */
-function AppearancePanel({ mode, setMode, ground, setGround }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
+/** The Appearance app: light or dark, and the ground behind every page. Kept in this browser. */
+function AppearanceApp({ mode, setMode, ground, setGround }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
   const row = (label: string, hint: string, control: React.ReactNode) => (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
       <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
@@ -80,7 +74,6 @@ function AppearancePanel({ mode, setMode, ground, setGround }: { mode: Mode; set
   );
   return (
     <Card id="appearance">
-      <CardHeader><CardTitle className="flex items-center gap-2"><AnimatedIcon name={iconFor('palette')} size="sm" />Appearance</CardTitle></CardHeader>
       <CardContent className="grid divide-y">
         {row('Light or dark', 'Auto follows this device.', <Appearance mode={mode} setMode={setMode} />)}
         {row('Background', 'What’s behind every page.', (
@@ -92,9 +85,3 @@ function AppearancePanel({ mode, setMode, ground, setGround }: { mode: Mode; set
     </Card>
   );
 }
-
-const ICONS: Record<string, string> = {
-  Knowledge: 'book-open', People: 'users', Mind: 'brain', Activity: 'activity', Bridges: 'messages-square', Clock: 'alarm-clock', Boxes: 'server',
-  Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'fingerprint-pattern', Machine: 'cpu',
-  Appearance: 'palette', Account: 'circle-user-round',
-};
