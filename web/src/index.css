@@ -612,3 +612,9 @@ body { background: var(--v-canvas); }
 @keyframes loom-glance { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
 @keyframes loom-lean { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 @keyframes loom-shake { 0%, 20%, 100% { transform: translateX(0); } 5% { transform: translateX(-4px); } 10% { transform: translateX(4px); } 15% { transform: translateX(-3px); } }
+
+/* An iPhone's home-screen app (standalone.ts): the document stays still and #root scrolls. iOS moves a fixed bar with
+   the page when the document is what scrolls, so the dock sat too high on opening and dropped once the page scrolled.
+   Heights are the screen's (100%: the app has no browser bars); the dock stays fixed, bottom 0, over its safe area. */
+html.loom-ios-app, html.loom-ios-app body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+html.loom-ios-app #root { height: 100%; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
