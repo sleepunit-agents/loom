@@ -3,7 +3,7 @@
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'muted';
 export interface Source { id: string; base: string; act?: string }
-export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string }> }
+export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } }> }
 export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
 export interface Field { name: string; label: string; kind: 'text' | 'textarea' | 'secret' | 'choice' | 'number' | 'date' | 'toggle' | 'check' | 'checks' | 'time' | 'segmented' | 'stepper'; value?: string; min?: number; max?: number; step?: number; unit?: string; hint?: string; required?: boolean; multiple?: boolean; options?: { value: string; label: string; detail?: string; swatch?: string }[] }
 export type Block =
@@ -41,7 +41,7 @@ export interface PanelRow {
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
 export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; asks?: number; sub?: string }
+export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string }; href: string; current: boolean; asks?: number; sub?: string }
 export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };

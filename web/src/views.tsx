@@ -47,7 +47,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
     <Card className="loom-identity cursor-pointer gap-0 p-0" onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
         <span className="relative shrink-0">
-          <AgentAvatar a={c} size={64} shape="circle" style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }} />
+          <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }} />
           <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-sky-500 loom-dot-live' : state === 'broken' ? 'bg-red-500' : state === 'unavailable' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
         </span>
         <div className="min-w-0 flex-1">

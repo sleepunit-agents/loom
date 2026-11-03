@@ -60,7 +60,7 @@ import { householdFind, householdSuggestPeople, householdThread } from './househ
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { agentDir, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
+import { agentDir, faceOf, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -462,7 +462,7 @@ const agentPieceSource = (agent: string, piece: string): Source => ({ id: piece,
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 
 /** Each agent's mark colors: household.json's `marks` when it names valid ones, else the palette in order. */
-function agentMarks(h: Household): Record<string, { bg: string; fg: string }> {
+function agentMarks(h: Household): Record<string, { bg: string; fg: string; face: { shape: string; eyes: string } }> {
   let custom: Record<string, { bg?: unknown; fg?: unknown }> = {};
   try {
     const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')) as { marks?: unknown };
@@ -470,12 +470,13 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string }> {
   } catch { /* none */ }
   return Object.fromEntries(h.agents.map((a, i) => {
     const c = custom[a];
-    return [a, c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : { bg: MARKS[i % MARKS.length].bg, fg: MARKS[i % MARKS.length].fg }];
+    const colors = c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : { bg: MARKS[i % MARKS.length].bg, fg: MARKS[i % MARKS.length].fg };
+    return [a, { ...colors, face: faceOf(h, a) }];
   }));
 }
 
 /** Each agent's name and mark, for drawing marks on rows that name an agent. */
-function agentsOf(h: Household | undefined): Record<string, { label: string; bg: string; fg: string }> | undefined {
+function agentsOf(h: Household | undefined): Record<string, { label: string; bg: string; fg: string; face: { shape: string; eyes: string } }> | undefined {
   if (!h) return undefined;
   const marks = agentMarks(h);
   return Object.fromEntries(h.agents.map((a) => [a, { label: agentName(agentDir(h, a)), ...marks[a] }]));

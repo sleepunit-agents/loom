@@ -727,6 +727,31 @@ export function setMark(h: Household, agent: string, mark: { bg: string; fg: str
   });
 }
 
+/** An agent's face (web/src/face.tsx): the shape of its body and its eyes. Its expression is its state. */
+export const FACE_SHAPES = ['pebble', 'trefoil', 'clover', 'drop'] as const;
+export const FACE_EYES = ['dot', 'oval'] as const;
+export type AgentFace = { shape: typeof FACE_SHAPES[number]; eyes: typeof FACE_EYES[number] };
+/** household.json's `faces` for an agent, else one from its place in the household: so two agents differ out of the box. */
+export function faceOf(h: Household, agent: string): AgentFace {
+  const f = rawHousehold(h.home).faces;
+  const mine = f && typeof f === 'object' && !Array.isArray(f) ? (f as Record<string, { shape?: unknown; eyes?: unknown }>)[agent] : undefined;
+  const at = Math.max(0, h.agents.indexOf(agent));
+  const shape = FACE_SHAPES.find((x) => x === mine?.shape) ?? FACE_SHAPES[at % FACE_SHAPES.length];
+  const eyes = FACE_EYES.find((x) => x === mine?.eyes) ?? FACE_EYES[at % FACE_EYES.length];
+  return { shape, eyes };
+}
+
+/** Set an agent's face in household.json's `faces`. */
+export function setFace(h: Household, agent: string, face: AgentFace): void {
+  if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
+  if (!FACE_SHAPES.includes(face.shape) || !FACE_EYES.includes(face.eyes)) throw new HouseholdError('that isn\'t a face loom knows');
+  withLock(h.home, () => {
+    const raw = rawHousehold(h.home);
+    const faces = raw.faces && typeof raw.faces === 'object' && !Array.isArray(raw.faces) ? raw.faces as Record<string, unknown> : {};
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, faces: { ...faces, [agent]: { shape: face.shape, eyes: face.eyes } } }, null, 2) + '\n');
+  });
+}
+
 /** What the household says an agent is, on its profile (its owner's words, set on its Setup), if anything. */
 export function aboutOf(h: Household, agent: string): string | undefined {
   const a = rawHousehold(h.home).about;

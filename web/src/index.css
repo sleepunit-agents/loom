@@ -593,3 +593,16 @@ body { background: var(--v-canvas); }
   font-family: var(--font-display); font-weight: 600; font-size: 40px; color: var(--v-on-accent); background: var(--v-blue); }
 .loom-profile__initials.-pink { background: var(--v-pink); } .loom-profile__initials.-yellow { background: var(--v-yellow); }
 .loom-profile__initials.-olive { background: var(--v-olive); } .loom-profile__initials.-blue { background: var(--v-blue); }
+
+/* An agent's face (face.tsx): its expression's motion. The still frame already says the state; motion only adds life. */
+.loom-face__eyes, .loom-face__field { transform-box: fill-box; transform-origin: center; }
+@media (prefers-reduced-motion: no-preference) {
+  [data-slot="agent-face"][data-motion="blink"] .loom-face__eyes { animation: loom-blink 5s infinite; }
+  [data-slot="agent-face"][data-motion="glance"] .loom-face__eyes { animation: loom-glance 6s ease-in-out infinite; }
+  [data-slot="agent-face"][data-motion="lean"] .loom-face__field { animation: loom-lean 2.4s ease-in-out infinite; }
+  [data-slot="agent-face"][data-motion="shake"] .loom-face__field { animation: loom-shake 3.2s infinite; }
+}
+@keyframes loom-blink { 0%, 95%, 100% { transform: scaleY(1); } 97.5% { transform: scaleY(.1); } }
+@keyframes loom-glance { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-6px); } }
+@keyframes loom-lean { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes loom-shake { 0%, 20%, 100% { transform: translateX(0); } 5% { transform: translateX(-4px); } 10% { transform: translateX(4px); } 15% { transform: translateX(-3px); } }

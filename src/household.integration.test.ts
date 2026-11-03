@@ -1142,7 +1142,7 @@ describe('the household page', () => {
     expect(setup.page.title).toBe('Art E Fish · Setup');
     // Its forms post to loom's own /act/loom.
     expect(setup.ctx.source).toEqual({ id: 'loom', base: '/' });
-    expect(blocksOf(setup).some((b) => b.type === 'form')).toBe(true);
+    expect(blocksOf(setup).some((b) => b.type === 'panel')).toBe(true);
     // The single-agent addresses land on the default agent.
     const r = await page(cookie, '/mind?category=user');
     expect(r.status).toBe(302);
@@ -1236,9 +1236,16 @@ describe('the household page', () => {
     const cookie = await login();
     const d = await data(cookie, '/a/mark/setup');
     const who = sectionOf(d, 'who').blocks as Data[];
-    const form = who.find((b) => b.type === 'form' && b.action === 'identity-set')!;
-    expect((form.fields as Data[]).map((f) => f.name)).toEqual(['about', 'purpose', 'voice', 'rules', 'ask']);
-    expect((form.fields as Data[]).find((f) => f.name === 'purpose')!.value).toBe('I am Visual Mark.');
+    // A panel: each part of its creed a row that says what it is now, its edit a sheet for that part alone.
+    const words = who.find((b) => b.type === 'panel' && b.title === 'Its words')!;
+    const rows = words.rows as Data[];
+    expect(rows.map((r) => (r.edit as Data).fields as Data[]).map((f) => f[0].name)).toEqual(['about', 'purpose', 'voice', 'rules', 'ask']);
+    expect(rows.every((r) => (r.edit as Data).action === 'identity-set')).toBe(true);
+    expect(rows.find((r) => r.label === 'What it\'s for')!.value).toBe('I am Visual Mark.');
+    // Its look: colour in a sheet; shape and eyes apply at once. Two agents differ out of the box.
+    const look = who.find((b) => b.type === 'panel' && b.title === 'Its look')!;
+    expect((look.rows as Data[]).map((r) => r.label)).toEqual(['Colour', 'Shape', 'Eyes']);
+    expect(((look.rows as Data[])[1].choice as Data).value).toBe('trefoil');
     // Its own: read, never a form.
     const own = JSON.stringify(sectionOf(d, 'own'));
     expect(own).toContain('Reviewing PRs.');
@@ -1259,6 +1266,14 @@ describe('the household page', () => {
     const bad = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-set', _path: 'a/mark/setup', agent: 'mark', purpose: ' ' });
     expect(flashOf(await data(cookie, bad.headers.get('location')!))).toContain('can\'t be empty');
     expect(md()).toBe(before);
+    // One part alone changes only that part.
+    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-set', _path: 'a/mark/setup', agent: 'mark', voice: 'Wry.' });
+    expect(md()).toContain('You are Visual Mark, the reviewer.');
+    expect(md()).toContain('## Voice\n\nWry.\n');
+    // Its face: a shape and eyes of its own, kept in household.json; anything else is refused.
+    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'face-set', _path: 'a/mark/setup', agent: 'mark', shape: 'clover' });
+    expect(JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')).faces).toEqual({ mark: { shape: 'clover', eyes: 'oval' } });
+    expect((await data(cookie, '/a/mark/setup')).ctx.agents.mark.face).toEqual({ shape: 'clover', eyes: 'oval' });
     expect(readFileSync(join(dir, 'self-model.md'), 'utf-8')).toBe('## Strengths\n\nReviewing PRs.\n');   // never touched
   });
 
@@ -1414,6 +1429,9 @@ esac
     expect(d.page.title).toBe('Members');
     expect(JSON.stringify(d.page)).toContain('every agent, and the household');
     expect(JSON.stringify(d.page)).not.toContain('member-remove');  // the one household owner can't be removed
+    // A panel: each member a row; what they own is Everything or agents by name, never ids typed into a box.
+    expect(d.page.sections[0].blocks[0].type).toBe('panel');
+    expect(JSON.stringify(d.page)).not.toContain('(pick from People)');
     const csrf = csrfOf(d);
     const act = async (fields: Record<string, string>) => (await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
@@ -1421,6 +1439,8 @@ esac
     expect(await act({ _action: 'member-set', person: 'nobody', agents: '*' })).toMatchObject({ ok: false });
     expect(await act({ _action: 'member-set', person: 'loren', agents: 'mark' })).toMatchObject({ ok: true });
     expect(loadHousehold(h.home)!.members).toEqual([{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }]);
+    expect(await act({ _action: 'member-set', person: 'loren', scope: 'some', agents: '' })).toMatchObject({ ok: false });
+    expect(await act({ _action: 'member-set', person: 'loren', scope: 'some', agents: 'mark' })).toMatchObject({ ok: true });
     // Her link opens a session that sees Mark alone.
     const link = await act({ _action: 'member-link', person: 'loren' });
     const code = /\/login\/([A-Za-z0-9_-]+)/.exec(link.message)?.[1] ?? '';
