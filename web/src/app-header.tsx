@@ -38,11 +38,13 @@ export function AppHeader({ title, lead, context, more, crumb, go, actions, wher
           {crumb && (
             <Breadcrumb aria-label="You are here" className="text-sm"><BreadcrumbList>
               <BreadcrumbItem><BreadcrumbLink href={crumb.href} onClick={(e) => { e.preventDefault(); go(crumb.href); }}>{crumb.label}</BreadcrumbLink></BreadcrumbItem>
-              <BreadcrumbSeparator /><BreadcrumbItem className="min-w-0"><BreadcrumbPage className="truncate">{title}</BreadcrumbPage></BreadcrumbItem>
+              {/* The page itself is the title right under it, whole: said for a screen reader, not printed twice (and cut). */}
+              <BreadcrumbSeparator /><BreadcrumbItem className="sr-only"><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
             </BreadcrumbList></Breadcrumb>
           )}
-          {title && <h1 className="block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
-          {context && <p className="truncate text-sm opacity-70">{context}</p>}
+          {/* A long title (a task's, a secret's name) wraps, a size down, rather than being cut. */}
+          {title && <h1 className={`line-clamp-3 break-words text-balance font-[family-name:var(--font-display)] font-semibold leading-tight tracking-tight ${title.length > 28 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl'}`}>{title}</h1>}
+          {context && <p className="line-clamp-2 break-words text-sm opacity-70">{context}</p>}
         </div>
         {extra && (
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={open ? 'Hide what this is' : 'What this is'}
