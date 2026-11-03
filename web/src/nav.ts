@@ -1,6 +1,6 @@
 // Where each destination lives in the shell, once (no React here, so it's tested on its own: src/ui/nav-plain.test.ts).
 // Places holds the apps, Setup the household's configuration, and the account (the side's account menu on a desktop,
-// the foot of More on a phone) what's the signed-in member's own: their passkeys and signing out. Nothing is in two.
+// the avatar on a phone's dock) what's the signed-in member's own: their passkeys and signing out. Nothing is in two.
 
 import type { Tone } from './loom';
 
@@ -9,8 +9,9 @@ type ShellLike = { core: Place[]; pieces: Place[]; tab: string; admin?: boolean 
 
 /** Appearance (light or dark, the background): this device's own, an app in Places like the others. */
 export const APPEARANCE = { label: 'Appearance', href: '/appearance' } as const;
-/** The member's own: in the account, not in Setup. */
-export const ACCOUNT = [{ label: 'Passkeys', href: '/passkeys' }] as const;
+/** The member's own: their account (who they are, their passkeys, signing out), not in Setup. The avatar on a phone's
+ * dock and the side's account menu open it. */
+export const ACCOUNT = [{ label: 'Account', href: '/account' }] as const;
 
 /** The apps: loom's own places, the pieces that are places, and Appearance last. The Inbox has its own tab. */
 export function placesOf(s: ShellLike): Place[] {

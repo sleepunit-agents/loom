@@ -28,6 +28,6 @@ describe('each destination has one home (web/src/nav.ts)', () => {
     const homes = [placesOf(shell()), settingsOf(shell()), [...ACCOUNT]].map((l) => l.map((p) => p.href));
     const all = homes.flat();
     expect(all.filter((h, n) => all.indexOf(h) !== n)).toEqual([]);
-    expect(homes[2]).toEqual(['/passkeys']);
+    expect(homes[2]).toEqual(['/account']);
   });
 });

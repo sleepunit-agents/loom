@@ -807,6 +807,16 @@ export interface FindMatches {
 const FIND_EACH = 5;
 
 /** Plain text matches for Find: knowledge titles, people's names, and each given agent's memories (titles first). */
+/** Find's suggestions before anything is typed: the household's people (not its agents, which the app has already),
+ * as the People page lists them. */
+export function householdSuggestPeople(h: Household, n = 8): Array<{ name: string; slug: string }> {
+  const dir = directory(h);
+  if (!dir) return [];
+  try {
+    return dir.list().filter((p) => kindOf(dir.getRow(p.slug)?.card ?? { how: {} }) !== 'agent').slice(0, n).map((p) => ({ name: p.name, slug: p.slug }));
+  } finally { dir.close(); }
+}
+
 export function householdFind(h: Household, q: string, agents: string[] = h.agents): FindMatches {
   const out: FindMatches = { knowledge: [], people: [], memories: [] };
   const needle = q.trim().toLowerCase();

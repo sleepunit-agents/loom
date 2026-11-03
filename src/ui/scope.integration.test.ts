@@ -197,6 +197,14 @@ describe('scope', () => {
     const data = await fetch(`${base}/a/mark/p/bridgy`, { headers: { cookie: owner, 'sec-fetch-dest': 'empty', accept: 'application/json' } });
     expect(((await data.json()) as { view: string }).view).toBe('page');
     expect(((await (await fetch(`${base}/passkeys`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { view: string }).view).toBe('passkeys');
+    // The account (the avatar on a phone's dock opens it): the same page, with who's signed in and what they are.
+    const account = (await (await fetch(`${base}/account`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { view: string; me: { name: string; role: string }; page: { title: string } };
+    expect([account.view, account.page.title, account.me.role]).toEqual(['passkeys', 'Account', 'Household owner']);
+    expect(account.me.name).toBeTruthy();
+    // Find with nothing typed answers its suggestions (the household's people), and nothing found.
+    const find = (await (await fetch(`${base}/find`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { suggest?: { people: unknown[] }; found?: unknown };
+    expect(Array.isArray(find.suggest?.people)).toBe(true);
+    expect(find.found).toBeUndefined();
     // Signed out, the app is no way in: loom's sign-in, which is still loom's own HTML.
     for (const headers of [{ 'sec-fetch-dest': 'document' }, {}, { accept: 'application/json' }]) {
       const out = await fetch(`${base}/a/mark`, { headers, redirect: 'manual' });

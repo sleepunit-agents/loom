@@ -1,7 +1,8 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AgentState } from '@/components/ui/agent-state';
+// An agent's state beside its name (a desktop's alone): its own chunk.
+const AgentState = lazy(() => import('@/components/ui/agent-state').then((m) => ({ default: m.AgentState })));
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 // The ground (contour field), on its own (ground.tsx).
 const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contours })));
@@ -10,9 +11,8 @@ const Depth = lazy(() => import('./ground').then((m) => ({ default: m.Depth })))
 const MoreMenu = lazy(() => import('./more-menu'));
 // The rail is a desktop's alone: a phone never draws it, so never loads it.
 const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
-// Passkeys' controls (WebAuthn, push) load with that page only.
-const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
-const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
+// The account's page (passkeys' controls: WebAuthn, push) loads with that page only.
+const AccountView = lazy(() => import('./account').then((m) => ({ default: m.AccountView })));
 const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
 import { ArrivalContext, type Arrivals } from './arrive';
 import { Boundary, Callout, iconFor } from './safe';
@@ -22,21 +22,28 @@ import { Dock, type DockItem } from '@/components/ui/dock';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Spinner } from '@/components/ui/spinner';
 import { refreshEvery, type Showing } from './refresh';
-import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
-import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
+// The toasts load with the first one (toasts.tsx).
+const Toasts = lazy(() => import('./toasts'));
+import type { Note } from './toasts';
+import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 import { placesOf } from './nav';
+import { nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
 // The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
+// Find, over whatever you're in (find.tsx): loads the first time it opens.
+const FindOverlay = lazy(() => import('./find'));
+const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPanel })));
+import { noteRecent } from './recent';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
-  Appearance: 'palette', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle',
+  Appearance: 'palette', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round',
 };
 const icon = (label: string) => ICON[label] ?? 'circle';
 
@@ -47,7 +54,6 @@ function useWide() {
   return wide;
 }
 
-type Note = { id: number; ok: boolean; message: string; from?: string; undo?: Flash['undo'] };
 type Tab = { label: string; href: string; current: boolean; count?: number };
 
 /** The tabs of this page: an agent's own (its head), else the household's. */
@@ -63,8 +69,10 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, More. Places is where you go regularly; More is the
   // house's settings and Setup (Jonathan, 2026-10-31: "places holds the things you actually go to regularly, ... the
   // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
+  // Find isn't a tab (Jonathan, 2026-11-03: "on phone, Find feels different from the dock's apps"): it's the search
+  // pill over the dock on Home and Places, and an overlay (find.tsx). The dock's last place is the member's avatar.
   const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
-    { label: 'Find', href: '/find', current: s.tab === 'find' }, { label: 'More', href: '/setup', current: setup.current }];
+    { label: 'More', href: '/setup', current: setup.current }];
   return matchMedia('(min-width: 1024px)').matches
     ? { tabs: [home, inbox, ...places, setup], more: settings }
     : { tabs: phone, more: [] };
@@ -82,6 +90,7 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
+  const [finding, setFinding] = useState(false);
   // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept in this browser.
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
@@ -174,8 +183,15 @@ export default function App() {
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
   useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ⌘K / Ctrl-K: Find, from anywhere.
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); } };
+    addEventListener('keydown', f); return () => removeEventListener('keydown', f);
+  }, []);
   const go = useCallback((href: string) => {
     const u = new URL(href, location.href);
+    // Find is an overlay over the page you're in, not a page of its own (find.tsx).
+    if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
     void load(u.pathname + u.search, true);
   }, [load]);
@@ -213,7 +229,10 @@ export default function App() {
   // among them, the rest under More (…). On an agent's pages the dock swaps (his "dock swap" board): the agent's
   // mark with a back chevron on the left, the household a tap away, and its own tabs on the right in its colour.
   const agentDock = !!head && !!accent;
-  const room = agentDock ? Math.max(3, Math.floor((vw - 52) / 60) - 1) : Math.max(4, Math.floor((vw - 40) / 60));
+  // The household's dock ends with who's signed in (Jonathan, 2026-11-03): their avatar, past a divider, opens their
+  // account. It isn't a page among the others, so it takes its own place and never folds into More.
+  const meTile = !agentDock && chrome?.shell ? chrome.shell.owner : null;
+  const room = agentDock ? Math.max(3, Math.floor((vw - 52) / 60) - 1) : Math.max(4, Math.floor((vw - 40 - (meTile ? 58 : 0)) / 60));
   const onPhone = (() => {
     if (nav.tabs.length <= room && !nav.more.length) return nav.tabs;
     const keep = nav.tabs.slice(0, room - 1);
@@ -229,6 +248,8 @@ export default function App() {
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const pick = (href: string) => (href === '#more' ? setMore(true) : href === '#back' ? go('/') : go(href));
+  const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
+  const accountOpen = data?.view === 'passkeys';
   const backTile: DockItem | null = agentDock && accent ? {
     value: '#back', label: 'Back',
     icon: <span className="loom-back-mark" aria-hidden>{accent.label[0]}</span>,
@@ -241,8 +262,12 @@ export default function App() {
   const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
+  // Where you've been, for Find's Recent: each page that opened, by its title.
+  useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
+  const pill = !wide && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
+
   return (
-    <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
+    <>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -275,7 +300,7 @@ export default function App() {
                 {title && !profileLeads && <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
                 {head?.sub && !profileLeads && <p className="truncate text-sm opacity-70">{head.sub}</p>}
               </div>
-              {accent && wide && !profileLeads && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
+              {accent && wide && !profileLeads && <Suspense fallback={null}><AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} /></Suspense>}
             </div>
           </header>
 
@@ -296,9 +321,12 @@ export default function App() {
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
                   : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} /></Suspense>
-                  : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
-                    <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
+                  : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                    <AccountView me={(data.me as { name: string; role: string }) ?? { name: chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
+                      add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
+                  : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                    <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -306,10 +334,17 @@ export default function App() {
           </main>
 
           {!wide && chrome && <div aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
+          {pill && (
+            // A phone's Find (as a phone's home screen has its Search over the dock): on the launch screens, Home and
+            // Places, a pill just above the dock that opens Find over the page. Not a tile: it isn't a place you go.
+            <button type="button" onClick={() => setFinding(true)} className="loom-find-pill fixed inset-x-0 z-40 mx-auto flex h-9 w-fit items-center gap-2 rounded-full px-4 text-sm font-medium [bottom:calc(var(--dock-h)_+_28px_+_env(safe-area-inset-bottom))]">
+              <AnimatedIcon name={iconFor('search')} size="sm" />Find</button>
+          )}
           {!wide && chrome && (
             <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
-              <Dock key={agentDock ? `agent:${accent?.id}` : 'household'} variant="shelf" className={agentDock ? 'loom-agent-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : dockItems(phoneTabs)} value={current(phoneTabs)} onValueChange={pick}
+              <Dock key={agentDock ? `agent:${accent?.id}` : 'household'} variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : me ? [...dockItems(phoneTabs), me] : dockItems(phoneTabs)}
+                value={accountOpen && me ? '/account' : current(phoneTabs)} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
             </nav>
           )}
@@ -327,17 +362,11 @@ export default function App() {
         </DrawerContent>
       </Drawer>
 
-      {notes.map((n) => (
-        <Toast key={n.id} variant={n.ok ? 'default' : 'danger'} duration={n.undo ? 8000 : 4000} onOpenChange={(o) => !o && setNotes((x) => x.filter((y) => y.id !== n.id))}>
-          <div className="grid gap-0.5"><ToastTitle>{n.from ? `${n.from}: ` : ''}{n.ok ? 'Done' : 'Not done'}</ToastTitle><ToastDescription>{n.message}</ToastDescription></div>
-          {n.undo && ctx && chrome && (
-            <ToastAction altText={n.undo.label ?? 'Undo'} onClick={() => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); })}>
-              {n.undo.label ?? 'Undo'}</ToastAction>
-          )}
-        </Toast>
-      ))}
-      <ToastViewport className="[bottom:calc(var(--dock-h)_+_24px_+_env(safe-area-inset-bottom))] lg:bottom-6" />
-    </ToastProvider>
+      {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
+
+      {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
+        undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
+    </>
   );
 }
 

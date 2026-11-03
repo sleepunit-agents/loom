@@ -1,25 +1,21 @@
-// The shell's sheets as pages (Scope, Places, Find, Setup, Appearance): their own chunk, loaded when
+// The shell's sheets as pages (Scope, Places, Setup, Appearance; Find is find.tsx's overlay): their own chunk, loaded when
 // one opens (the first page doesn't carry them).
-import { useContext, useState } from 'react';
+import { useContext } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EnvContext, Nothing } from './blocks';
 import type { Chrome, Tone } from './loom';
 import { DOT, Mark, PressCard, type Ground, type Mode } from './views';
-import { ACCOUNT, placesOf, settingsOf } from './nav';
+import { placesOf, settingsOf } from './nav';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, q, found, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
-  const { go, wide } = useEnv();
+export function SheetView({ which, chrome, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
+  const { go } = useEnv();
   const s = chrome.shell;
-  const [query, setQuery] = useState(q);
   // A launcher, as a phone's home screen (Jonathan, 2026-10-31: "we look like a phone os screen ... let's make both
   // screens a kind of click here to go to the place you want to go thing"): a tile in the dock's colours, its name
   // under it, a badge for what's waiting, and the piece's own word (22 in progress) small beneath.
@@ -42,41 +38,10 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
   // Appearance: an app of its own (it was a card on Setup), this device's look.
   if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} />;
   // Setup: the household's configuration only (the pieces that are settings, its members, its pieces). What's the
-  // member's own (passkeys, signing out) is the account's: the side's account menu on a desktop. A phone has no side,
-  // so More (this page, on a phone) ends with the account.
+  // member's own (passkeys, signing out) is the account's: the avatar on a phone's dock, the side's account menu.
   if (which === 'setup' && s) {
     const settings = settingsOf(s);
-    return (
-      <div className="grid gap-6">
-        {settings.length ? grid(settings) : <Nothing title="Nothing to set up" text="The household's settings are its owner's." />}
-        {!wide && <Account owner={s.owner} sub={s.household ? 'Owner' : 'Signed in'} csrf={chrome.csrf} go={go} />}
-      </div>
-    );
-  }
-  if (which === 'find') {
-    const groups: [string, string][] = [['do', 'Do'], ['knowledge', 'Knowledge'], ['people', 'People'], ['memories', 'Memories']];
-    // Places whose name matches, as the classic Find sheet had them: loom's own, the pieces', the agents', and Setup's.
-    const needle = q.trim().toLowerCase();
-    const places = s ? [...placesOf(s), ...s.agents.map((x) => ({ label: x.label, href: x.href })), { label: 'Setup', href: '/setup' }, ...settingsOf(s), ...ACCOUNT] : [];
-    const goTo = needle ? places.filter((p, n) => p.label.toLowerCase().includes(needle) && places.findIndex((x) => x.href === p.href) === n) : [];
-    return (
-      <div className="grid gap-4">
-        <form onSubmit={(e) => { e.preventDefault(); go(`/find?q=${encodeURIComponent(query)}`); }}>
-          <Input autoFocus placeholder="Find anything" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </form>
-        {goTo.length > 0 && (
-          <Card><CardHeader><CardTitle>Go to</CardTitle></CardHeader>
-            <CardContent><ul className="divide-y">{goTo.map((p) => (
-              <li key={p.href}><button className="w-full py-2.5 text-left" onClick={() => go(p.href)}>{p.label}</button></li>))}</ul></CardContent></Card>
-        )}
-        {found && groups.map(([k, l]) => (found[k]?.length ? (
-          <Card key={k}><CardHeader><CardTitle>{l}</CardTitle></CardHeader>
-            <CardContent><ul className="divide-y">{found[k].map((f) => (
-              <li key={f.href}><button className="w-full py-2.5 text-left" onClick={() => go(f.href)}>{f.label}{f.agent ? <span className="opacity-60"> · {f.agent}</span> : null}</button></li>))}</ul></CardContent></Card>
-        ) : null))}
-        {found && !goTo.length && groups.every(([k]) => !found[k]?.length) && <Nothing title={`Nothing found for “${q}”`} text="Try fewer words, or another name." />}
-      </div>
-    );
+    return settings.length ? grid(settings) : <Nothing title="Nothing to set up" text="The household's settings are its owner's." />;
   }
   if (which === 'scope' && s) {
     return (
@@ -118,24 +83,8 @@ function AppearanceApp({ mode, setMode, ground, setGround }: { mode: Mode; setMo
   );
 }
 
-/** A phone's account, at the foot of More: who's signed in, their passkeys, and signing out. */
-function Account({ owner, sub, csrf, go }: { owner: string; sub: string; csrf: string; go: (href: string) => void }) {
-  return (
-    <Card><CardContent className="grid gap-1 py-4">
-      <div className="flex items-center gap-3 pb-2">
-        <Avatar variant="pink" className="size-10 shrink-0"><AvatarFallback>{owner[0]?.toUpperCase()}</AvatarFallback></Avatar>
-        <span className="grid min-w-0 leading-tight"><span className="truncate font-medium">{owner}</span><span className="text-sm opacity-70">{sub}</span></span>
-      </div>
-      {ACCOUNT.map((a) => (
-        <Button key={a.href} variant="ghost" className="justify-start gap-3" onClick={() => go(a.href)}><AnimatedIcon name={iconFor(ICONS[a.label])} size="sm" />{a.label}</Button>))}
-      <form method="post" action="/logout"><input type="hidden" name="_csrf" value={csrf} />
-        <Button type="submit" variant="ghost" className="w-full justify-start gap-3"><AnimatedIcon name={iconFor('log-out')} size="sm" />Sign out</Button></form>
-    </CardContent></Card>
-  );
-}
-
 const ICONS: Record<string, string> = {
   Knowledge: 'book-open', People: 'users', Mind: 'brain', Activity: 'activity', Bridges: 'messages-square', Clock: 'alarm-clock', Boxes: 'server',
   Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'fingerprint-pattern', Machine: 'cpu',
-  Appearance: 'palette',
+  Appearance: 'palette', Account: 'circle-user-round',
 };
