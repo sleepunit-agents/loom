@@ -5,7 +5,7 @@
  * the store's half (who wrote which turn), which the audit write will check.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import BetterSqlite3 from 'better-sqlite3';
@@ -519,6 +519,31 @@ describe('criterion 5: venues', () => {
       const { call } = await mcp(art);
       const r = await call('conversation', { id: conv });
       expect((r.body.render as { by: string }).by).toBe('venue');
+    });
+
+    it('the render runs as the agent, so a grants authority is asked first (path render): a no is core\'s render', async () => {
+      // A stub authority: $LOOM_HOME/render-grant is allow or deny; every ask is written down.
+      const dir = join(h.home, 'pieces', 'gk');
+      mkdirSync(join(dir, 'current'), { recursive: true });
+      writeFileSync(join(dir, 'piece.json'), JSON.stringify({ v: 1, name: 'gk', source: { repo: 'x/y', commit: 'a'.repeat(40) }, package: 'gk', version: '1', installed: 'x',
+        bins: ['loom-gk'], loom: { settings: [], services: [], grants: ['loom-gk', 'ask'] } }));
+      writeFileSync(join(dir, 'current', 'cli'), `#!${process.execPath}
+const fs = require('node:fs'); let s = '';
+process.stdin.on('data', (d) => s += d).on('end', () => {
+  fs.appendFileSync(process.env.LOOM_HOME + '/asked', s + '\\n');
+  const g = fs.readFileSync(process.env.LOOM_HOME + '/render-grant', 'utf-8').trim();
+  console.log(JSON.stringify(g === 'allow' ? { allow: true } : { allow: false, reason: 'art may not have shuttle render' }));
+});
+`);
+      chmodSync(join(dir, 'current', 'cli'), 0o755);
+      symlinkSync(join(dir, 'current', 'cli'), join(h.home, 'pieces', 'bin', 'loom-gk'));
+      writeFileSync(join(h.home, 'render-grant'), 'deny');
+      const no = await conversationView(art, 'art', conv);
+      expect(no!.render.by).toBe('core');
+      expect(no!.render.error).toBe('shuttle: not asked to render (forbidden: art may not have shuttle render)');
+      expect(readFileSync(join(h.home, 'asked'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l))).toEqual([{ agent: 'art', piece: 'shuttle', path: 'render' }]);
+      writeFileSync(join(h.home, 'render-grant'), 'allow');
+      expect((await conversationView(art, 'art', conv))!.render.by).toBe('venue');
     });
 
     it('a render that fails or doesn\'t validate falls back to core\'s, saying why', async () => {
