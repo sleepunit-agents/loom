@@ -7,16 +7,14 @@ import type { Tone } from './loom';
 export type Place = { label: string; href: string; current: boolean; count?: number; stat?: string; tone?: Tone; kind?: 'place' | 'setting' };
 type ShellLike = { core: Place[]; pieces: Place[]; tab: string; admin?: boolean };
 
-/** Appearance (light or dark, the background): this device's own, an app in Places like the others. */
-export const APPEARANCE = { label: 'Appearance', href: '/appearance' } as const;
 /** The member's own: their account (who they are, their passkeys, signing out), not in Setup. The avatar on a phone's
  * dock and the side's account menu open it. */
 export const ACCOUNT = [{ label: 'Account', href: '/account' }] as const;
 
-/** The apps: loom's own places, the pieces that are places, and Appearance last. The Inbox has its own tab. */
+/** The apps, where you go regularly: loom's own places and the pieces that are places. The Inbox has its own tab.
+ * Appearance (light or dark, the background) isn't one: it's a panel of Setup, changed seldom (Jonathan, 2026-11-03). */
 export function placesOf(s: ShellLike): Place[] {
-  return [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting'), { ...APPEARANCE, current: s.tab === 'appearance' }]
-    .filter((p) => p.href !== '/inbox');
+  return [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox');
 }
 
 /** Setup: the household's configuration only. The pieces that are settings, then (for the household's owner) its
