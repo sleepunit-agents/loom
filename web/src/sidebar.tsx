@@ -1,5 +1,6 @@
 // A desktop's side of the page, as 000h's own docs have it (Jonathan, 2026-10-29): one panel down the whole side,
-// loom's mark and name at the top, Find under it (⌘K), the pages in groups, and who's signed in at the bottom.
+// loom's mark and name at the top, Find under it (⌘K), the pages in groups, and who's signed in at the bottom (their
+// account menu: passkeys, sign out). Each destination is in one group (nav.ts).
 import { lazy, Suspense, useEffect } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroupLabel, SidebarHeader, SidebarMenuBadge, SidebarMenuButton, SidebarMenuLabel } from '@/components/ui/sidebar';
@@ -8,6 +9,7 @@ import { iconFor } from './safe';
 import { AgentAvatar } from './blocks';
 import { Kbd } from '@/components/ui/kbd';
 import { AccountButton } from './account-button';
+import { placesOf } from './nav';
 const AccountMenu = lazy(() => import('./account-menu'));
 
 type Item = { label: string; href: string; current: boolean; count?: number };
@@ -32,7 +34,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
   const mark = (a: { label: string; bg: string; fg: string }) => <AgentAvatar a={a} size={24} className="shrink-0" />;
   const groups: { label?: string; items: React.ReactNode[] }[] = [];
   if (s) {
-    const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox');
+    const places = placesOf(s);
     const settings = s.pieces.filter((p) => p.kind === 'setting');
     // The same swap as a phone's dock (Jonathan, 2026-10-29): on an agent's pages the side is that agent's: its mark
     // with a back chevron first (the household), then its tabs, then the other agents to switch to. On the household's,

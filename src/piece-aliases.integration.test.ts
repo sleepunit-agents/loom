@@ -7,7 +7,8 @@
  *  2. /p/box/… and /a/<agent>/p/box/… pages, a 308 to the runtime's;
  *  3. a piece:box/<subject> credential acts as piece:runtime/<subject>;
  *  4. a house's remote `loom box …` (LOOM_URL);
- *  5. the first-run STARTERS.
+ *  5. the first-run STARTERS;
+ *  6. the page lists the runtime once (its loom-box bin isn't a second Boxes).
  * An installed box (or a loom-box on PATH that isn't the runtime's own bin) wins.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -19,6 +20,7 @@ import { agentDir, createToken, loadHousehold, type Household } from './househol
 import { resolvePieceName } from './cli/pieces.js';
 import { runCliCaptured } from './cli/test-helpers.js';
 import { STARTERS } from './ui/handler.js';
+import { CACHE_MS, pieceManifests } from './ui/pieces.js';
 
 const OWNER = 'owner-token-for-the-page-0123456789';
 
@@ -140,6 +142,12 @@ describe('box is the runtime now (PIECE_ALIASES)', () => {
     }
   });
 
+  it('6. the page shows the runtime once: its loom-box bin is the runtime, not a second piece', async () => {
+    const { pieces } = await pieceManifests(process.env, Date.now() + 10 * CACHE_MS);
+    expect(pieces.map((p) => p.piece)).toContain('runtime');
+    expect(pieces.map((p) => p.piece)).not.toContain('box');
+  });
+
   it('5. the first-run starters name runtime, not box', () => {
     expect(STARTERS).toContain('runtime');
     expect(STARTERS).not.toContain('box');
@@ -151,6 +159,9 @@ describe('box is the runtime now (PIECE_ALIASES)', () => {
       expect(resolvePieceName(process.env, 'box')).toBe('box');
       expect((await api('/api/box/houses', tok.art)).body).toEqual({ bin: 'the old box' });
       expect((await fetch(`${base}/p/box`, { redirect: 'manual' })).status).not.toBe(308);
+      // A box of its own is a piece of its own on the page too: asked for its manifest (this stub has none to give).
+      const m = await pieceManifests(process.env, Date.now() + 20 * CACHE_MS);
+      expect([...m.pieces, ...m.skipped].map((p) => p.piece)).toContain('box');
     } finally {
       rmSync(join(h.home, 'pieces', 'box'), { recursive: true, force: true });
       // Give the runtime its loom-box bin back.

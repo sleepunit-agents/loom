@@ -1,8 +1,9 @@
-// The shell's sheets as pages (Scope, Places, Find, Setup), and the appearance choices: their own chunk, loaded when
+// The shell's sheets as pages (Scope, Places, Find, Setup, Appearance): their own chunk, loaded when
 // one opens (the first page doesn't carry them).
 import { useContext, useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,11 +12,12 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EnvContext, Nothing } from './blocks';
 import type { Chrome, Tone } from './loom';
 import { DOT, Mark, PressCard, type Ground, type Mode } from './views';
+import { ACCOUNT, placesOf, settingsOf } from './nav';
 
 const useEnv = () => useContext(EnvContext)!;
 
 export function SheetView({ which, chrome, q, found, mode, setMode, ground, setGround }: { which: string; chrome: Chrome; q: string; found?: Record<string, { label: string; href: string; agent?: string }[]>; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
-  const { go } = useEnv();
+  const { go, wide } = useEnv();
   const s = chrome.shell;
   const [query, setQuery] = useState(q);
   // A launcher, as a phone's home screen (Jonathan, 2026-10-31: "we look like a phone os screen ... let's make both
@@ -35,28 +37,19 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
   const grid = (items: Array<{ label: string; href: string; stat?: string; tone?: Tone; count?: number }>) => (
     <div className="grid grid-cols-4 gap-x-3 gap-y-6 sm:grid-cols-6">{items.map(launch)}</div>
   );
-  // Places: where you go regularly (Activity, Knowledge, People, Tasks). The Inbox has its own tab.
-  if (which === 'places' && s) {
-    return grid([...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox'));
-  }
+  // Places: the apps, where you go regularly (Activity, Knowledge, People, Tasks, Appearance). The Inbox has its own tab.
+  if (which === 'places' && s) return grid(placesOf(s));
+  // Appearance: an app of its own (it was a card on Setup), this device's look.
+  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} />;
+  // Setup: the household's configuration only (the pieces that are settings, its members, its pieces). What's the
+  // member's own (passkeys, signing out) is the account's: the side's account menu on a desktop. A phone has no side,
+  // so More (this page, on a phone) ends with the account.
   if (which === 'setup' && s) {
-    const admin = s.admin !== false;
-    const own = [
-      ...(admin ? [{ label: 'Members', href: '/members' }, { label: 'Pieces', href: '/pieces' }] : []),
-      { label: 'Passkeys', href: '/passkeys' },
-    ];
+    const settings = settingsOf(s);
     return (
-      <div className="grid gap-4">
-        {grid([...s.pieces.filter((p) => p.kind === 'setting'), ...own])}
-        <Card><CardHeader><CardTitle>Appearance</CardTitle></CardHeader>
-          <CardContent className="grid gap-4"><Appearance mode={mode} setMode={setMode} />
-            <div className="grid gap-2"><p className="text-sm opacity-70">Background</p>
-              <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
-                {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup></div>
-          </CardContent></Card>
-        <Card><CardContent className="grid gap-2 py-4">
-          <form method="post" action="/logout"><input type="hidden" name="_csrf" value={chrome.csrf} /><Button type="submit" variant="ghost" className="w-full">Sign out</Button></form>
-        </CardContent></Card>
+      <div className="grid gap-6">
+        {settings.length ? grid(settings) : <Nothing title="Nothing to set up" text="The household's settings are its owner's." />}
+        {!wide && <Account owner={s.owner} sub={s.household ? 'Owner' : 'Signed in'} csrf={chrome.csrf} go={go} />}
       </div>
     );
   }
@@ -64,8 +57,7 @@ export function SheetView({ which, chrome, q, found, mode, setMode, ground, setG
     const groups: [string, string][] = [['do', 'Do'], ['knowledge', 'Knowledge'], ['people', 'People'], ['memories', 'Memories']];
     // Places whose name matches, as the classic Find sheet had them: loom's own, the pieces', the agents', and Setup's.
     const needle = q.trim().toLowerCase();
-    const places = s ? [...s.core, ...s.pieces, ...s.agents.map((x) => ({ label: x.label, href: x.href })), { label: 'Setup', href: '/setup' }, { label: 'Passkeys', href: '/passkeys' },
-      ...(s.admin ? [{ label: 'Members', href: '/members' }, { label: 'Manage pieces', href: '/pieces' }] : [])] : [];
+    const places = s ? [...placesOf(s), ...s.agents.map((x) => ({ label: x.label, href: x.href })), { label: 'Setup', href: '/setup' }, ...settingsOf(s), ...ACCOUNT] : [];
     const goTo = needle ? places.filter((p, n) => p.label.toLowerCase().includes(needle) && places.findIndex((x) => x.href === p.href) === n) : [];
     return (
       <div className="grid gap-4">
@@ -109,7 +101,41 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
   );
 }
 
+/** The Appearance app: light or dark, and the ground behind everything. Kept in this browser. */
+function AppearanceApp({ mode, setMode, ground, setGround }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void }) {
+  return (
+    <div className="grid gap-4">
+      <Card><CardHeader><CardTitle>Light or dark</CardTitle></CardHeader>
+        <CardContent className="grid gap-2"><Appearance mode={mode} setMode={setMode} />
+          <p className="text-sm opacity-70">Auto follows this device.</p></CardContent></Card>
+      <Card><CardHeader><CardTitle>Background</CardTitle></CardHeader>
+        <CardContent className="grid gap-2">
+          <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
+            {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup>
+          <p className="text-sm opacity-70">What’s behind every page.</p></CardContent></Card>
+      <p className="text-sm opacity-60">Kept on this device: another phone or browser keeps its own.</p>
+    </div>
+  );
+}
+
+/** A phone's account, at the foot of More: who's signed in, their passkeys, and signing out. */
+function Account({ owner, sub, csrf, go }: { owner: string; sub: string; csrf: string; go: (href: string) => void }) {
+  return (
+    <Card><CardContent className="grid gap-1 py-4">
+      <div className="flex items-center gap-3 pb-2">
+        <Avatar variant="pink" className="size-10 shrink-0"><AvatarFallback>{owner[0]?.toUpperCase()}</AvatarFallback></Avatar>
+        <span className="grid min-w-0 leading-tight"><span className="truncate font-medium">{owner}</span><span className="text-sm opacity-70">{sub}</span></span>
+      </div>
+      {ACCOUNT.map((a) => (
+        <Button key={a.href} variant="ghost" className="justify-start gap-3" onClick={() => go(a.href)}><AnimatedIcon name={iconFor(ICONS[a.label])} size="sm" />{a.label}</Button>))}
+      <form method="post" action="/logout"><input type="hidden" name="_csrf" value={csrf} />
+        <Button type="submit" variant="ghost" className="w-full justify-start gap-3"><AnimatedIcon name={iconFor('log-out')} size="sm" />Sign out</Button></form>
+    </CardContent></Card>
+  );
+}
+
 const ICONS: Record<string, string> = {
   Knowledge: 'book-open', People: 'users', Mind: 'brain', Activity: 'activity', Bridges: 'messages-square', Clock: 'alarm-clock', Boxes: 'server',
   Subscriptions: 'credit-card', Secrets: 'key-round', Tasks: 'list-checks', Members: 'users-round', Pieces: 'puzzle', Passkeys: 'fingerprint-pattern', Machine: 'cpu',
+  Appearance: 'palette',
 };
