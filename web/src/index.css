@@ -488,6 +488,10 @@ body { background: var(--v-canvas); }
 .loom-agent-dock.v-dock [data-part="lane"]:first-child::after { content: ""; position: absolute; inset-inline-end: -11px; inset-block: 22% 30%; width: 1px; background: var(--v-border); }
 .loom-agent-dock [data-part="lane"]:first-child [data-part="badge"] { inset-inline-start: -7px; inset-inline-end: auto; inset-block-start: -7px; inline-size: 22px; block-size: 22px; min-inline-size: 0; padding: 0;
   border-radius: 999px; background: var(--v-text); color: var(--v-canvas); display: grid; place-items: center; border: 2px solid var(--v-paper); }
+/* A card's title with a line under it (CardHeader is a row, for a title and its action): the two stack, so a narrow
+   card never squeezes the title into a column a few letters wide ("Notif / icati / ons" on a phone's Passkeys). */
+[data-slot="card-header"]:has(> [data-slot="card-description"]) { flex-direction: column; align-items: stretch; gap: var(--s-1, 4px); }
+[data-slot="card-title"] { overflow-wrap: normal; word-break: normal; min-width: 0; }
 .loom-back-mark { font-family: var(--font-display); font-weight: 600; font-size: 21px; line-height: 1; }
 .loom-side .loom-side-back { height: auto; min-height: var(--nav-row); padding-block: 8px; padding-inline-start: 12px; background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 18%, transparent); }
 .loom-side .loom-side-back:hover { background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 30%, transparent); }
