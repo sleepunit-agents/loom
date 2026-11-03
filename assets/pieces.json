@@ -12,7 +12,7 @@
     {
       "name": "secrets",
       "repo": "sleepunit-agents/loom-secrets",
-      "commit": "ed68b1d24bd6e5837886c8bae375d2efb05a8987",
+      "commit": "233913ff228d0275c3219d6b59a793681763e9ac",
       "version": "0.1.0",
       "label": "Secrets",
       "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
@@ -20,7 +20,7 @@
     {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
-      "commit": "7a0a4ecee3985a71f7330a62399774f705c2e15a",
+      "commit": "4cf1da00bf5cb2788d9936c5bbff45fd29a193ce",
       "version": "0.1.0",
       "label": "Shuttle",
       "description": "Chat bridges (Discord, Slack)."
@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "413a72e566edc02565a0d27fe91e19c983a2b2e7",
+      "commit": "54a92b96a05a98ca4324ff845d89ecc77e845a43",
       "version": "0.5.0",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "a84181bcc421159209b962a87d95fdc20fac1ee0",
+      "commit": "520dcca590ec598b595dead2926d3976895a19fa",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
@@ -44,7 +44,7 @@
     {
       "name": "clock",
       "repo": "sleepunit-agents/loom-clock",
-      "commit": "c25fb9e93d937829cefeff89714471aaecca4419",
+      "commit": "94c6012b396512aea2154ac38d108d99765e6980",
       "version": "0.1.0",
       "label": "Clock",
       "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
