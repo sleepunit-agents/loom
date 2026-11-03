@@ -18,6 +18,8 @@ import { constants as osConstants } from 'node:os';
 import { SUBCOMMANDS } from './subcommands.js';
 import type { IOStreams } from './io.js';
 import { aliasTarget, describeSource, managedBinDir, pieceEnvFor, pieceOfPath, readRecord, type GithubSource, type PieceRecord, type PieceSource } from './pieces-managed.js';
+import { householdHome } from '../household.js';
+import { mintGrant } from '../stores.js';
 
 const unchangedText = (r: PieceRecord) => `${r.name} is already ${r.version} (${describeSource(r.source)}): nothing in its directory changed\n`;
 
@@ -97,6 +99,31 @@ export function listPieces(env: NodeJS.ProcessEnv): InstalledPiece[] {
 }
 
 /**
+ * Whether this run of a piece is the owner's, at loom's machine: nothing in the environment says
+ * it's a piece's own process (LOOM_PIECE_NAME), a call loom gave a grant (LOOM_STORE_GRANT), or a
+ * house (a loom token to call home with, a house id). The same rule `loom person ensure` and
+ * `loom person merge` use for "the owner at loom's machine".
+ */
+export function ownersRun(env: NodeJS.ProcessEnv): boolean {
+  return !env.LOOM_PIECE_NAME && !env.LOOM_STORE_GRANT && !env.LOOM_TOKEN_FILE && !env.LOOM_URL && !env.HOUSE_ID;
+}
+
+/**
+ * The environment a dispatched piece runs with (pieceEnvFor), plus, for an owner's run of a
+ * managed piece, an owner's grant for that piece's store (docs/specs/piece-storage.md): what loom's
+ * page gives an owner's action, so `loom runtime gates import` piped by the owner writes the
+ * runtime's owner-written collection (agent-runtime.md, "What moves where"), and nothing else does.
+ */
+export function dispatchEnv(path: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = pieceEnvFor(path, env);
+  const rec = pieceOfPath(env, path);
+  if (!rec || !ownersRun(env)) return out;
+  try {
+    return { ...out, LOOM_STORE_GRANT: mintGrant(householdHome(env), { piece: rec.name, owner: true }) };
+  } catch { return out; }
+}
+
+/**
  * Run a piece with `args`, passing loom's env through (plus, for a managed
  * piece, its own: pieceEnvFor). With the
  * process's own streams the piece inherits the terminal (so it can prompt,
@@ -107,7 +134,7 @@ export function listPieces(env: NodeJS.ProcessEnv): InstalledPiece[] {
 export async function runPiece(path: string, args: string[], io: IOStreams): Promise<number> {
   const inherit = io.stdin === process.stdin;
   const child = spawn(path, args, {
-    env: pieceEnvFor(path, io.env),
+    env: dispatchEnv(path, io.env),
     stdio: inherit ? 'inherit' : ['pipe', 'pipe', 'pipe'],
   });
   if (!inherit) {

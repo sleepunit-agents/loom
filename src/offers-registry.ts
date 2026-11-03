@@ -37,10 +37,10 @@ export function piecesOffering(env: NodeJS.ProcessEnv, kind: OfferKind): PieceOf
  * a second one; were two ever present (piece.json edited by hand), there is no
  * authority to ask, and that is said rather than one picked.
  */
-export function grantsAuthority(env: NodeJS.ProcessEnv): { piece: string } | { piece: undefined; conflict?: string[] } {
-  const all = piecesOffering(env, 'grants').map((p) => p.piece);
-  if (all.length === 1) return { piece: all[0] };
-  return all.length ? { piece: undefined, conflict: all } : { piece: undefined };
+export function grantsAuthority(env: NodeJS.ProcessEnv): { piece: string; argv: string[] } | { piece: undefined; conflict?: string[] } {
+  const all = piecesOffering(env, 'grants');
+  if (all.length === 1) return { piece: all[0].piece, argv: [...all[0].offers.grants!] };
+  return all.length ? { piece: undefined, conflict: all.map((p) => p.piece) } : { piece: undefined };
 }
 
 /**
@@ -64,7 +64,7 @@ export interface OfferLimits { timeoutMs: number; maxBytes: number; pool: OfferP
 export const OFFER_LIMITS: Readonly<Record<OfferKind, OfferLimits>> = {
   sections: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
   venues: { timeoutMs: PIECE_TIMEOUT_MS, maxBytes: 64 * 1024, pool: 'page' },
-  grants: { timeoutMs: 2_000, maxBytes: 64 * 1024, pool: 'page' },
+  grants: { timeoutMs: 2_000, maxBytes: 4 * 1024, pool: 'grants' },
   mcp_tools: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'tools' },
   delivery: { timeoutMs: 120_000, maxBytes: 64 * 1024, pool: 'delivery' },
 };

@@ -13,6 +13,7 @@ import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf, w
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
 import { runOffer } from './offers-registry.js';
+import { askGrant } from './grants.js';
 
 // ─── Writing a turn ─────────────────────────────────────────────────────────
 
@@ -159,8 +160,14 @@ export async function conversationView(contextDir: string, agent: string, id: st
   let v;
   try { v = coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
-    const out = await runOffer(env, v.piece, v.render, { args: ['--conversation', id], parse: parseFeed, caller: { kind: 'agent', agent } });
-    render = out.ok ? { by: 'venue', feed: out.value } : { ...render, error: `${v.piece}: ${out.error}` };
+    // The render runs as the agent (its store grant), so the grants authority decides first, as for any
+    // agent's call to a piece (src/grants.ts, path `render`); a no, or one it can't give, is core's render.
+    const no = await askGrant(env, { agent, piece: v.piece, path: 'render' });
+    if (no) render = { ...render, error: `${v.piece}: not asked to render (${no.error})` };
+    else {
+      const out = await runOffer(env, v.piece, v.render, { args: ['--conversation', id], parse: parseFeed, caller: { kind: 'agent', agent } });
+      render = out.ok ? { by: 'venue', feed: out.value } : { ...render, error: `${v.piece}: ${out.error}` };
+    }
   }
   return {
     conversation: { ...c, venue_label: label, turns: total },

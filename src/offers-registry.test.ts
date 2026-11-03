@@ -45,22 +45,22 @@ describe('offers registry and runner', () => {
 
   it('lists the pieces offering each kind, and a piece\'s declared offers', async () => {
     await piece('tasks', { sections: { project: { ...feed, unfiled: false } } }, { 'loom-tasks': 'true' });
-    await piece('runtime', { role: 'runtime', grants: true, mcp_tools: { house: { description: 'd', input_schema: { type: 'object' }, argv: ['loom-runtime'] } } }, { 'loom-runtime': 'true' });
+    await piece('runtime', { role: 'runtime', grants: ['loom-runtime', 'grants'], mcp_tools: { house: { description: 'd', input_schema: { type: 'object' }, argv: ['loom-runtime'] } } }, { 'loom-runtime': 'true' });
     await piece('plain', {}, { 'loom-plain': 'true' });
     expect(piecesOffering(env, 'sections').map((p) => p.piece)).toEqual(['tasks']);
     expect(piecesOffering(env, 'mcp_tools').map((p) => p.piece)).toEqual(['runtime']);
     expect(piecesOffering(env, 'venues')).toEqual([]);
     expect(offersOf(env, 'tasks')).toEqual({ sections: { project: { ...feed, unfiled: false } } });
-    expect(offersOf(env, 'runtime')).toEqual({ grants: true, mcp_tools: { house: { description: 'd', input_schema: { type: 'object' }, argv: ['loom-runtime'] } } });
+    expect(offersOf(env, 'runtime')).toEqual({ grants: ['loom-runtime', 'grants'], mcp_tools: { house: { description: 'd', input_schema: { type: 'object' }, argv: ['loom-runtime'] } } });
     expect(offersOf(env, 'plain')).toEqual({});
     expect(offersOf(env, 'missing')).toBeUndefined();
-    expect(grantsAuthority(env)).toEqual({ piece: 'runtime' });
+    expect(grantsAuthority(env)).toEqual({ piece: 'runtime', argv: ['loom-runtime', 'grants'] });
   });
 
   it('no grants authority with none installed, and none (said) were two ever present', async () => {
     expect(grantsAuthority(env)).toEqual({ piece: undefined });
-    await piece('a', { grants: true }, { 'loom-a': 'true' });
-    await piece('b', { grants: true }, { 'loom-b': 'true' });
+    await piece('a', { grants: ['loom-a'] }, { 'loom-a': 'true' });
+    await piece('b', { grants: ['loom-b'] }, { 'loom-b': 'true' });
     expect(grantsAuthority(env)).toEqual({ piece: undefined, conflict: ['a', 'b'] });
   });
 

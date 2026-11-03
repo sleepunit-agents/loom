@@ -172,14 +172,19 @@ const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
  *  - `mcp_tools`: four at once, sixteen waiting;
  *  - `delivery`: eight at once, thirty-two waiting, larger than one calling piece's share
  *    (src/delivery.ts: 2 running, 4 waiting), so one piece at its cap leaves room for others.
+ *  - `grants`: eight at once, thirty-two waiting. Every agent call to a piece asks the authority
+ *    first (src/grants.ts), so the ask never queues behind a page's pieces or a long tool.
  */
 export const MAX_TOOLS_RUNNING = 4;
 export const MAX_TOOLS_WAITING = 16;
 export const MAX_DELIVERY_RUNNING = 8;
 export const MAX_DELIVERY_WAITING = 32;
-export type OfferPool = 'page' | 'tools' | 'delivery';
+export const MAX_GRANTS_RUNNING = 8;
+export const MAX_GRANTS_WAITING = 32;
+export type OfferPool = 'page' | 'tools' | 'delivery' | 'grants';
 const offerPools: Record<Exclude<OfferPool, 'page'>, Pool> = {
   tools: new Pool(MAX_TOOLS_RUNNING, MAX_TOOLS_WAITING),
+  grants: new Pool(MAX_GRANTS_RUNNING, MAX_GRANTS_WAITING),
   delivery: new Pool(MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING),
 };
 

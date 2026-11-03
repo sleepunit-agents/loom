@@ -171,7 +171,7 @@ A delivery failing any check is refused with `403` and the reason, and writes no
 **Limits.** Core forwards under the `mcp_tools` limits (120 s, an answer ≤ 64 KB), in delivery's own pool (8 running,
 32 waiting), apart from `mcp_tools`' and the page's. One calling piece has at most 2 forwards running and 4 waiting; past that it's refused with `503`, and other pieces aren't held
 back. Core keeps at most 10,000 answers per piece in 24 hours; past that, `429`. The body is ≤ 256 KB (`413`). A
-runtime that fails exits 1 with `{status: 5xx, error}`, which core passes on with that status. Any other failure is a
+runtime that fails, or refuses the body, exits 1 with `{status: 4xx or 5xx, error}`, which core passes on with that status, unkept. Any other failure is a
 `502`, and a timeout is a `504`. None of these is kept.
 
 The runtime:

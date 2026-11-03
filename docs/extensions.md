@@ -194,7 +194,7 @@ own schema:
   "venues":    { "relay": { "label": "Relay", "kind": "agent", "send": ["loom-runtime", "send"] } },
   "mcp_tools": { "house": { "description": "Ask for a house", "input_schema": { "type": "object" },
                             "argv": ["loom-runtime", "house", "--json"] } },
-  "grants":    true,
+  "grants":    ["loom-runtime", "grants", "ask"],
   "delivery":  ["loom-runtime", "deliver", "--json"]
 }
 ```
@@ -208,8 +208,18 @@ own schema:
   `"type": "object"`, at most 16 KB) and an `argv` that gets the arguments
   as JSON on stdin. It can't be named after one of core's tools, or anything
   `loom_*`.
-- **`grants`:** `true` (or `{}`) makes the piece the grants authority; `false`
-  offers nothing.
+- **`grants`:** an argv; it makes the piece the grants authority (`false`
+  offers nothing; `true`, the placeholder before core could ask, is refused).
+  Before an agent's call to a piece (`/api/<piece>/…`, `/api/<piece>/run`, the
+  relay tool's call to the clock) and before forwarding a delivery for an
+  agent, core runs it with `{agent, piece, path}` on stdin (`path` is what
+  follows `/api/<piece>/`, or `deliver`). It has 2 s, in a pool of its own
+  (eight at once, thirty-two waiting), to answer `{allow: true}` or
+  `{allow: false, reason}`. A no is a 403 with that reason, and the piece never
+  runs. A timeout, an error, an answer that isn't that, or the authority removed
+  while it was asked is a 503 with the reason (fail closed). Owner calls never
+  ask. With no authority installed, each piece decides by its own agent list
+  (`src/grants.ts`).
 - **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
   may declare it, and a second installed piece offering it is refused.
 - **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
@@ -631,9 +641,9 @@ passes its answer back (`src/delivery.ts`).
     `from: {kind: schedule}`. Nothing is delivered into `session`;
   - the `agent` is the household's and granted to the piece. With no grants
     authority installed, the piece's own agent list decides (the source
-    applied it before calling). With one, core must ask it, and until the
-    `grants` offer says how, a call from any other piece is refused with a
-    503 (fail closed);
+    applied it before calling). With one, core asks it (path `deliver`): a no
+    is a 403, an authority that can't answer a 503 (fail closed). The
+    authority's own deliveries (the runtime's relays) aren't asked of itself;
   - `from: {kind: person}` comes only from a venue adapter on a venue it
     declares (not `relay`); `from: {kind: agent}` only from the runtime, the
     installed piece offering `delivery` (a block's `role` alone isn't it).

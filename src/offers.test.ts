@@ -100,14 +100,18 @@ describe('mcp_tools', () => {
 });
 
 describe('grants', () => {
-  it('true or {} makes the piece the grants authority; false offers nothing', () => {
-    expect(parse({ grants: true })).toMatchObject({ grants: true });
-    expect(parse({ grants: {} })).toMatchObject({ grants: true });
+  it('an argv of its own bins makes the piece the grants authority; false offers nothing', () => {
+    expect(parse({ grants: ['loom-tasks', 'grants', 'ask'] })).toMatchObject({ grants: ['loom-tasks', 'grants', 'ask'] });
     expect(parse({ grants: false })).not.toHaveProperty('grants');
   });
 
-  it.each([['a string', 'yes'], ['a non-empty object', { agents: ['art'] }], ['a list', []]])('rejects %s', (_w, grants) => {
-    expect(parse({ grants })).toMatch(/loom.grants is true/);
+  it('true, the placeholder before core could ask, is refused: the authority has to be askable', () => {
+    expect(parse({ grants: true })).toMatch(/loom.grants is an argv core runs with \{agent, piece, path\}/);
+    expect(parse({ grants: {} })).toMatch(/loom.grants is an argv/);
+  });
+
+  it.each([['a string', 'yes'], ['an empty list', []], ['another bin', ['sh', '-c', 'echo']]])('rejects %s', (_w, grants) => {
+    expect(parse({ grants })).toMatch(/loom.grants/);
   });
 });
 
@@ -168,11 +172,11 @@ describe('a block with an invalid offer is rejected whole', () => {
 
 describe('offerConflicts (against the other installed pieces)', () => {
   const others: { name: string; loom: Offers }[] = [
-    { name: 'runtime', loom: { grants: true, mcp_tools: { house: tool as never }, venues: { relay: { label: 'Relay', kind: 'agent' } } } },
+    { name: 'runtime', loom: { grants: ['loom-runtime', 'grants'], mcp_tools: { house: tool as never }, venues: { relay: { label: 'Relay', kind: 'agent' } } } },
   ];
 
   it('refuses a second grants authority, a tool name or a venue name another piece has', () => {
-    expect(offerConflicts('other', { grants: true }, others)).toMatch(/runtime piece is already the grants authority/);
+    expect(offerConflicts('other', { grants: ['loom-other', 'ask'] }, others)).toMatch(/runtime piece is already the grants authority/);
     expect(offerConflicts('other', { mcp_tools: { house: tool as never } }, others)).toMatch(/tool house is already the runtime piece's/);
     expect(offerConflicts('other', { venues: { relay: { label: 'R', kind: 'agent' } } }, others)).toMatch(/venue relay is already the runtime piece's/);
   });
@@ -202,7 +206,7 @@ describe('offerConflicts (against the other installed pieces)', () => {
   });
 
   it('a piece never conflicts with its own earlier version, and distinct names pass', () => {
-    expect(offerConflicts('runtime', { grants: true, mcp_tools: { house: tool as never } }, others)).toBeUndefined();
+    expect(offerConflicts('runtime', { grants: ['loom-runtime', 'grants'], mcp_tools: { house: tool as never } }, others)).toBeUndefined();
     expect(offerConflicts('other', { mcp_tools: { other_tool: tool as never }, venues: { slack: { label: 'S', kind: 'live' } } }, others)).toBeUndefined();
   });
 });

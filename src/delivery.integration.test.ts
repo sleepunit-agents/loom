@@ -44,12 +44,20 @@ const home = process.env.LOOM_HOME;
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
+  if (process.argv[2] === 'grants') {
+    // The grants ask (src/grants.ts): $LOOM_HOME/grants-mode is allow, deny or slow.
+    fs.appendFileSync(home + '/grants-calls.jsonl', input + '\\n');
+    const g = fs.existsSync(home + '/grants-mode') ? fs.readFileSync(home + '/grants-mode', 'utf-8').trim() : 'allow';
+    if (g === 'slow') return setTimeout(() => console.log('{"allow":true}'), 3000);
+    return console.log(JSON.stringify(g === 'deny' ? { allow: false, reason: 'clock may not act for art' } : { allow: true }));
+  }
   fs.appendFileSync(home + '/runtime-calls.jsonl', JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(input) }) + '\\n');
   const n = fs.readFileSync(home + '/runtime-calls.jsonl', 'utf-8').trim().split('\\n').length;
   const mode = fs.existsSync(home + '/runtime-mode') ? fs.readFileSync(home + '/runtime-mode', 'utf-8').trim() : 'ok';
   if (mode === 'fail') { process.exit(1); }
   if (mode === 'said') { console.log(JSON.stringify({ status: 503, error: 'no house free for art' })); process.exit(1); }
-  if (mode === 'said-badly') { console.log(JSON.stringify({ status: 404, error: 'not a 5xx' })); process.exit(1); }
+  if (mode === 'said-badly') { console.log(JSON.stringify({ status: 302, error: 'not a 4xx or 5xx' })); process.exit(1); }
+  if (mode === 'said-400') { console.log(JSON.stringify({ status: 400, error: 'bad-input: place is not one of the venue\\'s' })); process.exit(1); }
   if (mode === 'huge') { console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started', reason: 'x'.repeat(65 * 1024) })); return; }
   if (mode === 'bad') { console.log(JSON.stringify({ conversation: 'nope', seq: 0, body: 'eaten' })); return; }
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
@@ -104,7 +112,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'said-400' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -261,14 +269,17 @@ describe('POST /api/loom/deliver', () => {
     it('a runtime that says it failed (exit 1, {status: 5xx, error}) is that status, and isn\'t kept', async () => {
       mode('said');
       expect(await post(tok.slack, slackMsg('m-said'))).toEqual({ status: 503, body: { error: 'no house free for art' } });
-      // Saying a status outside 5xx is no contract answer: core's 502.
+      // A 4xx the runtime says (a body it can't take) is that 4xx with its error, not core's 502; never kept.
+      mode('said-400');
+      expect(await post(tok.slack, slackMsg('m-said'))).toEqual({ status: 400, body: { error: "bad-input: place is not one of the venue's" } });
+      // Saying a status outside 4xx-5xx is no contract answer: core's 502.
       mode('said-badly');
       const r = await post(tok.slack, slackMsg('m-said'));
       expect(r.status).toBe(502);
       expect(r.body.error).toMatch(/failed \(exit 1\)/);
       mode('ok');
       expect((await post(tok.slack, slackMsg('m-said'))).status).toBe(200);
-      expect(calls()).toHaveLength(3);
+      expect(calls()).toHaveLength(4);
     });
 
     it('the table is in household.db; an answer over 24 hours old is neither replayed nor kept', () => {
@@ -541,13 +552,25 @@ describe('POST /api/loom/deliver', () => {
       expect((await post(tok.slack, slackMsg('n-1'))).status).toBe(200);
     });
 
-    it('a grants authority core can\'t ask yet fails closed for other pieces; its own calls pass', async () => {
-      piece(h.home, 'runtime', { ...RUNTIME_LOOM, grants: true }, RUNTIME_BIN);
-      const r = await post(tok.slack, slackMsg('g-1'));
-      expect(r.status).toBe(503);
-      expect(r.body.error).toMatch(/grants authority \(runtime\) can't be asked yet/);
+    it('with a grants authority, core asks it (path deliver): a no is a 403, a slow one a 503; its own relays aren\'t asked', async () => {
+      piece(h.home, 'runtime', { ...RUNTIME_LOOM, grants: ['loom-runtime', 'grants'] }, RUNTIME_BIN);
+      const asked = () => { const f = join(h.home, 'grants-calls.jsonl'); return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : []; };
+      writeFileSync(join(h.home, 'grants-mode'), 'deny');
+      const no = await post(tok.slack, slackMsg('g-1'));
+      expect(no.status).toBe(403);
+      expect(no.body.error).toBe('forbidden: clock may not act for art');
+      expect(asked()).toEqual([{ agent: 'art', piece: 'slack', path: 'deliver' }]);
       expect(calls()).toHaveLength(0);
+      writeFileSync(join(h.home, 'grants-mode'), 'slow');
+      const slow = await post(tok.slack, slackMsg('g-3'));
+      expect(slow.status).toBe(503);
+      expect(slow.body.error).toMatch(/grants authority \(runtime\) didn't answer \(timed out\)/);
+      expect(calls()).toHaveLength(0);
+      writeFileSync(join(h.home, 'grants-mode'), 'allow');
+      expect((await post(tok.slack, slackMsg('g-4'))).status).toBe(200);
+      const before = asked().length;
       expect((await post(tok.runtime, relay('g-2'))).status).toBe(200);
+      expect(asked()).toHaveLength(before);
     });
   });
 });
