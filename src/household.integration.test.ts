@@ -1155,13 +1155,27 @@ describe('the household page', () => {
     const cookie = await login();
     const front = await data(cookie, '/');
     expect(front.home.needs).toBeGreaterThanOrEqual(1);
-    expect(front.home.firstNeed).toBe('Art E Fish wants to remember something');
-    // Home only links to the Inbox: no buttons of its own.
-    expect(JSON.stringify(front.home)).not.toContain('ratify');
+    // Home's banner is the item's Inbox row, so it carries the item itself: what opens it (its key) and how.
+    expect(front.home.need).toMatchObject({ text: 'Art E Fish wants to remember something', kind: 'decision', attention: true, unread: true });
     expect((front.chrome.shell.core as Data[]).find((c) => c.href === '/inbox')).toMatchObject({ label: 'Inbox', count: expect.any(Number) });
     const inbox = await data(cookie, '/inbox');
     const it = (inbox.items as Data[]).find((i) => i.text === 'Art E Fish wants to remember something');
+    // The same item as the Inbox's row: it has buttons, so the banner opens its sheet (/inbox?i=<key>), not the Inbox.
+    expect(front.home.need.key).toBe(it.key);
     expect(it).toMatchObject({ unread: true, attention: true });
+    // Gone to straight (its own page), the app reads it first: the dot clears, on Home and in the Inbox. Only with
+    // the page's csrf, and only a key.
+    const csrf = csrfOf(front);
+    const read = (form: Record<string, string>) => fetch(`${base}/inbox/read`, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form).toString() });
+    expect((await read({ _csrf: '0'.repeat(64), i: it.key })).status).toBe(403);
+    expect((await read({ _csrf: csrf, i: 'nope' })).status).toBe(400);
+    expect((await data(cookie, '/')).home.need.unread).toBe(true);
+    expect((await read({ _csrf: csrf, i: it.key })).status).toBe(200);
+    expect((await data(cookie, '/')).home.need).toMatchObject({ key: it.key, unread: false });
+    expect(((await data(cookie, '/inbox')).items as Data[]).find((i) => i.key === it.key).unread).toBe(false);
+    // That address names the item, so the Inbox opens it there; and opened, it's read, on Home too.
+    expect((await data(cookie, `/inbox?i=${it.key}`)).open).toBe(it.key);
+    expect((await data(cookie, '/')).home.need).toMatchObject({ key: it.key, unread: false });
     expect(it.key).toMatch(/^[0-9a-f]{16}$/);
     expect(inbox.items[0].key).toBe(it.key);
     expect(JSON.stringify(it)).toContain('“Jonathan builds DnB on the Push 3 first”');

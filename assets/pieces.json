@@ -2,17 +2,17 @@
   "v": 1,
   "pieces": [
     {
-      "name": "box",
+      "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "c51df23528ffae1ede8bb1dc0bb9565dd8265422",
+      "commit": "992fc038b58cf83b175636abde693312f0bd071d",
       "version": "0.1.0",
-      "label": "Boxes",
+      "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
     },
     {
       "name": "secrets",
       "repo": "sleepunit-agents/loom-secrets",
-      "commit": "aa0727bda7b8a2a4c25d4893b1144567f0bb30b1",
+      "commit": "ed68b1d24bd6e5837886c8bae375d2efb05a8987",
       "version": "0.1.0",
       "label": "Secrets",
       "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
@@ -20,23 +20,39 @@
     {
       "name": "shuttle",
       "repo": "sleepunit-agents/shuttle",
-      "commit": "67d105f459f9bbd2599a73378cfa848b99eba8d2",
+      "commit": "105c41cd38291b6ec5e3e159c8341f4c235c4272",
       "version": "0.1.0",
       "label": "Shuttle",
-      "description": "Chat bridges (Discord, Slack) and the household's model subscriptions: accounts, sign-ins, usage."
+      "description": "Chat bridges (Discord, Slack)."
     },
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "79b64a1c38872b8e063ce238723a4165ce26b5b7",
+      "commit": "413a72e566edc02565a0d27fe91e19c983a2b2e7",
       "version": "0.5.0",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
+    },
+    {
+      "name": "approvals",
+      "repo": "sleepunit-agents/loom-approvals",
+      "commit": "a84181bcc421159209b962a87d95fdc20fac1ee0",
+      "version": "0.1.0",
+      "label": "Approvals",
+      "description": "Single-use approvals: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
+    },
+    {
+      "name": "clock",
+      "repo": "sleepunit-agents/loom-clock",
+      "commit": "aa30c6cdc0e361e86e6c975482b7242ba0b84789",
+      "version": "0.1.0",
+      "label": "Clock",
+      "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
     }
   ],
   "kinds": {
     "_comment": "A piece's tab kind when its manifest doesn't say (tab.kind): first-party pieces that are setup, not daily places.",
-    "box": "setting",
+    "runtime": "setting",
     "secrets": "setting",
     "subscriptions": "setting"
   }

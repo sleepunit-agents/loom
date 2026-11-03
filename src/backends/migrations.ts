@@ -8,6 +8,7 @@
  * Add new migrations at the bottom of MIGRATIONS — never reorder or remove
  * existing entries (future migrations may depend on prior state).
  */
+import { CONVERSATION_TABLES, createConversationTables } from './conversations.js';
 import type { Database } from 'better-sqlite3';
 import { rebuildUniqKeys } from './dedup.js';
 
@@ -414,6 +415,84 @@ export const MIGRATIONS: readonly Migration[] = [
     pending: (db) => hasTable(db, 'person_revisions') && !hasColumn(db, 'person_revisions', 'actor'),
     run: (db) => {
       db.prepare('ALTER TABLE person_revisions ADD COLUMN actor TEXT').run();
+    },
+  },
+  {
+    id: 'project_cards',
+    description:
+      'Add projects + project_revisions + project_names: project cards, the condensed current ' +
+      'state of a body of work, and the names (slug and aliases) every live project answers to ' +
+      '(docs/specs/projects.md). Additive — dropping the three tables is the whole backout',
+    pending: (db) => !hasTable(db, 'projects') || !hasTable(db, 'project_revisions') || !hasTable(db, 'project_names'),
+    run: (db) => {
+      db.transaction(() => {
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS projects (
+            slug           TEXT PRIMARY KEY,
+            name           TEXT NOT NULL,
+            status         TEXT NOT NULL,
+            card_json      TEXT NOT NULL,
+            archived_at    TEXT,
+            archived_by    TEXT,
+            archive_reason TEXT,
+            updated        TEXT NOT NULL,
+            synthesized_at TEXT
+          )`,
+        ).run();
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS project_revisions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            slug          TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            op            TEXT NOT NULL,
+            replaced_at   TEXT NOT NULL,
+            actor         TEXT
+          )`,
+        ).run();
+        db.prepare(
+          'CREATE INDEX IF NOT EXISTS idx_project_revisions_slug ON project_revisions(slug, id)',
+        ).run();
+        // Every live project's slug and aliases: "every project name is unique"
+        // is this primary key, not a check.
+        db.prepare(
+          `CREATE TABLE IF NOT EXISTS project_names (
+            name TEXT PRIMARY KEY,
+            slug TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('slug', 'alias'))
+          )`,
+        ).run();
+        db.prepare('CREATE INDEX IF NOT EXISTS idx_project_names_slug ON project_names(slug)').run();
+      }).immediate();
+    },
+  },
+  {
+    id: 'conversations',
+    description:
+      'Add conversations, conversation_turns, conversation_days and conversation_digests: ' +
+      'the agent\'s conversations as core records, metadata only (docs/specs/conversations.md, t-1741). ' +
+      'Additive: dropping the four tables is the whole backout',
+    pending: (db) => CONVERSATION_TABLES.some((t) => !hasTable(db, t)),
+    run: (db) => {
+      db.transaction(() => createConversationTables(db)).immediate();
+    },
+  },
+  {
+    id: 'person_merges',
+    description:
+      'Add person_merges: a person card merged into another (person_merge) leaves a redirect, ' +
+      'from_slug -> into_slug, with who merged, when and what was re-tagged ' +
+      '(docs/specs/person-cards.md, "Merge"). Additive: dropping the table is the whole backout',
+    pending: (db) => !hasTable(db, 'person_merges'),
+    run: (db) => {
+      db.prepare(
+        `CREATE TABLE IF NOT EXISTS person_merges (
+          from_slug   TEXT PRIMARY KEY,
+          into_slug   TEXT NOT NULL,
+          merged_at   TEXT NOT NULL,
+          merged_by   TEXT,
+          counts_json TEXT NOT NULL DEFAULT '{}'
+        )`,
+      ).run();
     },
   },
 ];

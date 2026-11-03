@@ -123,6 +123,15 @@ an agent's persistent state:
   `loom note attach`, stored once by their bytes beside `notes.db`.
 - **`note_read`** — a note's text, lifespan, expiry and files.
 - **`note_list`** — the notes under a prefix, newest first (no text).
+- **`conversation_digest`** — a body run's digest of its conversation (what was
+  asked, decided and done; `needs_owner` puts it in the owner's Inbox), for the
+  conversation and run given to `identity`. A conversation is core's record of who,
+  where and when, in any venue, and never holds text (docs/specs/conversations.md).
+- **`conversations`** — the agent's conversations, newest first, filtered by person,
+  project, venue or `since`.
+- **`conversation`** — one conversation: its record, digests, findings and render
+  (the venue's own, else core's generic one).
+- **`conversation_findings`** — graders' findings on the agent's own turns.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.
@@ -167,7 +176,9 @@ an agent's persistent state:
 - **Person cards** — `person_write`, `person_verify`, `person_archive`,
   `person_restore`, `person`, `person_list`, `person_history`,
   `person_revision_restore`, `person_evidence` (the tagged memories a card
-  condenses, as `loom person evidence` gives them). A card is the condensed current state of one human
+  condenses, as `loom person evidence` gives them), `person_merge` (two cards
+  that turn out to be one person become one: from is left as a redirect to into,
+  and everything tagged from is re-tagged). A card is the condensed current state of one human
   the agent works with (where they are in each system, with a freshness marker;
   how to work with them; what they were said to be allowed to do, each with a
   source). One value per field, overwritten; the past lives in revisions. Cards
@@ -176,6 +187,21 @@ an agent's persistent state:
   `# In the room` block with the cards of the people a turn is addressed by.
   CLI: `loom person show <slug>` / `loom person list`. Design:
   `docs/specs/person-cards.md`.
+
+- **Project cards** — `project_write`, `project_verify`, `project_archive`,
+  `project_restore`, `project_history`, `project_revision_restore`, `project`,
+  `project_list`, `project_hub`, `project_orphans`. A project card is the
+  condensed current state of an ongoing body of work (what it is, its goal,
+  where it stands, with freshness markers) plus `links`, the selectors its hub
+  reads with: aliases (other memory tags that mean this project), note
+  prefixes, an epic, repos, venues. The hub is computed at read, never stored:
+  memories tagged with any of the project's names, notes under its prefixes,
+  and person cards with a `where` field for it. A project's names (slug and
+  aliases) are unique across live projects, and recall scoped to any of them
+  sees memories tagged with any of them; `forget` and `memory_list` stay exact.
+  `identity({project})` adds a `# This project` block with the card.
+  `project_orphans` lists memory tags no project answers to. CLI:
+  `loom project show|list|hub|orphans`. Design: `docs/specs/projects.md`.
 
 Everything lives on disk as plain markdown plus a single SQLite file.
 No daemon, no external service, no GPU.

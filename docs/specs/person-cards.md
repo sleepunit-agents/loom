@@ -217,7 +217,8 @@ are removed with it.
 ## Revisions
 
 `person_revisions(id, slug, snapshot_json, op, replaced_at)`. `op` is one of
-`write | verify | archive | restore | revision_restore`. Every stored change
+`write | verify | archive | restore | revision_restore | merge | merged_from`
+(the last two are person_merge's, see Merge). Every stored change
 inserts a snapshot of the **whole previous row** (card JSON, archive state and
 timestamps) before it applies. No-ops insert nothing. The newest 10 are kept
 per slug, and older ones are pruned in the same transaction.
@@ -271,6 +272,145 @@ something then *enforces* has granted itself authority. So:
   agent's name, which is the same value `knowledge_write` uses for `author`.
   Archiving an archived card, or restoring an active one, is a no-op and
   returns `unchanged: true`. Either call on a missing card is rejected.
+
+**Ensure** (2026-11-02: a person is one card, however they were added)
+
+Adding a person anywhere outside an agent's own tools (a piece letting someone into
+an agent's gates, the runtime's gates, the owner by hand) makes sure they have a card,
+so the People page and every agent see them once. Agents keep writing cards with
+`person_write`; this is the one seam for everyone else.
+
+- `POST /api/loom/people/ensure` with `{slug, name, role?, source, where?, agent?,
+  dry_run?}`, where `where` maps a field to `{value, label?, source?}` and `value` is a
+  string or up to 8. On loom's machine: `loom person ensure` with the same body on stdin,
+  or `loom person ensure <slug> --name <n> [--role <r>] [--source <s>]
+  [--where <field>=<value>]... [--agent <a>] [--dry-run]`.
+- **No card:** a minimal one is made: the name, the summary `<role>. From <source>.`
+  (`From <source>.` without a role), and the `where` values, each with the call's
+  `source` unless it has its own. In a household the name and handles go to the
+  directory and the summary to `agent`'s relationship (the household's default agent
+  when none is named), the same split `person_write` makes.
+- **A card:** only the `where` values it lacks are added, beside the ones there, as
+  `loom person reach` adds an id: a value whose id (its first word) is already in the
+  field, however it was written, counts as there. The field's label and source are set
+  only when it has none. Name, summary, how and may are never touched, and an existing
+  card gets no relationship it didn't have. A call that adds nothing is a no-op.
+- **One person, one card:** a value already on another card (by id, in the same field)
+  refuses the whole call (409), naming that card. An archived card refuses too (409):
+  restore it first.
+- **Refused like a write:** a bad slug, a reserved key (as a field or inside one), an
+  unknown key, empty or over-long text (400). Nothing is written.
+- **Who may call it:** a household owner (their token); the runtime (its token: its
+  gates name a card, agent-runtime.md section 6); and a piece's process in an owner's
+  action, which carries the grant loom minted for that action (`LOOM_STORE_GRANT`,
+  piece-storage.md): `loom person ensure` reads it from the environment, and the route
+  takes the piece's own credential with the grant in `X-Loom-Store-Grant`. Either way
+  loom checks it as `loom store` does (signed by loom, unexpired, that piece's) and
+  that it is an owner's. A piece's own process, or one serving an agent, is refused
+  (exit 5, 403), and so are agent, agent-owner, peer and review tokens. `person ensure`
+  never runs over `POST /cli`. The revision records who: the owner, `<who> via <piece>`,
+  or `runtime:<piece>`.
+- `dry_run: true` answers what would change and writes nothing (it opens the stores
+  read-only), so on loom's machine any process may ask one (a piece's backfill
+  report); the route still takes only the callers above. The CLI takes several bodies,
+  one per line, so the owner can pipe a piece's list in (`loom shuttle cards-backfill
+  --bodies | loom person ensure`); each is answered on its own line. The answer is `{slug, created, added: {field: [values]}, unchanged,
+  dry_run, card}`.
+- Like `reach`, it reads the card and then writes it: two calls racing on one card can
+  each add their own id, and the later write keeps both only if each read the other's.
+  It's for the rare moment a person is added, not a hot path.
+
+**Merge** (2026-11-02: two cards that turn out to be one person become one)
+
+Two agents each talked to the same human and each made a card; then they find it's one
+person. `person_merge({from, into, dry_run?})` makes the two one, and afterwards nothing in
+loom points at `from`.
+
+- **Surfaces.** The MCP tool, for an agent: in a household its household holds both cards
+  (the shared directory), outside one its own store does; the revision names the agent.
+  **An agent merges only its own:** the commons card, its own copy, and its own memories,
+  proposals, conversations and turns. Every other agent's store is left alone and isn't
+  read, so the answer has no counts for it; `not_done` names those agents and says to ask
+  the owner, whose merge then finds the redirect and finishes them. Only the owner and the
+  runtime merge across every agent's store and see per-agent counts.
+  `loom person merge <from> <into> [--dry-run] [--json]` for the owner on loom's machine (a
+  piece's process is refused, exit 5; exit 3 for a missing card, 1 for any other refusal;
+  never over `POST /cli`). `POST /api/loom/people/merge {from, into, dry_run?}` for a
+  household owner (an agent owner, an agent, a piece, a peer or a review token is 403) and
+  for the runtime; 404 for a missing card, 409 for a refusal, 400 for a bad request.
+- **The card.** `where` is the union of both cards' values per field, by id (a value whose
+  id is already in the field counts as there, as ensure and reach count it). A field only
+  `from` has comes whole, with its own `verified_at`, `source`, `label`. A field both have
+  keeps one envelope, because the schema has one per field: checked at the older of the
+  two times (unverified if either side is), both sources joined, both labels joined, the
+  shorter `stale_after_days`. `from`'s own envelopes stay in its archived row and in
+  `into`'s history. `how` and `may` are the union, `into` winning a key (`may` entries are
+  the same when text and source are). Name and summary are `into`'s (an agent's copy that
+  has no `into` summary takes `from`'s), and the summary gains one line,
+  `Merged <from> (<from's name>) <YYYY-MM-DD>`. The merged card must pass the usual
+  schema, or the merge is refused naming why, and nothing is written.
+- **A cardless `from`.** `from` may be a bare tag with no card (memories tagged `jonathan`
+  beside the card `jonathan-barket`) when `into` has one: its memories, proposals,
+  conversations, turns and links are re-tagged and the redirect written, with no card to
+  archive, no merge line and no card fields (`cardless: true`). A bare tag that nothing in
+  reach carries is refused (404): it's a typo, not a person. The member refusal is for a
+  member's card, so a member's slug used only as a bare tag merges.
+- **Every copy.** In a household that's done to the directory entry (name, `where`, facts)
+  and to every agent's own copy (summary, the rest of `how`, `may`): an agent that had
+  both merges them, one that had only `from`'s now has it as `into`'s, one that had only
+  `into`'s gets the line. Where a copy took `from`'s content or memories were re-tagged,
+  its `synthesized_at` resets to null, so `memories_since_synthesis` counts every tagged
+  memory and the consolidation lane re-reads them.
+- **Re-tags,** in every agent's store the caller reaches (the owner and the runtime: every
+  agent's; an agent: its own; outside a household, the one store): memories with `metadata.person = from` or `from` in `metadata.people`
+  (archived ones too) and memory proposals the same, without touching `updated`;
+  `conversations.people_json`; every `conversation_turns.from_json` from the person.
+  `how.via` and `how.loop_in` naming `from` on any card, directory or relationship, are
+  pointed at `into` (inert strings everywhere else, rule 1; these two are slugs by
+  design). household.db holds no person slug (`conversation_strangers` is keyed by
+  conversation, and is left as is). A project card holds none either: a hub's people are
+  the person cards with a `where` field named for the project, so they follow the merged
+  `where` (the dry run names the hubs that list `from` today).
+- **The redirect.** `from` is archived (`archive_reason: merged into <into>`, the merger
+  as `archived_by`) and `person_merges(from_slug, into_slug, merged_at, merged_by,
+  counts_json)` records it, in the directory and in every agent's store the merge
+  touched. Reading `from` returns `into`'s card with `merged: {from, into, at}` and a last
+  rendered line `_(<from> was merged into <into> <date>: this is <into>'s card)_`; the
+  room block reads it as `into`, once however it's named; the People page opens `into`.
+  A later `person_write`, `person_verify`, ensure or `loom person reach` to `from` lands
+  on `into` and says `redirected_from`. Ensure doesn't count `from`'s archived values as
+  another card's. `person_restore` of `from` is refused. `person_list({include_archived:
+  true})` marks it `merged_into`. Redirects are followed when `into` is merged on later.
+  The redirect lasts until it's purged by hand (there is no purge surface).
+- **Refused:** `into` missing (404), or `from` with no card and no tags (404); either archived (restore it first; an `into` that
+  is itself a redirect names its own `into`); `from` equal to `into`; `from` already merged
+  elsewhere; `from` one of the household's agents, or a household member (their tokens and
+  sign-ins name them: merge the other way); an agent's entry merged with a person's.
+- **History.** `into` gets a `merge` revision (the card it was) and a `merged_from` one
+  (`from`'s card as it was, its summary with it, under `into`'s slug: listed by
+  `person_history`, never restorable onto `into`); `from` gets a `merge` revision before
+  it's archived. Every revision names the merger. `person_merges.counts_json` holds what
+  was re-tagged, per agent (`memories`, `proposals`, `conversations`, `turns`, the cards
+  relinked) and the directory's relinked cards.
+- **Order and crashes.** One SQLite transaction per database. In a household: the
+  directory first (its card, `from`'s archive and the redirect together), then each
+  agent's store (its copy, its redirect, its re-tags), then the counts. A crash between
+  them leaves at worst a redirect with some stores not yet re-tagged: running the same
+  merge again sees the redirect (`resumed: true`) and finishes them. Outside a household
+  it's one transaction.
+- **`dry_run: true`** opens every store read-only and answers what would change:
+  `where_added` (by field), `how_added`, `may_added`, the merged card, per agent the card
+  step and the memories, proposals, conversations and turns it would re-tag, the cards it
+  would relink, and the project hubs that list `from`.
+
+**What a card merge doesn't do.** It doesn't rename the slug in any agent's gates: those
+are the harness's (today shuttle's per-agent gate lists, which have their own people-merge
+owner action, shuttle#51, `shuttle/gates_page.py` `_merge`, one agent's list at a time).
+After a card merge, rename `from` to `into` in every agent's gates; the answer's `not_done`
+says so (t-1746 carries it into the runtime). It doesn't rewrite text: memory bodies,
+notes, knowledge pages and conversation digests that write the old slug in prose keep it.
+A piece that stores person slugs in its own store renames them itself. The audit log's
+redaction still knows `from`'s name and slug, because its archived card stays.
 
 **Read**
 - `person({slug, include_archived?})` returns `{found: true, rendered, card,

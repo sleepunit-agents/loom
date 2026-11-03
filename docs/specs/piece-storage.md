@@ -68,6 +68,11 @@ A piece declares its collections in its manifest, each with who may write it:
 
 - **`owner`**: written only while the piece is handling a page action from a
   household owner. loom hands that call a write grant good for that call alone.
+  The owner running the piece at loom's machine (`loom <piece> …`, with nothing
+  in the environment saying it's a piece's process, a granted call or a house)
+  gets the same grant for that run (src/cli/pieces.ts, `dispatchEnv`): how the
+  owner pipes one piece's export into another's import, each touching only its
+  own store (agent-runtime.md, "What moves where").
   Nothing else can write it: not the piece on its own, not an agent's token,
   and not the piece answering an agent's API call. This is the enforced
   owner-only surface the 2026-10-21 decision asked for.

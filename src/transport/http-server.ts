@@ -31,7 +31,7 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
-import { PieceStore, StoreError, type Grant } from '../stores.js';
+import { PieceStore, readGrant, StoreError, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
@@ -44,15 +44,27 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
-import { findPiece } from '../cli/pieces.js';
-import { readRecord } from '../cli/pieces-managed.js';
+import { findPiece, resolvePieceName } from '../cli/pieces.js';
+import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
+import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
+import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
+import { askGrant } from '../grants.js';
+import { writeTurn } from '../conversations.js';
+import { ConversationError, foldConversations } from '../backends/conversations.js';
+import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
+import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
+import { takeAudit } from '../audit-take.js';
+import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
+import { personEnsure, personMergeRun } from '../tools/person.js';
+import { PersonMergeError } from '../backends/people-merge.js';
+import { PersonCardError } from '../backends/people.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
-import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, roleString, TokenResolver, type Household, type Role } from '../household.js';
+import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
 import { createHash, timingSafeEqual as cryptoTimingSafeEqual } from 'node:crypto';
 import {
   assertSafeBind,
@@ -132,6 +144,18 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   if (res.headersSent) return;
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+/** The error envelope's leading word for a status: the one cascade core's /api/loom routes use. */
+function statusWord(status: number): string {
+  switch (status) {
+    case 403: return 'forbidden';
+    case 404: return 'not-found';
+    case 409: return 'conflict';
+    case 410: return 'gone';
+    case 503: return 'unavailable';
+    default: return status >= 500 ? 'error' : 'bad-input';
+  }
 }
 
 function sendError(res: ServerResponse, status: number, message: string): void {
@@ -235,7 +259,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (wrote.length) process.stderr.write(`loom: made directory entries for ${wrote.join(', ')} (People entries for the household's agents and members)\n`);
   }) : undefined;
   live?.();
-  const resolver = live ? new TokenResolver(live) : undefined;
+  // The runtime piece is read per request, so removing it (or installing a second) ends its tokens at once.
+  const resolver = live ? new TokenResolver(live, { runtimePieces: () => runtimePieces(process.env) }) : undefined;
   const ownerDigest = opts.token ? createHash('sha256').update(opts.token).digest() : undefined;
   /** An owner's caller for a piece: who, and what they own (docs/specs/owners.md). */
   const ownerCaller = (member: string | undefined): ApiCaller => {
@@ -263,6 +288,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
     }
     if (!role) return { status: 401, error: 'unauthorized: bearer token not recognized' };
+    // A credential minted for an old piece name (piece:box/<id>) acts as the piece it now is, its
+    // subject unchanged, so every check after this (own API, store, grants) sees that piece.
+    if (role.kind === 'piece') {
+      const now = resolvePieceName(process.env, role.piece);
+      if (now !== role.piece) role = { ...role, piece: now };
+    }
     return role;
   }
 
@@ -272,6 +303,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if ('status' in role) return role;
     // Every kind is handled by name: an unlisted one must never fall through to the owner's branch.
     if (role.kind === 'piece') return { status: 403, error: `forbidden: a piece credential reaches only /api/${role.piece}/` };
+    if (role.kind === 'runtime' || role.kind === 'review') return { status: 403, error: `forbidden: a ${role.kind} token reaches only its own /api/loom/ routes` };
     const h = live!();
     if (role.kind === 'peer') {
       if (target) return { status: 403, error: 'forbidden: a peer token reaches the commons only' };
@@ -318,6 +350,34 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   if (household) for (const a of household.agents) createBackend(agentDir(household, a));
   else if (!opts.createServer) createBackend(opts.contextDir);
 
+  // Conversations (docs/specs/conversations.md): the venues registry is reconciled with what's
+  // installed (a sync a piece change couldn't do is done now), and the retention fold runs at
+  // start and daily. Neither ever stops the daemon.
+  const foldAll = () => {
+    const dirs = live ? live().agents.map((a) => agentDir(live(), a)) : opts.createServer ? [] : [opts.contextDir];
+    for (const d of dirs) {
+      try { foldConversations(d); } catch (e) { process.stderr.write(`loom: the conversations fold failed for ${d}: ${(e as Error).message}\n`); }
+    }
+  };
+  if (household) syncVenuesQuietly(process.env);
+  foldAll();
+  const foldTimer = setInterval(foldAll, 24 * 60 * 60 * 1000);
+  foldTimer.unref();
+  // The audit log's sweep (docs/specs/conversations.md, "The audit log"): every entry older
+  // than 7 days goes, hourly and at start. The same pass settles the last days' metadata
+  // measures on the scorecards. Neither ever stops the daemon.
+  const sweepAll = () => {
+    if (!live) return;
+    const h = live();
+    try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
+    for (const day of recentDays()) {
+      try { computeMeasures(h, day); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
+    }
+  };
+  sweepAll();
+  const sweepTimer = setInterval(sweepAll, 60 * 60 * 1000);
+  sweepTimer.unref();
+
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
     ? {
@@ -355,6 +415,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     return async (argv: string[]): Promise<{ ok: boolean; text: string }> => {
       const path = findPiece('clock', process.env);
       if (!path) return { ok: false, text: 'relay: this loom has no clock piece' };
+      // A call to a piece as the agent: the grants authority decides first, as for /api (src/grants.ts).
+      const no = await askGrant(process.env, { agent, piece: 'clock', path: 'run' });
+      if (no) return { ok: false, text: `relay: ${no.error}` };
       const out = await pieceApi(path, { caller: { kind: 'agent', agent }, path: 'run', body: { argv } }, process.env);
       const b = (out.body ?? {}) as { exit?: number; stdout?: string; stderr?: string; error?: string };
       const ok = out.status === 200 && b.exit === 0;
@@ -422,8 +485,32 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
    * An owner or agent token calls as itself; a piece credential only its own
    * piece, as its subject; a peer never.
    */
-  async function handlePieceApi(req: IncomingMessage, res: ServerResponse, piece: string, subpath: string): Promise<void> {
-    if (req.method !== 'POST') return sendError(res, 405, `method-not-allowed: POST /api/${piece}/`);
+  async function handlePieceApi(req: IncomingMessage, res: ServerResponse, named: string, subpath: string): Promise<void> {
+    // An old piece name (PIECE_ALIASES: /api/box/… while the runtime is installed and no box is) is its piece.
+    const piece = named === 'loom' ? named : resolvePieceName(process.env, named);
+    // GET /api/loom/venues (role-routes.ts, RUNTIME_GET_ROUTES): the runtime's view of every venue.
+    if (piece === 'loom' && RUNTIME_GET_ROUTES.includes(subpath)) {
+      if (req.method !== 'GET') return sendError(res, 405, `method-not-allowed: GET /api/loom/${subpath}`);
+      if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+      if (req.headers['authorization'] === undefined) return sendError(res, 401, 'unauthorized: a bearer token is required');
+      const role = roleFor(req.headers['authorization']);
+      if ('status' in role) return sendError(res, role.status, role.error);
+      if (role.kind !== 'runtime') return sendError(res, 403, `forbidden: GET /api/loom/${subpath} takes the runtime's token`);
+      // The body first, then the head: a failure to read is the 503, never a 200 cut short.
+      let body: string;
+      try {
+        body = JSON.stringify({ venues: venueDirectory(process.env) });
+      } catch (e) {
+        process.stderr.write(`loom: couldn't list venues: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t list venues; see the daemon log');
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(body);
+      return;
+    }
+    // GET_ROUTES (the scorecards, the review's settings: a runtime token) are GET; everything else is POST.
+    const getRoute = piece === 'loom' && GET_ROUTES.includes(subpath);
+    if (getRoute ? req.method !== 'GET' : req.method !== 'POST') return sendError(res, 405, `method-not-allowed: ${getRoute ? 'GET' : 'POST'} /api/${piece}/${getRoute ? subpath : ''}`);
     // No token at all: only a path the piece declared open to strangers (its loom block, fixed at
     // install), with a small body, as {kind:'stranger', address}. Everything else still needs a token.
     if (req.headers['authorization'] === undefined) {
@@ -433,6 +520,28 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     const role = roleFor(req.headers['authorization']);
     if ('status' in role) return sendError(res, role.status, role.error);
+    // POST /api/loom/deliver (docs/specs/agent-runtime.md, "Delivery"): the one core route every
+    // piece credential reaches, as its piece, beside its own API; and the runtime's own token.
+    if (piece === 'loom' && subpath === DELIVER_ROUTE) {
+      if (role.kind !== 'piece' && role.kind !== 'runtime') return sendError(res, 403, `forbidden: /api/loom/${DELIVER_ROUTE} takes a piece's own token (a source delivering), or the runtime's`);
+      return deliverApi(req, res, role.piece);
+    }
+    // POST /api/loom/people/ensure (docs/specs/person-cards.md, "Ensure"): a household owner, a piece
+    // in an owner's action (its credential and the grant loom gave it), or the runtime.
+    if (piece === 'loom' && subpath === ENSURE_ROUTE) return ensureApi(req, res, role);
+    // POST /api/loom/people/merge (docs/specs/person-cards.md, "Merge"): a household owner, or the runtime.
+    if (piece === 'loom' && subpath === MERGE_ROUTE) return mergeApi(req, res, role);
+    // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
+    if (role.kind === 'runtime' || role.kind === 'review') {
+      if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
+      return loomApi(req, res, subpath, role, runOf(req.headers['authorization']));
+    }
+    // An agent's own session turns (docs/specs/conversations.md): the one core route an agent token reaches.
+    if (piece === 'loom' && role.kind === 'agent' && AGENT_ROUTES.includes(subpath)) return loomApi(req, res, subpath, role, '');
+    // Core's own routes for those roles refuse everyone else by name, before the store's 404.
+    if (piece === 'loom' && Object.values(ROLE_ROUTES).some((paths) => paths.includes(subpath))) {
+      return sendError(res, 403, `forbidden: /api/loom/${subpath} takes a runtime or review token${AGENT_ROUTES.includes(subpath) ? ', or an agent token for its own session' : ''}`);
+    }
     // A piece's own store in loom (docs/specs/piece-storage.md): its credential, or a household owner.
     if (piece === 'loom') return storeApi(req, res, subpath, role);
     let caller: ApiCaller;
@@ -447,7 +556,16 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           }
         }
         break;
-      case 'agent': caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) }; break;
+      case 'agent': {
+        caller = { kind: 'agent', agent: role.agent, ...(role.service ? { service: role.service } : {}), ...(role.house ? { house: role.house } : {}) };
+        // The grants authority, if one is installed, decides before the piece runs (src/grants.ts).
+        // A piece that isn't there is still its 404 below, asked or not.
+        if (piece !== 'loom' && findPiece(piece, process.env)) {
+          const no = await askGrant(process.env, { agent: role.agent, piece, path: subpath });
+          if (no) return sendError(res, no.status, no.error);
+        }
+        break;
+      }
       case 'piece':
         if (role.piece !== piece) return sendError(res, 403, `forbidden: this credential is ${role.piece}'s`);
         caller = { kind: 'piece', subject: role.subject };
@@ -455,6 +573,207 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       case 'peer': return sendError(res, 403, 'forbidden: a peer token reaches the commons only');
     }
     return pieceCall(req, res, piece, subpath, caller, maxBytes);
+  }
+
+  /** POST /api/loom/deliver as `piece`: checked and forwarded by src/delivery.ts. Like /api: JSON only, no Origin. */
+  async function deliverApi(req: IncomingMessage, res: ServerResponse, piece: string): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    // A declared length over the cap is refused before reading (as pieceCall does), so the caller gets the 413.
+    const declared = Number(req.headers['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > DELIVER_MAX_BYTES) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
+    const raw = await collectBody(req, DELIVER_MAX_BYTES);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: a delivery is ${DELIVER_MAX_BYTES / 1024} KB at most`);
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    let out;
+    try {
+      out = await deliver(process.env, live!(), { piece }, body);
+    } catch (e) {
+      // Keep the details (paths) out of the response.
+      process.stderr.write(`loom: couldn't deliver: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t deliver; see the daemon log');
+    }
+    if (out.status !== 200) return sendError(res, out.status, (out.body as { error: string }).error);
+    return sendJson(res, 200, out.body);
+  }
+
+  /**
+   * POST /api/loom/people/ensure {slug, name, role?, source, where?, agent?, dry_run?}: make sure a
+   * person has a card (backends/people-ensure.ts). Who may: a household owner; the runtime; a
+   * piece's credential carrying, in X-Loom-Store-Grant, the owner's grant loom gave that piece's
+   * process for the action in progress (checked as `loom store` checks it: signed by loom, not
+   * expired, this piece's, owner). Agents write cards with person_write; nobody else reaches it.
+   */
+  async function ensureApi(req: IncomingMessage, res: ServerResponse, role: Role): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    let actor: string;
+    if (role.kind === 'owner') {
+      const c = ownerCaller(role.member);
+      if (c.kind !== 'owner' || (c.agents !== undefined && c.agents !== '*')) return sendError(res, 403, 'forbidden: a card is made by a household owner, a piece in their action, or the runtime');
+      actor = c.who ?? 'owner';
+    } else if (role.kind === 'runtime') {
+      actor = `runtime:${role.piece}`;
+    } else if (role.kind === 'piece') {
+      const raw = req.headers['x-loom-store-grant'];
+      const g = readGrant(h.home, typeof raw === 'string' ? raw : undefined);
+      if (!g || g.piece !== role.piece || !g.owner) {
+        return sendError(res, 403, `forbidden: a piece makes a card only in an owner's action: send the owner's grant loom gave ${role.piece}'s process (X-Loom-Store-Grant)`);
+      }
+      actor = `${g.who ?? 'owner'} via ${role.piece}`;
+    } else {
+      return sendError(res, 403, role.kind === 'agent'
+        ? 'forbidden: an agent writes its cards with person_write; people/ensure is the owner\'s, a piece\'s in their action, and the runtime\'s'
+        : `forbidden: a ${role.kind} token doesn't make cards`);
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 16 * 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: an ensure is 16 KB at most');
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    try {
+      return sendJson(res, 200, personEnsure(agentDir(h, h.default), body, actor));
+    } catch (e) {
+      if (e instanceof PersonCardError) {
+        const conflict = /is archived|already on .*'s card/.test(e.message);
+        return sendError(res, conflict ? 409 : 400, `${conflict ? 'conflict' : 'bad-input'}: ${e.message}`);
+      }
+      process.stderr.write(`loom: couldn't ensure a person card: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t ensure the card; see the daemon log');
+    }
+  }
+
+  /**
+   * POST /api/loom/people/merge {from, into, dry_run?}: make two person cards one
+   * (backends/people-merge.ts), across the household's directory and every agent's store. Who
+   * may: a household owner; the runtime. An agent merges with person_merge; nobody else reaches it.
+   */
+  async function mergeApi(req: IncomingMessage, res: ServerResponse, role: Role): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    let actor: string;
+    if (role.kind === 'owner') {
+      const c = ownerCaller(role.member);
+      if (c.kind !== 'owner' || (c.agents !== undefined && c.agents !== '*')) return sendError(res, 403, 'forbidden: cards are merged by a household owner or the runtime');
+      actor = c.who ?? 'owner';
+    } else if (role.kind === 'runtime') {
+      actor = `runtime:${role.piece}`;
+    } else {
+      return sendError(res, 403, role.kind === 'agent'
+        ? 'forbidden: an agent merges cards with person_merge; people/merge is the owner\'s and the runtime\'s'
+        : `forbidden: a ${role.kind} token doesn't merge cards`);
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 4 * 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: a merge is 4 KB at most');
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    try {
+      return sendJson(res, 200, personMergeRun(agentDir(h, h.default), body, actor));
+    } catch (e) {
+      if (e instanceof PersonMergeError) {
+        const code = e.status === 404 ? 'not-found' : e.status === 409 ? 'conflict' : 'bad-input';
+        return sendError(res, e.status, `${code}: ${e.message}`);
+      }
+      if (e instanceof PersonCardError) return sendError(res, 400, `bad-input: ${e.message}`);
+      process.stderr.write(`loom: couldn't merge person cards: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t merge the cards; see the daemon log');
+    }
+  }
+
+  const reachList = (kind: 'runtime' | 'review') =>
+    ROLE_ROUTES[kind].length ? ROLE_ROUTES[kind].map((p) => `${GET_ROUTES.includes(p) ? 'GET' : 'POST'} /api/loom/${p}`).join(', ') : 'nothing yet';
+
+  /**
+   * A review run's id: a digest of its token (one token per run), so the refs a take hands out
+   * answer only that run's scores, findings and done. A digest, never the token itself.
+   */
+  const runOf = (header: string | undefined): string =>
+    `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
+
+  /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
+  const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
+
+  const auditFail = (res: ServerResponse, e: unknown, what: string) => {
+    if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
+    // Never the details: an audit error must not carry text or paths into a response.
+    process.stderr.write(`loom: couldn't ${what}: ${(e as Error).name}\n`);
+    return sendError(res, 503, `unavailable: couldn't ${what}; see the daemon log`);
+  };
+
+  /**
+   * POST /api/loom/<path> for the runtime and review roles (src/transport/role-routes.ts):
+   * the caller already passed roleReaches. Like /api: JSON only, no Origin.
+   */
+  async function loomApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Extract<Role, { kind: 'runtime' | 'review' | 'agent' }>, run: string): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    // GET /api/loom/scorecards (docs/specs/conversations.md, "Review", step 4): the runtime's model choice reads it.
+    if (subpath === 'scorecards' && role.kind === 'runtime') {
+      try {
+        const since = new URL(req.url ?? '/', 'http://localhost').searchParams.get('since') ?? undefined;
+        return sendJson(res, 200, { rows: scorecards(live!().home, since) });
+      } catch (e) { return auditFail(res, e, 'read the scorecards'); }
+    }
+    // GET /api/loom/review/config (docs/specs/conversations.md, "Review"): the runtime reads the
+    // setting here, never from the file.
+    if (subpath === 'review/config' && role.kind === 'runtime') {
+      const h = live!();
+      return sendJson(res, 200, { review: h.review ?? 'on', tz: h.tz ?? 'UTC' });
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const cap = bodyCap(subpath);
+    const raw = await collectBody(req, cap);
+    if (raw === OVERSIZED) return sendError(res, 413, `oversized: this call is ${cap / 1024} KB at most`);
+    let body: unknown = {};
+    try { if (raw !== '') body = JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    // POST /api/loom/conversations/turn (docs/specs/conversations.md, "Who writes what"): metadata only.
+    if (subpath === 'conversations/turn' && (role.kind === 'runtime' || role.kind === 'agent')) {
+      try {
+        return sendJson(res, 200, writeTurn(live!(), role, body));
+      } catch (e) {
+        if (e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
+        process.stderr.write(`loom: couldn't record a turn: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t record the turn; see the daemon log');
+      }
+    }
+    // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
+    if (subpath === 'audit' && (role.kind === 'runtime' || role.kind === 'agent')) {
+      try { return sendJson(res, 200, writeAudit(live!(), role, body)); } catch (e) { return auditFail(res, e, 'write the audit entry'); }
+    }
+    // The review run's routes (docs/specs/conversations.md, "Review tokens"), all scoped to its run.
+    if (role.kind === 'review') {
+      try {
+        if (subpath === 'audit/take') {
+          // Raw text, redacted: never cached.
+          const out = takeAudit(live!(), run, body);
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+          res.end(JSON.stringify(out));
+          return;
+        }
+        if (subpath === 'audit/done') return sendJson(res, 200, doneEntries(live!().home, run, body));
+        if (subpath === 'scores') return sendJson(res, 200, postScore(live!(), run, body));
+        if (subpath === 'findings') return sendJson(res, 200, postFinding(live!(), run, body));
+      } catch (e) { return auditFail(res, e, `answer ${subpath}`); }
+    }
+    // POST /api/loom/review/token (docs/specs/conversations.md, "Review tokens"): one per run.
+    if (subpath === 'review/token' && role.kind === 'runtime') {
+      try {
+        const { token, record } = mintReviewToken(live!(), role.piece);
+        // A credential: never cached.
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify({ token, expires: record.expires }));
+        return;
+      } catch (e) {
+        if (e instanceof TokenLimitError) return sendError(res, 429, `too-many: ${e.message}`);
+        // Keep the details (paths) out of the response, as roleFor does.
+        process.stderr.write(`loom: couldn't mint a review token: ${(e as Error).message}\n`);
+        return sendError(res, 503, 'unavailable: couldn\'t mint a review token; see the daemon log');
+      }
+    }
+    return sendError(res, 404, `not-found: /api/loom/${subpath}`);
   }
 
   /**
@@ -465,7 +784,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   async function storeApi(req: IncomingMessage, res: ServerResponse, subpath: string, role: Role): Promise<void> {
     const m = /^store\/([a-z][a-z0-9-]{0,39})\/(get|list|put|del|history|revert)$/.exec(subpath);
     if (!m) return sendError(res, 404, 'not-found: /api/loom/store/<piece>/<get|list|put|del|history|revert>');
-    const [, storePiece, op] = m;
+    const [, storeNamed, op] = m;
+    const storePiece = resolvePieceName(process.env, storeNamed);
     let grant: Grant;
     if (role.kind === 'piece' && role.piece === storePiece) grant = { piece: storePiece, exp: Number.MAX_SAFE_INTEGER };
     else if (role.kind === 'owner') {
@@ -711,6 +1031,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     host: opts.host,
     async close() {
       if (pushTimer) clearInterval(pushTimer);
+      clearInterval(foldTimer);
+      clearInterval(sweepTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

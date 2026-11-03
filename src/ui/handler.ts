@@ -46,13 +46,16 @@ import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { sessionStore, signinLink } from './sessions.js';
 import { APP_JS } from './app.js';
-import { askKey, publicKey, pushSub, watch } from './push.js';
+import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
-import { agentName, coreAct, corePage, homePage, uiTimeZone } from './core.js';
+import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } from './core.js';
+import { getConversation as conversationOf, openNeeds } from '../backends/conversations.js';
+import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
-import { catalogKinds, readCatalog } from '../cli/pieces-managed.js';
+import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
+import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
@@ -108,9 +111,11 @@ export interface UiOptions {
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup'
-    || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/');
+    || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
+    // A conversation is found among their agents only (the household they're given is theirs alone).
+    || pathname.startsWith('/conversation/');
 }
 
 /**
@@ -171,7 +176,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
   return `bearer:${createHash('sha256').update(String(req.headers.authorization ?? '')).digest('base64url')}`;
 }
 
-const PAGE_ROOTS = ['/app', '/events', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact'];
+const PAGE_ROOTS = ['/app', '/events', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -491,7 +496,7 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
   const hh = opts.household?.();
   const needs = (a: HomeAsk) => a.attention !== false;
-  if (hh) return [...proposalAsks(hh, Object.fromEntries(hh.agents.map((a) => [a, pendingProposals(hh, a)]))), ...pieceAsks(pieces, opts.env)].filter(needs);
+  if (hh) return [...coreAsks(hh), ...pieceAsks(pieces, opts.env)].filter(needs);
   return pieceAsks(pieces, opts.env).filter(needs);
 }
 
@@ -509,7 +514,7 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
     return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
   return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
-    key: askKey(a), title: `Your call · ${a.sourceLabel ?? a.source.id}`, body: a.text, ...(a.agent ? { agent: a.agent } : {}),
+    key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
   })), subject, undefined, hears);
 }
@@ -535,6 +540,33 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
     return { text: `${name} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.',
       page: `loom:a/${a}/mind`, label: 'Review', agent: a, source: CORE, sourceLabel: 'Mind' };
   });
+}
+
+/** loom's own asks for every agent: memory proposals, then conversations that need the owner. */
+export function coreAsks(h: Household): HomeAsk[] {
+  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h)];
+}
+
+/**
+ * Needs you (docs/specs/conversations.md): a conversation whose newest digest has `needs_owner`
+ * is an ask from core, linking to the conversation, until a later digest in it has none.
+ */
+export function conversationAsks(h: Household): HomeAsk[] {
+  return h.agents.flatMap((a) => {
+    let open: ReturnType<typeof openNeeds>;
+    try { open = openNeeds(agentDir(h, a)); } catch { return []; }
+    const name = agentName(agentDir(h, a));
+    return open.map(({ conversation: c, digest: d }): HomeAsk => ({
+      text: `${name} needs you: ${d.needs_owner}`,
+      meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
+      page: `loom:conversation/${c.id}`, label: 'Open', agent: a, at: d.at, source: CORE, sourceLabel: 'Conversations',
+    }));
+  });
+}
+
+/** How many of an agent's conversations need the owner. */
+function needsCount(h: Household, agent: string): number {
+  try { return openNeeds(agentDir(h, agent)).length; } catch { return 0; }
 }
 
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
@@ -574,7 +606,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
 
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, newest first. */
 function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): InboxItem[] {
-  const asks = [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...pieceAsks(pieces, env)];
+  const asks = [...coreAsks(h), ...pieceAsks(pieces, env)];
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
@@ -599,7 +631,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv): 
 function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[]): Found {
   const needle = q.toLowerCase();
   const hh = opts.household?.();
-  const asks = [...(hh ? proposalAsks(hh, Object.fromEntries(hh.agents.map((a) => [a, pendingProposals(hh, a)]))) : []), ...pieceAsks(pieces, opts.env)];
+  const asks = [...(hh ? coreAsks(hh) : []), ...pieceAsks(pieces, opts.env)];
   const found: Found = {
     do: asks.filter((a) => `${a.text} ${a.label ?? ''} ${a.sourceLabel ?? ''}`.toLowerCase().includes(needle))
       .slice(0, 5).map((a) => ({ label: a.text, href: a.page !== undefined ? pageHref(a.page, a.source) : '/' })),
@@ -641,7 +673,7 @@ function pendingProposals(h: Household, agent: string): number {
 }
 
 /** Which catalog pieces a fresh loom suggests first: talk in chat, then a work store. */
-const STARTERS = ['shuttle', 'tasks', 'box', 'secrets'];
+export const STARTERS = ['shuttle', 'tasks', 'box', 'secrets'].map((n) => aliasTarget(n) ?? n);
 
 /** A loom with no pieces yet: who's listening, and two pieces to give them hands. */
 function firstRun(names: string[]): NonNullable<Dashboard['firstRun']> {
@@ -698,7 +730,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
     const marks = agentMarks(h);
-    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length;
+    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a), 0);
     const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
     return {
       agent: h.owner ? `${h.owner}'s household` : 'household',
@@ -721,7 +753,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
-          asks: pendingProposals(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0),
+          asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0),
           sub: lastActive(agentDir(h, a)) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
@@ -796,6 +828,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const rest = '/' + pathname.slice(3).replace(/^[/\\]+/, '');
     res.writeHead(308, { location: rest + to.search, ...SECURITY_HEADERS });
     return void res.end();
+  }
+  // A piece's old name (PIECE_ALIASES): /p/box/… and /a/<agent>/p/box/… are the runtime's pages now.
+  const old = /^((?:\/a\/[^/]+)?\/p\/)([a-z][a-z0-9-]*)(\/.*)?$/.exec(pathname);
+  if (old) {
+    const now = resolvePieceName(opts.env, old[2]);
+    if (now !== old[2]) {
+      const to = new URL(req.url ?? pathname, 'http://loom.invalid');
+      res.writeHead(308, { location: `${old[1]}${now}${old[3] ?? ''}${to.search}`, ...SECURITY_HEADERS });
+      return void res.end();
+    }
   }
   const secure = req.headers['x-forwarded-proto'] === 'https';
 
@@ -1015,6 +1057,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const hh = opts.household?.();
+  // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
+  // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).
+  if (pathname === '/inbox/read' && hh) {
+    if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
+    if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
+    const form = await readForm(req, ACT_MAX_BYTES);
+    if (!form) return send(res, 413, 'text/plain', 'too large');
+    if (who.kind === 'session' && !safeEq(form.get('_csrf') ?? '', csrf)) return send(res, 403, 'text/plain', 'forbidden: this form is stale; reload and try again');
+    const key = form.get('i') ?? '';
+    if (!/^[0-9a-f]{16}$/.test(key)) return send(res, 400, 'text/plain', 'bad item');
+    storeFor(opts).markOpened(key, Math.floor(Date.now() / 1000), readerFor(opts, who));
+    return sendJson(res, 200, { ok: true });
+  }
   const agentAct = hh ? /^\/a\/([a-z][a-z0-9-]{0,39})\/act\/(loom|[a-z][a-z0-9-]{0,39})$/.exec(pathname) : null;
   if (pathname.startsWith('/act/') || agentAct) {
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
@@ -1218,6 +1273,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
       const waiting = inboxItems(hh, pieces, opts.env).filter((it) => it.attention);
+      // Unread as the Inbox says it: Home's banner is the first one's row there.
+      if (waiting[0]) waiting[0].unread = !storeFor(opts).openedKeys(readerFor(opts, who)).has(waiting[0].key);
       const cards = agentCards(hh, pieces, agents, nowMs);
       const down = (st: AgentState) => cards.filter((c) => c.state === st).map((c) => c.label);
       const say = (names: string[], what: string) => `${names.join(' and ')} ${names.length === 1 ? 'is' : 'are'} ${what}`;
@@ -1227,7 +1284,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const moving = pieces.flatMap((p) => Object.entries(p.manifest.agents ?? {}).filter(([a, r]) => hh.agents.includes(a) && r.state === 'working')
         .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
       const d: HouseHome = {
-        headline, needs: waiting.length, firstNeed: waiting[0]?.text, cards, moving,
+        headline, needs: waiting.length, need: waiting[0], cards, moving,
         // Home is the agents and what's moving (Jonathan, 2026-10-27): the pieces' tiles live on their own pages.
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
@@ -1306,6 +1363,13 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send200(slug && /^[a-z0-9][a-z0-9-]*$/.test(slug) ? householdPerson(hh, slug) : notFound, 'people', ctxOf(`people/${slug}`));
     }
     if (pathname === '/members') return send200(householdMembers(hh), 'members', ctxOf('members'));
+    // A conversation (docs/specs/conversations.md, loom:conversation/<id>): whichever of this viewer's agents has it.
+    const cv = /^\/conversation\/(cv-[0-9a-f]{12})$/.exec(pathname);
+    if (cv) {
+      const owner = hh.agents.find((x) => existsSync(agentDir(hh, x)) && conversationOf(agentDir(hh, x), cv[1]));
+      const page = owner ? await conversationPage(agentDir(hh, owner), owner, cv[1], { env: opts.env }) : null;
+      return send200(page ?? notFound, owner ? `a/${owner}` : '', ctxOf(`conversation/${cv[1]}`), owner ? { ...agentsOf(hh)![owner], tabs: agentTabs(owner, 'conversation', pieces) } : undefined);
+    }
     if (pathname === '/new-agent') return send200(newAgentPage(hh), '', ctxOf('new-agent'));
     if (pathname === '/new-person') return send200(newPersonPage(), 'people', ctxOf('new-person'));
     if (pathname === '/new-fact') return send200(newFactPage(), 'knowledge', ctxOf('new-fact'));
@@ -1326,9 +1390,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           label: agents[agent].label,
           agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces),
             id: agent, today: t.items.length, active: lastActive(agentDir(hh, agent)),
-            waiting: pendingProposals(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0),
+            waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0),
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })() },
-          asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
+          asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
           thread: t.items.slice(0, HOME_THREAD).map((r) => ({ agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), where: whereLabel(r.where), at: r.created, page: r.page })),
@@ -1353,6 +1417,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         return send200(pg, `a/${agent}`, ctxOf(path, asrc), head(`p/${pp[1]}`));
       }
       if (rest === 'setup') return send200(agentSetup(hh, agent, { ownerTokens: !opts.ownerScope }), `a/${agent}`, ctxOf(`a/${agent}/setup`, CORE), head('setup'));
+      const acv = /^conversation\/(cv-[0-9a-f]{12})$/.exec(rest);
+      if (acv) return send200((await conversationPage(dir, agent, acv[1], { env: opts.env })) ?? notFound, `a/${agent}`, ctxOf(rest, src), head('conversation'));
       const page = validPath(rest) ? corePage(dir, rest, query) : null;
       return send200(page ?? notFound, `a/${agent}`, ctxOf(validPath(rest) ? rest : '', src), page && (rest === 'mind' || rest === 'people') ? head(rest) : undefined);
     }

@@ -67,12 +67,15 @@ describe('the Pieces page', () => {
     await remember(stack, { category: 'project', title: 'a memory', content: 'body' });
     await writeFile(join(tmp, 'npmbin', 'npm'), FAKE_NPM);
     await chmod(join(tmp, 'npmbin', 'npm'), 0o755);
-    // The page's tab for the box: a manifest, so it shows in the nav once installed.
-    const manifest = JSON.stringify({ v: 2, tab: { label: 'Boxes' } });
+    // The catalog's first piece is the runtime (loom-box's repo, renamed): its package ships loom-runtime and,
+    // for old callers, loom-box, and its loom.name says which is the piece. Its tab is a manifest, so it shows
+    // in the nav once installed.
+    const manifest = JSON.stringify({ v: 2, tab: { label: 'Runtime' } });
+    const cli = `case "$1 $2" in "ui --json") echo '${manifest}' ;; *) echo "url=$LOOM_RUNTIME_PUBLIC_URL" ;; esac`;
     await fixture(box.repo, box.commit, {
-      name: 'loom-box',
-      loom: { label: 'Boxes', settings: [{ name: 'LOOM_BOX_PUBLIC_URL', label: 'The URL a box joins', required: true }] },
-    }, { 'loom-box': `case "$1 $2" in "ui --json") echo '${manifest}' ;; *) echo "url=$LOOM_BOX_PUBLIC_URL" ;; esac` });
+      name: 'loom-runtime',
+      loom: { name: 'runtime', label: 'Runtime', settings: [{ name: 'LOOM_RUNTIME_PUBLIC_URL', label: 'The URL a box joins', required: true }] },
+    }, { 'loom-runtime': cli, 'loom-box': cli });
     await writeFile(join(tmp, 'path', 'loom-handmade'), '#!/bin/sh\nexit 0\n');
     await chmod(join(tmp, 'path', 'loom-handmade'), 0o755);
     // XDG_CONFIG_HOME too: services are systemd units under it, and a test must never see this machine's.
@@ -138,21 +141,22 @@ describe('the Pieces page', () => {
     await settled();
     v = await view('/pieces', cookie);
     const html = JSON.stringify(v);
-    expect(html).toContain('Install Boxes');
+    expect(html).toContain('Install Runtime');
     expect(html).toContain('done');
     expect(html).toContain('needs setup');
     // Its tab is in the nav, and Home asks for the setting it lacks.
-    expect(v.chrome.nav).toContainEqual(expect.objectContaining({ label: 'Boxes', href: '/p/box' }));
+    expect(v.chrome.nav).toContainEqual(expect.objectContaining({ label: 'Runtime', href: '/p/runtime' }));
     const home = await page('/', cookie);
-    expect(home).toContain('Finish setting up Boxes');
-    expect(home).toContain('needs LOOM_BOX_PUBLIC_URL');
+    expect(home).toContain('Finish setting up Runtime');
+    expect(home).toContain('needs LOOM_RUNTIME_PUBLIC_URL');
 
-    expect((await act(cookie, csrf, 'piece-set', { name: 'box', s_loom_box_public_url: 'https://loom.example' })).status).toBe(303);
-    expect(await page('/', cookie)).not.toContain('Finish setting up Boxes');
+    expect((await act(cookie, csrf, 'piece-set', { name: 'runtime', s_loom_runtime_public_url: 'https://loom.example' })).status).toBe(303);
+    expect(await page('/', cookie)).not.toContain('Finish setting up Runtime');
     // The setting's field (in its piece's form) carries what was set.
-    expect(await page('/pieces', cookie)).toContain('"name":"s_loom_box_public_url","label":"The URL a box joins (LOOM_BOX_PUBLIC_URL)","kind":"text","value":"https://loom.example"');
+    expect(await page('/pieces', cookie)).toContain('"name":"s_loom_runtime_public_url","label":"The URL a box joins (LOOM_RUNTIME_PUBLIC_URL)","kind":"text","value":"https://loom.example"');
 
-    await act(cookie, csrf, 'piece-remove', { name: 'box' });
+    await act(cookie, csrf, 'piece-remove', { name: 'runtime' });
+    expect(existsSync(join(tmp, 'loom-home', 'pieces', 'bin', 'loom-runtime'))).toBe(false);
     expect(existsSync(join(tmp, 'loom-home', 'pieces', 'bin', 'loom-box'))).toBe(false);
     expect(await page('/pieces', cookie)).toContain(`Install ${box.label}`);
   });
@@ -189,6 +193,6 @@ describe('the Pieces page', () => {
     expect(res.status).toBe(401);
     const cookie = await login();
     expect((await act(cookie, '0'.repeat(64), 'piece-install', { name: box.name })).status).toBe(403);
-    expect(existsSync(join(tmp, 'loom-home', 'pieces', 'box'))).toBe(false);
+    expect(existsSync(join(tmp, 'loom-home', 'pieces', 'runtime'))).toBe(false);
   });
 });

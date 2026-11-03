@@ -104,6 +104,7 @@ describe('createLoomServer', () => {
     person_verify: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     person_archive: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     person_restore: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    person_merge: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     person: { readOnlyHint: true, openWorldHint: false },
     person_list: { readOnlyHint: true, openWorldHint: false },
     person_history: { readOnlyHint: true, openWorldHint: false },
@@ -113,6 +114,20 @@ describe('createLoomServer', () => {
     note_read: { readOnlyHint: true, openWorldHint: false },
     note_list: { readOnlyHint: true, openWorldHint: false },
     person_revision_restore: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    project_write: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    project_verify: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    project_archive: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    project_restore: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    project_history: { readOnlyHint: true, openWorldHint: false },
+    project_revision_restore: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    project: { readOnlyHint: true, openWorldHint: false },
+    project_list: { readOnlyHint: true, openWorldHint: false },
+    project_hub: { readOnlyHint: true, openWorldHint: false },
+    project_orphans: { readOnlyHint: true, openWorldHint: false },
+    conversation_digest: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    conversations: { readOnlyHint: true, openWorldHint: false },
+    conversation: { readOnlyHint: true, openWorldHint: true },
+    conversation_findings: { readOnlyHint: true, openWorldHint: false },
   };
 
   // t-1597: agent to agent. The household's HTTP server hands a session a

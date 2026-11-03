@@ -28,9 +28,12 @@ export const TOOLS = [
   'knowledge_write', 'knowledge_recall', 'knowledge_maintain',
   'knowledge_archive', 'knowledge_restore', 'knowledge_supersede', 'knowledge_move', 'knowledge_merge',
   'knowledge_purge', 'knowledge_verify', 'knowledge_history',
-  'person_write', 'person_verify', 'person_archive', 'person_restore',
+  'person_write', 'person_verify', 'person_archive', 'person_restore', 'person_merge',
   'person', 'person_list', 'person_history', 'person_revision_restore', 'person_evidence', 'knowledge_list',
+  'project_write', 'project_verify', 'project_archive', 'project_restore', 'project_history',
+  'project_revision_restore', 'project', 'project_list', 'project_hub', 'project_orphans',
   'note_write', 'note_read', 'note_list',
+  'conversation_digest', 'conversations', 'conversation', 'conversation_findings',
 ];
 
 function toolList(prefix: string): string {

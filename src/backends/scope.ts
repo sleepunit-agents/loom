@@ -9,8 +9,14 @@
  * recalling within the project it was written for) or 'global' (visible
  * everywhere). ECC's instinct-promotion model is the source: default to the
  * narrower scope, promote to global only on deliberate signal — here, an
- * explicit `scope` at write time, since loom has no cross-project id to
- * watch for repetition against.
+ * explicit `scope` at write time. (When this was written loom had no
+ * cross-project id; project cards are that id now — docs/specs/projects.md —
+ * but scope is still decided at write time, not by watching repetition.)
+ *
+ * A project's names (its slug and aliases, in project_names) resolve at
+ * recall: a recall scoped to any name of a project sees memories tagged with
+ * any name of the same project. Only reads resolve; forget, memory_list and
+ * every bulk operation match the tag exactly.
  *
  * The category split below follows ECC's scope-decision table as far as
  * loom's own category vocabulary lets it: 'user' (a fact about the person)
@@ -70,20 +76,40 @@ export function effectiveScope(mem: ScopableMemory): MemoryScope {
 
 /**
  * Recall-time enforcement: is `mem` visible to a caller currently working
- * within `recallProject`?
+ * within the project whose names are `recallProject`?
  *
- * `recallProject` null/undefined means the caller isn't scoping their recall
- * to a project — there is nothing to enforce, so every memory stays visible
- * (unchanged pre-t-337 behaviour: an unscoped recall searches everything).
- * Once a project is given: memories tagged to that exact project are always
- * visible, everything else is visible only if its effective scope is
- * 'global'.
+ * `recallProject` is the recall's name set: every name of the project the
+ * recall is scoped to (projectNameSet), or just the name passed when it is no
+ * live project's name. null/undefined/empty means the caller isn't scoping
+ * their recall to a project — there is nothing to enforce, so every memory
+ * stays visible (unchanged pre-t-337 behaviour: an unscoped recall searches
+ * everything). Once a project is given: memories tagged with any of its
+ * names are always visible, everything else is visible only if its
+ * effective scope is 'global'.
  */
 export function isVisibleInProject(
   mem: ScopableMemory,
-  recallProject: string | null | undefined,
+  recallProject: ReadonlySet<string> | null | undefined,
 ): boolean {
-  if (!recallProject) return true;
-  if ((mem.project ?? null) === recallProject) return true;
+  if (!recallProject || recallProject.size === 0) return true;
+  if (mem.project && recallProject.has(mem.project)) return true;
   return effectiveScope(mem) === 'global';
+}
+
+/**
+ * The name set a recall scoped to `project` filters with: `resolve(project)`
+ * (a live project's names) when it answers, else just `project` — a name that
+ * belongs to no live project, or a store that can't be read, keeps the exact
+ * match.
+ */
+export function recallNameSet(
+  project: string | null | undefined,
+  resolve: (name: string) => ReadonlySet<string> | null,
+): ReadonlySet<string> | null {
+  if (!project) return null;
+  try {
+    return resolve(project) ?? new Set([project]);
+  } catch {
+    return new Set([project]);
+  }
 }

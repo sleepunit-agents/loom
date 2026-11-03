@@ -38,12 +38,15 @@ export type Block =
   // `tone`), their avatar, name and summary, badges, a few numbers, and links out.
   | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: ProfileTone; summary?: string; badges?: string[];
       stats?: Array<{ label: string; value: string }>; links?: Array<{ text: string } & Target> }
-  | { type: 'list'; numbered?: boolean; wrap?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; avatar?: string; act?: Button } & Target> }
+  // A row's lead says who: `agent` (an agent's mark; `loom` is loom's own), `person` (a People slug: their avatar) or
+  // `avatar` (initials in a plain circle). A list where some rows say who, or that says `who`, draws the rest as nobody's yet.
+  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
-  | { type: 'callout'; text: string; title?: string; tone?: Tone }
+  // busy: something is under way (a sign-in being checked): drawn with a spinner in place of its tone's icon.
+  | { type: 'callout'; text: string; title?: string; tone?: Tone; busy?: boolean }
   | ({ type: 'link'; text: string } & Target)
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
@@ -51,13 +54,26 @@ export type Block =
   | { type: 'buttons'; items: Button[] }
   | { type: 'meter'; items: Array<{ label: string; value: number; detail?: string; tone?: Tone }> }
   | { type: 'code'; text: string; label?: string }
-  | { type: 'status'; items: Array<{ label: string; tone?: Tone; text?: string; meta?: string; page?: string }> };
+  | { type: 'status'; items: Array<{ label: string; tone?: Tone; text?: string; meta?: string; page?: string }> }
+  // 000h's chart: bars (grouped or stacked), an area or a line over labelled points, each series a 000h colour.
+  | { type: 'chart'; kind: ChartKind; variant?: ChartVariant; caption?: string; summary?: { label: string; value: string; detail?: string };
+      series: Array<{ key: string; label: string; color?: ChartColor }>; data: Array<{ label: string } & Record<string, number | string | null>> };
+
+export type ChartKind = 'bar' | 'area' | 'line';
+export type ChartVariant = 'grouped' | 'stacked' | 'smooth' | 'step';
+export type ChartColor = 'pink' | 'blue' | 'olive' | 'yellow' | 'ink';
+const CHART_KINDS = new Set(['bar', 'area', 'line']);
+const CHART_VARIANTS: Record<string, Set<string>> = { bar: new Set(['grouped', 'stacked']), area: new Set(['stacked', 'smooth']), line: new Set(['smooth', 'step']) };
+const CHART_COLORS = new Set(['pink', 'blue', 'olive', 'yellow', 'ink']);
+const SERIES_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 
 export interface Section {
   id: string;
   title?: string;
   side?: boolean;
   tone?: Tone;
+  /** Folds under its title: `open` starts open, `closed` folded. The viewer's choice then sticks. */
+  fold?: 'open' | 'closed';
   /** 'agent': this section is about one agent (it belongs on that agent's page); the household's by default. */
   level?: Level;
   blocks: Block[];
@@ -154,6 +170,8 @@ export const LIMITS = {
   answered: 20,
   agents: 16,
   readings: 4,
+  chartSeries: 5,
+  chartPoints: 60,
   doing: 8,
   fields: 30,
   hidden: 20,
@@ -176,7 +194,7 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
@@ -447,12 +465,14 @@ function block(v: unknown, depth = 0): Block {
         type: 'list',
         ...(b.numbered === true ? { numbered: true } : {}),
         ...(b.wrap === true ? { wrap: true } : {}),
+        ...(b.who === true ? { who: true } : {}),
         ...(b.pages !== undefined ? { pages: pages(b.pages) } : {}),
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');
           return {
             text: str(o.text, 'list.text'), meta: optStr(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
-            tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), avatar: avatarOf(o.avatar), ...target(o, 'list item'),
+            tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...(o.person !== undefined ? { person: personSlug(o.person, 'list.person') } : {}),
+            avatar: avatarOf(o.avatar), ...target(o, 'list item'),
             ...(o.act !== undefined ? { act: button(o.act) } : {}),
           };
         }),
@@ -484,7 +504,8 @@ function block(v: unknown, depth = 0): Block {
       return { type: 'prose', text: b.text };
     }
     case 'callout':
-      return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone) };
+      if (b.busy !== undefined && typeof b.busy !== 'boolean') throw new Invalid('callout.busy must be true or false');
+      return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
     case 'link': {
       const t = target(b, 'link');
       if (t.page === undefined && t.href === undefined) throw new Invalid('link needs page or href');
@@ -552,9 +573,54 @@ function block(v: unknown, depth = 0): Block {
           };
         }),
       };
+    case 'chart':
+      return chart(b);
     default:
       throw new Invalid(`unknown block type ${JSON.stringify(b.type)}`);
   }
+}
+
+function chart(b: Record<string, unknown>): Block {
+  if (typeof b.kind !== 'string' || !CHART_KINDS.has(b.kind)) throw new Invalid('chart.kind must be bar, area or line');
+  const kind = b.kind as ChartKind;
+  if (b.variant !== undefined && (typeof b.variant !== 'string' || !CHART_VARIANTS[kind].has(b.variant))) {
+    throw new Invalid(`chart.variant for ${kind} must be one of ${[...CHART_VARIANTS[kind]].join(', ')}`);
+  }
+  const series = arr(b.series, 'chart.series', LIMITS.chartSeries).map((x) => {
+    const o = obj(x, 'chart series');
+    const key = str(o.key, 'chart.series.key');
+    if (!SERIES_KEY.test(key) || key === 'label') throw new Invalid('chart.series.key must be lowercase letters, digits and _, not "label"');
+    if (o.color !== undefined && (typeof o.color !== 'string' || !CHART_COLORS.has(o.color))) throw new Invalid('chart.series.color is pink, blue, olive, yellow or ink');
+    return { key, label: str(o.label, 'chart.series.label'), ...(o.color !== undefined ? { color: o.color as ChartColor } : {}) };
+  });
+  if (!series.length) throw new Invalid('chart.series needs at least one');
+  if (new Set(series.map((x) => x.key)).size !== series.length) throw new Invalid('chart.series keys must differ');
+  const data = arr(b.data, 'chart.data', LIMITS.chartPoints).map((x) => {
+    const o = obj(x, 'chart point');
+    const point: { label: string } & Record<string, number | string | null> = { label: str(o.label, 'chart.data.label') };
+    for (const { key } of series) {
+      const v = o[key];
+      if (v === undefined || v === null) { point[key] = null; continue; }
+      if (typeof v !== 'number' || !Number.isFinite(v)) throw new Invalid(`chart.data.${key} must be a number`);
+      point[key] = v;
+    }
+    return point;
+  });
+  let summary: { label: string; value: string; detail?: string } | undefined;
+  if (b.summary !== undefined) {
+    const o = obj(b.summary, 'chart.summary');
+    summary = { label: str(o.label, 'chart.summary.label'), value: str(o.value, 'chart.summary.value'), detail: optStr(o.detail, 'chart.summary.detail') };
+  }
+  return {
+    type: 'chart', kind, ...(b.variant !== undefined ? { variant: b.variant as ChartVariant } : {}),
+    caption: optStr(b.caption, 'chart.caption'), ...(summary ? { summary } : {}), series, data,
+  };
+}
+
+/** A People slug: lowercase words joined by dashes. */
+function personSlug(v: unknown, what: string): string {
+  if (typeof v !== 'string' || v.length > 80 || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(v)) throw new Invalid(`${what} must be a People slug`);
+  return v;
 }
 
 function section(v: unknown): Section {
@@ -566,9 +632,16 @@ function section(v: unknown): Section {
     title: optStr(o.title, 'section.title'),
     side: bool(o.side),
     tone: tone(o.tone),
+    ...(o.fold !== undefined ? { fold: fold(o.fold, o.title) } : {}),
     ...(o.level !== undefined ? { level: level(o.level, 'section.level') } : {}),
     blocks: arr(o.blocks, 'section.blocks', LIMITS.blocks).map((x) => block(x)),
   };
+}
+
+function fold(v: unknown, title: unknown): 'open' | 'closed' {
+  if (v !== 'open' && v !== 'closed') throw new Invalid('section.fold must be open or closed');
+  if (typeof title !== 'string' || !title) throw new Invalid('a section that folds needs a title');
+  return v;
 }
 
 function sections(v: unknown): Section[] {

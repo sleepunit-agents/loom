@@ -8,9 +8,12 @@
  * names; a rejection is `Error: <message naming the path>`, like every other
  * loom tool. The CLI (`loom person`) calls the read functions here too.
  */
-import { resolveIdentityName } from '../config.js';
-import { householdOf } from '../household.js';
-import { openHouseholdPeople, type HouseholdPeople } from '../backends/people-household.js';
+import { existsSync } from 'node:fs';
+import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
+import { agentDir, householdOf, type Household } from '../household.js';
+import { commonsPeoplePath, HouseholdPeople, openHouseholdPeople } from '../backends/people-household.js';
+import { checkEnsureInput, ensurePerson, type EnsureResult } from '../backends/people-ensure.js';
+import { checkMergeInput, mergePeople, type PersonMergeResult } from '../backends/people-merge.js';
 import {
   openPeopleStore,
   PeopleStore,
@@ -41,7 +44,7 @@ function errorText(e: unknown): string {
  * this agent's relationships (backends/people-household.ts). Otherwise the
  * one store in the agent's memories.db, as before.
  */
-function openPeople(contextDir: string, opts: { readonly?: boolean } = {}): PeopleStore | HouseholdPeople | null {
+export function openPeople(contextDir: string, opts: { readonly?: boolean } = {}): PeopleStore | HouseholdPeople | null {
   const hh = householdOf(contextDir);
   if (hh) return openHouseholdPeople(hh.household, hh.agent, contextDir, opts);
   return openPeopleStore(contextDir, opts);
@@ -85,6 +88,70 @@ export async function personRevisionRestore(
   input: { slug: string; revision_id: number; store?: 'directory' | 'relationship' },
 ): Promise<string> {
   return withWritable(contextDir, (s) => (s instanceof PeopleStore ? s.revisionRestore({ slug: input.slug, revision_id: input.revision_id }) : s.revisionRestore(input)));
+}
+
+/** A store opened read-only, or an empty one in memory when its file isn't there yet (a dry run writes nothing). */
+function readonlyOrEmpty(dbPath: string, actor: string): PeopleStore {
+  return existsSync(dbPath) ? new PeopleStore({ dbPath, readonly: true, actor }) : new PeopleStore({ dbPath: ':memory:', actor });
+}
+
+/**
+ * Ensure a person card (backends/people-ensure.ts): `body` is the route's and the CLI's JSON,
+ * `actor` who's adding them (recorded on the revision). The caller has already checked that
+ * they may: the owner, a piece in an owner's action, or the runtime. In a household, a new
+ * card's summary goes to `body.agent`'s relationship (the household's default agent when
+ * none is named); its name and handles go to the shared directory. Throws PersonCardError.
+ */
+export function personEnsure(contextDir: string, body: unknown, actor: string): EnsureResult {
+  const input = checkEnsureInput(body);
+  const hh = householdOf(contextDir);
+  const h: Household | undefined = hh?.household;
+  if (h && input.agent !== undefined && !h.agents.includes(input.agent)) throw new PersonCardError(`agent: ${input.agent} isn't one of this household's agents`);
+  const dir = h ? agentDir(h, input.agent ?? hh!.agent) : contextDir;
+  let store: PeopleStore | HouseholdPeople;
+  if (input.dry_run) {
+    store = h
+      ? new HouseholdPeople(readonlyOrEmpty(commonsPeoplePath(h), actor), readonlyOrEmpty(resolveSqliteDbPath(dir), actor), Date.now, new Set(h.agents))
+      : readonlyOrEmpty(resolveSqliteDbPath(dir), actor);
+  } else {
+    store = h ? openHouseholdPeople(h, input.agent ?? hh!.agent, dir, { actor })! : openPeopleStore(dir, { actor })!;
+  }
+  try {
+    return ensurePerson(store, input);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Merge person card `from` into `into` (backends/people-merge.ts): `body` is {from, into,
+ * dry_run?}, `actor` who's merging (recorded on the redirect and every revision). The caller
+ * has already checked that they may: the owner, the runtime, or an agent of the household
+ * that holds both cards (its own store, outside one). In a household the owner and the
+ * runtime merge every agent's copy and store; an agent (`onlyOwnAgent`) only its own. The
+ * answer shows the card as this context's agent sees it. Throws
+ * PersonMergeError (its `status` says 400, 404 or 409).
+ */
+export function personMergeRun(contextDir: string, body: unknown, actor: string, opts: { onlyOwnAgent?: boolean } = {}): PersonMergeResult {
+  const input = checkMergeInput(body);
+  const hh = householdOf(contextDir);
+  return mergePeople(hh
+    ? { household: hh.household, viewer: hh.agent, actor, ...(opts.onlyOwnAgent ? { onlyAgent: hh.agent } : {}) }
+    : { contextDir, agentName: resolveIdentityName(contextDir), actor }, input);
+}
+
+/**
+ * The MCP tool: an agent merges two cards of its own household (or its own store). In a
+ * household it reaches the commons card, its own copy and its own memories and
+ * conversations, never another agent's store: the answer's not_done names them, for the owner.
+ */
+export async function personMerge(contextDir: string, input: { from: string; into: string; dry_run?: boolean }): Promise<string> {
+  try {
+    const hh = householdOf(contextDir);
+    return json(personMergeRun(contextDir, input, hh?.agent ?? resolveIdentityName(contextDir), { onlyOwnAgent: true }));
+  } catch (e) {
+    return errorText(e);
+  }
 }
 
 /** The `person` read. Throws on an invalid slug or an unreadable row; the MCP wrapper turns that into text. */

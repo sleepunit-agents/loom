@@ -19,6 +19,7 @@ import { pathSegmentError } from '../path-safety.js';
 import { digestForContext } from '../backends/salience.js';
 import { tapeForContext } from '../backends/episodes.js';
 import { PeopleStore, roomBlock } from '../backends/people.js';
+import { projectBlock } from '../backends/projects.js';
 import { commonsPeoplePath } from '../backends/people-household.js';
 import { householdOf } from '../household.js';
 import { RECORDER_COMPONENTS, readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
@@ -167,10 +168,11 @@ export async function loadIdentity(
     if (tape) {
       parts.push(
         '# Last 24h across bodies\n\n' +
-        '_Episodes other sleeves of you left (short-term, 48h TTL). This is the tape, ' +
-        'oldest first — what just happened, not what is important. Write your own before ' +
-        'you end (category `episode`, metadata.where = your surface); the harness writes a ' +
-        'fallback if you forget._\n\n' +
+        '_Episodes other sleeves of you left (short-term, 48h TTL), and the digests of their ' +
+        'conversations. This is the tape, oldest first — what just happened, not what is ' +
+        'important. Write your own before you end: in a conversation (identity was given ' +
+        'conversation and run), a `conversation_digest`; otherwise an episode (category ' +
+        '`episode`, metadata.where = your surface). The harness writes a fallback if you forget._\n\n' +
         tape,
       );
     }
@@ -179,6 +181,18 @@ export async function loadIdentity(
     // episode store may be broken — log it and record it so the next body sees a warning.
     console.error('[loom:identity] tape read failed:', tapeErr);
     recordFailure(contextDir, 'episodes', tapeErr);
+  }
+
+  // This project (project cards, docs/specs/projects.md) — after the tape,
+  // before the room and Top of Mind. The block is the heading and the
+  // rendered card (≤ 2,015 chars, the card's cap is checked at write), or a
+  // placeholder line for a missing, archived or unreadable card. Never a failure.
+  try {
+    const block = projectBlock(contextDir, project, { onFailure: (e) => recordFailure(contextDir, e) });
+    if (block) parts.push(block);
+  } catch (projectErr) {
+    console.error('[loom:identity] project block failed:', projectErr);
+    recordFailure(contextDir, projectErr);
   }
 
   // The room (person cards, docs/specs/person-cards.md) — after the tape and

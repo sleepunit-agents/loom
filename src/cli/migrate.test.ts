@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createConversationTables } from '../backends/conversations.js';
 import BetterSqlite3 from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { runCliCaptured } from './test-helpers.js';
@@ -104,6 +105,13 @@ function buildCurrentDb(dir: string): string {
     archived_at TEXT, archived_by TEXT, archive_reason TEXT, updated TEXT NOT NULL, synthesized_at TEXT)`).run();
   db.prepare(`CREATE TABLE person_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
     snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL, actor TEXT)`).run();
+  db.prepare(`CREATE TABLE projects (slug TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, card_json TEXT NOT NULL,
+    archived_at TEXT, archived_by TEXT, archive_reason TEXT, updated TEXT NOT NULL, synthesized_at TEXT)`).run();
+  db.prepare(`CREATE TABLE project_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL, actor TEXT)`).run();
+  db.prepare(`CREATE TABLE project_names (name TEXT PRIMARY KEY, slug TEXT NOT NULL, kind TEXT NOT NULL)`).run();
+  db.prepare(`CREATE TABLE person_merges (from_slug TEXT PRIMARY KEY, into_slug TEXT NOT NULL, merged_at TEXT NOT NULL,
+    merged_by TEXT, counts_json TEXT NOT NULL DEFAULT '{}')`).run();
   db.prepare(`
     CREATE TABLE memory_supersessions (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,6 +137,7 @@ function buildCurrentDb(dir: string): string {
     )
   `).run();
   db.prepare(`CREATE INDEX idx_memory_deletions_ref ON memory_deletions(ref)`).run();
+  createConversationTables(db);
   db.prepare(`
     CREATE VIRTUAL TABLE vec_memories USING vec0(embedding float[4] distance_metric=cosine)
   `).run();

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionStore } from './sessions.js';
-import { askKey, pushSub, watch, WATCH_S } from './push.js';
+import { pushTitle, askKey, pushSub, watch, WATCH_S } from './push.js';
 
 const sub = (host = 'fcm.googleapis.com', path = '/fcm/send/abc') => ({
   endpoint: `https://${host}${path}`, keys: { p256dh: 'B'.repeat(87), auth: 'a'.repeat(22) },
@@ -80,5 +80,15 @@ describe('push: the watch', () => {
     const a = { source: { id: 'tasks' }, text: 'Review the rubric', page: 'task/t-1' };
     expect(askKey(a)).toBe(askKey({ ...a }));
     expect(new Set([askKey(a), askKey({ ...a, text: 'x' }), askKey({ ...a, source: { id: 'clock' } }), askKey({ ...a, page: undefined })]).size).toBe(4);
+  });
+});
+
+describe('pushTitle', () => {
+  it('says what it is: an alert, a permission, a to-do; anything else is Your call', () => {
+    expect(pushTitle('alert', 'Machine')).toBe('Alert · Machine');
+    expect(pushTitle('permission', 'Approvals')).toBe('Permission · Approvals');
+    expect(pushTitle('todo', 'Tasks')).toBe('To do · Tasks');
+    expect(pushTitle('decision', 'Memory')).toBe('Your call · Memory');
+    expect(pushTitle(undefined, 'Gate')).toBe('Your call · Gate');
   });
 });

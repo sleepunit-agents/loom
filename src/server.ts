@@ -53,8 +53,29 @@ import {
   personHistory,
   personRevisionRestore,
   personEvidence,
+  personMerge,
 } from './tools/person.js';
+import {
+  projectWrite,
+  projectVerify,
+  projectArchive,
+  projectRestore,
+  projectHistory,
+  projectRevisionRestore,
+  project as projectRead,
+  projectList,
+  projectHub,
+  projectOrphansText,
+} from './tools/project.js';
 import { knowledgeFreshness } from './tools/knowledge-list.js';
+import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
+import { conversationsList, conversationView } from './conversations.js';
+import { householdOf } from './household.js';
+
+/** The agent a context dir is: its household name, else its directory's name. */
+function agentOfDir(contextDir: string): string {
+  return householdOf(contextDir)?.agent ?? (contextDir.replace(/\/+$/, '').split('/').pop() || 'agent');
+}
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +127,9 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
 
   // ─── Identity ───────────────────────────────────────────────────────────────
 
+  /** The conversation and run this session's body was given at identity (conversation_digest writes there). */
+  let here: { conversation: string; run: string } | undefined;
+
   server.registerTool(
     'identity',
     {
@@ -116,7 +140,10 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       'The identity defines who you are and how you should behave.',
       inputSchema:
       {
-        project: z.string().optional().describe('Project context to load (loads project-specific memories)'),
+        project: z.string().optional().describe(
+          'Project context to load (loads project-specific memories). A project card\'s name (slug or alias) also adds a ' +
+          '"# This project" block with its rendered card.',
+        ),
         client: z.string().optional().describe(
           'Runtime client name for tool-prefix context: "claude-code", "gemini-cli", or a custom name with a matching <contextDir>/clients/<name>.md override. ' +
           'Overrides the LOOM_CLIENT environment variable.',
@@ -134,10 +161,18 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
           'Slugs of the people this turn is addressed by (the room), e.g. ["patrick-kells"]. ' +
           'Adds an "# In the room" block with their person cards. Omit for no block.',
         ),
+        conversation: z.string().max(64).optional().describe(
+          'The conversation this body is in (cv-…), as the runtime or harness that started it says. ' +
+          'With run, it is where conversation_digest writes.',
+        ),
+        run: z.string().max(128).optional().describe('This body run\'s id, as the runtime or harness that started it says.'),
       },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ project, client, model, role, people }) => {
+    async ({ project, client, model, role, people, conversation, run }) => {
+      // The body's conversation and run (docs/specs/conversations.md): kept for this session's
+      // conversation_digest. Both or neither; a later identity call replaces them.
+      if (conversation !== undefined || run !== undefined) here = { conversation: conversation ?? '', run: run ?? '' };
       // Precedence: explicit param > data-driven manifest resolution > the
       // static code-map seed fallback > LOOM_CLIENT (inside loadIdentity).
       const peer = server.server.getClientVersion()?.name;
@@ -962,6 +997,32 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   );
 
   server.registerTool(
+    'person_merge',
+    {
+      description:
+      'Merge two person cards that turn out to be one person (two agents each met them and each made a card). ' +
+      'from becomes an archived redirect to into: reading from answers into\'s card, and a later write to from lands on into. ' +
+      'into keeps its name and summary (plus one "Merged <from> (<name>) <date>" line; from\'s card stays in into\'s history); ' +
+      'where is the union of both cards\' values, how and may the union with into winning a clash. In a household this tool merges ' +
+      'the shared card, your own copy, and your own memories, proposals, conversations and turns tagged from; other agents\' stores ' +
+      'are theirs: not_done names them, and the owner finishes with `loom person merge`. ' +
+      'from may be a bare tag with no card (memories tagged it): they are re-tagged and from redirects to into. ' +
+      'Refused when into is missing or archived, from is archived, from is into, a household agent, or a member\'s card. ' +
+      'dry_run: true reports what would change and writes nothing. Afterwards rename the slug in every agent\'s gates (not_done says so).',
+      inputSchema: z.object({
+        from: slugParam.describe('The card merged away: it becomes a redirect to into.'),
+        into: slugParam.describe('The card that survives.'),
+        dry_run: z.boolean().optional().describe('Report what would change (where values, re-tags per agent, conversations, projects); write nothing.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async ({ from, into, dry_run }) => {
+      const result = await personMerge(contextDir, { from, into, ...(dry_run !== undefined ? { dry_run } : {}) });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
     'person_restore',
     {
       description: 'Reactivate an archived person card, fields intact.',
@@ -1132,6 +1193,293 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const result = await personRevisionRestore(contextDir, { slug, revision_id, store });
       return { content: [{ type: 'text' as const, text: result }] };
     },
+  );
+
+  // ─── Projects ───────────────────────────────────────────────────────────────
+  // Project cards (docs/specs/projects.md): the condensed current state of a
+  // body of work, and its hub (everything filed under it, read live). As
+  // person cards: current state, revisions keep the past. Every slug-taking
+  // tool also takes a live alias and says so with resolved_from.
+
+  const projectSlug = z.string().describe('A project name: its slug (e.g. "pond") or a live alias. An archived project is reached by its slug only.');
+  const projectWhere = z.object({
+    value: z.string(),
+    verified_at: z.string().optional(),
+    source: z.string().optional(),
+    stale_after_days: z.number().int().optional(),
+  }).passthrough();
+  const nullable = <T extends z.ZodTypeAny>(t: T) => z.union([t, z.null()]);
+
+  server.registerTool(
+    'project_write',
+    {
+      description:
+      'Write a project card — the condensed current state of an ongoing body of work with a goal (a product, a ' +
+      'client engagement, a season), not a task tracker. merge (default true) replaces name/status/summary/goal ' +
+      'when passed and merges where and links one level deep (a key passed as null is removed: passing ' +
+      'links.epic keeps links.aliases); merge: false makes the card exactly what was passed. links are selectors ' +
+      'the hub reads with (aliases: other memory tags that mean this project; notes: note path prefixes, default ' +
+      'the slug; epic, repos, venues), never references. A slug is a project\'s for good; aliases are unique ' +
+      'across live projects. Passing summary moves synthesized_at.',
+      inputSchema: z.object({
+        slug: projectSlug,
+        name: z.string().optional().describe('Display name (required on create and on merge: false), ≤ 80 chars.'),
+        status: z.enum(['active', 'paused', 'done']).optional().describe('Default active. paused and done keep the project live; archive retires it.'),
+        summary: z.string().optional().describe('What it is, ≤ 1,200 chars.'),
+        goal: z.string().optional().describe('What done looks like, ≤ 400 chars.'),
+        where: z.record(z.string(), nullable(projectWhere)).optional().describe(
+          'Where it stands: field -> {value (a string ≤ 400), verified_at?, source?, stale_after_days?}, e.g. now, next. null removes a field.',
+        ),
+        links: z.object({
+          aliases: nullable(z.array(z.string())).optional(),
+          notes: nullable(z.array(z.string())).optional(),
+          epic: nullable(z.string()).optional(),
+          repos: nullable(z.array(z.string())).optional(),
+          venues: nullable(z.array(z.string())).optional(),
+        }).passthrough().optional().describe('Selectors for the hub. A key passed replaces that key; null removes it.'),
+        merge: z.boolean().optional().describe('Default true. false: the card becomes exactly what was passed.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      const result = await projectWrite(contextDir, input as Parameters<typeof projectWrite>[1]);
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_verify',
+    {
+      description:
+      'Stamp where fields on a project card as checked: sets verified_at (default now) and, if passed, source. ' +
+      'Values are not changed. All-or-nothing, as person_verify.',
+      inputSchema: z.object({
+        slug: projectSlug,
+        fields: z.array(z.string()).describe('where field names to stamp.'),
+        verified_at: z.string().optional().describe('ISO-8601 UTC; default now; not in the future.'),
+        source: z.string().optional().describe('What you checked against, e.g. "tasks".'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ slug, fields, verified_at, source }) => {
+      const result = await projectVerify(contextDir, { slug, fields, verified_at, source });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_archive',
+    {
+      description:
+      'Retire a project with a tombstone (who, when, why): hidden from project_list, its aliases freed (never ' +
+      'its slug). done is "finished, still findable"; archive is "gone". Rejects writes until project_restore.',
+      inputSchema: z.object({
+        slug: projectSlug,
+        reason: z.string().describe('Why the project is being retired, ≤ 200 chars.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ slug, reason }) => {
+      const result = await projectArchive(contextDir, { slug, reason });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_restore',
+    {
+      description:
+      'Reactivate an archived project (by its slug), fields intact. Its aliases are re-claimed: if any is now ' +
+      'held by a live project, nothing is restored.',
+      inputSchema: z.object({ slug: projectSlug }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ slug }) => {
+      const result = await projectRestore(contextDir, { slug });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_history',
+    {
+      description:
+      'Revision history of a project card, newest first: {revisions: [{id, op, replaced_at, actor}]}. Every ' +
+      'stored change snapshots the previous card; the newest 10 are kept.',
+      inputSchema: z.object({ slug: projectSlug }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ slug }) => {
+      const result = await projectHistory(contextDir, { slug });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_revision_restore',
+    {
+      description:
+      'Put a project card back to a revision from project_history (card, its names and synthesized_at). ' +
+      'Snapshots the current card first. Rejected if the revision\'s aliases are now another project\'s.',
+      inputSchema: z.object({
+        slug: projectSlug,
+        revision_id: z.number().int().positive().describe('Revision id from project_history.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async ({ slug, revision_id }) => {
+      const result = await projectRevisionRestore(contextDir, { slug, revision_id });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project',
+    {
+      description:
+      'Read one project card: {found, rendered, card, archived, updated, synthesized_at, resolved_from?}. A ' +
+      'missing project is {found: false}, not an error. where fields carry [ok], [unverified] or [STALE <n>d].',
+      inputSchema: z.object({
+        slug: projectSlug,
+        include_archived: z.boolean().optional().describe('Return an archived card in full (default false).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ slug, include_archived }) => {
+      const result = await projectRead(contextDir, { slug, include_archived });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_list',
+    {
+      description:
+      'List projects, most recent activity first: slug, name, status, links, activity, stale and unverified ' +
+      'counts, and memories_since_synthesis (memories tagged with any of its names created after the summary: ' +
+      'how a consolidation lane finds summaries that have fallen behind). Without status, every live project.',
+      inputSchema: z.object({
+        status: z.enum(['active', 'paused', 'done']).optional().describe('Only projects with this status.'),
+        include_archived: z.boolean().optional().describe('Include archived projects (default false).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ status, include_archived }) => {
+      const result = await projectList(contextDir, { status, include_archived });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_hub',
+    {
+      description:
+      'A project\'s hub: its card and its sections, computed live — memories tagged with any of its names (the ' +
+      '20 newest plus the 10 most salient), notes under its prefixes, person cards with a where field for ' +
+      'it, conversations whose digests name it, then each managed piece\'s section feed (piece:<name>). Items changed after since (default 7 days ago) are marked new. A section that fails is {key, error}; ' +
+      'the others still return. An archived project gives {found: true, archived: true} unless include_archived.',
+      inputSchema: z.object({
+        slug: projectSlug,
+        since: z.string().optional().describe('ISO-8601 time; default 7 days ago. Marks items new; does not filter.'),
+        include_archived: z.boolean().optional().describe('Compute an archived project\'s hub too (default false).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ slug, since, include_archived }) => {
+      const result = await projectHub(contextDir, { slug, since, include_archived });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'project_orphans',
+    {
+      description:
+      'Memory project tags that are no live project\'s name, with counts, most first: where to find projects ' +
+      'that ought to have a card. Counts only non-archived, non-expired memories.',
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => ({ content: [{ type: 'text' as const, text: await projectOrphansText(contextDir) }] }),
+  );
+
+  // ─── Conversations (docs/specs/conversations.md) ──────────────────────────────
+
+  const convText = (f: () => unknown) => {
+    try {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(f(), null, 2) }] };
+    } catch (e) {
+      if (e instanceof ConversationError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+      throw e;
+    }
+  };
+  const isoTime = z.string().max(40).refine((v) => !Number.isNaN(Date.parse(v)), 'an ISO-8601 time');
+
+  server.registerTool(
+    'conversation_digest',
+    {
+      description:
+      'Write this body run\'s digest of its conversation: what was asked, decided and done, and whether the owner ' +
+      'is needed. For the conversation and run given to identity (rejected without them); a second write in the ' +
+      'same run replaces it. Quote a line only when its words carry the meaning: never a transcript. The test for ' +
+      'anything written about a person: would they be fine reading it? A body in a conversation writes this instead of an episode.',
+      inputSchema: z.object({
+        summary: z.string().max(600).describe('What happened, at most 600 characters.'),
+        asks: z.array(z.string().max(200)).max(8).optional().describe('What was asked of the agent.'),
+        decisions: z.array(z.string().max(200)).max(8).optional().describe('What was decided.'),
+        tasks: z.array(z.string().max(64)).max(16).optional().describe('Task refs made or moved (t-…).'),
+        projects: z.array(z.string().max(80)).max(4).optional().describe('Project names (slugs or aliases); omitted: the project whose links.venues names this conversation\'s place, if exactly one does.'),
+        needs_owner: z.string().max(200).nullable().optional().describe('A one-line reason the owner is needed (it shows in their Inbox until a later digest has none), or null.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => convText(() => writeDigest(contextDir, here ?? { conversation: '', run: '' }, input)),
+  );
+
+  server.registerTool(
+    'conversations',
+    {
+      description:
+      'This agent\'s conversations, newest first (at most 100): venue, place, label, people, agents, projects, ' +
+      'started, last, turn count, the newest digest\'s summary and any open needs_owner. No text: conversations hold none.',
+      inputSchema: z.object({
+        people: z.string().max(80).optional().describe('Only conversations with this person (a slug).'),
+        project: z.string().max(80).optional().describe('Only conversations whose digests name this project (a slug or alias).'),
+        venue: z.string().max(32).optional().describe('Only this venue (slack, session, wake, …).'),
+        since: isoTime.optional().describe('Only conversations active after this time (their last turn is later).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ people, project, venue, since }) => convText(() => ({
+      conversations: conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) }),
+    })),
+  );
+
+  server.registerTool(
+    'conversation',
+    {
+      description:
+      'One of this agent\'s conversations: the record, its digests (newest first), the findings on it, and its ' +
+      'render (the venue\'s own when its piece is installed and offers one, else core\'s generic render).',
+      inputSchema: z.object({ id: z.string().max(64).describe('The conversation id, cv-….') }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ id }) => {
+      const view = await conversationView(contextDir, agentOfDir(contextDir), id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
+    },
+  );
+
+  server.registerTool(
+    'conversation_findings',
+    {
+      description:
+      'Graders\' findings on this agent\'s own turns, newest first: one line per conversation per UTC day at most, ' +
+      'from a grader that saw only redacted text. For introspection: what to learn from. Empty until the household\'s review has run.',
+      inputSchema: z.object({ since: isoTime.optional().describe('Only findings after this time.') }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ since }) => convText(() => ({ findings: findingsOf(contextDir, since ? { since } : {}) })),
   );
 
   // MCP-App render probe — env-gated, throwaway. Not part of the tool surface

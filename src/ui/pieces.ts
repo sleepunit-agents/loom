@@ -80,7 +80,8 @@ export interface PieceSkip {
   reason: string;
 }
 
-type Answer = { ok: true; stdout: string } | { ok: false; reason: string };
+/** A non-zero exit keeps what the piece printed (`stdout`): an offer may say why it failed there. */
+type Answer = { ok: true; stdout: string } | { ok: false; reason: string; code?: number | null; stdout?: string };
 type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
@@ -98,8 +99,13 @@ export function clearPieceCache(path?: string): void {
  */
 export const PAGE_FRESH_MS = 5_000;
 export const PAGE_STALE_MS = 5 * 60_000;
+/**
+ * A page that set `refresh` is waiting on something that's changing (a sign-in being checked): it's kept only this
+ * long, to share one run between tabs, and never shown stale, so each of its reloads sees the piece's state now.
+ */
+export const PAGE_LIVE_MS = 1_000;
 const PAGES_MAX = 500;
-interface PageEntry { at: number; result: Promise<Page | string>; refreshing?: boolean }
+interface PageEntry { at: number; result: Promise<Page | string>; refreshing?: boolean; live?: boolean }
 const pages = new Map<string, PageEntry>();
 
 export function pieceEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -125,7 +131,7 @@ export const MAX_RUNNING = 6;
  * of /api (a box, which may be compromised) can never starve the owner's page.
  * The API's queue is bounded too: past it, a call is refused, not parked.
  */
-class Pool {
+export class Pool {
   private running = 0;
   private readonly waiting: Array<() => void> = [];
   constructor(private readonly max: number, private readonly maxWaiting = Infinity) {}
@@ -149,6 +155,9 @@ class Pool {
       this.waiting.shift()?.();
     }
   }
+
+  /** Nothing running and nothing waiting: a caller keeping pools per key may drop this one. */
+  get idle(): boolean { return this.running === 0 && this.waiting.length === 0; }
 }
 
 const pagePool = new Pool(MAX_RUNNING);
@@ -156,8 +165,30 @@ const pagePool = new Pool(MAX_RUNNING);
 export const MAX_API_RUNNING = 4;
 export const MAX_API_WAITING = 8;
 const apiPool = new Pool(MAX_API_RUNNING, MAX_API_WAITING);
+/**
+ * The offers that may run long (agent-runtime.md: 120 s each) each have a pool of their own, so
+ * neither holds the page's pieces nor the other: an agent's MCP tools can't starve delivery, and
+ * a flood of deliveries can't starve the tools. Past a pool's queue, a call is refused as busy.
+ *  - `mcp_tools`: four at once, sixteen waiting;
+ *  - `delivery`: eight at once, thirty-two waiting, larger than one calling piece's share
+ *    (src/delivery.ts: 2 running, 4 waiting), so one piece at its cap leaves room for others.
+ *  - `grants`: eight at once, thirty-two waiting. Every agent call to a piece asks the authority
+ *    first (src/grants.ts), so the ask never queues behind a page's pieces or a long tool.
+ */
+export const MAX_TOOLS_RUNNING = 4;
+export const MAX_TOOLS_WAITING = 16;
+export const MAX_DELIVERY_RUNNING = 8;
+export const MAX_DELIVERY_WAITING = 32;
+export const MAX_GRANTS_RUNNING = 8;
+export const MAX_GRANTS_WAITING = 32;
+export type OfferPool = 'page' | 'tools' | 'delivery' | 'grants';
+const offerPools: Record<Exclude<OfferPool, 'page'>, Pool> = {
+  tools: new Pool(MAX_TOOLS_RUNNING, MAX_TOOLS_WAITING),
+  grants: new Pool(MAX_GRANTS_RUNNING, MAX_GRANTS_WAITING),
+  delivery: new Pool(MAX_DELIVERY_RUNNING, MAX_DELIVERY_WAITING),
+};
 
-async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number } = {}): Promise<Answer> {
+async function ask(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin?: string; timeoutMs?: number; maxBytes?: number } = {}): Promise<Answer> {
   return (await pagePool.run(() => run(path, args, env, opts)))!;
 }
 
@@ -199,12 +230,36 @@ function run(path: string, args: string[], env: NodeJS.ProcessEnv, opts: { stdin
     // 'close' waits for every holder of the pipe, and a helper the piece left
     // running would hold it open past the timeout.
     child.on('exit', (code) => {
-      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui' });
+      const done = () => finish(code === 0 ? { ok: true, stdout: out } : { ok: false, reason: 'no ui', code, stdout: out });
       if (child.stdout?.readableEnded) return done();
       child.stdout?.once('end', done);
       drain = setTimeout(done, DRAIN_MS);
     });
   });
+}
+
+/**
+ * Run a piece's bin with `args` (and `stdin`, when given) under the manifest
+ * runner's limits: 3 s, the process group killed afterwards, at most
+ * MAX_RUNNING at once, in the page's pool. In the piece's own environment, and
+ * with a store grant when there's a caller. The runner for offers
+ * (src/offers-registry.ts, runOffer): a failure says why, an exit says its code.
+ * `pool` runs it in a long offer's own pool instead (`tools`, `delivery`), for
+ * `timeoutMs` (a full pool answers `busy`). A non-zero exit says its code and
+ * keeps the stdout.
+ */
+export async function runPieceBin(
+  path: string, args: string[], env: NodeJS.ProcessEnv,
+  opts: { stdin?: string; maxBytes?: number; caller?: ApiCaller; pool?: OfferPool; timeoutMs?: number } = {},
+): Promise<{ ok: true; stdout: string } | { ok: false; reason: string; exit?: number; stdout?: string }> {
+  const env1 = withGrant(env, path, opts.caller);
+  const r = opts.pool && opts.pool !== 'page'
+    ? await offerPools[opts.pool].run(() => run(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs }))
+    : await ask(path, args, env1, { stdin: opts.stdin, maxBytes: opts.maxBytes, timeoutMs: opts.timeoutMs });
+  if (r === null) return { ok: false, reason: 'busy' };
+  if (r.ok) return r;
+  if (r.reason !== 'no ui') return { ok: false, reason: r.reason };
+  return { ok: false, reason: `exit ${r.code ?? 'by signal'}`, ...(typeof r.code === 'number' ? { exit: r.code } : {}), ...(r.stdout !== undefined ? { stdout: r.stdout } : {}) };
 }
 
 function json(stdout: string): unknown {
@@ -320,13 +375,13 @@ export async function piecePage(
   };
   const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
   const hit = pages.get(key);
-  if (hit && now - hit.at < PAGE_FRESH_MS) return hit.result;
-  if (hit && now - hit.at < PAGE_STALE_MS) {
+  if (hit && now - hit.at < (hit.live ? PAGE_LIVE_MS : PAGE_FRESH_MS)) return hit.result;
+  if (hit && !hit.live && now - hit.at < PAGE_STALE_MS) {
     if (!hit.refreshing) {
       hit.refreshing = true;
       const next = run();
       // Only a page replaces a page: a failed refresh keeps the last one, and is tried again next time.
-      void next.then((fresh) => { if (typeof fresh !== 'string') { if (pages.get(key) === hit) pages.set(key, { at: Date.now(), result: next }); } else hit.refreshing = false; });
+      void next.then((fresh) => { if (typeof fresh !== 'string') { if (pages.get(key) === hit) pages.set(key, { at: Date.now(), result: next, ...(fresh.refresh ? { live: true } : {}) }); } else hit.refreshing = false; });
     }
     return hit.result;
   }
@@ -344,9 +399,11 @@ export async function piecePage(
   pages.set(key, { at: now, result });
   // A failure isn't kept; the oldest go first past PAGES_MAX.
   void result.then((r) => {
-    if (pages.get(key)?.result !== result) return;
+    const entry = pages.get(key);
+    if (entry?.result !== result) return;
     if (typeof r === 'string') pages.delete(key);
     else if (fellBack) pages.set(key, { at: 0, result });
+    else if (r.refresh) entry.live = true;
   });
   if (pages.size > PAGES_MAX) pages.delete(pages.keys().next().value!);
   return result;

@@ -17,8 +17,8 @@
 import { join } from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import {
-  PeopleStore, PersonCardError, renderCard, SLUG_RE,
-  type MutationResult, type PersonCard, type PersonEvidence, type PersonListEntry, type PersonReadResult, type PersonRevisionMeta,
+  PeopleStore, PersonCardError, renderCard, SLUG_RE, throughRedirect,
+  type MutationResult, type PersonMergeRecord, type PersonCard, type PersonEvidence, type PersonListEntry, type PersonReadResult, type PersonRevisionMeta,
   type PersonRow, type PersonWriteInput,
 } from './people.js';
 import { resolveSqliteDbPath } from '../config.js';
@@ -111,6 +111,16 @@ export class HouseholdPeople {
     this.relationship.close();
   }
 
+  /** A merged slug's redirect (person_merge): the directory holds it, for every agent. */
+  mergeOf(slug: string): PersonMergeRecord | null {
+    return this.directory.mergeOf(slug);
+  }
+
+  /** Where a slug's reads and writes land: itself, or the card it was merged into. */
+  resolve(slug: string): string {
+    return this.directory.resolve(slug);
+  }
+
   getRow(slug: string): PersonRow | null {
     const d = this.directory.getRow(slug);
     if (!d) return null;
@@ -124,6 +134,8 @@ export class HouseholdPeople {
   }
 
   read(slug: string, includeArchived = false): PersonReadResult {
+    const target = this.resolve(slug);
+    if (target !== slug) return throughRedirect(this.read(target, includeArchived), this.mergeOf(slug)!);
     const row = this.getRow(slug);
     if (!row) return this.directory.read(slug, includeArchived);
     const archived = row.archived_at !== null;
@@ -164,6 +176,9 @@ export class HouseholdPeople {
    * so a write either half would refuse changes neither.
    */
   write(input: PersonWriteInput): MutationResult {
+    // A merged slug is a redirect: its writes land on the card it was merged into.
+    const asked = input.slug;
+    if (typeof asked === 'string') input = { ...input, slug: this.resolve(asked) };
     const merge = input.merge ?? true;
     const dirRow = this.directory.getRow(input.slug);
     const relRow = this.relationship.getRow(input.slug);
@@ -200,12 +215,22 @@ export class HouseholdPeople {
     rehearse(relRow, relInput, this.now);
     if (dirInput) this.directory.write(dirInput);
     if (relInput) this.relationship.write(relInput);
-    return this.mutation(input.slug);
+    return { ...this.mutation(input.slug), ...(asked !== input.slug ? { redirected_from: asked } : {}) };
+  }
+
+  /**
+   * Merge `where` fields into the directory entry alone: an existing person's handles,
+   * with no relationship made or touched (people-ensure.ts).
+   */
+  writeWhere(slug: string, where: NonNullable<PersonWriteInput['where']>): MutationResult {
+    const target = this.resolve(slug);
+    this.directory.write({ slug: target, where });
+    return this.mutation(target);
   }
 
   verify(input: { slug: string; fields: string[]; verified_at?: string; source?: string }): MutationResult {
-    this.directory.verify(input);
-    return this.mutation(input.slug);
+    const out = this.directory.verify(input);
+    return { ...this.mutation(out.card.slug), ...(out.redirected_from ? { redirected_from: out.redirected_from } : {}) };
   }
 
   archive(input: { slug: string; reason: string; actor: string }): MutationResult {
@@ -242,6 +267,8 @@ export class HouseholdPeople {
     const snap = this.relationship.revisionSnapshot(input.revision_id);
     if (!snap) throw new PersonCardError(`revision ${input.revision_id} not found`);
     if (snap.slug !== input.slug) throw new PersonCardError(`revision ${input.revision_id} belongs to another card, not ${input.slug}`);
+    // A merge keeps the merged card under the surviving slug (op merged_from): history, not a restore.
+    if (snap.card.slug !== input.slug) throw new PersonCardError(`revision ${input.revision_id} holds a card for another slug (${snap.card.slug}, merged in)`);
     if (!holdsDirectoryFields(snap.card)) {
       this.relationship.revisionRestore(input);
       return this.mutation(input.slug);
@@ -277,15 +304,15 @@ export function openHouseholdPeople(
   h: Household,
   agent: string,
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
 ): HouseholdPeople | null {
   const dirPath = commonsPeoplePath(h);
   const relPath = resolveSqliteDbPath(contextDir);
   if (opts.readonly && (!existsSync(dirPath) || !existsSync(relPath))) return null;
   if (!opts.readonly) mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
   return new HouseholdPeople(
-    new PeopleStore({ dbPath: dirPath, readonly: opts.readonly, now: opts.now, actor: agent }),
-    new PeopleStore({ dbPath: relPath, readonly: opts.readonly, now: opts.now, actor: agent }),
+    new PeopleStore({ dbPath: dirPath, readonly: opts.readonly, now: opts.now, actor: opts.actor ?? agent }),
+    new PeopleStore({ dbPath: relPath, readonly: opts.readonly, now: opts.now, actor: opts.actor ?? agent }),
     opts.now,
     new Set(h.agents),
   );

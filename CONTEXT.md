@@ -101,12 +101,14 @@ _Avoid_: summary, recent memories, context window
 **Episode**:
 A memory with `category: episode` — where a body was, what was said or
 decided, what shipped, what's open — written before a session ends. Short TTL
-(48h default).
+(48h default). A body in a conversation writes a digest instead; bodies
+without one still write episodes.
 _Avoid_: session summary, handoff, checkpoint, log
 
 **Tape**:
-The last N hours of episodes, time-ordered and never ranked, injected at boot
-after preferences. The cross-body short-term tier.
+The last N hours of episodes and conversation digests, interleaved by time and
+never ranked, injected at boot after preferences. The cross-body short-term
+tier. A digest on the tape is still not a memory: recall doesn't find it.
 _Avoid_: short-term memory, activity log, feed, timeline
 
 **Archive / tombstone**:
@@ -148,6 +150,88 @@ _Avoid_: attribute, property, fact
 The set of people a turn is addressed by. The harness (bridge, lane, voice)
 knows who is in it and passes it as identity's `people`; loom does not guess.
 _Avoid_: audience, channel (a room is people, not a venue)
+
+## Conversations
+
+(docs/specs/conversations.md)
+
+**Conversation**:
+An exchange between an agent and others (people, agents, or a schedule) in one
+place in one venue: who, where, when, and what came of it. Keyed by agent ·
+venue · place. A core record: it outlives the piece that carried it.
+_Avoid_: chat, session (that's a body's run), thread (that's a venue's word), transcript
+
+**Venue**:
+Where conversations happen, and the adapter that carries them: `discord`,
+`slack`, `session` (an interactive harness), `wake`, `relay`. A venue has a
+**kind** (`live`, `scheduled` or `agent`) that sets what it is measured on.
+_Avoid_: channel (that's a place), platform, bridge (that's the adapter's code)
+
+**Place**:
+The venue's own address for one conversation: a DM with someone, a channel, a
+schedule, an agent pair. The venue defines its places; core treats a place as
+an opaque string.
+_Avoid_: room (that's the people a turn is addressed by), channel
+
+**Turn**:
+One message or action in a conversation, as metadata: who, when, how long the
+reply took, which model and harness. Never its text.
+_Avoid_: message (that's the venue's object), event
+
+**Digest**:
+A body's own summary of its run in a conversation: what was asked, decided and
+done, and whether the owner is needed. One per body run. Not a memory: recall
+doesn't search it, and `conversations` reads it.
+_Avoid_: summary (that's a field), episode (a digest replaces one where a conversation exists)
+
+**Audit log**:
+The temporary, encrypted store of raw turn text that grading reads and then
+deletes. Not "the tape": the tape is the boot-time stream above.
+_Avoid_: tape, transcript store, history
+
+**Review**:
+The household's daily pass. **Grading** is household-wide, by bare models,
+blind. **Introspection** is per agent, by that agent, without raw text.
+_Avoid_: retro, reflection (that's an agent's own lane), evaluation
+
+**Finding**:
+A grader's note on one turn: one line of at most 200 printable characters, at
+most one per conversation per UTC day. A meaningful quote is fine; bulk quoting
+isn't, and the cap is what stops it (nothing machine-checks the words). Kept on
+the turn's agent's side.
+_Avoid_: comment, feedback (that's a memory category)
+
+**Scorecard**:
+Grades per model, family, harness and venue kind, aggregated across the
+household. Numbers and fixed labels only.
+_Avoid_: leaderboard, benchmark
+## Projects
+
+**Project**:
+An ongoing body of work with a goal, identified by a stable slug (`pond`). Its card is the condensed current state;
+its hub is everything filed under it, read live.
+_Avoid_: epic (a task-store row), workspace, repo, initiative
+
+**Project card**:
+The condensed current state of a project: what it is, its goal, where it stands, and the selectors its hub reads with.
+_Avoid_: project page (that's the hub as shown), brief, charter
+
+**Hub**:
+A project's sections, computed at read: its memories, notes, people and conversations, and what pieces contribute.
+_Avoid_: dashboard, feed, timeline
+
+**Project name**:
+A slug or an alias. Every project name resolves to exactly one live project. **Live** means not archived, whatever its
+`status`: a paused or done project keeps its names.
+_Avoid_: tag (that's the memory field a name matches), key
+
+**Section feed** (seam):
+A managed piece's contribution to a hub: a command loom runs that returns grouped items for one project.
+_Avoid_: plugin, integration, widget
+
+**Conversation digest**:
+A body run's own summary of its conversation, a core record: see **Digest** under Conversations.
+_Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
 
 ## Knowledge
 

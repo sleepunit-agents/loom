@@ -172,7 +172,8 @@ let s = ''; process.stdin.on('data', (d) => s += d).on('end', () => {
     const statuses = (await Promise.all(flood)).map((r) => r.status);
     expect(statuses.filter((x) => x === 503).length).toBe(4);
     expect(statuses.filter((x) => x === 200).length).toBe(12);
-  });
+    // Twelve 1.5 s calls through four slots are 4.5 s of work by design: vitest's 5 s default is no margin on CI.
+  }, 15_000);
 
   it('the piece role round-trips, and "loom" can\'t be a piece', () => {
     const r = parseRole('piece:box/thor.local');

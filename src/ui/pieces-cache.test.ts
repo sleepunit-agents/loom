@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CACHE_MS, PAGE_STALE_MS, PIECE_TIMEOUT_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage } from './pieces.js';
+import { CACHE_MS, PAGE_LIVE_MS, PAGE_STALE_MS, PIECE_TIMEOUT_MS, STALE_MAX_MS, clearPieceCache, pieceAct, pieceManifests, piecePage } from './pieces.js';
 
 // t-1584: 'loom pieces install' points pieces/bin/loom-<name> at a new version; Home showed the old one's
 // answer until the 45s cache ran out (or a restart). The cache keys on where the path resolves now.
@@ -68,6 +68,29 @@ describe('the manifest cache', () => {
     expect(await title()).toBe('n1');
     await pieceAct(info, { action: 'bump', path: '', fields: {} }, env);
     expect(await title()).toBe('n6');               // an action drops the piece's pages: the next look is fresh
+  });
+
+  // Jonathan, 2026-11-02: a sign-in page that reloads every 2 seconds while the box checks the code kept showing
+  // "checking" for a stale copy's worth of reloads after the box said it worked.
+  it('a page that asked to refresh is never shown stale: past a second, the next look asks the piece', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'loom-livepage-'));
+    dirs.push(root);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(root, 'n'), 'checking');
+    writeFileSync(join(bin, 'loom-gizmo'), `#!/bin/sh\nN=$(cat '${join(root, 'n')}')\ncase "$2" in\n page) if [ "$N" = checking ]; then echo '{"title":"checking","refresh":2,"sections":[]}'; else echo "{\\"title\\":\\"$N\\",\\"sections\\":[]}"; fi ;;\n *) echo '{"v":2,"tab":{"label":"Gizmo"}}' ;;\nesac\n`);
+    chmodSync(join(bin, 'loom-gizmo'), 0o755);
+    const env = { PATH: `${bin}:/usr/bin:/bin`, LOOM_HOME: join(root, 'home') };
+    const info = (await pieceManifests(env)).pieces.find((p) => p.piece === 'gizmo')!;
+    const title = async (at: number) => ((await piecePage(info, '', {}, env, undefined, at)) as { title: string }).title;
+    const t0 = Date.now();
+    expect(await title(t0)).toBe('checking');
+    writeFileSync(join(root, 'n'), 'logged-in');
+    expect(await title(t0 + 10)).toBe('checking');                   // within a second: the same run, for every tab
+    expect(await title(t0 + PAGE_LIVE_MS + 1)).toBe('logged-in');    // past it: the piece's state now, not a stale copy
+    // Settled (no refresh any more): kept as any page is, stale while it revalidates.
+    writeFileSync(join(root, 'n'), 'later');
+    expect(await title(t0 + PAGE_LIVE_MS + 2000)).toBe('logged-in');
   });
 
   // Jonathan, 2026-10-29: "machine couldn't show this page, timed out, when it didn't wait very long".

@@ -78,6 +78,13 @@ describe('meter, code and status blocks', () => {
     expect(page([{ type: 'status', items: [{ label: 'x', tone: 'purple' }] }])).toMatch(/tone/);
   });
 
+  it('a callout may say something is under way (busy: a spinner in its icon\'s place)', () => {
+    const p = ok(page([{ type: 'callout', text: 'Checking the code with Anthropic…', busy: true }, { type: 'callout', text: 'Done', tone: 'ok', busy: false }]));
+    expect(p.sections[0].blocks[0]).toEqual({ type: 'callout', text: 'Checking the code with Anthropic…', title: undefined, tone: undefined, busy: true });
+    expect(p.sections[0].blocks[1]).not.toHaveProperty('busy');
+    expect(page([{ type: 'callout', text: 'x', busy: 'yes' }])).toMatch(/busy/);
+  });
+
   it('a page may ask to be refreshed, every 2 to 300 seconds, forms or not', () => {
     const p = ok(page([{ type: 'form', action: 'a', submit: 'Go', fields: [{ name: 'n', label: 'N', kind: 'text' }] }], { refresh: 3 }));
     expect(p.refresh).toBe(3);
@@ -161,5 +168,46 @@ describe('the manifest for Home and the Inbox (t-1618)', () => {
     expect(typeof parseManifest({ v: 2, tab: { label: 'Clock', level: 'everyone' } })).toBe('string');
     const p = parsePage({ title: 'Clock', sections: [{ id: 'wakes', level: 'agent', blocks: [] }] });
     expect(typeof p === 'string' ? p : p.sections[0].level).toBe('agent');
+  });
+});
+
+describe('chart, folding sections and who a row is (Jonathan, 2026-10-31)', () => {
+  const chart = (extra: Record<string, unknown> = {}) => page([{ type: 'chart', kind: 'bar', caption: 'Opened and done, by week',
+    series: [{ key: 'opened', label: 'Opened', color: 'pink' }, { key: 'done', label: 'Done', color: 'olive' }],
+    data: [{ label: 'Oct 17', opened: 12, done: 9 }, { label: 'Oct 24', opened: 7 }], ...extra }]);
+
+  it('a chart is series over labelled points; a missing value stays missing', () => {
+    const c = ok(chart({ summary: { label: 'Done this week', value: '9' } })).sections[0].blocks[0] as Extract<Block, { type: 'chart' }>;
+    expect(c).toMatchObject({ kind: 'bar', caption: 'Opened and done, by week', summary: { label: 'Done this week', value: '9' } });
+    expect(c.data).toEqual([{ label: 'Oct 17', opened: 12, done: 9 }, { label: 'Oct 24', opened: 7, done: null }]);
+    expect(ok(chart({ kind: 'area', variant: 'stacked' })).sections[0].blocks[0]).toMatchObject({ kind: 'area', variant: 'stacked' });
+  });
+
+  it('a chart that would draw wrong is refused whole', () => {
+    expect(chart({ kind: 'pie' })).toMatch(/chart.kind/);
+    expect(chart({ variant: 'step' })).toMatch(/chart.variant/);
+    expect(chart({ series: [] })).toMatch(/at least one/);
+    expect(chart({ series: [{ key: 'a', label: 'A' }, { key: 'a', label: 'B' }] })).toMatch(/differ/);
+    expect(chart({ series: [{ key: 'label', label: 'L' }] })).toMatch(/series.key/);
+    expect(chart({ series: [{ key: 'a', label: 'A', color: 'red' }] })).toMatch(/color/);
+    expect(chart({ data: [{ label: 'x', opened: '3' }] })).toMatch(/chart.data.opened/);
+    expect(chart({ data: Array.from({ length: 61 }, (_, i) => ({ label: `${i}` })) })).toEqual(expect.any(String));
+  });
+
+  it('a section folds under its title, open or closed; one with no title cannot', () => {
+    const p = ok(parsePage({ title: 'T', sections: [{ id: 'later', title: 'Later · 245', fold: 'closed', blocks: [] }, { id: 'now', title: 'Now', blocks: [] }] }));
+    expect(p.sections.map((s) => s.fold)).toEqual(['closed', undefined]);
+    expect(parsePage({ title: 'T', sections: [{ id: 'x', fold: 'open', blocks: [] }] })).toMatch(/needs a title/);
+    expect(parsePage({ title: 'T', sections: [{ id: 'x', title: 'X', fold: 'shut', blocks: [] }] })).toMatch(/section.fold/);
+  });
+
+  it('a row may say who by People slug, and loom is an agent id for its own mark', () => {
+    const p = ok(page([{ type: 'list', items: [{ text: 'a', person: 'jonathan-barket' }, { text: 'b', agent: 'loom' }, { text: 'c' }] }]));
+    const items = (p.sections[0].blocks[0] as Extract<Block, { type: 'list' }>).items;
+    expect(items.map((i) => [i.person, i.agent])).toEqual([['jonathan-barket', undefined], [undefined, 'loom'], [undefined, undefined]]);
+    expect(page([{ type: 'list', items: [{ text: 'a', person: 'Jonathan Barket' }] }])).toMatch(/People slug/);
+    const marked = ok(page([{ type: 'list', who: true, items: [{ text: 'a' }] }])).sections[0].blocks[0];
+    expect(marked).toMatchObject({ who: true });
+    expect(ok(page([{ type: 'list', who: 'yes', items: [] }])).sections[0].blocks[0]).not.toHaveProperty('who');
   });
 });

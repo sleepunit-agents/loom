@@ -14,6 +14,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Two cards that turn out to be one person become one.** `person_merge`
+  (an agent of the household that holds both), `loom person merge <from>
+  <into> [--dry-run]` (the owner) and `POST /api/loom/people/merge` (a
+  household owner, the runtime) fold `from` into `into`: `where` is the union
+  of both cards' values, `how` and `may` the union with `into` winning, `into`'s
+  name and summary kept with a "Merged <from> (<name>) <date>" line, in the
+  directory and every agent's copy. Every memory, proposal, conversation and
+  turn tagged `from` is re-tagged, and `how.via`/`how.loop_in` relinked. `from`
+  is left an archived redirect (`person_merges`): reading it answers `into`'s
+  card with a note, and a later write, verify, ensure or reach lands on `into`.
+  A dry run says what would change; the answer's `not_done` says to rename the
+  slug in every agent's gates.
+
+- **A person is one card, however they were added.** `POST
+  /api/loom/people/ensure` and `loom person ensure` make sure someone has a
+  person card: with none, a minimal one (the name, `<role>. From <source>.`,
+  the `where` values); with one, only the `where` values it lacks, as `reach`
+  adds an id. Name, summary, how and may are never changed, and a value
+  already on another card is refused (409). A household owner, the runtime,
+  and a piece's process in an owner's action (the grant loom minted for it,
+  checked as `loom store` checks it) may call it; agents keep `person_write`,
+  and `person ensure` never runs over `POST /cli`. `--dry-run` writes nothing.
+
+- **Old piece names.** `box` is now `runtime`: the catalog lists loom-box's
+  repo as `runtime` (37cc43d), and core's alias table (`PIECE_ALIASES`)
+  maps `box` to `runtime` for `/api/box/…`, `/p/box/…` (a 308), `piece:box/…`
+  credentials, a house's `loom box …` and the starters, while no `box` piece
+  is installed. `loom pieces update box` says how to switch instead of
+  failing.
+
+- **Turn keys.** `POST /api/loom/conversations/turn` takes an optional `key`
+  (the runtime's `<source>:<id>`, runtime role only): a repeat within 24
+  hours answers the first `{conversation, seq}` and writes nothing, and the
+  same key on a different turn is a 409. Kept in `household.db` (`turn_keys`).
+
+- **Delivery, core's half.** `POST /api/loom/deliver`: the one core route every
+  piece token reaches (and the runtime's token). Core checks the body and who
+  may deliver what (the venue is the caller's, the agent the household's and
+  granted, a person only from a venue adapter, an agent only from the
+  runtime), each refused with a 403 that writes nothing; then forwards it to
+  the one piece offering the new `delivery` offer key (a runtime-role piece
+  only, one per household) under 120 s and 64 KB, and passes its answer
+  back (a runtime's own `{status: 5xx, error}` passes through). Idempotent on
+  (calling piece, id) for 24 hours, kept in `household.db`; a failed forward
+  isn't kept. `GET /api/loom/venues` gives the runtime every venue with its
+  `send` argv. Offer lookups by name use own keys only. A piece delivers on
+  core's `wake` only if it declares `"wake": {}` in its venues. Replays are
+  keyed on (calling piece, id) with a hash of the body (a changed body is a
+  409), and one piece gets at most 2 running and 4 waiting forwards and
+  10,000 kept answers a day (t-1744).
+- **The audit log and review's records** (docs/specs/conversations.md, slices 2-3).
+  `$LOOM_HOME/audit.db` holds raw turn text, age-encrypted to a review key made
+  at first use (`review.key`/`review.pub`, 0600), written by the turn's writer
+  (`POST /api/loom/audit`) and deleted on `audit/done` or 7 days after its
+  turn (an hourly sweep, also at start). A review token takes entries
+  (`audit/take`), redacted (people P…, agents A…, models M…, harnesses H…),
+  posts `scores` by ref and at most one `findings` line per conversation per
+  UTC day. Core aggregates `scorecards` (graded, plus the metadata measures),
+  which the runtime reads with `GET /api/loom/scorecards`. household.json gains
+  `families` (model → family). Bundles and exports never carry the audit log
+  or its key.
+
+- **Offers.** A managed piece's `loom` block may declare what it offers through
+  core: `sections` (a project section feed), `venues`, `mcp_tools` and
+  `grants`. Each is checked at install (a bad one rejects the whole block; a
+  venue or tool name another piece has, or a second grants authority, is
+  refused), kept in piece.json, listed by `src/offers-registry.ts`, and run
+  through the manifest's runner: 3 s, process group killed, 6 at once, the
+  answer checked against a schema (t-1738).
+
+- **Local pieces.** `loom pieces install --from path:/abs/dir` manages a piece
+  that will never be public (an agent's homelab wrappers) like any other: a
+  snapshot of the directory (`npm pack`), versioned by its sha256, so
+  `update` notices a change and `rollback` and `remove` work. `loom pieces`
+  lists it as `managed <version> (local)` (t-1728).
+
 - **A door for strangers, where a piece opens one.** A tokenless call reaches a
   managed piece's API only on a path its `loom` block lists in `strangers`, as
   `{kind:'stranger', address}`, 8 KB at most: so a new box can ask to join and

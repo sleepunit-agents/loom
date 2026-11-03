@@ -8,17 +8,20 @@ const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contour
 const Depth = lazy(() => import('./ground').then((m) => ({ default: m.Depth })));
 // The More drawer's menu (000h's navigation menu) loads when it opens.
 const MoreMenu = lazy(() => import('./more-menu'));
+// The rail is a desktop's alone: a phone never draws it, so never loads it.
+const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
 // Passkeys' controls (WebAuthn, push) load with that page only.
 const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
 const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
+const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
 import { ArrivalContext, type Arrivals } from './arrive';
-import { LoomSidebar } from './sidebar';
 import { Boundary, Callout, iconFor } from './safe';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Spinner } from '@/components/ui/spinner';
+import { refreshEvery, type Showing } from './refresh';
 import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
@@ -55,12 +58,14 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
   const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
   const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) };
-  // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, and More (Setup and every place). A desktop's rail: all of it.
+  // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, More. Places is where you go regularly; More is the
+  // house's settings and Setup (Jonathan, 2026-10-31: "places holds the things you actually go to regularly, ... the
+  // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
   const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
-    { label: 'Find', href: '/find', current: s.tab === 'find' }];
+    { label: 'Find', href: '/find', current: s.tab === 'find' }, { label: 'More', href: '/setup', current: setup.current }];
   return matchMedia('(min-width: 1024px)').matches
     ? { tabs: [home, inbox, ...places.filter((p) => p.href !== '/inbox'), setup], more: settings }
-    : { tabs: phone, more: [setup, ...places.filter((p) => p.href !== '/inbox'), ...settings] };
+    : { tabs: phone, more: [] };
 }
 
 export default function App() {
@@ -152,18 +157,17 @@ export default function App() {
     return () => { es.close(); document.removeEventListener('visibilitychange', back); };
   }, [load]);
 
-  // A page that stays fresh is fetched again in place (the classic page's data-live): page.refresh seconds, or 20 for a
-  // page without a form, and Home, Today and the Inbox; never while a sheet, an editor or a field is in use, or hidden.
-  const every = !data ? 0 : data.view === 'page' ? (data.page.refresh ?? (JSON.stringify(data.page).includes('"type":"form"') ? 0 : 20))
-    : data.view === 'sheet' ? 0 : 20;
+  // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
+  // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
+  const every = refreshEvery(data as Showing | null, live);
   useEffect(() => {
     if (!every) return;
     const t = setInterval(() => {
       const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
       if (!busy) void load(location.pathname + location.search, false, true);
-    }, (live ? Math.max(every, 60) : every) * 1000);
+    }, every * 1000);
     return () => clearInterval(t);
-  }, [every, live]); 
+  }, [every]); 
 
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
   useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -233,7 +237,7 @@ export default function App() {
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
   const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
-    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? String(data.which).replace(/^./, (c) => c.toUpperCase()) : 'Home');
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   return (
     <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
@@ -243,7 +247,7 @@ export default function App() {
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
         {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
         {ground === 'depth' && <Suspense fallback={null}><Depth /></Suspense>}
-        {wide && chrome && <LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} />}
+        {wide && chrome && <Suspense fallback={null}><LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} /></Suspense>}
         <div className="min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
@@ -279,13 +283,17 @@ export default function App() {
               This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
             {error && <Callout tone={/^loom answered/.test(error) ? 'danger' : 'warn'} icon={/^loom answered/.test(error) ? undefined : 'cloud-off'} title={/^loom answered/.test(error) ? 'loom couldn’t open this' : 'Can’t reach loom'}
               actions={<Button size="sm" variant="outline" onClick={() => void load(location.pathname + location.search, false)}>Try again</Button>}>{error}</Callout>}
+            {/* Home and the Inbox ask a device that could get Your call and doesn't (passkeys.tsx PushAsk). */}
+            {!error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
+              <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
+            )}
             {!error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
-                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView items={data.items as never} folder={data.folder as string} chrome={data.chrome} /></Suspense>
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} /></Suspense>
                   : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
                     <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
                   : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
@@ -335,15 +343,22 @@ export default function App() {
 const ACCENT: Record<string, string> = { '#b8a6ff': 'blue', '#7a2e4f': 'pink', '#2f6b5a': 'olive', '#e3b341': 'yellow', '#3d5a99': 'blue', '#f09a7a': 'pink' };
 const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
+const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined);
+
+const FoldCard = lazy(() => import('./fold'));
+
 function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const main = page.sections.filter((s) => !s.side);
   const side = page.sections.filter((s) => s.side);
-  const card = (s: Page['sections'][number]) => (
-    <Card key={s.id} className={s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined}>
+  const card = (s: Page['sections'][number]) => (s.fold ? (
+    // Its title while its chunk loads, so the page doesn't jump.
+    <Suspense key={s.id} fallback={<Card className={ring(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
+  ) : (
+    <Card key={s.id} className={ring(s)}>
       {s.title && <CardHeader><CardTitle>{s.title}</CardTitle></CardHeader>}
       <CardContent className="grid min-w-0 gap-4">{s.blocks.map((b, n) => <BlockView key={n} b={b} />)}</CardContent>
     </Card>
-  );
+  ));
   return (
     // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
     <div className={`grid grid-cols-[minmax(0,1fr)] gap-4 ${side.length ? 'lg:grid-cols-[minmax(0,1fr)_20rem]' : ''}`}>

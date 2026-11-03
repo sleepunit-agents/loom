@@ -20,38 +20,30 @@
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
-import { pathSegmentError } from '../path-safety.js';
 import { MIGRATIONS } from './migrations.js';
-import { retryWrite } from './retry.js';
+import {
+  CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
+  checkEnvelope, slugError, renderWhereLine, oneLine, byName, mergeLevel, withoutNulls, stampWhere, whereCounts,
+  hasTable, RESERVED_KEYS, isReserved, type CardRowBase, type RevisionMeta, type RevisionOp,
+} from './cards.js';
+
+export { SLUG_RE, RESERVED_KEYS, fieldState, type FieldState, type RevisionOp } from './cards.js';
+/** Every rejection the people surface makes. The message names the path. */
+export { CardError as PersonCardError } from './cards.js';
 
 // ─── Limits (the spec's Shape and Rendering sections) ────────────────────────
 
-export const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const MAX_SLUG = 64;
 const MAX_NAME = 80;
 const MAX_SUMMARY = 1200;
-const FIELD_RE = /^[a-z0-9_]+$/;
-const MAX_FIELD_NAME = 32;
 const MAX_FIELDS = 12;
 const MAX_STRING = 200;
 const MAX_ARRAY = 8;
 const MAX_MAY = 8;
-const DEFAULT_STALE_DAYS = 14;
 export const MAX_RENDER = 2000;
-const MAX_REVISIONS = 10;
-const SKEW_MS = 60_000;
-const DAY_MS = 86_400_000;
-
-/**
- * The harness's gating names. Fixed here, not configured: a card that carried
- * one would look like a gate, and the agent writes its own cards.
- */
-export const RESERVED_KEYS = ['tier', 'field', 'projects', 'scope', 'trust'] as const;
 
 const TOP_KEYS = ['slug', 'name', 'summary', 'where', 'how', 'may'];
 const WRITE_KEYS = [...TOP_KEYS, 'merge'];
-const ENVELOPE_KEYS = ['value', 'verified_at', 'source', 'stale_after_days', 'label'];
-const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -108,11 +100,30 @@ export interface MutationResult {
   archived: boolean;
   updated: string;
   synthesized_at: string | null;
+  /** The slug the call named, when it was merged into this card (person_merge): the write landed here. */
+  redirected_from?: string;
+}
+
+/** A card merged into another (person_merge): `from` is a redirect to `into` until purged by hand. */
+export interface PersonMergeRecord {
+  from: string;
+  into: string;
+  at: string;
+  by: string | null;
+  /** What the merge re-tagged, by store (people-merge.ts). */
+  counts: Record<string, unknown>;
+}
+
+/** On a read through a redirect: which slug was asked for, which card answered, and since when. */
+export interface MergedNote {
+  from: string;
+  into: string;
+  at: string;
 }
 
 export type PersonReadResult =
   | { found: false }
-  | { found: true; archived: true }
+  | { found: true; archived: true; merged?: MergedNote }
   | {
       found: true;
       rendered: string;
@@ -120,7 +131,17 @@ export type PersonReadResult =
       archived: boolean;
       updated: string;
       synthesized_at: string | null;
+      /** Present when the slug asked for was merged into this card: it reads as `into`. */
+      merged?: MergedNote;
     };
+
+/** A read of `into`'s card, answered for `from`: the same card, a line saying so, and `merged`. */
+export function throughRedirect(result: PersonReadResult, m: PersonMergeRecord): PersonReadResult {
+  if (!result.found) return result;
+  const merged: MergedNote = { from: m.from, into: m.into, at: m.at };
+  if (!('rendered' in result)) return { ...result, merged };
+  return { ...result, rendered: `${result.rendered}\n_(${m.from} was merged into ${m.into} ${m.at.slice(0, 10)}: this is ${m.into}'s card)_`, merged };
+}
 
 /** One memory a person card condenses (PeopleStore.evidence). */
 export interface PersonEvidence {
@@ -139,46 +160,21 @@ export interface PersonListEntry {
   stale: number;
   unverified: number;
   memories_since_synthesis: number;
+  /** An archived card that person_merge left as a redirect: the card it reads and writes as. */
+  merged_into?: string;
 }
 
-export interface PersonRevisionMeta {
-  id: number;
-  op: RevisionOp;
-  replaced_at: string;
-  /** The agent whose change this revision records (null before households). */
-  actor?: string | null;
+export interface PersonRevisionMeta extends RevisionMeta {
   /** In a household: which half of the card this revision is from. */
   store?: 'directory' | 'relationship';
-}
-
-export type RevisionOp = 'write' | 'verify' | 'archive' | 'restore' | 'revision_restore' | 'split';
-
-/** Every rejection the people surface makes. The message names the path. */
-export class PersonCardError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PersonCardError';
-  }
 }
 
 // ─── Validation ──────────────────────────────────────────────────────────────
 
 /** Null when `slug` is a valid person slug, else the reason. Never echoes an over-long slug. */
 export function personSlugError(slug: unknown): string | null {
-  if (typeof slug !== 'string' || slug === '') return 'slug is required';
-  if (slug.length > MAX_SLUG) return `slug is longer than ${MAX_SLUG} chars`;
-  const segment = pathSegmentError(slug, 'slug');
-  if (segment) return segment;
-  if (!SLUG_RE.test(slug)) return `slug "${slug}" must match ${SLUG_RE.source}`;
-  return null;
+  return slugError(slug, MAX_SLUG);
 }
-
-function fail(message: string): never {
-  throw new PersonCardError(message);
-}
-
-const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Reject a reserved key anywhere under `node`, naming it. Runs before shape checks. */
 function assertNoReserved(node: unknown, path: string): void {
@@ -188,7 +184,7 @@ function assertNoReserved(node: unknown, path: string): void {
   }
   if (!isPlainObject(node)) return;
   for (const [k, v] of Object.entries(node)) {
-    if ((RESERVED_KEYS as readonly string[]).includes(k)) {
+    if (isReserved(k)) {
       fail(
         `${path}.${k}: "${k}" is a reserved key (harness gating names: ${RESERVED_KEYS.join(', ')}). ` +
         'A card is not an authorization surface; gates stay in the harness.',
@@ -196,19 +192,6 @@ function assertNoReserved(node: unknown, path: string): void {
     }
     assertNoReserved(v, `${path}.${k}`);
   }
-}
-
-/** Reject a `null` anywhere under `node`, naming the path. */
-function assertNoNull(node: unknown, path: string): void {
-  if (node === null) fail(`${path}: null is not allowed here`);
-  if (Array.isArray(node)) node.forEach((v, i) => assertNoNull(v, `${path}[${i}]`));
-  else if (isPlainObject(node)) for (const [k, v] of Object.entries(node)) assertNoNull(v, `${path}.${k}`);
-}
-
-function checkString(v: unknown, path: string, max: number): string {
-  if (typeof v !== 'string') fail(`${path}: must be a string`);
-  if (v.length > max) fail(`${path}: longer than ${max} chars (${v.length})`);
-  return v;
 }
 
 function checkValue(v: unknown, path: string): void {
@@ -223,42 +206,6 @@ function checkValue(v: unknown, path: string): void {
     v.forEach((item, i) => checkString(item, `${path}[${i}]`, MAX_STRING));
   } else {
     fail(`${path}: must be a string, number, boolean, or array of strings`);
-  }
-}
-
-/** Names FIELD_RE admits that would reach Object.prototype through a plain-object assignment. */
-const PROTO_NAMES = ['__proto__', 'constructor', 'prototype'];
-
-function checkFieldName(name: string, path: string): void {
-  if (!FIELD_RE.test(name) || name.length > MAX_FIELD_NAME) {
-    fail(`${path}: field name must match ${FIELD_RE.source} and be at most ${MAX_FIELD_NAME} chars`);
-  }
-  if (PROTO_NAMES.includes(name)) fail(`${path}: "${name}" is not allowed as a field name`);
-}
-
-function checkVerifiedAt(v: unknown, path: string, nowMs: number | null): void {
-  const s = checkString(v, path, MAX_STRING);
-  if (!ISO_UTC_RE.test(s) || Number.isNaN(Date.parse(s))) {
-    fail(`${path}: must be an ISO-8601 UTC timestamp (e.g. 2026-10-19T14:00:00Z)`);
-  }
-  if (nowMs !== null && Date.parse(s) > nowMs + SKEW_MS) fail(`${path}: is in the future`);
-}
-
-function checkEnvelope(env: unknown, path: string, nowMs: number | null): void {
-  if (!isPlainObject(env)) fail(`${path}: must be an object with a "value"`);
-  for (const k of Object.keys(env)) {
-    if (!ENVELOPE_KEYS.includes(k)) fail(`${path}.${k}: unknown envelope key (allowed: ${ENVELOPE_KEYS.join(', ')})`);
-  }
-  if (!('value' in env)) fail(`${path}.value: is required`);
-  checkValue(env.value, `${path}.value`);
-  if ('verified_at' in env) checkVerifiedAt(env.verified_at, `${path}.verified_at`, nowMs);
-  if ('source' in env) checkString(env.source, `${path}.source`, MAX_STRING);
-  if ('label' in env) checkString(env.label, `${path}.label`, MAX_STRING);
-  if ('stale_after_days' in env) {
-    const d = env.stale_after_days;
-    if (typeof d !== 'number' || !Number.isInteger(d) || d < 1 || d > 365) {
-      fail(`${path}.stale_after_days: must be an integer 1–365`);
-    }
   }
 }
 
@@ -289,7 +236,7 @@ export function validateCard(card: unknown, nowMs: number | null): asserts card 
     if (names.length > MAX_FIELDS) fail(`${section}: more than ${MAX_FIELDS} fields`);
     for (const n of names) {
       checkFieldName(n, `${section}.${n}`);
-      if (section === 'where') checkEnvelope(fields[n], `where.${n}`, nowMs);
+      if (section === 'where') checkEnvelope(fields[n], `where.${n}`, nowMs, { checkValue, extraStringKeys: ['label'] });
       else checkValue(fields[n], `how.${n}`);
     }
   }
@@ -336,30 +283,9 @@ function validateWriteNulls(input: Record<string, unknown>, merge: boolean): voi
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
-export type FieldState = { kind: 'ok' } | { kind: 'unverified' } | { kind: 'stale'; days: number };
-
-/** Stale when now − verified_at > stale_after_days × 86,400 s (strictly greater). */
-export function fieldState(env: WhereEnvelope, nowMs: number): FieldState {
-  if (!env.verified_at) return { kind: 'unverified' };
-  const age = nowMs - Date.parse(env.verified_at);
-  const limit = (env.stale_after_days ?? DEFAULT_STALE_DAYS) * DAY_MS;
-  if (age > limit) return { kind: 'stale', days: Math.floor(age / DAY_MS) };
-  return { kind: 'ok' };
-}
-
-function marker(state: FieldState): string {
-  if (state.kind === 'ok') return '[ok]';
-  if (state.kind === 'unverified') return '[unverified]';
-  return `[STALE ${state.days > 999 ? '999+' : state.days}d]`;
-}
-
-const oneLine = (s: string) => s.replace(/\r?\n|\r/g, ' ');
-
 function renderValue(v: CardValue): string {
   return oneLine(Array.isArray(v) ? v.join(', ') : String(v));
 }
-
-const byName = <T>(o: Record<string, T>) => Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
 /**
  * The rendered card — the text identity and `person` return. With
@@ -369,18 +295,9 @@ const byName = <T>(o: Record<string, T>) => Object.entries(o).sort(([a], [b]) =>
  */
 export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: boolean } = {}): string {
   const lines = [`## ${oneLine(card.name)} (${card.slug})`, card.summary ? card.summary.trim() : '_(no summary)_'];
-  const where = byName(card.where ?? {});
-  if (where.length) {
-    lines.push(
-      '**Where:** ' +
-        where
-          .map(([n, env]) => {
-            const m = opts.worstCase ? '[STALE 999+d]' : marker(fieldState(env, nowMs));
-            return `${n}: ${renderValue(env.value)}${env.label ? ` (${oneLine(env.label)})` : ''} ${m}`;
-          })
-          .join(' · '),
-    );
-  }
+  const where = renderWhereLine(card.where ?? {}, nowMs, opts.worstCase ?? false,
+    (env) => `${renderValue(env.value)}${env.label ? ` (${oneLine(env.label)})` : ''}`);
+  if (where) lines.push(where);
   const how = byName(card.how ?? {});
   if (how.length) lines.push('**How:** ' + how.map(([n, v]) => `${n}: ${renderValue(v)}`).join(' · '));
   if (card.may?.length) {
@@ -392,36 +309,17 @@ export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: 
   return lines.join('\n');
 }
 
-/** Canonical JSON with sorted keys — the no-op comparison. */
-function canonical(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
-  if (isPlainObject(v)) {
-    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
-  }
-  return JSON.stringify(v);
-}
-
 // ─── Store ───────────────────────────────────────────────────────────────────
 
-const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor'];
+const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges'];
 
-function hasTable(db: Database, table: string): boolean {
-  return db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined;
-}
+type RawRow = CardRowBase;
 
-interface RawRow {
-  slug: string;
-  name: string;
-  card_json: string;
-  archived_at: string | null;
-  archived_by: string | null;
-  archive_reason: string | null;
-  updated: string;
-  synthesized_at: string | null;
-}
-
-const SELECT_ROW =
-  'SELECT slug, name, card_json, archived_at, archived_by, archive_reason, updated, synthesized_at FROM people WHERE slug = ?';
+const PERSON_NOUN = {
+  missing: (slug: string) => `no card for ${slug}`,
+  archived: (slug: string, verb: string) => `card for ${slug} is archived; person_restore it before ${verb}`,
+  otherRevision: (id: number, slug: string) => `revision ${id} belongs to another card, not ${slug}`,
+};
 
 export interface PeopleStoreConfig {
   dbPath: string;
@@ -455,14 +353,20 @@ function parseRow(raw: RawRow): PersonRow {
 
 export class PeopleStore {
   private db: Database;
+  private readonly table: CardTable<RawRow>;
   private readonly now: () => number;
-  private readonly actor: string | null;
   /** False on a read-only store whose tables do not exist yet. */
   readonly migrated: boolean;
+  /**
+   * Whether the store has a `people` table at all: it was a people store once, whatever its
+   * schema now. A store that holds people but isn't `migrated` is one a reader can't trust.
+   */
+  readonly holdsPeople: boolean;
+  /** Whether this store has the person_merges table (an old read-only store may not): no table, no redirects. */
+  private readonly holdsMerges: boolean;
 
   constructor(config: PeopleStoreConfig) {
     this.now = config.now ?? Date.now;
-    this.actor = config.actor ?? null;
     this.db = new BetterSqlite3(config.dbPath, config.readonly ? { readonly: true } : {});
     this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
     if (!config.readonly) {
@@ -474,55 +378,83 @@ export class PeopleStore {
         if (m.pending(this.db)) m.run(this.db);
       }
     }
-    this.migrated = hasTable(this.db, 'people') && hasTable(this.db, 'person_revisions');
+    this.holdsPeople = hasTable(this.db, 'people');
+    this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
+    this.holdsMerges = hasTable(this.db, 'person_merges');
+    this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null);
   }
 
   close(): void {
     this.db.close();
   }
 
+  /** The merge that left `slug` a redirect (person_merge), or null. */
+  mergeOf(slug: string): PersonMergeRecord | null {
+    if (!this.holdsMerges) return null;
+    const r = this.db.prepare('SELECT from_slug, into_slug, merged_at, merged_by, counts_json FROM person_merges WHERE from_slug = ?').get(slug) as
+      | { from_slug: string; into_slug: string; merged_at: string; merged_by: string | null; counts_json: string }
+      | undefined;
+    if (!r) return null;
+    let counts: Record<string, unknown> = {};
+    try { counts = JSON.parse(r.counts_json) as Record<string, unknown>; } catch { /* a bad row still redirects */ }
+    return { from: r.from_slug, into: r.into_slug, at: r.merged_at, by: r.merged_by, counts };
+  }
+
+  /** Every merge this store records, by from. */
+  merges(): PersonMergeRecord[] {
+    if (!this.holdsMerges) return [];
+    return (this.db.prepare('SELECT from_slug FROM person_merges ORDER BY from_slug').all() as Array<{ from_slug: string }>)
+      .map((r) => this.mergeOf(r.from_slug)!);
+  }
+
+  /**
+   * Where a slug's reads and writes land: itself, or the card it was merged into (followed
+   * when that one was merged on in turn). A redirect lasts until it's purged by hand.
+   */
+  resolve(slug: string): string {
+    let at = slug;
+    const seen = new Set([at]);
+    for (let hop = 0; hop < 16; hop++) {
+      const m = this.mergeOf(at);
+      if (!m || seen.has(m.into)) break;
+      at = m.into;
+      seen.add(at);
+    }
+    return at;
+  }
+
+  /**
+   * One BEGIN IMMEDIATE transaction with the raw database and its card table: person_merge's
+   * (people-merge.ts), so a store's card changes and its re-tags land together or not at all.
+   */
+  mergeTransaction<T>(fn: (db: Database, table: CardTable<CardRowBase>, at: string) => T): T {
+    return this.mutate(() => fn(this.db, this.table, this.nowIso()));
+  }
+
+  /** The raw database, read-only use: a merge's dry run counts what it would re-tag. */
+  get database(): Database {
+    return this.db;
+  }
+
+  /** The card table, for a merge's plan (people-merge.ts). */
+  get cardTable(): CardTable<CardRowBase> {
+    return this.table;
+  }
+
+  /** The stored row as is (archived ones too), unparsed, or null. */
+  rawRow(slug: string): CardRowBase | null {
+    if (!this.migrated) return null;
+    return this.table.readRow(slug) ?? null;
+  }
+
   private nowIso(): string {
     return new Date(this.now()).toISOString();
-  }
-
-  private readRow(slug: string): RawRow | undefined {
-    return this.db.prepare(SELECT_ROW).get(slug) as RawRow | undefined;
-  }
-
-  private snapshot(prev: RawRow, op: RevisionOp, at: string): number {
-    const snap = { ...prev, card: JSON.parse(prev.card_json) as unknown };
-    delete (snap as Partial<RawRow>).card_json;
-    const id = Number(
-      this.db
-        .prepare('INSERT INTO person_revisions (slug, snapshot_json, op, replaced_at, actor) VALUES (?, ?, ?, ?, ?)')
-        .run(prev.slug, JSON.stringify(snap), op, at, this.actor).lastInsertRowid,
-    );
-    this.db
-      .prepare(
-        `DELETE FROM person_revisions WHERE slug = ? AND id NOT IN
-           (SELECT id FROM person_revisions WHERE slug = ? ORDER BY id DESC LIMIT ?)`,
-      )
-      .run(prev.slug, prev.slug, MAX_REVISIONS);
-    return id;
-  }
-
-  private store(row: RawRow): void {
-    this.db
-      .prepare(
-        `INSERT INTO people (slug, name, card_json, archived_at, archived_by, archive_reason, updated, synthesized_at)
-         VALUES (@slug, @name, @card_json, @archived_at, @archived_by, @archive_reason, @updated, @synthesized_at)
-         ON CONFLICT(slug) DO UPDATE SET name = excluded.name, card_json = excluded.card_json,
-           archived_at = excluded.archived_at, archived_by = excluded.archived_by,
-           archive_reason = excluded.archive_reason, updated = excluded.updated,
-           synthesized_at = excluded.synthesized_at`,
-      )
-      .run(row);
   }
 
   /** One BEGIN IMMEDIATE transaction around `fn`, retried as a whole on SQLITE_BUSY. */
   private mutate<T>(fn: () => T): T {
     if (!this.migrated) fail('people store is not migrated');
-    return retryWrite(() => this.db.transaction(fn).immediate());
+    return this.table.mutate(fn);
   }
 
   private result(row: RawRow, unchanged: boolean, revisionId: number | null): MutationResult {
@@ -534,13 +466,6 @@ export class PeopleStore {
       updated: row.updated,
       synthesized_at: row.synthesized_at,
     };
-  }
-
-  private requireActive(slug: string, verb: string): RawRow {
-    const row = this.readRow(slug);
-    if (!row) fail(`no card for ${slug}`);
-    if (row.archived_at !== null) fail(`card for ${slug} is archived; person_restore it before ${verb}`);
-    return row;
   }
 
   write(input: PersonWriteInput): MutationResult {
@@ -565,56 +490,34 @@ export class PeopleStore {
     const passedSummary = 'summary' in raw && raw.summary !== undefined;
 
     return this.mutate(() => {
+      // A merged slug is a redirect: its writes land on the card it was merged into.
+      const asked = input.slug;
+      input = { ...input, slug: this.resolve(asked) };
       const nowMs = this.now();
       const at = new Date(nowMs).toISOString();
-      const existing = this.readRow(input.slug);
+      const existing = this.table.readRow(input.slug);
       if (existing?.archived_at) fail(`card for ${input.slug} is archived; person_restore it before writing`);
       const current = existing ? (parseRow(existing).card) : null;
 
       let next: Record<string, unknown>;
       if (!merge || !current) {
-        next = { slug: input.slug, name: input.name, where: input.where ?? {}, how: input.how ?? {}, may: input.may ?? [] };
+        next = { slug: input.slug, name: input.name, where: withoutNulls(input.where), how: withoutNulls(input.how), may: input.may ?? [] };
         if (passedSummary) next.summary = input.summary;
-        // A merge write that creates: drop the null deletes, there is nothing to remove.
-        for (const section of ['where', 'how'] as const) {
-          next[section] = Object.fromEntries(Object.entries(next[section] as object).filter(([, v]) => v !== null));
-        }
       } else {
         next = structuredClone(current) as unknown as Record<string, unknown>;
         if (input.name !== undefined) next.name = input.name;
         if (passedSummary) next.summary = input.summary;
         for (const section of ['where', 'how'] as const) {
           const passed = input[section];
-          if (!passed) continue;
-          const merged = { ...(next[section] as Record<string, unknown>) };
-          for (const [n, v] of Object.entries(passed)) {
-            if (v === null) delete merged[n];
-            else merged[n] = v;
-          }
-          next[section] = merged;
+          if (passed) next[section] = mergeLevel(next[section] as Record<string, unknown>, passed);
         }
         if (input.may !== undefined) next.may = input.may;
       }
       if (next.name === undefined) fail(`name: is required ${current ? 'on a merge: false write' : 'to create a card'}`);
       validateCard(next, nowMs);
 
-      if (current && !passedSummary && canonical(next) === canonical(current)) {
-        return this.result(existing!, true, null);
-      }
-      const revisionId = existing ? this.snapshot(existing, 'write', at) : null;
-      const synthesizedAt = passedSummary ? at : !merge ? null : (existing?.synthesized_at ?? null);
-      const row: RawRow = {
-        slug: input.slug,
-        name: next.name as string,
-        card_json: JSON.stringify(next),
-        archived_at: null,
-        archived_by: null,
-        archive_reason: null,
-        updated: at,
-        synthesized_at: synthesizedAt,
-      };
-      this.store(row);
-      return this.result(row, false, revisionId);
+      const c = this.table.commitWrite({ existing, current, next, passedSummary, merge, at });
+      return { ...this.result(c.row, c.unchanged, c.revisionId), ...(asked !== input.slug ? { redirected_from: asked } : {}) };
     });
   }
 
@@ -624,30 +527,18 @@ export class PeopleStore {
     if (!Array.isArray(input.fields) || input.fields.length === 0) fail('fields: list at least one where field');
     if (input.source !== undefined) checkString(input.source, 'source', MAX_STRING);
     return this.mutate(() => {
+      const asked = input.slug;
+      const slug = this.resolve(asked);
       const nowMs = this.now();
       const at = new Date(nowMs).toISOString();
       const verifiedAt = input.verified_at ?? at;
       checkVerifiedAt(verifiedAt, 'verified_at', nowMs);
-      const existing = this.requireActive(input.slug, 'verifying');
+      const existing = this.table.requireActive(slug, 'verifying');
       const card = parseRow(existing).card;
-      for (const f of input.fields) {
-        // Own properties only: `in` would accept an inherited name like
-        // __proto__ and stamp Object.prototype (PR143 review).
-        if (typeof f !== 'string' || !Object.hasOwn(card.where, f)) {
-          fail(`fields: "${String(f)}" is not a where field on ${input.slug}`);
-        }
-      }
-      const next = structuredClone(card);
-      for (const f of input.fields) {
-        next.where[f].verified_at = verifiedAt;
-        if (input.source !== undefined) next.where[f].source = input.source;
-      }
+      const next = stampWhere(card, input.fields, verifiedAt, input.source, slug);
       validateCard(next, nowMs);
-      if (canonical(next) === canonical(card)) return this.result(existing, true, null);
-      const revisionId = this.snapshot(existing, 'verify', at);
-      const row = { ...existing, card_json: JSON.stringify(next), updated: at };
-      this.store(row);
-      return this.result(row, false, revisionId);
+      const c = this.table.commitVerify(existing, card, next, at);
+      return { ...this.result(c.row, c.unchanged, c.revisionId), ...(asked !== slug ? { redirected_from: asked } : {}) };
     });
   }
 
@@ -657,29 +548,19 @@ export class PeopleStore {
     const reason = checkString(input.reason, 'reason', MAX_STRING);
     if (reason.trim() === '') fail('reason: is required');
     return this.mutate(() => {
-      const at = this.nowIso();
-      const existing = this.readRow(input.slug);
-      if (!existing) fail(`no card for ${input.slug}`);
-      if (existing.archived_at !== null) return this.result(existing, true, null);
-      const revisionId = this.snapshot(existing, 'archive', at);
-      const row = { ...existing, archived_at: at, archived_by: input.actor, archive_reason: reason, updated: at };
-      this.store(row);
-      return this.result(row, false, revisionId);
+      const c = this.table.archive(input.slug, reason, input.actor, this.nowIso());
+      return this.result(c.row, c.unchanged, c.revisionId);
     });
   }
 
   restore(input: { slug: string }): MutationResult {
     const slugErr = personSlugError(input.slug);
     if (slugErr) fail(`slug: ${slugErr}`);
+    const merged = this.mergeOf(input.slug);
+    if (merged) fail(`${input.slug} was merged into ${merged.into}: a merged card stays a redirect, and isn't restored`);
     return this.mutate(() => {
-      const at = this.nowIso();
-      const existing = this.readRow(input.slug);
-      if (!existing) fail(`no card for ${input.slug}`);
-      if (existing.archived_at === null) return this.result(existing, true, null);
-      const revisionId = this.snapshot(existing, 'restore', at);
-      const row = { ...existing, archived_at: null, archived_by: null, archive_reason: null, updated: at };
-      this.store(row);
-      return this.result(row, false, revisionId);
+      const c = this.table.restore(input.slug, this.nowIso());
+      return this.result(c.row, c.unchanged, c.revisionId);
     });
   }
 
@@ -687,39 +568,24 @@ export class PeopleStore {
     const slugErr = personSlugError(input.slug);
     if (slugErr) fail(`slug: ${slugErr}`);
     return this.mutate(() => {
-      const at = this.nowIso();
-      const existing = this.requireActive(input.slug, 'restoring a revision');
-      const rev = this.db
-        .prepare('SELECT slug, snapshot_json FROM person_revisions WHERE id = ?')
-        .get(input.revision_id) as { slug: string; snapshot_json: string } | undefined;
-      if (!rev) fail(`revision ${input.revision_id} not found`);
-      if (rev.slug !== input.slug) fail(`revision ${input.revision_id} belongs to another card, not ${input.slug}`);
-      const snap = JSON.parse(rev.snapshot_json) as { card: unknown; synthesized_at: string | null };
       // Structural only: time checks are not re-applied to a snapshot that was valid when written.
-      validateCard(snap.card, null);
-      if (snap.card.slug !== input.slug) fail(`revision ${input.revision_id} holds a card for another slug`);
-      const cardJson = JSON.stringify(snap.card);
-      const synthesizedAt = snap.synthesized_at ?? null;
-      if (cardJson === existing.card_json && synthesizedAt === existing.synthesized_at) {
-        return this.result(existing, true, null);
-      }
-      const revisionId = this.snapshot(existing, 'revision_restore', at);
-      const row = { ...existing, name: snap.card.name, card_json: cardJson, synthesized_at: synthesizedAt, updated: at };
-      this.store(row);
-      return this.result(row, false, revisionId);
+      const c = this.table.revisionRestore(input.slug, input.revision_id, this.nowIso(), (card) => validateCard(card, null));
+      return this.result(c.row, c.unchanged, c.revisionId);
     });
   }
 
   /** The stored row, or null. Throws UnreadableCardError for a row that does not parse or validate. */
   getRow(slug: string): PersonRow | null {
     if (!this.migrated) return null;
-    const raw = this.readRow(slug);
+    const raw = this.table.readRow(slug);
     return raw ? parseRow(raw) : null;
   }
 
   read(slug: string, includeArchived = false): PersonReadResult {
     const slugErr = personSlugError(slug);
     if (slugErr) fail(`slug: ${slugErr}`);
+    const target = this.resolve(slug);
+    if (target !== slug) return throughRedirect(this.read(target, includeArchived), this.mergeOf(slug)!);
     const row = this.getRow(slug);
     if (!row) return { found: false };
     const archived = row.archived_at !== null;
@@ -736,12 +602,7 @@ export class PeopleStore {
 
   list(includeArchived = false): PersonListEntry[] {
     if (!this.migrated) return [];
-    const raws = this.db
-      .prepare(
-        `SELECT slug, name, card_json, archived_at, archived_by, archive_reason, updated, synthesized_at FROM people
-         ${includeArchived ? '' : 'WHERE archived_at IS NULL'} ORDER BY slug`,
-      )
-      .all() as RawRow[];
+    const raws = this.table.allRows(includeArchived);
     const nowMs = this.now();
     const nowIso = new Date(nowMs).toISOString();
     const hasMemories = hasTable(this.db, 'memories');
@@ -754,15 +615,11 @@ export class PeopleStore {
              AND (? IS NULL OR created > ?)`,
         )
       : null;
+    const into = new Map(this.merges().map((m) => [m.from, m.into]));
     return raws.map((raw) => {
-      let stale = 0;
-      let unverified = 0;
+      let counts = { stale: 0, unverified: 0 };
       try {
-        for (const env of Object.values(parseRow(raw).card.where)) {
-          const s = fieldState(env, nowMs);
-          if (s.kind === 'stale') stale++;
-          if (s.kind === 'unverified') unverified++;
-        }
+        counts = whereCounts(parseRow(raw).card.where, nowMs);
       } catch {
         // An unreadable card still lists; its field counts read zero.
       }
@@ -775,9 +632,10 @@ export class PeopleStore {
         archived: raw.archived_at !== null,
         updated: raw.updated,
         synthesized_at: raw.synthesized_at,
-        stale,
-        unverified,
+        stale: counts.stale,
+        unverified: counts.unverified,
         memories_since_synthesis: n,
+        ...(into.has(raw.slug) ? { merged_into: into.get(raw.slug)! } : {}),
       };
     });
   }
@@ -786,10 +644,7 @@ export class PeopleStore {
     const slugErr = personSlugError(slug);
     if (slugErr) fail(`slug: ${slugErr}`);
     if (!this.migrated) return [];
-    const hasActor = (this.db.pragma('table_info(person_revisions)') as { name: string }[]).some((c) => c.name === 'actor');
-    return this.db
-      .prepare(`SELECT id, op, replaced_at${hasActor ? ', actor' : ''} FROM person_revisions WHERE slug = ? ORDER BY id DESC`)
-      .all(slug) as PersonRevisionMeta[];
+    return this.table.history(slug);
   }
 
   /**
@@ -800,16 +655,16 @@ export class PeopleStore {
   replaceCard(slug: string, card: PersonCard, keep: Pick<RawRow, 'updated' | 'synthesized_at' | 'archived_at' | 'archived_by' | 'archive_reason'>): void {
     validateCard(card, null);
     this.mutate(() => {
-      const existing = this.readRow(slug);
-      if (existing) this.snapshot(existing, 'split', this.nowIso());
-      this.store({ slug, name: card.name, card_json: JSON.stringify(card), ...keep });
+      const existing = this.table.readRow(slug);
+      if (existing) this.table.snapshot(existing, 'split', this.nowIso());
+      this.table.store({ slug, name: card.name, card_json: JSON.stringify(card), ...keep });
     });
   }
 
   /** The raw stored rows (timestamps and archive state included), for a migration. */
   rows(): Array<{ slug: string; card: PersonCard; updated: string; synthesized_at: string | null; archived_at: string | null; archived_by: string | null; archive_reason: string | null }> {
     if (!this.migrated) return [];
-    return (this.db.prepare('SELECT slug, name, card_json, archived_at, archived_by, archive_reason, updated, synthesized_at FROM people ORDER BY slug').all() as RawRow[])
+    return this.table.allRows(true)
       .map((r) => ({ slug: r.slug, card: JSON.parse(r.card_json) as PersonCard, updated: r.updated, synthesized_at: r.synthesized_at, archived_at: r.archived_at, archived_by: r.archived_by, archive_reason: r.archive_reason }));
   }
 
@@ -842,10 +697,7 @@ export class PeopleStore {
 
   /** A revision's snapshot (the whole previous row), for tests and inspection. */
   revisionSnapshot(id: number): { slug: string; card: PersonCard; synthesized_at: string | null; archived_at: string | null } | null {
-    const rev = this.db.prepare('SELECT snapshot_json FROM person_revisions WHERE id = ?').get(id) as
-      | { snapshot_json: string }
-      | undefined;
-    return rev ? JSON.parse(rev.snapshot_json) : null;
+    return this.table.revisionSnapshot(id);
   }
 }
 
@@ -855,11 +707,11 @@ export class PeopleStore {
  */
 export function openPeopleStore(
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
 ): PeopleStore | null {
   const dbPath = resolveSqliteDbPath(contextDir);
   if (opts.readonly && !existsSync(dbPath)) return null;
-  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now });
+  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now, actor: opts.actor });
 }
 
 // ─── The room (identity's `people` param) ────────────────────────────────────
@@ -911,6 +763,7 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
     let used = ROOM_HEADER.length;
     let cards = 0;
     let cardChars = 0;
+    const seenTargets = new Set<string>();
     const fits = (text: string) => used + ENTRY_SEP.length + text.length <= entryBudget;
     const place = (text: string) => {
       entries.push(text);
@@ -933,7 +786,11 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
       let line: string | null = null;
       let card: string | null = null;
       try {
-        const row = store.getRow(slug);
+        // A merged slug reads as the card it was merged into (person_merge), once however it's named.
+        const target = store.resolve(slug);
+        if (target !== slug && (seenTargets.has(target) || considered.includes(target))) continue;
+        seenTargets.add(target);
+        const row = store.getRow(target);
         if (!row) line = `_(no card for ${slug})_`;
         else if (row.archived_at !== null) line = `_(card for ${slug} is archived)_`;
         else card = renderCard(row.card, nowMs);

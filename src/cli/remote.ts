@@ -22,11 +22,12 @@
  * stays out of `ps` and shell history.
  */
 import { readFile } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import { readBody } from './io.js';
 import type { IOStreams } from './io.js';
 
 export const REMOTE_VERBS: ReadonlySet<string> = new Set([
-  'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person', 'note',
+  'wake', 'recall', 'remember', 'update', 'forget', 'memory', 'knowledge', 'person', 'project', 'note',
 ]);
 
 /**
@@ -35,6 +36,14 @@ export const REMOTE_VERBS: ReadonlySet<string> = new Set([
  * stack is; a house writes a note's text (note_write, `loom note write`), and links big files.
  */
 export const LOCAL_NOTE_SUBCOMMANDS: ReadonlySet<string> = new Set(['attach', 'file', 'sweep']);
+
+/**
+ * `person` subcommands that make a card on someone else's authority: `ensure` is the owner's and a piece's in an
+ * owner's action (people-ensure.ts), never an agent's over its token. An agent writes cards with person_write; the
+ * runtime and an owner elsewhere use POST /api/loom/people/ensure. `merge` is the owner's too: an agent merges with
+ * person_merge, the runtime and an owner elsewhere with POST /api/loom/people/merge.
+ */
+export const LOCAL_PERSON_SUBCOMMANDS: ReadonlySet<string> = new Set(['ensure', 'merge']);
 
 /**
  * `memory` subcommands with no MCP equivalent: recall-stats returns other
@@ -101,6 +110,22 @@ export function cliEndpoint(url: string): URL {
   return u;
 }
 
+/**
+ * JSON headers, with `Authorization: Bearer <token>` when LOOM_TOKEN_FILE names
+ * one. Undefined (and a message on stderr) when the file can't be read.
+ */
+async function requestHeaders(io: IOStreams): Promise<Record<string, string> | undefined> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const tokenFile = io.env.LOOM_TOKEN_FILE;
+  if (tokenFile) {
+    let token: string;
+    try { token = (await readFile(tokenFile, 'utf-8')).trim(); }
+    catch (err) { io.stderr(`loom: can't read LOOM_TOKEN_FILE: ${(err as Error).message}\n`); return undefined; }
+    headers.authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 function isCliResponse(v: unknown): v is CliResponse {
   const r = v as Partial<CliResponse> | null;
   return typeof r === 'object' && r !== null &&
@@ -130,14 +155,8 @@ export async function runRemote(
   try { endpoint = cliEndpoint(url); }
   catch { io.stderr(`loom: not a URL: ${url}\n`); return 2; }
 
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  const tokenFile = io.env.LOOM_TOKEN_FILE;
-  if (tokenFile) {
-    let token: string;
-    try { token = (await readFile(tokenFile, 'utf-8')).trim(); }
-    catch (err) { io.stderr(`loom: can't read LOOM_TOKEN_FILE: ${(err as Error).message}\n`); return 1; }
-    headers.authorization = `Bearer ${token}`;
-  }
+  const headers = await requestHeaders(io);
+  if (headers === undefined) return 1;
 
   const request: CliRequest = { argv: [sub, ...args] };
   if (readsBody(sub, args)) {
@@ -181,4 +200,99 @@ export async function runRemote(
   io.stdout(out.stdout);
   io.stderr(out.stderr);
   return out.exitCode;
+}
+
+/*
+ * Remote pieces (t-1737, docs/specs/agent-runtime.md "Seams this needs from
+ * core" 1): `loom <piece> …` in a house, where the piece isn't installed but
+ * LOOM_URL names a loom that has it. The argv goes to that loom's piece API as
+ * `POST /api/<piece>/run {argv}` (docs/extensions.md "The API"), as this
+ * body's own token; the piece runs it there and decides what this caller may
+ * run. The answer's stdout, stderr and exit code are this command's, so it
+ * reads like the local piece.
+ *
+ * Local always wins (index.ts asks only when findPiece found nothing), and
+ * only LOOM_URL turns it on: `--url` is a global flag, and global flags don't
+ * apply to pieces.
+ */
+
+/** A piece's `run` answer: the 200 body of POST /api/<piece>/run. */
+export interface PieceRunAnswer {
+  exit: number;
+  /** Absent when stdoutGz carries it. */
+  stdout?: string;
+  /** stdout gzipped and base64'd, for an answer too big to send plain (the tasks piece's `list`). */
+  stdoutGz?: string;
+  stderr?: string;
+}
+
+/** Longer than loom-http's own 15 s bound on a piece API call, so loom's own answer arrives first. */
+const PIECE_RUN_TIMEOUT_MS = 60_000;
+
+/** The piece API's run path beside the MCP URL: http://h:8787/mcp → http://h:8787/api/<piece>/run. */
+export function pieceRunEndpoint(url: string, piece: string): URL {
+  const u = new URL(url);
+  const base = u.pathname.replace(/\/+$/, '').replace(/\/mcp$/, '');
+  u.pathname = `${base}/api/${piece}/run`;
+  u.search = '';
+  u.hash = '';
+  return u;
+}
+
+function isPieceRunAnswer(v: unknown): v is PieceRunAnswer {
+  const r = v as Partial<PieceRunAnswer> | null;
+  return typeof r === 'object' && r !== null && Number.isInteger(r.exit) &&
+    (r.stdout === undefined || typeof r.stdout === 'string') &&
+    (r.stdoutGz === undefined || typeof r.stdoutGz === 'string') &&
+    (r.stderr === undefined || typeof r.stderr === 'string');
+}
+
+/** Run piece `name` with `args` on the loom at `url` (LOOM_URL). */
+export async function runRemotePiece(name: string, args: string[], url: string, io: IOStreams): Promise<number> {
+  let endpoint: URL;
+  try { endpoint = pieceRunEndpoint(url, name); }
+  catch { io.stderr(`loom: LOOM_URL isn't a URL: ${url}\n`); return 2; }
+
+  const headers = await requestHeaders(io);
+  if (headers === undefined) return 1;
+
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ argv: args }),
+      signal: AbortSignal.timeout(PIECE_RUN_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const cause = (err as { cause?: { message?: string } }).cause?.message;
+    io.stderr(`loom: can't reach ${endpoint} for the ${name} piece: ${cause ?? (err as Error).message}\n`);
+    return 1;
+  }
+
+  const text = await res.text();
+  if (res.status !== 200) {
+    let message = text;
+    try { message = (JSON.parse(text) as { error?: string }).error ?? text; } catch { /* not JSON */ }
+    // 404: no such piece there (or no household); 502: a piece with no api verb, or one that doesn't answer run.
+    const hint = res.status === 404 || res.status === 502
+      ? ` (${name} isn't installed here, and the loom at ${url} doesn't run it: \`loom pieces\` there lists what is)`
+      : '';
+    io.stderr(`loom: ${endpoint} answered ${res.status}: ${message.trim()}${hint}\n`);
+    return 1;
+  }
+
+  let out: unknown;
+  try { out = JSON.parse(text); }
+  catch { io.stderr(`loom: ${endpoint} sent an answer that isn't JSON\n`); return 1; }
+  // A missing or non-integer exit must never read as success.
+  if (!isPieceRunAnswer(out)) { io.stderr(`loom: ${endpoint} sent a malformed run answer (no integer exit)\n`); return 1; }
+  let stdout = out.stdout ?? '';
+  if (out.stdout === undefined && out.stdoutGz !== undefined) {
+    try { stdout = gunzipSync(Buffer.from(out.stdoutGz, 'base64')).toString('utf-8'); }
+    catch { io.stderr(`loom: ${endpoint} sent a stdoutGz that isn't gzip\n`); return 1; }
+  }
+  io.stdout(stdout);
+  io.stderr(out.stderr ?? '');
+  return out.exit;
 }

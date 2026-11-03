@@ -5,9 +5,10 @@
  */
 import {
   addAgent, agentDir, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
-  parseRole, revokeToken, type Household,
+  expired, parseRole, revokeToken, type Household,
 } from '../household.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
+import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
 import { signinLink } from '../ui/sessions.js';
 
@@ -28,7 +29,7 @@ $LOOM_HOME defaults to ~/.config/loom.
 
 const TOKEN_USAGE = `Usage: loom token <command>
 
-  create (--agent <name> [--service <name>] [--house <h-N>] | --owner | --peer <name> | --piece <piece>/<subject>) --label <text>
+  create (--agent <name> [--service <name>] [--house <h-N>] | --owner | --peer <name> | --piece <piece>/<subject> | --runtime <piece>) --label <text>
                            Mint a token. It's printed once; only its sha256 is kept.
                            --service and --house name a house's (agent:<name>/<service>@<house>): a piece can tell it apart
   list                     Every token: label, role, created, last used, revoked
@@ -40,6 +41,10 @@ const TOKEN_USAGE = `Usage: loom token <command>
 Roles: agent:<name> is MCP and the CLI as that agent; owner sees everything and
 the page; peer:<name> reaches commons knowledge only; piece:<piece>/<subject> is
 a piece's own credential (e.g. a box's), reaching only POST /api/<piece>/.
+runtime:<piece> is the runtime piece's (the one managed piece whose loom block
+says "role": "runtime"), reaching only its own POST /api/loom/ routes. A review
+token (review:<piece>) isn't made here: the runtime mints one per run, through
+POST /api/loom/review/token, and it expires in two hours.
 `;
 
 function flag(args: string[], name: string): string | undefined {
@@ -113,10 +118,10 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       const service = flag(rest, '--service');
       const house = flag(rest, '--house');
       if ((service !== undefined || house !== undefined) && !flag(rest, '--agent')) { io.stderr(TOKEN_USAGE); return 2; }
-      const picked = [flag(rest, '--agent') && `agent:${flag(rest, '--agent')}${service !== undefined ? `/${service}` : ''}${house !== undefined ? `@${house}` : ''}`, rest.includes('--owner') && 'owner', flag(rest, '--peer') && `peer:${flag(rest, '--peer')}`, flag(rest, '--piece') && `piece:${flag(rest, '--piece')}`].filter(Boolean) as string[];
+      const picked = [flag(rest, '--agent') && `agent:${flag(rest, '--agent')}${service !== undefined ? `/${service}` : ''}${house !== undefined ? `@${house}` : ''}`, rest.includes('--owner') && 'owner', flag(rest, '--peer') && `peer:${flag(rest, '--peer')}`, flag(rest, '--piece') && `piece:${flag(rest, '--piece')}`, flag(rest, '--runtime') && `runtime:${flag(rest, '--runtime')}`].filter(Boolean) as string[];
       const role = picked.length === 1 ? parseRole(picked[0]) : null;
       if (!label || !role) { io.stderr(TOKEN_USAGE); return 2; }
-      const { token, record } = createToken(h, { role, label });
+      const { token, record } = createToken(h, { role, label, ...(role.kind === 'runtime' ? { runtimePieces: runtimePieces(io.env) } : {}) });
       // The token goes to stdout alone, so it can be piped straight into a file.
       io.stderr(`Created ${record.role} token "${record.label}". It won't be shown again.\n`);
       io.stdout(`${token}\n`);
@@ -128,7 +133,8 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       const tokens = loadTokens(h.home);
       if (!tokens.length) { io.stdout('No tokens yet.\n'); return 0; }
       for (const t of tokens) {
-        io.stdout(`${t.revoked ? 'revoked' : 'live   '}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''})\n`);
+        const state = t.revoked ? 'revoked' : expired(t) ? 'expired' : 'live   ';
+        io.stdout(`${state}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.expires && !t.revoked ? `, expire${expired(t) ? 'd' : 's'} ${t.expires.slice(0, 16).replace('T', ' ')}` : ''}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''})\n`);
       }
       return 0;
     }

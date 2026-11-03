@@ -6,7 +6,7 @@ that wakes it, a chat bridge, an approval page) is a **piece**: a separate
 program that works with loom without becoming part of it.
 
 ```
-core       loom: identity, memory, knowledge, person cards. Nothing else.
+core       loom: identity, memory, knowledge, person cards, project cards, conversations. Nothing else.
 piece      a swappable extension: its own program, its own store, reached as `loom <piece>`.
 instance   glue for one agent: its routines, hooks, which pieces it installs and how they're set up.
 ```
@@ -16,6 +16,20 @@ continuity, identity or knowledge?** If yes, it's core. If it's authority
 (secrets, permissions), scheduling, transport, or work tracking, it's a piece
 that sits on top. A shared command namespace doesn't make a piece part of
 loom.
+
+And for every piece, of each thing it keeps: **is this data about the agent's
+life, or about a mechanism?** ([specs/conversations.md](specs/conversations.md))
+
+- Life (who, what was said or decided, what happened) must outlive the piece,
+  in one of two ways: it is a core record, or the piece's role contract gives
+  it a portable export that a replacement implementation imports (for tasks,
+  `spec/taskstore-core` in the public taskstore repo).
+- Mechanism (tokens, queues, timers, session-resume state, caches) is the
+  piece's, and may die with it.
+
+So the bridges' conversations and the clock's relay threads are core records
+(conversations), tasks stay the tasks piece's under its contract, and secrets,
+box and the model subscriptions are mechanism.
 
 ## The rules
 
@@ -61,6 +75,14 @@ Like `git <cmd>`: `loom tasks list` runs the first executable named
   refused, so `--json` must go after the piece name, as the piece's own flag.
 - **`loom pieces` lists what's installed**, each name with the path it
   resolves to.
+- **Not installed here, with `LOOM_URL` set, the loom there runs it.** In a
+  house, `loom tasks ready` with no `loom-tasks` (managed or on `PATH`) sends
+  `POST /api/tasks/run {"argv": ["ready"]}` to the loom `LOOM_URL` names, as
+  the token in `LOOM_TOKEN_FILE`, and prints the answer's stdout and stderr
+  and exits with its exit code (see `run` under [The API](#the-api-a-piece-thats-called-from-elsewhere)).
+  A local piece always wins: managed first, then `PATH`, then the remote
+  loom. An unreachable loom, or an answer that isn't a 200, exits 1 with
+  loom's words; stdin isn't sent.
 
 To install a piece, put an executable named `loom-<name>` on `PATH`. A
 package can ship one as an npm `bin`, as a script, or as a binary. Swapping
@@ -72,6 +94,57 @@ Or let loom install it: `loom pieces install <name>` from loom's catalog, or
 `$LOOM_HOME/pieces/bin`, and that's searched **before** `PATH`. It runs with
 its own environment (`LOOM_PIECE_NAME`, `LOOM_PIECE_HOME`, and the settings it
 declares). See [specs/pieces-install.md](specs/pieces-install.md).
+
+### Local pieces
+
+A piece that will never be public (an agent's homelab wrappers, say) can still
+be a managed one: `loom pieces install --from path:/abs/dir --yes`, where the
+directory holds the same npm package a GitHub piece would (a `bin` with
+`loom-<name>`, and an optional `loom` block). loom installs a **snapshot** of
+it (`npm pack`), not a link to it, so editing the directory changes nothing
+until `loom pieces update <name>` reads it again. Its version is the
+snapshot's sha256, so update notices a change, and rollback, remove, settings
+and services work as they do for any managed piece. `loom pieces` lists it as
+`managed <version> (local)`. It's arbitrary code like any piece from outside
+the catalog, so install asks for `--yes`. See
+[specs/pieces-install.md](specs/pieces-install.md#local-pieces).
+
+### Old names
+
+A piece that's renamed keeps working under its old name for the callers that
+still use it. Core's alias table, `PIECE_ALIASES` in
+`src/cli/pieces-managed.ts`, holds one entry today: **`box` is `runtime`**
+(loom-box's repo, renamed). The table is applied in one place,
+`resolvePieceName` in `src/cli/pieces.ts`, wherever a piece name comes in from
+outside:
+
+- `POST /api/box/…` (`/api/box/run` included) reaches the runtime;
+- `/p/box/…` and `/a/<agent>/p/box/…` answer a 308 to the runtime's page,
+  with the path and query kept;
+- a `piece:box/<subject>` credential (a joined box's) acts as
+  `piece:runtime/<subject>`, with the subject unchanged, so the own-API, store
+  and grants checks see `runtime`;
+- a house's remote `loom box …` (`LOOM_URL`) is `/api/box/run`, so it runs on
+  the runtime too;
+- the first-run starters name `runtime`.
+
+An alias stands aside while a piece with the old name itself is installed: a
+managed `box`, or a `loom-box` on `PATH` that isn't one of the runtime's own
+bins. A piece can't be installed as `box` while `runtime` is.
+
+**Switching an installed `box`.** `loom pieces update box` (and the page's
+Update) doesn't swap it for you. It refuses, says the piece is now `runtime`,
+and gives the steps:
+
+```bash
+loom pieces remove box        # its settings and data are kept
+loom pieces install runtime
+loom pieces set runtime LOOM_RUNTIME_…=…   # the settings' names carry the piece's; the old values are in pieces/box/settings.json
+```
+
+The swap is left to the owner because the two can't be installed side by side
+(both are `role: runtime`, and both ship `loom-box`). The new piece's settings
+are named after it, and its store is its own.
 
 ## Seams: how pieces compose
 
@@ -95,9 +168,116 @@ The shape:
 - **Each pairing gets its own test, on top of each piece's solo suite.**
   "Composes" is checked, not assumed.
 
-The seam vocabulary (`ask`, `notify`, …) and how pieces register offers isn't
-built yet. It gets defined the first time two real pieces need it. These
-rules exist so that day doesn't need a redesign.
+The seam vocabulary between pieces (`ask`, `notify`, …) isn't built yet. It
+gets defined the first time two real pieces need it. These rules exist so
+that day doesn't need a redesign. What a piece offers through **core** is
+built: see "Offers" below.
+
+### Offers
+
+A managed piece (specs/pieces-install.md) declares in its package's `loom`
+block what it offers through core. These are five sibling keys, each with its
+own schema:
+
+| Key | What core does with it | Its schema |
+|---|---|---|
+| `sections` | runs `sections.project` as a project's section feed | [specs/projects.md](specs/projects.md), "Section feeds (the seam)" |
+| `venues` | keeps the piece's venues, and runs each one's `render` and `send` | [specs/conversations.md](specs/conversations.md), "Venues" (`send` from [specs/agent-runtime.md](specs/agent-runtime.md)) |
+| `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
+| `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
+| `delivery` | forwards [`POST /api/loom/deliver`](#deliver-anything-addressed-to-an-agent) to this piece | [specs/agent-runtime.md](specs/agent-runtime.md), "Delivery" |
+
+```jsonc
+"loom": {
+  "role": "runtime",
+  "sections":  { "project": { "label": "Houses", "argv": ["loom-runtime", "project-feed", "--json"] } },
+  "venues":    { "relay": { "label": "Relay", "kind": "agent", "send": ["loom-runtime", "send"] } },
+  "mcp_tools": { "house": { "description": "Ask for a house", "input_schema": { "type": "object" },
+                            "argv": ["loom-runtime", "house", "--json"] } },
+  "grants":    ["loom-runtime", "grants", "ask"],
+  "delivery":  ["loom-runtime", "deliver", "--json"]
+}
+```
+
+- **One validation path, at install.** Each rule in those specs rejects the
+  whole `loom` block, so nothing is installed. Every argv is 1-16 strings of at
+  most 200, and its `argv[0]` must be one of the package's own `bin` names. Unknown keys
+  are rejected.
+- **`mcp_tools`:** each tool's name is `[a-z][a-z0-9_]*` (at most 64), with a
+  `description` (at most 1000), an `input_schema` (a JSON schema with
+  `"type": "object"`, at most 16 KB) and an `argv` that gets the arguments
+  as JSON on stdin. It can't be named after one of core's tools, or anything
+  `loom_*`.
+- **`grants`:** an argv; it makes the piece the grants authority (`false`
+  offers nothing; `true`, the placeholder before core could ask, is refused).
+  Before an agent's call to a piece (`/api/<piece>/…`, `/api/<piece>/run`, the
+  relay tool's call to the clock) and before forwarding a delivery for an
+  agent, core runs it with `{agent, piece, path}` on stdin (`path` is what
+  follows `/api/<piece>/`, or `deliver`). It has 2 s, in a pool of its own
+  (eight at once, thirty-two waiting), to answer `{allow: true}` or
+  `{allow: false, reason}`. A no is a 403 with that reason, and the piece never
+  runs. A timeout, an error, an answer that isn't that, or the authority removed
+  while it was asked is a 503 with the reason (fail closed). Owner calls never
+  ask. With no authority installed, each piece decides by its own agent list
+  (`src/grants.ts`).
+- **`delivery`:** an argv. Only a piece whose block says `"role": "runtime"`
+  may declare it, and a second installed piece offering it is refused.
+- **`venues`, `"wake": {}`:** `wake` is core's own venue. A piece that
+  delivers on it (the clock) declares an empty entry for it, which defines
+  nothing and only lets it [deliver](#deliver-anything-addressed-to-an-agent)
+  there. Any number of pieces may.
+- **`venues`:** core keeps a copy of every installed piece's venues in
+  `$LOOM_HOME/household.db` (`src/household-store.ts`). Install and update
+  replace the piece's rows; removing it (even with `--purge`) keeps them,
+  marked orphaned, without `render`, so its conversations still show; reinstalling
+  clears the mark. `render` runs with `--conversation <id>` and answers the
+  section-feed schema; without one, or once orphaned, core's generic render
+  shows the conversation.
+- **Against what's installed:** a venue or tool name another installed piece
+  declares is refused, and so is a second piece offering `grants` or `delivery`. A piece's
+  own update, or a rollback, is checked the same way.
+- **One runner.** Core runs an offer's argv, plus that offer's arguments (and
+  stdin, where it has one), in the piece's own environment, through the
+  manifest's runner: 3 s, the process group killed afterwards, at most 6
+  pieces at once. The answer is one JSON value on stdout (64 KB unless an
+  offer says otherwise), checked against the offer's output schema. A
+  timeout, a non-zero exit, or an answer that isn't valid is an error for that
+  piece alone (`src/offers-registry.ts`, `runOffer`). Each kind has its own
+  limits (`OFFER_LIMITS`): `delivery` and `mcp_tools` have 120 s and 64 KB,
+  and each has a pool of its own, apart from the page's pieces and from each
+  other: `mcp_tools` four at once and sixteen waiting, `delivery` eight at
+  once and thirty-two waiting (more than one calling piece's share, so one
+  piece at its cap leaves room for the rest). `grants` has 2 s. A non-zero exit keeps its
+  code and its stdout, so an offer can say why it failed.
+- **Only a managed piece offers.** A piece found on `PATH` has no package for
+  loom to read, so it is never run as an offer. piece.json keeps a copy of the
+  declarations, and core reads them from there (`offersOf`, `piecesOffering`,
+  `grantsAuthority`, `deliveryPiece`).
+
+### Sections
+
+A project's hub ([specs/projects.md](specs/projects.md), "The hub") is core's
+sections (memories, notes, people, conversations) and then one section per
+installed managed piece that declares `sections.project`. The piece keeps its
+own data. Core only runs the feed and shows what it answers, keyed
+`piece:<name>`, after the core sections, by piece name.
+
+- **The arguments**, in this order: `--project <slug> --since <iso>`, then
+  `--epic <id>` when the card has one, `--name <alias>` for each alias and
+  `--venue <v>` for each venue, in the card's order. `since` is no earlier than
+  8 days ago and is passed as UTC, `YYYY-MM-DDTHH:MM:SSZ`.
+- **The answer** is `{"groups": [{"title", "items": [{"title", "when", "who",
+  "person", "status", "ref", "body"}]}]}`: at most 8 groups and 50 items, every
+  key known, each string within its cap (projects.md, "Output"). `{"groups": []}`
+  is a present, empty section.
+- **A failure is that section's alone.** An answer that isn't valid, a non-zero
+  exit or a timeout becomes `{key, error}`, and every other section still
+  returns.
+- **`unfiled: true`** says the feed can also be asked `--unfiled --since <iso>`
+  (7 days ago) for items that belong to no project: Home's "Unfiled" list.
+- The feeds run through the one runner above, each time a hub is asked for
+  (`project_hub`, `loom project hub`), never for the project list, and are
+  not cached (`src/project-feeds.ts`).
 
 ## The page: how a piece shows up on loom's page
 
@@ -149,7 +329,7 @@ that ignores it keeps working. Outside a household there's no `caller`.
   shaped like a list of agents belongs to each agent, not the household. A link on such a page can reach the
   piece's own pages elsewhere: `agent:<id>[/<path>]` (this piece's tab on that
   agent's pages) and `household:<path>` (this piece's household pages).
-- **Links into loom** are `loom:<page>`: loom's own pages (`loom:inbox`,
+- **Links into loom** are `loom:<page>`: loom's own pages (`loom:inbox`, `loom:conversation/<id>`,
   `loom:people/<slug>`, `loom:knowledge/<slug>`…) and another piece's page,
   `loom:p/<piece>[/<path>]` (a conversation naming the task it closed). Only
   pages: never an action, sign-in or a JSON endpoint, and the piece linked to
@@ -232,10 +412,16 @@ a fetch from another site, but a link can still open one.) It answers:
 ```
 
 A page may set `"refresh"`: whole seconds from 2 to 300. It then reloads itself
-that often, even with a form on it. Use it only while something is changing
-(an install running, a session starting), and drop it once it's settled.
+that often, even with a form on it (never while a field in it is in use) and
+even while the app's live stream is open. loom doesn't keep a stale copy of
+such a page: each reload sees the piece's state as it is. Use it only while
+something is changing (an install running, a sign-in being checked), and drop
+it once it's settled. A `callout` with `"busy": true` says what's under way,
+with a spinner in its icon's place.
 
-A section with `"side": true` goes in the side column. `tone` gives the whole
+A section with `"side": true` goes in the side column. One with `"fold": "open"` or
+`"closed"` folds under its title (it needs one), starting that way; the viewer's
+last open or close on that page sticks, on that device. `tone` gives the whole
 section that tone's look, such as amber for "needs you".
 
 Paths are lowercase letters, digits and `. _ ~ / -`, at most 200 characters,
@@ -255,12 +441,12 @@ outside the page).
 | Block | Fields |
 |---|---|
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`. One item alone is the page's hero (its number at the top size) |
-| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
+| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
 | `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters. Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
-| `callout` | `text`, optional `title`, `tone`. A boxed note |
+| `callout` | `text`, optional `title`, `tone`, `busy` (true: something is under way, drawn with a spinner). A boxed note |
 | `profile` | `name`, optional `initials` (one or two letters), `agent` (an agent's id: its mark and colour) or `tone` (`pink`, `yellow`, `olive`, `blue`), `summary`, `badges` (up to 6 words), `stats` (up to 4 `label`/`value`), `links` (up to 4 `text` with `page` or `href`). Someone, as a profile card: a cover in their colour, their avatar, name and summary; when it leads a page, the page's own title gives way to it |
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
@@ -270,6 +456,7 @@ outside the page).
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |
 | `code` | `text`, optional `label`. Monospace, with a Copy button: a command, a link to hand someone |
 | `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
+| `chart` | `kind` (`bar`, `area` or `line`), `series` (1 to 5: `key`, lowercase letters, digits and `_`; `label`; optional `color`: `pink`, `blue`, `olive`, `yellow`, `ink`), `data` (up to 60 points: `label`, and a number or `null` per series key). Optional `variant` (bar: `grouped`, the default, or `stacked`; area: `smooth` or `stacked`; line: `smooth` or `step`), `caption` (what it shows, for a screen reader too), `summary` (`label`, `value`, optional `detail`: the one number it adds up to). 000h's chart: hover or tap a point to read it; a missing value stays missing, never a zero |
 
 A `list` or `table` longer than a page can send one page at a time and say so with
 `pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
@@ -277,6 +464,11 @@ page (from 1), how many pages there are and, optionally, how many rows in all.
 loom draws the pager and asks for `?<param>=<n>`, keeping the page's other query
 keys (its filters). Without `pages`, loom pages a long list or table itself, 15
 rows at a time, over whatever the piece sent.
+
+A list row says who with `agent`, `person` or `avatar`, and `agent: "loom"` is loom's own
+mark (its icon) for something loom or the system did. When any row of a list says who,
+a row that doesn't is drawn as nobody's yet (a dashed circle), never a gap. A list with
+`"who": true` draws that lead on every row even when none says who (a queue of unassigned work).
 
 Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind
@@ -367,7 +559,9 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
   with the role `piece:<piece>/<subject>` (`loom token create --piece
   box/thor`). A piece credential reaches its own piece's API and nothing
-  else: no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
+  else, but for two core routes: [`deliver`](#deliver-anything-addressed-to-an-agent),
+  and [`people/ensure`](#peopleensure-a-persons-card-when-a-piece-adds-someone) with an owner's grant:
+  no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
   get nothing. The piece decides what each caller may do.
 - **Strangers, only where a piece says.** A call with no token at all reaches
   a managed piece only on a path its package's `loom` block lists in
@@ -387,6 +581,121 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   waiting gives its place back. The path is `[A-Za-z0-9._~-]` segments, with
   no `.` or `..`.
 - A piece without an `api` verb answers nothing, and the caller gets a 502.
+
+### `run`: the piece's CLI, from elsewhere
+
+One path is standard: **`run`**, the piece's own CLI for a caller that isn't
+on loom's machine. `loom <piece> …` in a house sends it when the piece isn't
+installed there ([above](#how-loom-piece-finds-a-piece)).
+
+```bash
+# POST /api/<piece>/run, so the piece gets:
+{"caller": {...}, "path": "run", "body": {"argv": ["ready"]}}
+# and answers:
+{"status": 200, "body": {"exit": 0, "stdout": "...", "stderr": "..."}}
+```
+
+- **Request:** `{"argv": [...]}`, the arguments after the piece's name. No
+  stdin and no environment travel.
+- **Answer:** `{exit, stdout, stderr}`. `exit` is an integer and the
+  command's exit code; an answer without one is never read as success. A
+  stdout too big to send plain may come as `stdoutGz` instead (gzipped, then
+  base64), as the tasks piece's `list` does.
+- **A piece answers `run` only for argv it allows,** for each caller: the
+  same verbs, flags and exit codes as the local CLI, minus whatever reads or
+  writes loom's machine (a file path there, its own `api` and `ui` verbs). A
+  refusal is the piece's own 4xx with `{"error": "..."}`, which the caller
+  prints. A piece that doesn't want remote use doesn't answer `run`.
+
+### `deliver`: anything addressed to an agent
+
+One core route every piece credential reaches, as its own piece: **`POST
+/api/loom/deliver`** ([specs/agent-runtime.md](specs/agent-runtime.md),
+"Delivery"). A source (a venue adapter, the clock, the runtime relaying) calls
+it with its own token; the runtime's `runtime:<piece>` token reaches it too.
+Owner, agent, peer and review tokens get a 403. Core checks the call, then
+forwards it to the piece offering [`delivery`](#offers) (the runtime) and
+passes its answer back (`src/delivery.ts`).
+
+```bash
+# POST /api/loom/deliver
+{"id": "1730551200.000100", "agent": "art", "venue": "slack", "place": "dm:U123",
+ "label": "Loren (DM)", "from": {"kind": "person", "slug": "loren"},
+ "kind": "message", "at": "2026-11-02T12:00:00Z", "text": "..."}
+# core runs the delivery argv with {"source": "<calling piece>", ...that body} on stdin
+# and answers what the runtime answered:
+{"conversation": "cv-3f9a0c12d4e5", "seq": 4, "body": "started"}
+```
+
+- **The body:** `id` (the source's own id for the message, at most 200,
+  required); `agent`, `venue`, `place` (conversations.md's key); `from`,
+  `kind` (`message` or `wake`: a `note` is the agent's own turn, which a
+  source doesn't write), `at` (ISO-8601 UTC); `label`
+  (optional, at most 80); `text` (1-40,000 characters). Any other key, or a
+  field out of bounds, is a 400. The body is 256 KB at most.
+- **Who may deliver what,** each refused with a 403 and the reason before
+  anything runs, so nothing is written:
+  - the calling piece is an installed managed piece;
+  - the `venue` is one it declares (`venues`). `wake` is core's, so a piece
+    knocks on it only if it declares `"wake": {}`, and only with
+    `from: {kind: schedule}`. Nothing is delivered into `session`;
+  - the `agent` is the household's and granted to the piece. With no grants
+    authority installed, the piece's own agent list decides (the source
+    applied it before calling). With one, core asks it (path `deliver`): a no
+    is a 403, an authority that can't answer a 503 (fail closed). The
+    authority's own deliveries (the runtime's relays) aren't asked of itself;
+  - `from: {kind: person}` comes only from a venue adapter on a venue it
+    declares (not `relay`); `from: {kind: agent}` only from the runtime, the
+    installed piece offering `delivery` (a block's `role` alone isn't it).
+    A second `role: runtime` piece is refused at install.
+- **No delivery piece installed:** a 503 with the reason.
+- **Idempotent:** the same calling piece and `id` within 24 hours,
+  whichever of the piece's credentials calls (the runtime has two), gets the
+  first answer back verbatim, and the runtime isn't called. The same pair with a
+  different body is a 409. The answers are kept in `$LOOM_HOME/household.db`
+  (`deliveries`, with a SHA-256 of the body, never its text), swept past 24
+  hours.
+- **Fair:** one piece has at most 2 forwards running and 4 waiting; past
+  that, it gets a 503, and other pieces aren't held back. It keeps at most
+  10,000 answers in 24 hours; past that, a 429.
+- **The runtime's answer** is `{conversation, seq, body, reason?}`, `body`
+  one of `fed`, `resumed`, `started`, `queued` or `failed` (which carries a
+  `reason`). Its limits are 120 s and 64 KB. A runtime that fails says so by
+  exiting 1 with `{"status": 5xx, "error": "..."}` on stdout, and the caller
+  gets that status and error. Any other failure, or an answer that isn't the
+  contract's, is a 502, a timeout a 504, the delivery pool full a 503. None of them is
+  kept, so the source may retry with the same `id`.
+- **`GET /api/loom/venues`,** for the runtime's token only: every venue,
+  `{"venues": [{name, label, kind, piece, send?, orphaned?}]}`. Core's own
+  (`session`, `wake`) come first, with piece `loom`. `send` is the venue's
+  declared argv while its piece is installed, so the runtime never reads
+  another piece's piece.json.
+
+### `people/ensure`: a person's card, when a piece adds someone
+
+A piece that lets a person in somewhere (an agent's gates, say) makes sure they have a
+person card, so loom's People page shows them once however they were added: **`POST
+/api/loom/people/ensure`** ([specs/person-cards.md](specs/person-cards.md), "Ensure").
+With no card it makes a minimal one; with one, it only adds the `where` values the card
+lacks. It never changes a name, summary, `how` or `may`.
+
+```bash
+# On loom's machine, in an owner's action (LOOM_STORE_GRANT is in the piece's environment):
+echo '{"slug": "grace-aquino", "name": "Grace Aquino", "role": "Toxicologist", "agent": "art",
+       "source": "shuttle gates (art'"'"'s people), allowed by the owner 2026-11-02",
+       "where": {"slack": {"value": "U08C330F8AG (Onterris)"}}}' | loom person ensure --json
+# {"slug": "grace-aquino", "created": true, "added": {"slack": ["U08C330F8AG (Onterris)"]}, "unchanged": false, ...}
+```
+
+- **Only in an owner's action.** loom checks the grant it gave the process (signed,
+  unexpired, this piece's, an owner's), exactly as `loom store` does. A piece's own
+  service, or its process serving an agent, gets exit 5 (a 403 on the route). Elsewhere,
+  the piece's credential calls the route with that grant in `X-Loom-Store-Grant`.
+- A household owner's token and the runtime's reach the route too; an agent writes its
+  cards with `person_write`, and `person ensure` never runs over `POST /cli`.
+- A value already on someone else's card is refused (409): one person, one card. The
+  piece's own write (its gate) doesn't depend on the card: if the ensure fails, keep the
+  write and say why the card wasn't made.
 
 ## Storage: a piece's data in loom
 

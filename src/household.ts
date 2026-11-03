@@ -42,7 +42,22 @@ export interface Household {
    * from `members`, else the legacy `owner` as the one household owner.
    */
   members: Member[];
+  /**
+   * Model name → family (its provider: anthropic, openai, …), household.json's `families`
+   * (docs/specs/conversations.md, "Review"): a key is a model name, or a prefix ending in `*`.
+   * It adds to and overrides the built-in prefixes in src/review.ts (`familyOf`).
+   */
+  families?: Record<string, string>;
+  /** household.json's `tz` (an IANA name): the review's 04:00 is in it. loadHousehold defaults it to UTC. */
+  tz?: string;
+  /**
+   * household.json's `review` (docs/specs/conversations.md, "Review"): `on` (the default), `off`,
+   * or a command (1-16 strings of at most 200) that replaces the runtime's job.
+   */
+  review?: ReviewSetting;
 }
+
+export type ReviewSetting = 'on' | 'off' | string[];
 
 export interface Member {
   person: string;
@@ -100,22 +115,44 @@ export type Role =
    * A piece's credential (docs/extensions.md, "The API"): reaches only
    * POST /api/<piece>/…, as `subject`. No MCP, no /cli, no page, no store.
    */
-  | { kind: 'piece'; piece: string; subject: string };
+  | { kind: 'piece'; piece: string; subject: string }
+  /**
+   * The runtime piece's credential (docs/specs/conversations.md, "Who writes what"):
+   * `runtime:<piece>`, minted only for the one managed piece whose loom block says
+   * `"role": "runtime"`, and live only while it still is. It reaches only the routes
+   * ROLE_ROUTES names for it (src/transport/role-routes.ts).
+   */
+  | { kind: 'runtime'; piece: string }
+  /**
+   * A review run's credential (docs/specs/conversations.md, "Review tokens"):
+   * `review:<piece>`, minted by that runtime piece through POST /api/loom/review/token,
+   * always with `expires`. It reaches only the routes ROLE_ROUTES names for it.
+   */
+  | { kind: 'review'; piece: string };
+
+/** How long a review token lives (docs/specs/conversations.md, "Review tokens"). */
+export const REVIEW_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
+/** Live review tokens one runtime may hold at once: a runaway runtime can't grow tokens.json without bound. */
+export const REVIEW_TOKENS_LIVE_MAX = 8;
 
 export interface TokenRecord {
   label: string;
-  /** `agent:<name>[/<service>][@<house>]`, `owner`, `peer:<name>` or `piece:<piece>/<subject>`. */
+  /** `agent:<name>[/<service>][@<house>]`, `owner`, `peer:<name>`, `piece:<piece>/<subject>`, `runtime:<piece>` or `review:<piece>`. */
   role: string;
   /** sha256 of the token, hex. The token itself is never stored. */
   sha256: string;
   /** An owner token's member (a People slug), when it names one. */
   member?: string;
   created: string;
+  /** ISO-8601. Past it the token is refused everywhere, and the next token write drops the record. */
+  expires?: string;
   last_used?: string;
   revoked?: string;
 }
 
 export class HouseholdError extends Error {}
+/** A runtime asked for more live review tokens than it may hold (REVIEW_TOKENS_LIVE_MAX). */
+export class TokenLimitError extends HouseholdError {}
 
 /** $LOOM_HOME, else ~/.config/loom. */
 export function householdHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -148,7 +185,42 @@ export function loadHousehold(home: string): Household | null {
     default: def,
     owner: typeof raw.owner === 'string' ? raw.owner : undefined,
     members: parseMembers(raw, agents as string[], path),
+    ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
+    tz: parseTz(raw.tz, path),
+    review: parseReview(raw.review, path),
   };
+}
+
+function parseTz(v: unknown, path: string): string {
+  if (v === undefined) return 'UTC';
+  const bad = new HouseholdError(`${path}: tz is an IANA time zone name (e.g. America/Chicago)`);
+  if (typeof v !== 'string' || !v.length || v.length > 64) throw bad;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: v }); } catch { throw bad; }
+  return v;
+}
+
+function parseReview(v: unknown, path: string): ReviewSetting {
+  if (v === undefined || v === 'on') return 'on';
+  if (v === 'off') return 'off';
+  if (Array.isArray(v) && v.length >= 1 && v.length <= 16 && v.every((x) => typeof x === 'string' && x.length >= 1 && x.length <= 200 && !/[\x00-\x1f\x7f]/.test(x))) return [...v] as string[];
+  throw new HouseholdError(`${path}: review is "on", "off", or a command: 1-16 strings of at most 200 printable characters`);
+}
+
+/** A model family's name: lowercase letters, digits and dashes, at most 32. */
+export const FAMILY_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+
+function parseFamilies(v: unknown, path: string): Record<string, string> {
+  const bad = () => new HouseholdError(`${path}: families maps up to 64 model names (or prefixes ending in *) of at most 120 printable characters to family names (lowercase letters, digits, dashes)`);
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw bad();
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (entries.length > 64) throw bad();
+  // A null-prototype map: a model named "__proto__" or "constructor" is a key like any other.
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [k, f] of entries) {
+    if (!k.length || k.length > 120 || !/^[^\x00-\x1f\x7f]+$/.test(k) || typeof f !== 'string' || !FAMILY_NAME.test(f) || f === 'unknown') throw bad();
+    out[k.toLowerCase()] = f;
+  }
+  return out;
 }
 
 /**
@@ -171,6 +243,8 @@ export function parseRole(s: string): Role | null {
   if (s === 'owner') return { kind: 'owner' };
   const p = /^piece:([a-z][a-z0-9-]{0,39})\/([a-z0-9][a-z0-9._-]{0,63})$/.exec(s);
   if (p) return p[1] === 'loom' ? null : { kind: 'piece', piece: p[1], subject: p[2] };
+  const rr = /^(runtime|review):([a-z][a-z0-9-]{0,39})$/.exec(s);
+  if (rr) return rr[2] === 'loom' ? null : { kind: rr[1] as 'runtime' | 'review', piece: rr[2] };
   // A house's token: the agent, the service if it's a service house, and the house (loom-box
   // mints it), so a piece can grant one house something and none of the agent's others.
   const a = /^agent:([a-z][a-z0-9-]{0,39})(?:\/([a-z][a-z0-9-]{0,39}))?(?:@(h-[0-9]{1,9}))?$/.exec(s);
@@ -186,6 +260,8 @@ export function roleString(r: Role): string {
     case 'agent': return `agent:${r.agent}${r.service ? `/${r.service}` : ''}${r.house ? `@${r.house}` : ''}`;
     case 'peer': return `peer:${r.name}`;
     case 'piece': return `piece:${r.piece}/${r.subject}`;
+    case 'runtime': return `runtime:${r.piece}`;
+    case 'review': return `review:${r.piece}`;
   }
 }
 
@@ -286,6 +362,7 @@ function validRecord(t: unknown): t is TokenRecord {
   const r = t as Record<string, unknown>;
   return typeof r.label === 'string' && typeof r.role === 'string' && typeof r.sha256 === 'string' && SHA_HEX.test(r.sha256)
     && typeof r.created === 'string' && (r.revoked === undefined || typeof r.revoked === 'string')
+    && (r.expires === undefined || (typeof r.expires === 'string' && Number.isFinite(Date.parse(r.expires))))
     && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)));
 }
 
@@ -323,8 +400,35 @@ function saveTokens(home: string, tokens: TokenRecord[]): void {
   writePrivate(join(home, TOKENS_FILE), JSON.stringify({ v: 1, tokens: records }, null, 2) + '\n');
 }
 
+/** Past its `expires`, if it has one. */
+export function expired(t: Pick<TokenRecord, 'expires'>, now: number = Date.now()): boolean {
+  return t.expires !== undefined && !(Date.parse(t.expires) > now);
+}
+
+/** Neither revoked nor expired. */
+export function isLive(t: Pick<TokenRecord, 'revoked' | 'expires'>, now: number = Date.now()): boolean {
+  return !t.revoked && !expired(t, now);
+}
+
+/**
+ * Why `piece` can't be the runtime, or null when it can: it must be the one managed piece
+ * whose loom block says `"role": "runtime"` (`runtimePieces`, from runtimePieces() in
+ * cli/pieces-managed.ts).
+ */
+export function runtimeProblem(piece: string, runtimePieces: readonly string[]): string | null {
+  if (!runtimePieces.includes(piece)) return `${piece} isn't a managed piece whose loom block says "role": "runtime"`;
+  if (runtimePieces.length > 1) return `more than one managed piece says "role": "runtime" (${runtimePieces.join(', ')}); a household has one runtime`;
+  return null;
+}
+
 /** A role must name an agent this household has. */
-function checkRole(h: Household, role: Role): void {
+function checkRole(h: Household, role: Role, runtimePieces?: readonly string[]): void {
+  if (role.kind === 'review') throw new HouseholdError('a review token is minted only by the runtime, through POST /api/loom/review/token');
+  if (role.kind === 'runtime') {
+    // Fail closed: a caller that didn't say which pieces are the runtime mints none.
+    const problem = runtimeProblem(role.piece, runtimePieces ?? []);
+    if (problem) throw new HouseholdError(`can't mint a runtime token: ${problem}`);
+  }
   if (role.kind === 'agent' && !h.agents.includes(role.agent)) {
     throw new HouseholdError(`no agent named ${role.agent} in this household (${h.agents.join(', ')})`);
   }
@@ -334,12 +438,17 @@ function checkRole(h: Household, role: Role): void {
 }
 
 /** Mint a token. Returns it once; only its sha256 is kept. */
-export function createToken(h: Household, input: { role: Role; label: string }, now = new Date()): { token: string; record: TokenRecord } {
-  checkRole(h, input.role);
+/**
+ * `runtimePieces`: the managed pieces that say `"role": "runtime"` (runtimePieces() in
+ * cli/pieces-managed.ts); a runtime token needs it. A review token isn't minted here:
+ * mintReviewToken.
+ */
+export function createToken(h: Household, input: { role: Role; label: string; runtimePieces?: readonly string[] }, now = new Date()): { token: string; record: TokenRecord } {
+  checkRole(h, input.role, input.runtimePieces);
   const label = input.label.trim();
   if (!label || label.length > 120 || /[\x00-\x1f\x7f]/.test(label)) throw new HouseholdError('a token needs a label (120 printable characters at most)');
   return withLock(h.home, () => {
-    const tokens = loadTokens(h.home);
+    const tokens = unexpired(loadTokens(h.home), now.getTime());
     if (tokens.some((t) => t.label === label && !t.revoked)) throw new HouseholdError(`a live token is already labeled ${JSON.stringify(label)}`);
     const token = `loom_${randomBytes(32).toString('base64url')}`;
     const record: TokenRecord = {
@@ -352,9 +461,39 @@ export function createToken(h: Household, input: { role: Role; label: string }, 
   });
 }
 
+/** The lazy sweep: every token write drops records past their `expires`. */
+function unexpired(tokens: TokenRecord[], now: number): TokenRecord[] {
+  return tokens.filter((t) => !expired(t, now));
+}
+
+/**
+ * A review token for one run (docs/specs/conversations.md, "Review tokens"): role
+ * `review:<piece>`, `expires` two hours out. Only POST /api/loom/review/token calls this,
+ * for a caller that presented a live runtime token for `piece`.
+ */
+export function mintReviewToken(h: Household, piece: string, now = new Date()): { token: string; record: TokenRecord } {
+  const role: Role = { kind: 'review', piece };
+  return withLock(h.home, () => {
+    const tokens = unexpired(loadTokens(h.home), now.getTime());
+    const live = tokens.filter((t) => !t.revoked && t.role === roleString(role));
+    if (live.length >= REVIEW_TOKENS_LIVE_MAX) {
+      throw new TokenLimitError(`${piece} already holds ${live.length} live review tokens; one expires within two hours`);
+    }
+    const token = `loom_${randomBytes(32).toString('base64url')}`;
+    const record: TokenRecord = {
+      label: `review · ${piece} · ${now.toISOString()} · ${randomBytes(3).toString('hex')}`,
+      role: roleString(role), sha256: sha(token),
+      created: now.toISOString(),
+      expires: new Date(now.getTime() + REVIEW_TOKEN_TTL_MS).toISOString(),
+    };
+    saveTokens(h.home, [...tokens, record]);
+    return { token, record };
+  });
+}
+
 export function revokeToken(h: Household, label: string, now = new Date()): TokenRecord {
   return withLock(h.home, () => {
-    const tokens = loadTokens(h.home);
+    const tokens = unexpired(loadTokens(h.home), now.getTime());
     const t = tokens.find((x) => x.label === label && !x.revoked);
     if (!t) throw new HouseholdError(`no live token labeled ${JSON.stringify(label)}`);
     t.revoked = now.toISOString();
@@ -373,10 +512,16 @@ export class TokenResolver {
   private lastTouch = new Map<string, number>();
 
   private readonly get: () => Household;
+  private readonly runtimePieces?: () => readonly string[];
 
-  /** A household, or a function returning the current one (re-read as household.json changes). */
-  constructor(h: Household | (() => Household)) {
+  /**
+   * A household, or a function returning the current one (re-read as household.json changes).
+   * `runtimePieces`: the managed pieces that say `"role": "runtime"`, read per request. Without
+   * it, runtime and review tokens resolve to nothing.
+   */
+  constructor(h: Household | (() => Household), opts: { runtimePieces?: () => readonly string[] } = {}) {
     this.get = typeof h === 'function' ? h : () => h;
+    this.runtimePieces = opts.runtimePieces;
   }
 
   private get h(): Household { return this.get(); }
@@ -391,16 +536,22 @@ export class TokenResolver {
   }
 
   /**
-   * The role for a presented token, or null. Revoked tokens and roles naming a
-   * missing agent resolve to null. Throws HouseholdError when tokens.json is
-   * unreadable or untrusted: the caller fails closed.
+   * The role for a presented token, or null. Revoked and expired tokens, roles
+   * naming a missing agent, and runtime or review tokens whose piece is no
+   * longer the household's one runtime resolve to null. Throws HouseholdError
+   * when tokens.json is unreadable or untrusted: the caller fails closed.
    */
-  resolve(presented: string): Role | null {
+  resolve(presented: string, now: number = Date.now()): Role | null {
     const d = Buffer.from(sha(presented), 'hex');
-    const hit = this.current().find((t) => !t.revoked && t.sha256.length === 64 && timingSafeEqual(Buffer.from(t.sha256, 'hex'), d));
+    const hit = this.current().find((t) => isLive(t, now) && t.sha256.length === 64 && timingSafeEqual(Buffer.from(t.sha256, 'hex'), d));
     if (!hit) return null;
     const role = parseRole(hit.role);
     if (!role || (role.kind === 'agent' && !this.h.agents.includes(role.agent))) return null;
+    if (role.kind === 'runtime' || role.kind === 'review') {
+      if (!this.runtimePieces || runtimeProblem(role.piece, this.runtimePieces()) !== null) return null;
+      // A review token without an expiry wasn't minted by core: refuse it.
+      if (role.kind === 'review' && hit.expires === undefined) return null;
+    }
     if (role.kind === 'owner') {
       // An owner token is a member's: named on it, else the first household owner. One whose
       // member has left the household reaches nothing.
@@ -420,7 +571,7 @@ export class TokenResolver {
 
   /** The member a live owner token with this sha256 belongs to, if it's live and they're still a member. */
   ownerMember(digestHex: string): Member | undefined {
-    const t = this.current().find((x) => !x.revoked && x.role === 'owner' && x.sha256 === digestHex);
+    const t = this.current().find((x) => isLive(x) && x.role === 'owner' && x.sha256 === digestHex);
     if (!t) return undefined;
     return t.member === undefined ? firstOwner(this.h) : memberOf(this.h, t.member);
   }

@@ -13,13 +13,22 @@
  *   pieces/<name>/versions/<sha>/ one npm prefix per commit: current and the one before
  *   pieces/<name>/current         -> versions/<sha>
  *   pieces/<name>/install.log     the last install's npm output
+ *
+ * A local piece (--from path:/abs/dir) is a package in a directory on this
+ * machine. Its install is an `npm pack` of the directory (a snapshot: editing
+ * the directory doesn't change what's installed), and its version is the
+ * snapshot's sha256, so versions/<hash>/ holds it the way versions/<sha> holds
+ * a commit, and update and rollback work the same.
  */
 import { parseStoreDecl, type StoreDecl } from '../stores.js';
-import { spawn } from 'node:child_process';
+import { offerConflicts, parseOffers, type Offers } from '../offers.js';
+import { syncVenuesQuietly } from '../household-store.js';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   accessSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { syncServices, type ServicesResult } from './pieces-services.js';
 export { syncServices };
@@ -48,7 +57,11 @@ export interface Service {
   keepChildren?: boolean;
 }
 
-export interface LoomBlock {
+/**
+ * The checked `loom` block. Its offer keys (sections, venues, mcp_tools, grants: src/offers.ts) are
+ * part of it, so piece.json keeps a copy of what the piece declared.
+ */
+export interface LoomBlock extends Offers {
   /** Which loom-<name> bin is the piece, when the package has several. */
   name?: string;
   role?: string;
@@ -70,14 +83,33 @@ export interface LoomBlock {
   store?: StoreDecl;
 }
 
+/** A piece from a public GitHub repo, pinned to a commit. */
+export interface GithubSource { repo: string; commit: string }
+/**
+ * A local piece: the package in a directory on this machine. `hash` is the
+ * sha256 of its `npm pack` tarball, and is its version; `commit` is the git
+ * commit the directory was at, only when it was a clean work tree (where it
+ * came from, not what it is).
+ */
+export interface LocalSource { path: string; hash: string; commit?: string }
+export type PieceSource = GithubSource | LocalSource;
+
+export const isLocal = <T extends PieceSource | { path: string }>(s: T): s is Extract<T, { path: string }> => 'path' in s;
+/** What names an installed version (its versions/ directory): the commit, or a local piece's hash. */
+export const versionKey = (s: PieceSource): string => isLocal(s) ? s.hash : s.commit;
+/** Where a version came from, for people: `owner/repo@<sha12>`, or `local <dir>@<hash12>`. */
+export const describeSource = (s: PieceSource): string =>
+  isLocal(s) ? `local ${s.path}@${s.hash.slice(0, 12)}` : `${s.repo}@${s.commit.slice(0, 12)}`;
+
 export interface PieceRecord {
   v: 1;
   name: string;
-  source: { repo: string; commit: string };
+  source: PieceSource;
   package: string;
   version: string;
   installed: string;
-  previous?: { commit: string; version: string };
+  /** `commit` is the previous version's key (versionKey: a local piece's is its hash); `source` is where it came from. */
+  previous?: { commit: string; version: string; source?: PieceSource };
   bins: string[];
   loom: LoomBlock;
   /** The node npm ran on: the piece runs with it first on PATH, since its native modules were built for it. */
@@ -152,6 +184,15 @@ export function managedPieces(env: NodeJS.ProcessEnv): PieceRecord[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * The managed pieces whose loom block says `"role": "runtime"`. A runtime token is minted
+ * for, and reaches as, only the one such piece (docs/specs/conversations.md, "Who writes
+ * what"); with none or several, there's no runtime to be.
+ */
+export function runtimePieces(env: NodeJS.ProcessEnv): string[] {
+  return managedPieces(env).filter((r) => r.loom.role === 'runtime').map((r) => r.name);
+}
+
 export function readSettings(env: NodeJS.ProcessEnv, name: string): Record<string, string> {
   const root = piecesRoot(env);
   const s = root ? readJson(join(root, name, 'settings.json')) : undefined;
@@ -199,6 +240,36 @@ export function pieceOfPath(env: NodeJS.ProcessEnv, path: string): PieceRecord |
   return bin && dirname(path) === bin ? ownerOfBin(env, basename(path)) : undefined;
 }
 
+/**
+ * Old piece names that callers outside loom still use, and the piece each now is: a house's
+ * `loom box …`, a `/p/box/…` link, a joined box's `piece:box/<id>` credential. Applied where a
+ * name comes in from outside (cli/pieces.ts, resolvePieceName), and only while no installed
+ * piece has the old name itself. A piece can't be installed under an old name while the piece
+ * it now names is installed.
+ */
+export const PIECE_ALIASES: Readonly<Record<string, string>> = Object.freeze({ box: 'runtime' });
+
+/** The piece `name` is an old name for, if it is one. */
+export const aliasTarget = (name: string): string | undefined => (Object.hasOwn(PIECE_ALIASES, name) ? PIECE_ALIASES[name] : undefined);
+
+/**
+ * Why an installed piece under an old name doesn't update in place: the catalog now has its repo
+ * under the new name. The swap isn't done for you: the new piece has its own settings (their
+ * names carry the piece's, LOOM_BOX_* becoming LOOM_RUNTIME_*) and its own store, and its install
+ * is refused while the old one holds the runtime role and the bins. So: remove, install, set.
+ * Undefined when `rec` isn't a renamed piece.
+ */
+export function renamedAdvice(rec: PieceRecord, catalog: readonly CatalogEntry[] = readCatalog()): string | undefined {
+  const now = aliasTarget(rec.name);
+  if (!now || isLocal(rec.source)) return undefined;
+  const repo = rec.source.repo;
+  if (!catalog.some((c) => c.name === now && c.repo === repo)) return undefined;
+  return `${rec.name} is now the ${now} piece (the same repo, renamed), so it doesn't update in place. To switch: `
+    + `loom pieces remove ${rec.name} (its settings and data are kept), then loom pieces install ${now}, then set its settings `
+    + `under their new names (loom pieces set ${now} …; the old values stay in pieces/${rec.name}/settings.json). `
+    + `Until then, ${rec.name} keeps working as it is.`;
+}
+
 /** The catalog of first-party pieces that ships with loom (assets/pieces.json). */
 export function readCatalog(path = join(resolveRepoRoot(), 'assets', 'pieces.json')): CatalogEntry[] {
   const c = readJson(path) as { v?: number; pieces?: unknown } | undefined;
@@ -221,14 +292,31 @@ export function parseSource(spec: string): { repo: string; commit: string } {
   return { repo: m[1], commit: m[2] };
 }
 
+/**
+ * `path:/abs/dir` → the directory, normalized. Relative paths are refused: they
+ * would mean something else from wherever loom (or its daemon) runs.
+ */
+export function parseLocalSource(spec: string): { path: string } {
+  const m = /^path:(.*)$/.exec(spec);
+  if (!m) throw new PieceError(`a local source is path:/absolute/dir, not ${JSON.stringify(spec)}`);
+  if (!isAbsolute(m[1])) throw new PieceError(`a local source is an absolute path (path:/absolute/dir), not ${JSON.stringify(m[1])}`);
+  return { path: resolve(m[1]) };
+}
+
+/** What `--from` takes: `github:<owner>/<repo>#<commit>` or `path:/abs/dir`. */
+export function parseFrom(spec: string): GithubSource | { path: string } {
+  return spec.startsWith('path:') ? parseLocalSource(spec) : parseSource(spec);
+}
+
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 
 /**
  * The package's `loom` block, checked; a string says what's wrong. A setting
  * may not be one of loom's own variables (LOOM_*), except under the piece's
- * own prefix: the box piece may have LOOM_BOX_PUBLIC_URL.
+ * own prefix: the box piece may have LOOM_BOX_PUBLIC_URL. An offer's argv
+ * must start with one of the package's `bins` (none given: no argv passes).
  */
-export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string {
+export function parseLoomBlock(raw: unknown, piece?: string, bins?: readonly string[]): LoomBlock | string {
   const own = piece ? `LOOM_${piece.toUpperCase().replace(/-/g, '_')}_` : undefined;
   if (raw === undefined) return { settings: [], services: [] };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'the loom block is not an object';
@@ -300,7 +388,14 @@ export function parseLoomBlock(raw: unknown, piece?: string): LoomBlock | string
     if (typeof d === 'string') return d;
     out.store = d;
   }
-  return out;
+  const offers = parseOffers(b, { bins, role: out.role });
+  if (typeof offers === 'string') return offers;
+  return { ...out, ...offers };
+}
+
+/** Why `loom` can't be piece `name`'s beside the other installed pieces (offers.ts, offerConflicts). */
+export function loomConflicts(env: NodeJS.ProcessEnv, name: string, loom: LoomBlock): string | undefined {
+  return offerConflicts(name, loom, managedPieces(env));
 }
 
 /** npm from PATH (a test puts a stand-in first on it). */
@@ -314,17 +409,17 @@ function nodeOnPath(env: NodeJS.ProcessEnv): string | undefined {
   return undefined;
 }
 
-function runNpm(env: NodeJS.ProcessEnv, args: string[], log: string): Promise<number> {
+function runNpm(env: NodeJS.ProcessEnv, args: string[], log: string, append = false): Promise<number> {
   const npm = 'npm';
-  return new Promise((resolve) => {
+  return new Promise((done) => {
     const out: Buffer[] = [];
     const child = spawn(npm, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stdout.on('data', (d: Buffer) => out.push(d));
     child.stderr.on('data', (d: Buffer) => out.push(d));
     child.on('error', (err) => { out.push(Buffer.from(`couldn't run ${npm}: ${err.message}\n`)); });
     child.on('close', (code) => {
-      writeFileSync(log, `$ ${npm} ${args.join(' ')}\n${Buffer.concat(out).toString()}`);
-      resolve(code ?? 1);
+      writeFileSync(log, `$ ${npm} ${args.join(' ')}\n${Buffer.concat(out).toString()}`, append ? { flag: 'a' } : {});
+      done(code ?? 1);
     });
   });
 }
@@ -347,38 +442,89 @@ function binsOf(pkg: Record<string, unknown>, pkgName: string): string[] {
   return Object.keys(bin as Record<string, string>);
 }
 
+/** The git commit `dir` is at, if it's a clean git work tree; else nothing. */
+function cleanCommit(env: NodeJS.ProcessEnv, dir: string): string | undefined {
+  const git = (...args: string[]) => spawnSync('git', ['-C', dir, ...args], { env, encoding: 'utf-8', timeout: 10_000 });
+  const head = git('rev-parse', 'HEAD');
+  if (head.status !== 0 || !COMMIT.test(head.stdout.trim())) return undefined;
+  const status = git('status', '--porcelain', '--', '.');
+  return status.status === 0 && status.stdout.trim() === '' ? head.stdout.trim() : undefined;
+}
+
+/**
+ * Snapshot a local piece's directory: `npm pack` it (which runs its `prepare`,
+ * in the directory, as `npm pack` always does) into `staging/package.tgz`.
+ * The tarball is what gets installed, and its sha256 is the version.
+ */
+async function packLocal(
+  env: NodeJS.ProcessEnv, dir: string, staging: string, log: string, failed: (what: string, code: number) => PieceError,
+): Promise<LocalSource> {
+  let st;
+  try { st = lstatSync(dir); } catch { throw new PieceError(`${dir} doesn't exist`); }
+  if (!st.isDirectory()) throw new PieceError(`${dir} isn't a directory`);
+  if (!existsSync(join(dir, 'package.json'))) throw new PieceError(`${dir} has no package.json, so it isn't a package`);
+  const commit = cleanCommit(env, dir);
+  const dest = join(staging, '.pack');
+  mkdirSync(dest, { recursive: true });
+  const code = await runNpm(env, ['pack', dir, '--pack-destination', dest], log);
+  if (code !== 0) throw failed('npm pack', code);
+  const tgz = readdirSync(dest).filter((f) => f.endsWith('.tgz'));
+  if (tgz.length !== 1) throw new PieceError(`npm pack made ${tgz.length} tarballs, not 1`);
+  const tarball = join(staging, 'package.tgz');
+  renameSync(join(dest, tgz[0]), tarball);
+  rmSync(dest, { recursive: true, force: true });
+  const hash = createHash('sha256').update(readFileSync(tarball)).digest('hex');
+  return { path: dir, hash, ...(commit ? { commit } : {}) };
+}
+
 export interface InstallResult {
   record: PieceRecord;
   updated: boolean;
+  /** A local piece whose directory hasn't changed since it was installed: nothing was done. */
+  unchanged?: boolean;
   missing: string[];
   services: ServicesResult;
 }
 
 /**
- * Install `source` as piece `name` (from the catalog), or as whatever its one
- * loom-<name> bin names (from GitHub). A failed install leaves what was
- * current untouched.
+ * Install `source` as piece `name` (from the catalog, or a local piece's
+ * update), or as whatever its one loom-<name> bin names (from GitHub or a
+ * local directory). A failed install leaves what was current untouched.
  */
 export async function installPiece(
   env: NodeJS.ProcessEnv,
-  source: { repo: string; commit: string },
+  from: GithubSource | { path: string },
   name?: string,
   /** `services: false` installs without starting the piece's services (a restore starts them after its part is in). */
   opts: { services?: boolean } = {},
 ): Promise<InstallResult> {
   const root = rootOrThrow(env);
   mkdirSync(join(root, 'bin'), { recursive: true });
-  const staging = join(root, `.staging-${source.commit.slice(0, 12)}-${process.pid}`);
+  const staging = join(root, `.staging-${isLocal(from) ? 'local' : from.commit.slice(0, 12)}-${process.pid}`);
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
   const log = join(root, `.install-${process.pid}.log`);
+  const failed = (what: string, code: number) => {
+    renameSync(log, join(root, 'install.log'));
+    return new PieceError(`${what} failed (exit ${code}); its output is in ${join(root, 'install.log')}`);
+  };
   try {
-    const code = await runNpm(env, ['install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev',
-      `github:${source.repo}#${source.commit}`], log);
-    if (code !== 0) {
-      renameSync(log, join(root, 'install.log'));
-      throw new PieceError(`npm install failed (exit ${code}); its output is in ${join(root, 'install.log')}`);
+    let source: PieceSource;
+    let spec: string;
+    if (isLocal(from)) {
+      source = await packLocal(env, from.path, staging, log, failed);
+      // The same snapshot as what's current: there's nothing to do.
+      const same = managedPieces(env).find((r) => isLocal(r.source) && r.source.path === from.path && r.source.hash === (source as LocalSource).hash
+        && (!name || r.name === name) && existsSync(join(root, r.name, 'versions', r.source.hash)));
+      if (same) return { record: same, updated: false, unchanged: true, missing: missingSettings(env, same), services: { started: [], notes: [] } };
+      spec = join(staging, 'package.tgz');
+    } else {
+      source = from;
+      spec = `github:${from.repo}#${from.commit}`;
     }
+    const key = versionKey(source);
+    const code = await runNpm(env, ['install', '--prefix', staging, '--no-audit', '--no-fund', '--omit=dev', spec], log, isLocal(source));
+    if (code !== 0) throw failed('npm install', code);
     const { name: pkgName, pkg } = installedPackage(staging);
     const bins = binsOf(pkg, pkgName);
     // The piece is its one loom-<name> bin, or, with several, the one loom.name names;
@@ -394,11 +540,18 @@ export async function installPiece(
     }
     const pieceName = declared !== undefined ? String(declared) : loomBins[0].slice('loom-'.length);
     if (!PIECE.test(pieceName) || pieceName === 'loom') throw new PieceError(`loom-${pieceName} isn't a piece name`);
-    if (name && pieceName !== name) throw new PieceError(`the catalog's ${name} installs loom-${pieceName}, not loom-${name}`);
+    // An old name (PIECE_ALIASES) can't be installed beside the piece it now names.
+    const renamedTo = aliasTarget(pieceName);
+    if (renamedTo && readRecord(env, renamedTo)) {
+      throw new PieceError(`${pieceName} is an old name for ${renamedTo}, which is installed: a piece can't be installed as ${pieceName} while ${renamedTo} is`);
+    }
+    if (name && pieceName !== name) throw new PieceError(`${isLocal(source) ? source.path : `the catalog's ${name}`} installs loom-${pieceName}, not loom-${name}`);
     const bad = bins.find((b) => !BIN.test(b));
     if (bad) throw new PieceError(`bin name ${JSON.stringify(bad)} isn't allowed`);
-    const loom = parseLoomBlock(pkg.loom, pieceName);
+    const loom = parseLoomBlock(pkg.loom, pieceName, bins);
     if (typeof loom === 'string') throw new PieceError(`${pkgName}: ${loom}`);
+    const conflict = loomConflicts(env, pieceName, loom);
+    if (conflict) throw new PieceError(`${pkgName}: ${conflict}`);
     for (const other of managedPieces(env)) {
       if (other.name === pieceName) continue;
       const clash = bins.find((b) => other.bins.includes(b));
@@ -407,7 +560,7 @@ export async function installPiece(
 
     const home = join(root, pieceName);
     mkdirSync(join(home, 'versions'), { recursive: true });
-    const version = join(home, 'versions', source.commit);
+    const version = join(home, 'versions', key);
     if (existsSync(version)) rmSync(staging, { recursive: true, force: true });
     else renameSync(staging, version);
     renameSync(log, join(home, 'install.log'));
@@ -416,12 +569,14 @@ export async function installPiece(
     const record: PieceRecord = {
       v: 1, name: pieceName, source, package: pkgName, version: typeof pkg.version === 'string' ? pkg.version : '',
       installed: new Date().toISOString(), bins, loom, ...(nodeOnPath(env) ? { node: nodeOnPath(env) } : {}),
-      ...(old && old.source.commit !== source.commit ? { previous: { commit: old.source.commit, version: old.version } } : old?.previous ? { previous: old.previous } : {}),
+      ...(old && versionKey(old.source) !== key ? { previous: { commit: versionKey(old.source), version: old.version, source: old.source } } : old?.previous ? { previous: old.previous } : {}),
     };
-    swapLink(join('versions', source.commit), join(home, 'current'));
+    swapLink(join('versions', key), join(home, 'current'));
     relink(root, record, old);
     writeJson(join(home, 'piece.json'), record);
     prune(home, record);
+    // Its venues, in core's registry (docs/specs/conversations.md, "Venues"): update replaces its rows.
+    syncVenuesQuietly(env);
     const services = opts.services === false ? { started: [], notes: ['services not started yet'] } : syncServices(env, pieceName, record);
     return { record, updated: !!old, missing: missingSettings(env, record), services };
   } finally {
@@ -440,7 +595,7 @@ function relink(root: string, record: PieceRecord, old?: PieceRecord): void {
 
 /** Keep the current version and the previous one; the rest go. */
 function prune(home: string, record: PieceRecord): void {
-  const keep = new Set([record.source.commit, record.previous?.commit].filter(Boolean));
+  const keep = new Set([versionKey(record.source), record.previous?.commit].filter(Boolean));
   for (const v of readdirSync(join(home, 'versions'))) {
     if (!keep.has(v)) rmSync(join(home, 'versions', v), { recursive: true, force: true });
   }
@@ -451,18 +606,26 @@ export function rollbackPiece(env: NodeJS.ProcessEnv, name: string): PieceRecord
   const rec = readRecord(env, name);
   if (!rec) throw new PieceError(`${name} isn't a managed piece`);
   if (!rec.previous || !existsSync(join(root, name, 'versions', rec.previous.commit))) throw new PieceError(`${name} has no previous version to roll back to`);
+  // Where the previous version came from; a record written before that was kept had the same source, at another key.
+  const source: PieceSource = rec.previous.source && versionKey(rec.previous.source) === rec.previous.commit ? rec.previous.source
+    : isLocal(rec.source) ? { path: rec.source.path, hash: rec.previous.commit } : { repo: rec.source.repo, commit: rec.previous.commit };
   const back: PieceRecord = {
-    ...rec, source: { repo: rec.source.repo, commit: rec.previous.commit }, version: rec.previous.version,
-    installed: new Date().toISOString(), previous: { commit: rec.source.commit, version: rec.version },
+    ...rec, source, version: rec.previous.version,
+    installed: new Date().toISOString(), previous: { commit: versionKey(rec.source), version: rec.version, source: rec.source },
   };
   // The previous version's own bins are read from its package.json.
-  const { name: pkgName, pkg } = installedPackage(join(root, name, 'versions', back.source.commit));
+  const { name: pkgName, pkg } = installedPackage(join(root, name, 'versions', versionKey(back.source)));
   back.bins = binsOf(pkg, pkgName);
-  const loom = parseLoomBlock(pkg.loom, name);
-  if (typeof loom !== 'string') back.loom = loom;
-  swapLink(join('versions', back.source.commit), join(root, name, 'current'));
+  const loom = parseLoomBlock(pkg.loom, name, back.bins);
+  if (typeof loom !== 'string') {
+    const conflict = loomConflicts(env, name, loom);
+    if (conflict) throw new PieceError(`${name}'s previous version can't come back: ${conflict}`);
+    back.loom = loom;
+  }
+  swapLink(join('versions', versionKey(back.source)), join(root, name, 'current'));
   relink(root, back, rec);
   writeJson(join(root, name, 'piece.json'), back);
+  syncVenuesQuietly(env);
   syncServices(env, name, back);
   return back;
 }
@@ -479,12 +642,11 @@ export function removePiece(env: NodeJS.ProcessEnv, name: string, purge = false)
   }
   syncServices(env, name, undefined);
   const home = join(root, name);
-  if (purge) {
-    rmSync(home, { recursive: true, force: true });
-    return;
-  }
+  if (purge) rmSync(home, { recursive: true, force: true });
   // Settings and data stay, so installing it again picks up where it was.
-  for (const f of ['versions', 'current', 'piece.json', 'install.log']) rmSync(join(home, f), { recursive: true, force: true });
+  else for (const f of ['versions', 'current', 'piece.json', 'install.log']) rmSync(join(home, f), { recursive: true, force: true });
+  // Its venues stay in core's registry, orphaned, even with --purge: the conversations had there are the agent's.
+  syncVenuesQuietly(env);
 }
 
 /** Set (or with an empty value, clear) declared settings. */

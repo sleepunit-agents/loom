@@ -9,7 +9,7 @@ import type { IOStreams } from './io.js';
 import { realStreams } from './io.js';
 import { SUBCOMMANDS } from './subcommands.js';
 import { extractGlobalFlags, firstNonGlobalIndex } from './args.js';
-import { REMOTE_VERBS, runRemote } from './remote.js';
+import { REMOTE_VERBS, runRemote, runRemotePiece } from './remote.js';
 import { findPiece, isPieceName, runPiece } from './pieces.js';
 
 const TOP_HELP = `Usage: loom <command> [options]
@@ -27,6 +27,8 @@ Commands:
   note write|read|list|attach|sweep
                      An agent's notes: held for a while (keep, while, short), swept unless cited
   person show|list   Read person cards (condensed current state per person)
+  project show|list|hub|orphans
+                     Read project cards and their hubs (everything filed under a project)
   update-identity    Edit preferences.md / self-model.md sections
   bootstrap          Initialize a fresh agent
   serve              Explicit MCP stdio startup (same as no args)
@@ -43,7 +45,8 @@ Commands:
   store             A piece's own store in loom: get, list, put, del, history, revert
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> (managed, then PATH)
-(e.g. loom tasks list). Core commands always win. See docs/extensions.md.
+(e.g. loom tasks list). Core commands always win. Not installed here, with $LOOM_URL
+set: the loom there runs it (POST /api/<name>/run). See docs/extensions.md.
 
 Global flags:
   --context-dir <path>   Agent context dir (default: $LOOM_CONTEXT_DIR or ~/.config/loom/default)
@@ -52,7 +55,7 @@ Global flags:
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
                          http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person; other commands stay local.
+                         memory, knowledge, person, project; other commands stay local.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -69,14 +72,17 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   // A piece (docs/extensions.md): not a core command, and loom-<name> is on PATH.
   const pieceIdx = firstNonGlobalIndex(argv);
   const pieceName = argv[pieceIdx];
+  // Not installed here, with LOOM_URL set: the loom there runs it (POST /api/<piece>/run). Local always wins.
   if (isPieceName(pieceName)) {
     const path = findPiece(pieceName, io.env);
-    if (path) {
+    const remote = path ? undefined : io.env.LOOM_URL;
+    if (path || remote) {
       if (pieceIdx > 0) {
         io.stderr(`loom: global flags (${argv.slice(0, pieceIdx).join(' ')}) don't apply to pieces; put the piece's own flags after its name.\n`);
         return 2;
       }
-      return runPiece(path, argv.slice(pieceIdx + 1), io);
+      if (path) return runPiece(path, argv.slice(pieceIdx + 1), io);
+      return runRemotePiece(pieceName, argv.slice(pieceIdx + 1), remote!, io);
     }
   }
 
@@ -168,6 +174,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     }
     case 'person': {
       const { run } = await import('./person.js');
+      return run(rest, io);
+    }
+    case 'project': {
+      const { run } = await import('./project.js');
       return run(rest, io);
     }
     case 'forget': {
