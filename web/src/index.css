@@ -479,6 +479,29 @@ body { background: var(--v-canvas); }
 .loom-arrive { animation: loom-arrive-in 900ms cubic-bezier(.2,.8,.2,1) both, loom-arrive-glow 2600ms cubic-bezier(.3,.6,.2,1); border-radius: 14px; }
 @media (prefers-reduced-motion: reduce) { .loom-arrive { animation: none; } }
 
+/* The app's own states (states.tsx): a loom card with the app's tinted mark; a page on its way breathes in its shape. */
+.loom-state { background: color-mix(in oklab, var(--v-canvas) 88%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
+.loom-state-mark [data-slot="animated-icon"], .loom-state-mark [data-slot="animated-icon"] > span { display: grid; place-items: center; width: 30px; height: 30px; }
+.loom-state-mark svg { width: 30px !important; height: 30px !important; }
+.loom-skel { background: color-mix(in oklab, var(--v-canvas) 80%, transparent); animation: loom-skel 1.6s ease-in-out infinite both; }
+.loom-skel-line { background: color-mix(in oklab, var(--v-text) 9%, transparent); }
+@keyframes loom-skel { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .loom-skel { animation: none; } }
+
+/* The arrival, once a session (arrive.tsx arriveOnce): the ground first, then the header and the cards in turn, the
+   dock or the side last; under a second. arriveOnce never sets it under reduced motion. */
+@keyframes loom-in-fade { from { opacity: 0; } }
+@keyframes loom-in-rise { from { opacity: 0; transform: translateY(14px); } }
+@keyframes loom-in-dock { from { opacity: 0; transform: translateY(110%); } }
+@keyframes loom-in-side { from { opacity: 0; transform: translateX(-18px); } }
+[data-arrive] .loom-wash, [data-arrive] .loom-ground { animation: loom-in-fade 520ms ease-out both; }
+[data-arrive] .loom-top { animation: loom-in-rise 460ms cubic-bezier(.2,.8,.2,1) 120ms both; }
+[data-arrive] main > *, [data-arrive] main > div > * > * { animation: loom-in-rise 480ms cubic-bezier(.2,.8,.2,1) both; }
+[data-arrive] main > div > * > :nth-child(1) { animation-delay: 220ms; } [data-arrive] main > div > * > :nth-child(2) { animation-delay: 290ms; }
+[data-arrive] main > div > * > :nth-child(3) { animation-delay: 360ms; } [data-arrive] main > div > * > :nth-child(n+4) { animation-delay: 420ms; }
+[data-arrive] .loom-dock-bar, [data-arrive] .loom-find-pill { animation: loom-in-dock 560ms cubic-bezier(.2,.9,.25,1.15) 380ms both; }
+[data-arrive] .loom-side { animation: loom-in-side 520ms cubic-bezier(.2,.8,.2,1) 200ms both; }
+
 /* An agent's dock on a phone (the "dock swap"): its mark with a back chevron first, a rule, then its tabs in its colour,
    the one you're on solid. The page root carries the agent's colour (--loom-accent, --loom-on-accent). */
 .loom-agent-dock.v-dock [data-part="lane"] [data-part="visual"] { background: color-mix(in oklab, var(--loom-accent) 34%, var(--v-paper)); color: var(--v-text); }

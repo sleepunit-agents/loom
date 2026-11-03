@@ -91,7 +91,7 @@ export async function act(ctx: Ctx, csrf: string, action: string, fields: Record
   }).catch(() => undefined);
   if (!r) return { ok: false, message: 'Can’t reach loom: nothing was sent. Try again when there’s a connection.' };
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) {
-    return { ok: false, message: r.status === 403 ? 'That form is stale: reload and try again.' : `loom answered ${r.status}` };
+    return { ok: false, message: r.status === 403 ? 'That form is stale: reload and try again.' : 'That didn’t go through: loom had a problem. Try again in a moment.' };
   }
   return (await r.json()) as ActResult;
 }

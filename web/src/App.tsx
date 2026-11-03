@@ -1,6 +1,6 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 // An agent's state beside its name (a desktop's alone): its own chunk.
 const AgentState = lazy(() => import('@/components/ui/agent-state').then((m) => ({ default: m.AgentState })));
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -14,9 +14,8 @@ const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.Loo
 // The account's page (passkeys' controls: WebAuthn, push) loads with that page only.
 const AccountView = lazy(() => import('./account').then((m) => ({ default: m.AccountView })));
 const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
-import { ArrivalContext, type Arrivals } from './arrive';
+import { ArrivalContext, arriveOnce, type Arrivals } from './arrive';
 import { Boundary, Callout, iconFor } from './safe';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -26,10 +25,11 @@ import { refreshEvery, type Showing } from './refresh';
 const Toasts = lazy(() => import('./toasts'));
 import type { Note } from './toasts';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
-import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
+import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
 import { AppHeader, AppTile, oneLine } from './app-header';
+import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
 // The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
@@ -85,8 +85,9 @@ export default function App() {
   const [url, setUrl] = useState(() => location.pathname + location.search);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // A page with no copy kept yet: the last one dims under Orbit until it lands.
+  // A page with no copy kept yet: its header and its shape (states.tsx Skeleton) until it lands. `pending` is where to.
   const [waiting, setWaiting] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
@@ -121,7 +122,7 @@ export default function App() {
         if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
         setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
       }
-      setWaiting(!have);
+      setWaiting(!have); setPending(have ? null : to);
     }
     const r = await fetchView(to, have?.etag).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }));
     if (!quiet && showing.current === to) setWaiting(false);
@@ -136,7 +137,7 @@ export default function App() {
     if (!r.data) {
       if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
       setSavedAt(undefined); setUrl(to);
-      setError(r.status ? `loom answered ${r.status} for ${to}` : 'This page isn’t saved on this device yet. It opens when there’s a connection.');
+      setError(r.status ? 'server' : 'offline');
       return;
     }
     // A one-time message (?_flash=, after a form's post) is shown once, then leaves the address.
@@ -261,15 +262,18 @@ export default function App() {
   const profileLeads = (data?.view === 'page' && (data.page as Page).sections[0]?.blocks[0]?.type === 'profile')
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
-  const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
+  const title = error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
-  const path = url.split('?')[0];
-  const place = shellPlaces.find((p) => path === p.href) ?? shellPlaces.find((p) => p.href !== '/' && path.startsWith(`${p.href}/`));
+  const placeAt = (at: string) => shellPlaces.find((p) => at === p.href) ?? shellPlaces.find((p) => p.href !== '/' && at.startsWith(`${p.href}/`));
+  // On its way, or not opened: the header still says which app (a place's name), not the last page's title.
+  const path = (waiting && pending ? pending : url).split('?')[0];
+  const place = placeAt(path);
+  const shownTitle = title || ((error || waiting) && place ? place.label : '');
   const intro = !error && data?.view === 'page' ? (data.page as Page).intro : undefined;
-  const context = error ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
+  const context = error || waiting ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
     ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
   const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
     : path === '/' ? 'Home' : place?.label ?? chrome?.shell?.back?.label ?? title;
@@ -281,11 +285,19 @@ export default function App() {
     </button>
   ) : accent ? <AgentAvatar a={accent} size={44} className="shrink-0" />
     : data?.view === 'passkeys' && chrome?.shell ? <MeAvatar name={chrome.shell.owner} size={44} className="shrink-0" />
-    : title || error ? <AppTile label={tileLabel || 'loom'} icon={icon(tileLabel || "")} /> : undefined;
+    : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
+
+  // The app's arrival, once a session: the first time a page with its header has landed (arrive.tsx arriveOnce).
+  const arrived = useRef(false);
+  useLayoutEffect(() => {
+    if (arrived.current || !data || waiting) return;
+    arrived.current = true;
+    arriveOnce(document.querySelector<HTMLElement>('.loom-top h1'));
+  }, [data, waiting]);
 
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
-  const pill = !wide && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
+  const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
 
   return (
     <>
@@ -301,23 +313,26 @@ export default function App() {
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8">
             <div className="mx-auto max-w-5xl px-4 py-3">
-              <AppHeader where={url} title={title ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
+              <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
                 actions={accent && wide && !profileLeads ? <Suspense fallback={null}><AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} /></Suspense> : undefined} />
             </div>
           </header>
 
-          {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden><Spinner appearance="orbit" className="scale-[2.2]" /></div>}
-          <main aria-busy={waiting || undefined} className={`mx-auto max-w-5xl px-4 pb-44 pt-5 transition-opacity duration-300 lg:pb-10 ${waiting ? 'opacity-35' : ''}`}>
+          <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
+            {waiting && <Skeleton />}
             {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
               This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
-            {error && <Callout tone={/^loom answered/.test(error) ? 'danger' : 'warn'} icon={/^loom answered/.test(error) ? undefined : 'cloud-off'} title={/^loom answered/.test(error) ? 'loom couldn’t open this' : 'Can’t reach loom'}
-              actions={<Button size="sm" variant="outline" onClick={() => void load(location.pathname + location.search, false)}>Try again</Button>}>{error}</Callout>}
+            {!waiting && error && (error === 'offline'
+              ? <StateCard icon="cloud-off" tint="blue" title="Can’t reach loom" text="This page isn’t saved on this device yet. It opens as soon as there’s a connection."
+                  action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />
+              : <StateCard icon="triangle-alert" tint="yellow" title={`${place?.label ?? 'This page'} didn’t load`} text="loom had trouble opening it. Try again, or come back in a minute."
+                  action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />)}
             {/* Home and the Inbox ask a device that could get Your call and doesn't (passkeys.tsx PushAsk). */}
-            {!error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
+            {!waiting && !error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
               <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
             )}
-            {!error && data && env && (
+            {!waiting && !error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
@@ -333,7 +348,7 @@ export default function App() {
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
-            {!error && data && !env && <NotYet kind={data.view} url={url} />}
+            {!waiting && !error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>
 
           {!wide && chrome && <div aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
@@ -344,7 +359,7 @@ export default function App() {
               <AnimatedIcon name={iconFor('search')} size="sm" />Find</button>
           )}
           {!wide && chrome && (
-            <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
+            <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <Dock key={agentDock ? `agent:${accent?.id}` : 'household'} variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
                 items={backTile ? [backTile, ...dockItems(phoneTabs)] : me ? [...dockItems(phoneTabs), me] : dockItems(phoneTabs)}
                 value={accountOpen && me ? '/account' : current(phoneTabs)} onValueChange={pick}
@@ -399,8 +414,8 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
       <div className="grid min-w-0 content-start gap-4">
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
         {page.sections.length === 0 && (page.title === 'Not found'
-          ? <Nothing title="There’s no page here" text="It may have moved, or it was never there." />
-          : <Nothing title={`${page.title} has nothing yet`} text="When there’s something to show, it’ll be here." />)}
+          ? <StateCard quiet icon="map-pin-off" tint="pink" title="There’s no page here" text="It may have moved, or it was never there." />
+          : <StateCard quiet icon="sparkles" title={`Nothing in ${page.title} yet`} text="When there’s something to show, it’ll be here." />)}
         {main.map(card)}
       </div>
       {side.length > 0 && <aside className="grid min-w-0 content-start gap-4">{side.map(card)}</aside>}
@@ -410,10 +425,6 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
 
 /** A kind of page this version of the app doesn't know (a newer loom): said, not blank. */
 function NotYet({ kind, url }: { kind: string; url: string }) {
-  return (
-    <Card><CardContent className="grid gap-3 py-6">
-      <p>The app doesn't draw this page yet ({kind}).</p>
-      <Button variant="outline" onClick={() => location.reload()}>Reload</Button>{void url}
-    </CardContent></Card>
-  );
+  void kind; void url;
+  return <StateCard icon="refresh-cw" tint="olive" title="This page needs a newer app" text="loom has been updated. Reload to get the new version." action={{ label: 'Reload', onClick: () => location.reload() }} />;
 }
