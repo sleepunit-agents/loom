@@ -29,7 +29,7 @@ export function Sheet({ open, set, title, note, children }: { open: boolean; set
   return (
     <Drawer open={open} onOpenChange={set}>
       <DrawerContent>
-        <DrawerHeader><DrawerTitle>{title}</DrawerTitle>{note && <DrawerDescription>{note}</DrawerDescription>}</DrawerHeader>
+        <DrawerHeader className="flex-col"><DrawerTitle>{title}</DrawerTitle>{note && <DrawerDescription>{note}</DrawerDescription>}</DrawerHeader>
         <div className="grid max-h-[70dvh] min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto px-4 pb-6">{children}</div>
       </DrawerContent>
     </Drawer>
