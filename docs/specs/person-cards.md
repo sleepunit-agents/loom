@@ -310,7 +310,10 @@ so the People page and every agent see them once. Agents keep writing cards with
   never runs over `POST /cli`. The revision records who: the owner, `<who> via <piece>`,
   or `runtime:<piece>`.
 - `dry_run: true` answers what would change and writes nothing (it opens the stores
-  read-only). The answer is `{slug, created, added: {field: [values]}, unchanged,
+  read-only), so on loom's machine any process may ask one (a piece's backfill
+  report); the route still takes only the callers above. The CLI takes several bodies,
+  one per line, so the owner can pipe a piece's list in (`loom shuttle cards-backfill
+  --bodies | loom person ensure`); each is answered on its own line. The answer is `{slug, created, added: {field: [values]}, unchanged,
   dry_run, card}`.
 - Like `reach`, it reads the card and then writes it: two calls racing on one card can
   each add their own id, and the later write keeps both only if each read the other's.

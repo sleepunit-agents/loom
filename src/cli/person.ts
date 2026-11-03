@@ -5,12 +5,13 @@
  *   loom person list [--include-archived] [--json]
  *   loom person reach <slug> <field> <id> --label <name> [--source <s>] [--at <iso>]
  *   loom person ensure <slug> --name <n> [--role <r>] [--source <s>] [--where <field>=<value>]... [--agent <a>] [--dry-run]
- *   loom person ensure [--dry-run] < body.json        (the same body as POST /api/loom/people/ensure)
+ *   loom person ensure [--dry-run] < body.json        (the same body as POST /api/loom/people/ensure; or one per line)
  *
  * `ensure` makes sure someone has a card (backends/people-ensure.ts): with none, a minimal
  * one; with one, only the `where` values it lacks. It's the owner's, on loom's machine, and
  * a piece's process in an owner's action (LOOM_STORE_GRANT, owner); a piece's own process,
- * or one serving an agent, is refused (exit 5). It never runs over POST /cli: agents write
+ * or one serving an agent, is refused (exit 5). A dry run writes nothing (it opens the
+ * stores read-only), so any process on loom's machine may ask one. It never runs over POST /cli: agents write
  * cards with person_write.
  *
  * Cards are written through the MCP tools, with one exception: `reach` files where
@@ -47,14 +48,14 @@ Subcommands:
                 that exists (exit 3 otherwise); nothing else on it changes
   ensure <slug> --name <n> [--role <r>] [--source <s>] [--where <field>=<value>]...
          [--agent <a>] [--dry-run]
-  ensure [--dry-run] < body.json
+  ensure [--dry-run] < body.json     (or several bodies, one per line)
                 Make sure someone has a card: with none, a minimal one (the name,
                 "<role>. From <source>.", the where values); with one, only the
                 where values it lacks. Name, summary, how and may are never
                 changed. A value already on another card is refused. The JSON
                 body is POST /api/loom/people/ensure's. The owner's, and a piece's
                 in an owner's action; exit 5 for anyone else, 4 for an archived
-                card, 1 for a refusal
+                card, 1 for a refusal. --dry-run writes nothing and is anyone's
 
 Options:
   --include-archived   Show/list archived cards too
@@ -198,15 +199,18 @@ type Parsed = { values: Record<string, unknown>; positionals: string[] };
 
 async function ensure(parsed: Parsed, env: ReturnType<typeof resolveEnv>, io: IOStreams): Promise<number> {
   const procEnv = io.env ?? process.env;
-  const who = ensureActor(procEnv);
-  if ('refused' in who) { io.stderr(`person ensure: ${who.refused}\n`); return 5; }
   const v = parsed.values as { name?: string; role?: string; source?: string; where?: string[]; agent?: string; label?: string; 'dry-run'?: boolean };
-  let body: Record<string, unknown>;
+  let bodies: Record<string, unknown>[];
   if (parsed.positionals.length === 0) {
     if (v.name || v.role || v.where || v.label) { io.stderr(`person ensure: give a <slug> with --name, or the JSON body on stdin, not both.\n${USAGE}`); return 2; }
     if (io.stdinIsTTY) { io.stderr(`person ensure: give a <slug> with --name, or pipe the JSON body on stdin.\n${USAGE}`); return 2; }
-    try { body = JSON.parse(await readStdin(io.stdin ?? process.stdin)); } catch { io.stderr('person ensure: the body on stdin isn\'t JSON\n'); return 2; }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) { io.stderr('person ensure: the body is a JSON object\n'); return 2; }
+    const text = (await readStdin(io.stdin ?? process.stdin)).trim();
+    // One body, or several, one per line (a piece's backfill piped in by the owner).
+    try { bodies = [JSON.parse(text)]; } catch {
+      try { bodies = text.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l)); }
+      catch { io.stderr('person ensure: the body on stdin isn\'t JSON (one object, or one per line)\n'); return 2; }
+    }
+    if (!bodies.length || bodies.some((b) => !b || typeof b !== 'object' || Array.isArray(b))) { io.stderr('person ensure: each body is a JSON object\n'); return 2; }
   } else {
     const [slug, ...more] = parsed.positionals;
     if (more.length || !v.name) { io.stderr(`person ensure takes <slug> --name <name>.\n${USAGE}`); return 2; }
@@ -216,23 +220,36 @@ async function ensure(parsed: Parsed, env: ReturnType<typeof resolveEnv>, io: IO
       if (eq < 1 || eq === w.length - 1) { io.stderr(`person ensure: --where is <field>=<value> (slack=U0123), not ${w}\n`); return 2; }
       (where[w.slice(0, eq)] ??= { value: [] }).value.push(w.slice(eq + 1));
     }
-    body = {
+    bodies = [{
       slug, name: v.name, source: v.source ?? `the owner on loom's machine ${new Date().toISOString().slice(0, 10)}`,
       ...(v.role ? { role: v.role } : {}),
       ...(Object.keys(where).length ? { where: Object.fromEntries(Object.entries(where).map(([f, e]) => [f, e.value.length === 1 ? { value: e.value[0] } : e])) } : {}),
-    };
+    }];
   }
-  if (v.agent !== undefined) body.agent = v.agent;
-  if (v['dry-run']) body.dry_run = true;
+  let worst = 0;
+  for (const body of bodies) {
+    if (v.agent !== undefined) body.agent = v.agent;
+    if (v['dry-run']) body.dry_run = true;
+    const code = ensureOne(body, env, io, procEnv, bodies.length > 1);
+    if (code && !worst) worst = code;
+  }
+  return worst;
+}
+
+/** One body: who may (a dry run, which writes nothing, is anyone's on loom's machine), then the ensure and its answer. */
+function ensureOne(body: Record<string, unknown>, env: ReturnType<typeof resolveEnv>, io: IOStreams, procEnv: NodeJS.ProcessEnv, many: boolean): number {
+  const label = many && typeof body.slug === 'string' ? `${body.slug}: ` : '';
+  const who = body.dry_run === true ? ({ actor: 'dry run' } as const) : ensureActor(procEnv);
+  if ('refused' in who) { io.stderr(`person ensure: ${label}${who.refused}\n`); return 5; }
   let out;
   try {
     out = personEnsure(env.contextDir, body, who.actor);
   } catch (e) {
-    io.stderr(`person ensure: ${(e as Error).message}\n`);
+    io.stderr(`person ensure: ${label}${(e as Error).message}\n`);
     if (e instanceof PersonCardError && /is archived/.test(e.message)) return 4;
     return 1;
   }
-  if (env.json) { renderJson(io, out); return 0; }
+  if (env.json) { io.stdout(many ? `${JSON.stringify(out)}\n` : `${JSON.stringify(out, null, 2)}\n`); return 0; }
   const adds = Object.entries(out.added).map(([f, vs]) => `${f} ${vs.join(', ')}`).join('; ');
   const would = out.dry_run ? 'would ' : '';
   io.stdout(out.created ? `${out.slug}: ${would}${out.dry_run ? 'make' : 'made'} a card${adds ? ` (${adds})` : ''}\n`

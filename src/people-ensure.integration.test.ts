@@ -146,6 +146,23 @@ describe('people/ensure: the owner, a piece in an owner\'s action, the runtime; 
     expect((await runCliCaptured(['person', 'ensure', '../x', '--name', 'X'], { env: { LOOM_HOME: h.home, LOOM_CONTEXT_DIR: agentDir(h, 'art') } })).code).toBe(1);
   });
 
+  it('several bodies, one per line (a backfill piped in by the owner); a dry run is anyone\'s and writes nothing', async () => {
+    const env = { LOOM_HOME: h.home, LOOM_CONTEXT_DIR: agentDir(h, 'art') };
+    const lines = [body('line-one'), body('line-two'), body('../bad')].map((b) => JSON.stringify(b)).join('\n');
+    const dry = await runCliCaptured(['person', 'ensure', '--dry-run', '--json'], { stdin: lines, env: { ...env, LOOM_PIECE_NAME: 'shuttle' } });
+    expect(dry.code).toBe(1);
+    expect(dry.stdout.trim().split('\n').map((l) => JSON.parse(l))).toMatchObject([{ slug: 'line-one', created: true, dry_run: true }, { slug: 'line-two', created: true }]);
+    expect(dry.stderr).toMatch(/slug/);
+    expect(directoryCard('line-one')).toBeNull();
+    // Not dry, a piece's own process is still refused, line by line.
+    expect((await runCliCaptured(['person', 'ensure'], { stdin: lines, env: { ...env, LOOM_PIECE_NAME: 'shuttle' } })).code).toBe(5);
+    expect(directoryCard('line-one')).toBeNull();
+    const real = await runCliCaptured(['person', 'ensure'], { stdin: lines, env });
+    expect(real.code).toBe(1);
+    expect(real.stdout).toMatch(/line-one: made a card[\s\S]*line-two: made a card/);
+    expect(directoryCard('line-two')).not.toBeNull();
+  });
+
   it('never over POST /cli: an agent token runs `loom person` there, but not ensure', () => {
     expect(parseCliRequest({ argv: ['person', 'ensure', 'x', '--name', 'X'] })).toMatch(/^refused: person ensure is the owner's/);
     expect(parseCliRequest({ argv: ['--json', 'person', 'ensure'] })).toMatch(/^refused/);
