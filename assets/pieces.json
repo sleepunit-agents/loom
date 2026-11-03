@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "7f853225cac1ec3684c707a3ed20f1fb3d55e44c",
+      "commit": "38a3e4f500d0648941f7966b1ec1524a6e6d6ec1",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -52,7 +52,7 @@
     {
       "name": "discord",
       "repo": "sleepunit-agents/loom-discord",
-      "commit": "3827f631d90fd4bd553d22b365e7af74d96023bb",
+      "commit": "7b86c6a25052b830d0a35ca1104764b8678dbd25",
       "version": "0.1.0",
       "label": "Discord",
       "description": "Discord as a venue: each agent's own bot; a message is routed (a mention, the channel's primary, the gates) and delivered to the agent, and its replies post as that bot."
@@ -60,7 +60,7 @@
     {
       "name": "slack",
       "repo": "sleepunit-agents/loom-slack",
-      "commit": "6508b52cca703d1547fbdcaf934f47181dc8b9cb",
+      "commit": "5132c026030a0c121bd9f62083cc748c61aecf56",
       "version": "0.1.0",
       "label": "Slack",
       "description": "Slack as a venue: each agent's own app; a DM or group DM is checked against Slack and the gates and delivered to the agent, and its replies post as that app."
