@@ -70,6 +70,8 @@ asked to say. The rules that the shootout settled:
 | `details` holding other details (a service's Move and Take down) | the row opens an action sheet (`drawer`) |
 | `form` at the top level | inline, as today, unless the section is a side section: then a button and an editor |
 | `table` | a table on a desktop; on a phone, rows of label and value (no sideways scroll) |
+| `panel` | a card of rows, each its label, its value in words and one control: a `switch`, a segmented `toggle-group`, or a row that opens a sheet (`drawer` on a phone, `dialog` on a desktop) |
+| `health` | a big tone icon and the state in plain words; `stats` tiles under it may carry a spark line or a `progress` bar |
 | `kv`, `stats`, `meter`, `status`, `callout`, `text`, `prose`, `code`, `link`, `filters`, `buttons` | their 000h counterparts (`item`, `progress`, `badge`, `alert`, `typography`, `code-block`, `living-link`, `toggle-group`, `button`) |
 | an action's result | 000h's toast, with Undo when the result carries one; a `page` result navigates |
 

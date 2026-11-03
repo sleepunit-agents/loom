@@ -14,6 +14,9 @@ const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => 
 const Markdown = lazy(() => import('./markdown'));
 const Profile = lazy(() => import('./profile'));
 const ChartBlock = lazy(() => import('./chart'));
+const Panel = lazy(() => import('./panel'));
+const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health })));
+const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
 const Progress = lazy(() => import('@/components/ui/progress').then((m) => ({ default: m.Progress })));
 const CodeBlock = lazy(() => import('@/components/ui/code-block').then((m) => ({ default: m.CodeBlock })));
 
@@ -21,6 +24,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 const ChoiceSelect = lazy(() => import('./choice-select'));
+const Chips = lazy(() => import('./filters').then((m) => ({ default: m.Chips })));
 import { Field as UiField, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
@@ -86,10 +90,15 @@ export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; si
 function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: string) => void; id: string }) {
   if (f.kind === 'textarea') return <Textarea id={id} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
   if (f.kind === 'toggle') return <Switch id={id} checked={value === 'on' || value === 'true'} onCheckedChange={(c) => set(c ? 'on' : '')} />;
+  // A segmented control: one of a few, side by side.
+  if (f.kind === 'segmented') return <Suspense fallback={<Input id={id} value={value} readOnly />}><Chips f={f} value={value} set={set} id={id} /></Suspense>;
+  if (f.kind === 'stepper') return <Suspense fallback={<Input id={id} value={value} readOnly />}><Chips f={f} value={value} set={set} id={id} /></Suspense>;
   // One box (000h's checkbox): "on" or "". Several: the ticked values, joined with commas.
   if (f.kind === 'check') return <Checkbox id={id} checked={value === 'on'} onCheckedChange={(c) => set(c === true ? 'on' : '')}>{f.hint ? null : f.label}</Checkbox>;
   if (f.kind === 'checks') {
     const on = new Set(value.split(',').filter(Boolean));
+    // A few short choices (the days of a week) are chips in a row, any number pressed.
+    if ((f.options?.length ?? 0) <= 7 && f.options?.every((o) => o.label.length <= 4)) return <Suspense fallback={null}><Chips f={f} value={value} set={set} id={id} /></Suspense>;
     return (
       <div id={id} role="group" aria-label={f.label} className="grid gap-2">{f.options?.map((o) => (
         <Checkbox key={o.value} checked={on.has(o.value)} onCheckedChange={(c) => {
@@ -190,21 +199,28 @@ function EditorButton({ label, title, form, variant = 'outline' }: { label: stri
 
 function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolean }) {
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
+  // Nothing is cut so it can't be read (Jonathan, 2026-11-03): a row's words run to two lines, and a row that goes
+  // nowhere opens to its whole text on a tap; one that goes somewhere shows it all there.
+  const [open, setOpen] = useState(false);
+  const whole = wrap || open;
+  const linked = i.page !== undefined || !!i.href;
   const body = (
     <ItemContent className="min-w-0 flex-1">
-      <ItemTitle className={`flex min-w-0 gap-2 ${wrap ? 'items-start' : 'items-center'}`}>
+      <ItemTitle className={`flex min-w-0 gap-2 ${whole ? 'items-start' : 'items-center'}`}>
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
         {marked && <Who agent={i.agent} person={i.person} avatar={i.avatar} size={20} />}
-        <span className={wrap ? 'font-medium leading-relaxed [overflow-wrap:anywhere]' : 'truncate font-medium'}>{tidy(i.text)}</span>
+        <span className={whole ? 'font-medium leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]' : 'line-clamp-2 font-medium [overflow-wrap:anywhere]'}>{tidy(i.text)}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
-      {i.meta && <ItemDescription className="truncate">{tidy(i.meta)}</ItemDescription>}
+      {i.meta && <ItemDescription className={whole ? '[overflow-wrap:anywhere]' : 'line-clamp-2 [overflow-wrap:anywhere]'}>{tidy(i.meta)}</ItemDescription>}
     </ItemContent>
   );
   return (
     <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0">
       <Item as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
-        {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
+        {linked ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link>
+          : wrap ? body
+            : <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{body}</button>}
         {i.act && <ItemTrailing><ActButton b={i.act} /></ItemTrailing>}
       </Item>
     </Arrive>
@@ -393,7 +409,9 @@ export function BlockView({ b }: { b: Block }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{(b as Extract<Block, { type: 'stats' }>).items.map((s) => (
         <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-[var(--r-card)]"><Card lift={s.page !== undefined} className="gap-0 p-0">
           <Link page={s.page} className="block p-4 no-underline"><span className="block text-xs opacity-60">{s.label}</span>
-          <span className="block text-xl font-semibold">{s.value}</span>{s.detail && <span className="block text-xs opacity-60">{s.detail}</span>}</Link></Card></Arrive>))}</div>);
+          <span className="flex items-center gap-1.5 text-xl font-semibold">{s.tone && s.tone !== 'muted' && <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[s.tone]}`} />}{s.value}</span>{s.detail && <span className="block text-xs opacity-60 [overflow-wrap:anywhere]">{s.detail}</span>}
+          {s.meter !== undefined && <Suspense fallback={<div className="mt-2 h-2 rounded-full bg-black/10" />}><Progress className="mt-2" value={Math.round(s.meter * 100)} aria-label={s.label} /></Suspense>}
+          {s.spark && <Suspense fallback={<div className="mt-2 h-7" />}><Spark values={s.spark} tone={s.tone} /></Suspense>}</Link></Card></Arrive>))}</div>);
     case 'meter': return (
       <div className="grid gap-3">{(b as Extract<Block, { type: 'meter' }>).items.map((m) => (
         <div key={m.label} className="grid gap-1"><div className="flex justify-between text-sm"><span>{m.label}</span><span className="opacity-70">{Math.round(m.value * 100)}%</span></div>
@@ -410,6 +428,8 @@ export function BlockView({ b }: { b: Block }) {
     case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
     case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
     case 'chart': return <Suspense fallback={<div className="h-64" />}><ChartBlock b={b as Extract<Block, { type: 'chart' }>} /></Suspense>;
+    case 'panel': return <Suspense fallback={<div className="min-h-24" />}><Panel b={b as Extract<Block, { type: 'panel' }>} /></Suspense>;
+    case 'health': return <Suspense fallback={<div className="min-h-14" />}><Health b={b as Extract<Block, { type: 'health' }>} /></Suspense>;
     case 'filters': return <Suspense fallback={null}><Filters b={b as Extract<Block, { type: 'filters' }>} /></Suspense>;
     default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet)</p>;
   }
