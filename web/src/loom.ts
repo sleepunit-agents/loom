@@ -1,6 +1,7 @@
 // What loom answers (src/ui/handler.ts `view`, docs/specs/ui-app.md): the data each page is drawn from,
 // and how a link or an action reaches loom. Mirrors src/ui/vocab.ts and src/ui/render.ts; no piece code here.
 
+import type { Tint } from './tint';
 export type Tone = 'ok' | 'warn' | 'bad' | 'muted';
 export interface Source { id: string; base: string; act?: string }
 export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } }> }
@@ -46,7 +47,7 @@ export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };
   core: { label: string; href: string; current: boolean; count?: number }[];
-  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string }[];
+  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint }[];
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }

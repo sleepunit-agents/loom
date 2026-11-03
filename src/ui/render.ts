@@ -4,7 +4,7 @@
  * the app (web/, docs/specs/ui-app.md); the old HTML renderer went 2026-10-29. Every string that reaches the
  * sign-in pages goes through esc().
  */
-import type { AgentState, Ask, Button, Reading, Tile, Tone, Doing } from './vocab.js';
+import type { Accent, AgentState, Ask, Button, Reading, Tile, Tone, Doing } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
 
@@ -80,7 +80,7 @@ export interface Shell {
   core: Array<{ label: string; href: string; current: boolean; count?: number }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
   /** kind: a place (Places) or a setting (Setup), from the piece's tab.kind or the catalog. */
-  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string }>;
+  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Accent }>;
   /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance' or ''. */
   tab: string;
 }

@@ -490,8 +490,8 @@ describe('loom UI over HTTP', () => {
   });
 
   it('a piece that says it\'s a setting goes under Setup, not Places; the catalog says for box, secrets, subscriptions', async () => {
-    const m = (label: string, kind?: string, icon?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}), ...(icon ? { icon } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
-    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting', 'stamp')}'`);
+    const m = (label: string, kind?: string, icon?: string, accent?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}), ...(icon ? { icon } : {}), ...(accent ? { accent } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
+    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting', 'stamp', 'olive')}'`);
     await piece(bin, 'secrets', `[ "$1 $2" = "ui --json" ] && echo '${m('Secrets')}'`);   // no kind: the catalog's
     await piece(bin, 'daily', `[ "$1 $2" = "ui --json" ] && echo '${m('Daily')}'`);
     const cookie = await login();
@@ -505,6 +505,9 @@ describe('loom UI over HTTP', () => {
     // A piece's own icon (tab.icon) rides along for its tile; one that names none has none.
     const icons = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; icon?: string }>).map((p) => [p.label, p.icon]));
     expect(icons).toEqual({ Daily: undefined, Gizmo: 'stamp', Secrets: undefined });
+    // So does its own colour (tab.accent), for its tile, its dock tile and its header (web/src/tint.ts).
+    const accents = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; accent?: string }>).map((p) => [p.label, p.accent]));
+    expect(accents).toEqual({ Daily: undefined, Gizmo: 'olive', Secrets: undefined });
     // A lone agent's owner is an admin: Setup keeps its own links (Pieces, Passkeys) beside the settings.
     expect(v.chrome.shell.admin).not.toBe(false);
     expect((await view('/places', cookie)).which).toBe('places');

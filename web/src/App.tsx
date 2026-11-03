@@ -37,6 +37,7 @@ const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetV
 const FindOverlay = lazy(() => import('./find'));
 const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPanel })));
 import { noteRecent } from './recent';
+import { TintContext, tintsOf } from './tint';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -240,6 +241,8 @@ export default function App() {
   const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
   const icon = useMemo(() => iconsOf(chrome), [chrome]);
+  // Each app's one colour (tint.ts): its tile, its dock tile, its header and its page's accents.
+  const tint = useMemo(() => tintsOf(chrome?.shell?.pieces), [chrome]);
   // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
   // A phone's dock never scrolls (Jonathan, 2026-10-29): as many tiles as the width holds, the one you're on always
   // among them, the rest under More (…). On an agent's pages the dock swaps (his "dock swap" board): the agent's
@@ -259,7 +262,7 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />,
+    value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />, ...(agentDock ? {} : { tint: tint(t.label) }),
     ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
@@ -290,6 +293,10 @@ export default function App() {
     ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
   const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
     : path === '/' ? 'Home' : place?.label ?? chrome?.shell?.back?.label ?? title;
+  // An app's page wears its colour (tint.ts) past its tile: the header's and the page's accents (buttons, switches,
+  // selection: 000h's --v-pink) take it, as an agent's pages take the agent's. Not the dock or the side: they're the shell's.
+  const appTint = !accent && data?.view !== 'passkeys' && tileLabel ? tint(tileLabel) : undefined;
+  const appAccent = appTint && appTint !== 'pink' ? appTint : undefined;
   const headLead = accent && chrome?.shell?.household && !chrome.shell.back ? (
     // An agent's own pages: its mark, with a chevron, is the way back to the household.
     <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
@@ -313,7 +320,7 @@ export default function App() {
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
 
   return (
-    <>
+    <TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -324,7 +331,7 @@ export default function App() {
         <div className="min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
-          <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8">
+          <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
             <div className="mx-auto max-w-5xl px-4 py-3">
               <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
@@ -332,7 +339,7 @@ export default function App() {
             </div>
           </header>
 
-          <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10">
+          <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10" data-accent={appAccent}>
             {waiting && <Skeleton />}
             {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
               This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
@@ -389,7 +396,7 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </>
+    </TintContext.Provider>
   );
 }
 
@@ -420,7 +427,7 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
         {page.sections.length === 0 && (page.title === 'Not found'
           ? <StateCard quiet icon="map-pin-off" tint="pink" title="There’s no page here" text="It may have moved, or it was never there." />
-          : <StateCard quiet icon="sparkles" title={`Nothing in ${page.title} yet`} text="When there’s something to show, it’ll be here." />)}
+          : <StateCard quiet icon="sparkles" app={page.title} title={`Nothing in ${page.title} yet`} text="When there’s something to show, it’ll be here." />)}
         {main.map(card)}
       </div>
       {side.length > 0 && <aside className="grid min-w-0 content-start gap-4">{side.map(card)}</aside>}

@@ -146,6 +146,11 @@ export interface AgentReport { state?: AgentState; reason?: string; readings: Re
 /** Where a piece's tab (or one section) belongs: the household's (the default), or each agent's own pages. */
 export type Level = 'loom' | 'agent';
 
+/** loom's palette, by its tokens' names (--v-pink, …): an app's accent is one of these, so the theme decides the shade
+ * (each palette and light or dark has its own) and the ink on it stays readable. */
+export const ACCENTS = ['pink', 'blue', 'yellow', 'olive'] as const;
+export type Accent = typeof ACCENTS[number];
+
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
   scope?: boolean;
@@ -156,8 +161,10 @@ export interface Manifest {
    */
   owners?: 2;
   /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages.
-   * icon: a lucide icon's name for its tile and tab (`alarm-clock`); one loom can't draw is a plain one. */
-  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string };
+   * icon: a lucide icon's name for its tile and tab (`alarm-clock`); one loom can't draw is a plain one.
+   * accent: its colour everywhere it's drawn (tile, dock, its page's header), one of loom's palette (ACCENTS), so it
+   * holds in light and dark and under every palette; without one, loom's own for a catalog piece, else one from its name. */
+  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string; accent?: Accent };
   /**
    * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
    * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
@@ -789,7 +796,10 @@ export function parseManifest(value: unknown): Manifest | string {
       const lv = level(t.level, 'tab.level');
       const icon = optStr(t.icon, 'tab.icon');
       if (icon !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(icon)) throw new Invalid('tab.icon must be a lucide icon name (alarm-clock)');
-      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}), ...(icon ? { icon } : {}) };
+      const accent = optStr(t.accent, 'tab.accent');
+      if (accent !== undefined && !(ACCENTS as readonly string[]).includes(accent)) throw new Invalid(`tab.accent must be one of loom's palette: ${ACCENTS.join(', ')}`);
+      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}), ...(icon ? { icon } : {}),
+        ...(accent ? { accent: accent as Accent } : {}) };
     }
     if (top.agentTab !== undefined) {
       const t = obj(top.agentTab, 'agentTab');
