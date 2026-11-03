@@ -8,9 +8,11 @@
  * names; a rejection is `Error: <message naming the path>`, like every other
  * loom tool. The CLI (`loom person`) calls the read functions here too.
  */
-import { resolveIdentityName } from '../config.js';
-import { householdOf } from '../household.js';
-import { openHouseholdPeople, type HouseholdPeople } from '../backends/people-household.js';
+import { existsSync } from 'node:fs';
+import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
+import { agentDir, householdOf, type Household } from '../household.js';
+import { commonsPeoplePath, HouseholdPeople, openHouseholdPeople } from '../backends/people-household.js';
+import { checkEnsureInput, ensurePerson, type EnsureResult } from '../backends/people-ensure.js';
 import {
   openPeopleStore,
   PeopleStore,
@@ -85,6 +87,39 @@ export async function personRevisionRestore(
   input: { slug: string; revision_id: number; store?: 'directory' | 'relationship' },
 ): Promise<string> {
   return withWritable(contextDir, (s) => (s instanceof PeopleStore ? s.revisionRestore({ slug: input.slug, revision_id: input.revision_id }) : s.revisionRestore(input)));
+}
+
+/** A store opened read-only, or an empty one in memory when its file isn't there yet (a dry run writes nothing). */
+function readonlyOrEmpty(dbPath: string, actor: string): PeopleStore {
+  return existsSync(dbPath) ? new PeopleStore({ dbPath, readonly: true, actor }) : new PeopleStore({ dbPath: ':memory:', actor });
+}
+
+/**
+ * Ensure a person card (backends/people-ensure.ts): `body` is the route's and the CLI's JSON,
+ * `actor` who's adding them (recorded on the revision). The caller has already checked that
+ * they may: the owner, a piece in an owner's action, or the runtime. In a household, a new
+ * card's summary goes to `body.agent`'s relationship (the household's default agent when
+ * none is named); its name and handles go to the shared directory. Throws PersonCardError.
+ */
+export function personEnsure(contextDir: string, body: unknown, actor: string): EnsureResult {
+  const input = checkEnsureInput(body);
+  const hh = householdOf(contextDir);
+  const h: Household | undefined = hh?.household;
+  if (h && input.agent !== undefined && !h.agents.includes(input.agent)) throw new PersonCardError(`agent: ${input.agent} isn't one of this household's agents`);
+  const dir = h ? agentDir(h, input.agent ?? hh!.agent) : contextDir;
+  let store: PeopleStore | HouseholdPeople;
+  if (input.dry_run) {
+    store = h
+      ? new HouseholdPeople(readonlyOrEmpty(commonsPeoplePath(h), actor), readonlyOrEmpty(resolveSqliteDbPath(dir), actor), Date.now, new Set(h.agents))
+      : readonlyOrEmpty(resolveSqliteDbPath(dir), actor);
+  } else {
+    store = h ? openHouseholdPeople(h, input.agent ?? hh!.agent, dir, { actor })! : openPeopleStore(dir, { actor })!;
+  }
+  try {
+    return ensurePerson(store, input);
+  } finally {
+    store.close();
+  }
 }
 
 /** The `person` read. Throws on an invalid slug or an unreadable row; the MCP wrapper turns that into text. */

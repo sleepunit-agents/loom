@@ -189,6 +189,13 @@ Who may do what, in one place:
 
 - **Gates** (from bridges.md, "Who someone is"): who a platform id is, and what each person may do with each agent
   (tiers, grants, restricts). They're kept in the runtime's owner-written collection.
+  - **A gate entry names a person card.** Its key is the person's card slug (person-cards.md), and the card is where
+    that person is one person: the People page, the room block and every agent read it there. The gate holds only
+    what gates (tier, grants, restricts), which a card never carries (its reserved keys).
+  - **Adding one ensures the card,** through the same seam the bridges piece uses today: `POST /api/loom/people/ensure`
+    with the runtime's token (person-cards.md, "Ensure"). With no card, a minimal one is made (the name, the role and
+    where the entry came from, its platform ids); with one, only the ids it lacks are added. A gate write stands even
+    when the ensure fails, and the owner's answer says the card wasn't made and why.
 - **Agent grants:** which agents may use which pieces.
   - **Who decides.** With one installed piece offering `grants` (the runtime), core asks it before any call an agent
     makes to a piece: `/api/<piece>/…`, `/api/<piece>/run`, and an offered MCP tool. Running a piece's binary

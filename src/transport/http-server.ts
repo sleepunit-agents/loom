@@ -31,7 +31,7 @@
  *     owner token too. The role is resolved on every request and a session
  *     is pinned to the role and agent it opened with.
  */
-import { PieceStore, StoreError, type Grant } from '../stores.js';
+import { PieceStore, readGrant, StoreError, type Grant } from '../stores.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
@@ -46,7 +46,7 @@ import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
-import { AGENT_ROUTES, DELIVER_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
+import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
@@ -58,6 +58,8 @@ import { computeMeasures, postFinding, postScore, recentDays, scorecards } from 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
+import { personEnsure } from '../tools/person.js';
+import { PersonCardError } from '../backends/people.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
 import { agentDir, assertRealAgentDir, commonsProblem, firstOwner, liveHousehold, memberOf, mintReviewToken, TokenLimitError, roleString, TokenResolver, type Household, type Role } from '../household.js';
@@ -519,6 +521,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (role.kind !== 'piece' && role.kind !== 'runtime') return sendError(res, 403, `forbidden: /api/loom/${DELIVER_ROUTE} takes a piece's own token (a source delivering), or the runtime's`);
       return deliverApi(req, res, role.piece);
     }
+    // POST /api/loom/people/ensure (docs/specs/person-cards.md, "Ensure"): a household owner, a piece
+    // in an owner's action (its credential and the grant loom gave it), or the runtime.
+    if (piece === 'loom' && subpath === ENSURE_ROUTE) return ensureApi(req, res, role);
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -575,6 +580,53 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     }
     if (out.status !== 200) return sendError(res, out.status, (out.body as { error: string }).error);
     return sendJson(res, 200, out.body);
+  }
+
+  /**
+   * POST /api/loom/people/ensure {slug, name, role?, source, where?, agent?, dry_run?}: make sure a
+   * person has a card (backends/people-ensure.ts). Who may: a household owner; the runtime; a
+   * piece's credential carrying, in X-Loom-Store-Grant, the owner's grant loom gave that piece's
+   * process for the action in progress (checked as `loom store` checks it: signed by loom, not
+   * expired, this piece's, owner). Agents write cards with person_write; nobody else reaches it.
+   */
+  async function ensureApi(req: IncomingMessage, res: ServerResponse, role: Role): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    let actor: string;
+    if (role.kind === 'owner') {
+      const c = ownerCaller(role.member);
+      if (c.kind !== 'owner' || (c.agents !== undefined && c.agents !== '*')) return sendError(res, 403, 'forbidden: a card is made by a household owner, a piece in their action, or the runtime');
+      actor = c.who ?? 'owner';
+    } else if (role.kind === 'runtime') {
+      actor = `runtime:${role.piece}`;
+    } else if (role.kind === 'piece') {
+      const raw = req.headers['x-loom-store-grant'];
+      const g = readGrant(h.home, typeof raw === 'string' ? raw : undefined);
+      if (!g || g.piece !== role.piece || !g.owner) {
+        return sendError(res, 403, `forbidden: a piece makes a card only in an owner's action: send the owner's grant loom gave ${role.piece}'s process (X-Loom-Store-Grant)`);
+      }
+      actor = `${g.who ?? 'owner'} via ${role.piece}`;
+    } else {
+      return sendError(res, 403, role.kind === 'agent'
+        ? 'forbidden: an agent writes its cards with person_write; people/ensure is the owner\'s, a piece\'s in their action, and the runtime\'s'
+        : `forbidden: a ${role.kind} token doesn't make cards`);
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 16 * 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: an ensure is 16 KB at most');
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    try {
+      return sendJson(res, 200, personEnsure(agentDir(h, h.default), body, actor));
+    } catch (e) {
+      if (e instanceof PersonCardError) {
+        const conflict = /is archived|already on .*'s card/.test(e.message);
+        return sendError(res, conflict ? 409 : 400, `${conflict ? 'conflict' : 'bad-input'}: ${e.message}`);
+      }
+      process.stderr.write(`loom: couldn't ensure a person card: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t ensure the card; see the daemon log');
+    }
   }
 
   const reachList = (kind: 'runtime' | 'review') =>

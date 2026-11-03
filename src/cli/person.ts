@@ -4,6 +4,14 @@
  *   loom person show <slug> [--include-archived] [--json]
  *   loom person list [--include-archived] [--json]
  *   loom person reach <slug> <field> <id> --label <name> [--source <s>] [--at <iso>]
+ *   loom person ensure <slug> --name <n> [--role <r>] [--source <s>] [--where <field>=<value>]... [--agent <a>] [--dry-run]
+ *   loom person ensure [--dry-run] < body.json        (the same body as POST /api/loom/people/ensure)
+ *
+ * `ensure` makes sure someone has a card (backends/people-ensure.ts): with none, a minimal
+ * one; with one, only the `where` values it lacks. It's the owner's, on loom's machine, and
+ * a piece's process in an owner's action (LOOM_STORE_GRANT, owner); a piece's own process,
+ * or one serving an agent, is refused (exit 5). It never runs over POST /cli: agents write
+ * cards with person_write.
  *
  * Cards are written through the MCP tools, with one exception: `reach` files where
  * someone was just seen (a bridge heard them speak as <id> on <field>, named <name>)
@@ -14,7 +22,12 @@
  * exit as "no card".
  */
 import { parseArgs } from 'node:util';
-import { readPerson, listPeople, personEvidence, personWrite } from '../tools/person.js';
+import { readPerson, listPeople, personEvidence, personWrite, personEnsure } from '../tools/person.js';
+import { holdsValue, valuesOf } from '../backends/people-ensure.js';
+import { PersonCardError } from '../backends/people.js';
+import { householdHome } from '../household.js';
+import { readGrant } from '../stores.js';
+import { readStdin } from './io.js';
 import { assertStackVersionCompatible } from '../config.js';
 import { extractGlobalFlags, resolveEnv } from './args.js';
 import { renderJson } from './io.js';
@@ -32,6 +45,16 @@ Subcommands:
                 File where someone was seen: <id> joins where.<field>, with the
                 name the service shows and the time it was seen. Only on a card
                 that exists (exit 3 otherwise); nothing else on it changes
+  ensure <slug> --name <n> [--role <r>] [--source <s>] [--where <field>=<value>]...
+         [--agent <a>] [--dry-run]
+  ensure [--dry-run] < body.json
+                Make sure someone has a card: with none, a minimal one (the name,
+                "<role>. From <source>.", the where values); with one, only the
+                where values it lacks. Name, summary, how and may are never
+                changed. A value already on another card is refused. The JSON
+                body is POST /api/loom/people/ensure's. The owner's, and a piece's
+                in an owner's action; exit 5 for anyone else, 4 for an archived
+                card, 1 for a refusal
 
 Options:
   --include-archived   Show/list archived cards too
@@ -47,7 +70,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     io.stdout(USAGE);
     return sub ? 0 : 2;
   }
-  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence' && sub !== 'reach') {
+  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence' && sub !== 'reach' && sub !== 'ensure') {
     io.stderr(`Unknown person subcommand: ${sub}\n${USAGE}`);
     return 2;
   }
@@ -56,7 +79,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     parsed = parseArgs({
       args: rest.slice(1),
       options: { 'include-archived': { type: 'boolean' }, since: { type: 'string' }, help: { type: 'boolean', short: 'h' },
-        label: { type: 'string' }, source: { type: 'string' }, at: { type: 'string' } },
+        label: { type: 'string' }, source: { type: 'string' }, at: { type: 'string' },
+        name: { type: 'string' }, role: { type: 'string' }, where: { type: 'string', multiple: true }, agent: { type: 'string' },
+        'dry-run': { type: 'boolean' } },
       allowPositionals: true,
     });
   } catch (err) {
@@ -101,6 +126,8 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 0;
   }
 
+  if (sub === 'ensure') return ensure(parsed, env, io);
+
   if (sub === 'reach') {
     const [slug, field, id] = parsed.positionals;
     const label = parsed.values.label;
@@ -112,9 +139,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     if (!current.found || !('card' in current)) { io.stderr(`no card for ${slug}: reach files only on a card that exists\n`); return 3; }
     const was = (current.card.where ?? {})[field];
     // The id joins what's there: a second account is kept beside the first, never in its place.
-    const ids = was === undefined ? [] : Array.isArray(was.value) ? was.value.map(String) : [String(was.value)];
+    const ids = valuesOf(was);
     // A value written by hand may be a note around the id ("U02AYL3QX (Onterris), DM D0…"): the id in it counts as there.
-    const there = ids.some((v) => v === id || new RegExp(`(^|[^A-Za-z0-9])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`).test(v));
+    const there = holdsValue(ids, id);
     const value = there ? (ids.length === 1 ? ids[0] : ids) : ids.length ? [...ids, id] : id;
     const source = was?.source ?? parsed.values.source;
     const out = await personWrite(env.contextDir, { slug, where: { [field]: {
@@ -147,5 +174,69 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   }
   if (env.json) renderJson(io, result);
   else io.stdout(result.rendered + '\n');
+  return 0;
+}
+
+/**
+ * Who may ensure a card from this process: the owner at loom's machine (no grant, not a
+ * piece's own process), or a piece's process in an owner's action (a grant loom signed,
+ * `owner`). Returns the actor to record, or why not.
+ */
+export function ensureActor(env: NodeJS.ProcessEnv): { actor: string } | { refused: string } {
+  const token = env.LOOM_STORE_GRANT;
+  if (token) {
+    const g = readGrant(householdHome(env), token);
+    if (!g) return { refused: 'the grant in LOOM_STORE_GRANT isn\'t one loom signed, or it expired' };
+    if (!g.owner) return { refused: `${g.piece} is serving ${g.agent ? `the agent ${g.agent}` : 'itself'}, not an owner: only an owner's action makes a card (an agent writes cards with person_write)` };
+    return { actor: `${g.who ?? 'owner'} via ${g.piece}` };
+  }
+  if (env.LOOM_PIECE_NAME) return { refused: `${env.LOOM_PIECE_NAME}'s own process isn't an owner's action: a card is made while the owner acts` };
+  return { actor: 'owner' };
+}
+
+type Parsed = { values: Record<string, unknown>; positionals: string[] };
+
+async function ensure(parsed: Parsed, env: ReturnType<typeof resolveEnv>, io: IOStreams): Promise<number> {
+  const procEnv = io.env ?? process.env;
+  const who = ensureActor(procEnv);
+  if ('refused' in who) { io.stderr(`person ensure: ${who.refused}\n`); return 5; }
+  const v = parsed.values as { name?: string; role?: string; source?: string; where?: string[]; agent?: string; label?: string; 'dry-run'?: boolean };
+  let body: Record<string, unknown>;
+  if (parsed.positionals.length === 0) {
+    if (v.name || v.role || v.where || v.label) { io.stderr(`person ensure: give a <slug> with --name, or the JSON body on stdin, not both.\n${USAGE}`); return 2; }
+    if (io.stdinIsTTY) { io.stderr(`person ensure: give a <slug> with --name, or pipe the JSON body on stdin.\n${USAGE}`); return 2; }
+    try { body = JSON.parse(await readStdin(io.stdin ?? process.stdin)); } catch { io.stderr('person ensure: the body on stdin isn\'t JSON\n'); return 2; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) { io.stderr('person ensure: the body is a JSON object\n'); return 2; }
+  } else {
+    const [slug, ...more] = parsed.positionals;
+    if (more.length || !v.name) { io.stderr(`person ensure takes <slug> --name <name>.\n${USAGE}`); return 2; }
+    const where: Record<string, { value: string[] }> = {};
+    for (const w of v.where ?? []) {
+      const eq = w.indexOf('=');
+      if (eq < 1 || eq === w.length - 1) { io.stderr(`person ensure: --where is <field>=<value> (slack=U0123), not ${w}\n`); return 2; }
+      (where[w.slice(0, eq)] ??= { value: [] }).value.push(w.slice(eq + 1));
+    }
+    body = {
+      slug, name: v.name, source: v.source ?? `the owner on loom's machine ${new Date().toISOString().slice(0, 10)}`,
+      ...(v.role ? { role: v.role } : {}),
+      ...(Object.keys(where).length ? { where: Object.fromEntries(Object.entries(where).map(([f, e]) => [f, e.value.length === 1 ? { value: e.value[0] } : e])) } : {}),
+    };
+  }
+  if (v.agent !== undefined) body.agent = v.agent;
+  if (v['dry-run']) body.dry_run = true;
+  let out;
+  try {
+    out = personEnsure(env.contextDir, body, who.actor);
+  } catch (e) {
+    io.stderr(`person ensure: ${(e as Error).message}\n`);
+    if (e instanceof PersonCardError && /is archived/.test(e.message)) return 4;
+    return 1;
+  }
+  if (env.json) { renderJson(io, out); return 0; }
+  const adds = Object.entries(out.added).map(([f, vs]) => `${f} ${vs.join(', ')}`).join('; ');
+  const would = out.dry_run ? 'would ' : '';
+  io.stdout(out.created ? `${out.slug}: ${would}${out.dry_run ? 'make' : 'made'} a card${adds ? ` (${adds})` : ''}\n`
+    : out.unchanged ? `${out.slug}: has a card with all of that already\n`
+    : `${out.slug}: ${would}${out.dry_run ? 'add' : 'added'} ${adds}\n`);
   return 0;
 }

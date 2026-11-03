@@ -18,8 +18,17 @@ export type NarrowRole = 'runtime' | 'review';
  */
 export const DELIVER_ROUTE = 'deliver';
 
+/**
+ * POST /api/loom/people/ensure (docs/specs/person-cards.md, "Ensure"): make sure a person has a
+ * card. The runtime's (its gates name a card), and also a household owner's and a piece's
+ * credential carrying an owner's grant (X-Loom-Store-Grant), dispatched before this table is
+ * consulted (http-server.ts, ensureApi). Agent, peer and review tokens never reach it: an
+ * agent writes cards with person_write.
+ */
+export const ENSURE_ROUTE = 'people/ensure';
+
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config'],
+  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config', ENSURE_ROUTE],
   review: ['audit/take', 'audit/done', 'scores', 'findings'],
 };
 
