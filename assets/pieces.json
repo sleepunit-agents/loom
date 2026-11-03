@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "a2f1da58ce26d81b9488f88e19c53ddbab5488b5",
+      "commit": "b7cd651f59a83e62a715df9249ed69fb5ffb9376",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
