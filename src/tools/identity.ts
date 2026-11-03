@@ -187,12 +187,13 @@ export async function loadIdentity(
   // before the room and Top of Mind. The block is the heading and the
   // rendered card (≤ 2,015 chars, the card's cap is checked at write), or a
   // placeholder line for a missing, archived or unreadable card. Never a failure.
+  // Recorded under its own 'projects' component (t-1382), like the room's 'cards'.
   try {
-    const block = projectBlock(contextDir, project, { onFailure: (e) => recordFailure(contextDir, e) });
+    const block = projectBlock(contextDir, project, { onFailure: (e) => recordFailure(contextDir, 'projects', e) });
     if (block) parts.push(block);
   } catch (projectErr) {
     console.error('[loom:identity] project block failed:', projectErr);
-    recordFailure(contextDir, projectErr);
+    recordFailure(contextDir, 'projects', projectErr);
   }
 
   // The room (person cards, docs/specs/person-cards.md) — after the tape and

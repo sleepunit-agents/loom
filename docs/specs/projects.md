@@ -272,7 +272,9 @@ the tape and before Top of Mind, and before `# In the room` when that is present
 `# This project` and the rendered card, so it is at most 2,015 chars (heading, newline, card) and never needs truncating (the card's cap is
 checked at write),
 best-effort as person cards: a missing, archived or unreadable card gives the line `_(no project <name>)_`, `_(project <name> is archived)_`
-or `_(project <name> is unreadable)_`, never a failure. A body
+or `_(project <name> is unreadable)_`, never a failure. An unreadable card is passed to
+`recordFailure(contextDir, 'projects', err)` (recorder-health.ts, t-1382): its own ledger component, so its streak
+is not reset by another component's success. A body
 working in a project's repo or conversation passes it, the way a bridge passes `people`.
 
 **loom's page** (its own PR, after the store and tools):

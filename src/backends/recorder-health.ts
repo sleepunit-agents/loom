@@ -7,6 +7,8 @@
  *     the tape-read path (identity.ts catch) on failure.
  *   - `cards` — the person-card read path (people.ts roomBlock) on failure: a
  *     bad row or a store-open failure while building identity's room block.
+ *   - `projects` — the project-card read path (projects.ts projectBlock) on
+ *     failure, while building identity's "This project" block.
  * Read by:
  *   - identity.ts, which appends one warning block per component below the
  *     identity payload when that component has failed FAILURE_THRESHOLD
@@ -21,14 +23,15 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** The things recordSuccess/recordFailure track separately (t-1382). */
-export type RecorderComponent = 'episodes' | 'cards';
+export type RecorderComponent = 'episodes' | 'cards' | 'projects';
 
-export const RECORDER_COMPONENTS: readonly RecorderComponent[] = ['episodes', 'cards'];
+export const RECORDER_COMPONENTS: readonly RecorderComponent[] = ['episodes', 'cards', 'projects'];
 
 /** Human label for a component, used in the warning block's heading and body. */
 const COMPONENT_LABEL: Record<RecorderComponent, string> = {
   episodes: 'episode recorder',
   cards: 'person-card reader',
+  projects: 'project-card reader',
 };
 
 /** What's at risk and how to exercise the path, specific to each component. */
@@ -41,6 +44,11 @@ const COMPONENT_IMPACT: Record<RecorderComponent, string> = {
     "Person cards in identity's room block may be unreadable — bodies addressed by " +
     'these people will wake without their card context.\n' +
     'Check the people table in the context\'s memories.db. Call `mcp__loom__person` ' +
+    'to exercise the card-read path.',
+  projects:
+    "The project card in identity's \"This project\" block may be unreadable — bodies " +
+    'loading this project will wake without its card.\n' +
+    "Check the projects table in the context's memories.db. Call `mcp__loom__project` " +
     'to exercise the card-read path.',
 };
 
