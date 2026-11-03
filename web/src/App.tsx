@@ -2,7 +2,6 @@
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 // An agent's state beside its name (a desktop's alone): its own chunk.
-const AgentState = lazy(() => import('@/components/ui/agent-state').then((m) => ({ default: m.AgentState })));
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 // The ground (contour field), on its own (ground.tsx).
 const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contours })));
@@ -255,7 +254,7 @@ export default function App() {
   const accountOpen = data?.view === 'passkeys';
   const backTile: DockItem | null = agentDock && accent ? {
     value: '#back', label: 'Back',
-    icon: <span className="loom-back-mark" aria-hidden>{accent.label[0]}</span>,
+    icon: <span className="loom-back-mark" aria-hidden><AgentAvatar a={accent} size={36} state={accent.asks ? 'needs-input' : 'idle'} /></span>,
     badge: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>,
   } : null;
   // A profile leads with the name itself, big: the page's own title would say it twice (the trail keeps it).
@@ -281,9 +280,9 @@ export default function App() {
     // An agent's own pages: its mark, with a chevron, is the way back to the household.
     <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
       <AnimatedIcon name={iconFor('chevron-left')} size="sm" />
-      {profileLeads ? <span className="pr-2 text-sm">The household</span> : <AgentAvatar a={accent} size={40} />}
+      {profileLeads ? <span className="pr-2 text-sm">The household</span> : <AgentAvatar a={accent} size={40} state={accent.asks ? 'needs-input' : 'idle'} />}
     </button>
-  ) : accent ? <AgentAvatar a={accent} size={44} className="shrink-0" />
+  ) : accent ? <AgentAvatar a={accent} size={44} className="shrink-0" state={accent.asks ? 'needs-input' : 'idle'} />
     : data?.view === 'passkeys' && chrome?.shell ? <MeAvatar name={chrome.shell.owner} size={44} className="shrink-0" />
     : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
 
@@ -315,7 +314,7 @@ export default function App() {
             <div className="mx-auto max-w-5xl px-4 py-3">
               <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
-                actions={accent && wide && !profileLeads ? <Suspense fallback={null}><AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} /></Suspense> : undefined} />
+                actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
             </div>
           </header>
 

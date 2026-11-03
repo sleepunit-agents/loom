@@ -14,6 +14,7 @@ const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => 
 const Markdown = lazy(() => import('./markdown'));
 const Profile = lazy(() => import('./profile'));
 const ChartBlock = lazy(() => import('./chart'));
+const Face = lazy(() => import('./face'));
 const Panel = lazy(() => import('./panel'));
 const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health })));
 const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
@@ -335,13 +336,24 @@ function PageLink({ l }: { l: Extract<Block, { type: 'link' }> }) {
   return <Suspense fallback={plain}><LivingLink href={to} direction="forward" onClick={(e: React.MouseEvent) => { if (e.metaKey || e.ctrlKey || to === '#') return; e.preventDefault(); go(to); }}>{l.text}</LivingLink></Suspense>;
 }
 
-/** An agent's mark as 000h's avatar: its initial on its colour, rounded. */
-export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style }: { a: { label: string; bg: string; fg: string }; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties }) {
-  return (
+/** An agent's mark: its face (face.tsx), its shape and eyes its own, its expression its state; its initial on its
+ * colour while the face loads. */
+export type Mark = { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } };
+export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
+const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
+export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
+  const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
       style={{ '--c': a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
+  );
+  return (
+    <Suspense fallback={initial}>
+      <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
+        <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} />
+      </span>
+    </Suspense>
   );
 }
 

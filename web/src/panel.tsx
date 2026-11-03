@@ -58,7 +58,7 @@ function RowChoice({ r }: { r: PanelRow }) {
   const [value, setValue] = useState(c.value);
   const [busy, setBusy] = useState(false);
   return (
-    <ToggleGroup type="single" className="v-seg" aria-label={r.label} value={value} disabled={busy} onValueChange={async (v) => {
+    <ToggleGroup type="single" className={c.options.length > 3 ? undefined : 'v-seg'} aria-label={r.label} value={value} disabled={busy} onValueChange={async (v) => {
       if (!v || v === value) return;
       const was = value; setValue(v); setBusy(true);
       const ok = await send(c.action, { ...(c.fields ?? {}), [c.name]: v });

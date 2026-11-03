@@ -38,8 +38,8 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       groups.push({ items: [(
         <SidebarMenuButton key="#back" href="/" label={`${agent.label}: back to the household`} className="loom-side-back"
           onClick={(e) => { e.preventDefault(); go('/'); }}>
-          <span className="relative grid size-8 shrink-0 place-items-center rounded-[10px] text-sm font-semibold" style={{ background: agent.bg, color: agent.fg }}>
-            {agent.label[0]}
+          <span className="relative grid size-8 shrink-0 place-items-center">
+            <AgentAvatar a={agent} size={32} state={agent.asks ? 'needs-input' : 'idle'} />
             <span className="absolute -left-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full border-2 border-[var(--v-paper)] bg-[var(--v-text)] text-[color:var(--v-canvas)]">
               <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>
             </span>
