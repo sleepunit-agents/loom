@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { ActButton, BlockView, Form, Link, Who, useEnv } from './blocks';
+import { ActButton, BlockView, Link, Who, useEnv } from './blocks';
+import Form from './form';
 import { tidy } from './tidy';
 import type { Block, PanelRow, Tone } from './loom';
 

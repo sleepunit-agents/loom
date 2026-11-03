@@ -20,26 +20,21 @@ const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health }))
 const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
 const Progress = lazy(() => import('@/components/ui/progress').then((m) => ({ default: m.Progress })));
 const CodeBlock = lazy(() => import('@/components/ui/code-block').then((m) => ({ default: m.CodeBlock })));
+// What Home's first screen never draws loads when a page has it (the first page's weight, web-app.test.ts): forms and
+// their editors (000h's fields, radio chips, switches, checkboxes, dialog), the confirm a danger button asks, a
+// desktop's table and a long list's pages.
+const Form = lazy(() => import('./form'));
+const Confirm = lazy(() => import('./block-extras').then((m) => ({ default: m.Confirm })));
+const Pager = lazy(() => import('./block-extras').then((m) => ({ default: m.Pager })));
+const DetailsBlock = lazy(() => import('./details'));
+const WideTable = lazy(() => import('./block-extras').then((m) => ({ default: m.WideTable })));
 
-import { Checkbox } from '@/components/ui/checkbox';
-import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-const ChoiceSelect = lazy(() => import('./choice-select'));
-const Chips = lazy(() => import('./filters').then((m) => ({ default: m.Chips })));
-import { Field as UiField, FieldDescription, FieldLabel } from '@/components/ui/field';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { createContext, useContext, useState, type ReactNode, lazy, Suspense } from 'react';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import { pageHref, type Block, type Button as Btn, type Ctx, type Field, type ListItem, type Tone } from './loom';
+import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem, type Tone } from './loom';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
@@ -67,131 +62,16 @@ export function Link({ page, href, children, className }: { page?: string; href?
 export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; size?: 'sm' | 'default'; full?: boolean; onDone?: () => void }) {
   const { send } = useEnv();
   const [asking, setAsking] = useState(false);
+  // The confirm dialog (000h's alert dialog) loads the first time it's asked for, and stays for its closing motion.
+  const [asked, setAsked] = useState(false);
   const [busy, setBusy] = useState(false);
   const fire = async () => { setBusy(true); await send(b.action, b.fields ?? {}); setBusy(false); onDone?.(); };
   const variant = b.tone === 'danger' ? 'danger' : b.tone === 'primary' ? 'default' : 'outline';
   return (
     <>
       <Button size={size} variant={variant} disabled={busy} className={full ? 'w-full' : undefined}
-        onClick={() => (b.confirm || b.tone === 'danger' ? setAsking(true) : void fire())}>{b.label}</Button>
-      <AlertDialog open={asking} onOpenChange={setAsking}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>{b.label}?</AlertDialogTitle>
-            <AlertDialogDescription>{b.confirm ?? 'This can\'t be undone from here.'}</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void fire()}>{b.label}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  );
-}
-
-// ---- forms -----------------------------------------------------------------------------------------
-
-function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: string) => void; id: string }) {
-  if (f.kind === 'textarea') return <Textarea id={id} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
-  if (f.kind === 'toggle') return <Switch id={id} checked={value === 'on' || value === 'true'} onCheckedChange={(c) => set(c ? 'on' : '')} />;
-  // A segmented control: one of a few, side by side.
-  if (f.kind === 'segmented') return <Suspense fallback={<Input id={id} value={value} readOnly />}><Chips f={f} value={value} set={set} id={id} /></Suspense>;
-  if (f.kind === 'stepper') return <Suspense fallback={<Input id={id} value={value} readOnly />}><Chips f={f} value={value} set={set} id={id} /></Suspense>;
-  // One box (000h's checkbox): "on" or "". Several: the ticked values, joined with commas.
-  if (f.kind === 'check') return <Checkbox id={id} checked={value === 'on'} onCheckedChange={(c) => set(c === true ? 'on' : '')}>{f.hint ? null : f.label}</Checkbox>;
-  if (f.kind === 'checks') {
-    const on = new Set(value.split(',').filter(Boolean));
-    // A few short choices (the days of a week) are chips in a row, any number pressed.
-    if ((f.options?.length ?? 0) <= 7 && f.options?.every((o) => o.label.length <= 4)) return <Suspense fallback={null}><Chips f={f} value={value} set={set} id={id} /></Suspense>;
-    return (
-      <div id={id} role="group" aria-label={f.label} className="grid gap-2">{f.options?.map((o) => (
-        <Checkbox key={o.value} checked={on.has(o.value)} onCheckedChange={(c) => {
-          const next = new Set(on); if (c === true) next.add(o.value); else next.delete(o.value);
-          set((f.options ?? []).map((x) => x.value).filter((v) => next.has(v)).join(','));
-        }}>{o.label}</Checkbox>))}
-      </div>
-    );
-  }
-  // A time of day (Jonathan, 2026-10-30: "and the time picker"): the device's own picker, which shows it as its owner
-  // reads time (2:30 PM here); "HH:MM" on the wire. Several: a row each, a way to drop one, and one to add another.
-  if (f.kind === 'time') {
-    const times = value ? value.split(',').map((t) => t.trim()) : [''];
-    const put = (next: string[]) => set(next.filter(Boolean).join(','));
-    return (
-      <div id={id} role="group" aria-label={f.label} className="grid gap-2">
-        {times.map((t, n) => (
-          <div key={n} className="flex items-center gap-2">
-            <Input type="time" aria-label={times.length > 1 ? `${f.label} ${n + 1}` : f.label} value={t} required={f.required && n === 0} className="w-40"
-              onChange={(e) => { const next = [...times]; next[n] = e.target.value; put(next.length ? next : ['']); if (!e.target.value && times.length === 1) set(''); }} />
-            {f.multiple && times.length > 1 && <Button type="button" size="sm" variant="ghost" aria-label={`Remove ${t || 'this time'}`} onClick={() => put(times.filter((_, i) => i !== n))}>Remove</Button>}
-          </div>
-        ))}
-        {f.multiple && times.every(Boolean) && times.length < 12 && (
-          <Button type="button" size="sm" variant="outline" className="justify-self-start" onClick={() => set([...times, ''].join(','))}>Add a time</Button>
-        )}
-      </div>
-    );
-  }
-  // A few choices show at once (000h's radio chips); many go in a select.
-  if (f.kind === 'choice' && (f.options?.length ?? 0) <= 5 && !f.options?.some((o) => o.swatch)) {
-    return (
-      <RadioGroup id={id} value={value || f.options?.[0]?.value || ''} onValueChange={set} className="flex flex-wrap gap-2">
-        {f.options?.map((o) => <RadioGroupItem key={o.value || '_'} value={o.value} appearance="chip">{o.label}</RadioGroupItem>)}
-      </RadioGroup>
-    );
-  }
-  if (f.kind === 'choice') {
-    return (
-      <Suspense fallback={<Input id={id} value={f.options?.find((o) => o.value === value)?.label ?? ''} readOnly />}>
-        <ChoiceSelect id={id} value={value} options={f.options ?? []} set={set} />
-      </Suspense>
-    );
-  }
-  return <Input id={id} type={f.kind === 'secret' ? 'password' : f.kind === 'number' ? 'number' : f.kind === 'date' ? 'date' : 'text'}
-    autoComplete={f.kind === 'secret' ? 'off' : undefined} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
-}
-
-export function Form({ form, onDone, inDialog = false }: { form: Extract<Block, { type: 'form' }>; onDone?: () => void; inDialog?: boolean }) {
-  const { send } = useEnv();
-  const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(form.fields.map((f) => [f.name, f.value ?? ''])));
-  const [busy, setBusy] = useState(false);
-  const fields = (
-    <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 ${inDialog ? 'max-h-[52dvh] overflow-y-auto pr-1' : ''}`}>
-      {form.fields.map((f) => (
-        <UiField key={f.name} controlId={`${form.action}-${f.name}`}>
-          <FieldLabel htmlFor={`${form.action}-${f.name}`}>{f.label}{f.required ? <span aria-hidden className="opacity-50"> *</span> : null}</FieldLabel>
-          <FieldInput id={`${form.action}-${f.name}`} f={f} value={vals[f.name] ?? ''} set={(v) => setVals((s) => ({ ...s, [f.name]: v }))} />
-          {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
-        </UiField>
-      ))}
-      {form.note && <p className="text-sm opacity-70">{form.note}</p>}
-    </div>
-  );
-  const submit = <Button type="submit" disabled={busy}>{form.submit}</Button>;
-  return (
-    <form className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" onSubmit={async (e) => {
-      e.preventDefault(); setBusy(true);
-      // A time row added and left empty isn't sent: "07:17," is "07:17".
-      const clean = Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, form.fields.find((f) => f.name === k)?.kind === 'time' ? v.split(',').map((t) => t.trim()).filter(Boolean).join(',') : v]));
-      const ok = await send(form.action, { ...(form.hidden ?? {}), ...clean });
-      setBusy(false); if (ok) onDone?.();
-    }}>
-      {!inDialog && form.title && <h4 className="font-medium">{form.title}</h4>}
-      {fields}
-      {inDialog ? <DialogFooter>{submit}</DialogFooter> : <div>{submit}</div>}
-    </form>
-  );
-}
-
-/** A form behind a button, opened as a focused editor. */
-function EditorButton({ label, title, form, variant = 'outline' }: { label: string; title: string; form: Extract<Block, { type: 'form' }>; variant?: 'outline' | 'default' | 'ghost' }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button size="sm" variant={variant} onClick={() => setOpen(true)}>{label}</Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent appearance="editor" showCloseButton>
-          <DialogHeader><DialogTitle>{title}</DialogTitle>{form.note && <DialogDescription>{form.note}</DialogDescription>}</DialogHeader>
-          <Form form={{ ...form, note: undefined }} inDialog onDone={() => setOpen(false)} />
-        </DialogContent>
-      </Dialog>
+        onClick={() => (b.confirm || b.tone === 'danger' ? (setAsked(true), setAsking(true)) : void fire())}>{b.label}</Button>
+      {asked && <Suspense fallback={null}><Confirm b={b} open={asking} onOpenChange={setAsking} fire={() => void fire()} /></Suspense>}
     </>
   );
 }
@@ -248,19 +128,7 @@ function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } 
   const shown = [...new Set([0, page - 1, page, page + 1, pages - 1].filter((p) => p >= 0 && p < pages))].sort((x, y) => x - y);
   return {
     rows: served ? all : all.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS),
-    pager: (
-      <Pagination className="mt-2" aria-label="Pages of this list">
-        <PaginationContent>
-          <PaginationItem><PaginationPrevious disabled={page === 0} onClick={() => to(page - 1)} /></PaginationItem>
-          {shown.map((p, i) => [
-            i && p - shown[i - 1] > 1 ? <PaginationItem key={`e${p}`}><PaginationEllipsis /></PaginationItem> : null,
-            <PaginationItem key={p}><PaginationLink isActive={p === page} aria-current={p === page ? 'page' : undefined} onClick={() => to(p)}>{p + 1}</PaginationLink></PaginationItem>,
-          ])}
-          <PaginationItem><PaginationNext disabled={page === pages - 1} onClick={() => to(page + 1)} /></PaginationItem>
-        </PaginationContent>
-        {served?.total !== undefined && <p className="mt-1 text-xs opacity-60">{served.total.toLocaleString()} in all</p>}
-      </Pagination>
-    ),
+    pager: <Suspense fallback={<div className="mt-2 h-9" />}><Pager page={page} pages={pages} shown={shown} to={to} total={served?.total} /></Suspense>,
   };
 }
 
@@ -289,41 +157,9 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
     );
   }
   // A desktop: 000h's table (its ledger look), rows as they come.
-  return (
-    <>
-      <TableContainer>
-        <Table>
-          <TableHeader><TableRow>{b.columns.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-          <TableBody>{rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-middle">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
-        </Table>
-      </TableContainer>
-      {pager}
-    </>
-  );
+  return <><Suspense fallback={<div className="min-h-24" />}><WideTable columns={b.columns} rows={rows} cell={cell} /></Suspense>{pager}</>;
 }
 
-/** A details, by what it holds: a form is an editor; a list or a table a drawer; anything else a drawer too. */
-function DetailsBlock({ b }: { b: Extract<Block, { type: 'details' }> }) {
-  const forms = b.blocks.filter((x) => x.type === 'form') as Extract<Block, { type: 'form' }>[];
-  const [open, setOpen] = useState(false);
-  if (forms.length === 1 && b.blocks.length === 1) return <EditorButton label={b.summary} title={forms[0].title ?? b.summary} form={forms[0]} />;
-  const count = (b.blocks.find((x) => x.type === 'list' || x.type === 'table') as { items?: unknown[]; rows?: unknown[] } | undefined);
-  const n = count?.items?.length ?? count?.rows?.length;
-  return (
-    <>
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>{b.summary}{n !== undefined ? ` · ${n}` : b.meta ? ` · ${b.meta}` : ''}</Button>
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerContent className="lg:mx-auto lg:max-w-2xl">
-          <DrawerHeader className="flex-col"><DrawerTitle>{b.summary}</DrawerTitle>{b.meta && <DrawerDescription>{b.meta}</DrawerDescription>}</DrawerHeader>
-          <div className="grid gap-3">{b.blocks.map((x, k) => (x.type === 'form'
-            ? <EditorButton key={k} label={(x as { title?: string }).title ?? b.summary} title={(x as { title?: string }).title ?? b.summary} form={x as Extract<Block, { type: 'form' }>} variant="default" />
-            : x.type === 'buttons' ? <div key={k} className="grid gap-2">{(x as Extract<Block, { type: 'buttons' }>).items.map((y) => <ActButton key={y.label} b={y} full size="default" onDone={() => setOpen(false)} />)}</div>
-              : <BlockView key={k} b={x} />))}</div>
-        </DrawerContent>
-      </Drawer>
-    </>
-  );
-}
 
 /** Pills that set one query value on this page, and an optional search over them (?q=), the other choices kept. */
 
@@ -437,8 +273,8 @@ export function BlockView({ b }: { b: Block }) {
     case 'code': { const text = (b as { text: string }).text;
       return <Suspense fallback={<pre className="overflow-x-auto rounded-xl p-3 text-xs">{text}</pre>}><CodeBlock code={text} /></Suspense>; }
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
-    case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
-    case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
+    case 'form': return <Suspense fallback={<div className="min-h-24" />}><Form form={b as Extract<Block, { type: 'form' }>} /></Suspense>;
+    case 'details': return <Suspense fallback={<Button size="sm" variant="ghost" disabled>{(b as { summary: string }).summary}</Button>}><DetailsBlock b={b as Extract<Block, { type: 'details' }>} /></Suspense>;
     case 'chart': return <Suspense fallback={<div className="h-64" />}><ChartBlock b={b as Extract<Block, { type: 'chart' }>} /></Suspense>;
     case 'panel': return <Suspense fallback={<div className="min-h-24" />}><Panel b={b as Extract<Block, { type: 'panel' }>} /></Suspense>;
     case 'health': return <Suspense fallback={<div className="min-h-14" />}><Health b={b as Extract<Block, { type: 'health' }>} /></Suspense>;

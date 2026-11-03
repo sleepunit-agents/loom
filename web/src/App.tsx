@@ -7,7 +7,8 @@ import { AnimatedIcon } from '@/components/ui/animated-icon';
 const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contours })));
 const Depth = lazy(() => import('./ground').then((m) => ({ default: m.Depth })));
 // The More drawer's menu (000h's navigation menu) loads when it opens.
-const MoreMenu = lazy(() => import('./more-menu'));
+// The More drawer (its menu, 000h's drawer) loads the first time it opens; it stays mounted for its closing motion.
+const MoreSheet = lazy(() => import('./more-sheet'));
 // The rail is a desktop's alone: a phone never draws it, so never loads it.
 const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
 // The account's page (passkeys' controls: WebAuthn, push) loads with that page only.
@@ -17,7 +18,6 @@ import { ArrivalContext, arriveOnce, type Arrivals } from './arrive';
 import { Boundary, Callout, iconFor } from './safe';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
-import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Spinner } from '@/components/ui/spinner';
 import { refreshEvery, type Showing } from './refresh';
 // The toasts load with the first one (toasts.tsx).
@@ -94,6 +94,7 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
+  const [moreAsked, setMoreAsked] = useState(false);
   const [finding, setFinding] = useState(false);
   // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept in this browser.
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
@@ -102,6 +103,14 @@ export default function App() {
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
   const setGround = (g: Ground) => { setGroundState(g); try { localStorage.setItem('loom-ground', g); } catch { /* private window */ } };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
+  // What the first page leaves out (forms, details, the More drawer, a table's pages) is fetched once the browser is
+  // idle a moment after it, so the first tap on one doesn't wait on the network.
+  useEffect(() => {
+    const warm = () => { void import('./form'); void import('./details'); void import('./block-extras'); void import('./more-sheet'); };
+    // Late enough not to share the network with the first screen's own (its faces, its ground).
+    const t = setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(warm, { timeout: 4000 }) : warm()), 2500);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
   const effective = mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
   useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
@@ -254,7 +263,7 @@ export default function App() {
     ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
-  const pick = (href: string) => (href === '#more' ? setMore(true) : href === '#back' ? go('/') : go(href));
+  const pick = (href: string) => (href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
   const backTile: DockItem | null = agentDock && accent ? {
@@ -373,16 +382,8 @@ export default function App() {
         </div>
       </div>
 
-      <Drawer open={more} onOpenChange={setMore}>
-        <DrawerContent>
-          <DrawerHeader><DrawerTitle>More</DrawerTitle>{head && <DrawerDescription>{head.label}'s other pages</DrawerDescription>}</DrawerHeader>
-          {more && (
-            <Suspense fallback={<div className="grid place-items-center py-6"><Spinner appearance="orbit" /></div>}>
-              <MoreMenu pages={moreTabs} agents={chrome?.shell?.agents ?? []} here={head?.label} icon={icon} go={(href) => { setMore(false); go(href); }} />
-            </Suspense>
-          )}
-        </DrawerContent>
-      </Drawer>
+      {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
+        go={(href) => { setMore(false); go(href); }} /></Suspense>}
 
       {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
 
