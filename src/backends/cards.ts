@@ -240,7 +240,11 @@ export function hasTable(db: Database, table: string): boolean {
   return db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined;
 }
 
-export type RevisionOp = 'write' | 'verify' | 'archive' | 'restore' | 'revision_restore' | 'split';
+/**
+ * `merge` and `merged_from` are person_merge's (people-merge.ts): the card a merge displaced,
+ * and, under the surviving card's slug, the merged card as it was (its summary kept there).
+ */
+export type RevisionOp = 'write' | 'verify' | 'archive' | 'restore' | 'revision_restore' | 'split' | 'merge' | 'merged_from';
 
 /** The columns every card table has. A kind may add its own (projects' `status`). */
 export interface CardRowBase {

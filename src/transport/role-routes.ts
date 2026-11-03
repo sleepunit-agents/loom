@@ -27,8 +27,16 @@ export const DELIVER_ROUTE = 'deliver';
  */
 export const ENSURE_ROUTE = 'people/ensure';
 
+/**
+ * POST /api/loom/people/merge (docs/specs/person-cards.md, "Merge"): make two person cards one.
+ * The runtime's (its gates may find two cards are one person), and a household owner's,
+ * dispatched before this table is consulted (http-server.ts, mergeApi). Agent, piece, peer and
+ * review tokens never reach it: an agent merges with person_merge.
+ */
+export const MERGE_ROUTE = 'people/merge';
+
 export const ROLE_ROUTES: Readonly<Record<NarrowRole, readonly string[]>> = {
-  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config', ENSURE_ROUTE],
+  runtime: ['review/token', 'conversations/turn', DELIVER_ROUTE, 'audit', 'scorecards', 'review/config', ENSURE_ROUTE, MERGE_ROUTE],
   review: ['audit/take', 'audit/done', 'scores', 'findings'],
 };
 

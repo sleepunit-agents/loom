@@ -34,7 +34,7 @@ flowchart LR
       IDW["Identity wing<br/>identity · dossier · update_identity<br/>bootstrap · harness_init · harness_describe"]
       MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit · memory_recompute_salience<br/>relay (household HTTP)<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
-      PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence"]
+      PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence · person_merge"]
       PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
       NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
@@ -180,6 +180,8 @@ flowchart LR
   PV["person_verify<br/>stamps where.*.verified_at"] --> TX
   PA["person_archive · person_restore"] --> TX
   PR["person_revision_restore"] --> TX
+  PM["person_merge<br/>from becomes a redirect to into"] --> TX
+  TX -- "from -> into" --> MG[("person_merges")]
   TX --> PT[("people")]
   TX -- "previous row, newest 10 kept" --> RV[("person_revisions")]
   PT --> RD["person · person_list · loom person show|list<br/>rendered: [ok] · [unverified] · [STALE nd]"]
@@ -197,7 +199,7 @@ have fallen behind.
 | Store | Tables / files | Backend |
 |---|---|---|
 | `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
-| `memories.db` (people) | `people`, `person_revisions` | `people.ts`, created by the `people_cards` migration |
+| `memories.db` (people) | `people`, `person_revisions`, `person_merges` (a merged card's redirect: from, into, who, when, what was re-tagged) | `people.ts`, created by the `people_cards` and `person_merges` migrations; in a household `commons/people.db` holds the same tables for the directory |
 | `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md), `findings` (a grader's one line per conversation per UTC day, made by the first) | `src/backends/conversations.ts`, created by the `conversations` migration (`findings` by its first write) |
 | `$LOOM_HOME/household.db` | `venues`: core's copy of every installed piece's venues, orphaned when the piece goes; `audit_reads` (who took which audit entry, never text), `conversation_strangers` (sticky: a turn came from a non-owner), `review_scores` and `scorecards` | `src/household-store.ts`, synced at install, update, remove and daemon start; `src/audit.ts` and `src/review.ts` write the review's tables |
 | `$LOOM_HOME/audit.db` | `audit_entries`: raw turn text, age-encrypted to `review.pub`, deleted on `audit/done` and 7 days after its turn. Never in a bundle or an export, nor are `review.key` and `review.pub` | `src/audit.ts` |
@@ -246,6 +248,7 @@ have fallen behind.
 | `src/backends/projects.ts` | Project cards: validation, render, store, names (project_names), the hub's memory reads, the identity project block |
 | `src/backends/cards.ts` | What person and project cards share: validation primitives, where envelopes and staleness markers, merge one level deep, no-op detection, the row store (revisions, archive/restore, revision restore, BEGIN IMMEDIATE) |
 | `src/backends/people-household.ts` | Person cards in a household: the commons directory (name, handles, facts) plus each agent's relationship (summary, how it talks to them, may), merged on read, split on write, and the one-time split of an existing agent's cards |
+| `src/backends/people-merge.ts` | Merge two person cards into one (person_merge, POST /api/loom/people/merge, `loom person merge`): the union of the cards in the directory and every agent's copy, every memory, proposal, conversation and turn re-tagged, and from left as an archived redirect to into |
 | `src/backends/people-ensure.ts` | Ensure a person card: a minimal card when there's none, only the missing `where` values when there is one, and a value already on another card refused (POST /api/loom/people/ensure, `loom person ensure`) |
 | `src/backends/dedup.ts` | Write-time exact-restatement key |
 | `src/backends/scope.ts` | Project vs global visibility |

@@ -104,6 +104,7 @@ describe('createLoomServer', () => {
     person_verify: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     person_archive: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     person_restore: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    person_merge: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     person: { readOnlyHint: true, openWorldHint: false },
     person_list: { readOnlyHint: true, openWorldHint: false },
     person_history: { readOnlyHint: true, openWorldHint: false },

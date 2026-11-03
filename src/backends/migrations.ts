@@ -476,6 +476,25 @@ export const MIGRATIONS: readonly Migration[] = [
       db.transaction(() => createConversationTables(db)).immediate();
     },
   },
+  {
+    id: 'person_merges',
+    description:
+      'Add person_merges: a person card merged into another (person_merge) leaves a redirect, ' +
+      'from_slug -> into_slug, with who merged, when and what was re-tagged ' +
+      '(docs/specs/person-cards.md, "Merge"). Additive: dropping the table is the whole backout',
+    pending: (db) => !hasTable(db, 'person_merges'),
+    run: (db) => {
+      db.prepare(
+        `CREATE TABLE IF NOT EXISTS person_merges (
+          from_slug   TEXT PRIMARY KEY,
+          into_slug   TEXT NOT NULL,
+          merged_at   TEXT NOT NULL,
+          merged_by   TEXT,
+          counts_json TEXT NOT NULL DEFAULT '{}'
+        )`,
+      ).run();
+    },
+  },
 ];
 
 /**

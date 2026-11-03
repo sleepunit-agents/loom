@@ -196,6 +196,10 @@ Who may do what, in one place:
     with the runtime's token (person-cards.md, "Ensure"). With no card, a minimal one is made (the name, the role and
     where the entry came from, its platform ids); with one, only the ids it lacks are added. A gate write stands even
     when the ensure fails, and the owner's answer says the card wasn't made and why.
+  - **A card merge is followed by the gates** (t-1746). `POST /api/loom/people/merge` with the runtime's token makes
+    two cards one (person-cards.md, "Merge"): the old slug is a redirect to the survivor. loom doesn't hold the
+    gates, so after a merge the runtime renames the old slug to the survivor in every agent's gates, as shuttle's
+    people-merge owner action does for one agent's list today.
 - **Agent grants:** which agents may use which pieces.
   - **Who decides.** With one installed piece offering `grants` (the runtime), core asks it before any call an agent
     makes to a piece: `/api/<piece>/…`, `/api/<piece>/run`, and an offered MCP tool. Running a piece's binary

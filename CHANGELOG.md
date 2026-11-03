@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Two cards that turn out to be one person become one.** `person_merge`
+  (an agent of the household that holds both), `loom person merge <from>
+  <into> [--dry-run]` (the owner) and `POST /api/loom/people/merge` (a
+  household owner, the runtime) fold `from` into `into`: `where` is the union
+  of both cards' values, `how` and `may` the union with `into` winning, `into`'s
+  name and summary kept with a "Merged <from> (<name>) <date>" line, in the
+  directory and every agent's copy. Every memory, proposal, conversation and
+  turn tagged `from` is re-tagged, and `how.via`/`how.loop_in` relinked. `from`
+  is left an archived redirect (`person_merges`): reading it answers `into`'s
+  card with a note, and a later write, verify, ensure or reach lands on `into`.
+  A dry run says what would change; the answer's `not_done` says to rename the
+  slug in every agent's gates.
+
 - **A person is one card, however they were added.** `POST
   /api/loom/people/ensure` and `loom person ensure` make sure someone has a
   person card: with none, a minimal one (the name, `<role>. From <source>.`,

@@ -100,11 +100,30 @@ export interface MutationResult {
   archived: boolean;
   updated: string;
   synthesized_at: string | null;
+  /** The slug the call named, when it was merged into this card (person_merge): the write landed here. */
+  redirected_from?: string;
+}
+
+/** A card merged into another (person_merge): `from` is a redirect to `into` until purged by hand. */
+export interface PersonMergeRecord {
+  from: string;
+  into: string;
+  at: string;
+  by: string | null;
+  /** What the merge re-tagged, by store (people-merge.ts). */
+  counts: Record<string, unknown>;
+}
+
+/** On a read through a redirect: which slug was asked for, which card answered, and since when. */
+export interface MergedNote {
+  from: string;
+  into: string;
+  at: string;
 }
 
 export type PersonReadResult =
   | { found: false }
-  | { found: true; archived: true }
+  | { found: true; archived: true; merged?: MergedNote }
   | {
       found: true;
       rendered: string;
@@ -112,7 +131,17 @@ export type PersonReadResult =
       archived: boolean;
       updated: string;
       synthesized_at: string | null;
+      /** Present when the slug asked for was merged into this card: it reads as `into`. */
+      merged?: MergedNote;
     };
+
+/** A read of `into`'s card, answered for `from`: the same card, a line saying so, and `merged`. */
+export function throughRedirect(result: PersonReadResult, m: PersonMergeRecord): PersonReadResult {
+  if (!result.found) return result;
+  const merged: MergedNote = { from: m.from, into: m.into, at: m.at };
+  if (!('rendered' in result)) return { ...result, merged };
+  return { ...result, rendered: `${result.rendered}\n_(${m.from} was merged into ${m.into} ${m.at.slice(0, 10)}: this is ${m.into}'s card)_`, merged };
+}
 
 /** One memory a person card condenses (PeopleStore.evidence). */
 export interface PersonEvidence {
@@ -131,6 +160,8 @@ export interface PersonListEntry {
   stale: number;
   unverified: number;
   memories_since_synthesis: number;
+  /** An archived card that person_merge left as a redirect: the card it reads and writes as. */
+  merged_into?: string;
 }
 
 export interface PersonRevisionMeta extends RevisionMeta {
@@ -280,7 +311,7 @@ export function renderCard(card: PersonCard, nowMs: number, opts: { worstCase?: 
 
 // ─── Store ───────────────────────────────────────────────────────────────────
 
-const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor'];
+const PEOPLE_MIGRATIONS = ['people_cards', 'person_revisions_actor', 'person_merges'];
 
 type RawRow = CardRowBase;
 
@@ -331,6 +362,8 @@ export class PeopleStore {
    * schema now. A store that holds people but isn't `migrated` is one a reader can't trust.
    */
   readonly holdsPeople: boolean;
+  /** Whether this store has the person_merges table (an old read-only store may not): no table, no redirects. */
+  private readonly holdsMerges: boolean;
 
   constructor(config: PeopleStoreConfig) {
     this.now = config.now ?? Date.now;
@@ -347,11 +380,71 @@ export class PeopleStore {
     }
     this.holdsPeople = hasTable(this.db, 'people');
     this.migrated = this.holdsPeople && hasTable(this.db, 'person_revisions');
+    this.holdsMerges = hasTable(this.db, 'person_merges');
     this.table = new CardTable<RawRow>(this.db, { table: 'people', revisions: 'person_revisions', noun: PERSON_NOUN }, config.actor ?? null);
   }
 
   close(): void {
     this.db.close();
+  }
+
+  /** The merge that left `slug` a redirect (person_merge), or null. */
+  mergeOf(slug: string): PersonMergeRecord | null {
+    if (!this.holdsMerges) return null;
+    const r = this.db.prepare('SELECT from_slug, into_slug, merged_at, merged_by, counts_json FROM person_merges WHERE from_slug = ?').get(slug) as
+      | { from_slug: string; into_slug: string; merged_at: string; merged_by: string | null; counts_json: string }
+      | undefined;
+    if (!r) return null;
+    let counts: Record<string, unknown> = {};
+    try { counts = JSON.parse(r.counts_json) as Record<string, unknown>; } catch { /* a bad row still redirects */ }
+    return { from: r.from_slug, into: r.into_slug, at: r.merged_at, by: r.merged_by, counts };
+  }
+
+  /** Every merge this store records, by from. */
+  merges(): PersonMergeRecord[] {
+    if (!this.holdsMerges) return [];
+    return (this.db.prepare('SELECT from_slug FROM person_merges ORDER BY from_slug').all() as Array<{ from_slug: string }>)
+      .map((r) => this.mergeOf(r.from_slug)!);
+  }
+
+  /**
+   * Where a slug's reads and writes land: itself, or the card it was merged into (followed
+   * when that one was merged on in turn). A redirect lasts until it's purged by hand.
+   */
+  resolve(slug: string): string {
+    let at = slug;
+    const seen = new Set([at]);
+    for (let hop = 0; hop < 16; hop++) {
+      const m = this.mergeOf(at);
+      if (!m || seen.has(m.into)) break;
+      at = m.into;
+      seen.add(at);
+    }
+    return at;
+  }
+
+  /**
+   * One BEGIN IMMEDIATE transaction with the raw database and its card table: person_merge's
+   * (people-merge.ts), so a store's card changes and its re-tags land together or not at all.
+   */
+  mergeTransaction<T>(fn: (db: Database, table: CardTable<CardRowBase>, at: string) => T): T {
+    return this.mutate(() => fn(this.db, this.table, this.nowIso()));
+  }
+
+  /** The raw database, read-only use: a merge's dry run counts what it would re-tag. */
+  get database(): Database {
+    return this.db;
+  }
+
+  /** The card table, for a merge's plan (people-merge.ts). */
+  get cardTable(): CardTable<CardRowBase> {
+    return this.table;
+  }
+
+  /** The stored row as is (archived ones too), unparsed, or null. */
+  rawRow(slug: string): CardRowBase | null {
+    if (!this.migrated) return null;
+    return this.table.readRow(slug) ?? null;
   }
 
   private nowIso(): string {
@@ -397,6 +490,9 @@ export class PeopleStore {
     const passedSummary = 'summary' in raw && raw.summary !== undefined;
 
     return this.mutate(() => {
+      // A merged slug is a redirect: its writes land on the card it was merged into.
+      const asked = input.slug;
+      input = { ...input, slug: this.resolve(asked) };
       const nowMs = this.now();
       const at = new Date(nowMs).toISOString();
       const existing = this.table.readRow(input.slug);
@@ -421,7 +517,7 @@ export class PeopleStore {
       validateCard(next, nowMs);
 
       const c = this.table.commitWrite({ existing, current, next, passedSummary, merge, at });
-      return this.result(c.row, c.unchanged, c.revisionId);
+      return { ...this.result(c.row, c.unchanged, c.revisionId), ...(asked !== input.slug ? { redirected_from: asked } : {}) };
     });
   }
 
@@ -431,16 +527,18 @@ export class PeopleStore {
     if (!Array.isArray(input.fields) || input.fields.length === 0) fail('fields: list at least one where field');
     if (input.source !== undefined) checkString(input.source, 'source', MAX_STRING);
     return this.mutate(() => {
+      const asked = input.slug;
+      const slug = this.resolve(asked);
       const nowMs = this.now();
       const at = new Date(nowMs).toISOString();
       const verifiedAt = input.verified_at ?? at;
       checkVerifiedAt(verifiedAt, 'verified_at', nowMs);
-      const existing = this.table.requireActive(input.slug, 'verifying');
+      const existing = this.table.requireActive(slug, 'verifying');
       const card = parseRow(existing).card;
-      const next = stampWhere(card, input.fields, verifiedAt, input.source, input.slug);
+      const next = stampWhere(card, input.fields, verifiedAt, input.source, slug);
       validateCard(next, nowMs);
       const c = this.table.commitVerify(existing, card, next, at);
-      return this.result(c.row, c.unchanged, c.revisionId);
+      return { ...this.result(c.row, c.unchanged, c.revisionId), ...(asked !== slug ? { redirected_from: asked } : {}) };
     });
   }
 
@@ -458,6 +556,8 @@ export class PeopleStore {
   restore(input: { slug: string }): MutationResult {
     const slugErr = personSlugError(input.slug);
     if (slugErr) fail(`slug: ${slugErr}`);
+    const merged = this.mergeOf(input.slug);
+    if (merged) fail(`${input.slug} was merged into ${merged.into}: a merged card stays a redirect, and isn't restored`);
     return this.mutate(() => {
       const c = this.table.restore(input.slug, this.nowIso());
       return this.result(c.row, c.unchanged, c.revisionId);
@@ -484,6 +584,8 @@ export class PeopleStore {
   read(slug: string, includeArchived = false): PersonReadResult {
     const slugErr = personSlugError(slug);
     if (slugErr) fail(`slug: ${slugErr}`);
+    const target = this.resolve(slug);
+    if (target !== slug) return throughRedirect(this.read(target, includeArchived), this.mergeOf(slug)!);
     const row = this.getRow(slug);
     if (!row) return { found: false };
     const archived = row.archived_at !== null;
@@ -513,6 +615,7 @@ export class PeopleStore {
              AND (? IS NULL OR created > ?)`,
         )
       : null;
+    const into = new Map(this.merges().map((m) => [m.from, m.into]));
     return raws.map((raw) => {
       let counts = { stale: 0, unverified: 0 };
       try {
@@ -532,6 +635,7 @@ export class PeopleStore {
         stale: counts.stale,
         unverified: counts.unverified,
         memories_since_synthesis: n,
+        ...(into.has(raw.slug) ? { merged_into: into.get(raw.slug)! } : {}),
       };
     });
   }
@@ -659,6 +763,7 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
     let used = ROOM_HEADER.length;
     let cards = 0;
     let cardChars = 0;
+    const seenTargets = new Set<string>();
     const fits = (text: string) => used + ENTRY_SEP.length + text.length <= entryBudget;
     const place = (text: string) => {
       entries.push(text);
@@ -681,7 +786,11 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
       let line: string | null = null;
       let card: string | null = null;
       try {
-        const row = store.getRow(slug);
+        // A merged slug reads as the card it was merged into (person_merge), once however it's named.
+        const target = store.resolve(slug);
+        if (target !== slug && (seenTargets.has(target) || considered.includes(target))) continue;
+        seenTargets.add(target);
+        const row = store.getRow(target);
         if (!row) line = `_(no card for ${slug})_`;
         else if (row.archived_at !== null) line = `_(card for ${slug} is archived)_`;
         else card = renderCard(row.card, nowMs);

@@ -46,7 +46,7 @@ import { WATCH_S } from '../ui/push.js';
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
-import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
+import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
@@ -58,7 +58,8 @@ import { computeMeasures, postFinding, postScore, recentDays, scorecards } from 
 /** A stranger's call (a box asking to join) is small: a name, its facts, a proof hash. */
 const STRANGER_MAX_BYTES = 8 * 1024;
 import { createKnowledgeOnlyServer } from './knowledge-server.js';
-import { personEnsure } from '../tools/person.js';
+import { personEnsure, personMergeRun } from '../tools/person.js';
+import { PersonMergeError } from '../backends/people-merge.js';
 import { PersonCardError } from '../backends/people.js';
 import { ensureAgentEntries, ensureMemberEntries, hasUnsplitPeople } from '../backends/people-household.js';
 import { agentName } from '../ui/core.js';
@@ -524,6 +525,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // POST /api/loom/people/ensure (docs/specs/person-cards.md, "Ensure"): a household owner, a piece
     // in an owner's action (its credential and the grant loom gave it), or the runtime.
     if (piece === 'loom' && subpath === ENSURE_ROUTE) return ensureApi(req, res, role);
+    // POST /api/loom/people/merge (docs/specs/person-cards.md, "Merge"): a household owner, or the runtime.
+    if (piece === 'loom' && subpath === MERGE_ROUTE) return mergeApi(req, res, role);
     // The runtime and review roles reach only core's routes ROLE_ROUTES names for them.
     if (role.kind === 'runtime' || role.kind === 'review') {
       if (piece !== 'loom' || !roleReaches(role.kind, subpath)) return sendError(res, 403, `forbidden: a ${role.kind} token reaches only ${reachList(role.kind)}`);
@@ -626,6 +629,45 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       }
       process.stderr.write(`loom: couldn't ensure a person card: ${(e as Error).message}\n`);
       return sendError(res, 503, 'unavailable: couldn\'t ensure the card; see the daemon log');
+    }
+  }
+
+  /**
+   * POST /api/loom/people/merge {from, into, dry_run?}: make two person cards one
+   * (backends/people-merge.ts), across the household's directory and every agent's store. Who
+   * may: a household owner; the runtime. An agent merges with person_merge; nobody else reaches it.
+   */
+  async function mergeApi(req: IncomingMessage, res: ServerResponse, role: Role): Promise<void> {
+    if (req.headers['origin'] !== undefined) return sendError(res, 403, 'forbidden: /api refuses browser requests');
+    const h = live?.();
+    if (!h) return sendError(res, 404, 'not-found: this server has no household');
+    let actor: string;
+    if (role.kind === 'owner') {
+      const c = ownerCaller(role.member);
+      if (c.kind !== 'owner' || (c.agents !== undefined && c.agents !== '*')) return sendError(res, 403, 'forbidden: cards are merged by a household owner or the runtime');
+      actor = c.who ?? 'owner';
+    } else if (role.kind === 'runtime') {
+      actor = `runtime:${role.piece}`;
+    } else {
+      return sendError(res, 403, role.kind === 'agent'
+        ? 'forbidden: an agent merges cards with person_merge; people/merge is the owner\'s and the runtime\'s'
+        : `forbidden: a ${role.kind} token doesn't merge cards`);
+    }
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return sendError(res, 415, 'unsupported-media-type: POST /api takes application/json');
+    const raw = await collectBody(req, 4 * 1024);
+    if (raw === OVERSIZED) return sendError(res, 413, 'oversized: a merge is 4 KB at most');
+    let body: unknown;
+    try { body = raw === '' ? {} : JSON.parse(raw); } catch { return sendError(res, 400, 'bad-input: malformed JSON'); }
+    try {
+      return sendJson(res, 200, personMergeRun(agentDir(h, h.default), body, actor));
+    } catch (e) {
+      if (e instanceof PersonMergeError) {
+        const code = e.status === 404 ? 'not-found' : e.status === 409 ? 'conflict' : 'bad-input';
+        return sendError(res, e.status, `${code}: ${e.message}`);
+      }
+      if (e instanceof PersonCardError) return sendError(res, 400, `bad-input: ${e.message}`);
+      process.stderr.write(`loom: couldn't merge person cards: ${(e as Error).message}\n`);
+      return sendError(res, 503, 'unavailable: couldn\'t merge the cards; see the daemon log');
     }
   }
 

@@ -53,6 +53,7 @@ import {
   personHistory,
   personRevisionRestore,
   personEvidence,
+  personMerge,
 } from './tools/person.js';
 import {
   projectWrite,
@@ -991,6 +992,30 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ slug, reason }) => {
       const result = await personArchive(contextDir, { slug, reason });
+      return { content: [{ type: 'text' as const, text: result }] };
+    },
+  );
+
+  server.registerTool(
+    'person_merge',
+    {
+      description:
+      'Merge two person cards that turn out to be one person (two agents each met them and each made a card). ' +
+      'from becomes an archived redirect to into: reading from answers into\'s card, and a later write to from lands on into. ' +
+      'into keeps its name and summary (plus one "Merged <from> (<name>) <date>" line; from\'s card stays in into\'s history); ' +
+      'where is the union of both cards\' values, how and may the union with into winning a clash. In a household every agent\'s ' +
+      'copy is merged, and every agent\'s memories, proposals, conversations and turns tagged from are re-tagged into. ' +
+      'Refused when either card is missing or archived, when from is into, a household agent or a member. ' +
+      'dry_run: true reports what would change and writes nothing. Afterwards rename the slug in every agent\'s gates (not_done says so).',
+      inputSchema: z.object({
+        from: slugParam.describe('The card merged away: it becomes a redirect to into.'),
+        into: slugParam.describe('The card that survives.'),
+        dry_run: z.boolean().optional().describe('Report what would change (where values, re-tags per agent, conversations, projects); write nothing.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async ({ from, into, dry_run }) => {
+      const result = await personMerge(contextDir, { from, into, ...(dry_run !== undefined ? { dry_run } : {}) });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

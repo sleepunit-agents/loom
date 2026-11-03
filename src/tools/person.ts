@@ -13,6 +13,7 @@ import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
 import { agentDir, householdOf, type Household } from '../household.js';
 import { commonsPeoplePath, HouseholdPeople, openHouseholdPeople } from '../backends/people-household.js';
 import { checkEnsureInput, ensurePerson, type EnsureResult } from '../backends/people-ensure.js';
+import { checkMergeInput, mergePeople, type PersonMergeResult } from '../backends/people-merge.js';
 import {
   openPeopleStore,
   PeopleStore,
@@ -119,6 +120,30 @@ export function personEnsure(contextDir: string, body: unknown, actor: string): 
     return ensurePerson(store, input);
   } finally {
     store.close();
+  }
+}
+
+/**
+ * Merge person card `from` into `into` (backends/people-merge.ts): `body` is {from, into,
+ * dry_run?}, `actor` who's merging (recorded on the redirect and every revision). The caller
+ * has already checked that they may: the owner, the runtime, or an agent of the household
+ * that holds both cards (its own store, outside one). In a household every agent's copy and
+ * store is merged; the answer shows the card as this context's agent sees it. Throws
+ * PersonMergeError (its `status` says 400, 404 or 409).
+ */
+export function personMergeRun(contextDir: string, body: unknown, actor: string): PersonMergeResult {
+  const input = checkMergeInput(body);
+  const hh = householdOf(contextDir);
+  return mergePeople(hh ? { household: hh.household, viewer: hh.agent, actor } : { contextDir, agentName: resolveIdentityName(contextDir), actor }, input);
+}
+
+/** The MCP tool: an agent merges two cards of its own household (or its own store). */
+export async function personMerge(contextDir: string, input: { from: string; into: string; dry_run?: boolean }): Promise<string> {
+  try {
+    const hh = householdOf(contextDir);
+    return json(personMergeRun(contextDir, input, hh?.agent ?? resolveIdentityName(contextDir)));
+  } catch (e) {
+    return errorText(e);
   }
 }
 
