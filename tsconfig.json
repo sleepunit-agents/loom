@@ -14,5 +14,5 @@
     "sourceMap": false
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/test-setup.ts", "src/cli/test-helpers.ts"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "src/test-setup.ts", "src/test-isolation.ts", "src/cli/test-helpers.ts"]
 }
