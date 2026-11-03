@@ -262,7 +262,7 @@ const gates = new Map<string, Pool>();
 export function runtimeFailure(exit: number | undefined, answer: unknown): { status: number; error: string } | undefined {
   if (exit !== 1 || !isObject(answer)) return undefined;
   const { status, error } = answer;
-  if (typeof status !== 'number' || !Number.isInteger(status) || status < 500 || status > 599) return undefined;
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 400 || status > 599) return undefined;
   if (typeof error !== 'string' || !error.length) return undefined;
   return { status, error: error.slice(0, 500) };
 }
@@ -291,7 +291,7 @@ const conflict = (id: string): DeliverResult =>
  * 400 for a body that isn't the contract's; 403 for a delivery the caller may not make; 503
  * with no delivery piece; then the kept answer for a repeat (409 when the same id came with
  * another body), or the runtime's answer. A piece over its share is a 503 (in flight) or 429
- * (kept in a day). A runtime that says it failed is its own 5xx; one that fails otherwise or
+ * (kept in a day). A runtime that says it failed is its own 4xx or 5xx; one that fails otherwise or
  * answers something else is a 502, a timeout a 504, a full pool a 503. None of those is kept.
  */
 export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, raw: unknown, nowMs: () => number = Date.now): Promise<DeliverResult> {
@@ -321,7 +321,8 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
     if (gate.idle && gates.get(k.piece) === gate) gates.delete(k.piece);
     if (r === null) return refuse(503, `unavailable: ${k.piece} has too many deliveries in flight (${DELIVERY_LIMITS.perPieceRunning} running, ${DELIVERY_LIMITS.perPieceWaiting} waiting); try again shortly`);
     if (!r.ok) {
-      // The runtime's own failure: exit 1 with {status: 5xx, error} on stdout, passed through as that status.
+      // The runtime's own answer: exit 1 with {status: 4xx|5xx, error} on stdout, passed through as that status
+      // (a 400 for a body it can't take is the source's to fix, not a gateway's failure), and never kept.
       const said = runtimeFailure(r.exit, r.answer);
       if (said) return refuse(said.status, said.error);
       if (r.error === 'busy') return refuse(503, `unavailable: the delivery piece (${target.piece}) is busy; try again shortly`);

@@ -56,7 +56,8 @@ process.stdin.on('end', () => {
   const mode = fs.existsSync(home + '/runtime-mode') ? fs.readFileSync(home + '/runtime-mode', 'utf-8').trim() : 'ok';
   if (mode === 'fail') { process.exit(1); }
   if (mode === 'said') { console.log(JSON.stringify({ status: 503, error: 'no house free for art' })); process.exit(1); }
-  if (mode === 'said-badly') { console.log(JSON.stringify({ status: 404, error: 'not a 5xx' })); process.exit(1); }
+  if (mode === 'said-badly') { console.log(JSON.stringify({ status: 302, error: 'not a 4xx or 5xx' })); process.exit(1); }
+  if (mode === 'said-400') { console.log(JSON.stringify({ status: 400, error: 'bad-input: place is not one of the venue\\'s' })); process.exit(1); }
   if (mode === 'huge') { console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started', reason: 'x'.repeat(65 * 1024) })); return; }
   if (mode === 'bad') { console.log(JSON.stringify({ conversation: 'nope', seq: 0, body: 'eaten' })); return; }
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
@@ -111,7 +112,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'said-400' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -268,14 +269,17 @@ describe('POST /api/loom/deliver', () => {
     it('a runtime that says it failed (exit 1, {status: 5xx, error}) is that status, and isn\'t kept', async () => {
       mode('said');
       expect(await post(tok.slack, slackMsg('m-said'))).toEqual({ status: 503, body: { error: 'no house free for art' } });
-      // Saying a status outside 5xx is no contract answer: core's 502.
+      // A 4xx the runtime says (a body it can't take) is that 4xx with its error, not core's 502; never kept.
+      mode('said-400');
+      expect(await post(tok.slack, slackMsg('m-said'))).toEqual({ status: 400, body: { error: "bad-input: place is not one of the venue's" } });
+      // Saying a status outside 4xx-5xx is no contract answer: core's 502.
       mode('said-badly');
       const r = await post(tok.slack, slackMsg('m-said'));
       expect(r.status).toBe(502);
       expect(r.body.error).toMatch(/failed \(exit 1\)/);
       mode('ok');
       expect((await post(tok.slack, slackMsg('m-said'))).status).toBe(200);
-      expect(calls()).toHaveLength(3);
+      expect(calls()).toHaveLength(4);
     });
 
     it('the table is in household.db; an answer over 24 hours old is neither replayed nor kept', () => {
