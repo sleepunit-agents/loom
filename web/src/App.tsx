@@ -106,7 +106,9 @@ export default function App() {
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => [...x, { ...n, id: Date.now() + Math.random() }]), []);
+  // One toast per outcome: an action that lands on another page says it, and that page's one-time flash says it again.
+  const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
+    ? x : [...x, { ...n, id: Date.now() + Math.random() }])), []);
 
   // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
   // asked behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow").

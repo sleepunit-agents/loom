@@ -53,7 +53,23 @@ interface File {
    * Another member's own `seen` and `opened` (docs/specs/owners.md): one member's reading doesn't
    * read it for another. The first household owner keeps the household's `seen` and `opened` above.
    */
-  members?: Record<string, { seen?: { at: number; since: number }; opened?: Record<string, number> }>;
+  members?: Record<string, { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[] }>;
+  /** What the owner's actions said (their toasts), kept as FYI items in the Inbox (Jonathan, 2026-11-03). */
+  done?: Done[];
+}
+
+/** One action's outcome, as its toast said it: an FYI item in the Inbox afterwards. */
+export interface Done {
+  /** When, in seconds. */
+  at: number;
+  ok: boolean;
+  /** The toast's line. */
+  text: string;
+  /** Who said it: loom, or a piece (its id and its tab's label). */
+  source: { id: string; base: string; act?: string };
+  sourceLabel?: string;
+  /** Where it was done (a loom: or piece link), to go back to. */
+  page?: string;
 }
 
 export interface PushSub { endpoint: string; keys: { p256dh: string; auth: string } }
@@ -70,8 +86,11 @@ interface PushState {
 
 /** Away for at least this long, and the "new since" boundary moves up to when you last looked. */
 export const SEEN_GAP_S = 15 * 60;
+/** The Inbox keeps this many of the owner's own outcomes; past it, the oldest go. */
+export const DONE_MAX = 50;
+
 /** Where a reader's `seen` and `opened` live: the household's for the first owner (no reader), else their own. */
-function readerOf(f: File, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number> } {
+function readerOf(f: File, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[] } {
   if (!reader) return f;
   f.members ??= {};
   return (f.members[reader] ??= {});
@@ -290,6 +309,20 @@ export class SessionStore {
         for (const k of keys.sort((a, b) => r.opened![a] - r.opened![b]).slice(0, keys.length - OPENED_MAX)) delete r.opened[k];
       }
     });
+  }
+
+  /** An action's outcome (what its toast said), for this reader's Inbox: newest first, DONE_MAX kept. */
+  noteDone(d: Done, reader?: string): void {
+    this.withLock((f) => {
+      const r = readerOf(f, reader);
+      r.done = [d, ...(r.done ?? [])].slice(0, DONE_MAX);
+    });
+  }
+
+  /** This reader's own outcomes, newest first. */
+  doneItems(reader?: string): Done[] {
+    if (!existsSync(this.file)) return [];
+    return this.withLock((f) => [...(readerOf(f, reader).done ?? [])]);
   }
 
   /** The items this reader's Inbox has opened. */
