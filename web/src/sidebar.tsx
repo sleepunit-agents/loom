@@ -1,7 +1,7 @@
 // A desktop's side of the page, as 000h's own docs have it (Jonathan, 2026-10-29): one panel down the whole side,
-// loom's mark and name at the top, Find under it (⌘K), the pages in groups, and who's signed in at the bottom (their
+// loom's mark and name at the top, Find under it (⌘K, App.tsx; it opens find.tsx's overlay), the pages in groups, and who's signed in at the bottom (their
 // account menu: passkeys, sign out). Each destination is in one group (nav.ts).
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroupLabel, SidebarHeader, SidebarMenuBadge, SidebarMenuButton, SidebarMenuLabel } from '@/components/ui/sidebar';
 import type { AgentHead, AgentView, Chrome } from './loom';
@@ -18,11 +18,6 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
   chrome: Chrome; head?: AgentHead; agent?: AgentView; go: (href: string) => void; icon: (label: string) => string;
 }) {
   const s = chrome.shell;
-  // ⌘K / Ctrl-K: Find, from anywhere.
-  useEffect(() => {
-    const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); go('/find'); } };
-    addEventListener('keydown', f); return () => removeEventListener('keydown', f);
-  }, [go]);
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const row = (t: Item, lead?: React.ReactNode) => (
     <SidebarMenuButton key={t.href} href={t.href} isActive={t.current} onClick={(e) => { e.preventDefault(); go(t.href); }}>

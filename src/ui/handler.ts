@@ -56,7 +56,7 @@ import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { resolvePieceName } from '../cli/pieces.js';
-import { householdFind, householdThread } from './household-pages.js';
+import { householdFind, householdSuggestPeople, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
@@ -111,7 +111,7 @@ export interface UiOptions {
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance'
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
@@ -176,7 +176,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
   return `bearer:${createHash('sha256').update(String(req.headers.authorization ?? '')).digest('base64url')}`;
 }
 
-const PAGE_ROOTS = ['/app', '/events', '/setup', '/appearance', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+const PAGE_ROOTS = ['/app', '/events', '/setup', '/appearance', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -725,7 +725,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
   // same number its Needs you shows, so the badge is never a 1 for something already answered.
   const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
-  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'appearance'].includes(current) ? current : '';
+  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'appearance', 'account'].includes(current) ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
@@ -1228,19 +1228,25 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
     const q = (url.searchParams.get('q') ?? '').slice(0, 100);
     { const which = tab as 'scope' | 'places' | 'find' | 'setup' | 'appearance'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
-      return view('sheet', { which, chrome: ch, q, found }); }
+      // Find with nothing typed: who's in the household, for its suggestions (Knowledge and People are the household's).
+      const hhNow = opts.household?.();
+      const suggest = tab === 'find' && !q.trim() && hhNow && !opts.ownerScope
+        ? { people: householdSuggestPeople(hhNow).map((p) => ({ label: p.name, href: `/people/${p.slug}` })) } : undefined;
+      return view('sheet', { which, chrome: ch, q, found, suggest }); }
   }
 
-  if (pathname === '/passkeys') {
+  // The account (Jonathan, 2026-11-03): who's signed in, their passkeys, push on this device, signing out. The avatar
+  // on a phone's dock and the side's account menu open it; /passkeys is the same page under its old name.
+  if (pathname === '/passkeys' || pathname === '/account') {
     const tz = uiTimeZone();
     const when = (s?: number) => (s ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(s * 1000)) : 'never');
     // An agent owner sees their own passkeys; a household owner, every one.
     const keys = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : storeFor(opts).passkeys();
     const page: Page = {
-      title: 'Passkeys',
+      title: 'Account',
       sections: [
         // The board's order: your passkeys, then adding one (loom's control, put in after this), then another device.
-        { id: 'passkeys', blocks: keys.length
+        { id: 'passkeys', title: 'Passkeys', blocks: keys.length
           ? [{ type: 'list', items: keys.slice(0, 200).map((k) => {
               const works = opts.auth.live(Buffer.from(k.secret, 'hex'));
               return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}` : 'its token was revoked, so it no longer works',
@@ -1254,13 +1260,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ] }] : []),
       ],
     };
-    const ch = chrome(req, opts, pieces, skippedNames, 'passkeys', csrf, flash);
+    const ch = chrome(req, opts, pieces, skippedNames, 'account', csrf, flash);
+    // Who this is, as the account's head says it: their name, and what they are in the household.
+    const member = who?.member;
+    const named = hh && member ? (member.agents === '*' ? 'Household owner' : `Owns ${member.agents.map((a) => agentName(agentDir(hh, a))).join(', ')}`) : hh ? 'Household owner' : 'Signed in';
+    const me = { name: ch.shell?.owner ?? 'owner', role: named };
     const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
       : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
       : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
       : { csrf };
     // The app draws the list, and adds loom's own "add a passkey" control (WebAuthn) and the push switch beside it.
-    return view('passkeys', { page, ctx: { source: CORE, path: 'passkeys', query, csrf }, chrome: ch, add });
+    return view('passkeys', { page, ctx: { source: CORE, path: 'passkeys', query, csrf }, chrome: ch, add, me });
   }
 
   if (hh) {
