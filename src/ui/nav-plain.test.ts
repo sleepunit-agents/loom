@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT, placesOf, settingsOf } from '../../web/src/nav';
+import { ACCOUNT, APPEARANCE, placesOf, settingsOf } from '../../web/src/nav';
 
 // The shell as loom answers it for a household (handler.ts chrome): loom's own places, and the pieces with their kinds.
 const shell = (over: Record<string, unknown> = {}) => ({
@@ -12,14 +12,16 @@ const shell = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('each destination has one home (web/src/nav.ts)', () => {
-  it('Places holds the apps; not the Inbox (its own tab), not a setting, not Appearance (a panel of Setup)', () => {
+  it('Places holds the apps; not the Inbox (its own tab), not a setting, not Appearance (Setup\'s)', () => {
     expect(placesOf(shell()).map((p) => p.label)).toEqual(['Activity', 'Knowledge', 'People', 'Tasks']);
   });
 
-  it('Setup holds the household\'s configuration only: no appearance, no passkeys, no sign out', () => {
-    expect(settingsOf(shell()).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Members', 'Pieces']);
-    // An agent owner (admin false) manages neither the members nor the pieces.
-    expect(settingsOf(shell({ admin: false })).map((p) => p.label)).toEqual(['Boxes', 'Bridges']);
+  it('Setup holds the household\'s configuration, then Appearance as a tile of its own: no passkeys, no sign out', () => {
+    expect(settingsOf(shell()).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Members', 'Pieces', 'Appearance']);
+    expect(settingsOf(shell()).at(-1)).toMatchObject({ href: APPEARANCE.href, current: false });
+    expect(settingsOf(shell({ tab: 'appearance' })).at(-1)?.current).toBe(true);
+    // An agent owner (admin false) manages neither the members nor the pieces; their device's look is still theirs.
+    expect(settingsOf(shell({ admin: false })).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Appearance']);
   });
 
   it('no destination is in two of Places, Setup and the account', () => {

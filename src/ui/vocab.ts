@@ -155,8 +155,9 @@ export interface Manifest {
    * only household owners see the piece at all.
    */
   owners?: 2;
-  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages. */
-  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level };
+  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages.
+   * icon: a lucide icon's name for its tile and tab (`alarm-clock`); one loom can't draw is a plain one. */
+  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string };
   /**
    * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
    * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
@@ -786,7 +787,9 @@ export function parseManifest(value: unknown): Manifest | string {
       const t = obj(top.tab, 'tab');
       if (t.kind !== undefined && t.kind !== 'place' && t.kind !== 'setting') throw new Invalid('tab.kind must be place or setting');
       const lv = level(t.level, 'tab.level');
-      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}) };
+      const icon = optStr(t.icon, 'tab.icon');
+      if (icon !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(icon)) throw new Invalid('tab.icon must be a lucide icon name (alarm-clock)');
+      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}), ...(icon ? { icon } : {}) };
     }
     if (top.agentTab !== undefined) {
       const t = obj(top.agentTab, 'agentTab');

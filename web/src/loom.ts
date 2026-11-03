@@ -46,7 +46,7 @@ export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };
   core: { label: string; href: string; current: boolean; count?: number }[];
-  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting' }[];
+  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string }[];
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }

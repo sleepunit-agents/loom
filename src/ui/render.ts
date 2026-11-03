@@ -80,7 +80,7 @@ export interface Shell {
   core: Array<{ label: string; href: string; current: boolean; count?: number }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
   /** kind: a place (Places) or a setting (Setup), from the piece's tab.kind or the catalog. */
-  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting' }>;
+  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string }>;
   /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance' or ''. */
   tab: string;
 }

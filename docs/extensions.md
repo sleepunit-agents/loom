@@ -324,7 +324,9 @@ that ignores it keeps working. Outside a household there's no `caller`.
   (`kinds` in loom's `assets/pieces.json`), else a place. Optional `level`: `"loom"` (the default) keeps the
   tab on the household's pages. `"agent"` puts it on each agent's own pages,
   where the piece is called with `LOOM_SCOPE` set. A page's section may carry
-  the same `level` when it's about one agent within a household page.
+  the same `level` when it's about one agent within a household page. Optional `icon`: a
+  [lucide](https://lucide.dev/icons) icon's name (`"alarm-clock"`, `"key-round"`) for the
+  piece's tile and tab; without one, loom's own for its label, else a plain circle.
 - **`agentTab`** (`{ "label": "Clock" }`) puts a tab on each agent's own pages
   too, beside Today, Mind and Setup: served at `/a/<agent>/p/<piece>/<path>`,
   the piece called with `LOOM_SCOPE=<agent>`, its links and actions staying

@@ -44,7 +44,11 @@ const ICON: Record<string, string> = {
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
   Appearance: 'palette', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round',
 };
-const icon = (label: string) => ICON[label] ?? 'circle';
+// A piece's own icon (its manifest's tab.icon) first, then loom's for that name.
+const iconsOf = (chrome?: Chrome) => {
+  const own = Object.fromEntries((chrome?.shell?.pieces ?? []).filter((p) => p.icon).map((p) => [p.label, p.icon!]));
+  return (label: string) => own[label] ?? ICON[label] ?? 'circle';
+};
 
 function useWide() {
   const q = '(min-width: 1024px)';
@@ -64,7 +68,7 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const settings = s.pieces.filter((p) => p.kind === 'setting');
   const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
   const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
-  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) };
+  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || settings.some((p) => p.current) };
   // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, More. Places is where you go regularly; More is the
   // house's settings and Setup (Jonathan, 2026-10-31: "places holds the things you actually go to regularly, ... the
   // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
@@ -226,6 +230,7 @@ export default function App() {
   const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => send(a, f, c), go, wide, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
   const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
+  const icon = useMemo(() => iconsOf(chrome), [chrome]);
   // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
   // A phone's dock never scrolls (Jonathan, 2026-10-29): as many tiles as the width holds, the one you're on always
   // among them, the rest under More (…). On an agent's pages the dock swaps (his "dock swap" board): the agent's
@@ -343,7 +348,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
