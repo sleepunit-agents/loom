@@ -99,14 +99,6 @@ export function listPieces(env: NodeJS.ProcessEnv): InstalledPiece[] {
 }
 
 /**
- * Run a piece with `args`, passing loom's env through (plus, for a managed
- * piece, its own: pieceEnvFor). With the
- * process's own streams the piece inherits the terminal (so it can prompt,
- * e.g. for a secret's value); with captured streams (tests) its output is
- * forwarded. Exit code: the piece's own, 128+signal if it was killed, 127 if
- * it couldn't start.
- */
-/**
  * Whether this run of a piece is the owner's, at loom's machine: nothing in the environment says
  * it's a piece's own process (LOOM_PIECE_NAME), a call loom gave a grant (LOOM_STORE_GRANT), or a
  * house (a loom token to call home with, a house id). The same rule `loom person ensure` and
@@ -131,6 +123,14 @@ export function dispatchEnv(path: string, env: NodeJS.ProcessEnv): NodeJS.Proces
   } catch { return out; }
 }
 
+/**
+ * Run a piece with `args`, passing loom's env through (plus, for a managed
+ * piece, its own: pieceEnvFor). With the
+ * process's own streams the piece inherits the terminal (so it can prompt,
+ * e.g. for a secret's value); with captured streams (tests) its output is
+ * forwarded. Exit code: the piece's own, 128+signal if it was killed, 127 if
+ * it couldn't start.
+ */
 export async function runPiece(path: string, args: string[], io: IOStreams): Promise<number> {
   const inherit = io.stdin === process.stdin;
   const child = spawn(path, args, {
