@@ -445,7 +445,9 @@ outside the page).
 
 | Block | Fields |
 |---|---|
-| `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`. One item alone is the page's hero (its number at the top size) |
+| `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`, `spark` (up to 30 numbers, oldest first: a small trend line under the value), `meter` (0 to 1: a bar under the value, like a disk's use). One item alone is the page's hero (its number at the top size) |
+| `health` | `tone` (required), `text`, optional `detail`. A status screen's headline: how things are in a word or two ("All good", "One bridge is down"), big, with an icon for its tone (never colour alone). Put it first, tiles (`stats`) under it, and the engineering proof in a `details` |
+| `panel` | `rows`, optional `title`, `action` (one `buttons` item: the panel's primary action, at its foot). Settings as an app's panel; see Panels below |
 | `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
@@ -463,6 +465,34 @@ outside the page).
 | `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
 | `chart` | `kind` (`bar`, `area` or `line`), `series` (1 to 5: `key`, lowercase letters, digits and `_`; `label`; optional `color`: `pink`, `blue`, `olive`, `yellow`, `ink`), `data` (up to 60 points: `label`, and a number or `null` per series key). Optional `variant` (bar: `grouped`, the default, or `stacked`; area: `smooth` or `stacked`; line: `smooth` or `step`), `caption` (what it shows, for a screen reader too), `summary` (`label`, `value`, optional `detail`: the one number it adds up to). 000h's chart: hover or tap a point to read it; a missing value stays missing, never a zero |
 
+#### Panels
+
+A setting is a `panel` row, not a form (Jonathan, 2026-11-03: "app panels, not web forms"). A row says
+what the setting is now, in words people use, and holds **at most one** way to change it:
+
+| Row field | |
+|---|---|
+| `label` | what it is ("When", "Who gets it") |
+| `value`, `detail` | what it is now, as a sentence ("5:17 AM, weekdays"), and a quieter line under it. Both wrap; nothing is cut |
+| `tone`, `agent` | a status dot (with the words saying the same), an agent's mark |
+| `toggle` | `{action, on, fields?}`: a switch that applies at once. It posts `action` with `fields` and `on` set to `"on"` or `""`; if the piece answers `ok: false`, the switch goes back |
+| `choice` | `{action, name, value, options (2 to 5: value, label), fields?}`: a segmented control that applies at once, posting `name` = the chosen value |
+| `edit` | `{action, fields, title?, submit?, note?, hidden?}`: a tap opens a sheet with these fields (a form: keep it to the one or two that change together) |
+| `sheet` | `{title?, blocks}`: a tap opens a sheet of detail: the proof, a log, the raw record. A sheet can't hold a row with another sheet |
+| `page` or `href` | a tap goes there |
+| `act` | one button at the row's end (a danger one asks first) |
+
+A row with two of these is refused, and so is the page it's on. Raw ids, hashes and JSON never go in a
+`label` or `value`: name things the way people do, and put the id in a `sheet` for whoever asks for it.
+
+Fields gain three kinds for sheets and forms: `toggle` (a switch, posted `on` or empty), `segmented`
+(2 to 5 `options` side by side, one chosen) and `stepper` (a whole number with − and +; optional `min`,
+`max`, `step` and `unit`, such as `"days"`). A `checks` field of up to seven short options (four letters
+or fewer, like the days of a week) is drawn as a row of chips.
+
+A row in a `list` runs to two lines; a row that goes nowhere opens to its whole text when tapped, and
+`wrap` shows it whole from the start (comments, notes). A row that goes somewhere shows it all there.
+
 A `list` or `table` longer than a page can send one page at a time and say so with
 `pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
 page (from 1), how many pages there are and, optionally, how many rows in all.
@@ -478,7 +508,7 @@ a row that doesn't is drawn as nobody's yet (a dashed circle), never a gap. A li
 Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind
 `text`, `textarea`, `choice` (with `options`: `value`, `label`, optional
-`detail`), `secret`, `check` (one checkbox: posted as `on`, or empty when it's
+`detail`), `toggle`, `segmented`, `stepper` (see Panels), `time`, `secret`, `check` (one checkbox: posted as `on`, or empty when it's
 not ticked; `value` `on` starts it ticked) or `checks` (any number of its
 `options`: posted as the ticked values joined with commas, so an option's
 value can't hold one; `value` the same way). A `secret` field never carries a `value` and is drawn

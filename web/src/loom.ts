@@ -5,7 +5,7 @@ export type Tone = 'ok' | 'warn' | 'bad' | 'muted';
 export interface Source { id: string; base: string; act?: string }
 export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string }> }
 export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
-export interface Field { name: string; label: string; kind: 'text' | 'textarea' | 'secret' | 'choice' | 'number' | 'date' | 'toggle' | 'check' | 'checks' | 'time'; value?: string; hint?: string; required?: boolean; multiple?: boolean; options?: { value: string; label: string; detail?: string; swatch?: string }[] }
+export interface Field { name: string; label: string; kind: 'text' | 'textarea' | 'secret' | 'choice' | 'number' | 'date' | 'toggle' | 'check' | 'checks' | 'time' | 'segmented' | 'stepper'; value?: string; min?: number; max?: number; step?: number; unit?: string; hint?: string; required?: boolean; multiple?: boolean; options?: { value: string; label: string; detail?: string; swatch?: string }[] }
 export type Block =
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
@@ -16,7 +16,9 @@ export type Block =
   | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean; who?: boolean }
   | { type: 'table'; columns: string[]; rows: (string | { text: string; page?: string })[][] }
   | { type: 'kv'; items: { label: string; value: string; page?: string }[] }
-  | { type: 'stats'; items: { label: string; value: string; detail?: string; tone?: Tone; page?: string }[] }
+  | { type: 'stats'; items: { label: string; value: string; detail?: string; tone?: Tone; page?: string; spark?: number[]; meter?: number }[] }
+  | { type: 'health'; tone: Tone; text: string; detail?: string }
+  | { type: 'panel'; title?: string; rows: PanelRow[]; action?: Button }
   | { type: 'link'; text: string; page?: string; href?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
@@ -28,6 +30,14 @@ export type Block =
   | { type: 'chart'; kind: 'bar' | 'area' | 'line'; variant?: 'grouped' | 'stacked' | 'smooth' | 'step'; caption?: string; summary?: { label: string; value: string; detail?: string };
       series: { key: string; label: string; color?: 'pink' | 'blue' | 'olive' | 'yellow' | 'ink' }[]; data: ({ label: string } & Record<string, number | string | null>)[] }
   | { type: string; [k: string]: unknown };
+export interface PanelRow {
+  label: string; value?: string; detail?: string; tone?: Tone; agent?: string; page?: string; href?: string;
+  toggle?: { action: string; on: boolean; fields?: Record<string, string> };
+  choice?: { action: string; name: string; value: string; options: { value: string; label: string }[]; fields?: Record<string, string> };
+  edit?: { action: string; title?: string; submit?: string; note?: string; fields: Field[]; hidden?: Record<string, string> };
+  sheet?: { title?: string; blocks: Block[] };
+  act?: Button;
+}
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
 export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }

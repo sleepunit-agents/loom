@@ -211,3 +211,52 @@ describe('chart, folding sections and who a row is (Jonathan, 2026-10-31)', () =
     expect(ok(page([{ type: 'list', who: 'yes', items: [] }])).sections[0].blocks[0]).not.toHaveProperty('who');
   });
 });
+
+describe('app panels and status screens (Jonathan, 2026-11-03: "app panels, not web forms"; "status screens, not markdown dumps")', () => {
+  const one = (blocks: unknown[]) => ok(page(blocks)).sections[0].blocks[0];
+  it('a panel row states its value and holds one control: a toggle, a segmented choice, an edit sheet, a detail sheet, a link or a button', () => {
+    const p = one([{ type: 'panel', title: 'Knowledge expand', rows: [
+      { label: 'On', value: 'Runs daily', toggle: { action: 'lane-enabled', on: true, fields: { lane: 'knowledge-expand' } } },
+      { label: 'Where', choice: { action: 'lane-where', name: 'where', value: 'house', options: [{ value: 'house', label: 'A house' }, { value: 'local', label: 'loom\'s machine' }] } },
+      { label: 'When', value: '5:17 AM daily', edit: { action: 'lane-when', title: 'When it runs', fields: [{ name: 'at', label: 'Time', kind: 'time', value: '05:17' }, { name: 'days', label: 'Days', kind: 'checks', options: [{ value: 'mon', label: 'M' }] }] } },
+      { label: 'Last run', value: 'Today, 5:17 AM', tone: 'ok', sheet: { title: 'Last run', blocks: [{ type: 'code', text: 'ok' }] } },
+      { label: 'Whose', value: 'Art', agent: 'art', page: 'agent:art' },
+    ], action: { action: 'lane-run', label: 'Run now', tone: 'primary' } }]) as Extract<Block, { type: 'panel' }>;
+    expect(p.rows).toHaveLength(5);
+    expect(p.rows[0].toggle).toEqual({ action: 'lane-enabled', on: true, fields: { lane: 'knowledge-expand' } });
+    expect(p.rows[1].choice?.options).toHaveLength(2);
+    expect(p.rows[2].edit?.fields.map((f) => f.kind)).toEqual(['time', 'checks']);
+    expect(p.rows[3].sheet?.blocks[0]).toMatchObject({ type: 'code' });
+    expect(p.action?.label).toBe('Run now');
+  });
+
+  it('a panel row with two controls, a sheet in a sheet, or a one-option choice is refused whole', () => {
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', toggle: { action: 'a', on: true }, page: 'y' }] }])).toBe('string');
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', toggle: { action: 'a', on: 'yes' } }] }])).toBe('string');
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', choice: { action: 'a', name: 'n', value: 'v', options: [{ value: 'v', label: 'V' }] } }] }])).toBe('string');
+    expect(typeof page([{ type: 'panel', rows: [{ label: 'x', sheet: { blocks: [{ type: 'panel', rows: [{ label: 'y', sheet: { blocks: [] } }] }] } }] }])).toBe('string');
+  });
+
+  it('a toggle, a segmented control and a stepper are fields too', () => {
+    const f = (one([{ type: 'form', action: 'a', submit: 'Save', fields: [
+      { name: 'on', label: 'On', kind: 'toggle', value: 'on' },
+      { name: 'mode', label: 'Mode', kind: 'segmented', value: 'b', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] },
+      { name: 'keep', label: 'Keep', kind: 'stepper', value: '14', min: 1, max: 90, step: 1, unit: 'days' },
+    ] }]) as Extract<Block, { type: 'form' }>).fields;
+    expect(f.map((x) => x.kind)).toEqual(['toggle', 'segmented', 'stepper']);
+    expect(f[2]).toMatchObject({ min: 1, max: 90, step: 1, unit: 'days', value: '14' });
+    expect(typeof page([{ type: 'form', action: 'a', submit: 'S', fields: [{ name: 'k', label: 'K', kind: 'stepper', min: 5, max: 1 }] }])).toBe('string');
+    expect(typeof page([{ type: 'form', action: 'a', submit: 'S', fields: [{ name: 'k', label: 'K', kind: 'toggle', value: 'yes' }] }])).toBe('string');
+    expect(typeof page([{ type: 'form', action: 'a', submit: 'S', fields: [{ name: 'k', label: 'K', kind: 'segmented', options: Array.from({ length: 6 }, (_, i) => ({ value: `${i}`, label: `${i}` })) }] }])).toBe('string');
+  });
+
+  it('a status screen leads with its health in plain words; a tile may carry a trend or how full it is', () => {
+    expect(one([{ type: 'health', tone: 'ok', text: 'All good', detail: 'Checked a minute ago' }])).toEqual({ type: 'health', tone: 'ok', text: 'All good', detail: 'Checked a minute ago' });
+    expect(typeof page([{ type: 'health', text: 'All good' }])).toBe('string');
+    const s = one([{ type: 'stats', items: [{ label: 'Disk', value: '41%', meter: 0.41, tone: 'ok' }, { label: 'Runs', value: '12', spark: [1, 3, 2, 5] }] }]) as Extract<Block, { type: 'stats' }>;
+    expect(s.items[0].meter).toBe(0.41);
+    expect(s.items[1].spark).toEqual([1, 3, 2, 5]);
+    expect(typeof page([{ type: 'stats', items: [{ label: 'x', value: '1', meter: 2 }] }])).toBe('string');
+    expect(typeof page([{ type: 'stats', items: [{ label: 'x', value: '1', spark: Array(31).fill(1) }] }])).toBe('string');
+  });
+});
