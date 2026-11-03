@@ -27,14 +27,16 @@ import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, 
 import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
+import { placesOf } from './nav';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
-// The sheets (Scope, Places, Find, Setup) load when one opens.
+// The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
+  Appearance: 'palette', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle',
 };
 const icon = (label: string) => ICON[label] ?? 'circle';
 
@@ -53,7 +55,7 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   if (head) return { tabs: head.tabs, more: [] };
   const s = chrome.shell;
   if (!s) return { tabs: chrome.nav.map((n) => ({ ...n })), more: [] };
-  const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')];
+  const places = placesOf(s);
   const settings = s.pieces.filter((p) => p.kind === 'setting');
   const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
   const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
@@ -64,7 +66,7 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
     { label: 'Find', href: '/find', current: s.tab === 'find' }, { label: 'More', href: '/setup', current: setup.current }];
   return matchMedia('(min-width: 1024px)').matches
-    ? { tabs: [home, inbox, ...places.filter((p) => p.href !== '/inbox'), setup], more: settings }
+    ? { tabs: [home, inbox, ...places, setup], more: settings }
     : { tabs: phone, more: [] };
 }
 
@@ -80,10 +82,10 @@ export default function App() {
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
-  // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup, kept in this browser.
+  // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept in this browser.
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
-  // are a choice in Setup, kept in this browser.
+  // are a choice in the Appearance app, kept in this browser.
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
   const setGround = (g: Ground) => { setGroundState(g); try { localStorage.setItem('loom-ground', g); } catch { /* private window */ } };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);

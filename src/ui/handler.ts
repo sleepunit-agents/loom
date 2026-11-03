@@ -112,7 +112,7 @@ export interface UiOptions {
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
   return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/events'
-    || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup'
+    || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance'
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
     || pathname.startsWith('/conversation/');
@@ -176,7 +176,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
   return `bearer:${createHash('sha256').update(String(req.headers.authorization ?? '')).digest('base64url')}`;
 }
 
-const PAGE_ROOTS = ['/app', '/events', '/setup', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+const PAGE_ROOTS = ['/app', '/events', '/setup', '/appearance', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -725,7 +725,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
   // same number its Needs you shows, so the badge is never a 1 for something already answered.
   const needs = pieces.reduce((n, p) => n + p.manifest.asks.filter((a) => a.attention !== false).length, 0) + piecesAsks(opts.env).length;
-  const tab = current === '' ? 'home' : current === 'places' || current === 'scope' || current === 'find' || current === 'setup' ? current : '';
+  const tab = current === '' ? 'home' : ['places', 'scope', 'find', 'setup', 'appearance'].includes(current) ? current : '';
   const h = opts.household?.();
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
@@ -1222,12 +1222,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.end(out.body);
   };
 
-  // The shell's sheets (Scope, Places, Find, Setup): the app draws them as pages.
-  if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup') {
+  // The shell's sheets (Scope, Places, Find, Setup, and the Appearance app, this device's own): the app draws them as pages.
+  if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance') {
     const tab = pathname.slice(1);
     const ch = chrome(req, opts, pieces, skippedNames, tab, csrf, flash);
     const q = (url.searchParams.get('q') ?? '').slice(0, 100);
-    { const which = tab as 'scope' | 'places' | 'find' | 'setup'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
+    { const which = tab as 'scope' | 'places' | 'find' | 'setup' | 'appearance'; const found = tab === 'find' && q.trim() ? findAll(q.trim(), req, opts, pieces) : undefined;
       return view('sheet', { which, chrome: ch, q, found }); }
   }
 
