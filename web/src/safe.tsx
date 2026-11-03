@@ -38,8 +38,9 @@ export class Boundary extends Component<{ children: ReactNode; where: string }, 
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <Callout tone="danger" title="This page couldn't be drawn in the app." actions={<Button size="sm" variant="outline" onClick={() => location.reload()}>Reload</Button>}>
-        {this.state.error}
+      // What broke is the app's to know (the console has it), not the reader's: plain words and a way out.
+      <Callout tone="warn" title="Part of this page couldn’t be shown" actions={<Button size="sm" variant="outline" onClick={() => location.reload()}>Reload</Button>}>
+        Reloading usually fixes it.
       </Callout>
     );
   }

@@ -30,6 +30,33 @@ function arrive(el: HTMLElement): () => void {
   el.classList.remove('loom-arrive');
   void el.offsetWidth;   // restart the animation if it's arriving again
   el.classList.add('loom-arrive');
+  return decode(el);
+}
+
+/**
+ * The app's own arrival (Jonathan, 2026-11-03: "a short, tasteful opening animation on first open of a session"): once
+ * a session, the ground fades up, the header and the cards rise in turn, the dock (or the side) slides in, and the
+ * title resolves out of noise, all in under a second (index.css [data-arrive]). Never under reduced motion, and never
+ * again in that tab's session.
+ */
+export function arriveOnce(title: HTMLElement | null): void {
+  const KEY = 'loom-arrived';
+  try { if (sessionStorage.getItem(KEY)) return; sessionStorage.setItem(KEY, '1'); } catch { return; }
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const root = document.documentElement;
+  root.dataset.arrive = '';
+  if (title) decode(title);
+  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens.
+  const done = () => { delete root.dataset.arrive; };
+  requestAnimationFrame(() => {
+    const t = setTimeout(done, 3000);
+    void Promise.allSettled(document.getAnimations().filter((a) => /^loom-in-/.test((a as CSSAnimation).animationName ?? '')).map((a) => a.finished))
+      .then(() => { clearTimeout(t); done(); });
+  });
+}
+
+/** Its words resolve out of noise (000h's decode); a text React changes meanwhile is left alone. */
+function decode(el: HTMLElement): () => void {
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) => (n.nodeValue?.trim() && !n.parentElement?.closest('svg,input,textarea,select,[data-slot=animated-icon]') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   });
