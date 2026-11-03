@@ -146,6 +146,10 @@ describe('scope', () => {
     expect(res.status).toBe(303);
     expect(res.headers.get('location')).toMatch(/^\/a\/mark\/p\/bridgy\/done\?_flash=/);
     expect((await fetch(`${base}/a/nobody/act/bridgy`, { method: 'POST', headers: { cookie: owner, origin: base } })).status).toBe(404);
+    // What its toast said stays in the Inbox, under FYI: the piece's line, labelled with the piece, never unread.
+    const inbox = await view('/inbox?f=fyi', owner);
+    const fyi = (inbox.items as Array<{ kind: string; text: string; sourceLabel?: string; meta?: string; unread: boolean; attention: boolean }>).filter((it) => it.kind === 'fyi');
+    expect(fyi).toContainEqual(expect.objectContaining({ text: 'poked scope=mark', sourceLabel: 'Bridgy', meta: 'You did this', unread: false, attention: false }));
   });
 
   it('every page answers as JSON too: the data it is drawn from, under the same rules (docs/specs/ui-app.md)', async () => {
