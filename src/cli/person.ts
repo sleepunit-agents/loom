@@ -6,6 +6,13 @@
  *   loom person reach <slug> <field> <id> --label <name> [--source <s>] [--at <iso>]
  *   loom person ensure <slug> --name <n> [--role <r>] [--source <s>] [--where <field>=<value>]... [--agent <a>] [--dry-run]
  *   loom person ensure [--dry-run] < body.json        (the same body as POST /api/loom/people/ensure; or one per line)
+ *   loom person merge <from> <into> [--dry-run] [--json]
+ *
+ * `merge` makes two cards one (backends/people-merge.ts): from becomes an archived redirect to
+ * into, every agent's copy is merged, and everything tagged from is re-tagged into. It's the
+ * owner's, on loom's machine (a piece's process is refused, exit 5); a dry run writes nothing
+ * and is anyone's. It never runs over POST /cli. Exit 3 when a card is missing, 1 for any
+ * other refusal.
  *
  * `ensure` makes sure someone has a card (backends/people-ensure.ts): with none, a minimal
  * one; with one, only the `where` values it lacks. It's the owner's, on loom's machine, and
@@ -23,7 +30,8 @@
  * exit as "no card".
  */
 import { parseArgs } from 'node:util';
-import { readPerson, listPeople, personEvidence, personWrite, personEnsure } from '../tools/person.js';
+import { readPerson, listPeople, personEvidence, personWrite, personEnsure, personMergeRun } from '../tools/person.js';
+import { PersonMergeError, type PersonMergeResult } from '../backends/people-merge.js';
 import { holdsValue, valuesOf } from '../backends/people-ensure.js';
 import { PersonCardError } from '../backends/people.js';
 import { householdHome } from '../household.js';
@@ -56,6 +64,15 @@ Subcommands:
                 body is POST /api/loom/people/ensure's. The owner's, and a piece's
                 in an owner's action; exit 5 for anyone else, 4 for an archived
                 card, 1 for a refusal. --dry-run writes nothing and is anyone's
+  merge <from> <into> [--dry-run]
+                Make two cards one person's: from becomes an archived redirect to
+                into (reading or writing from lands on into); where, how and may
+                are the union, into's name and summary kept; every agent's copy
+                is merged and every memory, proposal, conversation and turn tagged
+                from is re-tagged. The owner's (exit 5 for a piece's process);
+                exit 3 for a missing card, 1 for a refusal. --dry-run reports what
+                would change and writes nothing. Rename the slug in every agent's
+                gates afterwards
 
 Options:
   --include-archived   Show/list archived cards too
@@ -71,7 +88,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     io.stdout(USAGE);
     return sub ? 0 : 2;
   }
-  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence' && sub !== 'reach' && sub !== 'ensure') {
+  if (sub !== 'show' && sub !== 'list' && sub !== 'evidence' && sub !== 'reach' && sub !== 'ensure' && sub !== 'merge') {
     io.stderr(`Unknown person subcommand: ${sub}\n${USAGE}`);
     return 2;
   }
@@ -128,6 +145,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   }
 
   if (sub === 'ensure') return ensure(parsed, env, io);
+  if (sub === 'merge') return merge(parsed, env, io);
 
   if (sub === 'reach') {
     const [slug, field, id] = parsed.positionals;
@@ -256,4 +274,46 @@ function ensureOne(body: Record<string, unknown>, env: ReturnType<typeof resolve
     : out.unchanged ? `${out.slug}: has a card with all of that already\n`
     : `${out.slug}: ${would}${out.dry_run ? 'add' : 'added'} ${adds}\n`);
   return 0;
+}
+
+/** Who may merge cards from this process: the owner at loom's machine, not a piece's process. */
+export function mergeActor(env: NodeJS.ProcessEnv): { actor: string } | { refused: string } {
+  if (env.LOOM_STORE_GRANT || env.LOOM_PIECE_NAME) {
+    return { refused: `${env.LOOM_PIECE_NAME ?? 'a piece'}'s process doesn't merge cards: that's the owner's, on loom's machine (or POST /api/loom/people/merge)` };
+  }
+  return { actor: 'owner' };
+}
+
+function merge(parsed: Parsed, env: ReturnType<typeof resolveEnv>, io: IOStreams): Promise<number> | number {
+  const [from, into, ...more] = parsed.positionals;
+  if (!from || !into || more.length) { io.stderr(`person merge takes <from> <into>.\n${USAGE}`); return 2; }
+  const dry = parsed.values['dry-run'] === true;
+  const who = dry ? ({ actor: 'dry run' } as const) : mergeActor(io.env ?? process.env);
+  if ('refused' in who) { io.stderr(`person merge: ${who.refused}\n`); return 5; }
+  let out: PersonMergeResult;
+  try {
+    out = personMergeRun(env.contextDir, { from, into, ...(dry ? { dry_run: true } : {}) }, who.actor);
+  } catch (e) {
+    io.stderr(`person merge: ${(e as Error).message}\n`);
+    return e instanceof PersonMergeError && e.status === 404 ? 3 : 1;
+  }
+  if (env.json) { renderJson(io, out); return 0; }
+  io.stdout(mergeReport(out));
+  return 0;
+}
+
+/** A merge's answer for a person to read. */
+export function mergeReport(out: PersonMergeResult): string {
+  const lines = [`${out.dry_run ? 'would merge' : 'merged'} ${out.from}${out.cardless ? ' (no card: its tags only)' : ''} into ${out.into}${out.resumed ? ' (finishing an earlier merge)' : ''}`];
+  const where = Object.entries(out.where_added).map(([f, vs]) => `${f} +${vs.join(', +')}`);
+  lines.push(`  where: ${where.length ? where.join('; ') : 'nothing new'}`);
+  if (out.how_added.length || out.may_added) lines.push(`  how: ${out.how_added.length ? `+${out.how_added.join(', +')}` : 'nothing new'} · may: +${out.may_added}`);
+  for (const [a, c] of Object.entries(out.agents)) {
+    lines.push(`  ${a}: card ${c.card} · ${c.memories} memories · ${c.proposals} proposals · ${c.conversations} conversations · ${c.turns} turns` +
+      (c.relinked.length ? ` · relinked ${c.relinked.join(', ')}` : ''));
+  }
+  if (out.directory?.relinked.length) lines.push(`  directory: relinked ${out.directory.relinked.join(', ')}`);
+  if (out.projects.length) lines.push(`  project hubs: ${out.projects.map((p) => `${p.agent}/${p.project} (${p.field})`).join(', ')}`);
+  for (const n of out.not_done) lines.push(`  not done: ${n}`);
+  return lines.join('\n') + '\n';
 }

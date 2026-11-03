@@ -110,6 +110,8 @@ function buildCurrentDb(dir: string): string {
   db.prepare(`CREATE TABLE project_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT NOT NULL,
     snapshot_json TEXT NOT NULL, op TEXT NOT NULL, replaced_at TEXT NOT NULL, actor TEXT)`).run();
   db.prepare(`CREATE TABLE project_names (name TEXT PRIMARY KEY, slug TEXT NOT NULL, kind TEXT NOT NULL)`).run();
+  db.prepare(`CREATE TABLE person_merges (from_slug TEXT PRIMARY KEY, into_slug TEXT NOT NULL, merged_at TEXT NOT NULL,
+    merged_by TEXT, counts_json TEXT NOT NULL DEFAULT '{}')`).run();
   db.prepare(`
     CREATE TABLE memory_supersessions (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,

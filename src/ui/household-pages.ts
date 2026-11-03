@@ -334,6 +334,8 @@ export function householdPerson(h: Household, slug: string, opts: CoreOptions = 
   const dir = directory(h);
   if (!dir) return { title: 'Not found', sections: [] };
   try {
+    // A merged slug's page is the card it was merged into (person_merge).
+    slug = dir.resolve(slug);
     const d = dir.getRow(slug);
     if (!d) return { title: 'Not found', sections: [] };
     const facts = Object.entries(d.card.how ?? {}).filter(([k, v]) => !(k === 'kind' && v === 'person'));

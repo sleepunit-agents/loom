@@ -77,7 +77,9 @@ export function parseCliRequest(body: unknown): CliRequest | string {
     const after = [...args.slice(0, verbIdx), ...args.slice(verbIdx + 1)];
     const sub = extractGlobalFlags(after).rest[0];
     if (sub !== undefined && LOCAL_PERSON_SUBCOMMANDS.has(sub)) {
-      return `refused: person ${sub} is the owner's (POST /api/loom/people/ensure, or on loom's machine); an agent writes cards with person_write`;
+      return sub === 'merge'
+        ? 'refused: person merge is the owner\'s (POST /api/loom/people/merge, or on loom\'s machine); an agent merges cards with person_merge'
+        : `refused: person ${sub} is the owner's (POST /api/loom/people/ensure, or on loom's machine); an agent writes cards with person_write`;
     }
   }
   return { argv: args, stdin: stdin as string | undefined, env: hints };

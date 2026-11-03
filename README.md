@@ -176,7 +176,9 @@ an agent's persistent state:
 - **Person cards** — `person_write`, `person_verify`, `person_archive`,
   `person_restore`, `person`, `person_list`, `person_history`,
   `person_revision_restore`, `person_evidence` (the tagged memories a card
-  condenses, as `loom person evidence` gives them). A card is the condensed current state of one human
+  condenses, as `loom person evidence` gives them), `person_merge` (two cards
+  that turn out to be one person become one: from is left as a redirect to into,
+  and everything tagged from is re-tagged). A card is the condensed current state of one human
   the agent works with (where they are in each system, with a freshness marker;
   how to work with them; what they were said to be allowed to do, each with a
   source). One value per field, overwritten; the past lives in revisions. Cards

@@ -62,6 +62,8 @@ export interface EnsureResult {
   dry_run: boolean;
   /** The card as it is now (as it would be, dry). */
   card: PersonCard;
+  /** The slug the call named, when it was merged into `slug` (person_merge): the values landed there. */
+  redirected_from?: string;
 }
 
 const str = (v: unknown, path: string, max: number, required = true): string | undefined => {
@@ -151,7 +153,8 @@ type Store = PeopleStore | HouseholdPeople;
 /** Any other card (archived ones too: still that person) holding one of `values` in `field` (by id): the first, or null. */
 function heldElsewhere(store: Store, slug: string, field: string, values: string[]): { slug: string; value: string } | null {
   for (const e of store.list(true)) {
-    if (e.slug === slug) continue;
+    // A merged card's values are its survivor's now (person_merge): it's a redirect, not another person.
+    if (e.slug === slug || e.merged_into !== undefined) continue;
     let row;
     try { row = store.getRow(e.slug); } catch { continue; }
     if (!row) continue;
@@ -163,6 +166,10 @@ function heldElsewhere(store: Store, slug: string, field: string, values: string
 
 /** Make sure `input.slug` has a card, adding only what it lacks. Throws PersonCardError with the reason. */
 export function ensurePerson(store: Store, input: EnsureInput): EnsureResult {
+  // A merged slug is a redirect: an ensure of it adds to the card it was merged into.
+  const asked = input.slug;
+  const target = store.resolve(asked);
+  if (target !== asked) return { ...ensurePerson(store, { ...input, slug: target }), redirected_from: asked };
   const dry = input.dry_run === true;
   const row = store.getRow(input.slug);
   if (row?.archived_at) throw new PersonCardError(`card for ${input.slug} is archived; restore it (person_restore) before adding to it`);

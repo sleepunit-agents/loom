@@ -40,9 +40,10 @@ export const LOCAL_NOTE_SUBCOMMANDS: ReadonlySet<string> = new Set(['attach', 'f
 /**
  * `person` subcommands that make a card on someone else's authority: `ensure` is the owner's and a piece's in an
  * owner's action (people-ensure.ts), never an agent's over its token. An agent writes cards with person_write; the
- * runtime and an owner elsewhere use POST /api/loom/people/ensure.
+ * runtime and an owner elsewhere use POST /api/loom/people/ensure. `merge` is the owner's too: an agent merges with
+ * person_merge, the runtime and an owner elsewhere with POST /api/loom/people/merge.
  */
-export const LOCAL_PERSON_SUBCOMMANDS: ReadonlySet<string> = new Set(['ensure']);
+export const LOCAL_PERSON_SUBCOMMANDS: ReadonlySet<string> = new Set(['ensure', 'merge']);
 
 /**
  * `memory` subcommands with no MCP equivalent: recall-stats returns other
