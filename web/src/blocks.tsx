@@ -314,7 +314,7 @@ function DetailsBlock({ b }: { b: Extract<Block, { type: 'details' }> }) {
       <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>{b.summary}{n !== undefined ? ` · ${n}` : b.meta ? ` · ${b.meta}` : ''}</Button>
       <Drawer open={open} onOpenChange={setOpen}>
         <DrawerContent className="lg:mx-auto lg:max-w-2xl">
-          <DrawerHeader><DrawerTitle>{b.summary}</DrawerTitle>{b.meta && <DrawerDescription>{b.meta}</DrawerDescription>}</DrawerHeader>
+          <DrawerHeader className="flex-col"><DrawerTitle>{b.summary}</DrawerTitle>{b.meta && <DrawerDescription>{b.meta}</DrawerDescription>}</DrawerHeader>
           <div className="grid gap-3">{b.blocks.map((x, k) => (x.type === 'form'
             ? <EditorButton key={k} label={(x as { title?: string }).title ?? b.summary} title={(x as { title?: string }).title ?? b.summary} form={x as Extract<Block, { type: 'form' }>} variant="default" />
             : x.type === 'buttons' ? <div key={k} className="grid gap-2">{(x as Extract<Block, { type: 'buttons' }>).items.map((y) => <ActButton key={y.label} b={y} full size="default" onDone={() => setOpen(false)} />)}</div>
