@@ -53,20 +53,20 @@ function AgentIdentity({ c }: { c: AgentCard }) {
         <div className="min-w-0 flex-1">
           <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill,#b42c22)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
           <h3 className="truncate font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">{c.label}</h3>
-          {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="truncate text-sm opacity-70">{c.reason}</Arrive>}
+          {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="line-clamp-2 break-words text-sm opacity-70">{c.reason}</Arrive>}
         </div>
       </div>
       {(doing.length > 0 || problems.length > 0) && (
         <ul className="grid gap-0.5 px-3 pb-3">
           {problems.map((p) => (
             <Arrive as="li" key={`p:${p.text}`} k={`pb:${c.id}\0${p.text}`} className={`flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm ${p.tone === 'bad' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
-              <AnimatedIcon name={iconFor('triangle-alert')} size="sm" /><span className="min-w-0 flex-1 truncate font-medium">{p.text}</span>
+              <AnimatedIcon name={iconFor('triangle-alert')} size="sm" /><span className="line-clamp-3 min-w-0 flex-1 break-words font-medium">{p.text}</span>
             </Arrive>))}
           {doing.map((d, n) => (
             <Arrive as="li" key={n} k={`do:${c.id}\0${d.text}\0${d.where ?? ''}`} className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm">
               <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${c.bg} 22%, transparent)` }}>
                 <AnimatedIcon name={iconFor(DOING_ICON[d.kind ?? 'other'])} size="sm" /></span>
-              <span className="min-w-0 flex-1"><span className="block truncate font-medium">{d.text}</span>
+              <span className="min-w-0 flex-1"><span className="line-clamp-3 break-words font-medium">{d.text}</span>
                 {(d.where || d.since) && <span className="block truncate text-xs opacity-60">{[d.where, d.since ? ago(d.since) : ''].filter(Boolean).join(' · ')}</span>}</span>
             </Arrive>))}
         </ul>
@@ -162,10 +162,11 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
         {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
         <span className="min-w-0 flex-1">
-          {/* The whole title, mostly (Jonathan liked reading it): two lines before it's cut. */}
+          {/* The whole title, mostly (Jonathan liked reading it): three lines before it's cut. */}
           <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
-            <span className={`line-clamp-2 break-words ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
-          {(p.why ?? i.outcome) && <span className="block truncate text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
+            <span className={`line-clamp-3 break-words ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
+          {/* A quote (a memory's words, a reason) reads to three lines; the row opens it whole. */}
+          {(p.why ?? i.outcome) && <span className="line-clamp-3 break-words text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
         </span>
         <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
       </button>
@@ -201,7 +202,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
         <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-[var(--r-card)]"><Card lift className="gap-0 p-0"><Link page={t.page} className="grid gap-0.5 p-4 no-underline">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="text-xl font-semibold">{t.value}</span>
-          {t.detail && <span className="line-clamp-2 text-xs opacity-60">{t.detail}</span>}
+          {t.detail && <span className="line-clamp-3 break-words text-xs opacity-60">{t.detail}</span>}
         </Link></Card></Arrive>
       </As>))}
     </div>
