@@ -30,7 +30,7 @@ export function Sheet({ open, set, title, note, children }: { open: boolean; set
     <Drawer open={open} onOpenChange={set}>
       <DrawerContent>
         <DrawerHeader><DrawerTitle>{title}</DrawerTitle>{note && <DrawerDescription>{note}</DrawerDescription>}</DrawerHeader>
-        <div className="grid max-h-[70dvh] gap-3 overflow-y-auto px-4 pb-6">{children}</div>
+        <div className="grid max-h-[70dvh] min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto px-4 pb-6">{children}</div>
       </DrawerContent>
     </Drawer>
   );
@@ -116,7 +116,7 @@ function Row({ r }: { r: PanelRow }) {
       )}
       {r.sheet && (
         <Sheet open={open} set={setOpen} title={r.sheet.title ?? r.label}>
-          <div className="grid gap-4">{r.sheet.blocks.map((b, k) => <BlockView key={k} b={b} />)}</div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">{r.sheet.blocks.map((b, k) => <BlockView key={k} b={b} />)}</div>
         </Sheet>
       )}
     </li>

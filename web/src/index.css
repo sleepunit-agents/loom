@@ -559,7 +559,9 @@ body { background: var(--v-canvas); }
 
 /* A prose block's markdown (markdown.tsx): headings come two levels down (h3 is a body's #), lists with their marks,
    code on beige, tables ruled; spaced for reading, at the page's width. */
-.loom-prose { line-height: 1.65; overflow-wrap: anywhere; }
+.loom-prose { line-height: 1.65; overflow-wrap: anywhere; min-width: 0; max-width: 100%; }
+/* A long line of code scrolls inside its box; a table too: neither pushes a phone's page wider (2026-11-03 catalogue). */
+.loom-prose table { display: block; max-width: 100%; overflow-x: auto; }
 .loom-prose > * + * { margin-top: .8em; }
 .loom-prose :is(h3, h4, h5, h6) { font-family: var(--font-display); font-weight: 600; line-height: 1.25; margin-top: 1.4em; }
 .loom-prose > :first-child { margin-top: 0; }
