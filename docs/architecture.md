@@ -246,6 +246,7 @@ have fallen behind.
 | `src/backends/projects.ts` | Project cards: validation, render, store, names (project_names), the hub's memory reads, the identity project block |
 | `src/backends/cards.ts` | What person and project cards share: validation primitives, where envelopes and staleness markers, merge one level deep, no-op detection, the row store (revisions, archive/restore, revision restore, BEGIN IMMEDIATE) |
 | `src/backends/people-household.ts` | Person cards in a household: the commons directory (name, handles, facts) plus each agent's relationship (summary, how it talks to them, may), merged on read, split on write, and the one-time split of an existing agent's cards |
+| `src/backends/people-ensure.ts` | Ensure a person card: a minimal card when there's none, only the missing `where` values when there is one, and a value already on another card refused (POST /api/loom/people/ensure, `loom person ensure`) |
 | `src/backends/dedup.ts` | Write-time exact-restatement key |
 | `src/backends/scope.ts` | Project vs global visibility |
 | `src/backends/ttl.ts` | TTL parsing and expiry |

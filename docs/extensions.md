@@ -549,7 +549,8 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
   with the role `piece:<piece>/<subject>` (`loom token create --piece
   box/thor`). A piece credential reaches its own piece's API and nothing
-  else, but for one core route, [`deliver`](#deliver-anything-addressed-to-an-agent):
+  else, but for two core routes: [`deliver`](#deliver-anything-addressed-to-an-agent),
+  and [`people/ensure`](#peopleensure-a-persons-card-when-a-piece-adds-someone) with an owner's grant:
   no MCP, no `/cli`, no page, no other piece. Peer tokens and no token
   get nothing. The piece decides what each caller may do.
 - **Strangers, only where a piece says.** A call with no token at all reaches
@@ -659,6 +660,32 @@ passes its answer back (`src/delivery.ts`).
   (`session`, `wake`) come first, with piece `loom`. `send` is the venue's
   declared argv while its piece is installed, so the runtime never reads
   another piece's piece.json.
+
+### `people/ensure`: a person's card, when a piece adds someone
+
+A piece that lets a person in somewhere (an agent's gates, say) makes sure they have a
+person card, so loom's People page shows them once however they were added: **`POST
+/api/loom/people/ensure`** ([specs/person-cards.md](specs/person-cards.md), "Ensure").
+With no card it makes a minimal one; with one, it only adds the `where` values the card
+lacks. It never changes a name, summary, `how` or `may`.
+
+```bash
+# On loom's machine, in an owner's action (LOOM_STORE_GRANT is in the piece's environment):
+echo '{"slug": "grace-aquino", "name": "Grace Aquino", "role": "Toxicologist", "agent": "art",
+       "source": "shuttle gates (art'"'"'s people), allowed by the owner 2026-11-02",
+       "where": {"slack": {"value": "U08C330F8AG (Onterris)"}}}' | loom person ensure --json
+# {"slug": "grace-aquino", "created": true, "added": {"slack": ["U08C330F8AG (Onterris)"]}, "unchanged": false, ...}
+```
+
+- **Only in an owner's action.** loom checks the grant it gave the process (signed,
+  unexpired, this piece's, an owner's), exactly as `loom store` does. A piece's own
+  service, or its process serving an agent, gets exit 5 (a 403 on the route). Elsewhere,
+  the piece's credential calls the route with that grant in `X-Loom-Store-Grant`.
+- A household owner's token and the runtime's reach the route too; an agent writes its
+  cards with `person_write`, and `person ensure` never runs over `POST /cli`.
+- A value already on someone else's card is refused (409): one person, one card. The
+  piece's own write (its gate) doesn't depend on the card: if the ensure fails, keep the
+  write and say why the card wasn't made.
 
 ## Storage: a piece's data in loom
 

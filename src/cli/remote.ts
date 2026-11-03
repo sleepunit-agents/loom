@@ -38,6 +38,13 @@ export const REMOTE_VERBS: ReadonlySet<string> = new Set([
 export const LOCAL_NOTE_SUBCOMMANDS: ReadonlySet<string> = new Set(['attach', 'file', 'sweep']);
 
 /**
+ * `person` subcommands that make a card on someone else's authority: `ensure` is the owner's and a piece's in an
+ * owner's action (people-ensure.ts), never an agent's over its token. An agent writes cards with person_write; the
+ * runtime and an owner elsewhere use POST /api/loom/people/ensure.
+ */
+export const LOCAL_PERSON_SUBCOMMANDS: ReadonlySet<string> = new Set(['ensure']);
+
+/**
  * `memory` subcommands with no MCP equivalent: recall-stats returns other
  * callers' query text, so it runs only where the stack is. (recompute-salience
  * has memory_recompute_salience now, so a consolidation lane in a house can

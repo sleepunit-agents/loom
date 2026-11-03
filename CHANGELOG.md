@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A person is one card, however they were added.** `POST
+  /api/loom/people/ensure` and `loom person ensure` make sure someone has a
+  person card: with none, a minimal one (the name, `<role>. From <source>.`,
+  the `where` values); with one, only the `where` values it lacks, as `reach`
+  adds an id. Name, summary, how and may are never changed, and a value
+  already on another card is refused (409). A household owner, the runtime,
+  and a piece's process in an owner's action (the grant loom minted for it,
+  checked as `loom store` checks it) may call it; agents keep `person_write`,
+  and `person ensure` never runs over `POST /cli`. `--dry-run` writes nothing.
+
 - **Old piece names.** `box` is now `runtime`: the catalog lists loom-box's
   repo as `runtime` (37cc43d), and core's alias table (`PIECE_ALIASES`)
   maps `box` to `runtime` for `/api/box/…`, `/p/box/…` (a 308), `piece:box/…`

@@ -272,6 +272,53 @@ something then *enforces* has granted itself authority. So:
   Archiving an archived card, or restoring an active one, is a no-op and
   returns `unchanged: true`. Either call on a missing card is rejected.
 
+**Ensure** (2026-11-02: a person is one card, however they were added)
+
+Adding a person anywhere outside an agent's own tools (a piece letting someone into
+an agent's gates, the runtime's gates, the owner by hand) makes sure they have a card,
+so the People page and every agent see them once. Agents keep writing cards with
+`person_write`; this is the one seam for everyone else.
+
+- `POST /api/loom/people/ensure` with `{slug, name, role?, source, where?, agent?,
+  dry_run?}`, where `where` maps a field to `{value, label?, source?}` and `value` is a
+  string or up to 8. On loom's machine: `loom person ensure` with the same body on stdin,
+  or `loom person ensure <slug> --name <n> [--role <r>] [--source <s>]
+  [--where <field>=<value>]... [--agent <a>] [--dry-run]`.
+- **No card:** a minimal one is made: the name, the summary `<role>. From <source>.`
+  (`From <source>.` without a role), and the `where` values, each with the call's
+  `source` unless it has its own. In a household the name and handles go to the
+  directory and the summary to `agent`'s relationship (the household's default agent
+  when none is named), the same split `person_write` makes.
+- **A card:** only the `where` values it lacks are added, beside the ones there, as
+  `loom person reach` adds an id: a value whose id (its first word) is already in the
+  field, however it was written, counts as there. The field's label and source are set
+  only when it has none. Name, summary, how and may are never touched, and an existing
+  card gets no relationship it didn't have. A call that adds nothing is a no-op.
+- **One person, one card:** a value already on another card (by id, in the same field)
+  refuses the whole call (409), naming that card. An archived card refuses too (409):
+  restore it first.
+- **Refused like a write:** a bad slug, a reserved key (as a field or inside one), an
+  unknown key, empty or over-long text (400). Nothing is written.
+- **Who may call it:** a household owner (their token); the runtime (its token: its
+  gates name a card, agent-runtime.md section 6); and a piece's process in an owner's
+  action, which carries the grant loom minted for that action (`LOOM_STORE_GRANT`,
+  piece-storage.md): `loom person ensure` reads it from the environment, and the route
+  takes the piece's own credential with the grant in `X-Loom-Store-Grant`. Either way
+  loom checks it as `loom store` does (signed by loom, unexpired, that piece's) and
+  that it is an owner's. A piece's own process, or one serving an agent, is refused
+  (exit 5, 403), and so are agent, agent-owner, peer and review tokens. `person ensure`
+  never runs over `POST /cli`. The revision records who: the owner, `<who> via <piece>`,
+  or `runtime:<piece>`.
+- `dry_run: true` answers what would change and writes nothing (it opens the stores
+  read-only), so on loom's machine any process may ask one (a piece's backfill
+  report); the route still takes only the callers above. The CLI takes several bodies,
+  one per line, so the owner can pipe a piece's list in (`loom shuttle cards-backfill
+  --bodies | loom person ensure`); each is answered on its own line. The answer is `{slug, created, added: {field: [values]}, unchanged,
+  dry_run, card}`.
+- Like `reach`, it reads the card and then writes it: two calls racing on one card can
+  each add their own id, and the later write keeps both only if each read the other's.
+  It's for the rare moment a person is added, not a hot path.
+
 **Read**
 - `person({slug, include_archived?})` returns `{found: true, rendered, card,
   archived, updated, synthesized_at}`. A missing card returns `{found: false}`,

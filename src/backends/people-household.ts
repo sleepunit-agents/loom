@@ -203,6 +203,15 @@ export class HouseholdPeople {
     return this.mutation(input.slug);
   }
 
+  /**
+   * Merge `where` fields into the directory entry alone: an existing person's handles,
+   * with no relationship made or touched (people-ensure.ts).
+   */
+  writeWhere(slug: string, where: NonNullable<PersonWriteInput['where']>): MutationResult {
+    this.directory.write({ slug, where });
+    return this.mutation(slug);
+  }
+
   verify(input: { slug: string; fields: string[]; verified_at?: string; source?: string }): MutationResult {
     this.directory.verify(input);
     return this.mutation(input.slug);
@@ -277,15 +286,15 @@ export function openHouseholdPeople(
   h: Household,
   agent: string,
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
 ): HouseholdPeople | null {
   const dirPath = commonsPeoplePath(h);
   const relPath = resolveSqliteDbPath(contextDir);
   if (opts.readonly && (!existsSync(dirPath) || !existsSync(relPath))) return null;
   if (!opts.readonly) mkdirSync(commonsDir(h), { recursive: true, mode: 0o700 });
   return new HouseholdPeople(
-    new PeopleStore({ dbPath: dirPath, readonly: opts.readonly, now: opts.now, actor: agent }),
-    new PeopleStore({ dbPath: relPath, readonly: opts.readonly, now: opts.now, actor: agent }),
+    new PeopleStore({ dbPath: dirPath, readonly: opts.readonly, now: opts.now, actor: opts.actor ?? agent }),
+    new PeopleStore({ dbPath: relPath, readonly: opts.readonly, now: opts.now, actor: opts.actor ?? agent }),
     opts.now,
     new Set(h.agents),
   );

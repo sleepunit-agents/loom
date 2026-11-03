@@ -603,11 +603,11 @@ export class PeopleStore {
  */
 export function openPeopleStore(
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
 ): PeopleStore | null {
   const dbPath = resolveSqliteDbPath(contextDir);
   if (opts.readonly && !existsSync(dbPath)) return null;
-  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now });
+  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now, actor: opts.actor });
 }
 
 // ─── The room (identity's `people` param) ────────────────────────────────────
