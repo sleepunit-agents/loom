@@ -94,7 +94,8 @@ export function parseTarget(s: string): Target {
 export function scrub(text: string, url?: string): string {
   let t = String(text ?? '');
   if (url) t = t.split(url).join(`<target ${shortName(url)}>`);
-  return t.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^@\s/]+@/g, '$1***@');
+  // Up to the last '@' before the host: a password may hold one (u:p@ss@host).
+  return t.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/]*@/g, '$1***@');
 }
 
 function shortName(url: string): string {

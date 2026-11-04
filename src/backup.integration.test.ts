@@ -128,6 +128,8 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(said).toMatch(/https:\/\/\*\*\*@host/);
     expect(scrub('fatal: could not read from https://github.com/x/backups.git', 'https://github.com/x/backups.git')).toBe('fatal: could not read from <target backups>');
     expect(scrub('see http://tok@a.b/c and https://x:y@z/w')).toBe('see http://***@a.b/c and https://***@z/w');
+    expect(scrub("fatal: unable to access 'https://u:p@ss@host/org/repo.git/'")).toBe("fatal: unable to access 'https://***@host/org/repo.git/'");
+    expect(gitFailure('push', 'https://u:p@ss@w@host/x', undefined)).not.toMatch(/ss@|p@|w@host/);
   });
 
   it('a git failure in a run reaches the state and the alert without userinfo', async () => {
