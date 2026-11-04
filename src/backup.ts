@@ -14,9 +14,9 @@
  * none. Core never asks a piece for authority (docs/specs/household.md, "Where core ends").
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync, closeSync, copyFileSync, existsSync, realpathSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync,
+  chmodSync, closeSync, copyFileSync, existsSync, linkSync, realpathSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync,
   statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -55,6 +55,8 @@ export interface BackupState {
   v: 1; runs: BackupRun[]; lastGood?: BackupRun; lastStart?: string; setAt?: string;
   /** The alert command was told of these, and when (so a lasting one is said again every REMIND_MS, and its end once). */
   said?: { failed?: string; missed?: string };
+  /** The last time it came back from a failure or a miss: an FYI in the Inbox for a week. */
+  recovered?: { at: string; text: string };
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────
@@ -220,21 +222,35 @@ function updateState(home: string, f: (s: BackupState) => void): BackupState {
 /** Take the run lock, or null when another live process holds it. One stale (its pid gone, or too old) is taken over. */
 export function takeLock(home: string, nowMs = Date.now()): { release: () => void } | null {
   const p = join(ensureDir(home), 'run.lock');
+  const token = randomBytes(8).toString('hex');
+  const mine = () => { try { return (JSON.parse(readFileSync(p, 'utf-8')) as { token?: string }).token === token; } catch { return false; } };
   for (let i = 0; i < 2; i++) {
     try {
       const fd = openSync(p, 'wx', 0o600);
-      writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date(nowMs).toISOString() }));
+      writeSync(fd, JSON.stringify({ pid: process.pid, at: new Date(nowMs).toISOString(), token }));
       closeSync(fd);
-      return { release: () => { try { unlinkSync(p); } catch { /* gone */ } } };
+      // Released only while it's still ours: a run taken over as stale never removes its successor's lock.
+      return { release: () => { if (mine()) { try { unlinkSync(p); } catch { /* gone */ } } } };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      let raw = '';
+      try { raw = readFileSync(p, 'utf-8'); } catch { continue; /* gone between: try again */ }
       let held: { pid?: number; at?: string } = {};
-      try { held = JSON.parse(readFileSync(p, 'utf-8')); } catch { /* half-written: judge by age */ }
-      const age = nowMs - (Date.parse(held.at ?? '') || statSync(p).mtimeMs);
+      try { held = JSON.parse(raw); } catch { /* half-written: judge by age */ }
+      let mtime = nowMs;
+      try { mtime = statSync(p).mtimeMs; } catch { continue; }
+      const age = nowMs - (Date.parse(held.at ?? '') || mtime);
       let alive = false;
       if (Number.isInteger(held.pid) && held.pid! > 0) { try { process.kill(held.pid!, 0); alive = true; } catch (err) { alive = (err as NodeJS.ErrnoException).code === 'EPERM'; } }
       if (alive && age < LOCK_STALE_MS) return null;
-      try { unlinkSync(p); } catch { /* someone else took it over */ }
+      // Stale. Take it over atomically: rename it aside (only one taker's rename finds it), and only if what was moved
+      // is the lock judged stale is it gone; one that's changed meanwhile is someone's fresh lock, put back.
+      const aside = `${p}.stale-${process.pid}-${token}`;
+      try { renameSync(p, aside); } catch { return null; }
+      let moved = '';
+      try { moved = readFileSync(aside, 'utf-8'); } catch { /* gone */ }
+      if (moved !== raw) { try { linkSync(aside, p); } catch { /* another lock is there now: it wins */ } try { unlinkSync(aside); } catch { /* gone */ } return null; }
+      try { unlinkSync(aside); } catch { /* gone */ }
     }
   }
   return null;
@@ -301,6 +317,8 @@ export interface RunDeps {
   /** What the owner's alert command is told (alertCommand by default). */
   alert?: (env: NodeJS.ProcessEnv, a: CoreAlert) => boolean;
   splitAt?: number;
+  /** Called just before the push (a test moves the remote here, as a second machine would). */
+  beforePush?: () => void;
   /** The pieces installed here now (listPieces by default). */
   installedPieces?: () => string[];
 }
@@ -427,7 +445,7 @@ function gitPreflight(repo: string, env: NodeJS.ProcessEnv): string | null {
 }
 
 /** One commit, no parent: the kept bundles, RESTORE.md and the marker. Pushed with a lease on what loom saw. */
-function gitWrite(repo: string, remote: string | null, files: Array<{ path: string; name: string }>, s: BackupSettings, stamp: string, env: NodeJS.ProcessEnv): { commit: string; kept: string[] } {
+function gitWrite(repo: string, remote: string | null, files: Array<{ path: string; name: string }>, s: BackupSettings, stamp: string, env: NodeJS.ProcessEnv, beforePush?: () => void): { commit: string; kept: string[] } {
   const index = join(mkdtempSync(join(tmpdir(), 'loom-backup-index-')), 'index');
   // A bare clone has no work tree, and the index commands want one: an empty dir stands in (nothing is checked out).
   const genv = { ...env, GIT_DIR: repo, GIT_WORK_TREE: join(index, '..'), GIT_INDEX_FILE: index, GIT_AUTHOR_NAME: 'loom', GIT_AUTHOR_EMAIL: 'loom@localhost', GIT_COMMITTER_NAME: 'loom', GIT_COMMITTER_EMAIL: 'loom@localhost' };
@@ -451,6 +469,7 @@ function gitWrite(repo: string, remote: string | null, files: Array<{ path: stri
     }
     const tree = git(['-C', repo, 'write-tree'], { env: genv }).trim();
     const commit = git(['-C', repo, 'commit-tree', '--no-gpg-sign', tree, '-m', `household bundle ${stamp} (drilled)`], { env: genv }).trim();
+    beforePush?.();
     git(['-C', repo, 'push', '-q', `--force-with-lease=refs/heads/${BRANCH}:${remote ?? ''}`, 'origin', `${commit}:refs/heads/${BRANCH}`], { env });
     git(['-C', repo, 'update-ref', `refs/remotes/origin/${BRANCH}`, commit], { env });
     // What the old commits held and the new one doesn't: gone from the clone too, so it doesn't grow a bundle a night.
@@ -542,7 +561,7 @@ export async function runBackup(opts: { home: string; env: NodeJS.ProcessEnv; no
       const files = run.bytes > size ? splitFile(file, name, work, size).map((p) => ({ path: p, name: p.slice(work.length + 1) })) : [{ path: file, name }];
       if (files.length > 1 && !rejoins(files.map((f) => f.path), sha)) throw new BackupError('the parts don\'t rejoin to the drilled bundle; nothing was pushed');
       run.parts = files.length;
-      run.commit = gitWrite(repo!, remote, files, s, stamp, opts.env).commit;
+      run.commit = gitWrite(repo!, remote, files, s, stamp, opts.env, deps.beforePush).commit;
     } else {
       pathWrite(s.target.dir, file, name, s, stamp);
       run.parts = 1;
@@ -590,6 +609,13 @@ export function backupProblem(h: Household, nowMs = Date.now()): BackupProblem |
       meta: `It runs each day at ${s!.at} (${s!.tz}). Is loom running?`, at: since };
   }
   return null;
+}
+
+/** The Inbox's FYI that it's over: the last recovery, for a week. */
+export function backupFyi(h: Household, nowMs = Date.now()): { text: string; meta: string; at: string } | null {
+  const r = readState(h.home).recovered;
+  if (!r || nowMs - Date.parse(r.at) > 7 * 86_400_000) return null;
+  return { text: r.text, meta: 'A good backup again, drilled.', at: r.at };
 }
 
 /** Setup's Backup row: when the last good one was, its drill and where it went; or what's wrong. */
@@ -648,9 +674,11 @@ function sayRun(env: NodeJS.ProcessEnv, st: BackupState, run: BackupRun, alert: 
     updateState(home, (s) => { s.said = { ...s.said, failed: new Date(nowMs).toISOString() }; });
     return;
   }
-  if (st.said?.failed || st.said?.missed) {
-    alert(env, { source: 'loom-backup', severity: 'warn', summary: 'The nightly backup is OK again', facts: { cleared: 1, at: run.at, name: run.name } });
-    updateState(home, (s) => { delete s.said; });
+  const prev = st.runs[1];
+  const wasBad = st.said?.failed || st.said?.missed || (prev && !prev.ok);
+  if (wasBad) {
+    if (st.said?.failed || st.said?.missed) alert(env, { source: 'loom-backup', severity: 'warn', summary: 'The nightly backup is OK again', facts: { cleared: 1, at: run.at, name: run.name } });
+    updateState(home, (s) => { delete s.said; s.recovered = { at: run.at, text: 'The nightly backup is OK again' }; });
   }
 }
 

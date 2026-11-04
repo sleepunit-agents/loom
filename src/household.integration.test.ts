@@ -1635,7 +1635,8 @@ esac
     const jonC = await login(jonathan);
     const has = (x: unknown) => JSON.stringify(x).includes('secret-nas') || JSON.stringify(x).includes('nightly backup');
     expect(has(await data(jonC, '/inbox'))).toBe(true);
-    for (const path of ['/inbox', '/', '/find?q=backup', '/find?q=nightly']) expect(has(await data(lorenC, path)), path).toBe(false);
+    for (const path of ['/inbox', '/', '/find?q=backup', '/find?q=nightly', '/a/mark/setup']) expect(has(await data(lorenC, path)), path).toBe(false);
+    expect(has(await data(jonC, '/a/art/setup'))).toBe(true);
   });
 
   it('an agent owner\'s live stream hears of their agents only: art\'s memory moving is no news to Loren', async () => {

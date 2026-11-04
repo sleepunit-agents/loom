@@ -5,17 +5,17 @@
  * owner's alert command. Needs `age` and `git` (CI installs age).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { loadHousehold, rawHousehold, type Household } from './household.js';
 import {
-  alertCommandArgv, backupProblem, gitFailure, parseTarget, scrub, backupRow, BackupError, ensureDrillKey, isDue, keptStamps, lastSlot, readSettings, readState, runBackup,
+  alertCommandArgv, backupFyi, backupProblem, gitFailure, parseTarget, scrub, backupRow, BackupError, ensureDrillKey, isDue, keptStamps, lastSlot, readSettings, readState, runBackup,
   setSettings, stampOf, takeLock, tickBackup, validateSettings, type CoreAlert, type RunDeps,
 } from './backup.js';
 import { backupAsks } from './ui/handler.js';
-import { agentSetup } from './ui/household-pages.js';
+import { agentSetup, householdAct } from './ui/household-pages.js';
 import type { DrillReport, Manifest } from './bundle.js';
 import { runCli } from './cli/index.js';
 import { ENTRY, spawnBackupTick } from './backup-tick.js';
@@ -460,6 +460,65 @@ describe.skipIf(!hasTools)('loom backup', () => {
     writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), lastStart: new Date(t).toISOString() }));
     await tickBackup({ home: h.home, env, nowMs: t, deps: fakes() });
     expect(alerts[0].facts).toMatchObject({ minutes: 1800 });
+  });
+
+  it('a stale lock taken over by two processes at once: one gets it; a run never releases its successor\'s lock', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
+    const script = join(work, 'race.mjs');
+    writeFileSync(script, `import { takeLock } from ${JSON.stringify(new URL('./backup.ts', import.meta.url).pathname.replace(/\.ts$/, '.js').replace('/src/', '/dist/'))};
+const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) setTimeout(() => l.release(), 400);`);
+    const run1 = () => new Promise<string>((res) => { const c = spawn(process.execPath, [script, h.home], { env }); let o = ''; c.stdout.on('data', (d) => { o += d; }); c.on('close', () => res(o.trim())); });
+    const outs = await Promise.all([run1(), run1(), run1()]);
+    expect(outs.sort()).toEqual(['busy', 'busy', 'got']);
+    // A lock taken over as stale: the old holder's release leaves the new one's.
+    const old = takeLock(h.home)!;
+    writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString(), token: 'successor' }));
+    old.release();
+    expect(JSON.parse(readFileSync(join(h.home, 'backup', 'run.lock'), 'utf-8')).token).toBe('successor');
+  });
+
+  it('the push\'s lease: a remote that moved after this run read it is never pushed over', async () => {
+    const remote = join(work, 'remote.git');
+    git(['init', '-q', '--bare', remote]);
+    settings(`git:${remote}`);
+    expect((await runBackup({ home: h.home, env, now: () => new Date('2026-10-02T09:00:00Z'), deps: fakes() })).ok).toBe(true);
+    let theirs = '';
+    const run = await runBackup({ home: h.home, env, now: () => new Date('2026-10-03T09:00:00Z'), deps: { ...fakes(), beforePush: () => {
+      // Another machine pushes its night meanwhile.
+      const c = join(work, 'other'); git(['clone', '-q', remote, c]);
+      writeFileSync(join(c, 'bundles', 'loom-household-20261003-0300.bundle'), 'theirs');
+      git(['add', '-A'], c); git(['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'theirs'], c); git(['push', '-q', 'origin', 'HEAD:main'], c);
+      theirs = git(['rev-parse', 'HEAD'], c);
+    } } });
+    expect(run.ok).toBe(false);
+    expect(run.why).toMatch(/git push failed/);
+    expect(git(['--git-dir', remote, 'rev-parse', 'main'])).toBe(theirs);
+  }, 30_000);
+
+  it('a failure then a good run: an FYI in the household owner\'s Inbox that it\'s OK again', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    await runBackup({ home: h.home, env, deps: fakes({ drills: [false, false, true] }) });
+    expect(backupFyi(h)).toBeNull();
+    await runBackup({ home: h.home, env, now: () => new Date(Date.now() + 60_000), deps: fakes() });
+    expect(backupFyi(h)).toMatchObject({ text: 'The nightly backup is OK again' });
+    expect(backupFyi(h, Date.now() + 8 * 86_400_000)).toBeNull();
+  });
+
+  it('Setup: the Backup row and its form are a household owner\'s; the form sets it', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    const ids = (o?: { ownerTokens?: boolean }) => agentSetup(h, 'art', o).sections.map((x) => x.id);
+    const row = (o?: { ownerTokens?: boolean }) => JSON.stringify(agentSetup(h, 'art', o).sections[0]).includes('"Backup"');
+    expect(ids()).toContain('backup');
+    expect(row()).toBe(true);
+    expect(ids({ ownerTokens: false })).not.toContain('backup');
+    expect(row({ ownerTokens: false })).toBe(false);
+    const r = await householdAct(h, 'backup-set', { target: `path:${dir}`, recipients: owner.recipient, at: '04:00', tz: 'UTC', keep: '5', required: 'box secrets' });
+    expect(r).toMatchObject({ ok: true });
+    expect(readSettings(h).settings).toMatchObject({ at: '04:00', keep: 5, required: ['box', 'secrets'] });
+    expect(await householdAct(h, 'backup-set', { target: 'nowhere', recipients: owner.recipient })).toMatchObject({ ok: false, message: expect.stringMatching(/git:<url> or path:/) });
   });
 
   // ─── What the owner sees ──────────────────────────────────────────────────
