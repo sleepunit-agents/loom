@@ -94,7 +94,6 @@ const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'erro
   working: { status: 'working', word: 'Working' }, available: { status: 'idle', word: 'Available' },
   unavailable: { status: 'needs-input', word: 'Unavailable' }, broken: { status: 'error', word: 'Broken' },
 };
-export { DOT };
 
 /** The same blocks, but links and actions go to another source (a tile's piece, an ask's piece). */
 export function As({ source, children }: { source: Source; children: React.ReactNode }) {

@@ -83,5 +83,15 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     await laptop.waitForFunction(() => document.documentElement.dataset.look !== undefined);
     expect((await look(laptop))[0]).toBe('000h');
     expect(await laptop.evaluate(() => !!document.getElementById('loom-look-neon'))).toBe(false);
+
+    // And back: Neon chosen on the phone reaches the laptop, which kept 000h, stylesheet and all.
+    await laptop.unroute('**/*');
+    const back = phone.waitForResponse((r) => r.url().endsWith('/appearance/prefs') && r.request().method() === 'POST');
+    await phone.getByRole('radio', { name: 'Neon Noir' }).click();
+    expect((await back).status()).toBe(200);
+    await laptop.reload();
+    await laptop.waitForFunction(() => document.documentElement.dataset.look === 'neon', null, { timeout: 15_000 });
+    await laptop.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--v-canvas').trim().toUpperCase() === '#07070C', null, { timeout: 15_000 });
+    expect(await look(laptop)).toEqual(['neon', 'dark']);
   }, 60_000);
 });

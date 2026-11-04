@@ -25,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   per member like the Inbox's read state (`ui-sessions.json`, a preference,
   never what they browsed), saved from any device (`POST /appearance/prefs`),
   and carried on every page's chrome; a device keeps a copy only for its first
-  paint. Every look's colours are measured in a test (text 4.5:1, control
-  edges 3:1, ink on the tints 4.5:1), and the page's last hard-coded colours
+  paint. Every look's colours are measured in a test (text 4.5:1 on every
+  surface, control edges 3:1, ink on the tints 4.5:1; one exception is named
+  there: 000h's count badge, 3.91:1, left as it was so 000h doesn't change), and the page's last hard-coded colours
   (status dots, warning rings, counts, the unread dot, how far the dark dims the
   ground) are tokens a look re-points.
 - **The nightly backup is loom's own.** `loom backup set --target git:<url>|path:<dir>

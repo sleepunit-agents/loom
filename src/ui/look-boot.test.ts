@@ -53,5 +53,7 @@ describe.runIf(built)('the look\'s boot script', () => {
     expect(html['data-look']).toBe('000h');
     expect(html['data-mode']).toBeUndefined();
     expect(head).toEqual([]);
+    // Neon's address is still left on the page: loom's answer may say Neon, and look.ts wearLook loads it from there.
+    expect(html['data-neon-css']).toBe(neon);
   });
 });

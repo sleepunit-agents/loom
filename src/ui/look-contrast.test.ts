@@ -41,9 +41,13 @@ const lum = (h: string) => {
 const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)]; return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 
 const SURFACES = ['--v-canvas', '--v-paper', '--v-beige'];
+// The tinted regions text also sits on (tokens.css's semantic surfaces and soft tints).
+const TINTED = ['--v-beige-2', '--v-cream-pill', '--surface-quiet', '--surface-work', '--surface-automation', '--surface-memory', '--surface-library',
+  '--surface-ai', '--surface-alert', '--v-pink-soft', '--v-blue-soft', '--v-yellow-soft', '--v-olive-soft'];
 const PAIRS: Array<[string, string, number]> = [
-  ...['--v-text', '--v-text-2', '--v-text-3'].flatMap((t) => SURFACES.map((s) => [t, s, 4.5] as [string, string, number])),
-  ...SURFACES.map((s) => ['--v-edge', s, 3] as [string, string, number]),
+  ...['--v-text', '--v-text-2', '--v-text-3'].flatMap((t) => [...SURFACES, ...TINTED].map((s) => [t, s, 4.5] as [string, string, number])),
+  // Control edges (a selection's too). --v-border is a hairline between static surfaces, never a control's edge (tokens.css).
+  ...SURFACES.flatMap((s) => [['--v-edge', s, 3], ['--sel-edge', s, 3]] as Array<[string, string, number]>),
   ...['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((a) => ['--v-on-accent', a, 4.5] as [string, string, number]),
   ['--v-brand', '--v-canvas', 3],
   ['--loom-count-ink', '--loom-count', 4.5],

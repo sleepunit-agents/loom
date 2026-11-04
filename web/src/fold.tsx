@@ -5,8 +5,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { BlockView } from './blocks';
 import type { Page } from './loom';
 import '@/styles/cojeev/collapsible.css';
-
 import { sectionRing } from './tones';
+
 
 /** Whether a folding section is open: the viewer's last say on this page, else the piece's (`fold`). */
 const foldKey = (id: string) => `loom:fold:${location.pathname}:${id}`;

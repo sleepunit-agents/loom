@@ -82,7 +82,8 @@ describe('Appearance, kept per person', () => {
     expect((await save(cookie, { _csrf: csrf })).status).toBe(400);
     expect((await save(cookie, { _csrf: 'stale', look: '000h' })).status).toBe(403);
     expect((await save(cookie, { _csrf: csrf, look: '000h' }, 'https://elsewhere.example')).status).toBe(403);
-    expect((await fetch(`${base}/appearance/prefs`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{"look":"000h"}', redirect: 'manual' })).status).not.toBe(200);
+    // Signed out: refused, as every page's POST is (401), never a save.
+    expect((await fetch(`${base}/appearance/prefs`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{"look":"000h"}', redirect: 'manual' })).status).toBe(401);
     expect((await view(cookie)).chrome.prefs).toEqual({});
   });
 });

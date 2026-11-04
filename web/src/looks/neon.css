@@ -22,7 +22,7 @@ color-scheme:dark;
 --v-danger:#FF5468;--v-danger-fill:#C9203E;--v-danger-ink:#FF7A8A;--v-danger-soft:#2E1219;--destructive:var(--v-danger-fill);
 /* structure */
 --v-structure:#0D0C15;--on-structure:#F3F1FF;--structure-quiet:#1C1A2A;--structure-line:#3A3754;--structure-text:#E2DEF5;--sidebar:var(--v-structure);
---sidebar-muted:#A9A4C4;--glide-bg:#0D0C15;--glide-fg:#F3F1FF;--ink-fixed:#0D0C15;--cream-fixed:#F3F1FF;
+--sidebar-muted:#A9A4C4;--muted-foreground-ink:#BDB8D6;--muted-foreground-tinted:#BDB8D6;--glide-bg:#0D0C15;--glide-fg:#F3F1FF;--ink-fixed:#0D0C15;--cream-fixed:#F3F1FF;
 /* states */
 --v-skel-face:#1C1A2A;--v-skel-sheen:#12111C;--v-skel-edge:#2B2940;--v-disabled-ink:#8F8AAD;--v-disabled-face:#1C1A2A;--v-disabled-edge:#6E6896;
 --v-disabled-fill:#1C1A2A;--switch-knob:#12111C;--switch-knob-on:#07070C;--sel-bg:#2E1630;--sel-edge:#FF3DA8;--sel-ink:#F3F1FF;
