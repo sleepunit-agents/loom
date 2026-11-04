@@ -3,8 +3,13 @@
 // pleased, worried. The shape and the eyes say who; the expression says how, and reads in a still frame and in grey,
 // so neither rests on colour or motion. Paths: the identity prototype's spec (face-data.json), all of one topology
 // so a state morphs into the next. Its own chunk; until it loads, the mark's initial stands in.
-import { motion } from 'motion/react';
-import { useId } from 'react';
+//
+// Alive (Jonathan, 2026-11-04: "should feel more alive"): it breathes at rest, blinks and looks around now and then,
+// bobs and scans while working, sways while thinking (face.css). CSS transforms only, each face on its own phase so
+// a list never blinks in unison; only while it's on screen and the page is visible; none with reduced motion.
+import { motion, useInView } from 'motion/react';
+import { useEffect, useId, useRef, useState } from 'react';
+import './face.css';
 import { useChoreography } from '@/lib/cojeev-motion/choreography';
 import data from './face-data.json';
 
@@ -36,6 +41,9 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
 }) {
   const id = useId().replace(/:/g, '');
   const { quiet } = useChoreography();
+  const ref = useRef<SVGSVGElement>(null);
+  const inView = useInView(ref, { margin: '40px' });
+  const shown = useVisible();
   const fam = families[shape] ?? families.pebble;
   const body = fam[state] ?? fam.idle;
   const face = (faces[eyes] ?? faces.dot)[state] ?? faces.dot.idle;
@@ -51,8 +59,10 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   const k = face.scale * tier.faceScale;
   const stroke = tier.stroke / k;
   const move = !quiet;
-  const loop = move && body.frames ? { d: body.frames } : { d: body.d };
-  const loopT = move && body.frames ? { duration: body.dur ?? 3, repeat: Infinity, ease: (body.ease === 'linear' ? 'linear' : 'easeInOut') as 'linear' | 'easeInOut' } : { duration: quiet ? 0 : 0.6 };
+  // Moving only where it's seen: off screen or in a hidden tab, nothing runs (the body's morph included).
+  const live = move && inView && shown;
+  const loop = live && body.frames ? { d: body.frames } : { d: body.d };
+  const loopT = live && body.frames ? { duration: body.dur ?? 3, repeat: Infinity, ease: (body.ease === 'linear' ? 'linear' : 'easeInOut') as 'linear' | 'easeInOut' } : { duration: quiet ? 0 : 0.6 };
   const paint = (c?: string) => (c === 'fg' ? ink : c === 'hi' ? hi : c ?? 'none');
   const part = (p: Part, n: number) => {
     if (drop.has(p.role)) return null;
@@ -65,8 +75,10 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   const rest = face.parts.filter((p) => p.role !== 'eye' && p.role !== 'hi');
   const [ox, oy] = face.offset;
   return (
-    <svg role="img" aria-label={label ? `${label}, ${STATE_WORD[state]}` : STATE_WORD[state]} viewBox="0 0 180 160" width={size} height={size * 160 / 180}
-      data-slot="agent-face" data-state={state} data-shape={shape} data-motion={move ? face.motion ?? undefined : undefined} className="loom-face shrink-0 overflow-visible">
+    <svg ref={ref} role="img" aria-label={label ? `${label}, ${STATE_WORD[state]}` : STATE_WORD[state]} viewBox="0 0 180 160" width={size} height={size * 160 / 180}
+      data-slot="agent-face" data-state={state} data-shape={shape} data-motion={move ? face.motion ?? undefined : undefined} data-live={live || undefined}
+      data-tier={size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card'} style={{ '--face-phase': `${-phaseOf(id)}s` } as React.CSSProperties}
+      className="loom-face shrink-0 overflow-visible">
       <defs>
         <radialGradient id={`${id}b`} cx=".3" cy=".2" r=".85"><stop stopColor={light} /><stop offset=".5" stopColor={base} /><stop offset="1" stopColor={deep} /></radialGradient>
       </defs>
@@ -79,4 +91,23 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
       </g>
     </svg>
   );
+}
+
+/** Whether the page is visible (a hidden tab runs nothing). */
+function useVisible(): boolean {
+  const [v, setV] = useState(true);
+  useEffect(() => {
+    const update = () => setV(document.visibilityState !== 'hidden');
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return v;
+}
+
+/** Where in its loops a face starts, 0 to 12 s, steady for one face: a row of them breathes and blinks out of step. */
+function phaseOf(id: string): number {
+  let h = 7;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return (h % 1200) / 100;
 }
