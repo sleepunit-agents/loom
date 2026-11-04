@@ -42,16 +42,18 @@ describe('an agent\'s pixel face', () => {
   let handle: HttpServeHandle;
   let base: string;
   let token: string;
+  let samToken: string;
   let browser: Browser | undefined;
   const saved = process.env.LOOM_HOME;
 
   beforeAll(async () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-pixel-'));
     for (const a of ['art', 'mark']) { mkdirSync(join(home, 'agents', a), { recursive: true }); writeFileSync(join(home, 'agents', a, 'IDENTITY.md'), a === 'art' ? '# Art E Fish\n' : '# Visual Mark\n'); }
-    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['art'] }] }));
     process.env.LOOM_HOME = home;
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    samToken = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     if (built && chrome) browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -69,6 +71,7 @@ describe('an agent\'s pixel face', () => {
   it('a manifest seeded from PixelLab: each state in each facing, one animation, weight 1; waiting south only', () => {
     const m = manifestFromPixelLab(JSON.parse(sheet().json.toString()));
     expect(m.cell).toEqual([56, 84]);
+    expect(m.char).toBe(48);
     expect(m.states.idle).toEqual({ south: [{ row: 7, frames: 17, weight: 1 }], 'south-east': [{ row: 8, frames: 17, weight: 1 }], 'south-west': [{ row: 9, frames: 17, weight: 1 }] });
     expect(m.states.working?.south).toEqual([{ row: 4, frames: 17, weight: 1 }]);
     expect(m.states.waiting).toEqual({ south: [{ row: 16, frames: 17, weight: 1 }] });
@@ -93,6 +96,7 @@ describe('an agent\'s pixel face', () => {
     expect(pick([usual, rare], undefined, 0.9)).toBe(rare);
     expect(pick([usual, rare], rare, 0.99)).toBe(usual);   // after a rare one, never a rare one
     expect(pick([usual, rare], usual, 0.9)).toBe(rare);    // the usual one may be followed by a rare one
+    expect(pick([usual, rare], usual, 0.5)).toBe(usual);   // and by itself
     let prev: typeof usual | undefined, twice = 0;
     for (let i = 0; i < 2000; i++) { const v = pick([usual, rare], prev); if (v === rare && prev === rare) twice++; prev = v; }
     expect(twice).toBe(0);
@@ -104,6 +108,9 @@ describe('an agent\'s pixel face', () => {
     expect(variantsFor(m, 'idle', 'south-west')).toEqual({ list: m.states.idle['south-east'], flip: true });
     expect(variantsFor(m, 'thinking', 'south-east')).toEqual({ list: m.states.idle.south, flip: false });
     expect(variantsFor(m, 'needs-input', 'south-east')).toEqual({ list: m.states.waiting.south, flip: false });
+    // With south-west rows anywhere in the face, a state without its own uses its south (no mirroring).
+    const withSW = { ...m, states: { ...m.states, thinking: { south: [{ row: 10, frames: 17, weight: 1 }], 'south-west': [{ row: 12, frames: 17, weight: 1 }] } } };
+    expect(variantsFor(withSW, 'error', 'south-west')).toEqual({ list: m.states.error.south, flip: false });
   });
 
   it('is set from the command line, checked first: a PNG and a sprite sheet\'s JSON, for an agent of the household', async () => {
@@ -137,6 +144,9 @@ describe('an agent\'s pixel face', () => {
     expect((await (await fetch(`${base}/faces/art/manifest.json`, { headers: { cookie } })).json()).states.waiting).toEqual({ south: [{ row: 16, frames: 17, weight: 1 }] });
     expect((await fetch(`${base}/faces/mark/sheet.png`, { headers: { cookie } })).status).toBe(404);
     expect((await fetch(`${base}/faces/art/sheet.png`, { redirect: 'manual' })).status).not.toBe(200);
+    // A member who owns only Art sees Art's face too.
+    const sam = ((await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(samToken)}`, redirect: 'manual' })).headers.get('set-cookie') ?? '').split(';')[0];
+    expect((await fetch(`${base}/faces/art/sheet.png`, { headers: { cookie: sam } })).status).toBe(200);
   });
 
   it.runIf(built && chrome)('in a browser: whole pixels, 2x on the card; the drawn face for an agent without one, and for everyone with Pixel faces off', async () => {
@@ -147,6 +157,9 @@ describe('an agent\'s pixel face', () => {
     const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
     await face.waitFor({ timeout: 15_000 });
     expect(await face.evaluate((c) => [getComputedStyle(c).imageRendering, c.getBoundingClientRect().width, (c as HTMLCanvasElement).width])).toEqual(['pixelated', 96, 48]);
+    // It draws the sheet (the fixture's cyan square), not an empty square.
+    await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-identity .loom-pixel-face canvas'); if (!c) return false;
+      const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }, null, { timeout: 15_000 });
     expect(await page.locator('.loom-identity').count()).toBe(2);
     expect(await page.locator('.loom-identity [data-slot="agent-face"]').count()).toBe(1);   // Mark's, drawn
     await page.goto(`${base}/appearance`);

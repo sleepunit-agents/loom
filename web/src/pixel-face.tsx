@@ -35,7 +35,7 @@ type Facing = typeof FACINGS[number];
 /** One animation: a row of a sheet, its frame count, its weight among its state's animations in that facing. */
 type Variant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean };
 /** The agent's manifest (src/household.ts SpriteManifest): its states by PixelLab's names. */
-type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>> };
+type Manifest = { cell: [number, number]; char?: number; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>> };
 type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement>; top: number; height: number };
 export type Sprite = { facings: string[]; v: string; base: string };
 
@@ -77,13 +77,14 @@ function sheetOf(s: Sprite): Promise<Sheet | null> {
   return p;
 }
 
-/** A state's animations in a facing: its own, else south-east's mirrored for south-west, else its south's, else idle's
- * south (the base). Waiting on you is south only. */
+/** A state's animations in a facing: its own; with none, that state's south (else idle's south, the base). A face
+ * whose sheets have no south-west at all wears south-east's, mirrored, there. Waiting on you is south only. */
 export function variantsFor(m: Manifest, st: FaceState, f: Facing): { list: Variant[]; flip: boolean } {
   const byF = m.states[NAME[st]] ?? {};
   const face = st === 'needs-input' ? 'south' : f;
   if (byF[face]?.length) return { list: byF[face]!, flip: false };
-  if (face === 'south-west' && byF['south-east']?.length) return { list: byF['south-east']!, flip: true };
+  const noSouthWest = !Object.values(m.states).some((x) => x?.['south-west']?.length);
+  if (face === 'south-west' && noSouthWest && byF['south-east']?.length) return { list: byF['south-east']!, flip: true };
   if (byF.south?.length) return { list: byF.south, flip: false };
   return { list: m.states.idle?.south ?? [], flip: false };
 }
@@ -101,17 +102,19 @@ const rnd = ([a, b]: [number, number]) => a + Math.random() * (b - a);
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 /** The character's width (PixelLab's square): the face is cropped to it, centred in its cell. */
 const CHAR = 48;
+const charOf = (m: Manifest) => m.char ?? Math.min(CHAR, m.cell[0]);
 
-export default function PixelFace({ sprite, state = 'idle', size, label }: { sprite: Sprite; state?: FaceState; size: number; label?: string }) {
+export default function PixelFace({ sprite, state = 'idle', size, label, fallback }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [failed, setFailed] = useState(false);
   const want = useRef(state);
   want.current = state;
   // Set by the running face: a new state, taken up at once while resting, or when the beat in progress ends.
   const kick = useRef<() => void>(() => {});
   const scale = size >= 64 ? 2 : 1;
 
-  useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) setSheet(s); }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) { setSheet(s); setFailed(!s); } }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const cv = canvas.current;
@@ -136,7 +139,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label }: { spr
       g.clearRect(0, 0, cv.width, cv.height);
       g.save();
       if (flip) { g.translate(cv.width, 0); g.scale(-1, 1); }
-      g.drawImage(img, (f % cols) * cw + (cw - CHAR) / 2, v.row * ch + sheet.top, CHAR, sheet.height, 0, 0, CHAR, sheet.height);
+      g.drawImage(img, (f % cols) * cw + (cw - charOf(sheet.m)) / 2, v.row * ch + sheet.top, charOf(sheet.m), sheet.height, 0, 0, charOf(sheet.m), sheet.height);
       g.restore();
     };
     const clear = () => { clearTimeout(timer); clearTimeout(roll); timer = 0; roll = 0; };
@@ -152,8 +155,12 @@ export default function PixelFace({ sprite, state = 'idle', size, label }: { spr
         frame++;
         if (frame < anim!.frames) { draw(frame); timer = window.setTimeout(step, PIXEL.frameMs); return; }
         playing = false; anim = undefined;
+        const played = shown;
         if (shown === 'complete') shown = 'idle';   // done plays once, then rests as idle
-        if (want.current !== shown && want.current !== 'complete') return enter(want.current);
+        // Off screen or hidden now: stop at rest; a newer state is drawn still, and taken up when seen again.
+        if (!live) { if (want.current !== played) shown = want.current === 'complete' ? 'idle' : want.current; return still(); }
+        // A state asked for during the beat (done too, unless it was done that just played).
+        if (want.current !== shown && !(want.current === 'complete' && played === 'complete')) return enter(want.current);
         draw(rest()); resting(rnd(PIXEL.gaps[shown] ?? PIXEL.gaps.idle), false);
       };
       timer = window.setTimeout(step, PIXEL.frameMs);
@@ -201,11 +208,13 @@ export default function PixelFace({ sprite, state = 'idle', size, label }: { spr
 
   useEffect(() => { kick.current(); }, [state]);
 
-  const h = sheet?.height ?? CHAR;
+  // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
+  if (failed) return <>{fallback}</>;
+  const h = sheet?.height ?? CHAR, w = sheet ? charOf(sheet.m) : CHAR;
   return (
     <span className="loom-pixel-face" style={{ width: size, height: size }}>
-      <canvas ref={canvas} role="img" aria-label={label ? `${label}, ${STATE_WORDS[state]}` : STATE_WORDS[state]} width={CHAR} height={h}
-        style={{ width: CHAR * scale, height: h * scale }} data-state={state} />
+      <canvas ref={canvas} role="img" aria-label={label ? `${label}, ${STATE_WORDS[state]}` : STATE_WORDS[state]} width={w} height={h}
+        style={{ width: w * scale, height: h * scale }} data-state={state} />
     </span>
   );
 }

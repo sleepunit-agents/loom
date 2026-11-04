@@ -194,8 +194,10 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
   return (
     <Suspense fallback={initial}>
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
-        {pixel ? <PixelFace sprite={a.face!.sprite!} state={state} size={size} label={a.label} />
-          : <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />}
+        {(() => {
+          const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />;
+          return pixel ? <PixelFace sprite={a.face!.sprite!} state={state} size={size} label={a.label} fallback={drawn} /> : drawn;
+        })()}
       </span>
     </Suspense>
   );
