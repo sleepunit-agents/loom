@@ -60,7 +60,7 @@
     {
       "name": "slack",
       "repo": "sleepunit-agents/loom-slack",
-      "commit": "167ec9883747198b2289e377171e8a302db42499",
+      "commit": "8d473734a530f1f79eebf75837dfaaf69a071707",
       "version": "0.1.0",
       "label": "Slack",
       "description": "Slack as a venue: each agent's own app; a DM or group DM is checked against Slack and the gates and delivered to the agent, and its replies post as that app."
