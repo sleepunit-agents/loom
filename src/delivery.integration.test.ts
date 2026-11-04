@@ -401,6 +401,8 @@ describe('POST /api/loom/deliver', () => {
       ['a local time', { at: '2026-11-02T12:00:00' }, /at is an ISO-8601 UTC time/],
       ['a label over 80', { label: 'l'.repeat(81) }, /label/],
       ['a from of no kind', { from: { slug: 'loren' } }, /from/],
+      ['local, on another venue (t-1830)', { local: true }, /local is only for a wake, on venue wake/],
+      ['local that isn\'t true', { local: 'yes' }, /local is true, or left out/],
     ])('%s', async (_w, extra, re) => {
       const body: Record<string, unknown> = slackMsg('b-1', extra);
       for (const k of Object.keys(body)) if (body[k] === undefined) delete body[k];
@@ -408,6 +410,14 @@ describe('POST /api/loom/deliver', () => {
       const r = await post(tok.slack, body);
       expect(r.status).toBe(400);
       expect(calls()).toHaveLength(0);
+    });
+
+    it('local: a wake\'s structured field, forwarded as given and part of its hash (t-1830)', () => {
+      const d = parseDeliver(wake('w-local', { local: true })) as DeliverBody;
+      expect(d.local).toBe(true);
+      const plain = parseDeliver(wake('w-local')) as DeliverBody;
+      expect(plain.local).toBeUndefined();
+      expect(deliveryHash(d)).not.toBe(deliveryHash(plain));
     });
 
     it('40,000 characters of text is fine', async () => {
