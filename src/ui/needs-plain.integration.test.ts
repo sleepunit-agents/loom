@@ -190,6 +190,9 @@ describe('a Needs you in plain words', () => {
     expect(a.approval.actions.map((b: Data) => [b.label, b.fields.id])).toEqual([['Allow once', 'a-1234abcd'], ['Deny', 'a-1234abcd']]);
     expect((d.items as Data[]).filter((i) => i.source.id === 'approvals' && i.attention)).toEqual([]);
     expect((d.items as Data[]).filter((i) => i.attention)).toHaveLength(1);
+    // And counted once: the Inbox's badge and the agent's.
+    expect(d.chrome.shell.asks).toBe(1);
+    expect(d.chrome.shell.agents.find((x: Data) => x.id === 'art').asks).toBe(1);
     // Allow, as the sheet posts it: to the approvals piece. The ask clears itself at once, leaving a quiet FYI.
     const allow = a.approval.actions[0];
     expect(await press(cookie, d, a.approval.source, allow.action, allow.fields)).toMatchObject({ ok: true });
