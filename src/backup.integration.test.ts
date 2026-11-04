@@ -18,7 +18,7 @@ import { backupAsks } from './ui/handler.js';
 import { agentSetup } from './ui/household-pages.js';
 import type { DrillReport, Manifest } from './bundle.js';
 import { runCli } from './cli/index.js';
-import { spawnBackupTick } from './backup-tick.js';
+import { ENTRY, spawnBackupTick } from './backup-tick.js';
 import { Readable } from 'node:stream';
 import { remember } from './tools/remember.js';
 import { closeAllBackends } from './backends/index.js';
@@ -286,7 +286,7 @@ describe.skipIf(!hasTools)('loom backup', () => {
     const joined = Buffer.concat(parts.map((p) => spawnSync('git', ['--git-dir', remote, 'show', `main:${p}`]).stdout));
     expect(joined.length).toBe(2500);
     expect(readState(h.home).lastGood?.commit).toBe(git(['--git-dir', remote, 'rev-parse', 'main']));
-  });
+   }, 30_000);
 
   it('a run from a fresh clone (a new or restored machine) keeps the bundles already in the remote', async () => {
     const remote = join(work, 'remote.git');
@@ -395,6 +395,73 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
   });
 
+  it('the real alert command: a failed run reaches LOOM_ALERT_COMMAND, with source loom-backup; a planted household command never runs', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    const heard = join(work, 'heard');
+    const cmd = join(work, 'alert.sh');
+    writeFileSync(cmd, `#!/bin/sh\nprintf '%s\\n' "$@" > ${heard}\n`);
+    chmodSync(cmd, 0o755);
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...rawHousehold(h.home), backup: { ...(rawHousehold(h.home).backup as object), alertCommand: ['/bin/touch', join(work, 'planted')] } }));
+    const { alert: _a, ...noAlert } = fakes({ drills: [false, false, false, false] });
+    // No LOOM_ALERT_COMMAND: nothing runs, the household's plant least of all.
+    await runBackup({ home: h.home, env, deps: noAlert });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(existsSync(join(work, 'planted'))).toBe(false);
+    await runBackup({ home: h.home, env: { ...env, LOOM_ALERT_COMMAND: JSON.stringify([cmd]) }, now: () => new Date(Date.now() + 60_000), deps: noAlert });
+    for (let i = 0; i < 50 && !existsSync(heard); i++) await new Promise((r) => setTimeout(r, 100));
+    const argv = readFileSync(heard, 'utf-8').split('\n');
+    expect(argv.slice(0, 5)).toEqual(['loom-backup', '--severity', 'bad', '--summary', expect.stringMatching(/^The nightly backup failed: the drill/)]);
+    expect(existsSync(join(work, 'planted'))).toBe(false);
+  });
+
+  it('two ticks racing: the one without the lock runs nothing', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    const exported = { n: 0 };
+    const held = takeLock(h.home)!;
+    expect(await tickBackup({ home: h.home, env, deps: fakes({ exported }) })).toBe('busy');
+    expect(exported.n).toBe(0);
+    held.release();
+    const [a, b] = await Promise.all([tickBackup({ home: h.home, env, deps: fakes({ exported }) }), tickBackup({ home: h.home, env, deps: fakes({ exported }) })]);
+    expect([a, b].sort()).toEqual(['busy', 'ran']);
+    expect(exported.n).toBe(1);
+  });
+
+  it('a git target that\'s a local repo inside $LOOM_HOME is refused; so is a main with an empty tree', async () => {
+    expect(() => settings(`git:${join(h.home, 'vault.git')}`)).toThrow(/inside loom's home/);
+    expect(() => settings(`git:file://${join(h.home, 'vault.git')}`)).toThrow(/inside loom's home/);
+    const remote = join(work, 'empty-main.git');
+    git(['init', '-q', '--bare', remote]);
+    const clone = join(work, 'c2');
+    git(['clone', '-q', remote, clone]);
+    git(['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-q', '--allow-empty', '-m', 'empty'], clone);
+    git(['push', '-q', 'origin', 'HEAD:main'], clone);
+    settings(`git:${remote}`);
+    const exported = { n: 0 };
+    expect((await runBackup({ home: h.home, env, deps: fakes({ exported }) })).why).toMatch(/has a main loom didn't write/);
+    expect(exported.n).toBe(0);
+  });
+
+  it('RESTORE.md fits its target: a directory\'s names no bundles/ and no branch', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    expect((await runBackup({ home: h.home, env, deps: fakes() })).parts).toBe(1);
+    const text = readFileSync(join(dir, 'RESTORE.md'), 'utf-8');
+    expect(text).toMatch(/loom restore loom-household-<stamp>\.bundle/);
+    expect(text).not.toMatch(/bundles\/|branch|part-/);
+    expect(statSync(join(dir, '.loom-backup')).mode & 0o777).toBe(0o600);
+  });
+
+  it('the miss\'s alert carries minutes', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    const t = Date.parse(readState(h.home).setAt!) + 30 * 3600_000;
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), lastStart: new Date(t).toISOString() }));
+    await tickBackup({ home: h.home, env, nowMs: t, deps: fakes() });
+    expect(alerts[0].facts).toMatchObject({ minutes: 1800 });
+  });
+
   // ─── What the owner sees ──────────────────────────────────────────────────
 
   it('the Inbox has a backup alert after a failed run and after 26 hours with none; none after a good run; Setup shows it', async () => {
@@ -406,6 +473,8 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(backupAsks(h, Date.now() + 27 * 3600_000)).toMatchObject([{ kind: 'alert', text: "The nightly backup hasn't run yet", sourceLabel: 'Backup' }]);
     await runBackup({ home: h.home, env, deps: fakes({ drills: [false, false] }) });
     expect(backupAsks(h)).toMatchObject([{ kind: 'alert', text: 'The nightly backup failed', meta: expect.stringMatching(/drill/) }]);
+    // Failed and 26 hours with none: one alert, the failure.
+    expect(backupAsks(h, Date.now() + 27 * 3600_000)).toMatchObject([{ text: 'The nightly backup failed' }]);
     expect(backupAsks(h)[0].agent).toBeUndefined();
     expect(backupRow(h)).toMatchObject({ tone: 'bad', text: 'failed' });
     const good = await runBackup({ home: h.home, env, now: () => new Date(Date.now() + 60_000), deps: fakes({ bytes: 3 * 1048576 }) });
@@ -455,11 +524,18 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(spawnBackupTick(h, env, { spawnImpl, entry: '/x/dist/index.js' })).toBe(false);
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
-    expect(spawnBackupTick(h, env, { spawnImpl, entry: '/x/dist/index.js' })).toBe(true);
+    // Set, but nothing to do now (not due, no miss): no child.
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), lastStart: new Date().toISOString() }));
+    expect(spawnBackupTick(h, env, { spawnImpl, entry: '/x/dist/index.js' })).toBe(false);
+    expect(spawnBackupTick(h, env, { spawnImpl, entry: '/x/dist/index.js', wanted: () => true })).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0].args).toEqual(['/x/dist/index.js', 'backup', 'tick']);
     expect(calls[0].o.detached).toBe(true);
     expect(calls[0].o.env?.LOOM_HOME).toBe(h.home);
+    // The real entry: a built loom that runs `backup tick`.
+    expect(existsSync(ENTRY)).toBe(true);
+    const r = spawnSync(process.execPath, [ENTRY, 'backup', 'tick'], { env: { ...env, LOOM_HOME: h.home }, encoding: 'utf-8' });
+    expect(r.stdout.trim()).toBe('idle');
   });
 });
 

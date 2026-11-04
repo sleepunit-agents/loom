@@ -864,9 +864,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   needsFirst?.unref();
   // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
   // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
-  const backupTimer = opts.createServer || !household ? undefined : setInterval(() => { if (live) spawnBackupTick(live(), process.env); }, 10 * 60_000);
+  const backupTick = () => { if (live) spawnBackupTick(live(), process.env); };
+  const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
   backupTimer?.unref();
-  const backupFirst = backupTimer ? setTimeout(() => { if (live) spawnBackupTick(live(), process.env); }, 60_000) : undefined;
+  const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
   backupFirst?.unref();
 
   const http = createServer((req, res) => {

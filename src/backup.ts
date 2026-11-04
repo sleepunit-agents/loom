@@ -16,7 +16,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, closeSync, existsSync, realpathSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync,
+  chmodSync, closeSync, copyFileSync, existsSync, realpathSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync,
   statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,6 +39,7 @@ export const REMIND_MS = 6 * 3600_000;
 const LOCK_STALE_MS = 6 * 3600_000;
 const RUNS_KEPT = 30;
 const MARKER = '.loom-backup';
+const MARKER_TEXT = 'Written by loom (docs/specs/keeping-watch.md): its nightly backup. loom replaces what it wrote here each night.\n';
 const BRANCH = 'main';
 
 export type Target = { kind: 'git'; url: string } | { kind: 'path'; dir: string };
@@ -150,13 +151,15 @@ export function setSettings(h: Household, s: BackupSettings, env: NodeJS.Process
 
 /** A path target inside $LOOM_HOME would put bundles beside the drill key: never. */
 function assertOutsideHome(home: string, t: Target): void {
-  if (t.kind !== 'path') return;
+  // A path target, or a git target that's a local repo (an absolute path or file:///): neither may sit in loom's home.
+  const dir = t.kind === 'path' ? t.dir : t.url.startsWith('/') ? t.url : t.url.startsWith('file://') ? t.url.slice('file://'.length) : null;
+  if (!dir) return;
   const inside = (a: string, b: string) => { const r = relative(b, a); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
-  let real = resolve(t.dir);
-  try { real = realpathSync(t.dir); } catch { /* not there yet: its own path */ }
+  let real = resolve(dir);
+  try { real = realpathSync(dir); } catch { /* not there yet: its own path */ }
   let homeReal = resolve(home);
   try { homeReal = realpathSync(home); } catch { /* as given */ }
-  if (inside(real, homeReal) || inside(resolve(t.dir), resolve(home))) throw new BackupError(`${t.dir} is inside loom's home (${home}); a backup goes somewhere else`);
+  if (inside(real, homeReal) || inside(resolve(dir), resolve(home))) throw new BackupError(`${dir} is inside loom's home (${home}); a backup goes somewhere else`);
 }
 
 export function clearSettings(h: Household): void { writeHouseholdKey(h, 'backup', undefined); }
@@ -344,6 +347,16 @@ function rejoins(parts: string[], sha: string): boolean {
 }
 
 export function restoreText(s: BackupSettings): string {
+  const git = s.target.kind === 'git';
+  const take = git
+    ? `2. Take the newest bundle. One in parts joins first:
+
+       cat bundles/loom-household-<stamp>.bundle.part-* > loom-household-<stamp>.bundle`
+    : '2. Take the newest bundle here: loom-household-<stamp>.bundle (the stamp is the date and time it was made).';
+  const kept = git
+    ? `Kept: the newest ${s.keep} nights and the first bundle of each month. This
+branch is always one commit: loom replaces it each night.`
+    : `Kept: the newest ${s.keep} nights and the first bundle of each month.`;
   return `# The household's backup
 
 Written by loom each night (docs/specs/keeping-watch.md). Each bundle is the
@@ -354,9 +367,7 @@ can be read without one of them.
 To bring the household back on a new machine:
 
 1. Install loom (npm i -g @jbarket/loomai) and age.
-2. Take the newest bundle. One in parts joins first:
-
-       cat bundles/loom-household-<stamp>.bundle.part-* > loom-household-<stamp>.bundle
+${take}
 
 3. Restore it into an empty home:
 
@@ -366,8 +377,7 @@ To bring the household back on a new machine:
    hands each its part.
 4. Start loom (loom serve --http) and point a harness at it.
 
-Kept: the newest ${s.keep} nights and the first bundle of each month. This
-branch is always one commit: loom replaces it each night.
+${kept}
 `;
 }
 
@@ -378,7 +388,8 @@ export function gitFailure(verb: string, stderr: string, url?: string): string {
 }
 
 function git(args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string | Buffer; url?: string } = {}): string {
-  const r = spawnSync('git', args, { cwd: o.cwd, env: o.env ?? process.env, input: o.input, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000 });
+  // Never a prompt: a credential git can't find is a failure that says so, not a run holding the lock for 30 minutes.
+  const r = spawnSync('git', args, { cwd: o.cwd, env: { ...(o.env ?? process.env), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' }, input: o.input, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000 });
   if (r.status !== 0) throw new BackupError(gitFailure(args[0] === '-C' ? args[2] : args[0], `${r.stderr || r.error?.message || `exit ${r.status}`}`, o.url ?? currentUrl));
   return r.stdout;
 }
@@ -410,7 +421,8 @@ function gitPreflight(repo: string, env: NodeJS.ProcessEnv): string | null {
     git(['-C', repo, 'fetch', '-q', 'origin', `+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}`], { env });
   }
   const names = git(['-C', repo, 'ls-tree', '--name-only', sha], { env }).split('\n').filter(Boolean);
-  if (names.length && !names.includes(MARKER)) throw new BackupError(`the target holds files loom didn't write (no ${MARKER}); loom only writes to a repo that's empty or its own`);
+  // A main whose tree is empty (an --allow-empty first commit) isn't "a repo with no branches": it's someone's.
+  if (!names.includes(MARKER)) throw new BackupError(`the target ${names.length ? 'holds files' : 'has a main'} loom didn't write (no ${MARKER}); loom only writes to a repo that's empty or its own`);
   return sha;
 }
 
@@ -433,7 +445,7 @@ function gitWrite(repo: string, remote: string | null, files: Array<{ path: stri
       const st = stampOfPath(p);
       if (st && !keep.has(st)) git(['-C', repo, 'update-index', '--force-remove', '--', p], { env: genv });
     }
-    for (const [path, body] of [['RESTORE.md', restoreText(s)], [MARKER, 'Written by loom (docs/specs/keeping-watch.md). loom replaces this branch each night.\n']]) {
+    for (const [path, body] of [['RESTORE.md', restoreText(s)], [MARKER, MARKER_TEXT]]) {
       const blob = git(['-C', repo, 'hash-object', '-w', '--stdin'], { env: genv, input: body }).trim();
       git(['-C', repo, 'update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], { env: genv });
     }
@@ -456,11 +468,13 @@ function pathPreflight(dir: string): void {
 }
 
 function pathWrite(dir: string, bundle: string, name: string, s: BackupSettings, stamp: string): string[] {
+  // The marker first: a crash after the bundle lands never leaves a target loom then refuses as someone else's.
+  writeFileSync(join(dir, MARKER), MARKER_TEXT, { mode: 0o600 });
   const tmp = join(dir, `.${name}.${process.pid}.tmp`);
-  writeFileSync(tmp, readFileSync(bundle), { mode: 0o600 });
+  copyFileSync(bundle, tmp);
+  chmodSync(tmp, 0o600);
   renameSync(tmp, join(dir, name));
-  writeFileSync(join(dir, MARKER), 'Written by loom (docs/specs/keeping-watch.md).\n');
-  writeFileSync(join(dir, 'RESTORE.md'), restoreText(s));
+  writeFileSync(join(dir, 'RESTORE.md'), restoreText(s), { mode: 0o600 });
   const names = readdirSync(dir).filter((n) => BUNDLE_NAME.test(n));
   const keep = keptStamps([...names.map((n) => BUNDLE_NAME.exec(n)![1]), stamp], s.keep);
   for (const n of names) if (!keep.has(BUNDLE_NAME.exec(n)![1])) rmSync(join(dir, n), { force: true });
@@ -531,6 +545,7 @@ export async function runBackup(opts: { home: string; env: NodeJS.ProcessEnv; no
       run.commit = gitWrite(repo!, remote, files, s, stamp, opts.env).commit;
     } else {
       pathWrite(s.target.dir, file, name, s, stamp);
+      run.parts = 1;
     }
     if (missing.length) throw new BackupError(`written, but without ${missing.join(', ')}'s part (in the last good backup)`);
     run.ok = true;
@@ -639,6 +654,16 @@ function sayRun(env: NodeJS.ProcessEnv, st: BackupState, run: BackupRun, alert: 
   }
 }
 
+/** Whether a tick has anything to do now (a run due, or a miss to say): the daemon starts one only then. */
+export function tickWanted(h: Household, nowMs = Date.now()): boolean {
+  const { settings: s } = readSettings(h);
+  const st = readState(h.home);
+  if (!s || !st.setAt) return false;
+  if (isDue(s, st, nowMs)) return true;
+  const p = backupProblem(h, nowMs);
+  return p?.kind === 'missed' && (!st.said?.missed || nowMs - Date.parse(st.said.missed) >= REMIND_MS);
+}
+
 /**
  * The daemon's tick (every 10 minutes, from each listener): a miss is said (again every 6 hours while it
  * lasts), and a run that's due is run. Only the process holding the run lock does either.
@@ -655,7 +680,7 @@ export async function tickBackup(opts: { home: string; env: NodeJS.ProcessEnv; n
     const p = backupProblem(h, nowMs);
     const said = readState(opts.home).said?.missed;
     if (p?.kind === 'missed' && (!said || nowMs - Date.parse(said) >= REMIND_MS)) {
-      (opts.deps?.alert ?? alertCommand)(opts.env, { source: 'loom-backup', severity: 'bad', summary: `${p.text}${said ? ' (still)' : ''}`, facts: { since: p.at } });
+      (opts.deps?.alert ?? alertCommand)(opts.env, { source: 'loom-backup', severity: 'bad', summary: `${p.text}${said ? ' (still)' : ''}`, facts: { since: p.at, minutes: Math.round((nowMs - Date.parse(p.at)) / 60_000) } });
       updateState(opts.home, (st) => { st.said = { ...st.said, missed: new Date(nowMs).toISOString() }; });
     }
     if (!isDue(s, readState(opts.home), nowMs)) return 'idle';

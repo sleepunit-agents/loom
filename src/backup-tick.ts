@@ -7,16 +7,18 @@ import { spawn } from 'node:child_process';
 import { closeSync, mkdirSync, openSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { backupDir, readSettings } from './backup.js';
+import { backupDir, tickWanted } from './backup.js';
+import { existsSync } from 'node:fs';
 import type { Household } from './household.js';
 
-/** dist/index.js (this file is dist/backup-tick.js once built). */
-const ENTRY = fileURLToPath(new URL('./index.js', import.meta.url));
+/** dist/index.js: beside this file once built (dist/backup-tick.js); from src/ (tsx, the tests), the build's. */
+export const ENTRY = [new URL('./index.js', import.meta.url), new URL('../dist/index.js', import.meta.url)].map((u) => fileURLToPath(u)).find((p) => existsSync(p))
+  ?? fileURLToPath(new URL('./index.js', import.meta.url));
 
-export function spawnBackupTick(h: Household, env: NodeJS.ProcessEnv, o: { spawnImpl?: typeof spawn; entry?: string } = {}): boolean {
+export function spawnBackupTick(h: Household, env: NodeJS.ProcessEnv, o: { spawnImpl?: typeof spawn; entry?: string; wanted?: (h: Household) => boolean } = {}): boolean {
   try {
-    const { settings, problem } = readSettings(h);
-    if (!settings && !problem) return false;
+    // Nothing to do (not set, not due, no miss to say): no child at all.
+    if (!(o.wanted ?? tickWanted)(h)) return false;
     // Its last words, for when a tick fails before it records anything: backup/tick.log, appended (three listeners
     // share it), started over past a megabyte.
     mkdirSync(backupDir(h.home), { recursive: true, mode: 0o700 });
