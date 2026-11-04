@@ -25,10 +25,16 @@ describe('the app (web/)', () => {
     const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
     const named = (re: RegExp) => [...index.matchAll(re)].map((m) => gzipSync(readFileSync(`${root}dist/web/${m[1]}`)).length).reduce((a, b) => a + b, 0);
     const js = named(/<script[^>]+src="\/app\/([^"]+\.js)"/g) + named(/<link rel="modulepreload"[^>]+href="\/app\/([^"]+\.js)"/g);
-    const css = named(/<link rel="stylesheet"[^>]+href="\/app\/([^"]+\.css)"/g);
+    // Neon Noir, the default look, is on the first page too: its stylesheet, named in its boot script (web/src/looks/boot.js).
+    const boot = /<script src="\/app\/(assets\/look-[^"]+\.js)"/.exec(index)?.[1];
+    expect(boot, 'the look\'s boot script in the head').toBeTruthy();
+    const neon = readFileSync(`${root}dist/web/${boot}`, 'utf-8').match(/\/app\/(assets\/neon-[^']+\.css)/)?.[1];
+    expect(neon, 'Neon Noir\'s stylesheet, named in the boot script').toBeTruthy();
+    const css = named(/<link rel="stylesheet"[^>]+href="\/app\/([^"]+\.css)"/g) + gzipSync(readFileSync(`${root}dist/web/${neon}`)).length;
     expect(js).toBeGreaterThan(0);
     expect(css).toBeGreaterThan(0);
     expect(js, 'first-page JS, gzipped').toBeLessThan(250_000);
+    console.log(`first page: ${js} B of JS, ${css} B of CSS, gzipped`);
     expect(css, 'first-page CSS, gzipped').toBeLessThan(120_000);
   });
 });

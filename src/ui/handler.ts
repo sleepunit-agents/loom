@@ -45,7 +45,7 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { sessionStore, signinLink, type Done } from './sessions.js';
+import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
@@ -1200,6 +1200,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     }
   }
 
+  // The person's Appearance (web/src/look.ts): saved from any device, and every page's chrome carries it back (`view`).
+  // A preference, not browsing (docs/privacy.md): the look, light or dark, the ground, sound; kept like `seen`, per member.
+  if (pathname === '/appearance/prefs') {
+    if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
+    if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
+    const body = await readJson(req, LOGIN_MAX_BYTES);
+    if (!body) return sendJson(res, 400, { error: 'not a JSON object' });
+    if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
+    const p = prefsOf(body);
+    if (!p) return sendJson(res, 400, { error: 'not an Appearance choice loom keeps' });
+    return sendJson(res, 200, { ok: true, prefs: storeFor(opts).setPrefs(p, readerFor(opts, who)) });
+  }
+
   const hh = opts.household?.();
   // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
   // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).
@@ -1375,6 +1388,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const skippedNames = skipped.map((s) => s.piece);
   const view = (kind: string, data: Record<string, unknown>, status = 200) => {
     if (!asJson) return app(status);
+    // Every page carries the signed-in person's Appearance, so a device they've just signed in on wears it.
+    if (data.chrome && typeof data.chrome === 'object') data = { ...data, chrome: { ...data.chrome, prefs: storeFor(opts).prefs(readerFor(opts, who)) } };
     const text = JSON.stringify({ view: kind, ...data });
     // The data's fingerprint (without the clock it was drawn at): an app that already has this answer gets a 304.
     const etag = `W/"${createHash('sha256').update(JSON.stringify({ view: kind, ...data, now: undefined })).digest('base64url').slice(0, 22)}"`;

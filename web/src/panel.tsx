@@ -12,7 +12,7 @@ import Form from './form';
 import { tidy } from './tidy';
 import type { Block, PanelRow, Tone } from './loom';
 
-const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
+const DOT: Record<Tone, string> = { ok: 'bg-[var(--loom-ok)]', warn: 'bg-[var(--loom-warn)]', bad: 'bg-[var(--loom-bad)]', muted: 'bg-[var(--loom-muted)]' };
 
 /** A sheet: a bottom drawer on a phone, a centred editor on a desktop. */
 export function Sheet({ open, set, title, note, children }: { open: boolean; set: (o: boolean) => void; title: string; note?: string; children: ReactNode }) {
@@ -156,7 +156,7 @@ export function Spark({ values, tone }: { values: number[]; tone?: Tone }) {
   if (values.length < 2) return null;
   const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
   const pts = values.map((v, i) => `${(i / (values.length - 1)) * 100},${28 - ((v - lo) / span) * 24}`).join(' ');
-  const stroke = tone === 'bad' ? 'var(--v-danger, #c0392b)' : tone === 'warn' ? 'var(--v-yellow-deep, #b8860b)' : 'currentColor';
+  const stroke = tone === 'bad' ? 'var(--v-danger)' : tone === 'warn' ? 'var(--v-yellow-deep)' : 'currentColor';
   return (
     <svg aria-hidden viewBox="0 0 100 30" preserveAspectRatio="none" className="mt-2 h-7 w-full opacity-70">
       <polyline points={pts} fill="none" stroke={stroke} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />

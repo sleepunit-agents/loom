@@ -45,7 +45,7 @@ export interface Env {
 export const EnvContext = createContext<Env | null>(null);
 export const useEnv = () => useContext(EnvContext)!;
 
-const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
+const DOT: Record<Tone, string> = { ok: 'bg-[var(--loom-ok)]', warn: 'bg-[var(--loom-warn)]', bad: 'bg-[var(--loom-bad)]', muted: 'bg-[var(--loom-muted)]' };
 const BADGE: Record<string, string> = { running: 'live', wanted: 'pending', starting: 'pending', failed: 'danger', lost: 'danger' };
 
 export function Link({ page, href, children, className }: { page?: string; href?: string; children: ReactNode; className?: string }) {

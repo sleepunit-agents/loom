@@ -1,0 +1,45 @@
+/* Neon Noir (Jonathan, 2026-11-04: "neon noir with a few things borrowed from terminal hud"): a night-city control
+   room, where light comes from edges and states, never from surfaces. Dark only: boot.js sets data-mode="dark" with it.
+   Its own stylesheet, loaded before first paint by src/looks/boot.js; 000h (tokens.css) is untouched by it.
+   Every rule here is under :root[data-look="neon"][data-mode], which outranks tokens.css's :root[data-mode="dark"]
+   whichever loads first. src/ui/look-contrast.test.ts measures the pairs below. */
+:root[data-look="neon"][data-mode]{
+color-scheme:dark;
+/* surfaces: #07070C, not #000, so an OLED screen doesn't smear when it scrolls */
+--v-canvas:#07070C;--v-paper:#12111C;--v-beige:#1C1A2A;--v-beige-2:#15141F;--v-cream-pill:#12111C;--card:var(--v-paper);--popover:var(--v-paper);
+/* ink and text */
+--v-ink:#F3F1FF;--v-ink-soft:#BDB8D6;--v-on-ink:#07070C;--v-on-accent:#0A0912;--v-text:#F3F1FF;--v-text-2:#BDB8D6;--v-text-3:#8F8AAD;
+--alert-ink:#BDB8D6;--nav-group-ink:#8F8AAD;--unavail-ink:#8F8AAD;--btn-disabled-ink:#8F8AAD;
+/* edges: border is a hairline between surfaces; edge is a control's boundary (3:1 or better) */
+--v-border:#2B2940;--v-edge:#6E6896;--v-brand:#2EE6F0;--v-scrim:rgba(4,3,10,.72);
+/* the four tints: magenta, cyan, amber, violet (the olive slot) */
+--v-pink:#FF3DA8;--v-pink-deep:#E0348F;--v-pink-soft:#2E1630;
+--v-blue:#2EE6F0;--v-blue-deep:#22C3CC;--v-blue-soft:#102A31;
+--v-yellow:#FFC23D;--v-yellow-deep:#E0A82F;--v-yellow-soft:#2E2512;
+--v-olive:#A27DFF;--v-olive-deep:#8D6AE6;--v-olive-soft:#221C3A;--v-olive-ink:#B79BFF;
+--v-accent-ink:#FF6BBE;--accent-foreground:var(--v-on-accent);
+/* danger */
+--v-danger:#FF5468;--v-danger-fill:#C9203E;--v-danger-ink:#FF7A8A;--v-danger-soft:#2E1219;--destructive:var(--v-danger-fill);
+/* structure */
+--v-structure:#0D0C15;--on-structure:#F3F1FF;--structure-quiet:#1C1A2A;--structure-line:#3A3754;--structure-text:#E2DEF5;--sidebar:var(--v-structure);
+--sidebar-muted:#A9A4C4;--glide-bg:#0D0C15;--glide-fg:#F3F1FF;--ink-fixed:#0D0C15;--cream-fixed:#F3F1FF;
+/* states */
+--v-skel-face:#1C1A2A;--v-skel-sheen:#12111C;--v-skel-edge:#2B2940;--v-disabled-ink:#8F8AAD;--v-disabled-face:#1C1A2A;--v-disabled-edge:#6E6896;
+--v-disabled-fill:#1C1A2A;--switch-knob:#12111C;--switch-knob-on:#07070C;--sel-bg:#2E1630;--sel-edge:#FF3DA8;--sel-ink:#F3F1FF;
+/* semantic surfaces */
+--surface-quiet:#12111C;--surface-work:#101F2A;--surface-automation:#221D14;--surface-memory:#1B1730;--surface-library:#25132A;--surface-ai:#101F2A;--surface-alert:#2A1219;
+/* status: ok is its own green here (the olive slot is violet), so "fine" still reads as fine */
+--status-ok:#3DF5A6;--status-ok-bg:#0F2A22;--status-ok-ink:#3DF5A6;--status-warn-bg:#2A2210;--status-warn-ink:#FFC23D;--status-danger-bg:#2E1219;--status-danger-ink:#FF8A98;
+--status-info-bg:#102A31;--status-info-ink:#2EE6F0;--status-pending-bg:#1C1A2A;--status-pending-ink:#BDB8D6;--status-danger:var(--v-danger);
+/* loom's own (index.css): the status dots, rings and counts */
+--loom-ok:#3DF5A6;--loom-warn:#FFC23D;--loom-bad:#FF5468;--loom-muted:#8F8AAD;--loom-live:#2EE6F0;--loom-live-pulse:#2EE6F0;
+--loom-ring-bad:#FF5468;--loom-ring-warn:#FFC23D;--loom-ring-warn-soft:#FFC23D;--loom-count:#FF3DA8;--loom-count-ink:#0A0912;--loom-unread:#2EE6F0;
+/* the ground: brighter than 000h's dark, since neon is light given off against the dark */
+--loom-ground-dim:.9;--loom-wash-dim:.5;
+/* elevation */
+--shadow-float:0 12px 32px -12px rgba(0,0,0,.7);
+}
+/* The wash: three pools, stronger than 000h's (magenta, cyan, amber). */
+:root[data-look="neon"] .loom-wash{background:radial-gradient(at 18% 30%,color-mix(in srgb,var(--v-pink) 24%,transparent),transparent 60%),
+  radial-gradient(at 82% 72%,color-mix(in srgb,var(--v-blue) 20%,transparent),transparent 62%),
+  radial-gradient(at 56% 8%,color-mix(in srgb,var(--v-yellow) 8%,transparent),transparent 56%),var(--v-canvas)}

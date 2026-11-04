@@ -2,6 +2,7 @@
 // and how a link or an action reaches loom. Mirrors src/ui/vocab.ts and src/ui/render.ts; no piece code here.
 
 import type { Tint } from './tint';
+import type { Prefs } from './look';
 export type Tone = 'ok' | 'warn' | 'bad' | 'muted';
 export interface Source { id: string; base: string; act?: string }
 export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } }> }
@@ -52,7 +53,9 @@ export interface Shell {
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
-export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell }
+export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell;
+  /** The signed-in person's Appearance (look.ts), as loom keeps it. */
+  prefs?: Prefs }
 export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];
   id?: string; bio?: string; today?: number; waiting?: number; active?: string }
 

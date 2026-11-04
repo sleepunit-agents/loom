@@ -785,7 +785,7 @@ describe('loom UI over HTTP', () => {
     expect([again.status, await again.text()]).toEqual([304, '']);
     // Someone else's fingerprint is no way in: signed out is still the sign-in page.
     expect((await fetch(`${base}/`, { headers: { accept: 'application/json', 'if-none-match': etag }, redirect: 'manual' })).status).toBe(303);
-    const js = /src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
+    const js = /<script type="module"[^>]+src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
     for (const [enc, want] of [['br', 'br'], ['gzip', 'gzip'], ['identity', null]] as const) {
       const r = await fetch(`${base}/app/${js}`, { headers: { 'accept-encoding': enc } });
       expect([r.status, r.headers.get('content-encoding'), r.headers.get('vary')], enc).toEqual([200, want, 'accept-encoding']);

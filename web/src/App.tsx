@@ -38,6 +38,7 @@ const FindOverlay = lazy(() => import('./find'));
 const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPanel })));
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
+import { keep, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -102,7 +103,7 @@ export default function App() {
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
   // are a choice in the Appearance app, kept in this browser.
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
-  const setGround = (g: Ground) => { setGroundState(g); try { localStorage.setItem('loom-ground', g); } catch { /* private window */ } };
+  const setGround = (g: Ground) => { setGroundState(g); keep('loom-ground', g); save({ ground: g }); };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
   // What the first page leaves out (forms, details, the More drawer, a table's pages) is fetched once the browser is
   // idle a moment after it, so the first tap on one doesn't wait on the network.
@@ -113,9 +114,16 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
-  const effective = mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
+  // The look (look.ts): Neon Noir unless the person chose 000h. Neon is dark only; Light or Dark is 000h's.
+  const [look, setLookState] = useState<Look>(shownLook);
+  const effective = look === 'neon' ? 'dark' : mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
   useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
-  const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem('loom-mode', m); } catch { /* private window */ } };
+  useEffect(() => { wearLook(look); }, [look]);
+  // A choice is the person's: saved to loom (every device they sign in on gets it), and this device keeps a copy.
+  const csrf = useRef('');
+  const save = (p: Prefs) => { if (csrf.current) savePrefs(csrf.current, p); };
+  const setMode = (m: Mode) => { setModeState(m); keep('loom-mode', m); save({ mode: m }); };
+  const setLook = (l: Look) => { setLookState(l); keep('loom-look', l); save({ look: l }); };
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -213,6 +221,19 @@ export default function App() {
   }, [load]);
 
   const chrome = data?.chrome;
+  // loom's copy of the person's Appearance wins once a page lands, and this device's copy follows it. Only a change in
+  // what loom says is applied: an answer that was already on its way when a choice was made doesn't undo it.
+  const heard = useRef<string | null>(null);
+  useEffect(() => {
+    if (chrome?.csrf) csrf.current = chrome.csrf;
+    const p = chrome?.prefs;
+    const said = p ? JSON.stringify(p) : null;
+    if (!p || said === heard.current) return;
+    heard.current = said;
+    if (p.look) { setLookState(p.look); keep('loom-look', p.look); }
+    if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
+    if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
+  }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
   const accent = useMemo(() => {
@@ -364,7 +385,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -404,7 +425,7 @@ export default function App() {
 const ACCENT: Record<string, string> = { '#b8a6ff': 'blue', '#7a2e4f': 'pink', '#2f6b5a': 'olive', '#e3b341': 'yellow', '#3d5a99': 'blue', '#f09a7a': 'pink' };
 const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
-const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined);
+const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : s.tone === 'warn' ? 'ring-1 ring-[var(--loom-ring-warn)]' : undefined);
 
 const FoldCard = lazy(() => import('./fold'));
 

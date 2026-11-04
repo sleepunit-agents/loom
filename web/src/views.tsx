@@ -49,10 +49,10 @@ function AgentIdentity({ c }: { c: AgentCard }) {
       <div className="flex items-center gap-4 p-5">
         <span className="relative shrink-0">
           <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }} />
-          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-sky-500 loom-dot-live' : state === 'broken' ? 'bg-red-500' : state === 'unavailable' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)] loom-dot-live' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
         </span>
         <div className="min-w-0 flex-1">
-          <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill,#b42c22)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
+          <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
           <h3 className="truncate font-[family-name:var(--font-display)] text-2xl font-semibold leading-tight">{c.label}</h3>
           {c.reason && !doing.length && <Arrive as="p" k={`why:${c.id}\0${c.reason}`} className="line-clamp-2 break-words text-sm opacity-70">{c.reason}</Arrive>}
         </div>
@@ -60,7 +60,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
       {(doing.length > 0 || problems.length > 0) && (
         <ul className="grid gap-0.5 px-3 pb-3">
           {problems.map((p) => (
-            <Arrive as="li" key={`p:${p.text}`} k={`pb:${c.id}\0${p.text}`} className={`flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm ${p.tone === 'bad' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
+            <Arrive as="li" key={`p:${p.text}`} k={`pb:${c.id}\0${p.text}`} className={`flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm ${p.tone === 'bad' ? 'bg-[color-mix(in_oklab,var(--loom-bad)_10%,transparent)]' : 'bg-[color-mix(in_oklab,var(--loom-warn)_10%,transparent)]'}`}>
               <AnimatedIcon name={iconFor('triangle-alert')} size="sm" /><span className="line-clamp-3 min-w-0 flex-1 break-words font-medium">{p.text}</span>
             </Arrive>))}
           {doing.map((d, n) => (
@@ -93,7 +93,7 @@ const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'erro
   working: { status: 'working', word: 'Working' }, available: { status: 'idle', word: 'Available' },
   unavailable: { status: 'needs-input', word: 'Unavailable' }, broken: { status: 'error', word: 'Broken' },
 };
-export const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
+export const DOT: Record<Tone, string> = { ok: 'bg-[var(--loom-ok)]', warn: 'bg-[var(--loom-warn)]', bad: 'bg-[var(--loom-bad)]', muted: 'bg-[var(--loom-muted)]' };
 
 /** The same blocks, but links and actions go to another source (a tile's piece, an ask's piece). */
 export function As({ source, children }: { source: Source; children: React.ReactNode }) {
@@ -122,7 +122,7 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
       {home.need && (
         <Card className="gap-0 px-4 py-3">
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.08em]">
-            <span className="size-2 rounded-full bg-amber-500" />
+            <span className="size-2 rounded-full bg-[var(--loom-warn)]" />
             <span className="opacity-70">Needs you{home.needs > 1 ? ` · ${home.needs}` : ''}</span>
             {home.needs > 1 && <button type="button" className="ml-auto normal-case tracking-normal opacity-70 hover:opacity-100" onClick={() => go('/inbox')}>All in the Inbox</button>}
           </div>
@@ -170,7 +170,7 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
         <span className="min-w-0 flex-1">
           {/* The whole title, mostly (Jonathan liked reading it): three lines before it's cut. */}
-          <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,#2563eb)]" />}
+          <span className="flex min-w-0 items-start gap-2">{i.unread && <span className="mt-[0.45em] size-2 shrink-0 rounded-full bg-[var(--loom-accent,var(--loom-unread))]" />}
             <span className={`line-clamp-3 break-words ${i.unread ? 'font-semibold' : 'font-medium'}`}>{p.title}</span></span>
           {/* A quote (a memory's words, a reason) reads to three lines; the row opens it whole. */}
           {(p.why ?? i.outcome) && <span className="line-clamp-3 break-words text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
@@ -192,7 +192,7 @@ function Asks({ asks }: { asks: Ask[] }) {
   return (
     <div className="grid gap-3">{asks.map((a, n) => (
       <As key={n} source={a.source}><Arrive k={`ask:${a.source.id}\0${a.text}`} className="rounded-3xl">
-        <Card className={a.tone === 'bad' ? 'ring-1 ring-red-400' : 'ring-1 ring-amber-300'}>
+        <Card className={a.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : 'ring-1 ring-[var(--loom-ring-warn-soft)]'}>
           <CardContent className="grid gap-2 py-4">
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>

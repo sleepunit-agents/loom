@@ -6,7 +6,7 @@ import { BlockView } from './blocks';
 import type { Page } from './loom';
 import '@/styles/cojeev/collapsible.css';
 
-const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined);
+const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : s.tone === 'warn' ? 'ring-1 ring-[var(--loom-ring-warn)]' : undefined);
 
 /** Whether a folding section is open: the viewer's last say on this page, else the piece's (`fold`). */
 const foldKey = (id: string) => `loom:fold:${location.pathname}:${id}`;

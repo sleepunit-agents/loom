@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon Noir, the page's new look, and the default.** Appearance has a
+  Look: Neon Noir (dark only: a night-city control room, light from edges and
+  states) or 000h (light or dark, as before). Neon is what a person who hasn't
+  chosen sees, so everyone's page changes on update; 000h is one tap away and
+  draws exactly as it did. Its stylesheet is its own file, put on before first
+  paint by a 0.5 KB script in the page's head (loom's CSP allows no inline
+  script), so a page never flashes the other look. A person's Appearance (the
+  look, light or dark, the background) is theirs on every device: kept by loom
+  per member like the Inbox's read state (`ui-sessions.json`, a preference,
+  never what they browsed), saved from any device (`POST /appearance/prefs`),
+  and carried on every page's chrome; a device keeps a copy only for its first
+  paint. Every look's colours are measured in a test (text 4.5:1, control
+  edges 3:1, ink on the tints 4.5:1), and the page's last hard-coded colours
+  (status dots, warning rings, counts, the unread dot, how far the dark dims the
+  ground) are tokens a look re-points.
 - **The nightly backup is loom's own.** `loom backup set --target git:<url>|path:<dir>
   --recipient age1…` (docs/specs/keeping-watch.md): each night at `--at`, one of
   the listeners exports the household, drills a restore of it with the
