@@ -48,7 +48,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
   });
 
   async function device(): Promise<Page> {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
     await ctx.request.post(`${base}/login`, { form: { token: TOKEN }, maxRedirects: 0 });
     return ctx.newPage();
   }
