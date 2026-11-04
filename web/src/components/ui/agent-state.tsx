@@ -41,13 +41,14 @@ export function AgentState({ status = "idle", size = "md", label, description, c
     document.addEventListener("visibilitychange", update);
     return () => document.removeEventListener("visibilitychange", update);
   }, []);
-  const active = !quiet && inView && visible && (status === "thinking" || status === "working");
+  const live = !quiet && inView && visible;
+  const active = live && (status === "thinking" || status === "working");
   const contour = silhouettes[status];
   const alternate = silhouettes[status === "thinking" ? "working" : "thinking"];
   const pathAnimation = active ? { d: [contour, alternate, contour] } : { d: contour };
   const fieldTransition = active ? { duration: status === "working" ? 5 : 7, repeat: Infinity, ease: "easeInOut" as const } : transition;
   return (
-    <div ref={ref} data-slot="agent-state" data-status={status} data-size={size} data-animated={active || undefined} className={cn("v-agent-state", className)} role="status" aria-live="polite" aria-atomic="true" {...props}>
+    <div ref={ref} data-slot="agent-state" data-status={status} data-size={size} data-animated={active || undefined} data-live={live || undefined} className={cn("v-agent-state", className)} role="status" aria-live="polite" aria-atomic="true" {...props}>
       <svg className="v-agent-state__field" viewBox="0 0 180 160" fill="none" aria-hidden="true" focusable="false">
         <defs>
           <radialGradient id={`${id}-body`} cx=".3" cy=".2" r=".85">
@@ -82,7 +83,7 @@ export function AgentState({ status = "idle", size = "md", label, description, c
         </g>
         <motion.path initial={false} d={contour} animate={pathAnimation} transition={fieldTransition} stroke={`url(#${id}-rim)`} strokeWidth="1.2" />
         <g className="v-agent-state__mark" stroke="var(--ink-fixed)" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-          {status === "complete" ? <path d="m77 79 9 9 19-21" /> : status === "error" ? <><path d="M90 66v16" /><path d="M90 91h.01" /></> : status === "needs-input" ? <><path d="M84 72a7 7 0 0 1 14 0c0 5-8 6-8 11" /><path d="M90 92h.01" /></> : <><path d="M77 77v5M101 77v5" /><path d={status === "idle" ? "M84 91q6 4 12 0" : "M85 91h10"} /></>}
+          {status === "complete" ? <path d="m77 79 9 9 19-21" /> : status === "error" ? <><path d="M90 66v16" /><path d="M90 91h.01" /></> : status === "needs-input" ? <><path d="M84 72a7 7 0 0 1 14 0c0 5-8 6-8 11" /><path d="M90 92h.01" /></> : <><g className="v-agent-state__eyes"><path d="M77 77v5M101 77v5" /></g><path d={status === "idle" ? "M84 91q6 4 12 0" : status === "working" ? "M85 90q5 3.5 10 0" : "M85 91h10"} /></>}
         </g>
       </svg>
       <div className="v-agent-state__copy"><span className="v-agent-state__label">{label ?? stateLabels[status]}</span>{description && <span className="v-agent-state__description">{description}</span>}</div>
