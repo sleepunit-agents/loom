@@ -44,7 +44,7 @@ export interface PanelRow {
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
 export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
-export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string }; href: string; current: boolean; asks?: number; sub?: string }
+export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string }
 export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };

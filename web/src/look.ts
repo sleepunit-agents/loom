@@ -7,7 +7,7 @@ import type { Ground, Mode } from './views';
 
 export type Look = 'neon' | '000h';
 /** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. */
-export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** loom's version of them: when they last changed */ at?: number };
+export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** loom's version of them: when they last changed */ at?: number };
 
 const root = () => document.documentElement;
 
@@ -53,6 +53,8 @@ export async function savePrefs(csrf: string, p: Prefs): Promise<number | undefi
 /** The look being worn, for what draws differently in each (an agent's face: look.ts consumers). */
 export const LookContext = createContext<Look>('neon');
 export const useLook = () => useContext(LookContext);
+/** Whether an agent with a pixel sheet wears it (Appearance's "Pixel faces", the person's; on unless turned off). */
+export const PixelContext = createContext(true);
 
 /** loom's six agent marks (src/household.ts MARKS), by their colour: a look can re-point each (neon.css --mark-*). */
 const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
