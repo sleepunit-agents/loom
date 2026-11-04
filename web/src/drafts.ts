@@ -36,3 +36,28 @@ export function guardFooter<B extends { action: string }>(actions: B[], drafted:
     ? { b, send: true, label: busy ? 'Sending…' : 'Send and mark done', disabled: busy }
     : { b, send: false, disabled: busy || (drafted && b.action === 'needs-dismiss') });
 }
+
+/**
+ * A piece's form, the same guard (a task's ask, answered on its page: Jonathan, 2026-11-04): the words typed in its
+ * boxes (textareas only: never a secret or a one-line value) are kept on this device by the page, the action and its
+ * hidden fields, until the form is sent. Leaving the page, or pressing another button on it, loses nothing.
+ */
+export const formDraftKey = (path: string, action: string, hidden?: Record<string, string>): string =>
+  `form:${path}:${action}:${JSON.stringify(hidden ?? {})}`;
+
+/** The words kept for a form, by field name ({} when none, or when what's kept can't be read). */
+export function keptWords(key: string, s: Store | undefined = local()): Record<string, string> {
+  const raw = draftOf(key, s);
+  if (!raw) return {};
+  try {
+    const o = JSON.parse(raw) as unknown;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+    return Object.fromEntries(Object.entries(o as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'));
+  } catch { return {}; }
+}
+
+/** Keep a form's words (blank ones dropped; none at all drops the draft). */
+export function keepWords(key: string, words: Record<string, string>, s: Store | undefined = local()): void {
+  const kept = Object.fromEntries(Object.entries(words).filter(([, v]) => v.trim()));
+  keepDraft(key, Object.keys(kept).length ? JSON.stringify(kept) : '', s);
+}

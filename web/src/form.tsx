@@ -1,6 +1,6 @@
 // A form block and the editor a details holding one opens (blocks.tsx): 000h's fields, radio chips, switches,
 // checkboxes and dialog. Its own chunk: Home's first screen draws no form (web-app.test.ts, the first page's weight).
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useEnv } from './blocks';
 import type { Block, Field } from './loom';
+import { formDraftKey, keepWords, keptWords } from './drafts';
 const ChoiceSelect = lazy(() => import('./choice-select'));
 const Chips = lazy(() => import('./filters').then((m) => ({ default: m.Chips })));
 
@@ -75,10 +76,32 @@ function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: s
     autoComplete={f.kind === 'secret' ? 'off' : undefined} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
 }
 
+/** The fields whose words are kept until sent (drafts.ts): its boxes of words, never a secret or a one-line value. */
+export const wordFields = (form: Extract<Block, { type: 'form' }>) => form.fields.filter((f) => f.kind === 'textarea').map((f) => f.name);
+
+/** Whether any of a form's boxes holds words that weren't there to begin with: they're not sent yet. */
+export function unsent(form: Extract<Block, { type: 'form' }>, vals: Record<string, string>): boolean {
+  return form.fields.some((f) => f.kind === 'textarea' && (vals[f.name] ?? '').trim() !== '' && (vals[f.name] ?? '') !== (f.value ?? ''));
+}
+
 export default function Form({ form, onDone, inDialog = false }: { form: Extract<Block, { type: 'form' }>; onDone?: () => void; inDialog?: boolean }) {
   const { send } = useEnv();
-  const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(form.fields.map((f) => [f.name, f.value ?? ''])));
+  const key = formDraftKey(typeof location === 'undefined' ? '' : location.pathname, form.action, form.hidden);
+  const words = wordFields(form);
+  const [vals, setVals] = useState<Record<string, string>>(() => {
+    const kept = keptWords(key);
+    return Object.fromEntries(form.fields.map((f) => [f.name, words.includes(f.name) && kept[f.name] ? kept[f.name] : f.value ?? '']));
+  });
   const [busy, setBusy] = useState(false);
+  // Which button sent it: `submit`, or one of `submits` (its own fields go with the form's).
+  const extra = useRef<Record<string, string> | undefined>(undefined);
+  // Kept as they're typed (an editor's dialog keeps nothing: it's a setting, not a reply).
+  useEffect(() => {
+    if (inDialog) return;
+    const initial = (n: string) => form.fields.find((f) => f.name === n)?.value ?? '';
+    keepWords(key, Object.fromEntries(words.filter((n) => (vals[n] ?? '') !== initial(n)).map((n) => [n, vals[n] ?? ''])));
+  }, [key, vals]); // eslint-disable-line react-hooks/exhaustive-deps
+  const drafted = unsent(form, vals);
   const fields = (
     <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 ${inDialog ? 'max-h-[52dvh] overflow-y-auto pr-1' : ''}`}>
       {form.fields.map((f) => (
@@ -91,14 +114,30 @@ export default function Form({ form, onDone, inDialog = false }: { form: Extract
       {form.note && <p className="text-sm opacity-70">{form.note}</p>}
     </div>
   );
-  const submit = <Button type="submit" disabled={busy}>{form.submit}</Button>;
+  // More ways to send it (Yes and No over a box of words): each sends what's typed too, so nothing typed is lost to a
+  // button (loom#479's guard). They skip the browser's required check: a Yes needs no words.
+  const submit = (
+    <div className="flex flex-wrap items-center gap-2">
+      {form.submits?.map((b) => (
+        <Button key={b.label} type="submit" formNoValidate disabled={busy} variant={b.tone === 'danger' ? 'danger' : b.tone === 'primary' ? 'default' : 'outline'}
+          onClick={() => { extra.current = b.fields ?? {}; }}>{b.label}</Button>))}
+      <Button type="submit" disabled={busy} variant={form.submits?.length ? 'outline' : 'default'} onClick={() => { extra.current = undefined; }}>{form.submit}</Button>
+      {drafted && !busy && !inDialog && <span className="text-sm opacity-70">Not sent yet</span>}
+    </div>
+  );
   return (
     <form className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" onSubmit={async (e) => {
       e.preventDefault(); setBusy(true);
       // A time row added and left empty isn't sent: "07:17," is "07:17".
       const clean = Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, form.fields.find((f) => f.name === k)?.kind === 'time' ? v.split(',').map((t) => t.trim()).filter(Boolean).join(',') : v]));
-      const ok = await send(form.action, { ...(form.hidden ?? {}), ...clean });
-      setBusy(false); if (ok) onDone?.();
+      const own = extra.current; extra.current = undefined;
+      const ok = await send(form.action, { ...(form.hidden ?? {}), ...clean, ...(own ?? {}) });
+      setBusy(false);
+      if (ok) {
+        keepWords(key, {});
+        setVals((s) => ({ ...s, ...Object.fromEntries(form.fields.filter((f) => words.includes(f.name)).map((f) => [f.name, f.value ?? ''])) }));
+        onDone?.();
+      }
     }}>
       {!inDialog && form.title && <h4 className="font-medium">{form.title}</h4>}
       {fields}
