@@ -54,7 +54,7 @@ export interface BackupRun {
 export interface BackupState {
   v: 1; runs: BackupRun[]; lastGood?: BackupRun; lastStart?: string; setAt?: string;
   /** The alert command was told of these, and when (so a lasting one is said again every REMIND_MS, and its end once). */
-  said?: { failed?: string; missed?: string };
+  said?: { failed?: string; missed?: string; broken?: string };
   /** The last time it came back from a failure or a miss: an FYI in the Inbox for a week. */
   recovered?: { at: string; text: string };
 }
@@ -675,18 +675,20 @@ function sayRun(env: NodeJS.ProcessEnv, st: BackupState, run: BackupRun, alert: 
     return;
   }
   const prev = st.runs[1];
-  const wasBad = st.said?.failed || st.said?.missed || (prev && !prev.ok);
+  const wasBad = st.said?.failed || st.said?.missed || st.said?.broken || (prev && !prev.ok);
   if (wasBad) {
-    if (st.said?.failed || st.said?.missed) alert(env, { source: 'loom-backup', severity: 'warn', summary: 'The nightly backup is OK again', facts: { cleared: 1, at: run.at, name: run.name } });
+    if (st.said?.failed || st.said?.missed || st.said?.broken) alert(env, { source: 'loom-backup', severity: 'warn', summary: 'The nightly backup is OK again', facts: { cleared: 1, at: run.at, name: run.name } });
     updateState(home, (s) => { delete s.said; s.recovered = { at: run.at, text: 'The nightly backup is OK again' }; });
   }
 }
 
 /** Whether a tick has anything to do now (a run due, or a miss to say): the daemon starts one only then. */
 export function tickWanted(h: Household, nowMs = Date.now()): boolean {
-  const { settings: s } = readSettings(h);
+  const { settings: s, problem } = readSettings(h);
   const st = readState(h.home);
-  if (!s || !st.setAt) return false;
+  if (!st.setAt || (!s && !problem)) return false;
+  // Settings that don't work: the alert command hears it on the cadence (there's no run to do).
+  if (!s) return !st.said?.broken || nowMs - Date.parse(st.said.broken) >= REMIND_MS;
   if (isDue(s, st, nowMs)) return true;
   const p = backupProblem(h, nowMs);
   return p?.kind === 'missed' && (!st.said?.missed || nowMs - Date.parse(st.said.missed) >= REMIND_MS);
@@ -700,11 +702,19 @@ export async function tickBackup(opts: { home: string; env: NodeJS.ProcessEnv; n
   const nowMs = opts.nowMs ?? Date.now();
   const h = loadHousehold(opts.home);
   if (!h) return 'not-set';
-  const { settings: s } = readSettings(h);
-  if (!s || !readState(opts.home).setAt) return 'not-set';
+  const { settings: s, problem } = readSettings(h);
+  if ((!s && !problem) || !readState(opts.home).setAt) return 'not-set';
   const lock = takeLock(opts.home, nowMs);
   if (!lock) return 'busy';
   try {
+    if (!s) {
+      const said = readState(opts.home).said?.broken;
+      if (!said || nowMs - Date.parse(said) >= REMIND_MS) {
+        (opts.deps?.alert ?? alertCommand)(opts.env, { source: 'loom-backup', severity: 'bad', summary: `The nightly backup can't run: its settings don't work${said ? ' (still)' : ''}`, facts: { problem } });
+        updateState(opts.home, (st) => { st.said = { ...st.said, broken: new Date(nowMs).toISOString() }; });
+      }
+      return 'idle';
+    }
     const p = backupProblem(h, nowMs);
     const said = readState(opts.home).said?.missed;
     if (p?.kind === 'missed' && (!said || nowMs - Date.parse(said) >= REMIND_MS)) {

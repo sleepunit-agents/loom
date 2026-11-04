@@ -285,6 +285,8 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(parts).toHaveLength(3);
     const joined = Buffer.concat(parts.map((p) => spawnSync('git', ['--git-dir', remote, 'show', `main:${p}`]).stdout));
     expect(joined.length).toBe(2500);
+    // Byte for byte the file the run drilled (the fake export's bytes for that night).
+    expect(joined.equals(Buffer.from(Array.from({ length: 2500 }, (_, i) => (i * 7) % 251)))).toBe(true);
     expect(readState(h.home).lastGood?.commit).toBe(git(['--git-dir', remote, 'rev-parse', 'main']));
    }, 30_000);
 
@@ -392,7 +394,8 @@ describe.skipIf(!hasTools)('loom backup', () => {
     await tickBackup({ home: h.home, env, nowMs: t + 10 * 60_000, deps });
     expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet"]);
     await tickBackup({ home: h.home, env, nowMs: t + 6 * 3600_000, deps });
-    expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
+    // (6 hours on, a night's slot may have come round too: its good run then says OK again after these.)
+    expect(alerts.map((a) => a.summary).slice(0, 2)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
   });
 
   it('the real alert command: a failed run reaches LOOM_ALERT_COMMAND, with source loom-backup; a planted household command never runs', async () => {
@@ -509,11 +512,13 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) set
 
   it('Setup: the Backup row and its form are a household owner\'s; the form sets it', async () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
-    const ids = (o?: { ownerTokens?: boolean }) => agentSetup(h, 'art', o).sections.map((x) => x.id);
-    const row = (o?: { ownerTokens?: boolean }) => JSON.stringify(agentSetup(h, 'art', o).sections[0]).includes('"Backup"');
+    const ids = (o: { ownerTokens?: boolean } = { ownerTokens: true }) => agentSetup(h, 'art', o).sections.map((x) => x.id);
+    const row = (o: { ownerTokens?: boolean } = { ownerTokens: true }) => JSON.stringify(agentSetup(h, 'art', o).sections[0]).includes('"Backup"');
     expect(ids()).toContain('backup');
     expect(row()).toBe(true);
     expect(ids({ ownerTokens: false })).not.toContain('backup');
+    // Fail closed: a caller that doesn't say it's a household owner's page gets no backup.
+    expect(ids({})).not.toContain('backup');
     expect(row({ ownerTokens: false })).toBe(false);
     const r = await householdAct(h, 'backup-set', { target: `path:${dir}`, recipients: owner.recipient, at: '04:00', tz: 'UTC', keep: '5', required: 'box secrets' });
     expect(r).toMatchObject({ ok: true });
@@ -521,11 +526,30 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) set
     expect(await householdAct(h, 'backup-set', { target: 'nowhere', recipients: owner.recipient })).toMatchObject({ ok: false, message: expect.stringMatching(/git:<url> or path:/) });
   });
 
+  it('settings that stop working: the alert command hears it, again 6 hours on; nothing runs', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...rawHousehold(h.home), backup: { target: 'nowhere', recipients: [owner.recipient] } }));
+    const exported = { n: 0 };
+    const t = Date.now();
+    expect(await tickBackup({ home: h.home, env, nowMs: t, deps: fakes({ exported }) })).toBe('idle');
+    expect(await tickBackup({ home: h.home, env, nowMs: t + 600_000, deps: fakes({ exported }) })).toBe('idle');
+    await tickBackup({ home: h.home, env, nowMs: t + 6 * 3600_000, deps: fakes({ exported }) });
+    expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup can't run: its settings don't work", "The nightly backup can't run: its settings don't work (still)"]);
+    expect(exported.n).toBe(0);
+  });
+
+  it('the daemon\'s tick never throws, whatever the home', () => {
+    const file = join(work, 'a-file'); writeFileSync(file, 'x');
+    const ro = { ...h, home: join(file, 'home') };
+    expect(() => spawnBackupTick(ro as Household, env, { wanted: () => true })).not.toThrow();
+  });
+
   // ─── What the owner sees ──────────────────────────────────────────────────
 
   it('the Inbox has a backup alert after a failed run and after 26 hours with none; none after a good run; Setup shows it', async () => {
     expect(backupAsks(h)).toEqual([]);
-    expect(agentSetup(h, 'art').sections[0].blocks[0]).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ label: 'Backup', text: 'not set up' })]) });
+    expect(agentSetup(h, 'art', { ownerTokens: true }).sections[0].blocks[0]).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ label: 'Backup', text: 'not set up' })]) });
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
     expect(backupAsks(h)).toEqual([]);
@@ -540,7 +564,7 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) set
     expect(good.ok).toBe(true);
     expect(backupAsks(h)).toEqual([]);
     expect(backupRow(h, Date.now(), () => 'just now')).toMatchObject({ tone: 'ok', text: 'just now', meta: `drill passed · 3 MB · to ${dir}` });
-    const row = (agentSetup(h, 'art').sections[0].blocks[0] as { items: Array<{ label: string; tone: string }> }).items.find((i) => i.label === 'Backup');
+    const row = (agentSetup(h, 'art', { ownerTokens: true }).sections[0].blocks[0] as { items: Array<{ label: string; tone: string }> }).items.find((i) => i.label === 'Backup');
     expect(row?.tone).toBe('ok');
     expect(backupAsks(h, Date.now() + 27 * 3600_000)).toMatchObject([{ text: expect.stringMatching(/^No backup since /) }]);
   });

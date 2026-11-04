@@ -461,7 +461,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
           text: Number.isNaN(lastMs) ? 'nothing in 3 days' : since(last.created, nowMs), ...(last ? { meta: whereLabel(last.where) } : {}) },
         { label: 'Tokens', tone: live.length ? 'ok' : 'warn', text: `${live.length} live`, meta: live.length ? `used ${since(live[0].last_used, nowMs)}` : 'none' },
         // The household's nightly backup (src/backup.ts), on the default agent's Setup, to a household owner.
-        ...(agent === h.default && opts.ownerTokens !== false ? [backupRow(h, nowMs, (iso) => since(iso, nowMs))] : []),
+        ...(agent === h.default && opts.ownerTokens === true ? [backupRow(h, nowMs, (iso) => since(iso, nowMs))] : []),
       ] }] },
       // Who it is: the boxes someone filling in their own agent from scratch fills (Jonathan, 2026-10-30). The creed is
       // the owner's (the agent can't change it); a household owner edits it here, an agent owner reads it.
@@ -505,7 +505,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         ];
       })() },
       // The nightly backup's settings (src/backup.ts): the household owner's, on the default agent's Setup.
-      ...(agent === h.default && opts.ownerTokens !== false ? [backupSection(h)] : []),
+      ...(agent === h.default && opts.ownerTokens === true ? [backupSection(h)] : []),
     ],
   };
 }
