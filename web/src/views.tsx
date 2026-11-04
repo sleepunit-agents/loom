@@ -192,12 +192,31 @@ function Asks({ asks }: { asks: Ask[] }) {
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
             {a.meta && <p className="text-sm opacity-70">{a.meta}</p>}
-            {a.approval && <As source={a.approval.source}><div className="flex flex-wrap gap-2">{a.approval.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div></As>}
+            {a.approval && <ApprovalBox a={a.approval} />}
             {a.actions && <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>}
           </CardContent>
         </Card>
       </Arrive></As>))}
     </div>
+  );
+}
+
+/**
+ * What Allow allows, beside Allow (security review, t-1778): an ask that absorbed an approval is the agent's words,
+ * and an agent could word it innocently while the approval grants something else. So its Allow and Deny never stand
+ * under the ask alone: always the approval's own words, whole (never cut), labelled as what you're allowing. With no
+ * words to show, no buttons; the sheet's link is the way in.
+ */
+export function ApprovalBox({ a, size = 'sm', onDone }: { a: Approval; size?: 'sm' | 'default'; onDone?: () => void }) {
+  const text = a.text?.trim();
+  if (!text) return null;
+  return (
+    <section className="grid gap-1.5 rounded-2xl bg-[color:var(--v-beige)] p-3" aria-label="You're allowing">
+      <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">You're allowing</h3>
+      <p className="whitespace-pre-wrap break-words font-medium">{text}</p>
+      {a.meta && <p className="whitespace-pre-wrap break-words text-sm opacity-70">{a.meta}</p>}
+      <As source={a.source}><div className="flex flex-wrap gap-2 pt-1">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div></As>
+    </section>
   );
 }
 

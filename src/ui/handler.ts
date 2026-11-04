@@ -663,7 +663,7 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
   const taken = new Set<HomeAsk>();
   const out = asks.map((a) => {
     if (!a.waitsOnApproval) return a;
-    const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
+    const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
     if (!card) return a;
     taken.add(card);
     return { ...a, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source } };

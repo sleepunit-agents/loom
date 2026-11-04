@@ -8,7 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Textarea } from '@/components/ui/textarea';
 import { ActButton, EnvContext, Link, LoomMark, Nothing } from './blocks';
 import type { Chrome, Source } from './loom';
-import { As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
+import { ApprovalBox, As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 
@@ -114,14 +114,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
               <div key={k} className="grid gap-1"><dt className="text-xs font-semibold uppercase tracking-wide opacity-60">{k}</dt><dd className="break-words">{words(v!)}</dd></div>))}
           </dl>
         )}
-        {i.approval && i.attention && (
-          <section className="grid gap-2 rounded-2xl bg-[color:var(--v-beige)] p-3" aria-label="Approval">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">The approval it waits on</h3>
-            <p className="break-words font-medium">{i.approval.text}</p>
-            {i.approval.meta && <p className="break-words text-sm opacity-70">{tidy(i.approval.meta)}</p>}
-            <As source={i.approval.source}><div className="flex flex-wrap gap-2">{i.approval.actions.map((b) => <ActButton key={b.action + b.label} b={b} size="default" onDone={onDone} />)}</div></As>
-          </section>
-        )}
+        {i.approval && i.attention && <ApprovalBox a={i.approval} size="default" onDone={onDone} />}
         {linked && (
           <section className="grid gap-2" aria-label="Links">
             <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Links</h3>
