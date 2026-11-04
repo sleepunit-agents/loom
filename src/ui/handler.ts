@@ -1402,7 +1402,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.end(out.body);
   };
 
-  // The shell's sheets (Scope, Places, Find, Setup, and Appearance, an app in Setup's grid: this device's look; Jonathan,
+  // The shell's sheets (Scope, Places, Find, Setup, and Appearance, an app in Setup's grid: the person's look, kept by loom; Jonathan,
   // 2026-11-03: a page of icons with loose controls under them is wrong): the app draws them as pages.
   if (pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance') {
     const tab = pathname.slice(1);

@@ -98,10 +98,10 @@ export default function App() {
   const [more, setMore] = useState(false);
   const [moreAsked, setMoreAsked] = useState(false);
   const [finding, setFinding] = useState(false);
-  // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept in this browser.
+  // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept by loom for the person (look.ts).
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
-  // are a choice in the Appearance app, kept in this browser.
+  // are a choice in the Appearance app, kept by loom for the person.
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
   const setGround = (g: Ground) => { setGroundState(g); keep('loom-ground', g); save({ ground: g }); };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
@@ -121,7 +121,9 @@ export default function App() {
   useEffect(() => { wearLook(look); }, [look]);
   // A choice is the person's: saved to loom (every device they sign in on gets it), and this device keeps a copy.
   const csrf = useRef('');
-  const save = (p: Prefs) => { if (csrf.current) savePrefs(csrf.current, p); };
+  // loom's version of the person's choices this tab has (look.ts Prefs.at): only a newer one is applied.
+  const heard = useRef(0);
+  const save = (p: Prefs) => { if (csrf.current) void savePrefs(csrf.current, p).then((at) => { if (at) heard.current = Math.max(heard.current, at); }); };
   const setMode = (m: Mode) => { setModeState(m); keep('loom-mode', m); save({ mode: m }); };
   const setLook = (l: Look) => { setLookState(l); keep('loom-look', l); save({ look: l }); };
 
@@ -221,15 +223,14 @@ export default function App() {
   }, [load]);
 
   const chrome = data?.chrome;
-  // loom's copy of the person's Appearance wins once a page lands, and this device's copy follows it. Only a change in
-  // what loom says is applied: an answer that was already on its way when a choice was made doesn't undo it.
-  const heard = useRef<string | null>(null);
+  // loom's copy of the person's Appearance wins once a page lands, and this device's copy follows it. Only a newer
+  // version than this tab has (its `at`) is applied: an answer that was already on its way when a choice was made, or
+  // that landed before the choice's own save came back, carries an older one and doesn't undo it.
   useEffect(() => {
     if (chrome?.csrf) csrf.current = chrome.csrf;
     const p = chrome?.prefs;
-    const said = p ? JSON.stringify(p) : null;
-    if (!p || said === heard.current) return;
-    heard.current = said;
+    if (!p?.at || p.at <= heard.current) return;
+    heard.current = p.at;
     if (p.look) { setLookState(p.look); keep('loom-look', p.look); }
     if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }

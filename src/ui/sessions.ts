@@ -67,8 +67,10 @@ interface File {
  * theme, that sucks"): the look, 000h's light or dark, the ground, and sound. Only what they chose; kept per member
  * like `seen`, so it follows them to every device they sign in on.
  */
-export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean }
-const PREF_VALUES: { [K in keyof Prefs]-?: readonly unknown[] } = {
+export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean;
+  /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
+  at?: number }
+const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
   look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false],
 };
 /** The Appearance fields of a request body that are ones loom keeps, or null if any field given isn't. */
@@ -76,8 +78,8 @@ export function prefsOf(body: Record<string, unknown>): Prefs | null {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(body)) {
     if (k === '_csrf') continue;
-    const allowed = PREF_VALUES[k as keyof Prefs];
-    if (!allowed || !allowed.includes(v)) return null;
+    // Its own keys only: a body's "constructor" or "__proto__" is no Appearance choice.
+    if (!Object.hasOwn(PREF_VALUES, k) || !PREF_VALUES[k as keyof typeof PREF_VALUES].includes(v)) return null;
     out[k] = v;
   }
   return Object.keys(out).length ? out as Prefs : null;
@@ -359,10 +361,11 @@ export class SessionStore {
   }
 
   /** Change some of this reader's Appearance; what's not given stays as it was. */
-  setPrefs(p: Prefs, reader?: string): Prefs {
+  setPrefs(p: Prefs, reader?: string, nowMs = Date.now()): Prefs {
     return this.withLock((f) => {
       const r = readerOf(f, reader);
-      r.prefs = { ...(r.prefs ?? {}), ...p };
+      // Strictly later than the last change, even within a millisecond: the version a device compares.
+      r.prefs = { ...(r.prefs ?? {}), ...p, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
       return { ...r.prefs };
     });
   }

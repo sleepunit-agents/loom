@@ -59,8 +59,7 @@ describe('each look\'s contrast', () => {
     });
   }
   it('Neon Noir: its status inks and its own inks', () => {
-    const t = { ...neon, ...block(read('looks/neon.css'), ':root[data-look="neon"][data-mode]') };
-    const short = NEON_PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(t, f), hex(t, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
+    const short = NEON_PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(neon, f), hex(neon, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
     expect(short).toEqual([]);
   });
 });

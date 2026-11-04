@@ -10,6 +10,8 @@ import tailwindcss from '@tailwindcss/vite';
  * page's head (src/looks/boot.js) puts it on before first paint. loom's CSP allows no inline script, so the script is a
  * file of its own, named by its content like the rest of assets/ (the service worker keeps it for offline).
  */
+// The boot script is joined onto one line (comments dropped): every statement in boot.js ends with ; or }, and
+// src/ui/look-boot.test.ts runs the emitted file. Build only: under `vite dev` there's no Neon (000h dark shows).
 function looks(): Plugin {
   return {
     name: 'loom-looks',
@@ -28,7 +30,9 @@ function looks(): Plugin {
       const html = bundle['index.html'];
       if (!html || html.type !== 'asset') throw new Error('loom-looks: no index.html in the build');
       // First in the head, before the app's stylesheet: it decides which look paints.
-      html.source = String(html.source).replace('<meta charset="UTF-8" />', `<meta charset="UTF-8" />\n    <script src="/app/${fileName}"></script>`);
+      const anchor = '<meta charset="UTF-8" />';
+      if (!String(html.source).includes(anchor)) throw new Error(`loom-looks: index.html has no ${anchor} to put the look's script after`);
+      html.source = String(html.source).replace(anchor, `${anchor}\n    <script src="/app/${fileName}"></script>`);
     },
   };
 }

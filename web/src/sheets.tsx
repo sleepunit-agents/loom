@@ -43,7 +43,7 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // device's look: all tiles, nothing loose under them (Jonathan, 2026-11-03: a page that mixes icons with loose controls
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
-  // Appearance: an app of Setup's, this device's look.
+  // Appearance: an app of Setup's, the person's look (look.ts).
   if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} />;
   if (which === 'scope' && s) {
     return (

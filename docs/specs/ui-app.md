@@ -89,7 +89,10 @@ targets, nothing important only in a tooltip.
 The shootout's 000h build was heavy: 242 KB of JS and 341 KB of CSS gzipped,
 because each component brings its whole stylesheet. Budget for the real app:
 under 250 KB of JS and 120 KB of CSS gzipped for the first page, enforced in CI.
-We install only the components we use, and trim their CSS.
+We install only the components we use, and trim their CSS. The default look's
+own stylesheet (Neon Noir, `web/src/looks/neon.css`) counts toward the CSS, and
+the script that puts the look on before first paint (`web/src/looks/boot.js`)
+stays under 1 KB gzipped (`src/ui/look-boot.test.ts`).
 
 ## Live, and fast
 
@@ -160,6 +163,11 @@ been used.
 - **Server rendering** for the first paint: not at first (loom is behind a
   sign-in, on a LAN or a tailnet, and the app shell is cached by the service
   worker). Revisit if first loads feel slow on a phone.
+- **loom's looks** (Jonathan, 2026-11-04: "neon noir with a few things borrowed
+  from terminal hud"): Neon Noir is the default, dark only, a stylesheet of its
+  own over 000h's tokens (`web/src/looks/`); 000h stays a choice and the light
+  look. The look, light or dark, the ground and sound are the person's, kept by
+  loom per member and carried on every page's chrome (`POST /appearance/prefs`).
 - **loom's own look inside 000h**: 000h's look, whole. Each agent's pages take
   their own accent from 000h's palette (Jonathan, accepting: "agents could get
   different accents if you guys like the 000h options"): an agent's mark color

@@ -138,8 +138,9 @@ export default function Panel({ b }: { b: Extract<Block, { type: 'panel' }> }) {
 /** A status screen's headline: its state in a word or two, big, with a shape as well as a colour (never colour alone). */
 export function Health({ b }: { b: Extract<Block, { type: 'health' }> }) {
   const icon = b.tone === 'ok' ? 'check' : b.tone === 'bad' ? 'x' : b.tone === 'warn' ? 'alert-triangle' : 'minus';
-  const ring: Record<Tone, string> = { ok: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300', warn: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-    bad: 'bg-red-500/15 text-red-700 dark:text-red-300', muted: 'bg-neutral-500/15 opacity-80' };
+  const ring: Record<Tone, string> = { ok: 'bg-[color-mix(in_oklab,var(--loom-ok)_15%,transparent)] text-[color:var(--loom-ok-ink)]',
+    warn: 'bg-[color-mix(in_oklab,var(--loom-warn)_15%,transparent)] text-[color:var(--loom-warn-ink)]',
+    bad: 'bg-[color-mix(in_oklab,var(--loom-bad)_15%,transparent)] text-[color:var(--loom-bad-ink)]', muted: 'bg-[color-mix(in_oklab,var(--loom-muted-wash)_15%,transparent)] opacity-80' };
   return (
     <div className="flex items-center gap-4" data-slot="health" data-tone={b.tone} role="status">
       <span className={`grid size-14 shrink-0 place-items-center rounded-full ${ring[b.tone]}`}><AnimatedIcon name={icon} size="lg" /></span>

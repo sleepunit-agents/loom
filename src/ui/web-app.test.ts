@@ -37,4 +37,25 @@ describe('the app (web/)', () => {
     console.log(`first page: ${js} B of JS, ${css} B of CSS, gzipped`);
     expect(css, 'first-page CSS, gzipped').toBeLessThan(120_000);
   });
+
+  // 000h draws as it did (Neon Noir's sweep): each colour that was a Tailwind class is now a token whose 000h value is
+  // that class's own colour, as the built stylesheet writes it, and the few hex literals keep their old values.
+  it.runIf(existsSync(`${root}web/node_modules/tailwindcss/theme.css`))('000h\'s swept colours are the values they replaced', () => {
+    // Tailwind's palette as it ships (the classes are gone from the build, so their colours are too).
+    const css = readFileSync(`${root}web/node_modules/tailwindcss/theme.css`, 'utf-8');
+    const tw = (c: string) => new RegExp(`--color-${c}:\\s*([^;}]+)`).exec(css)?.[1];
+    const src = readFileSync(`${root}web/src/index.css`, 'utf-8');
+    const block = (sel: string) => Object.fromEntries([...src.slice(src.indexOf(sel)).split('}')[0].matchAll(/(--loom-[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+    const light = block(':root { --loom-ok:'), dark = block(':root[data-mode="dark"] { --loom-ok-ink');
+    const n = (v?: string) => v?.replace(/\s+/g, ' ').replace(/\b0\./g, '.').replace(/ none\)/g, ' 0)');
+    const was: Array<[Record<string, string>, string, string]> = [
+      [light, '--loom-ok', 'emerald-500'], [light, '--loom-warn', 'amber-500'], [light, '--loom-bad', 'red-500'], [light, '--loom-muted', 'neutral-400'],
+      [light, '--loom-live', 'sky-500'], [light, '--loom-ring-bad', 'red-400'], [light, '--loom-ring-warn', 'amber-400'], [light, '--loom-ring-warn-soft', 'amber-300'],
+      [light, '--loom-ok-ink', 'emerald-700'], [light, '--loom-warn-ink', 'amber-700'], [light, '--loom-bad-ink', 'red-700'], [light, '--loom-muted-wash', 'neutral-500'],
+      [dark, '--loom-ok-ink', 'emerald-300'], [dark, '--loom-warn-ink', 'amber-300'], [dark, '--loom-bad-ink', 'red-300'],
+    ];
+    expect(was.filter(([t, k, c]) => n(t[k]) !== n(tw(c))).map(([t, k, c]) => `${k}: ${t[k]} vs ${c} ${tw(c)}`)).toEqual([]);
+    expect(light).toMatchObject({ '--loom-live-pulse': '#0ea5e9', '--loom-count': '#e5484d', '--loom-count-ink': '#fff', '--loom-unread': '#2563eb',
+      '--loom-ground-dim': '.55', '--loom-wash-dim': '.35' });
+  });
 });
