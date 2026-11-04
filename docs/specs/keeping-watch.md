@@ -593,15 +593,10 @@ Jonathan turns the old one off.
 
 ## Open questions
 
-- **Is the drill key allowed in core?** household.md's test says a secret is
-  never core, with no exception. This spec's argument (above, "Is this
-  core?") is that the drill key opens nothing but core's own backup and
-  gives no one new reach, and that the alert command is the owner's own
-  daemon configuration. That's a reading of the rule, not the rule, and it's
-  Jonathan's to accept. The way out, if not: the drill runs only when the
-  owner's key is at hand, which a nightly job can't do, so the drill moves
-  to the runtime (a piece, holding its own key).
-
+- **Is the drill key allowed in core?** Decided: **the drill key stays in core** (Jonathan, 2026-11-04). It
+  opens nothing but core's own backup and gives no one reach they didn't have; the alert command is the
+  owner's own daemon configuration. household.md's test ("does it hold authority? then never core") is
+  read that way for these two.
 - **A warm standby** (household.md's open question): out of scope. The
   nightly bundle and the owner's key are the USB stick.
 - **The monthly bundles in the one commit grow by ~100 MB a month.** At a
