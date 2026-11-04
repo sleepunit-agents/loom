@@ -1210,6 +1210,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
     const p = prefsOf(body);
     if (!p) return sendJson(res, 400, { error: 'not an Appearance choice loom keeps' });
+    if (!Object.keys(p).length) return sendJson(res, 400, { error: 'no Appearance choice to save' });
     return sendJson(res, 200, { ok: true, prefs: storeFor(opts).setPrefs(p, readerFor(opts, who)) });
   }
 

@@ -12,6 +12,7 @@ import { Spinner } from '@/components/ui/spinner';
 const Profile = lazy(() => import('./profile'));
 const Ledger = lazy(() => import('./ledger'));
 import { ActButton, AgentAvatar, BlockView, EnvContext, Link, LoomMark, Nothing, type Env } from './blocks';
+import { DOT } from './tones';
 import { markRead, pageHref, type Button as Btn, type Source, type Tone } from './loom';
 import { openItem, plain } from './plain';
 import { tidy } from './tidy';
@@ -93,7 +94,7 @@ const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'erro
   working: { status: 'working', word: 'Working' }, available: { status: 'idle', word: 'Available' },
   unavailable: { status: 'needs-input', word: 'Unavailable' }, broken: { status: 'error', word: 'Broken' },
 };
-export const DOT: Record<Tone, string> = { ok: 'bg-[var(--loom-ok)]', warn: 'bg-[var(--loom-warn)]', bad: 'bg-[var(--loom-bad)]', muted: 'bg-[var(--loom-muted)]' };
+export { DOT };
 
 /** The same blocks, but links and actions go to another source (a tile's piece, an ask's piece). */
 export function As({ source, children }: { source: Source; children: React.ReactNode }) {

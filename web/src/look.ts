@@ -16,15 +16,22 @@ export const shownLook = (): Look => (root().dataset.look === '000h' ? '000h' : 
 /** Wear a look now: its attribute on <html>, and for Neon its stylesheet (boot.js's, or added now). */
 export function wearLook(l: Look): void {
   root().dataset.look = l;
-  // The browser's own bar matches the page: Neon's canvas, else index.html's own pair (000h's paper and ink).
-  for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
-    m.dataset.own ??= m.content;
-    m.content = l === 'neon' ? '#07070C' : m.dataset.own;
-  }
   if (l === 'neon' && !document.getElementById('loom-look-neon') && root().dataset.neonCss) {
     const k = document.createElement('link');
     k.rel = 'stylesheet'; k.id = 'loom-look-neon'; k.href = root().dataset.neonCss!;
+    k.onload = paintBar;
     document.head.appendChild(k);
+  }
+  paintBar();
+}
+
+/** The browser's own bar matches the page: Neon's canvas (its token, once its stylesheet is on), else index.html's own
+ * pair (000h's paper and ink). */
+function paintBar(): void {
+  const neon = root().dataset.look === 'neon' ? getComputedStyle(root()).getPropertyValue('--v-canvas').trim() : '';
+  for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    m.dataset.own ??= m.content;
+    m.content = neon || m.dataset.own;
   }
 }
 

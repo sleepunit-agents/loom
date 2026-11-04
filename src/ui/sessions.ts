@@ -73,7 +73,7 @@ export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
   look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false],
 };
-/** The Appearance fields of a request body that are ones loom keeps, or null if any field given isn't. */
+/** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
 export function prefsOf(body: Record<string, unknown>): Prefs | null {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(body)) {
@@ -82,7 +82,7 @@ export function prefsOf(body: Record<string, unknown>): Prefs | null {
     if (!Object.hasOwn(PREF_VALUES, k) || !PREF_VALUES[k as keyof typeof PREF_VALUES].includes(v)) return null;
     out[k] = v;
   }
-  return Object.keys(out).length ? out as Prefs : null;
+  return out as Prefs;
 }
 
 /** One action's outcome, as its toast said it: an FYI item in the Inbox afterwards. */

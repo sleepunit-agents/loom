@@ -38,6 +38,7 @@ const FindOverlay = lazy(() => import('./find'));
 const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPanel })));
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
+import { sectionRing } from './tones';
 import { keep, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
@@ -426,7 +427,6 @@ export default function App() {
 const ACCENT: Record<string, string> = { '#b8a6ff': 'blue', '#7a2e4f': 'pink', '#2f6b5a': 'olive', '#e3b341': 'yellow', '#3d5a99': 'blue', '#f09a7a': 'pink' };
 const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
-const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : s.tone === 'warn' ? 'ring-1 ring-[var(--loom-ring-warn)]' : undefined);
 
 const FoldCard = lazy(() => import('./fold'));
 
@@ -435,9 +435,9 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const side = page.sections.filter((s) => s.side);
   const card = (s: Page['sections'][number]) => (s.fold ? (
     // Its title while its chunk loads, so the page doesn't jump.
-    <Suspense key={s.id} fallback={<Card className={ring(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
+    <Suspense key={s.id} fallback={<Card className={sectionRing(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
   ) : (
-    <Card key={s.id} className={ring(s)}>
+    <Card key={s.id} className={sectionRing(s)}>
       {s.title && <CardHeader><CardTitle>{s.title}</CardTitle></CardHeader>}
       <CardContent className="grid min-w-0 gap-4">{s.blocks.map((b, n) => <BlockView key={n} b={b} />)}</CardContent>
     </Card>

@@ -34,7 +34,8 @@ import { createContext, useContext, useState, type ReactNode, lazy, Suspense } f
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem, type Tone } from './loom';
+import { DOT } from './tones';
+import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
@@ -45,7 +46,6 @@ export interface Env {
 export const EnvContext = createContext<Env | null>(null);
 export const useEnv = () => useContext(EnvContext)!;
 
-const DOT: Record<Tone, string> = { ok: 'bg-[var(--loom-ok)]', warn: 'bg-[var(--loom-warn)]', bad: 'bg-[var(--loom-bad)]', muted: 'bg-[var(--loom-muted)]' };
 const BADGE: Record<string, string> = { running: 'live', wanted: 'pending', starting: 'pending', failed: 'danger', lost: 'danger' };
 
 export function Link({ page, href, children, className }: { page?: string; href?: string; children: ReactNode; className?: string }) {
@@ -258,12 +258,12 @@ export function BlockView({ b }: { b: Block }) {
         <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-[var(--r-card)]"><Card lift={s.page !== undefined} className="gap-0 p-0">
           <Link page={s.page} className="block p-4 no-underline"><span className="block text-xs opacity-60">{s.label}</span>
           <span className="flex items-center gap-1.5 text-xl font-semibold">{s.tone && s.tone !== 'muted' && <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[s.tone]}`} />}{s.value}</span>{s.detail && <span className="block text-xs opacity-60 [overflow-wrap:anywhere]">{s.detail}</span>}
-          {s.meter !== undefined && <Suspense fallback={<div className="mt-2 h-2 rounded-full bg-black/10" />}><Progress className="mt-2" value={Math.round(s.meter * 100)} aria-label={s.label} /></Suspense>}
+          {s.meter !== undefined && <Suspense fallback={<div className="mt-2 h-2 rounded-full bg-[var(--loom-track)]" />}><Progress className="mt-2" value={Math.round(s.meter * 100)} aria-label={s.label} /></Suspense>}
           {s.spark && <Suspense fallback={<div className="mt-2 h-7" />}><Spark values={s.spark} tone={s.tone} /></Suspense>}</Link></Card></Arrive>))}</div>);
     case 'meter': return (
       <div className="grid gap-3">{(b as Extract<Block, { type: 'meter' }>).items.map((m) => (
         <div key={m.label} className="grid gap-1"><div className="flex justify-between text-sm"><span>{m.label}</span><span className="opacity-70">{Math.round(m.value * 100)}%</span></div>
-          <Suspense fallback={<div className="h-2 rounded-full bg-black/10" />}><Progress value={Math.round(Math.min(1, m.value) * 100)} aria-label={m.label} /></Suspense>
+          <Suspense fallback={<div className="h-2 rounded-full bg-[var(--loom-track)]" />}><Progress value={Math.round(Math.min(1, m.value) * 100)} aria-label={m.label} /></Suspense>
           {m.detail && <p className="text-xs opacity-60">{m.detail}</p>}</div>))}</div>);
     case 'status': return (
       <ul className="grid gap-2">{(b as Extract<Block, { type: 'status' }>).items.map((s) => (

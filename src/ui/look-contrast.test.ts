@@ -19,7 +19,10 @@ function block(css: string, sel: string): Record<string, string> {
 }
 
 const tokens = read('styles/cojeev/tokens.css');
-const light = block(tokens, ':root');
+// loom's own (index.css --loom-*: the count badge and the rest swept from literals) over 000h's.
+const own = read('index.css');
+const loomBlock = (sel: string) => Object.fromEntries([...own.slice(own.indexOf(sel)).split('}')[0].matchAll(/(--loom-[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+const light = { ...block(tokens, ':root'), ...loomBlock(':root { --loom-ok:') };
 const dark = { ...light, ...block(tokens, ':root[data-mode="dark"]') };
 const neon = { ...dark, ...block(read('looks/neon.css'), ':root[data-look="neon"][data-mode]') };
 const LOOKS = { '000h light': light, '000h dark': dark, 'Neon Noir': neon } as const;
@@ -27,6 +30,7 @@ const LOOKS = { '000h light': light, '000h dark': dark, 'Neon Noir': neon } as c
 function hex(t: Record<string, string>, name: string): string {
   let v = t[name];
   for (let i = 0; i < 5 && v?.startsWith('var('); i++) v = t[/var\((--[\w-]+)/.exec(v)![1]];
+  if (/^#[0-9a-f]{3}$/i.test(v ?? '')) v = `#${[...v.slice(1)].map((c) => c + c).join('')}`;
   if (!/^#[0-9a-f]{6}$/i.test(v ?? '')) throw new Error(`${name} isn't a plain colour (${v})`);
   return v;
 }
@@ -42,20 +46,30 @@ const PAIRS: Array<[string, string, number]> = [
   ...SURFACES.map((s) => ['--v-edge', s, 3] as [string, string, number]),
   ...['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((a) => ['--v-on-accent', a, 4.5] as [string, string, number]),
   ['--v-brand', '--v-canvas', 3],
+  ['--loom-count-ink', '--loom-count', 4.5],
 ];
 // Neon's own: its status inks on their washes, and the inks it adds on its ground.
 const NEON_PAIRS: Array<[string, string, number]> = [
   ['--status-ok-ink', '--status-ok-bg', 4.5], ['--status-warn-ink', '--status-warn-bg', 4.5], ['--status-danger-ink', '--status-danger-bg', 4.5],
   ['--status-info-ink', '--status-info-bg', 4.5], ['--status-pending-ink', '--status-pending-bg', 4.5],
   ['--v-danger-ink', '--v-paper', 4.5], ['--v-accent-ink', '--v-paper', 4.5], ['--v-olive-ink', '--v-paper', 4.5], ['--sel-ink', '--sel-bg', 4.5],
-  ['--loom-count-ink', '--loom-count', 4.5],
 ];
+
+/**
+ * Short of the floor today, and kept so on purpose: 000h's count badge (white on #e5484d, 11px semibold) is 3.91:1.
+ * Neon Noir was asked to leave 000h drawing exactly as it did (Jonathan, 2026-11-04), so it stays here, named, until
+ * 000h's own palette is changed; Neon's count passes. Anything new short of the floor fails.
+ */
+const KNOWN: Record<string, Array<{ pair: string; ratio: number; min: number }>> = {
+  '000h light': [{ pair: '--loom-count-ink on --loom-count', ratio: 3.91, min: 4.5 }],
+  '000h dark': [{ pair: '--loom-count-ink on --loom-count', ratio: 3.91, min: 4.5 }],
+};
 
 describe('each look\'s contrast', () => {
   for (const [name, t] of Object.entries(LOOKS)) {
-    it(`${name}: text 4.5:1, control edges 3:1, ink on the tints 4.5:1`, () => {
+    it(`${name}: text 4.5:1, control edges 3:1, ink on the tints and the count 4.5:1`, () => {
       const short = PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(t, f), hex(t, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
-      expect(short).toEqual([]);
+      expect(short).toEqual(KNOWN[name] ?? []);
     });
   }
   it('Neon Noir: its status inks and its own inks', () => {

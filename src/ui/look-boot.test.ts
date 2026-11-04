@@ -36,14 +36,16 @@ describe.runIf(built)('the look\'s boot script', () => {
     expect(at).toBeLessThan(index.indexOf('rel="stylesheet"'));
     expect(at).toBeLessThan(index.indexOf('type="module"'));
     expect(gzipSync(src).length).toBeLessThan(1024);
-    expect(existsSync(`${root}dist/web${neon}`.replace('/app/', '/'))).toBe(true);
+    expect(neon && existsSync(`${root}dist/web/${neon.slice('/app/'.length)}`)).toBe(true);
   });
   it('nothing kept on this device: Neon, dark, its stylesheet render-blocking', () => {
     for (const kept of [{}, 'throws' as const, { 'loom-look': 'neon' }, { 'loom-look': 'glass' }]) {
       const { html, head } = paint(src, kept);
       expect(html, JSON.stringify(kept)).toMatchObject({ 'data-look': 'neon', 'data-mode': 'dark', 'data-neon-css': neon });
       expect(head).toHaveLength(1);
-      expect(head[0]).toMatchObject({ tag: 'link', rel: 'stylesheet', id: 'loom-look-neon', href: neon, attrs: { blocking: 'render' } });
+      // Set as a property or an attribute, the same to a browser.
+      const at = (k: 'rel' | 'id' | 'href') => head[0][k] ?? head[0].attrs[k];
+      expect([head[0].tag, at('rel'), at('id'), at('href'), head[0].attrs.blocking]).toEqual(['link', 'stylesheet', 'loom-look-neon', neon, 'render']);
     }
   });
   it('000h kept: 000h, its mode left to the app, nothing fetched', () => {

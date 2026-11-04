@@ -79,6 +79,7 @@ describe('Appearance, kept per person', () => {
       expect((await fetch(`${base}/appearance/prefs`, { method: 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' },
         body: `{"_csrf":"${csrf}","${k}":1}` })).status, k).toBe(400);
     }
+    expect((await save(cookie, { _csrf: csrf })).status).toBe(400);
     expect((await save(cookie, { _csrf: 'stale', look: '000h' })).status).toBe(403);
     expect((await save(cookie, { _csrf: csrf, look: '000h' }, 'https://elsewhere.example')).status).toBe(403);
     expect((await fetch(`${base}/appearance/prefs`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{"look":"000h"}', redirect: 'manual' })).status).not.toBe(200);

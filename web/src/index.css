@@ -461,7 +461,9 @@
 :root { --loom-ok: oklch(69.6% .17 162.48); --loom-warn: oklch(76.9% .188 70.08); --loom-bad: oklch(63.7% .237 25.331); --loom-muted: oklch(70.8% 0 none);
   --loom-live: oklch(68.5% .169 237.323); --loom-live-pulse: #0ea5e9; --loom-ring-bad: oklch(70.4% .191 22.216); --loom-ring-warn: oklch(82.8% .189 84.429);
   --loom-ring-warn-soft: oklch(87.9% .169 91.605); --loom-count: #e5484d;
-  --loom-ok-ink: oklch(50.8% .118 165.612); --loom-warn-ink: oklch(55.5% .163 48.998); --loom-bad-ink: oklch(50.5% .213 27.518); --loom-muted-wash: oklch(55.6% 0 none); --loom-count-ink: #fff; --loom-unread: #2563eb; --loom-ground-dim: .55; --loom-wash-dim: .35; }
+  --loom-ok-ink: oklch(50.8% .118 165.612); --loom-warn-ink: oklch(55.5% .163 48.998); --loom-bad-ink: oklch(50.5% .213 27.518); --loom-muted-wash: oklch(55.6% 0 none); --loom-count-ink: #fff; --loom-unread: #2563eb; --loom-ground-dim: .55; --loom-wash-dim: .35;
+  /* A meter's track while its bar loads (was bg-black/10). */
+  --loom-track: color-mix(in oklab, #000 10%, transparent); }
 :root[data-mode="dark"] { --loom-ok-ink: oklch(84.5% .143 164.978); --loom-warn-ink: oklch(87.9% .169 91.605); --loom-bad-ink: oklch(80.8% .114 19.571); }
 /* The page's ground: 000h's docs wash (three soft pools on the canvas); quieter in the dark. */
 .loom-wash { background: radial-gradient(at 18% 35%, color-mix(in srgb, var(--v-pink) 65%, transparent), transparent 62%),

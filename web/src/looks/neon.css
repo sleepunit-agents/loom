@@ -36,7 +36,7 @@ color-scheme:dark;
 --loom-ok-ink:#3DF5A6;--loom-warn-ink:#FFC23D;--loom-bad-ink:#FF8A98;--loom-muted-wash:#8F8AAD;
 --loom-ring-bad:#FF5468;--loom-ring-warn:#FFC23D;--loom-ring-warn-soft:#FFC23D;--loom-count:#FF3DA8;--loom-count-ink:#0A0912;--loom-unread:#2EE6F0;
 /* the ground: brighter than 000h's dark, since neon is light given off against the dark */
---loom-ground-dim:.9;--loom-wash-dim:.5;
+--loom-track:color-mix(in srgb,#fff 10%,transparent);--loom-ground-dim:.9;--loom-wash-dim:.5;
 /* elevation */
 --shadow-float:0 12px 32px -12px rgba(0,0,0,.7);
 }
