@@ -127,12 +127,24 @@ export default function App() {
   const save = (p: Prefs) => { if (csrf.current) void savePrefs(csrf.current, p).then((at) => { if (at) heard.current = Math.max(heard.current, at); }); };
   const setMode = (m: Mode) => { setModeState(m); keep('loom-mode', m); save({ mode: m }); };
   const setLook = (l: Look) => { setLookState(l); keep('loom-look', l); save({ look: l }); };
+  // Sound (sound.ts): off unless the person turns it on; its chunk loads only then.
+  const [sound, setSoundState] = useState(() => { try { return localStorage.getItem('loom-sound') === 'on'; } catch { return false; } });
+  const soundOn = useRef(sound);
+  soundOn.current = sound;
+  const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
   // One toast per outcome: an action that lands on another page says it, and that page's one-time flash says it again.
-  const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
-    ? x : [...x, { ...n, id: Date.now() + Math.random() }])), []);
+  const chimed = useRef({ message: '', at: 0 });
+  const say = useCallback((n: Omit<Note, 'id'>) => {
+    // One chime per outcome, as one toast: the page it lands on saying it again is the same outcome.
+    if (n.ok && soundOn.current && !(chimed.current.message === n.message && Date.now() - chimed.current.at < 5000)) {
+      chimed.current = { message: n.message, at: Date.now() };
+      void import('./sound').then((m) => m.chime('done'));
+    }
+    setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
+    ? x : [...x, { ...n, id: Date.now() + Math.random() }])); }, []);
 
   // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
   // asked behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow").
@@ -235,6 +247,7 @@ export default function App() {
     if (p.look) { setLookState(p.look); keep('loom-look', p.look); }
     if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
+    if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
   }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -335,7 +348,10 @@ export default function App() {
   useLayoutEffect(() => {
     if (arrived.current || !data || waiting) return;
     arrived.current = true;
-    arriveOnce(document.querySelector<HTMLElement>('.loom-top h1'));
+    // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
+    // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
+    const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
+    if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
   }, [data, waiting]);
 
   // Where you've been, for Find's Recent: each page that opened, by its title.
@@ -356,6 +372,7 @@ export default function App() {
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
             <div className="mx-auto max-w-5xl px-4 py-3">
+              {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} clock={chrome.clock} offline={!!savedAt} />}
               <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
                 actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
@@ -387,7 +404,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -420,6 +437,23 @@ export default function App() {
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
     </TintContext.Provider></LookContext.Provider>
+  );
+}
+
+/**
+ * Neon Noir's status bar (Terminal HUD's borrow): LOOM//OS, whether loom is reached, how many agents and how many things
+ * need you, and the clock. Words, not colours: the dot's glow is the same either way and the word says which.
+ */
+function StatusBar({ shell, clock, offline }: { shell: NonNullable<Chrome['shell']>; clock: string; offline: boolean }) {
+  const n = shell.agents.length;
+  return (
+    <div className="loom-status">
+      <span className="loom-status__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
+      <span className="loom-status__live" data-off={offline || undefined}>{offline ? 'offline' : 'live'}</span>
+      <span className="loom-status__what loom-data">{n} agent{n === 1 ? '' : 's'}{shell.asks ? ` · ${shell.asks} need${shell.asks === 1 ? 's' : ''} you` : ''}</span>
+      {/* loom's clock (the household's time zone, as every page says it), from the page's last answer: the time alone. */}
+      <span className="loom-data ml-auto">{/\d{1,2}:\d{2}(\s?[AP]M)?/.exec(clock)?.[0] ?? clock}</span>
+    </div>
   );
 }
 

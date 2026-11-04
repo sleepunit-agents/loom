@@ -89,6 +89,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
   const conv = /^loom:conversation\/(cv-[0-9a-f]{12})$/.exec(i.page ?? '')?.[1];
   const refs = refsOf(`${i.text} ${i.meta ?? ''} ${n?.refs.join(' ') ?? ''}`, github);
   if (conv && !refs.some((r) => r.t === 'conv' && r.id === conv)) refs.push({ t: 'conv', id: conv });
+  const task = refs.find((r) => r.t === 'task')?.id;
   const linked = !!i.href || (i.kind === 'alert' && refs.length > 0);
   const words = (s: string) => bits(s, github).map((b, n) => <Ref key={n} b={b} tasks={tasks} />);
   // Answering it (a Needs you): Yes and No when it's a yes/no question (and no Allow and Deny of its own), and words.
@@ -97,6 +98,9 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
   return (
     <DrawerContent className="lg:mx-auto lg:max-w-xl">
       <DrawerHeader className="flex-col items-stretch gap-3">
+        {/* Neon Noir's title bar (index.css hides it in 000h). What it is and who asks are the row's below too, so a screen
+            reader hears those once; its task is said here, as an item's task may be nowhere else on the sheet. */}
+        <div className="loom-sheet-bar"><b aria-hidden>{p.ended ?? KIND[i.kind]}</b><span aria-hidden>{who}</span>{task && <span className="loom-data">{task}</span>}</div>
         <div className="flex min-w-0 items-center gap-3">
           {mark ? <Mark a={mark} size={36} /> : <LoomMark size={36} />}
           <DrawerDescription className="min-w-0 truncate text-sm">{[who, from].filter(Boolean).join(' · ')}</DrawerDescription>
