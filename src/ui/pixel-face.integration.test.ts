@@ -5,7 +5,7 @@
  * (2x on its card) unless the person turned "Pixel faces" off; an agent without one keeps its drawn face.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -21,7 +21,7 @@ const built = existsSync(`${root}dist/web/index.html`);
 
 /** A sheet as PixelLab exports one: 56×84 cells, 17 columns, a rotations row, then each state in the facings given; a cyan square in each cell. */
 function sheet(facings = ['south', 'south-east', 'south-west']): { png: Buffer; json: Buffer } {
-  const names = ['Error', 'Shift eyes rapidly from side to side to simulate reading', 'Idle', 'Thinking', 'Done', 'Waiting'];
+  const names = ['Error', 'Shift eyes rapidly from side to side to simulate reading', 'Idle', 'Thinking', 'Done', 'Waiting', 'Crack Neck'];
   const [cw, ch, cols, rows] = [56, 84, 17, 1 + names.length * facings.length];
   const [w, h] = [cw * cols, ch * rows];
   const raw = Buffer.alloc((w * 4 + 1) * h);
@@ -72,18 +72,30 @@ describe('an agent\'s pixel face', () => {
     expect(m.states.idle).toEqual({ south: [{ row: 7, frames: 17, weight: 1 }], 'south-east': [{ row: 8, frames: 17, weight: 1 }], 'south-west': [{ row: 9, frames: 17, weight: 1 }] });
     expect(m.states.working?.south).toEqual([{ row: 4, frames: 17, weight: 1 }]);
     expect(m.states.waiting).toEqual({ south: [{ row: 16, frames: 17, weight: 1 }] });
+    // A named animation that isn't a state is left out unless placed: Art's neck crack, a rare idle.
+    expect(Object.values(m.states).flatMap((f) => Object.values(f!).flat()).some((v) => v!.row >= 19)).toBe(false);
+    const art = manifestFromPixelLab(JSON.parse(sheet().json.toString()), { weights: { idle: 85 }, variants: { 'Crack Neck': { state: 'idle', weight: 15, rare: true } } });
+    expect(art.states.idle).toEqual({
+      south: [{ row: 7, frames: 17, weight: 85 }, { row: 19, frames: 17, weight: 15, rare: true }],
+      'south-east': [{ row: 8, frames: 17, weight: 85 }, { row: 20, frames: 17, weight: 15, rare: true }],
+      'south-west': [{ row: 9, frames: 17, weight: 85 }, { row: 21, frames: 17, weight: 15, rare: true }],
+    });
     expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] }, waiting: { 'south-east': [{ row: 17, frames: 17, weight: 1 }] } } })).toThrow(HouseholdError);
     expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { east: [{ row: 7, frames: 17, weight: 1 }] } } })).toThrow(HouseholdError);
     expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ sheet: '../x.png', row: 0, frames: 2, weight: 1 }] } } })).toThrow(HouseholdError);
+    expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 0, frames: 2, weight: 1, rare: 'yes' }] } } })).toThrow(HouseholdError);
   });
 
   it('picks an animation by weight at each beat, never the same rare one twice in a row; a facing with none uses south', () => {
-    const usual = { row: 7, frames: 17, weight: 85 }, rare = { sheet: 'idle-rare.png', row: 0, frames: 12, weight: 15 };
+    const usual = { row: 7, frames: 17, weight: 85 }, rare = { sheet: 'idle-rare.png', row: 0, frames: 12, weight: 15, rare: true };
     const m = { cell: [56, 84] as [number, number], states: { idle: { south: [usual, rare], 'south-east': [{ row: 8, frames: 17, weight: 1 }] }, error: { south: [{ row: 1, frames: 17, weight: 1 }], 'south-east': [{ row: 2, frames: 17, weight: 1 }] }, waiting: { south: [{ row: 16, frames: 17, weight: 1 }] } } };
     expect(pick([usual, rare], undefined, 0.5)).toBe(usual);
     expect(pick([usual, rare], undefined, 0.9)).toBe(rare);
-    expect(pick([usual, rare], rare, 0.99)).toBe(usual);   // a rare one, not twice running
-    expect(pick([usual, rare], usual, 0.9)).toBe(rare);    // the usual one may follow itself, and be followed by a rare one
+    expect(pick([usual, rare], rare, 0.99)).toBe(usual);   // after a rare one, never a rare one
+    expect(pick([usual, rare], usual, 0.9)).toBe(rare);    // the usual one may be followed by a rare one
+    let prev: typeof usual | undefined, twice = 0;
+    for (let i = 0; i < 2000; i++) { const v = pick([usual, rare], prev); if (v === rare && prev === rare) twice++; prev = v; }
+    expect(twice).toBe(0);
     let rares = 0;
     for (let i = 0; i < 2000; i++) if (pick([usual, rare], undefined) === rare) rares++;
     expect(rares / 2000).toBeGreaterThan(0.1); expect(rares / 2000).toBeLessThan(0.2);
@@ -107,8 +119,9 @@ describe('an agent\'s pixel face', () => {
     writeFileSync(join(dir, 'a.png'), png); writeFileSync(join(dir, 'a.json'), json);
     const out: string[] = [];
     const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } };
-    expect(await runHousehold(['sprite', 'art', join(dir, 'a.png'), join(dir, 'a.json')], io as never)).toBe(0);
+    expect(await runHousehold(['sprite', 'art', join(dir, 'a.png'), join(dir, 'a.json'), '--weight', 'idle=85', '--variant', 'Crack Neck=idle:15:rare'], io as never)).toBe(0);
     expect(spriteOf(h, 'art')).toMatchObject({ facings: ['south', 'south-east', 'south-west'] });
+    expect(JSON.parse(readFileSync(join(h.home, 'faces', 'art', 'manifest.json'), 'utf-8')).states.idle.south).toEqual([{ row: 7, frames: 17, weight: 85 }, { row: 19, frames: 17, weight: 15, rare: true }]);
     rmSync(dir, { recursive: true, force: true });
   });
 

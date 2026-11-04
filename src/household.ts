@@ -760,13 +760,14 @@ export function faceOf(h: Household, agent: string): AgentFace {
  * page picks one by weight (weights are tuned in the file, no deploy). Facings are south, south-east and south-west;
  * waiting on you is south only. A state with nothing in a facing uses its south; south is the one every pixel face has.
  *   { "cell": [56, 84], "states": { "idle": { "south": [{ "row": 7, "frames": 17, "weight": 85 },
- *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15 }], "south-east": [...] }, "waiting": { "south": [...] } } }
- * A variant's sheet is "sheet.png" unless it names another. An agent without a manifest keeps its drawn face.
+ *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15, "rare": true }], "south-east": [...] }, "waiting": { "south": [...] } } }
+ * A variant's sheet is "sheet.png" unless it names another; a rare one never plays twice running (after a rare beat the
+ * next is never rare). An agent without a manifest keeps its drawn face.
  */
 export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
 export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
 export type SpriteFacing = typeof SPRITE_FACINGS[number];
-export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number };
+export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean };
 export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>> };
 const SPRITE_MAX_BYTES = 4 * 1024 * 1024;
 const SHEET_NAME = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
@@ -794,7 +795,8 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
         const x = v as SpriteVariant;
         if (!x || !Number.isInteger(x.row) || x.row < 0 || !Number.isInteger(x.frames) || x.frames < 1 || x.frames > 256 || typeof x.weight !== 'number' || !(x.weight > 0)) bad(`has an animation in ${st} ${f} without a row, frames and a weight`);
         if (x.sheet !== undefined && (typeof x.sheet !== 'string' || !SHEET_NAME.test(x.sheet))) bad(`names a sheet that isn't a plain .png name (${String(x.sheet)})`);
-        return { ...(x.sheet && x.sheet !== 'sheet.png' ? { sheet: x.sheet } : {}), row: x.row, frames: x.frames, weight: x.weight };
+        if (x.rare !== undefined && typeof x.rare !== 'boolean') bad(`has an animation in ${st} ${f} whose "rare" isn't true or false`);
+        return { ...(x.sheet && x.sheet !== 'sheet.png' ? { sheet: x.sheet } : {}), row: x.row, frames: x.frames, weight: x.weight, ...(x.rare ? { rare: true } : {}) };
       });
       ((out.states[st as keyof SpriteManifest['states']] ??= {}) as Record<string, SpriteVariant[]>)[f] = vs;
     }
@@ -820,18 +822,26 @@ export function spriteOf(h: Household, agent: string): { facings: SpriteFacing[]
   } catch { return undefined; }
 }
 
-/** A manifest seeded from a PixelLab export: each state's row in each facing, one animation each, weight 1; waiting south only. */
-export function manifestFromPixelLab(meta: unknown): SpriteManifest {
+/**
+ * A manifest seeded from a PixelLab export: each state's rows by their names (Error, Idle, Thinking, Done, Waiting; a
+ * row named by a whole prompt is Working), one animation per state and facing, weight 1 unless `weights` says; waiting
+ * south only. Any other named row is an extra animation only if `variants` places it (its state, weight, and rare or not).
+ */
+export function manifestFromPixelLab(meta: unknown, opts: { weights?: Record<string, number>; variants?: Record<string, { state: string; weight: number; rare?: boolean }> } = {}): SpriteManifest {
   const sh = (meta as { spritesheet?: { cell_size?: { width?: number; height?: number }; columns?: number; rows?: Array<{ row: number; type?: string; animation?: string; direction?: string; frame_count?: number }> } })?.spritesheet;
   if (!sh?.cell_size?.width || !sh.cell_size.height || !Array.isArray(sh.rows)) throw new HouseholdError('that JSON isn\'t a PixelLab sprite sheet\'s (spritesheet.cell_size, rows)');
   const named: Record<string, typeof SPRITE_STATES[number]> = { error: 'error', idle: 'idle', thinking: 'thinking', done: 'done', waiting: 'waiting', working: 'working' };
   const states: Record<string, Record<string, SpriteVariant[]>> = {};
+  const extra = Object.fromEntries(Object.entries(opts.variants ?? {}).map(([k, v]) => [k.trim().toLowerCase(), v]));
   for (const r of sh.rows.filter((x) => x.type === 'animation')) {
-    // PixelLab names a row by its prompt: Working's is what it does, so any name that isn't a state is working.
-    const st = named[(r.animation ?? '').trim().toLowerCase()] ?? 'working';
+    const name = (r.animation ?? '').trim();
+    const x = extra[name.toLowerCase()];
+    // PixelLab names a row by its animation, or by its whole prompt (Working's describes what it does).
+    const st = x?.state ?? named[name.toLowerCase()] ?? (name.split(/\s+/).length > 6 ? 'working' : undefined);
     const f = r.direction ?? 'south';
-    if (!(SPRITE_FACINGS as readonly string[]).includes(f) || (st === 'waiting' && f !== 'south')) continue;
-    ((states[st] ??= {})[f] ??= []).push({ row: r.row, frames: r.frame_count ?? sh.columns ?? 1, weight: 1 });
+    if (!st || !(SPRITE_FACINGS as readonly string[]).includes(f) || (st === 'waiting' && f !== 'south')) continue;
+    const v: SpriteVariant = { row: r.row, frames: r.frame_count ?? sh.columns ?? 1, weight: x ? x.weight : opts.weights?.[st] ?? 1, ...(x?.rare ? { rare: true } : {}) };
+    ((states[st] ??= {})[f] ??= []).push(v);
   }
   return checkSpriteManifest({ cell: [sh.cell_size.width, sh.cell_size.height], states });
 }

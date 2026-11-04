@@ -14,8 +14,8 @@
 // back to south first; error and done may stay angled. A turn is a cut at the rest frame.
 //
 // What plays is the agent's manifest (src/household.ts): per state and facing, its animations (a row of a sheet, its
-// frame count) with weights, one picked by weight at each beat (say the usual idle at 85, a rare one at 15), a rare one
-// never twice in a row. A facing's animations differ from south's, on purpose; a facing with none for a state uses that
+// frame count) with weights, one picked by weight at each beat among the facing's own (say the usual idle at 85, a
+// rare neck crack at 15), a rare one never twice in a row. A facing's animations differ from south's, on purpose; a facing with none for a state uses that
 // state's south (south-west: south-east's, mirrored, first).
 import { useEffect, useRef, useState } from 'react';
 import type { FaceState } from './face';
@@ -33,7 +33,7 @@ export const PIXEL = {
 const FACINGS = ['south', 'south-east', 'south-west'] as const;
 type Facing = typeof FACINGS[number];
 /** One animation: a row of a sheet, its frame count, its weight among its state's animations in that facing. */
-type Variant = { sheet?: string; row: number; frames: number; weight: number };
+type Variant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean };
 /** The agent's manifest (src/household.ts SpriteManifest): its states by PixelLab's names. */
 type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>> };
 type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement>; top: number; height: number };
@@ -88,11 +88,10 @@ export function variantsFor(m: Manifest, st: FaceState, f: Facing): { list: Vari
   return { list: m.states.idle?.south ?? [], flip: false };
 }
 
-/** One animation by weight. The most-weighted is the usual one; any other is rare, and a rare one never plays twice in a
- * row (the last one played is left out of the draw when it was rare). */
+/** One animation by weight, among the facing's own. After a rare one (marked rare in the manifest), the next is never
+ * rare, so a rare one never plays twice running (the preview's pick(): VARIANTS, lastRare). */
 export function pick(list: Variant[], last: Variant | undefined, r = Math.random()): Variant {
-  const usual = list.reduce((a, b) => (b.weight > a.weight ? b : a), list[0]);
-  const pool = last && last !== usual && list.length > 1 ? list.filter((v) => v !== last) : list;
+  const pool = last?.rare && list.some((v) => !v.rare) ? list.filter((v) => !v.rare) : list;
   let x = r * pool.reduce((n, v) => n + v.weight, 0);
   for (const v of pool) { x -= v.weight; if (x < 0) return v; }
   return pool[pool.length - 1];
@@ -126,7 +125,8 @@ export default function PixelFace({ sprite, state = 'idle', size, label }: { spr
     const rest = () => (shown === 'error' ? PIXEL.errorHold : 0);
     // The animation playing, or the one resting (a state's usual one: its rest frame is that one's).
     let anim: Variant | undefined, last: Variant | undefined;
-    const usual = () => { const { list } = variantsFor(sheet.m, shown, facing); return list.reduce((a, b) => (b.weight > a.weight ? b : a), list[0]); };
+    // At rest: the state's usual animation (its weightiest, never a rare one) in this facing.
+    const usual = () => { const { list } = variantsFor(sheet.m, shown, facing); const plain = list.filter((v) => !v.rare); return (plain.length ? plain : list).reduce((a, b) => (b.weight > a.weight ? b : a)); };
     const draw = (i: number) => {
       const { flip } = variantsFor(sheet.m, shown, facing);
       const v = anim ?? usual();
