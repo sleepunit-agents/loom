@@ -714,7 +714,7 @@ export const MARKS: ReadonlyArray<{ bg: string; fg: string; name: string }> = [
 ];
 
 
-function rawHousehold(home: string): Record<string, unknown> {
+export function rawHousehold(home: string): Record<string, unknown> {
   try {
     const raw = JSON.parse(readFileSync(join(home, HOUSEHOLD_FILE), 'utf-8')) as unknown;
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
@@ -761,6 +761,15 @@ export function setFace(h: Household, agent: string, face: AgentFace): void {
     const raw = rawHousehold(h.home);
     const faces = raw.faces && typeof raw.faces === 'object' && !Array.isArray(raw.faces) ? raw.faces as Record<string, unknown> : {};
     writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, faces: { ...faces, [agent]: { shape: face.shape, eyes: face.eyes } } }, null, 2) + '\n');
+  });
+}
+
+/** Set (or, undefined, remove) one top-level key of household.json, under the household's lock. Core's own keys only. */
+export function writeHouseholdKey(h: Household, key: 'backup', value: unknown): void {
+  withLock(h.home, () => {
+    const raw = { ...rawHousehold(h.home) };
+    if (value === undefined) delete raw[key]; else raw[key] = value;
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify(raw, null, 2) + '\n');
   });
 }
 

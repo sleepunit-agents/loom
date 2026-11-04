@@ -224,6 +224,8 @@ function assertNoAuditFiles(dir: string): void {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (AUDIT_FILES.includes(name)) throw new BundleError(`the bundle would carry ${name}; the audit log and its key never leave this machine`);
+    // The backup's drill key (src/backup.ts): it opens what the machine already holds, and never leaves it.
+    if (name === 'drill.key') throw new BundleError('the bundle would carry a drill.key; the backup\'s drill key never leaves this machine');
     if (lstatSync(p).isDirectory()) assertNoAuditFiles(p);
   }
 }

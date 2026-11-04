@@ -34,6 +34,7 @@
  * message is kept in memory under a random id for a minute.
  */
 import { changed, openStream, type Sees } from './live.js';
+import { backupProblem } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -548,7 +549,18 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
 
 /** loom's own asks for every agent: memory proposals, then conversations that need the owner. */
 export function coreAsks(h: Household): HomeAsk[] {
-  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h)];
+  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h), ...backupAsks(h)];
+}
+
+/**
+ * The nightly backup's alert (src/backup.ts; docs/specs/keeping-watch.md): its last run failed, or there's been none
+ * good in 26 hours. Its text holds while it lasts (pushed once); why is its meta. The household owner's, so no agent.
+ */
+export function backupAsks(h: Household, nowMs = Date.now()): HomeAsk[] {
+  let p: ReturnType<typeof backupProblem>;
+  try { p = backupProblem(h, nowMs); } catch { return []; }
+  if (!p) return [];
+  return [{ kind: 'alert', text: p.text, meta: p.meta.slice(0, 300), at: p.at, page: `loom:a/${h.default}/setup`, label: 'Look', source: CORE, sourceLabel: 'Backup' }];
 }
 
 /**
