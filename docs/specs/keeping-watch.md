@@ -438,7 +438,7 @@ clearing. Its next sample ends or continues each of them.
 
 **Which boxes go dark.** Only a box marked **always on**: loom's own box and a
 report-only box always are; any other only when the owner says so (`loom
-runtime always-on <box> on|off`, or on its page). A laptop that's closed is
+runtime always-on <box> on|off`, or the Watch row on its page). A laptop that's closed is
 "not heard from since" on its page, never an alert. And the dark check waits
 until the runtime has been up 10 minutes itself, so a loom that was down
 doesn't come back to find every box dark.
@@ -446,7 +446,7 @@ doesn't come back to find every box dark.
 The control plane keeps per box, in the runtime's data directory
 (`$LOOM_BOX_DATA`, default `~/.local/share/loom-box`) and never in its state
 file (`~/.config/loom-box/state.json`, where boxes and houses are): the last sample and the conditions now (when each began, when
-it last alerted) in `health/<box>.json`, and every sample in
+it last alerted) in `box-watch.json`, with each box's boot and failing units, and every sample in
 `health/<box>-<YYYY-MM>.jsonl`, three months kept, as host-watch keeps
 wunder's. `loom runtime health [<box>]` prints the last sample in words and
 what's wrong now (host-watch's `status`). host-watch's `--dry-run` is
