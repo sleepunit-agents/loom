@@ -97,6 +97,7 @@ describe.skipIf(!hasTools)('loom backup', () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     const a = settings(`path:${dir}`);
     expect(rawHousehold(h.home).backup).toEqual({ target: `path:${dir}`, recipients: [owner.recipient], at: '02:55', tz: 'America/Chicago', keep: 7 });
+    expect(() => settings(`path:${dir}`, { recipients: [a.drillRecipient] })).toThrow(/drill key/);
     const key = join(h.home, 'backup', 'drill.key');
     expect(statSync(key).mode & 0o777).toBe(0o600);
     const b = settings(`path:${dir}`, { keep: 3 });
@@ -248,6 +249,15 @@ describe.skipIf(!hasTools)('loom backup', () => {
     // Uninstalled: not required any more.
     const gone = await runBackup({ home: h.home, env, now: () => new Date(later.getTime() + 2 * 86_400_000), deps: { ...fakes({ pieces: ['secrets'] }), installedPieces: () => ['secrets'] } });
     expect(gone.ok).toBe(true);
+  });
+
+  it('required pieces are a floor: a fresh machine\'s first run without one fails', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`, { required: ['box', 'secrets'] });
+    const run = await runBackup({ home: h.home, env, deps: { ...fakes({ pieces: ['secrets'] }), installedPieces: () => [] } });
+    expect(run).toMatchObject({ ok: false, missing: ['box'] });
+    expect(readState(h.home).lastGood).toBeUndefined();
+    expect(() => validateSettings({ target: 'path:/x', recipients: [owner.recipient], required: ['Bad Name'] })).toThrow(/names a piece/);
   });
 
   // ─── A git target ─────────────────────────────────────────────────────────

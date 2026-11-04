@@ -8,7 +8,7 @@ import {
 } from '../backup.js';
 import type { IOStreams } from './io.js';
 
-const USAGE = `Usage: loom backup set --target git:<url>|path:<dir> --recipient <age1…> [--recipient …] [--at HH:MM] [--tz Zone] [--keep N]
+const USAGE = `Usage: loom backup set --target git:<url>|path:<dir> --recipient <age1…> [--recipient …] [--at HH:MM] [--tz Zone] [--keep N] [--require piece]…
        loom backup run            export, drill and write one now
        loom backup status [--json]
        loom backup off            stop the nightly backup (its bundles stay where they are)
@@ -23,7 +23,8 @@ throwaway home and compares it with the live one, then writes it to the target:
               this user's own git credentials; loom stores none.
   path:<dir>  a directory (a USB stick, a NAS): the same bundles, as files.
 
-A target that holds anything loom didn't write is refused.
+A target that holds anything loom didn't write is refused. --require names a piece
+whose part every bundle must hold (a fresh machine has no last good bundle to go by).
 `;
 
 function flag(args: string[], name: string): string | undefined {
@@ -46,7 +47,7 @@ export async function runBackupCli(argv: string[], io: IOStreams): Promise<numbe
   try {
     switch (verb) {
       case 'set': {
-        const s = validateSettings({ target: flag(rest, '--target'), recipients: all(rest, '--recipient'), at: flag(rest, '--at'), tz: flag(rest, '--tz'), keep: flag(rest, '--keep') },
+        const s = validateSettings({ target: flag(rest, '--target'), recipients: all(rest, '--recipient'), at: flag(rest, '--at'), tz: flag(rest, '--tz'), keep: flag(rest, '--keep'), required: all(rest, '--require') },
           Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
         const { drillRecipient } = setSettings(h, s, io.env);
         io.stdout(`The nightly backup is set: ${targetString(s.target)}, each day at ${s.at} (${s.tz}), keeping ${s.keep} nights and each month's first.\n`

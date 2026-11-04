@@ -42,7 +42,7 @@ const MARKER = '.loom-backup';
 const BRANCH = 'main';
 
 export type Target = { kind: 'git'; url: string } | { kind: 'path'; dir: string };
-export interface BackupSettings { target: Target; recipients: string[]; at: string; tz: string; keep: number }
+export interface BackupSettings { target: Target; recipients: string[]; at: string; tz: string; keep: number; required: string[] }
 
 export interface BackupRun {
   at: string; ok: boolean; why?: string; scheduled?: boolean; ms?: number;
@@ -111,7 +111,7 @@ export function targetLabel(t: Target): string {
 }
 
 /** Settings as the owner gives them, checked, with the defaults filled in. Throws BackupError. */
-export function validateSettings(input: { target?: unknown; recipients?: unknown; at?: unknown; tz?: unknown; keep?: unknown }, defaultTz = 'UTC'): BackupSettings {
+export function validateSettings(input: { target?: unknown; recipients?: unknown; at?: unknown; tz?: unknown; keep?: unknown; required?: unknown }, defaultTz = 'UTC'): BackupSettings {
   const target = parseTarget(String(input.target ?? ''));
   const recipients = Array.isArray(input.recipients) ? input.recipients.map((r) => String(r).trim()).filter(Boolean) : [];
   if (!recipients.length) throw new BackupError('a backup needs at least one --recipient: an age (age1…) or ssh public key the owner holds');
@@ -122,7 +122,11 @@ export function validateSettings(input: { target?: unknown; recipients?: unknown
   if (!validTz(tz)) throw new BackupError(`${tz} isn't a time zone (America/Chicago, UTC, …)`);
   const keep = input.keep === undefined || input.keep === '' ? 7 : Number(input.keep);
   if (!Number.isInteger(keep) || keep < 1 || keep > 90) throw new BackupError('--keep is a whole number of nights, 1 to 90');
-  return { target, recipients: [...new Set(recipients)], at, tz, keep };
+  // The floor a fresh machine has no last good bundle to give (art-loom-bundle's REQUIRED): pieces every bundle must hold.
+  const required = Array.isArray(input.required) ? input.required.map((r) => String(r).trim()).filter(Boolean)
+    : typeof input.required === 'string' && input.required ? input.required.split(',').map((r) => r.trim()).filter(Boolean) : [];
+  for (const r of required) if (!/^[a-z][a-z0-9-]{0,39}$/.test(r)) throw new BackupError(`--require names a piece (lowercase letters, digits, dashes), not ${r.slice(0, 40)}`);
+  return { target, recipients: [...new Set(recipients)], at, tz, keep, required: [...new Set(required)] };
 }
 
 /** The household's backup settings, or why there are none usable. */
@@ -138,7 +142,8 @@ export function readSettings(h: Household): { settings?: BackupSettings; problem
 export function setSettings(h: Household, s: BackupSettings, env: NodeJS.ProcessEnv, now = new Date()): { settings: BackupSettings; drillRecipient: string } {
   assertOutsideHome(h.home, s.target);
   const key = ensureDrillKey(h.home, env);
-  writeHouseholdKey(h, 'backup', { target: targetString(s.target), recipients: s.recipients, at: s.at, tz: s.tz, keep: s.keep });
+  if (s.recipients.includes(key.recipient)) throw new BackupError('that recipient is this machine\'s own drill key: the bundle is always encrypted to it already; give your own key');
+  writeHouseholdKey(h, 'backup', { target: targetString(s.target), recipients: s.recipients, at: s.at, tz: s.tz, keep: s.keep, ...(s.required.length ? { required: s.required } : {}) });
   updateState(h.home, (st) => { st.setAt = now.toISOString(); });
   return { settings: s, drillRecipient: key.recipient };
 }
@@ -512,7 +517,7 @@ export async function runBackup(opts: { home: string; env: NodeJS.ProcessEnv; no
     // Every piece whose part was in the last good bundle must be in this one (the box's dropped out silently, 2026-10-26).
     // ...that's still installed: a piece the owner removed isn't required.
     const installed = new Set((deps.installedPieces ?? (() => listPieces(opts.env).map((p) => p.name)))());
-    const missing = (before.lastGood?.pieces ?? []).filter((p) => !run.pieces!.includes(p) && installed.has(p));
+    const missing = [...new Set([...s.required, ...(before.lastGood?.pieces ?? []).filter((p) => installed.has(p))])].filter((p) => !run.pieces!.includes(p));
     if (missing.length) run.missing = missing;
     run.name = name;
     run.bytes = statSync(file).size;
