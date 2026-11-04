@@ -671,6 +671,12 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
   return out.filter((a) => !taken.has(a));
 }
 
+/** How many approvals cards a Needs you absorbed (of one agent's, or all): the counts that add asks up take them off once. */
+function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, agent?: string): number {
+  const all = [...conversationAsks(agent ? { ...h, agents: [agent] } : h), ...pieceAsks(pieces, env)];
+  return all.length - absorbApprovals(all, env).length;
+}
+
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
 function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
   return [
@@ -839,7 +845,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
     const marks = agentMarks(h);
-    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a), 0);
+    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a), 0) - absorbedCount(h, pieces, opts.env);
     const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
     return {
       agent: h.owner ? `${h.owner}'s household` : 'household',
@@ -862,7 +868,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
-          asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0),
+          asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
           sub: lastActive(agentDir(h, a)) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
@@ -1531,7 +1537,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           label: agents[agent].label,
           agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces),
             id: agent, today: t.items.length, active: lastActive(agentDir(hh, agent)),
-            waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0),
+            waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, agent),
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })() },
           asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
