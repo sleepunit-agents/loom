@@ -177,8 +177,8 @@ What a turn is (one delivered message or action, never merged) is the venue adap
 { "id": "dg-…",                     // "dg-" + 12 hex of SHA-256 over "conversation id\0run id"
   "conversation": "cv-…", "run": "…", "at": "…",
   "summary": "… ≤ 600", "asks": [], "decisions": [], "tasks": [], "projects": [],
-  "needs_owner": null,               // or a one-line reason ≤ 200
-  "needs_owner_href": null }         // with needs_owner: the exact thing to open, an https:// URL ≤ 500
+  "needs_owner": null,               // or the ask (below), or a plain one-line string ≤ 200 (the ask alone)
+  "needs_owner_href": null }         // the older name for needs_owner.href: an https:// URL ≤ 500, given once
 ```
 
 - **Keys:** exactly these; unknown keys are rejected.
@@ -356,6 +356,29 @@ audit log, so it has no raw text to copy.
 - `conversations({people?, project?, venue?, since?})`, `conversation({id})`, `conversation_findings({since?})`: as
   above.
 
+**The ask** (`needs_owner` as an object, src/backends/needs.ts), written for the owner: what decision, why, what
+happens either way.
+
+```jsonc
+{ "ask": "OK to install rclone and restic on loom's machine to set up the Google Drive backup?",  // ≤ 140, one line
+  "why": "The nightly backup has no offsite copy yet.",               // ≤ 240, one line
+  "if_yes": "I install both and run the first backup tonight.",       // ≤ 140
+  "if_no": "Backups stay on this machine only.",                      // ≤ 140
+  "href": "https://…",                                                // the exact thing to open
+  "refs": ["t-40", "a-7693c00e"],                                     // ≤ 8 ids: t-N, a-…, owner/repo#N, cv-…
+  "waits_on": { "approval": "a-7693c00e" } }                          // or {"task": "t-N"}: what resolves it
+```
+
+- **The lint.** An `ask` naming internal ids or lane words (`a-`+8 hex, `cv-`/`dg-`/`w-`+hex, `h-N`, `round N`,
+  `nudge-watch`, `chain-check`, `local-wake`; and, in the object, `t-N` and `repo#N`, which go in `refs`) is
+  refused, the message naming each and showing the object, so the agent asks again in words. A plain string gets the
+  same lint, less `t-N` and `repo#N` (it has no refs to put them in). Patterns only: no model rewrites anything.
+- **What it waits on.** `waits_on` is one approval or one task. With none, a lone approval in `refs` is what it
+  waits on. A pull request isn't taken: loom has no sanctioned way to read GitHub, so it would never clear; the agent
+  writes `needs_owner: null` in a later digest once it's merged.
+- **Stored** as `needs_owner` (the ask's text, which lists and counts read) and `needs_owner_json` (the object). A
+  string stored as one reads its refs from its words, and waits on the one approval it names, if exactly one.
+
 **Needs you.** A digest with `needs_owner` appears in loom's Inbox as an ask from core, linking to
 `loom:conversation/<id>`, until a later digest in that conversation has none, or the owner answers it (t-1778). Its
 sheet has the whole of it, its links (`needs_owner_href` first; `owner/repo#N`, and `repo#N` under household.json's
@@ -368,6 +391,21 @@ sheet has the whole of it, its links (`needs_owner_href` first; `owner/repo#N`, 
 A reply also answers it. `conversation_needs_answers` keeps the digest, how (`replied`, `done`, `dismissed`), who
 and when, never the words. Done and replied ones stay a week in the Inbox's history. A digest rewritten later
 (the same run's, or a later run's) that still needs the owner asks again.
+
+An ask written as the object is headlined by its `ask` (the Inbox row, Home's banner, a push), its `why` under it;
+its sheet has the ask as the title, then why, *If yes* and *If no*, then its links (`href`, then `refs`), then its
+details (the conversation, its venue, the refs). A plain string reads as before: "<agent> needs you: …".
+
+- **The approval it waits on.** When it waits on an approval of the same agent's that's pending, the alert absorbs
+  that approval's card (the approvals piece's ask, found by its *Allow once*'s `fields.id`): the sheet shows the card's
+  own words and its *Allow once* and *Deny*, posted to the approvals piece as the card's would be, and the card isn't
+  in the Inbox (or on the agent's Today) beside it. One item, not two. Another agent's approval stays its own card.
+- **Clearing itself** (src/needs-resolve.ts). Each minute (and at start, and right after an approval is answered on
+  the page) core checks what each open ask waits on, through the pieces' own APIs as the household owner: the
+  approvals piece's (`role: approvals`) `state` (`{ids}` → each known id's state; an unknown id is gone), the tasks
+  piece's (`role: tasks`) `run show`. Allowed, used, denied, expired or gone, or a task closed or gone: the ask is
+  answered `resolved`, by `loom`, with the reason, and leaves a quiet FYI in the Inbox ("Cleared itself: the approval
+  was allowed and used"). A piece that's absent or doesn't answer clears nothing.
 
 **Projects.** A project's hub gets a core section, `conversations`, after `people`. It replaces the shuttle feed in
 projects.md and follows projects.md's core-section rule: `since` marks `new`, it doesn't filter.
@@ -436,7 +474,8 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
     - Scores are posted by `ref`; the resulting rows carry the producer's model, family and harness, which the
       grader never received.
     - An agent's `conversation_findings` returns only its own.
-11. **Needs you.** A `needs_owner` digest makes an Inbox ask, and a later digest without one clears it.
+11. **Needs you.** A `needs_owner` digest makes an Inbox ask, and a later digest without one clears it; an ask the
+    lint refuses is rejected with why; one that waits on an approval or a task clears itself once that's resolved.
 12. **Projects.** The `conversations` section's contents, caps, order and `new` are as stated.
 13. **The boot tape** interleaves digests in its window with episodes by time.
 14. **Scoping.** An agent's `conversations` lists only its own. A member whose `agents` is `["pond-bot"]` sees only

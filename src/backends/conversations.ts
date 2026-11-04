@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveSqliteDbPath } from '../config.js';
+import { MAX_NEEDS_HREF, MAX_NEEDS_STRING, needsOfRow, parseNeeds, type NeedsOwner } from './needs.js';
 
 // ─── Shapes ─────────────────────────────────────────────────────────────────
 
@@ -75,10 +76,14 @@ export interface DigestInput {
   decisions?: string[];
   tasks?: string[];
   projects?: string[];
-  needs_owner?: string | null;
+  /** A plain one-line ask, or the object (src/backends/needs.ts): ask, why, if_yes, if_no, href, refs, waits_on. */
+  needs_owner?: string | NeedsOwnerInput | null;
   /** The exact thing the owner is needed for (a pull request's URL): https only, and only with needs_owner. */
   needs_owner_href?: string | null;
 }
+
+/** needs_owner as an agent writes the object (parseNeeds checks it). */
+export interface NeedsOwnerInput { ask: string; why?: string; if_yes?: string; if_no?: string; href?: string; refs?: string[]; waits_on?: { approval?: string; task?: string } }
 
 export interface Digest {
   id: string;
@@ -90,8 +95,11 @@ export interface Digest {
   decisions: string[];
   tasks: string[];
   projects: string[];
+  /** The ask's headline (its `ask`, or the plain string as written), or null: what lists and counts read. */
   needs_owner: string | null;
   needs_owner_href: string | null;
+  /** The whole of what it asks (src/backends/needs.ts), or null. */
+  needs: NeedsOwner | null;
 }
 
 export interface DayRow {
@@ -127,8 +135,8 @@ export const MAX_ASKS = 8;
 export const MAX_ASK = 200;
 export const MAX_TASKS = 16;
 export const MAX_TASK = 64;
-export const MAX_NEEDS_OWNER = 200;
-export const MAX_NEEDS_HREF = 500;
+export const MAX_NEEDS_OWNER = MAX_NEEDS_STRING;
+export { MAX_NEEDS_HREF };
 /** A run id, a model and a harness: short printable strings. */
 export const MAX_RUN = 128;
 export const MAX_MODEL = 120;
@@ -208,7 +216,8 @@ export function createConversationTables(db: Database): void {
       tasks_json     TEXT NOT NULL,
       projects_json  TEXT NOT NULL,
       needs_owner    TEXT,
-      needs_owner_href TEXT
+      needs_owner_href TEXT,
+      needs_owner_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_conversation_digests_conv ON conversation_digests(conversation, at);
     CREATE INDEX IF NOT EXISTS idx_conversation_digests_at ON conversation_digests(at);
@@ -225,9 +234,10 @@ export function openConversations(contextDir: string): Database {
   db.pragma('busy_timeout = 5000');
   if (!CONVERSATION_TABLES.every((t) => hasTable(db, t))) createConversationTables(db);
   // needs_owner_href came after the table (t-1778): a store from before gets the column on its first write.
-  if (!(db.prepare('PRAGMA table_info(conversation_digests)').all() as Array<{ name: string }>).some((c) => c.name === 'needs_owner_href')) {
-    db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_href TEXT');
-  }
+  // And needs_owner_json after it (the ask as an object): the same way.
+  const cols = (db.prepare('PRAGMA table_info(conversation_digests)').all() as Array<{ name: string }>).map((c) => c.name);
+  if (!cols.includes('needs_owner_href')) db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_href TEXT');
+  if (!cols.includes('needs_owner_json')) db.exec('ALTER TABLE conversation_digests ADD COLUMN needs_owner_json TEXT');
   return db;
 }
 
@@ -513,20 +523,14 @@ function stringList(v: unknown, maxItems: number, maxLen: number, what: string):
 }
 
 /** A digest as the agent wrote it, checked: exactly these keys, within the caps. Projects are names, unresolved. */
-export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_owner' | 'needs_owner_href'>> & { needs_owner: string | null; needs_owner_href: string | null } {
+export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_owner' | 'needs_owner_href'>> & { needs_owner: string | null; needs_owner_href: string | null; needs: NeedsOwner | null } {
   if (!isObject(raw)) return fail('a digest is a JSON object');
   const bad = Object.keys(raw).find((k) => !(DIGEST_KEYS as readonly string[]).includes(k));
   if (bad !== undefined) fail(`a digest has no key ${JSON.stringify(bad)} (it has ${DIGEST_KEYS.join(', ')})`);
   if (typeof raw.summary !== 'string' || !raw.summary.trim() || raw.summary.length > MAX_SUMMARY) fail(`summary is required, at most ${MAX_SUMMARY} characters`);
-  const needs = raw.needs_owner;
-  if (needs !== undefined && needs !== null && (typeof needs !== 'string' || !needs.trim() || needs.length > MAX_NEEDS_OWNER || /[\r\n]/.test(needs))) {
-    fail(`needs_owner is null or a one-line reason of at most ${MAX_NEEDS_OWNER} characters`);
-  }
-  const href = raw.needs_owner_href;
-  if (href !== undefined && href !== null) {
-    if (typeof href !== 'string' || href.length > MAX_NEEDS_HREF || !isHttpsUrl(href)) fail(`needs_owner_href is null or an https:// URL of at most ${MAX_NEEDS_HREF} characters`);
-    if (typeof needs !== 'string') fail('needs_owner_href goes with needs_owner: it is the exact thing the owner is needed for');
-  }
+  // What it asks the owner: checked and linted (src/backends/needs.ts); a refusal says why, so the agent asks in words.
+  const needs = parseNeeds(raw.needs_owner, raw.needs_owner_href);
+  if (typeof needs === 'string') fail(needs);
   const projects = stringList(raw.projects, MAX_DIGEST_PROJECTS, 80, 'projects');
   const badName = projects.find((p) => !SLUG.test(p));
   if (badName !== undefined) fail(`projects are project names (slugs or aliases): not ${JSON.stringify(badName)}`);
@@ -536,13 +540,10 @@ export function parseDigest(raw: unknown): Required<Omit<DigestInput, 'needs_own
     decisions: stringList(raw.decisions, MAX_ASKS, MAX_ASK, 'decisions'),
     tasks: stringList(raw.tasks, MAX_TASKS, MAX_TASK, 'tasks'),
     projects,
-    needs_owner: typeof needs === 'string' ? needs.trim() : null,
-    needs_owner_href: typeof href === 'string' ? href : null,
+    needs_owner: needs ? needs.ask : null,
+    needs_owner_href: needs?.href ?? null,
+    needs,
   };
-}
-
-function isHttpsUrl(s: string): boolean {
-  try { const u = new URL(s); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password && !/\s/.test(s); } catch { return false; }
 }
 
 /**
@@ -602,25 +603,28 @@ export function writeDigest(contextDir: string, at: { conversation: string; run:
     const d: Digest = {
       id: digestId(at.conversation, at.run), conversation: at.conversation, run: at.run, at: now.toISOString(),
       summary: input.summary, asks: input.asks, decisions: input.decisions, tasks: input.tasks, projects, needs_owner: input.needs_owner,
-      needs_owner_href: input.needs_owner_href,
+      needs_owner_href: input.needs_owner_href, needs: input.needs,
     };
-    db.prepare(`INSERT INTO conversation_digests (id, conversation, run, at, summary, asks_json, decisions_json, tasks_json, projects_json, needs_owner, needs_owner_href)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    // A plain string is kept as one (needs_owner alone); the object whole, beside its headline.
+    const json = input.needs && !input.needs.legacy ? JSON.stringify(input.needs) : null;
+    db.prepare(`INSERT INTO conversation_digests (id, conversation, run, at, summary, asks_json, decisions_json, tasks_json, projects_json, needs_owner, needs_owner_href, needs_owner_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET at = excluded.at, summary = excluded.summary, asks_json = excluded.asks_json,
                   decisions_json = excluded.decisions_json, tasks_json = excluded.tasks_json, projects_json = excluded.projects_json,
-                  needs_owner = excluded.needs_owner, needs_owner_href = excluded.needs_owner_href`).run(
-      d.id, d.conversation, d.run, d.at, d.summary, JSON.stringify(d.asks), JSON.stringify(d.decisions), JSON.stringify(d.tasks), JSON.stringify(d.projects), d.needs_owner, d.needs_owner_href);
+                  needs_owner = excluded.needs_owner, needs_owner_href = excluded.needs_owner_href, needs_owner_json = excluded.needs_owner_json`).run(
+      d.id, d.conversation, d.run, d.at, d.summary, JSON.stringify(d.asks), JSON.stringify(d.decisions), JSON.stringify(d.tasks), JSON.stringify(d.projects), d.needs_owner, d.needs_owner_href, json);
     return d;
   }).immediate());
 }
 
-interface DigestRow { id: string; conversation: string; run: string; at: string; summary: string; asks_json: string; decisions_json: string; tasks_json: string; projects_json: string; needs_owner: string | null; needs_owner_href?: string | null }
+interface DigestRow { id: string; conversation: string; run: string; at: string; summary: string; asks_json: string; decisions_json: string; tasks_json: string; projects_json: string; needs_owner: string | null; needs_owner_href?: string | null; needs_owner_json?: string | null }
 
 function digestOf(r: DigestRow): Digest {
   return {
     id: r.id, conversation: r.conversation, run: r.run, at: r.at, summary: r.summary,
     asks: JSON.parse(r.asks_json) as string[], decisions: JSON.parse(r.decisions_json) as string[], tasks: JSON.parse(r.tasks_json) as string[],
     projects: JSON.parse(r.projects_json) as string[], needs_owner: r.needs_owner, needs_owner_href: r.needs_owner_href ?? null,
+    needs: needsOfRow(r),
   };
 }
 
@@ -764,27 +768,34 @@ export function openNeeds(contextDir: string): Array<{ conversation: Conversatio
   });
 }
 
-/** How the owner answered a Needs you: done (it's handled), dismissed (not theirs), or replied (their words went to the agent). */
-export type NeedsVerdict = 'done' | 'dismissed' | 'replied';
-export const NEEDS_VERDICTS: readonly NeedsVerdict[] = ['done', 'dismissed', 'replied'];
+/**
+ * How a Needs you was answered: done (it's handled), dismissed (not theirs), or replied (their words went to the
+ * agent), by the owner; or resolved, by core, when what it waits on was (src/needs-resolve.ts: `reason` says how).
+ */
+export type NeedsVerdict = 'done' | 'dismissed' | 'replied' | 'resolved';
+export const NEEDS_VERDICTS: readonly NeedsVerdict[] = ['done', 'dismissed', 'replied', 'resolved'];
 
-export interface NeedsAnswer { digest: string; conversation: string; verdict: NeedsVerdict; by: string; at: string }
+export interface NeedsAnswer { digest: string; conversation: string; verdict: NeedsVerdict; by: string; at: string; reason?: string | null }
 
 /**
  * The owner answers the open Needs you of `conversation` (its newest digest, `digest`): it leaves their Inbox. A
  * digest the agent rewrites later in the same run (a newer `at`) asks again, and so does a later run's. Kept is who
  * and how, never words: a reply's text went to the agent's conversation, and conversations hold none.
  */
-export function answerNeeds(contextDir: string, a: { conversation: string; digest: string; verdict: NeedsVerdict; by: string }, now: Date = new Date()): NeedsAnswer {
+export function answerNeeds(contextDir: string, a: { conversation: string; digest: string; verdict: NeedsVerdict; by: string; reason?: string }, now: Date = new Date()): NeedsAnswer {
   if (!isConversationId(a.conversation)) fail('conversation is a conversation id (cv-…)');
   if (!NEEDS_VERDICTS.includes(a.verdict)) fail(`verdict is one of ${NEEDS_VERDICTS.join(', ')}`);
   return withDb(contextDir, (db) => db.transaction(() => {
     const open = openNeedsOf(db, a.conversation);
     if (!open || open.id !== a.digest) fail('that ask isn\'t open any more: the agent wrote since, or it was answered', 409);
     db.exec(`CREATE TABLE IF NOT EXISTS conversation_needs_answers (
-      digest TEXT PRIMARY KEY, conversation TEXT NOT NULL, verdict TEXT NOT NULL, by TEXT NOT NULL, at TEXT NOT NULL)`);
-    const out: NeedsAnswer = { digest: a.digest, conversation: a.conversation, verdict: a.verdict, by: a.by, at: now.toISOString() };
-    db.prepare('INSERT OR REPLACE INTO conversation_needs_answers (digest, conversation, verdict, by, at) VALUES (?, ?, ?, ?, ?)').run(out.digest, out.conversation, out.verdict, out.by, out.at);
+      digest TEXT PRIMARY KEY, conversation TEXT NOT NULL, verdict TEXT NOT NULL, by TEXT NOT NULL, at TEXT NOT NULL, reason TEXT)`);
+    // reason came after the table: core's words for how a resolved ask cleared ("the approval was allowed").
+    if (!(db.prepare('PRAGMA table_info(conversation_needs_answers)').all() as Array<{ name: string }>).some((c) => c.name === 'reason')) {
+      db.exec('ALTER TABLE conversation_needs_answers ADD COLUMN reason TEXT');
+    }
+    const out: NeedsAnswer = { digest: a.digest, conversation: a.conversation, verdict: a.verdict, by: a.by, at: now.toISOString(), reason: a.reason?.slice(0, 200) ?? null };
+    db.prepare('INSERT OR REPLACE INTO conversation_needs_answers (digest, conversation, verdict, by, at, reason) VALUES (?, ?, ?, ?, ?, ?)').run(out.digest, out.conversation, out.verdict, out.by, out.at, out.reason);
     return out;
   }).immediate());
 }
