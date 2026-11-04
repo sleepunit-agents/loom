@@ -14,6 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon Noir's status bar, sheets, Find, power-on and sound.** Under Neon a
+  status bar heads every page: LOOM//OS, live or offline (in words), how many
+  agents and how many things need you, and loom's clock. The Inbox's sheet
+  gets a title bar (what it is, who asks, its task) and a lit top edge, and
+  Find is a command bar with a prompt and the current row's cyan edge. Under
+  Neon the once-a-session arrival becomes a power-on (a line opens into the
+  screen and the page flickers on, about a second, cut short by any tap or
+  key, never under reduced motion); 000h's arrival is as it was. Appearance has Sound, off unless the person turns it on:
+  a WebAudio chime (0.5 KB, loaded only when on) when loom opens and when
+  something they did lands (once per outcome); no opening chime when the
+  opening animation is skipped, and a browser that won't play sound before a
+  tap stays quiet.
+- **Neon Noir's faces, type, corners and glow.** An agent's face keeps its
+  body and its expression and becomes dark glass rim-lit in its mark's neon
+  (six marks re-pointed per look, `--mark-*`), with a soft glow that is the same
+  in every state: the expression says the state. Titles are Oxanium, reading
+  is Figtree, and numbers, ids and times are IBM Plex Mono (self-hosted Latin
+  subsets, fetched only when Neon is worn). The app's hard-coded tile corners
+  are tokens, Neon's radii step down, an agent's card has a 45° cut corner lit
+  in its colour, and the dock, the launcher and an app's tile are dark keys
+  with a neon edge (the current one lit solid). The depth background's lines
+  glow. Glow sits on edges and what's current only, never on a state or a
+  status, and goes under `prefers-contrast: more` (checked in a test).
 - **Neon Noir, the page's new look, and the default.** Appearance has a
   Look: Neon Noir (dark only: a night-city control room, light from edges and
   states) or 000h (light or dark, as before). Neon is what a person who hasn't

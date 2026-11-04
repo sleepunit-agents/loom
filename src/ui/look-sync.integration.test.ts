@@ -47,8 +47,9 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     await rm(tmp, { recursive: true, force: true });
   });
 
-  async function device(): Promise<Page> {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  async function device(motion: 'reduce' | 'no-preference' = 'reduce', kept?: Record<string, string>): Promise<Page> {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+    if (kept) await ctx.addInitScript((k) => { for (const [a, b] of Object.entries(k)) localStorage.setItem(a, b); }, kept);
     await ctx.request.post(`${base}/login`, { form: { token: TOKEN }, maxRedirects: 0 });
     return ctx.newPage();
   }
@@ -94,4 +95,46 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     await laptop.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--v-canvas').trim().toUpperCase() === '#07070C', null, { timeout: 15_000 });
     expect(await look(laptop)).toEqual(['neon', 'dark']);
   }, 60_000);
+
+  // Oxanium is wider than Bricolage: at 390 px, the built-in titles stay on one line, as in 000h.
+  it('Neon\'s titles fit at 390 px', async () => {
+    const page = await device('reduce', { 'loom-look': 'neon' });
+    for (const path of ['/appearance', '/places', '/inbox', '/']) {
+      await page.goto(`${base}${path}`);
+      const h1 = page.locator('.loom-top h1');
+      await h1.waitFor();
+      await page.waitForFunction(() => document.fonts.status === 'loaded');
+      const m = await h1.evaluate((e) => ({ h: e.getBoundingClientRect().height, lh: parseFloat(getComputedStyle(e).lineHeight), w: e.scrollWidth, cw: e.clientWidth, font: getComputedStyle(e).fontFamily }));
+      expect(m.font, path).toContain('Oxanium');
+      expect(m.h, path).toBeLessThan(m.lh * 1.5);
+      expect(m.w, path).toBeLessThanOrEqual(m.cw);
+    }
+  }, 60_000);
+
+  it('Neon\'s chrome: a status bar only under Neon, no sideways scroll at 390 px, none with reduced motion, no sound unless on', async () => {
+    const sounds: string[] = [];
+    const neon = await device('reduce', { 'loom-look': 'neon' });
+    neon.on('request', (r) => { if (/\/assets\/sound-/.test(r.url())) sounds.push(r.url()); });
+    for (const path of ['/', '/places', '/setup', '/inbox', '/appearance']) {
+      await neon.goto(`${base}${path}`);
+      await neon.locator('.loom-top h1').waitFor();
+      const m = await neon.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, bar: !!document.querySelector('.loom-status'), arrive: 'arrive' in document.documentElement.dataset }));
+      expect(m.sw, path).toBeLessThanOrEqual(m.cw);
+      expect(m.bar, path).toBe(true);
+      expect(m.arrive, `${path}: no power-on with reduced motion`).toBe(false);
+    }
+    expect(sounds).toEqual([]);
+
+    // The power-on and its tap: look-neon-chrome.integration.test.ts.
+
+    // The same person, choosing 000h (loom's copy wins over a device's, so it's chosen, not just kept): no status bar.
+    const plain = await device('reduce');
+    await plain.goto(`${base}/appearance`);
+    await plain.getByRole('radio', { name: '000h' }).click();
+    await plain.waitForFunction(() => document.documentElement.dataset.look === '000h');
+    await plain.goto(`${base}/`);
+    await plain.locator('.loom-top h1').waitFor();
+    expect((await plain.evaluate(() => document.documentElement.dataset.look))).toBe('000h');
+    expect(await plain.evaluate(() => !!document.querySelector('.loom-status'))).toBe(false);
+  }, 90_000);
 });

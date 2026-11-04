@@ -39,7 +39,7 @@ const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPane
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
-import { keep, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, LookContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -127,12 +127,24 @@ export default function App() {
   const save = (p: Prefs) => { if (csrf.current) void savePrefs(csrf.current, p).then((at) => { if (at) heard.current = Math.max(heard.current, at); }); };
   const setMode = (m: Mode) => { setModeState(m); keep('loom-mode', m); save({ mode: m }); };
   const setLook = (l: Look) => { setLookState(l); keep('loom-look', l); save({ look: l }); };
+  // Sound (sound.ts): off unless the person turns it on; its chunk loads only then.
+  const [sound, setSoundState] = useState(() => { try { return localStorage.getItem('loom-sound') === 'on'; } catch { return false; } });
+  const soundOn = useRef(sound);
+  soundOn.current = sound;
+  const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
   // One toast per outcome: an action that lands on another page says it, and that page's one-time flash says it again.
-  const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
-    ? x : [...x, { ...n, id: Date.now() + Math.random() }])), []);
+  const chimed = useRef({ message: '', at: 0 });
+  const say = useCallback((n: Omit<Note, 'id'>) => {
+    // One chime per outcome, as one toast: the page it lands on saying it again is the same outcome.
+    if (n.ok && soundOn.current && !(chimed.current.message === n.message && Date.now() - chimed.current.at < 5000)) {
+      chimed.current = { message: n.message, at: Date.now() };
+      void import('./sound').then((m) => m.chime('done'));
+    }
+    setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
+    ? x : [...x, { ...n, id: Date.now() + Math.random() }])); }, []);
 
   // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
   // asked behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow").
@@ -235,6 +247,7 @@ export default function App() {
     if (p.look) { setLookState(p.look); keep('loom-look', p.look); }
     if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
+    if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
   }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -286,7 +299,7 @@ export default function App() {
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
     value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />, ...(agentDock ? {} : { tint: tint(t.label) }),
-    ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
+    ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const pick = (href: string) => (href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
@@ -335,7 +348,10 @@ export default function App() {
   useLayoutEffect(() => {
     if (arrived.current || !data || waiting) return;
     arrived.current = true;
-    arriveOnce(document.querySelector<HTMLElement>('.loom-top h1'));
+    // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
+    // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
+    const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
+    if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
   }, [data, waiting]);
 
   // Where you've been, for Find's Recent: each page that opened, by its title.
@@ -343,7 +359,7 @@ export default function App() {
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
 
   return (
-    <TintContext.Provider value={tint}>
+    <LookContext.Provider value={look}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -356,6 +372,7 @@ export default function App() {
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
             <div className="mx-auto max-w-5xl px-4 py-3">
+              {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} clock={chrome.clock} offline={!!savedAt} />}
               <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
                 actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
@@ -365,7 +382,7 @@ export default function App() {
           <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10" data-accent={appAccent}>
             {waiting && <Skeleton />}
             {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
-              This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
+              This is how it looked at <span className="loom-data">{new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>. Actions wait for a connection.</Callout>}
             {!waiting && error && (error === 'offline'
               ? <StateCard icon="cloud-off" tint="blue" title="Can’t reach loom" text="This page isn’t saved on this device yet. It opens as soon as there’s a connection."
                   action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />
@@ -387,7 +404,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -419,7 +436,24 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </TintContext.Provider>
+    </TintContext.Provider></LookContext.Provider>
+  );
+}
+
+/**
+ * Neon Noir's status bar (Terminal HUD's borrow): LOOM//OS, whether loom is reached, how many agents and how many things
+ * need you, and the clock. Words, not colours: the dot's glow is the same either way and the word says which.
+ */
+function StatusBar({ shell, clock, offline }: { shell: NonNullable<Chrome['shell']>; clock: string; offline: boolean }) {
+  const n = shell.agents.length;
+  return (
+    <div className="loom-status">
+      <span className="loom-status__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
+      <span className="loom-status__live" data-off={offline || undefined}>{offline ? 'offline' : 'live'}</span>
+      <span className="loom-status__what loom-data">{n} agent{n === 1 ? '' : 's'}{shell.asks ? ` · ${shell.asks} need${shell.asks === 1 ? 's' : ''} you` : ''}</span>
+      {/* loom's clock (the household's time zone, as every page says it), from the page's last answer: the time alone. */}
+      <span className="loom-data ml-auto">{/\d{1,2}:\d{2}(\s?[AP]M)?/.exec(clock)?.[0] ?? clock}</span>
+    </div>
   );
 }
 

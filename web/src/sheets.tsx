@@ -16,7 +16,7 @@ import type { Look } from './look';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void }) {
+export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -26,9 +26,9 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // app's own (tint.ts), not its place in the grid, so installing a piece moves no other tile's colour.
   const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
     <button key={p.href} type="button" onClick={() => go(p.href)} className="loom-launch group grid min-w-0 content-start justify-items-center gap-1.5 text-center">
-      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[22%] shadow-sm transition-transform group-active:scale-95" data-tint={tint(p.label)}>
+      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[var(--loom-r-launch)] shadow-sm transition-transform group-active:scale-95" data-tint={tint(p.label)}>
         <AnimatedIcon name={iconFor(icon(p.label))} />
-        {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]">{p.count}</span> : null}
+        {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full loom-data bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]">{p.count}</span> : null}
         {p.tone && p.tone !== 'ok' && <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-[var(--v-paper)] ${DOT[p.tone]}`} />}
       </span>
       <span className="w-full truncate text-sm font-medium">{p.label}</span>
@@ -45,7 +45,7 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} />;
+  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} />;
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
@@ -70,7 +70,7 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
 }
 
 /** The Appearance app: the look, light or dark (000h's), and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ mode, setMode, ground, setGround, look, setLook }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void }) {
+function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void }) {
   const row = (label: string, hint: string, control: React.ReactNode) => (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
       <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
@@ -88,6 +88,10 @@ function AppearanceApp({ mode, setMode, ground, setGround, look, setLook }: { mo
         {row('Background', 'What’s behind every page.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
             {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup>
+        ))}
+        {row('Sound', 'A chime when loom opens and when something you did lands. Off unless you turn it on.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Sound" value={sound ? 'on' : 'off'} onValueChange={(v) => { if (v) setSound(v === 'on'); }}>
+            <ToggleGroupItem value="off">Off</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem></ToggleGroup>
         ))}
         <p className="pt-3 text-sm opacity-60">Yours on every device you sign in on.</p>
       </CardContent>

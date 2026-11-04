@@ -59,9 +59,11 @@ describe.runIf(built && chrome)('a phone: the dock and the toasts', () => {
 
   async function measure(how: 'app' | 'tab' | 'desktop'): Promise<Measured> {
     const phone = how !== 'desktop';
+    // No service worker: 127.0.0.1 is a secure context, so loom's worker can install and answer the page's JSON itself,
+    // where this test's route (the flash below) never sees it, and then no toast comes (CI, now and then).
     const ctx = await browser.newContext(phone
-      ? { viewport: { width: 393, height: how === 'app' ? 852 : 659 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: IPHONE }
-      : { viewport: { width: 1440, height: 900 } });
+      ? { viewport: { width: 393, height: how === 'app' ? 852 : 659 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: IPHONE, serviceWorkers: 'block' }
+      : { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
     const page: Page = await ctx.newPage();
     const cdp = await ctx.newCDPSession(page);
     if (phone) await cdp.send('Emulation.setSafeAreaInsetsOverride' as never, { insets: INSETS } as never);

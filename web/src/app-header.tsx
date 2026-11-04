@@ -12,7 +12,7 @@ import { useTint } from './tint';
 export function AppTile({ label, icon, size = 44 }: { label: string; icon: string; size?: number }) {
   const tint = useTint();
   return (
-    <span aria-hidden className="loom-app-tile grid shrink-0 place-items-center rounded-[28%]" data-tint={tint(label)} style={{ width: size, height: size }}>
+    <span aria-hidden className="loom-app-tile grid shrink-0 place-items-center rounded-[var(--loom-r-tile)]" data-tint={tint(label)} style={{ width: size, height: size }}>
       <AnimatedIcon name={iconFor(icon)} size="sm" />
     </span>
   );
