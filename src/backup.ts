@@ -31,6 +31,10 @@ export class BackupError extends Error {}
 export const DIR = 'backup';
 /** A file the git host takes (GitHub refuses one over 100 MB). */
 export const SPLIT_AT = 90 * 1000 * 1000;
+/** git's http.postBuffer for the push, at most: git allocates all of it, so it's sized to the night's push (below). */
+export const POST_BUFFER_MAX = 512 * 1024 * 1024;
+/** The push's buffer: what's new tonight (the bundle) and room for the rest, never over the cap. */
+export const postBufferFor = (bytes: number) => Math.min(POST_BUFFER_MAX, Math.max(1, Math.ceil(bytes)) + 16 * 1024 * 1024);
 /** No good run in this long, while the backup is set: it's missed. */
 export const MISSED_MS = 26 * 3600_000;
 /** A condition still going: the alert command hears of it again this often. */
@@ -408,7 +412,10 @@ export function gitFailure(verb: string, stderr: string, url?: string): string {
 function git(args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string | Buffer; url?: string } = {}): string {
   // Never a prompt: a credential git can't find is a failure that says so, not a run holding the lock for 30 minutes.
   const r = spawnSync('git', args, { cwd: o.cwd, env: { ...(o.env ?? process.env), GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '' }, input: o.input, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000 });
-  if (r.status !== 0) throw new BackupError(gitFailure(args[0] === '-C' ? args[2] : args[0], `${r.stderr || r.error?.message || `exit ${r.status}`}`, o.url ?? currentUrl));
+  // Its verb, past -C <dir> and -c <k=v>: what a failure is named by ("git push failed").
+  let v = 0;
+  while (v < args.length && (args[v] === '-C' || args[v] === '-c')) v += 2;
+  if (r.status !== 0) throw new BackupError(gitFailure(args[v] ?? 'git', `${r.stderr || r.error?.message || `exit ${r.status}`}`, o.url ?? currentUrl));
   return r.stdout;
 }
 
@@ -470,7 +477,10 @@ function gitWrite(repo: string, remote: string | null, files: Array<{ path: stri
     const tree = git(['-C', repo, 'write-tree'], { env: genv }).trim();
     const commit = git(['-C', repo, 'commit-tree', '--no-gpg-sign', tree, '-m', `household bundle ${stamp} (drilled)`], { env: genv }).trim();
     beforePush?.();
-    git(['-C', repo, 'push', '-q', `--force-with-lease=refs/heads/${BRANCH}:${remote ?? ''}`, 'origin', `${commit}:refs/heads/${BRANCH}`], { env });
+    // One sized POST, not a chunked one: GitHub hung up on chunked pushes of ~50 MB over a lossy uplink twice on
+    // 2026-11-04, and the same push with a large buffer went through. The buffer is the night's bundle plus 16 MB.
+    const newBytes = files.reduce((n, f) => n + statSync(f.path).size, 0);
+    git(['-C', repo, '-c', `http.postBuffer=${postBufferFor(newBytes)}`, 'push', '-q', `--force-with-lease=refs/heads/${BRANCH}:${remote ?? ''}`, 'origin', `${commit}:refs/heads/${BRANCH}`], { env });
     git(['-C', repo, 'update-ref', `refs/remotes/origin/${BRANCH}`, commit], { env });
     // What the old commits held and the new one doesn't: gone from the clone too, so it doesn't grow a bundle a night.
     spawnSync('git', ['-C', repo, 'prune', '--expire=now'], { env });

@@ -209,7 +209,10 @@ hand):
    with no parent (`commit-tree --no-gpg-sign`, so a signing git config
    can't stop it) and pushed with `--force-with-lease=refs/heads/main:<sha>`, where
    `<sha>` is what `git ls-remote` said `main` was at the start of this run
-   (empty, so "must not exist", for an empty repo). Bundles are
+   (empty, so "must not exist", for an empty repo). It's sent as one sized
+   POST (`http.postBuffer` of the night's bundle plus 16 MB, 512 MB at
+   most), not chunked: GitHub hung up on chunked pushes over a lossy uplink
+   (2026-11-04). Bundles are
    ~100 MB a night; a history of them would grow without end (art-vault is
    822 MB today), and every bundle that's kept is in the one commit.
    Blobs the remote already has aren't sent again.

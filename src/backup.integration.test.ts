@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { loadHousehold, rawHousehold, type Household } from './household.js';
 import {
-  alertCommandArgv, backupFyi, backupProblem, gitFailure, parseTarget, scrub, backupRow, BackupError, ensureDrillKey, isDue, keptStamps, lastSlot, readSettings, readState, runBackup,
+  alertCommandArgv, backupFyi, backupProblem, postBufferFor, gitFailure, parseTarget, scrub, backupRow, BackupError, ensureDrillKey, isDue, keptStamps, lastSlot, readSettings, readState, runBackup,
   setSettings, stampOf, takeLock, tickBackup, validateSettings, type CoreAlert, type RunDeps,
 } from './backup.js';
 import { backupAsks } from './ui/handler.js';
@@ -290,6 +290,27 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(readState(h.home).lastGood?.commit).toBe(git(['--git-dir', remote, 'rev-parse', 'main']));
    }, 30_000);
 
+  it('the push is one sized POST: http.postBuffer on the push itself, sized to the night\'s bundle', async () => {
+    const remote = join(work, 'remote.git');
+    git(['init', '-q', '--bare', remote]);
+    settings(`git:${remote}`);
+    // A git that writes down each argv, then is git.
+    const bin = join(work, 'bin'); mkdirSync(bin);
+    const log = join(work, 'git-argv.log');
+    const real = which('git');
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${log}\nexec ${real} "$@"\n`);
+    chmodSync(join(bin, 'git'), 0o755);
+    const run = await runBackup({ home: h.home, env: { ...env, PATH: `${bin}${delimiter}${env.PATH}` }, deps: fakes({ bytes: 3000 }) });
+    expect(run.ok).toBe(true);
+    const lines = readFileSync(log, 'utf-8').split('\n');
+    const push = lines.filter((l) => / push /.test(l));
+    expect(push).toHaveLength(1);
+    expect(push[0]).toMatch(new RegExp(`-c http\\.postBuffer=${postBufferFor(3000)} push`));
+    expect(lines.filter((l) => /postBuffer/.test(l))).toHaveLength(1);
+    expect(postBufferFor(3000)).toBe(3000 + 16 * 1024 * 1024);
+    expect(postBufferFor(10 * 1024 ** 3)).toBe(512 * 1024 * 1024);
+  });
+
   it('a run from a fresh clone (a new or restored machine) keeps the bundles already in the remote', async () => {
     const remote = join(work, 'remote.git');
     git(['init', '-q', '--bare', remote]);
@@ -497,6 +518,7 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) set
     } } });
     expect(run.ok).toBe(false);
     expect(run.why).toMatch(/git push failed/);
+
     expect(git(['--git-dir', remote, 'rev-parse', 'main'])).toBe(theirs);
   }, 30_000);
 
