@@ -288,6 +288,8 @@ The control plane keeps the last `boot` per box. When `id` changes:
 - **The alert command**: source `box-boot`, severity `warn`, facts `box`,
   `up_s`, `dark_s`, `kernel_restarted`.
 - A box's first `boot` is only recorded.
+- A box's boots alert at most once an hour (each still leaves its FYI, five a box at most), so a box
+  that boot-loops, or says it does, is one alert an hour, not one a poll.
 
 A box restarting its runner (an upgrade, a crash) keeps its `id`: no notice.
 
