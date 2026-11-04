@@ -58,7 +58,7 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
 
   /** A device: its own sign-in, this device's copy of the look, and a record of the arrival and of every tone played. */
   async function device(motion: 'reduce' | 'no-preference', look: 'neon' | '000h'): Promise<Page> {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion, isMobile: true, hasTouch: true });
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
     await ctx.addInitScript((l) => {
       localStorage.setItem('loom-look', l);
       const w = window as unknown as { arrive: { set?: number; off?: number }; tones: number };
