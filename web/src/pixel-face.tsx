@@ -25,18 +25,20 @@ export const PIXEL = {
   frameMs: 90,
   /** Between beats, per state (ms): a random gap in the range, per face. */
   gaps: { idle: [4000, 9000], working: [600, 1800], thinking: [3000, 5000], 'needs-input': [4000, 6000], error: [12000, 20000] } as Record<string, [number, number]>,
-  /** Error's rest frame (worried); every other state rests on 0. */
-  errorHold: 13,
+  /** Error's rest frame, counted from its animation's end (the worried pose: 13 of Art's 17); every other state rests on 0. */
+  errorHoldFromEnd: 4,
+  /** The box every agent's cell is centred in, so faces of different cell sizes line up (Art 56×84, Mark 96×80). */
+  box: [96, 84] as [number, number],
   turn: { rollMs: 2000, leave: 0.03, back: 0.3, minAwayMs: 3000 },
 };
 
 const FACINGS = ['south', 'south-east', 'south-west'] as const;
 type Facing = typeof FACINGS[number];
 /** One animation: a row of a sheet, its frame count, its weight among its state's animations in that facing. */
-type Variant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean };
+type Variant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; rest?: number };
 /** The agent's manifest (src/household.ts SpriteManifest): its states by PixelLab's names. */
-type Manifest = { cell: [number, number]; char?: number; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>> };
-type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement>; top: number; height: number };
+type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>> };
+type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement> };
 export type Sprite = { facings: string[]; v: string; base: string };
 
 /** loom's states by the manifest's names. */
@@ -55,21 +57,7 @@ function sheetOf(s: Sprite): Promise<Sheet | null> {
         const all = Object.values(m.states).flatMap((byF) => Object.values(byF ?? {}).flat()) as Variant[];
         const imgs: Record<string, HTMLImageElement> = {};
         await Promise.all([...new Set(all.map(fileOf))].map(async (f) => { const i = new Image(); i.src = `${s.base}${f}?v=${s.v}`; await i.decode(); imgs[f] = i; }));
-        // The character's own height in its cells (its pixels' extent over every animation), so nothing is cut off.
-        const [cw, ch] = m.cell;
-        let top = ch, bottom = 0;
-        const c = document.createElement('canvas');
-        c.width = cw; c.height = ch;
-        const g = c.getContext('2d', { willReadFrequently: true })!;
-        for (const v of all) for (let i = 0; i < v.frames; i++) {
-          const img = imgs[fileOf(v)], cols = Math.max(1, Math.floor(img.width / cw));
-          g.clearRect(0, 0, cw, ch);
-          g.drawImage(img, (i % cols) * cw, v.row * ch, cw, ch, 0, 0, cw, ch);
-          const px = g.getImageData(0, 0, cw, ch).data;
-          for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (px[(y * cw + x) * 4 + 3] > 8) { if (y < top) top = y; if (y > bottom) bottom = y; }
-        }
-        if (bottom < top) { top = 0; bottom = ch - 1; }
-        return { m, imgs, top, height: bottom - top + 1 };
+        return { m, imgs };
       } catch { return null; }
     })();
     sheets.set(key, p);
@@ -98,11 +86,96 @@ export function pick(list: Variant[], last: Variant | undefined, r = Math.random
   return pool[pool.length - 1];
 }
 
-const rnd = ([a, b]: [number, number]) => a + Math.random() * (b - a);
+/** What a player needs from the world: a clock, timers, and chance. A page's are the real ones; a test's are fake. */
+export type PlayerEnv = { now: () => number; setTimeout: (f: () => void, ms: number) => number; clearTimeout: (t: number) => void; random: () => number };
+/** What a player draws: an animation (none: nothing to draw), its frame, the facing, mirrored or not. */
+export type Frame = { v: Variant | undefined; frame: number; facing: Facing; flip: boolean; /** part of a beat (else a rest) */ beat: boolean };
+
+/**
+ * One face's motion, apart from any canvas (so it can be tested on a fake clock): the beats, the rests, the gaps, the
+ * variants by weight, and the turns. `want` asks for a state (taken up at once while resting, or when the beat in
+ * progress ends); `live` says whether it may move (on screen, a visible page, motion allowed). Still, it rests facing south.
+ */
+export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => void, env: PlayerEnv) {
+  const rnd = ([a, b]: [number, number]) => a + env.random() * (b - a);
+  let want = first;
+  // A face that first appears done is simply at rest (done is a moment, not a place).
+  let shown: FaceState = first === 'complete' ? 'idle' : first;
+  let facing: Facing = 'south', awaySince = 0, frame = 0, playing = false, live = false;
+  let timer = 0, roll = 0;
+  // The animation playing, if one is, and the last one played (a rare one is never followed by a rare one).
+  let anim: Variant | undefined, last: Variant | undefined;
+  const southOnly = () => shown === 'needs-input';
+  // At rest: the state's usual animation in this facing (its weightiest, never a rare one); error rests on its worried frame.
+  const usual = () => { const { list } = variantsFor(m, shown, facing); const plain = list.filter((v) => !v.rare); return (plain.length ? plain : list).reduce((x, y) => (y.weight > x.weight ? y : x), list[0]); };
+  // Its rest frame: the manifest's, else 0 (error: its worried pose, 4 from its end, as both sheets end on the neutral one).
+  const rest = () => { const u = usual(); return u?.rest ?? (shown === 'error' ? Math.max(0, (u?.frames ?? 1) - PIXEL.errorHoldFromEnd) : 0); };
+  const paint = (i: number) => { const { flip } = variantsFor(m, shown, facing); draw({ v: anim ?? usual(), frame: i, facing, flip, beat: !!anim }); };
+  const clear = () => { env.clearTimeout(timer); env.clearTimeout(roll); timer = 0; roll = 0; };
+  const still = () => { clear(); facing = 'south'; paint(rest()); };
+  // A beat: the animation's frames at frameMs, then rest. A state asked for meanwhile is taken up after it.
+  const beat = () => {
+    env.clearTimeout(roll); roll = 0;
+    if (southOnly()) facing = 'south';
+    anim = pick(variantsFor(m, shown, facing).list, last, env.random());
+    last = anim;
+    playing = true; frame = 0; paint(0);
+    const step = () => {
+      frame++;
+      if (frame < anim!.frames) { paint(frame); timer = env.setTimeout(step, PIXEL.frameMs); return; }
+      playing = false; anim = undefined;
+      const played = shown;
+      // Done plays once, then rests as idle: asked for once, it's had.
+      if (shown === 'complete') { shown = 'idle'; if (want === 'complete') want = 'idle'; }
+      // No longer live: stop at rest; a newer state is drawn still, and taken up when it's live again.
+      if (!live) { if (want !== played) shown = want === 'complete' ? 'idle' : want; return still(); }
+      // A state asked for during the beat (done too, unless it was done that just played).
+      if (want !== shown) return enter(want);
+      paint(rest()); resting(rnd(PIXEL.gaps[shown] ?? PIXEL.gaps.idle), false);
+    };
+    timer = env.setTimeout(step, PIXEL.frameMs);
+  };
+  // Resting: the turn rolls (never while waiting on you), one step at a time, and the next beat after its gap.
+  const rolls = () => {
+    const t = PIXEL.turn;
+    if (!southOnly()) {
+      if (facing === 'south') {
+        if (env.random() < t.leave) { facing = env.random() < 0.5 ? 'south-east' : 'south-west'; awaySince = env.now(); paint(rest()); }
+      } else if (env.now() - awaySince >= t.minAwayMs && env.random() < t.back) { facing = 'south'; paint(rest()); }
+    }
+    roll = env.setTimeout(rolls, t.rollMs);
+  };
+  const resting = (gap: number, firstRest: boolean) => {
+    timer = env.setTimeout(beat, gap);
+    roll = env.setTimeout(rolls, firstRest ? env.random() * PIXEL.turn.rollMs : PIXEL.turn.rollMs);
+  };
+  const enter = (st: FaceState) => {
+    clear();
+    shown = st; anim = undefined; last = undefined;
+    if (st === 'complete' || st === 'error' || st === 'needs-input') return beat();
+    paint(rest());
+    // The first gap in a state is a random part of a whole one, so faces that start together don't move together.
+    resting(rnd(PIXEL.gaps[st] ?? PIXEL.gaps.idle) * (0.2 + env.random() * 0.8), true);
+  };
+  still();
+  return {
+    want(st: FaceState) {
+      want = st;
+      if (!live) { shown = st === 'complete' ? 'idle' : st; return still(); }
+      if (!playing && st !== shown) enter(st);
+    },
+    live(on: boolean) {
+      if (on === live) return;
+      live = on;
+      if (!live) { if (!playing) still(); return; }
+      if (!playing) enter(want === 'complete' && shown === 'idle' ? 'idle' : want);
+    },
+    dispose: clear,
+  };
+}
+
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-/** The character's width (PixelLab's square): the face is cropped to it, centred in its cell. */
-const CHAR = 48;
-const charOf = (m: Manifest) => m.char ?? Math.min(CHAR, m.cell[0]);
+const pageEnv: PlayerEnv = { now: () => performance.now(), setTimeout: (f, ms) => window.setTimeout(f, ms), clearTimeout: (t) => window.clearTimeout(t), random: Math.random };
 
 export default function PixelFace({ sprite, state = 'idle', size, label, fallback }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -110,8 +183,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   const [failed, setFailed] = useState(false);
   const want = useRef(state);
   want.current = state;
-  // Set by the running face: a new state, taken up at once while resting, or when the beat in progress ends.
-  const kick = useRef<() => void>(() => {});
+  const player = useRef<ReturnType<typeof createPlayer> | null>(null);
   const scale = size >= 64 ? 2 : 1;
 
   useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) { setSheet(s); setFailed(!s); } }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -120,97 +192,34 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
     const cv = canvas.current;
     if (!sheet || !cv) return;
     const g = cv.getContext('2d')!;
-    // A face that first appears done is simply at rest (done is a moment, not a place).
-    let shown: FaceState = want.current === 'complete' ? 'idle' : want.current;
-    let facing: Facing = 'south', awaySince = 0, frame = 0, playing = false, live = false, seen = false;
-    let timer = 0, roll = 0;
-    const southOnly = () => shown === 'needs-input';
-    const rest = () => (shown === 'error' ? PIXEL.errorHold : 0);
-    // The animation playing, or the one resting (a state's usual one: its rest frame is that one's).
-    let anim: Variant | undefined, last: Variant | undefined;
-    // At rest: the state's usual animation (its weightiest, never a rare one) in this facing.
-    const usual = () => { const { list } = variantsFor(sheet.m, shown, facing); const plain = list.filter((v) => !v.rare); return (plain.length ? plain : list).reduce((a, b) => (b.weight > a.weight ? b : a)); };
-    const draw = (i: number) => {
-      const { flip } = variantsFor(sheet.m, shown, facing);
-      const v = anim ?? usual();
+    const [bw, bh] = PIXEL.box;
+    const draw = ({ v, frame, flip }: Frame) => {
+      g.clearRect(0, 0, cv.width, cv.height);
       if (!v) return;
       const img = sheet.imgs[fileOf(v)], [cw, ch] = sheet.m.cell, cols = Math.max(1, Math.floor(img.width / cw));
-      const f = Math.min(i, v.frames - 1);
-      g.clearRect(0, 0, cv.width, cv.height);
+      const f = Math.min(frame, v.frames - 1);
       g.save();
       if (flip) { g.translate(cv.width, 0); g.scale(-1, 1); }
-      g.drawImage(img, (f % cols) * cw + (cw - charOf(sheet.m)) / 2, v.row * ch + sheet.top, charOf(sheet.m), sheet.height, 0, 0, charOf(sheet.m), sheet.height);
+      // The cell, centred in the common box: every agent's character (48×48, centred in its cell) lands in the same place.
+      g.drawImage(img, (f % cols) * cw, v.row * ch, cw, ch, Math.round((bw - cw) / 2), Math.round((bh - ch) / 2), cw, ch);
       g.restore();
     };
-    const clear = () => { clearTimeout(timer); clearTimeout(roll); timer = 0; roll = 0; };
-    // A beat: the row's frames at frameMs, then rest. A state asked for meanwhile is taken up after it.
-    const beat = () => {
-      clearTimeout(roll); roll = 0;
-      if (southOnly()) facing = 'south';
-      // This beat's animation, by weight, in the facing it's in.
-      anim = pick(variantsFor(sheet.m, shown, facing).list, last);
-      last = anim;
-      playing = true; frame = 0; draw(0);
-      const step = () => {
-        frame++;
-        if (frame < anim!.frames) { draw(frame); timer = window.setTimeout(step, PIXEL.frameMs); return; }
-        playing = false; anim = undefined;
-        const played = shown;
-        if (shown === 'complete') shown = 'idle';   // done plays once, then rests as idle
-        // Off screen or hidden now: stop at rest; a newer state is drawn still, and taken up when seen again.
-        if (!live) { if (want.current !== played) shown = want.current === 'complete' ? 'idle' : want.current; return still(); }
-        // A state asked for during the beat (done too, unless it was done that just played).
-        if (want.current !== shown && !(want.current === 'complete' && played === 'complete')) return enter(want.current);
-        draw(rest()); resting(rnd(PIXEL.gaps[shown] ?? PIXEL.gaps.idle), false);
-      };
-      timer = window.setTimeout(step, PIXEL.frameMs);
-    };
-    // Resting: the rest frame, the turn rolls (not while waiting on you), and the next beat after its gap.
-    const rolls = () => {
-      const t = PIXEL.turn;
-      if (!southOnly()) {
-        if (facing === 'south') {
-          if (Math.random() < t.leave) { facing = Math.random() < 0.5 ? 'south-east' : 'south-west'; awaySince = performance.now(); draw(rest()); }
-        } else if (performance.now() - awaySince >= t.minAwayMs && Math.random() < t.back) { facing = 'south'; draw(rest()); }
-      }
-      roll = window.setTimeout(rolls, t.rollMs);
-    };
-    const resting = (gap: number, first: boolean) => {
-      timer = window.setTimeout(beat, gap);
-      roll = window.setTimeout(rolls, first ? Math.random() * PIXEL.turn.rollMs : PIXEL.turn.rollMs);
-    };
-    const enter = (st: FaceState) => {
-      clear();
-      shown = st; anim = undefined; last = undefined;
-      if (st === 'complete' || st === 'error' || st === 'needs-input') return beat();
-      draw(rest());
-      resting(rnd(PIXEL.gaps[st] ?? PIXEL.gaps.idle) * (0.2 + Math.random() * 0.8), true);
-    };
-    const still = () => { clear(); facing = 'south'; draw(rest()); };
+    const p = createPlayer(sheet.m, want.current, draw, pageEnv);
+    player.current = p;
     // Only on screen, in a visible page, with motion allowed.
-    const go = () => {
-      const now = seen && document.visibilityState === 'visible' && !reduced();
-      if (now === live) return;
-      live = now;
-      if (!live) { if (!playing) clear(); return; }
-      if (!playing) enter(want.current === 'complete' && shown === 'idle' ? 'idle' : want.current);
-    };
-    kick.current = () => {
-      if (!live) { shown = want.current === 'complete' ? 'idle' : want.current; return still(); }
-      if (!playing && want.current !== shown) enter(want.current);
-    };
+    let seen = false;
+    const go = () => p.live(seen && document.visibilityState === 'visible' && !reduced());
     const io = new IntersectionObserver(([e]) => { seen = e.isIntersecting; go(); }, { rootMargin: '40px' });
     io.observe(cv);
     document.addEventListener('visibilitychange', go);
-    still();
-    return () => { clear(); io.disconnect(); document.removeEventListener('visibilitychange', go); kick.current = () => {}; };
+    return () => { p.dispose(); io.disconnect(); document.removeEventListener('visibilitychange', go); player.current = null; };
   }, [sheet]);
 
-  useEffect(() => { kick.current(); }, [state]);
+  useEffect(() => { player.current?.want(state); }, [state]);
 
   // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
   if (failed) return <>{fallback}</>;
-  const h = sheet?.height ?? CHAR, w = sheet ? charOf(sheet.m) : CHAR;
+  const [w, h] = PIXEL.box;
   return (
     <span className="loom-pixel-face" style={{ width: size, height: size }}>
       <canvas ref={canvas} role="img" aria-label={label ? `${label}, ${STATE_WORDS[state]}` : STATE_WORDS[state]} width={w} height={h}

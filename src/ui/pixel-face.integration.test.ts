@@ -71,7 +71,6 @@ describe('an agent\'s pixel face', () => {
   it('a manifest seeded from PixelLab: each state in each facing, one animation, weight 1; waiting south only', () => {
     const m = manifestFromPixelLab(JSON.parse(sheet().json.toString()));
     expect(m.cell).toEqual([56, 84]);
-    expect(m.char).toBe(48);
     expect(m.states.idle).toEqual({ south: [{ row: 7, frames: 17, weight: 1 }], 'south-east': [{ row: 8, frames: 17, weight: 1 }], 'south-west': [{ row: 9, frames: 17, weight: 1 }] });
     expect(m.states.working?.south).toEqual([{ row: 4, frames: 17, weight: 1 }]);
     expect(m.states.waiting).toEqual({ south: [{ row: 16, frames: 17, weight: 1 }] });
@@ -156,7 +155,7 @@ describe('an agent\'s pixel face', () => {
     await page.goto(`${base}/`);
     const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
     await face.waitFor({ timeout: 15_000 });
-    expect(await face.evaluate((c) => [getComputedStyle(c).imageRendering, c.getBoundingClientRect().width, (c as HTMLCanvasElement).width])).toEqual(['pixelated', 96, 48]);
+    expect(await face.evaluate((c) => [getComputedStyle(c).imageRendering, c.getBoundingClientRect().width, (c as HTMLCanvasElement).width])).toEqual(['pixelated', 192, 96]);
     // It draws the sheet (the fixture's cyan square), not an empty square.
     await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-identity .loom-pixel-face canvas'); if (!c) return false;
       const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }, null, { timeout: 15_000 });

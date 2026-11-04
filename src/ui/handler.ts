@@ -64,9 +64,7 @@ import { householdFind, householdSuggestPeople, householdThread } from './househ
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { agentDir, checkSpriteManifest, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, spriteSheets, type Household, type Member } from '../household.js';
-/** The sheets an agent's pixel-face manifest names (household.ts). */
-const spriteSheetsOf = (h: Household, agent: string) => spriteSheets(checkSpriteManifest(JSON.parse(readFileSync(join(spriteDir(h, agent), 'manifest.json'), 'utf-8'))));
+import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -480,7 +478,7 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string; face
     const c = custom[a];
     const colors = c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : { bg: MARKS[i % MARKS.length].bg, fg: MARKS[i % MARKS.length].fg };
     const sprite = spriteOf(h, a);
-    return [a, { ...colors, face: { ...faceOf(h, a), ...(sprite ? { sprite: { ...sprite, base: `/faces/${a}/` } } : {}) } }];
+    return [a, { ...colors, face: { ...faceOf(h, a), ...(sprite ? { sprite: { facings: sprite.facings, v: sprite.v, base: `/faces/${a}/` } } : {}) } }];
   }));
 }
 
@@ -1227,7 +1225,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
     const [, agent, file] = sprite;
     // Its manifest, and only the sheets that manifest names.
-    const named = hh?.agents.includes(agent) && spriteOf(hh, agent) ? spriteSheetsOf(hh, agent) : null;
+    const named = hh?.agents.includes(agent) ? spriteOf(hh, agent)?.sheets : undefined;
     if (!named || (file !== 'manifest.json' && !named.includes(file))) return send(res, 404, 'text/plain', 'not found');
     const body = readFileSync(join(spriteDir(hh!, agent), file));
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': file.endsWith('.png') ? 'image/png' : 'application/json',

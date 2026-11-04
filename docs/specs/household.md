@@ -95,7 +95,10 @@ $LOOM_HOME/                     (default ~/.config/loom)
   own animations by weight (a rare one never twice running); a facing with none
   for a state uses that state's south (south-west: south-east's mirrored
   first). Weights are tuned by editing the file: the page sees the change on its
-  next load. A variant marked `"rare": true` is never followed by a rare one.
+  next load. A variant marked `"rare": true` is never followed by a rare one;
+  `"rest"` names the frame it rests on (default 0; error's, 4 from its end).
+  Cells may differ by agent (Art's 56×84, Mark's 96×80): the page centres each
+  in one common box, so every face lines up.
   `loom household sprite <agent> <sheet.png> <pixellab.json>` seeds one from a
   PixelLab export (each state's rows, weight 1; `--weight idle=85` and
   `--variant "Crack Neck=idle:15:rare"` place the rest); `--manifest` replaces it.

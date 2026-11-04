@@ -767,8 +767,8 @@ export function faceOf(h: Household, agent: string): AgentFace {
 export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
 export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
 export type SpriteFacing = typeof SPRITE_FACINGS[number];
-export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean };
-export type SpriteManifest = { cell: [number, number]; /** the character's width in its cell (PixelLab's square; 48) */ char?: number; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>> };
+export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; /** the frame it rests on (default: 0; error's, 4 from its end) */ rest?: number };
+export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>> };
 const SPRITE_MAX_BYTES = 4 * 1024 * 1024;
 const SHEET_NAME = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -783,9 +783,7 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
   const cell = m.cell;
   if (!Array.isArray(cell) || cell.length !== 2 || !cell.every((n) => Number.isInteger(n) && n > 0 && n <= 512)) bad('needs "cell": [width, height]');
   if (!m.states || typeof m.states !== 'object') bad('needs "states"');
-  const char = (m as { char?: unknown }).char;
-  if (char !== undefined && (!Number.isInteger(char) || (char as number) < 1 || (char as number) > (cell as number[])[0])) bad('has a "char" width that isn\'t a whole number within its cell');
-  const out: SpriteManifest = { cell: cell as [number, number], ...(char !== undefined ? { char: char as number } : {}), states: {} };
+  const out: SpriteManifest = { cell: cell as [number, number], states: {} };
   for (const [st, byFacing] of Object.entries(m.states as Record<string, unknown>)) {
     if (!(SPRITE_STATES as readonly string[]).includes(st)) bad(`names a state loom doesn't have (${st})`);
     if (!byFacing || typeof byFacing !== 'object') bad(`has no facings for ${st}`);
@@ -798,7 +796,8 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
         if (!x || !Number.isInteger(x.row) || x.row < 0 || !Number.isInteger(x.frames) || x.frames < 1 || x.frames > 256 || typeof x.weight !== 'number' || !(x.weight > 0)) bad(`has an animation in ${st} ${f} without a row, frames and a weight`);
         if (x.sheet !== undefined && (typeof x.sheet !== 'string' || !SHEET_NAME.test(x.sheet))) bad(`names a sheet that isn't a plain .png name (${String(x.sheet)})`);
         if (x.rare !== undefined && typeof x.rare !== 'boolean') bad(`has an animation in ${st} ${f} whose "rare" isn't true or false`);
-        return { ...(x.sheet && x.sheet !== 'sheet.png' ? { sheet: x.sheet } : {}), row: x.row, frames: x.frames, weight: x.weight, ...(x.rare ? { rare: true } : {}) };
+        if (x.rest !== undefined && (!Number.isInteger(x.rest) || x.rest < 0 || x.rest >= x.frames)) bad(`has an animation in ${st} ${f} whose "rest" isn't one of its frames`);
+        return { ...(x.sheet && x.sheet !== 'sheet.png' ? { sheet: x.sheet } : {}), row: x.row, frames: x.frames, weight: x.weight, ...(x.rare ? { rare: true } : {}), ...(x.rest !== undefined ? { rest: x.rest } : {}) };
       });
       ((out.states[st as keyof SpriteManifest['states']] ??= {}) as Record<string, SpriteVariant[]>)[f] = vs;
     }
@@ -811,16 +810,17 @@ export const spriteSheets = (m: SpriteManifest): string[] =>
   [...new Set(Object.values(m.states).flatMap((byF) => Object.values(byF ?? {}).flat().map((v) => v!.sheet ?? 'sheet.png')))];
 
 /** An agent's pixel face: its facings and a version that changes when its manifest or a sheet does; none without one. */
-export function spriteOf(h: Household, agent: string): { facings: SpriteFacing[]; v: string } | undefined {
+export function spriteOf(h: Household, agent: string): { facings: SpriteFacing[]; v: string; sheets: string[] } | undefined {
   if (!AGENT_NAME.test(agent)) return undefined;
   const dir = spriteDir(h, agent);
   try {
     const raw = readFileSync(join(dir, 'manifest.json'));
     const m = checkSpriteManifest(JSON.parse(raw.toString('utf-8')));
     const v = createHash('sha256').update(raw);
-    for (const f of spriteSheets(m)) { const st = statSync(join(dir, f)); v.update(`${f}:${st.size}:${st.mtimeMs}`); }
+    const sheets = spriteSheets(m);
+    for (const f of sheets) { const st = statSync(join(dir, f)); v.update(`${f}:${st.size}:${st.mtimeMs}`); }
     const facings = SPRITE_FACINGS.filter((f) => Object.values(m.states).some((byF) => byF?.[f]));
-    return { facings, v: v.digest('base64url').slice(0, 10) };
+    return { facings, v: v.digest('base64url').slice(0, 10), sheets };
   } catch { return undefined; }
 }
 
@@ -830,7 +830,6 @@ export function spriteOf(h: Household, agent: string): { facings: SpriteFacing[]
  * south only. Any other named row is an extra animation only if `variants` places it (its state, weight, and rare or not).
  */
 export function manifestFromPixelLab(meta: unknown, opts: { weights?: Record<string, number>; variants?: Record<string, { state: string; weight: number; rare?: boolean }> } = {}): SpriteManifest {
-  const charW = (meta as { character?: { size?: { width?: unknown } } })?.character?.size?.width;
   const sh = (meta as { spritesheet?: { cell_size?: { width?: number; height?: number }; columns?: number; rows?: Array<{ row: number; type?: string; animation?: string; direction?: string; frame_count?: number }> } })?.spritesheet;
   if (!sh?.cell_size?.width || !sh.cell_size.height || !Array.isArray(sh.rows)) throw new HouseholdError('that JSON isn\'t a PixelLab sprite sheet\'s (spritesheet.cell_size, rows)');
   const named: Record<string, typeof SPRITE_STATES[number]> = { error: 'error', idle: 'idle', thinking: 'thinking', done: 'done', waiting: 'waiting', working: 'working' };
@@ -846,7 +845,7 @@ export function manifestFromPixelLab(meta: unknown, opts: { weights?: Record<str
     const v: SpriteVariant = { row: r.row, frames: r.frame_count ?? sh.columns ?? 1, weight: x ? x.weight : opts.weights?.[st] ?? 1, ...(x?.rare ? { rare: true } : {}) };
     ((states[st] ??= {})[f] ??= []).push(v);
   }
-  return checkSpriteManifest({ cell: [sh.cell_size.width, sh.cell_size.height], ...(typeof charW === 'number' ? { char: charW } : {}), states });
+  return checkSpriteManifest({ cell: [sh.cell_size.width, sh.cell_size.height], states });
 }
 
 /** Keep an agent's pixel face: its manifest and the sheets it names (name → PNG), all checked before any is written. */
