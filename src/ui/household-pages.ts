@@ -23,6 +23,7 @@ import {
 } from '../household.js';
 import { relayOf } from '../relay-pairs.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
+import { backupRow, readSettings, setSettings, targetString, validateSettings } from '../backup.js';
 import { initialsOf, profileLinks, profileTone, reachOf, SERVICE } from './reach.js';
 import { BOXES, boxSection, OWN_FILES, readCreed, withPart, withSection, writeCreed, type Box, type Creed } from './identity-edit.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
@@ -459,6 +460,8 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         { label: 'Last active', tone: Number.isNaN(lastMs) ? 'warn' : nowMs - lastMs < 86_400_000 ? 'ok' : 'warn',
           text: Number.isNaN(lastMs) ? 'nothing in 3 days' : since(last.created, nowMs), ...(last ? { meta: whereLabel(last.where) } : {}) },
         { label: 'Tokens', tone: live.length ? 'ok' : 'warn', text: `${live.length} live`, meta: live.length ? `used ${since(live[0].last_used, nowMs)}` : 'none' },
+        // The household's nightly backup (src/backup.ts), on the default agent's Setup, to a household owner.
+        ...(agent === h.default && opts.ownerTokens === true ? [backupRow(h, nowMs, (iso) => since(iso, nowMs))] : []),
       ] }] },
       // Who it is: the boxes someone filling in their own agent from scratch fills (Jonathan, 2026-10-30). The creed is
       // the owner's (the agent can't change it); a household owner edits it here, an agent owner reads it.
@@ -501,8 +504,26 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
           fields: [{ name: 'label', label: 'Label', kind: 'text', hint: 'Where it goes, e.g. "Art · laptop".', required: true }] }] },
         ];
       })() },
+      // The nightly backup's settings (src/backup.ts): the household owner's, on the default agent's Setup.
+      ...(agent === h.default && opts.ownerTokens === true ? [backupSection(h)] : []),
     ],
   };
+}
+
+/** Setup's Backup section: the form loom backup set is, filled with what's set. */
+function backupSection(h: Household) {
+  const { settings: s } = readSettings(h);
+  return { id: 'backup', title: 'Nightly backup', side: true, blocks: [
+    { type: 'text' as const, tone: 'muted' as const, text: 'Each night loom exports the household, encrypted to your keys, checks it restores, and writes it to a git repo it owns (one commit) or a directory. It pushes with this machine\'s own git login.' },
+    { type: 'details' as const, summary: s ? 'Change it' : 'Set it up', blocks: [{ type: 'form' as const, action: 'backup-set', submit: 'Save', fields: [
+      { name: 'target', label: 'Where', kind: 'text' as const, required: true, ...(s ? { value: targetString(s.target) } : {}), hint: 'git:https://github.com/you/backup.git, or path:/mnt/usb' },
+      { name: 'recipients', label: 'Your keys', kind: 'text' as const, required: true, ...(s ? { value: s.recipients.join(' ') } : {}), hint: 'age public keys (age1…), separated by spaces' },
+      { name: 'at', label: 'At', kind: 'text' as const, value: s?.at ?? '03:00', hint: 'HH:MM, 24-hour' },
+      { name: 'tz', label: 'Time zone', kind: 'text' as const, value: s?.tz ?? uiTimeZone() },
+      { name: 'keep', label: 'Nights kept', kind: 'text' as const, value: String(s?.keep ?? 7), hint: 'besides each month\'s first' },
+      { name: 'required', label: 'Pieces it must hold', kind: 'text' as const, ...(s?.required.length ? { value: s.required.join(' ') } : {}), hint: 'optional, e.g. box secrets' },
+    ] }] },
+  ] };
 }
 
 /**
@@ -714,6 +735,12 @@ export async function householdAct(h: Household, action: string, fields: Record<
       if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
       const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'confirmed', note: 'confirmed from loom\'s page' }, h.owner ?? 'owner');
       return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge/${slug}` } : { ok: false, message: out };
+    }
+    if (action === 'backup-set') {
+      const split = (v?: string) => (v ?? '').split(/[\s,]+/).filter(Boolean);
+      const st = validateSettings({ target: fields.target, recipients: split(fields.recipients), at: fields.at, tz: fields.tz, keep: fields.keep, required: split(fields.required) }, uiTimeZone());
+      setSettings(h, st, process.env);
+      return { ok: true, message: `The nightly backup is set: ${targetString(st.target)}, each day at ${st.at} (${st.tz}).`, page: `loom:a/${h.default}/setup` };
     }
     if (action === 'create-token') {
       const agent = fields.agent ?? '';

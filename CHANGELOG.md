@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The nightly backup is loom's own.** `loom backup set --target git:<url>|path:<dir>
+  --recipient age1…` (docs/specs/keeping-watch.md): each night at `--at`, one of
+  the listeners exports the household, drills a restore of it with the
+  machine's own drill key, and writes it to the target (a git repo as one
+  force-pushed commit, or a directory). The default agent's Setup has a Backup
+  row; a failed or missed run is an Inbox alert for household owners, and
+  `LOOM_ALERT_COMMAND` hears it. `loom backup run`, `status`, `off`.
+
 - **Two cards that turn out to be one person become one.** `person_merge`
   (an agent of the household that holds both), `loom person merge <from>
   <into> [--dry-run]` (the owner) and `POST /api/loom/people/merge` (a
