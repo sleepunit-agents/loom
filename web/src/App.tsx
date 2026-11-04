@@ -39,7 +39,7 @@ const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPane
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
-import { keep, LookContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, LookContext, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -131,6 +131,9 @@ export default function App() {
   const [sound, setSoundState] = useState(() => { try { return localStorage.getItem('loom-sound') === 'on'; } catch { return false; } });
   const soundOn = useRef(sound);
   soundOn.current = sound;
+  // Pixel faces (pixel-face.tsx), where an agent has a sheet: on unless the person turns them off.
+  const [pixel, setPixelState] = useState(() => { try { return localStorage.getItem('loom-pixel') !== 'off'; } catch { return true; } });
+  const setPixel = (on: boolean) => { setPixelState(on); keep('loom-pixel', on ? 'on' : 'off'); save({ pixel: on }); };
   const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
 
   // eslint-disable-line react-hooks/exhaustive-deps
@@ -248,6 +251,7 @@ export default function App() {
     if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
+    if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
   }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -359,7 +363,7 @@ export default function App() {
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
 
   return (
-    <LookContext.Provider value={look}><TintContext.Provider value={tint}>
+    <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -404,7 +408,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -436,7 +440,7 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </TintContext.Provider></LookContext.Provider>
+    </TintContext.Provider></PixelContext.Provider></LookContext.Provider>
   );
 }
 

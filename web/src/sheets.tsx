@@ -16,7 +16,7 @@ import type { Look } from './look';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void }) {
+export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -45,7 +45,7 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} />;
+  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
@@ -70,7 +70,7 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
 }
 
 /** The Appearance app: the look, light or dark (000h's), and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void }) {
+function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, sprites }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; sprites: boolean }) {
   const row = (label: string, hint: string, control: React.ReactNode) => (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
       <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
@@ -88,6 +88,10 @@ function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound,
         {row('Background', 'What’s behind every page.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
             {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup>
+        ))}
+        {sprites && row('Pixel faces', 'An agent with a pixel portrait wears it; off, every agent has its drawn face.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Pixel faces" value={pixel ? 'on' : 'off'} onValueChange={(v) => { if (v) setPixel(v === 'on'); }}>
+            <ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
         ))}
         {row('Sound', 'A chime when loom opens and when something you did lands. Off unless you turn it on.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Sound" value={sound ? 'on' : 'off'} onValueChange={(v) => { if (v) setSound(v === 'on'); }}>

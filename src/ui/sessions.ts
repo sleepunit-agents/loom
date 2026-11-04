@@ -67,11 +67,11 @@ interface File {
  * theme, that sucks"): the look, 000h's light or dark, the ground, and sound. Only what they chose; kept per member
  * like `seen`, so it follows them to every device they sign in on.
  */
-export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean;
+export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean;
   /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
   at?: number }
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
-  look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false],
+  look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
 export function prefsOf(body: Record<string, unknown>): Prefs | null {

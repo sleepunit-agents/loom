@@ -64,7 +64,9 @@ import { householdFind, householdSuggestPeople, householdThread } from './househ
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { agentDir, faceOf, firstOwner, MARKS, memberOf, type Household, type Member } from '../household.js';
+import { agentDir, checkSpriteManifest, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, spriteSheets, type Household, type Member } from '../household.js';
+/** The sheets an agent's pixel-face manifest names (household.ts). */
+const spriteSheetsOf = (h: Household, agent: string) => spriteSheets(checkSpriteManifest(JSON.parse(readFileSync(join(spriteDir(h, agent), 'manifest.json'), 'utf-8'))));
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -180,7 +182,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
   return `bearer:${createHash('sha256').update(String(req.headers.authorization ?? '')).digest('base64url')}`;
 }
 
-const PAGE_ROOTS = ['/app', '/events', '/setup', '/appearance', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -466,7 +468,7 @@ const agentPieceSource = (agent: string, piece: string): Source => ({ id: piece,
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 
 /** Each agent's mark colors: household.json's `marks` when it names valid ones, else the palette in order. */
-function agentMarks(h: Household): Record<string, { bg: string; fg: string; face: { shape: string; eyes: string } }> {
+function agentMarks(h: Household): Record<string, { bg: string; fg: string; face: { shape: string; eyes: string; sprite?: { facings: string[]; v: string; base: string } } }> {
   let custom: Record<string, { bg?: unknown; fg?: unknown }> = {};
   try {
     const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')) as { marks?: unknown };
@@ -475,7 +477,8 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string; face
   return Object.fromEntries(h.agents.map((a, i) => {
     const c = custom[a];
     const colors = c && typeof c.bg === 'string' && HEX.test(c.bg) && typeof c.fg === 'string' && HEX.test(c.fg) ? { bg: c.bg, fg: c.fg } : { bg: MARKS[i % MARKS.length].bg, fg: MARKS[i % MARKS.length].fg };
-    return [a, { ...colors, face: faceOf(h, a) }];
+    const sprite = spriteOf(h, a);
+    return [a, { ...colors, face: { ...faceOf(h, a), ...(sprite ? { sprite: { ...sprite, base: `/faces/${a}/` } } : {}) } }];
   }));
 }
 
@@ -1215,6 +1218,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   const hh = opts.household?.();
+  // An agent's pixel face (household.ts spriteOf): its sheet and its JSON, for an agent this person sees. The page asks
+  // with the face's version (?v=), so a copy is kept until the sheet changes.
+  const sprite = /^\/faces\/([a-z][a-z0-9-]{0,39})\/(manifest\.json|[a-z0-9][a-z0-9-]{0,40}\.png)$/.exec(pathname);
+  if (sprite) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
+    const [, agent, file] = sprite;
+    // Its manifest, and only the sheets that manifest names.
+    const named = hh?.agents.includes(agent) && spriteOf(hh, agent) ? spriteSheetsOf(hh, agent) : null;
+    if (!named || (file !== 'manifest.json' && !named.includes(file))) return send(res, 404, 'text/plain', 'not found');
+    const body = readFileSync(join(spriteDir(hh!, agent), file));
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': file.endsWith('.png') ? 'image/png' : 'application/json',
+      'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
+    return void res.end(req.method === 'HEAD' ? undefined : body);
+  }
   // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
   // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).
   if (pathname === '/inbox/read' && hh) {

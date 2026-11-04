@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Pixel faces.** An agent can have a pixel face (Jonathan's PixelLab
+  portraits for Art): a manifest and its sprite sheets kept with the
+  household's marks (`faces/<agent>/`, set with `loom household sprite`),
+  drawn at whole pixels (1x, 2x on a card) in its own lazily loaded chunk.
+  Each state plays as a beat, then rests, with a random gap per face; several
+  weighted animations per state and facing (one picked per beat, a rare one
+  never twice running); a glance to the south-east or south-west now and then
+  while resting, waiting on you always facing you. Nothing moves off screen,
+  in a hidden tab or under reduced motion. Appearance's "Pixel faces" (on by
+  default where a face exists) is the person's, on every device. An agent
+  without one keeps its drawn face.
 - **Neon Noir's status bar, sheets, Find, power-on and sound.** Under Neon a
   status bar heads every page: LOOM//OS, live or offline (in words), how many
   agents and how many things need you, and loom's clock. The Inbox's sheet

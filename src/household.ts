@@ -753,6 +753,105 @@ export function faceOf(h: Household, agent: string): AgentFace {
   return { shape, eyes };
 }
 
+/**
+ * An agent's pixel face (Jonathan, 2026-11-04: the PixelLab sheets he made for Art): a manifest and its sheets, kept with
+ * the household's other marks at <home>/faces/<agent>/ (manifest.json, and each sheet it names, a PNG). The manifest
+ * says, per state and facing, its animations, each a row of a sheet with its frame count and a weight; at each beat the
+ * page picks one by weight (weights are tuned in the file, no deploy). Facings are south, south-east and south-west;
+ * waiting on you is south only. A state with nothing in a facing uses its south; south is the one every pixel face has.
+ *   { "cell": [56, 84], "states": { "idle": { "south": [{ "row": 7, "frames": 17, "weight": 85 },
+ *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15 }], "south-east": [...] }, "waiting": { "south": [...] } } }
+ * A variant's sheet is "sheet.png" unless it names another. An agent without a manifest keeps its drawn face.
+ */
+export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
+export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
+export type SpriteFacing = typeof SPRITE_FACINGS[number];
+export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number };
+export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>> };
+const SPRITE_MAX_BYTES = 4 * 1024 * 1024;
+const SHEET_NAME = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+export const spriteDir = (h: Household, agent: string) => join(h.home, 'faces', agent);
+
+/** A manifest as loom keeps it, checked: known states and facings only, waiting south only, every variant a row, its
+ * frames and a weight, its sheet a plain file name; idle in south at the least. Throws HouseholdError, saying what's wrong. */
+export function checkSpriteManifest(raw: unknown): SpriteManifest {
+  const bad = (why: string): never => { throw new HouseholdError(`that sprite manifest ${why}`); };
+  const m = raw as { cell?: unknown; states?: unknown };
+  if (!m || typeof m !== 'object') bad('isn\'t a JSON object');
+  const cell = m.cell;
+  if (!Array.isArray(cell) || cell.length !== 2 || !cell.every((n) => Number.isInteger(n) && n > 0 && n <= 512)) bad('needs "cell": [width, height]');
+  if (!m.states || typeof m.states !== 'object') bad('needs "states"');
+  const out: SpriteManifest = { cell: cell as [number, number], states: {} };
+  for (const [st, byFacing] of Object.entries(m.states as Record<string, unknown>)) {
+    if (!(SPRITE_STATES as readonly string[]).includes(st)) bad(`names a state loom doesn't have (${st})`);
+    if (!byFacing || typeof byFacing !== 'object') bad(`has no facings for ${st}`);
+    for (const [f, list] of Object.entries(byFacing as Record<string, unknown>)) {
+      if (!(SPRITE_FACINGS as readonly string[]).includes(f)) bad(`names a facing loom doesn't use (${f})`);
+      if (st === 'waiting' && f !== 'south') bad('turns waiting away from south (waiting on you always faces you)');
+      if (!Array.isArray(list) || !list.length) bad(`has no animations for ${st} ${f}`);
+      const vs = (list as unknown[]).map((v) => {
+        const x = v as SpriteVariant;
+        if (!x || !Number.isInteger(x.row) || x.row < 0 || !Number.isInteger(x.frames) || x.frames < 1 || x.frames > 256 || typeof x.weight !== 'number' || !(x.weight > 0)) bad(`has an animation in ${st} ${f} without a row, frames and a weight`);
+        if (x.sheet !== undefined && (typeof x.sheet !== 'string' || !SHEET_NAME.test(x.sheet))) bad(`names a sheet that isn't a plain .png name (${String(x.sheet)})`);
+        return { ...(x.sheet && x.sheet !== 'sheet.png' ? { sheet: x.sheet } : {}), row: x.row, frames: x.frames, weight: x.weight };
+      });
+      ((out.states[st as keyof SpriteManifest['states']] ??= {}) as Record<string, SpriteVariant[]>)[f] = vs;
+    }
+  }
+  if (!out.states.idle?.south) bad('needs idle facing south (every pixel face has it)');
+  return out;
+}
+/** The sheet files a manifest uses. */
+export const spriteSheets = (m: SpriteManifest): string[] =>
+  [...new Set(Object.values(m.states).flatMap((byF) => Object.values(byF ?? {}).flat().map((v) => v!.sheet ?? 'sheet.png')))];
+
+/** An agent's pixel face: its facings and a version that changes when its manifest or a sheet does; none without one. */
+export function spriteOf(h: Household, agent: string): { facings: SpriteFacing[]; v: string } | undefined {
+  if (!AGENT_NAME.test(agent)) return undefined;
+  const dir = spriteDir(h, agent);
+  try {
+    const raw = readFileSync(join(dir, 'manifest.json'));
+    const m = checkSpriteManifest(JSON.parse(raw.toString('utf-8')));
+    const v = createHash('sha256').update(raw);
+    for (const f of spriteSheets(m)) { const st = statSync(join(dir, f)); v.update(`${f}:${st.size}:${st.mtimeMs}`); }
+    const facings = SPRITE_FACINGS.filter((f) => Object.values(m.states).some((byF) => byF?.[f]));
+    return { facings, v: v.digest('base64url').slice(0, 10) };
+  } catch { return undefined; }
+}
+
+/** A manifest seeded from a PixelLab export: each state's row in each facing, one animation each, weight 1; waiting south only. */
+export function manifestFromPixelLab(meta: unknown): SpriteManifest {
+  const sh = (meta as { spritesheet?: { cell_size?: { width?: number; height?: number }; columns?: number; rows?: Array<{ row: number; type?: string; animation?: string; direction?: string; frame_count?: number }> } })?.spritesheet;
+  if (!sh?.cell_size?.width || !sh.cell_size.height || !Array.isArray(sh.rows)) throw new HouseholdError('that JSON isn\'t a PixelLab sprite sheet\'s (spritesheet.cell_size, rows)');
+  const named: Record<string, typeof SPRITE_STATES[number]> = { error: 'error', idle: 'idle', thinking: 'thinking', done: 'done', waiting: 'waiting', working: 'working' };
+  const states: Record<string, Record<string, SpriteVariant[]>> = {};
+  for (const r of sh.rows.filter((x) => x.type === 'animation')) {
+    // PixelLab names a row by its prompt: Working's is what it does, so any name that isn't a state is working.
+    const st = named[(r.animation ?? '').trim().toLowerCase()] ?? 'working';
+    const f = r.direction ?? 'south';
+    if (!(SPRITE_FACINGS as readonly string[]).includes(f) || (st === 'waiting' && f !== 'south')) continue;
+    ((states[st] ??= {})[f] ??= []).push({ row: r.row, frames: r.frame_count ?? sh.columns ?? 1, weight: 1 });
+  }
+  return checkSpriteManifest({ cell: [sh.cell_size.width, sh.cell_size.height], states });
+}
+
+/** Keep an agent's pixel face: its manifest and the sheets it names (name → PNG), all checked before any is written. */
+export function setSprite(h: Household, agent: string, manifest: SpriteManifest, sheets: Record<string, Buffer>): void {
+  if (!AGENT_NAME.test(agent) || !h.agents.includes(agent)) throw new HouseholdError(`${agent} isn't an agent of this household`);
+  const m = checkSpriteManifest(manifest);
+  const dir = spriteDir(h, agent);
+  for (const [name, png] of Object.entries(sheets)) {
+    if (!SHEET_NAME.test(name)) throw new HouseholdError(`${name} isn't a plain .png name (lowercase letters, digits, dashes)`);
+    if (png.length > SPRITE_MAX_BYTES || !png.subarray(0, 8).equals(PNG_MAGIC)) throw new HouseholdError(`${name} isn't a PNG (4 MB at most)`);
+  }
+  const missing = spriteSheets(m).filter((f) => !sheets[f] && !existsSync(join(dir, f)));
+  if (missing.length) throw new HouseholdError(`the manifest names ${missing.join(', ')}, which ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} given or kept`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const [name, png] of Object.entries(sheets)) writeFileSync(join(dir, name), png, { mode: 0o600 });
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n', { mode: 0o600 });
+}
+
 /** Set an agent's face in household.json's `faces`. */
 export function setFace(h: Household, agent: string, face: AgentFace): void {
   if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);

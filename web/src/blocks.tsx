@@ -15,6 +15,8 @@ const Markdown = lazy(() => import('./markdown'));
 const Profile = lazy(() => import('./profile'));
 const ChartBlock = lazy(() => import('./chart'));
 const Face = lazy(() => import('./face'));
+// An agent's pixel face, where it has a sheet (pixel-face.tsx): its own chunk, its sheet loaded when drawn.
+const PixelFace = lazy(() => import('./pixel-face'));
 const Panel = lazy(() => import('./panel'));
 const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health })));
 const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
@@ -36,7 +38,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
 import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
-import { markColor, useLook } from './look';
+import { markColor, PixelContext, useLook } from './look';
+import type { Sprite } from './pixel-face';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
@@ -175,11 +178,13 @@ function PageLink({ l }: { l: Extract<Block, { type: 'link' }> }) {
 
 /** An agent's mark: its face (face.tsx), its shape and eyes its own, its expression its state; its initial on its
  * colour while the face loads. */
-export type Mark = { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } };
+export type Mark = { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: Sprite } };
 export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
 const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
 export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
   const look = useLook();
+  // A pixel face is at least its 48-pixel square: drawn at 1x from 36 px, 2x from 64; smaller, the drawn face.
+  const pixel = useContext(PixelContext) && !!a.face?.sprite && size >= 36;
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
       style={{ '--c': look === 'neon' ? markColor(a.bg) : a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
@@ -189,7 +194,8 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
   return (
     <Suspense fallback={initial}>
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
-        <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />
+        {pixel ? <PixelFace sprite={a.face!.sprite!} state={state} size={size} label={a.label} />
+          : <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />}
       </span>
     </Suspense>
   );
