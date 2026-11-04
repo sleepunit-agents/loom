@@ -1,7 +1,7 @@
 // loom's sounds (Appearance → Sound, off unless the person turns it on): synthesised here with WebAudio, so there are
 // no files. Its own chunk, loaded only when Sound is on. Two: a short detuned pad swell with a high ping when loom
 // opens (only when the opening animation runs: never under reduced motion), and two soft pings when something you did
-// lands. A browser that won't play before a tap (autoplay rules) simply stays quiet.
+// lands. A browser that won't play before a tap (autoplay rules) simply stays quiet: that chime is skipped, not delayed.
 let ctx: AudioContext | null = null;
 
 function tone(c: AudioContext, out: AudioNode, type: OscillatorType, hz: number, at: number, up: number, hold: number, down: number, peak: number, detune = 0) {
@@ -18,7 +18,9 @@ function tone(c: AudioContext, out: AudioNode, type: OscillatorType, hz: number,
 export function chime(kind: 'boot' | 'done'): void {
   try { ctx ??= new AudioContext(); } catch { return; }
   const c = ctx;
-  if (c.state === 'suspended') void c.resume().catch(() => {});
+  // A context the browser holds (autoplay, before a tap) plays nothing now: a chime scheduled on it would sound later,
+  // whenever the browser lets it go, apart from what it was for. Wake it for next time, and stay quiet this time.
+  if (c.state !== 'running') { void c.resume().catch(() => {}); return; }
   const t = c.currentTime + 0.03;
   const lp = c.createBiquadFilter();
   lp.type = 'lowpass'; lp.frequency.value = 2400;
