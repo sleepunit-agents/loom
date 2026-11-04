@@ -497,6 +497,8 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) set
     } } });
     expect(run.ok).toBe(false);
     expect(run.why).toMatch(/git push failed/);
+    // The push asks for one sized POST (http.postBuffer), never a chunked one.
+    expect(readFileSync(new URL('./backup.ts', import.meta.url), 'utf-8')).toMatch(/'-c', `http\.postBuffer=\$\{POST_BUFFER\}`, 'push'/);
     expect(git(['--git-dir', remote, 'rev-parse', 'main'])).toBe(theirs);
   }, 30_000);
 
