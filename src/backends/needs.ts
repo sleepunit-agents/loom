@@ -9,6 +9,10 @@
  * words is refused with why, so the agent says it again in words. No model in the loop: patterns, small and tested.
  */
 
+/** How an ask is answered (NeedsOwner.answers). */
+export type NeedsAnswers = 'yes-no' | 'words';
+export const NEEDS_ANSWERS: readonly NeedsAnswers[] = ['yes-no', 'words'];
+
 /** What an ask waits on: when that's resolved, the ask clears itself (src/needs-resolve.ts). */
 export type WaitsOn = { approval: string } | { task: string };
 
@@ -23,6 +27,9 @@ export interface NeedsOwner {
   /** The ids it's about (t-40, a-7693c00e, owner/repo#12): links and details. */
   refs: string[];
   waits_on?: WaitsOn;
+  /** How it's answered: `yes-no` (the sheet's Yes and No, each sending its if_yes or if_no line), or `words` (a reply
+   * only). Left off, an ask with if_yes or if_no is a yes/no question. */
+  answers?: NeedsAnswers;
   /** Written as a plain string (before the object, or since): its headline keeps "<agent> needs you: …". */
   legacy?: true;
 }
@@ -76,7 +83,7 @@ export function isHttpsUrl(s: string): boolean {
   try { const u = new URL(s); return u.protocol === 'https:' && !!u.hostname && !u.username && !u.password && !/\s/.test(s); } catch { return false; }
 }
 
-const NEEDS_KEYS = ['ask', 'why', 'if_yes', 'if_no', 'href', 'refs', 'waits_on'] as const;
+const NEEDS_KEYS = ['ask', 'why', 'if_yes', 'if_no', 'answers', 'href', 'refs', 'waits_on'] as const;
 
 /**
  * A digest's needs_owner (and the older needs_owner_href beside it), checked: null, a plain one-line string, or the
@@ -111,6 +118,9 @@ export function parseNeeds(raw: unknown, href: unknown): NeedsOwner | null | str
     if (typeof o.href !== 'string' || o.href.length > MAX_NEEDS_HREF || !isHttpsUrl(o.href)) return `needs_owner.href is an https:// URL of at most ${MAX_NEEDS_HREF} characters`;
     if (hrefS && hrefS !== o.href) return 'give the link once: needs_owner.href (needs_owner_href is the older name for it)';
   }
+  if (o.answers !== undefined && o.answers !== null && !(NEEDS_ANSWERS as readonly unknown[]).includes(o.answers)) {
+    return 'needs_owner.answers is "yes-no" (the owner answers with Yes or No) or "words" (they reply in their own words)';
+  }
   const refs = o.refs ?? [];
   if (!Array.isArray(refs) || refs.length > MAX_NEEDS_REFS || !refs.every((r) => typeof r === 'string' && isRef(r))) {
     return `needs_owner.refs is a list of at most ${MAX_NEEDS_REFS} ids: tasks (t-40), approvals (a-7693c00e), pull requests or issues (owner/repo#12), conversations (cv-…)`;
@@ -120,6 +130,7 @@ export function parseNeeds(raw: unknown, href: unknown): NeedsOwner | null | str
     ...(typeof o.why === 'string' ? { why: o.why.trim() } : {}),
     ...(typeof o.if_yes === 'string' ? { if_yes: o.if_yes.trim() } : {}),
     ...(typeof o.if_no === 'string' ? { if_no: o.if_no.trim() } : {}),
+    ...(typeof o.answers === 'string' ? { answers: o.answers as NeedsAnswers } : {}),
     ...(typeof o.href === 'string' ? { href: o.href } : hrefS ? { href: hrefS } : {}),
   };
   if (o.waits_on !== undefined && o.waits_on !== null) {
@@ -171,4 +182,16 @@ export function needsOfRow(r: { needs_owner: string | null; needs_owner_href?: s
   const refs = refsIn(r.needs_owner);
   const approvals = refs.filter((x) => APPROVAL.test(x));
   return { ask: r.needs_owner, refs, ...(r.needs_owner_href ? { href: r.needs_owner_href } : {}), ...(approvals.length === 1 ? { waits_on: { approval: approvals[0] } } : {}), legacy: true };
+}
+
+/** How the owner answers an ask: as it says, else a yes/no question when it says what happens either way. */
+export function answersOf(n: NeedsOwner): NeedsAnswers {
+  if (n.answers) return n.answers;
+  return !n.legacy && (n.if_yes || n.if_no) ? 'yes-no' : 'words';
+}
+
+/** The owner's Yes or No, as the words the agent's conversation gets: the answer, the ask, and its own line for it. */
+export function yesNoText(n: NeedsOwner, answer: 'yes' | 'no'): string {
+  const line = answer === 'yes' ? n.if_yes : n.if_no;
+  return `${answer === 'yes' ? 'Yes' : 'No'}, to: ${n.ask}${line ? `\nIf ${answer}, you said: ${line}` : ''}`;
 }

@@ -83,7 +83,7 @@ export interface DigestInput {
 }
 
 /** needs_owner as an agent writes the object (parseNeeds checks it). */
-export interface NeedsOwnerInput { ask: string; why?: string; if_yes?: string; if_no?: string; href?: string; refs?: string[]; waits_on?: { approval?: string; task?: string } }
+export interface NeedsOwnerInput { ask: string; why?: string; if_yes?: string; if_no?: string; answers?: 'yes-no' | 'words'; href?: string; refs?: string[]; waits_on?: { approval?: string; task?: string } }
 
 export interface Digest {
   id: string;
@@ -769,11 +769,12 @@ export function openNeeds(contextDir: string): Array<{ conversation: Conversatio
 }
 
 /**
- * How a Needs you was answered: done (it's handled), dismissed (not theirs), or replied (their words went to the
- * agent), by the owner; or resolved, by core, when what it waits on was (src/needs-resolve.ts: `reason` says how).
+ * How a Needs you was answered: done (it's handled), dismissed (not theirs), replied (their words went to the
+ * agent), or yes or no (their Yes or No went to the agent, with the ask's own line for it), by the owner; or resolved,
+ * by core, when what it waits on was (src/needs-resolve.ts: `reason` says how).
  */
-export type NeedsVerdict = 'done' | 'dismissed' | 'replied' | 'resolved';
-export const NEEDS_VERDICTS: readonly NeedsVerdict[] = ['done', 'dismissed', 'replied', 'resolved'];
+export type NeedsVerdict = 'done' | 'dismissed' | 'replied' | 'yes' | 'no' | 'resolved';
+export const NEEDS_VERDICTS: readonly NeedsVerdict[] = ['done', 'dismissed', 'replied', 'yes', 'no', 'resolved'];
 
 export interface NeedsAnswer { digest: string; conversation: string; verdict: NeedsVerdict; by: string; at: string; reason?: string | null }
 

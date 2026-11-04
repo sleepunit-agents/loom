@@ -52,6 +52,7 @@ import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRe
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } from './core.js';
 import { answeredNeeds, answerNeeds, ConversationError, getConversation as conversationOf, isConversationId, openNeeds, type NeedsVerdict } from '../backends/conversations.js';
+import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
 import { venueLabel } from '../household-store.js';
@@ -573,7 +574,7 @@ export function conversationAsks(h: Household): HomeAsk[] {
         meta: plain ? n.why ?? where : where,
         page: `loom:conversation/${c.id}`, label: 'Open the conversation', agent: a, at: d.at, source: agentSource(a), sourceLabel: 'Conversations',
         ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}),
-        ...(n ? { needs: { ...(plain && n.why ? { why: n.why } : {}), ...(n.if_yes ? { if_yes: n.if_yes } : {}), ...(n.if_no ? { if_no: n.if_no } : {}), refs: n.refs, details: where } } : {}),
+        ...(n ? { needs: { ...(plain && n.why ? { why: n.why } : {}), ...(n.if_yes ? { if_yes: n.if_yes } : {}), ...(n.if_no ? { if_no: n.if_no } : {}), answers: answersOf(n), refs: n.refs, details: where } } : {}),
         ...(n?.waits_on && 'approval' in n.waits_on ? { waitsOnApproval: n.waits_on.approval } : {}),
         reply: { action: 'needs-reply', label: `Reply to ${name}`, fields },
         actions: [{ action: 'needs-done', label: 'Done', tone: 'primary', fields }, { action: 'needs-dismiss', label: 'Dismiss', fields }],
@@ -581,6 +582,9 @@ export function conversationAsks(h: Household): HomeAsk[] {
     });
   });
 }
+
+/** How the history says an answered Needs you was answered. */
+const ANSWERED: Partial<Record<NeedsVerdict, string>> = { replied: 'You replied', yes: 'You said yes', no: 'You said no', done: 'Done' };
 
 /** The Needs you the owner answered done or replied to in the last week: the Inbox's history of them. */
 function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
@@ -599,7 +603,7 @@ function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
           page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
       }
       return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', attention: false, unread: false, text,
-        outcome: answer.verdict === 'replied' ? 'You replied' : 'Done', meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
+        outcome: ANSWERED[answer.verdict] ?? 'Done', meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
         at: answer.at, agent: a, source, sourceLabel: 'Conversations', page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
     });
   });
@@ -610,7 +614,8 @@ const NEEDS_REPLY_MAX = 40_000;
 
 /**
  * The Needs you sheet's actions, on one agent (t-1778): `needs-reply` delivers the owner's words to the conversation as
- * their own message (deliverAsOwner), and then the ask is answered; `needs-done` and `needs-dismiss` answer it.
+ * their own message (deliverAsOwner), and then the ask is answered; `needs-answer` does the same with their Yes or No
+ * (`answer`), in words made from the ask's own if_yes or if_no line; `needs-done` and `needs-dismiss` answer it.
  */
 async function needsAct(opts: UiOptions, hh: Household, agent: string, action: string, fields: Record<string, string>, person: string): Promise<ActResult> {
   const dir = agentDir(hh, agent);
@@ -623,18 +628,24 @@ async function needsAct(opts: UiOptions, hh: Household, agent: string, action: s
   try {
     if (action === 'needs-done') { answer('done'); return { ok: true, message: `Done: ${name}'s ask is answered.` }; }
     if (action === 'needs-dismiss') { answer('dismissed'); return { ok: true, message: 'Dismissed.' }; }
-    const text = (fields.text ?? '').trim();
-    if (!text) return { ok: false, message: `Write what to tell ${name} first.` };
-    if (text.length > NEEDS_REPLY_MAX) return { ok: false, message: `That's longer than ${NEEDS_REPLY_MAX.toLocaleString('en-US')} characters.` };
     // Still open: a reply to an ask the agent has moved past goes nowhere it expects.
-    if (!openNeeds(dir).some((n) => n.conversation.id === c.id && n.digest.id === fields.digest)) {
+    const open = openNeeds(dir).find((n) => n.conversation.id === c.id && n.digest.id === fields.digest);
+    const yesNo = action === 'needs-answer' ? (fields.answer === 'yes' || fields.answer === 'no' ? fields.answer : null) : undefined;
+    if (yesNo === null) return { ok: false, message: 'Answer yes or no.' };
+    const text = yesNo && open?.digest.needs ? yesNoText(open.digest.needs, yesNo) : (fields.text ?? '').trim();
+    if (!yesNo && !text) return { ok: false, message: `Write what to tell ${name} first.` };
+    if (text.length > NEEDS_REPLY_MAX) return { ok: false, message: `That's longer than ${NEEDS_REPLY_MAX.toLocaleString('en-US')} characters.` };
+    if (!open || !open.digest.needs) {
       return { ok: false, message: 'That ask isn\'t open any more: the agent wrote since, or it was answered.', page };
     }
+    if (yesNo && answersOf(open.digest.needs) !== 'yes-no') return { ok: false, message: `That ask isn't a yes or no: answer ${name} in words.`, page };
     // One reply, once: the same words to the same ask are the same delivery.
     const id = `needs:${fields.digest}:${createHash('sha256').update(text).digest('hex').slice(0, 16)}`;
     const r = await deliverAsOwner(opts.env, hh, { id, agent, venue: c.venue, place: c.place, label: c.label, person, text });
     if (r.status !== 200 || 'error' in r.body) return { ok: false, message: `It didn't reach ${name}: ${'error' in r.body ? r.body.error : r.status}`, page };
-    answer('replied');
+    // Answered once it's delivered. If it was answered meanwhile (Done pressed while this was on its way: Jonathan,
+    // 2026-11-04), the words still reached the agent, so it's Sent, never an error that says they didn't.
+    try { answer(yesNo ?? 'replied'); } catch (e) { if (!(e instanceof ConversationError)) throw e; }
     const how = r.body.body === 'failed' ? `It's in the conversation, but ${name} couldn't start (${r.body.reason ?? 'no reason given'}): the runtime tries again.`
       : r.body.body === 'queued' ? `It waits for ${name}: ${r.body.reason ?? 'its body is busy'}.` : `${name} has it.`;
     return { ok: true, message: `Sent. ${how}` };
@@ -1229,7 +1240,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // An agent's Needs you, answered from its sheet: replied to, done or dismissed. Who answers is the signed-in member.
       source = agentSource(agentAct[1]);
       const person = who?.member?.person ?? firstOwner(hh!).person;
-      result = ['needs-reply', 'needs-done', 'needs-dismiss'].includes(action)
+      result = ['needs-reply', 'needs-answer', 'needs-done', 'needs-dismiss'].includes(action)
         ? await needsAct(opts, hh!, agentAct[1], action, fields, person) : { ok: false, message: 'No such action.' };
       quiet = result.ok;
     } else if (agentAct) {

@@ -1,5 +1,5 @@
 // The Inbox: its own chunk, loaded when it opens (it and its folder switch aren't on the first page).
-import { useContext, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -11,6 +11,7 @@ import type { Chrome, Source } from './loom';
 import { ApprovalBox, As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
+import { draftOf, guardFooter, keepDraft } from './drafts';
 
 const useEnv = () => useContext(EnvContext)!;
 
@@ -90,6 +91,9 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
   if (conv && !refs.some((r) => r.t === 'conv' && r.id === conv)) refs.push({ t: 'conv', id: conv });
   const linked = !!i.href || (i.kind === 'alert' && refs.length > 0);
   const words = (s: string) => bits(s, github).map((b, n) => <Ref key={n} b={b} tasks={tasks} />);
+  // Answering it (a Needs you): Yes and No when it's a yes/no question (and no Allow and Deny of its own), and words.
+  const ans = useAnswer(i.reply && i.attention ? i : undefined, onDone);
+  const yesNo = n?.answers === 'yes-no' && !(i.approval && i.attention);
   return (
     <DrawerContent className="lg:mx-auto lg:max-w-xl">
       <DrawerHeader className="flex-col items-stretch gap-3">
@@ -129,7 +133,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
             </div>
           </section>
         )}
-        {i.reply && i.attention && <As source={i.source}><ReplyBox r={i.reply} onDone={onDone} /></As>}
+        {ans && <AnswerBox a={ans} yesNo={yesNo} />}
         {n && (
           <section className="grid gap-1.5">
             <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Details</h3>
@@ -146,7 +150,10 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
         <DrawerFooter className="flex-col-reverse items-stretch sm:flex-row sm:items-center">
           <DrawerClose asChild><Button variant="outline">Close</Button></DrawerClose>
           {own && !i.actions?.length && !conv && <Button asChild variant="outline"><Link page={i.page}>{i.label ?? `Open in ${from}`}</Link></Button>}
-          {i.actions?.map((b) => <ActButton key={b.action + b.label} b={b} size="default" onDone={onDone} />)}
+          {/* Words in the box: Done sends them, rather than answering without them (Jonathan, 2026-11-04). */}
+          {guardFooter(i.actions ?? [], !!ans?.drafted, !!ans?.busy).map((f) => f.send
+            ? <Button key={f.b.action} disabled={f.disabled} onClick={() => void ans?.reply()}>{f.label}</Button>
+            : <ActButton key={f.b.action + f.b.label} b={f.b} size="default" onDone={onDone} disabled={f.disabled} />)}
         </DrawerFooter>
       </As>
     </DrawerContent>
@@ -174,24 +181,57 @@ function shortHref(href: string): string {
   } catch { return href; }
 }
 
-/** Answer the agent in words (the Needs you sheet's Reply): posted as the owner's own message into its conversation. */
-export function ReplyBox({ r, onDone }: { r: NonNullable<InboxItem['reply']>; onDone: () => void }) {
-  const { send } = useEnv();
-  const [text, setText] = useState('');
+type Answer = { draft: string; setDraft: (s: string) => void; drafted: boolean; busy: boolean; reply: () => Promise<void>; say: (a: 'yes' | 'no') => Promise<void>; label: string };
+
+/** A Needs you's answer, as its sheet holds it: the words in its box (kept on this device until they're sent, so
+ * closing the sheet loses nothing), and sending them, or a Yes or a No. One at a time: while one is on its way, the
+ * sheet's other answers wait (on 2026-11-04 a Done pressed while a reply was sending answered the ask first). */
+function useAnswer(i: InboxItem | undefined, onDone: () => void): Answer | undefined {
+  const env = useEnv();
+  const key = i?.key ?? '';
+  const [draft, setDraft] = useState(() => (key ? draftOf(key) : ''));
   const [busy, setBusy] = useState(false);
-  const fire = async () => {
-    if (!text.trim()) return;
+  useEffect(() => { if (key) keepDraft(key, draft); }, [key, draft]);
+  if (!i?.reply) return undefined;
+  const r = i.reply;
+  const post = async (fields: Record<string, string>, action = r.action) => {
     setBusy(true);
-    const ok = await send(r.action, { ...r.fields, text });
+    // Posted as the item's own source's (the agent's actions), as its sheet's other buttons are.
+    const ok = await env.withSource(i.source).send(action, { ...r.fields, ...fields });
     setBusy(false);
-    if (ok) { setText(''); onDone(); }
+    return ok;
   };
+  return {
+    draft, setDraft, busy, drafted: !!draft.trim(), label: r.label,
+    reply: async () => {
+      if (!draft.trim() || busy) return;
+      if (await post({ text: draft })) { keepDraft(key, ''); setDraft(''); onDone(); }
+    },
+    say: async (a) => {
+      if (busy) return;
+      if (await post({ answer: a }, 'needs-answer')) { keepDraft(key, ''); setDraft(''); onDone(); }
+    },
+  };
+}
+
+/** Answer the agent: Yes or No (a yes/no question), or in words, posted as the owner's own message into its
+ * conversation. */
+export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
   return (
-    <section className="grid gap-2">
-      <label htmlFor="loom-reply" className="text-xs font-semibold uppercase tracking-wide opacity-60">{r.label}</label>
-      <Textarea id="loom-reply" value={text} rows={3} placeholder="What should it know or do?" onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void fire(); }} />
-      <Button className="justify-self-end" disabled={busy || !text.trim()} onClick={() => void fire()}>{busy ? 'Sending…' : 'Send'}</Button>
+    <section className="grid gap-3">
+      {yesNo && (
+        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Your answer">
+          <Button disabled={a.busy} onClick={() => void a.say('yes')}>Yes</Button>
+          <Button disabled={a.busy} onClick={() => void a.say('no')}>No</Button>
+        </div>
+      )}
+      <label htmlFor="loom-reply" className="text-xs font-semibold uppercase tracking-wide opacity-60">{yesNo ? 'Or answer in your own words' : a.label}</label>
+      <Textarea id="loom-reply" value={a.draft} rows={3} placeholder="What should it know or do?" onChange={(e) => a.setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void a.reply(); }} />
+      <div className="flex items-center justify-end gap-3">
+        {a.drafted && !a.busy && <span className="text-sm opacity-70">Not sent yet</span>}
+        <Button variant={yesNo ? 'outline' : 'default'} disabled={a.busy || !a.drafted} onClick={() => void a.reply()}>{a.busy ? 'Sending…' : 'Send'}</Button>
+      </div>
     </section>
   );
 }

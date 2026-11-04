@@ -118,7 +118,7 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
   /** The approval id it waits on (core's own; not sent). */
   waitsOnApproval?: string }
 
-export interface NeedsView { why?: string; if_yes?: string; if_no?: string; refs: string[]; details: string }
+export interface NeedsView { why?: string; if_yes?: string; if_no?: string; answers: 'yes-no' | 'words'; refs: string[]; details: string }
 export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source }
 
 // ─── Home, an agent's Today, and the sign-in pages ───
