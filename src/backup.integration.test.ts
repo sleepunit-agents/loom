@@ -159,13 +159,27 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(alerts).toEqual([]);
   });
 
-  it('export refuses to stage a drill.key, wherever it is', async () => {
-    writeFileSync(join(h.home, 'agents', 'art', 'drill.key'), 'AGE-SECRET-KEY-1');
+  it('an agent\'s own file named drill.key is its data: the backup still runs, and loom\'s own drill key isn\'t in it', async () => {
+    writeFileSync(join(h.home, 'agents', 'art', 'drill.key'), 'not the drill key');
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
     const run = await runBackup({ home: h.home, env, deps: { alert: (_e, a) => { alerts.push(a); return true; } } });
+    expect(run.why).toBeUndefined();
+    const out = join(work, 'plain.tar');
+    expect(spawnSync(AGE, ['-d', '-i', owner.identity, '-o', out, join(dir, run.name!)]).status).toBe(0);
+    const list = spawnSync('tar', ['-tzf', out], { encoding: 'utf-8' }).stdout.split('\n');
+    expect(list).toContain('./agents/art/drill.key');
+    expect(list.filter((l) => l.includes('backup/'))).toEqual([]);
+  });
+
+  it('a drill that throws pushes nothing, and doesn\'t retry', async () => {
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`);
+    let drills = 0;
+    const run = await runBackup({ home: h.home, env, deps: { ...fakes(), drillBundle: async () => { drills++; throw new Error('age (decrypt: is this the right key?) failed'); } } });
     expect(run.ok).toBe(false);
-    expect(run.why).toMatch(/drill\.key/);
+    expect(run.why).toMatch(/right key/);
+    expect(drills).toBe(1);
     expect(readdirSync(dir).filter((n) => n.endsWith('.bundle'))).toEqual([]);
   });
 
@@ -192,15 +206,18 @@ describe.skipIf(!hasTools)('loom backup', () => {
     settings(`path:${dir}`);
     expect((await runBackup({ home: h.home, env, deps: fakes({ pieces: ['box', 'secrets'] }) })).ok).toBe(true);
     const later = new Date(Date.now() + 86_400_000);
-    const run = await runBackup({ home: h.home, env, now: () => later, deps: fakes({ pieces: ['secrets'] }) });
+    const run = await runBackup({ home: h.home, env, now: () => later, deps: { ...fakes({ pieces: ['secrets'] }), installedPieces: () => ['box', 'secrets'] } });
     expect(run.ok).toBe(false);
     expect(run.missing).toEqual(['box']);
     expect(run.why).toMatch(/without box's part/);
     expect(existsSync(join(dir, run.name!))).toBe(true);
     // The last good one stays the one with the box's part, so tomorrow's is held to it too.
     expect(readState(h.home).lastGood?.pieces).toEqual(['box', 'secrets']);
-    const next = await runBackup({ home: h.home, env, now: () => new Date(later.getTime() + 86_400_000), deps: fakes({ pieces: ['secrets'] }) });
+    const next = await runBackup({ home: h.home, env, now: () => new Date(later.getTime() + 86_400_000), deps: { ...fakes({ pieces: ['secrets'] }), installedPieces: () => ['box', 'secrets'] } });
     expect(next).toMatchObject({ ok: false, missing: ['box'] });
+    // Uninstalled: not required any more.
+    const gone = await runBackup({ home: h.home, env, now: () => new Date(later.getTime() + 2 * 86_400_000), deps: { ...fakes({ pieces: ['secrets'] }), installedPieces: () => ['secrets'] } });
+    expect(gone.ok).toBe(true);
   });
 
   // ─── A git target ─────────────────────────────────────────────────────────
@@ -229,6 +246,19 @@ describe.skipIf(!hasTools)('loom backup', () => {
     const joined = Buffer.concat(parts.map((p) => spawnSync('git', ['--git-dir', remote, 'show', `main:${p}`]).stdout));
     expect(joined.length).toBe(2500);
     expect(readState(h.home).lastGood?.commit).toBe(git(['--git-dir', remote, 'rev-parse', 'main']));
+  });
+
+  it('a run from a fresh clone (a new or restored machine) keeps the bundles already in the remote', async () => {
+    const remote = join(work, 'remote.git');
+    git(['init', '-q', '--bare', remote]);
+    settings(`git:${remote}`, { keep: 3 });
+    for (const d of ['2026-10-02T09:00:00Z', '2026-10-03T09:00:00Z']) expect((await runBackup({ home: h.home, env, now: () => new Date(d), deps: fakes() })).ok).toBe(true);
+    rmSync(join(h.home, 'backup', 'repo.git'), { recursive: true, force: true });
+    const run = await runBackup({ home: h.home, env, now: () => new Date('2026-10-04T09:00:00Z'), deps: fakes() });
+    expect(run.why).toBeUndefined();
+    const files = git(['--git-dir', remote, 'ls-tree', '-r', '--name-only', 'main']).split('\n').filter((f) => f.startsWith('bundles/'));
+    expect(files).toEqual(['bundles/loom-household-20261002-0400.bundle', 'bundles/loom-household-20261003-0400.bundle', 'bundles/loom-household-20261004-0400.bundle']);
+    expect(git(['--git-dir', remote, 'rev-list', '--count', 'main'])).toBe('1');
   });
 
   it('a target holding files loom didn\'t write is refused before export', async () => {

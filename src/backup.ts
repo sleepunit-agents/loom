@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { drillBundle as realDrill, exportBundle as realExport, type DrillReport, type Manifest } from './bundle.js';
 import { findProgram } from './programs.js';
+import { listPieces } from './cli/pieces.js';
 import { agentDir, loadHousehold, rawHousehold, writeHouseholdKey, type Household } from './household.js';
 
 export class BackupError extends Error {}
@@ -272,6 +273,8 @@ export interface RunDeps {
   /** What the owner's alert command is told (alertCommand by default). */
   alert?: (env: NodeJS.ProcessEnv, a: CoreAlert) => boolean;
   splitAt?: number;
+  /** The pieces installed here now (listPieces by default). */
+  installedPieces?: () => string[];
 }
 
 function sha256File(p: string): string {
@@ -480,7 +483,9 @@ export async function runBackup(opts: { home: string; env: NodeJS.ProcessEnv; no
     if (!drill?.ok) throw new BackupError(`the drill didn't match the live household twice (${run.drill.differences?.join(', ')}); nothing was written`);
     run.pieces = manifest!.pieces.filter((p) => p.included).map((p) => p.name);
     // Every piece whose part was in the last good bundle must be in this one (the box's dropped out silently, 2026-10-26).
-    const missing = (before.lastGood?.pieces ?? []).filter((p) => !run.pieces!.includes(p));
+    // ...that's still installed: a piece the owner removed isn't required.
+    const installed = new Set((deps.installedPieces ?? (() => listPieces(opts.env).map((p) => p.name)))());
+    const missing = (before.lastGood?.pieces ?? []).filter((p) => !run.pieces!.includes(p) && installed.has(p));
     if (missing.length) run.missing = missing;
     run.name = name;
     run.bytes = statSync(file).size;
