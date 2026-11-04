@@ -45,11 +45,14 @@ export function arriveOnce(title: HTMLElement | null): boolean {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
   const root = document.documentElement;
   root.dataset.arrive = '';
-  if (title) decode(title);
-  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens. A tap cuts it
-  // short (Neon Noir's power-on, neon.css, is a second's black screen: never one you have to wait out).
-  const done = () => { delete root.dataset.arrive; removeEventListener('pointerdown', done, true); removeEventListener('keydown', done, true); };
-  addEventListener('pointerdown', done, true); addEventListener('keydown', done, true);
+  const stop = title ? decode(title) : () => {};
+  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens. Under Neon a tap
+  // or a key cuts it short, title and all (its power-on, neon.css, is a second's dark screen: never one you have to wait
+  // out); 000h's arrival is as it was.
+  const cut = root.dataset.look === 'neon';
+  const done = () => { delete root.dataset.arrive; if (cut) { removeEventListener('pointerdown', tap, true); removeEventListener('keydown', tap, true); } };
+  const tap = () => { stop(); done(); };
+  if (cut) { addEventListener('pointerdown', tap, true); addEventListener('keydown', tap, true); }
   requestAnimationFrame(() => {
     const t = setTimeout(done, 3000);
     void Promise.allSettled(document.getAnimations().filter((a) => /^loom-in-/.test((a as CSSAnimation).animationName ?? '')).map((a) => a.finished))

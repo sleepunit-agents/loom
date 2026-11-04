@@ -131,12 +131,19 @@ export default function App() {
   const [sound, setSoundState] = useState(() => { try { return localStorage.getItem('loom-sound') === 'on'; } catch { return false; } });
   const soundOn = useRef(sound);
   soundOn.current = sound;
-  const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); if (on) void import('./sound').then((m) => m.chime('done')); };
+  const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
   // One toast per outcome: an action that lands on another page says it, and that page's one-time flash says it again.
-  const say = useCallback((n: Omit<Note, 'id'>) => { if (n.ok && soundOn.current) void import('./sound').then((m) => m.chime('done')); setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
+  const chimed = useRef({ message: '', at: 0 });
+  const say = useCallback((n: Omit<Note, 'id'>) => {
+    // One chime per outcome, as one toast: the page it lands on saying it again is the same outcome.
+    if (n.ok && soundOn.current && !(chimed.current.message === n.message && Date.now() - chimed.current.at < 5000)) {
+      chimed.current = { message: n.message, at: Date.now() };
+      void import('./sound').then((m) => m.chime('done'));
+    }
+    setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
     ? x : [...x, { ...n, id: Date.now() + Math.random() }])); }, []);
 
   // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
@@ -363,7 +370,7 @@ export default function App() {
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
             <div className="mx-auto max-w-5xl px-4 py-3">
-              {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} offline={!!savedAt} />}
+              {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} clock={chrome.clock} offline={!!savedAt} />}
               <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
                 actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
@@ -435,16 +442,15 @@ export default function App() {
  * Neon Noir's status bar (Terminal HUD's borrow): LOOM//OS, whether loom is reached, how many agents and how many things
  * need you, and the clock. Words, not colours: the dot's glow is the same either way and the word says which.
  */
-function StatusBar({ shell, offline }: { shell: NonNullable<Chrome['shell']>; offline: boolean }) {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => { const t = setInterval(() => setNow(new Date()), 20_000); return () => clearInterval(t); }, []);
+function StatusBar({ shell, clock, offline }: { shell: NonNullable<Chrome['shell']>; clock: string; offline: boolean }) {
   const n = shell.agents.length;
   return (
     <div className="loom-status">
       <span className="loom-status__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
       <span className="loom-status__live" data-off={offline || undefined}>{offline ? 'offline' : 'live'}</span>
-      <span className="loom-data">{n} agent{n === 1 ? '' : 's'}{shell.asks ? ` · ${shell.asks} need${shell.asks === 1 ? 's' : ''} you` : ''}</span>
-      <time className="loom-data ml-auto">{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
+      <span className="loom-status__what loom-data">{n} agent{n === 1 ? '' : 's'}{shell.asks ? ` · ${shell.asks} need${shell.asks === 1 ? 's' : ''} you` : ''}</span>
+      {/* loom's clock (the household's time zone, as every page says it), from the page's last answer: the time alone. */}
+      <span className="loom-data ml-auto">{/\d{1,2}:\d{2}(\s?[AP]M)?/.exec(clock)?.[0] ?? clock}</span>
     </div>
   );
 }

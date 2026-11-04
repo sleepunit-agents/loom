@@ -110,40 +110,47 @@ color-scheme:dark;
   :root[data-look="neon"][data-mode]{--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none}
 }
 
-/* ---- the status bar (App.tsx StatusBar): LOOM//OS, live or offline in words, agents and asks, the clock ---- */
-.loom-status{display:flex;align-items:center;gap:10px;min-width:0;height:22px;margin:-6px 0 8px;font-family:var(--font-mono);font-size:11px;letter-spacing:.02em;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
-.loom-status>*{flex:none} .loom-status>.loom-data:not(time){flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.loom-status__brand{font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
-.loom-status__brand i{font-style:normal;color:var(--v-pink)}
-.loom-status__live{display:inline-flex;align-items:center;gap:6px}
-.loom-status__live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--loom-ok)}
-.loom-status__live[data-off]::before{background:var(--loom-warn)}
+/* ---- the status bar (App.tsx StatusBar, drawn only under Neon): LOOM//OS, live or offline in words, agents and asks,
+   loom's clock ---- */
+:root[data-look="neon"] .loom-status{display:flex;align-items:center;gap:10px;min-width:0;height:22px;margin:-6px 0 8px;font-family:var(--loom-font-data);font-size:11px;letter-spacing:.02em;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
+:root[data-look="neon"] .loom-status>*{flex:none} :root[data-look="neon"] .loom-status>.loom-status__what{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+:root[data-look="neon"] .loom-status__brand{font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
+:root[data-look="neon"] .loom-status__brand i{font-style:normal;color:var(--v-pink)}
+:root[data-look="neon"] .loom-status__live{display:inline-flex;align-items:center;gap:6px}
+:root[data-look="neon"] .loom-status__live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--loom-ok)}
+:root[data-look="neon"] .loom-status__live[data-off]::before{background:var(--loom-warn)}
 
-/* ---- sheets: a lit top edge, and a title bar (ASK · who · its task) ---- */
-:root[data-look="neon"] :is([data-slot="drawer-content"],[data-slot="dialog-content"]){border-top:1px solid var(--v-pink);box-shadow:0 -10px 40px -12px color-mix(in srgb,var(--v-pink) 45%,transparent)}
+/* ---- the Inbox's sheet (inbox.tsx): a lit top edge, and a title bar (ALERT · who · its task) ---- */
+:root[data-look="neon"][data-mode]{--glow-sheet:0 -10px 40px -12px;--glow-find:0 10px 40px -10px;--glow-field:0 0 16px -6px;--glow-line:0 0 18px}
+:root[data-look="neon"] :is([data-slot="drawer-content"],[data-slot="dialog-content"]){border-top:1px solid var(--v-pink);box-shadow:var(--glow-sheet) color-mix(in srgb,var(--v-pink) 45%,transparent)}
 :root[data-look="neon"] .loom-sheet-bar{display:flex;align-items:center;gap:8px;min-width:0;padding-bottom:10px;border-bottom:1px solid var(--v-border);
-  font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
+  font-family:var(--loom-font-data);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
 :root[data-look="neon"] .loom-sheet-bar b{color:var(--v-pink);font-weight:500}
 :root[data-look="neon"] .loom-sheet-bar>span{overflow:hidden;text-overflow:ellipsis}
 :root[data-look="neon"] .loom-sheet-bar>span::before{content:"·";margin-right:8px;color:var(--v-text-3)}
 
 /* ---- Find as a command bar: a prompt, a cyan field, the current row's cyan edge ---- */
-:root[data-look="neon"] .loom-find{box-shadow:0 10px 40px -10px color-mix(in srgb,var(--v-blue) 40%,transparent),inset 0 0 0 1px var(--v-border)}
-:root[data-look="neon"] .loom-find-field{margin:10px 10px 0;border:1px solid var(--v-blue);border-radius:10px;box-shadow:0 0 16px -6px var(--v-blue)}
-:root[data-look="neon"] .loom-find-field::before{content:"›";font-family:var(--font-mono);font-size:20px;line-height:1;color:var(--v-blue)}
-:root[data-look="neon"] .loom-find-group{font-family:var(--font-mono);font-weight:500}
+:root[data-look="neon"] .loom-find{box-shadow:var(--glow-find) color-mix(in srgb,var(--v-blue) 40%,transparent),inset 0 0 0 1px var(--v-border)}
+:root[data-look="neon"] .loom-find-field{margin:10px 10px 0;border:1px solid var(--v-blue);border-radius:10px;box-shadow:var(--glow-field) var(--v-blue)}
+:root[data-look="neon"] .loom-find-field input{background:transparent;box-shadow:none}
+:root[data-look="neon"] .loom-find-field::before{content:"›";font-family:var(--loom-font-data);font-size:20px;line-height:1;color:var(--v-blue)}
+:root[data-look="neon"] .loom-find-group{font-family:var(--loom-font-data);font-weight:500}
 :root[data-look="neon"] .loom-find-row[data-selected]{background:color-mix(in srgb,var(--v-blue) 10%,transparent);box-shadow:inset 2px 0 0 var(--v-blue);border-radius:4px}
 
-/* ---- power-on (arrive.tsx arriveOnce, once a session, never under reduced motion, cut short by a tap): a line
-   opens into the screen, then the page flickers on. About a second. ---- */
+/* ---- power-on (arrive.tsx arriveOnce: once a session, cut short by a tap, never under reduced motion): a line opens into
+   the screen, then the page flickers on. About a second. Only with motion allowed, here as in arrive.tsx. ---- */
+@media (prefers-reduced-motion:no-preference){
 :root[data-look="neon"][data-arrive] body::before{content:"";position:fixed;inset:0;z-index:2147483646;background:var(--v-canvas);pointer-events:none;
   animation:loom-in-neon-boot 1s ease-out both}
-:root[data-look="neon"][data-arrive] body::after{content:"";position:fixed;left:0;right:0;top:50%;height:2px;z-index:2147483647;background:#fff;pointer-events:none;
-  box-shadow:0 0 18px var(--v-pink),0 0 40px var(--v-blue);transform:scaleX(0);animation:loom-in-neon-line 1s ease-out both}
+:root[data-look="neon"][data-arrive] body::after{content:"";position:fixed;left:0;right:0;top:50%;height:2px;z-index:2147483647;background:var(--v-text);pointer-events:none;
+  box-shadow:var(--glow-line) var(--v-pink);transform:scaleX(0);animation:loom-in-neon-line 1s ease-out both}
 :root[data-look="neon"][data-arrive] :is(.loom-top,main>*,main>div>*>*,.loom-dock-bar,.loom-find-pill){animation:loom-in-neon-flick .5s steps(1) .55s both}
 :root[data-look="neon"][data-arrive] :is(.loom-wash,.loom-ground){animation:loom-in-fade .4s ease-out .45s both}
+}
 @keyframes loom-in-neon-boot{0%,45%{opacity:1}100%{opacity:0}}
 @keyframes loom-in-neon-line{0%{transform:scaleX(0);opacity:1}35%{transform:scaleX(1);opacity:1}55%{transform:scaleX(1) scaleY(60);opacity:0}100%{opacity:0}}
 @keyframes loom-in-neon-flick{0%{opacity:0}30%{opacity:.6}45%{opacity:.1}60%,100%{opacity:1}}
-@media (prefers-reduced-motion:reduce){:root[data-look="neon"][data-arrive] body::before,:root[data-look="neon"][data-arrive] body::after{display:none}}
-:root[data-look="neon"] .loom-find-field input{background:transparent;box-shadow:none}
+
+@media (prefers-contrast:more){
+  :root[data-look="neon"][data-mode]{--glow-sheet:0 0 0 0;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0}
+}
