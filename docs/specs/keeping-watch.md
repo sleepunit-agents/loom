@@ -16,7 +16,7 @@ Five jobs keep Art's household safe today, and all five are scripts in
 | Job | What it does | Where it should live |
 |---|---|---|
 | `art-loom-bundle` (nightly) | `loom export`, `loom restore --drill`, push the encrypted bundle to `sleepunit-agents/art-vault` | **core**: the backup is continuity |
-| `scripts/loom-backup.py` (weekly) | a *plaintext* JSONL dump of memories, knowledge and identity to `art-loom-backup` | gone: the nightly bundle covers it, encrypted |
+| `scripts/loom-backup.py` (weekly) | a *plaintext* JSONL dump of memories, knowledge and identity to `art-loom-backup` | gone: the nightly bundle covers the same data, encrypted. What's dropped is that it could be read with no loom and no key; a plaintext copy of every memory on GitHub is the exposure the bundle exists to avoid |
 | `host-watch` (every 2 min) | samples wunder, the Proxmox host, over root ssh; alerts when a problem lasts | **runtime**: every box watches itself |
 | `art-boot-notify`, `art-boot.service` | on boot of loom's container, page Jonathan with the host's uptime; start the boot triage lane | **runtime**: a box says when it came back |
 | `art-unit-alert`, `art-alert@.service` | `OnFailure=` sink: one alert per failed unit, rate-limited, with the journal's last lines | **runtime**: a box says when a unit fails |
@@ -52,8 +52,7 @@ today (loom-box `alerthook.mjs`, t-1830):
    else. Core's is an environment variable, never a household setting: a
    bundle restored somewhere else can't plant a command to run.
 
-**Every** condition in this spec, whatever section it's in, follows one
-cadence: the alert command hears it once when it starts alerting, again every
+**Every** condition in this spec but one follows one cadence: the alert command hears it once when it starts alerting, again every
 6 hours while it lasts (its summary ending "(still)", with a `minutes` fact),
 and once when it clears ("… is OK again", with `--fact cleared=1`), so the
 triage conversation hears that it's over. That cadence replaces
@@ -61,7 +60,9 @@ triage conversation hears that it's over. That cadence replaces
 "ESCALATED" streak: an alert is now one per *episode* (a unit failing, a
 condition holding), never one per failure event, so a crash loop is one alert
 with a `restarts` fact, not fifty, and a four-hour outage reads as one alert
-that has lasted four hours.
+that has lasted four hours. The one exception is a **failed backup run**:
+each failed run is said once (a run is a discrete event, once a day), and a
+run that's merely missed follows the cadence.
 
 **When loom itself is down.** The runtime runs as its own service, apart from
 loom's listeners, and the alert command runs on loom's machine without them.
@@ -112,11 +113,27 @@ the owner's choice.
 if there isn't one, and every bundle is also encrypted to its public key, so
 the drill can open what was just written. It never leaves the machine:
 
-- it isn't a setting, and it's never in a bundle (export refuses a staged
-  file named `drill.key`, as it refuses the audit log);
-- it opens only what the machine already holds in plaintext, so it adds no
-  reach. Losing it loses nothing: the next `loom backup set` or run makes a
-  new one, and the owner's key still opens every old bundle.
+- it isn't a setting, and it's never in a bundle (export copies nothing from
+  `$LOOM_HOME/backup/`, and refuses a staged `backup/` directory at the
+  bundle's root, as it refuses the audit log);
+- **what it reaches:** every bundle the target keeps (the newest `keep`
+  nights and each month's first), so whoever takes loom's machine can read
+  the household as it was up to a year back, things deleted since included.
+  They already hold the live household, so this adds only the history.
+  Accepted: the drill can't check a bundle it can't open, and the owner's
+  key must stay off the machine.
+- Losing it loses nothing: the next run makes a new one, and the owner's key
+  still opens every bundle. Bundles made under the old key stay readable by
+  it until they're pruned; to cut it off sooner, delete the key and the
+  target's old bundles.
+
+**Is this core?** household.md's test: "Does it hold authority (secrets, the
+right to run code somewhere)? Then it's never core." The drill key is a
+secret, but it unlocks only the backup of what core already holds, and no
+one else. The alert command is the owner's own configuration of the daemon
+(like `LOOM_BEARER_TOKEN`, an environment variable of loom's service), run as
+loom's own user; it grants nothing to an agent, a piece or a bundle. Neither
+gives anyone reach they didn't have, which is what the test guards.
 
 ### Credentials
 
@@ -142,9 +159,13 @@ hand):
 2. **Drill** it with `drillBundle` and the drill key. The live household can
    move on between export and drill (a wake writes a memory), so a mismatch
    gets one fresh export and drill. Two mismatches: **nothing is pushed** and
-   the run fails, naming the differences.
-3. **Required parts.** Every piece whose part was in the last good bundle
-   must be in this one. The **last good bundle** is the newest run recorded
+   the run fails, naming the differences. A drill that **errors** (it can't
+   decrypt, can't read the bundle, can't find the live household) is a
+   failure too, with no retry: nothing is pushed. Only a bundle whose drill
+   passed is ever written to the target.
+3. **Required parts.** Every piece whose part was in the last good bundle,
+   and that's still installed, must be in this one (a piece the owner
+   removed isn't required). The **last good bundle** is the newest run recorded
    with `ok: true`; the state records each run's included pieces. One
    missing is still written (the rest is worth having offsite), and the run
    is recorded `ok: false`, naming it, so it never becomes the baseline: the
@@ -155,7 +176,12 @@ hand):
    - **path:** `<dir>/loom-household-<YYYYMMDD-HHMM>.bundle`, written to a
      temp name and renamed;
    - **git:** loom keeps its own bare clone at `$LOOM_HOME/backup/repo.git`
-     (nothing is checked out). A bundle over 90 MB (a constant the tests
+     (nothing is checked out), and **builds each commit from the remote's
+     `main`**, never from what the clone happens to hold: the tree of the
+     commit `ls-remote` names (fetched when the clone doesn't have it, as on
+     a fresh or restored machine) is read, tonight's bundle is added, and the
+     prune below is applied to that. So a new machine's first push keeps
+     every bundle the old one left. A bundle over 90 MB (a constant the tests
      lower) is split into `bundles/<name>.part-00`, `-01`, … (GitHub refuses
      a file over 100 MB); a smaller one is `bundles/<name>`. The parts must
      rejoin, byte for byte, to the drilled file before anything is
@@ -189,7 +215,9 @@ back: install loom, join the parts with `cat`, `loom restore <bundle>
 
 ### The schedule
 
-Each of loom's listeners checks every 10 minutes whether a run is due
+loom runs as three listener processes (`loom serve --http` on loopback, the
+tailnet and the LAN; `loom-http*.service`), each its own daemon. Each of them
+checks every 10 minutes whether a run is due
 (`at` has passed today, in `tz`, and no run has started since). One of them
 takes `$LOOM_HOME/backup/run.lock` (created with `O_EXCL`, holding its pid
 and when; one whose pid is gone, or older than 6 hours, is stale and taken
@@ -273,12 +301,22 @@ The control plane, per box and unit:
 - **When it's over:** a failed unit that's no longer `failed`, or a looping
   one whose `NRestarts` hasn't gone up for 15 minutes. The alert goes, an FYI
   says so, and the alert command hears `cleared=1`.
+- **Looping** means the unit's `NRestarts` rose by 3 or more in total over
+  the last 15 minutes (the sum of its rises between samples, so a
+  `RestartSec=5` loop that rises by 12 within one minute is looping at once).
+  A count that goes down (`systemctl reset-failed`, a stop) is a new
+  baseline, never a rise.
 - **Dropped from `art-unit-alert`:** the alert ledger (`bin/alert-ledger` is
   Art's; his alert command writes it), and the Machine piece's Restart
   button: restarting a unit is an owner's action on a box the runtime
   doesn't do yet. The Machine piece keeps its button until it does.
-- **What's ignored:** `LOOM_RUNTIME_UNITS_IGNORE`, a regex on unit names, set
-  on the box. Default: none.
+- **What's ignored:** `LOOM_RUNTIME_UNITS_IGNORE`, a JavaScript regex
+  searched (unanchored) in the unit's full name, set on the box: `^art-`
+  ignores `art-slack.service`, `art` ignores anything with "art" in it.
+  Default: none.
+- Two units whose names agree in their first 34 characters share one
+  source, and so one triage conversation (as with `art-unit-alert`).
+  Accepted: the facts name the unit.
 
 A unit that fails and is restarted by its timer before the next sample is
 missed; `OnFailure=` caught it. Accepted: a minute's sampling misses a
@@ -310,9 +348,9 @@ once, never from each container on it.
 | memory and swap | `/proc/meminfo` (MemTotal, MemAvailable, SwapTotal, SwapFree) |
 | pressure (cpu, io, memory: some and full, avg60) | `/proc/pressure/*` |
 | filesystems: used % | `statfs` of each mount of a real filesystem (ext4, xfs, btrfs, zfs, vfat, f2fs) in `/proc/mounts`, one per device |
-| disks: busy %, read and write latency, MB/s, rotational | `/proc/diskstats` (sd*, nvme*n*, vd*), the change since the last sample; `/sys/block/*/queue/rotational` |
-| ZFS cache: size, dnodes, arc_prune per second | `/proc/spl/kstat/zfs/arcstats`, where it exists |
-| ZFS pools: health, capacity | `zpool list -H`, where `zpool` runs (`/dev/zfs` is 0666 on wunder) |
+| disks: busy %, read and write latency, MB/s, rotational | `/proc/diskstats` (sd*, nvme*n*, vd*), read twice 5 seconds apart within the sample; `/sys/block/*/queue/rotational` |
+| ZFS cache: size, dnodes, arc_prune per second | `/proc/spl/kstat/zfs/arcstats`, read twice 5 seconds apart, where it exists |
+| ZFS pools: health, capacity | `zpool list -H -o name,health,capacity`, where `zpool` runs. Measured 2026-11-04 on wunder as uid 65534 (`setpriv --reuid=65534`): it answers (`rpool ONLINE 72%`), as do arcstats and `/sys/fs/cgroup/lxc/<id>/*.pressure` (0644) |
 | containers: io and memory pressure | `/sys/fs/cgroup/lxc/<id>/*.pressure`, where they exist (a Proxmox host) |
 | SMART, container names | `/run/loom-box/root-health.json`, only if a root job writes it (below): `{"t": <unix s>, "smart": {"<disk>": {"passed", "temp_c", "reallocated", "pending", "wear_pct", "media_errors"}}, "containers": {"<id>": "<name>"}}`, the fields host-watch-sample.py reads; ignored when `t` is over 30 minutes old |
 | failed units | section 2 |
@@ -345,13 +383,38 @@ own: each time loom reads the runtime's manifest (each minute, for push) and
 on every poll, a box whose last poll is over 10 minutes old is dark, and its
 next poll ends it. A box the owner revoked is never dark.
 
+Each condition has a **key**, which makes it one episode:
+
+| Condition | Key |
+|---|---|
+| host io pressure | `io` |
+| a container's io, memory | `ct-io-<id>`, `ct-mem-<id>` |
+| a disk | `disk-<name>` (`disk-sda`) |
+| arc_prune | `arc-prune` |
+| a pool's health, fullness | `pool-<name>`, `pool-full-<name>` |
+| a filesystem | `fs-<mount point>` (`fs-/`, `fs-/mnt/media`) |
+| memory, swap | `mem`, `swap` |
+| SMART | `smart-<disk>` |
+| dark | `dark` |
+
 Each condition alerting is an Inbox alert on the Boxes tab ("wunder: ZFS's
 cache is thrashing"), and the alert command with source `box-health`,
 severity `warn` (`bad` for a pool, SMART or a dark box), and facts `box`,
-`key` (the condition: `arc-prune`, `pool-rpool`, `fs-/`), `minutes`.
+`key`, `minutes`.
 
-The control plane keeps per box, in the runtime's data directory and never in
-its state file: the last sample and the conditions now (when each began, when
+**While a box is dark**, its other conditions are frozen: no "(still)", no
+clearing. Its next sample ends or continues each of them.
+
+**Which boxes go dark.** Only a box marked **always on**: loom's own box and a
+report-only box always are; any other only when the owner says so (`loom
+runtime always-on <box> on|off`, or on its page). A laptop that's closed is
+"not heard from since" on its page, never an alert. And the dark check waits
+until the runtime has been up 10 minutes itself, so a loom that was down
+doesn't come back to find every box dark.
+
+The control plane keeps per box, in the runtime's data directory
+(`$LOOM_BOX_DATA`, default `~/.local/share/loom-box`) and never in its state
+file (`~/.config/loom-box/state.json`, where boxes and houses are): the last sample and the conditions now (when each began, when
 it last alerted) in `health/<box>.json`, and every sample in
 `health/<box>-<YYYY-MM>.jsonl`, three months kept, as host-watch keeps
 wunder's. `loom runtime health [<box>]` prints the last sample in words and
@@ -372,7 +435,7 @@ Three ways to cover the host without that:
 
 | | What runs on wunder | Root on wunder | Trade-off |
 |---|---|---|---|
-| **A. A report-only box** (chosen) | loom-box as an unprivileged user, `loom runtime join … --report-only`, no podman | once, to install node 22 and make the user | One sampler for every box, upgraded by the runtime as any box is. The box credential can only report and poll; a report-only box is never given a house or a secret. Node on the hypervisor is new. |
+| **A. A report-only box** (chosen) | loom-box as an unprivileged user, `loom runtime join … --report-only`, no podman | once, to install node 22 and make the user | One sampler for every box. The box credential can only report and poll; a report-only box is never given a house, a secret, a login or a session, and **never upgrades itself** from what loom says (`want.version`): it's updated by hand on the host. So nothing in CT 103 chooses code that runs on wunder, and what CT 103 can do to wunder is read its numbers. Node on the hypervisor is new. |
 | B. A stdlib Python reporter | a ~200-line script on a timer, posting to `/api/box/health` | once, to install it | No node, but a second sampler to keep in step, and upgrades by hand. |
 | C. Keep root ssh | nothing | none | The problem this replaces. |
 
@@ -426,10 +489,14 @@ Jonathan turns the old one off.
   owner's key opens, and that the drill key opens too; a bundle never holds
   a `drill.key`.
 - A drill that mismatches once and then passes pushes; one that mismatches
-  twice pushes nothing, and the state says why.
+  twice pushes nothing, and the state says why; one that throws pushes
+  nothing.
+- A git target with bundles from another machine's runs: a run from a fresh
+  clone keeps them (pruned as usual), never only tonight's.
 - A piece part in the last good bundle and missing now: the bundle is
   written, and the run is failed, naming the piece; the night after, a run
-  still without it fails again.
+  still without it fails again; once the piece is uninstalled, it isn't
+  required.
 - A git target: a bundle over the split size is pushed as parts that rejoin
   to the drilled file; the branch is one commit after every run; `keep`
   nights plus each month's first are kept.
@@ -466,13 +533,19 @@ Jonathan turns the old one off.
   FYI. A run of samples with one gap in it (condition, none, condition) for
   longer than *for* doesn't alert. A reading the box couldn't take never
   alerts.
-- A box silent for 10 minutes is a dark alert from a manifest read alone (no
-  poll); its next poll clears it.
+- An always-on box silent for 10 minutes is a dark alert from a manifest read
+  alone (no poll); its next poll clears it. A box not always on is never
+  dark; neither is any box in the runtime's first 10 minutes up.
+- A unit whose `NRestarts` rises by 12 in one sample is looping; one that
+  rises by 1 three times in 20 minutes is not; a count that drops is a new
+  baseline.
+- A report-only box's poll carries no `version` to upgrade to.
 - A container box (the fake root says lxc) reports its cgroup's pressure, not
   `/proc/pressure`'s, and no disks or ZFS.
 - A report-only box gets no houses, logins or sessions from poll, and
   `claim` refuses it.
-- The sampler reads a fake root (loom-box `test/fixtures/`: a Proxmox host's
+- The sampler reads a fake root (fixtures this work adds to loom-box
+  `test/fixtures/`: a Proxmox host's
   `/proc`, `/sys` and a `root-health.json`, and an LXC container's) into the
   sample the rules expect, SMART and container names included; a
   `root-health.json` over 30 minutes old is ignored.
@@ -482,4 +555,5 @@ Jonathan turns the old one off.
 - **A warm standby** (household.md's open question): out of scope. The
   nightly bundle and the owner's key are the USB stick.
 - **The monthly bundles in the one commit grow by ~100 MB a month.** At a
-  year that's ~1.3 GB on GitHub. `keep_months` can cap it when it matters.
+  year, with `keep: 7`, that's 19 bundles, ~1.9 GB on GitHub. A
+  `keep_months` can cap it when it matters.
