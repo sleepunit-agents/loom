@@ -84,4 +84,18 @@ describe('the app (web/)', () => {
     ];
     expect(sites.filter(([f, now]) => !src(f).includes(now)).map(([f, , w]) => `${f}: ${w}`)).toEqual([]);
   });
+
+  // Neon Noir's sweep of the corners: each radius token's 000h value is the literal it replaced.
+  it('000h\'s swept corners are the values they replaced', () => {
+    const src = readFileSync(`${root}web/src/index.css`, 'utf-8');
+    const block = Object.fromEntries([...src.slice(src.indexOf(':root { --loom-ok:')).split('}')[0].matchAll(/(--loom-r-[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+    expect(block).toEqual({ '--loom-r-launch': '22%', '--loom-r-tile': '28%', '--loom-r-state': '30%', '--loom-r-side': '24px', '--loom-r-soft': '14px', '--loom-r-icon': '12px' });
+  });
+
+  // Neon re-points loom's six agent marks by their colours: the page's map is the household's palette.
+  it('the page knows each of loom\'s six marks by the household\'s colour for it', async () => {
+    const { MARKS } = await import('../household.js');
+    const look = readFileSync(`${root}web/src/look.ts`, 'utf-8');
+    for (const m of MARKS) expect(look, m.name).toContain(`'${m.bg.toLowerCase()}': '${m.name.toLowerCase()}'`);
+  });
 });

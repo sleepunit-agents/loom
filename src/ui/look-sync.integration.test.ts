@@ -48,7 +48,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
   });
 
   async function device(): Promise<Page> {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
     await ctx.request.post(`${base}/login`, { form: { token: TOKEN }, maxRedirects: 0 });
     return ctx.newPage();
   }
@@ -93,5 +93,20 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     await laptop.waitForFunction(() => document.documentElement.dataset.look === 'neon', null, { timeout: 15_000 });
     await laptop.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--v-canvas').trim().toUpperCase() === '#07070C', null, { timeout: 15_000 });
     expect(await look(laptop)).toEqual(['neon', 'dark']);
+  }, 60_000);
+
+  // Oxanium is wider than Bricolage: at 390 px, the built-in titles stay on one line, as in 000h.
+  it('Neon\'s titles fit at 390 px', async () => {
+    const page = await device('reduce', { 'loom-look': 'neon' });
+    for (const path of ['/appearance', '/places', '/inbox', '/']) {
+      await page.goto(`${base}${path}`);
+      const h1 = page.locator('.loom-top h1');
+      await h1.waitFor();
+      await page.waitForFunction(() => document.fonts.status === 'loaded');
+      const m = await h1.evaluate((e) => ({ h: e.getBoundingClientRect().height, lh: parseFloat(getComputedStyle(e).lineHeight), w: e.scrollWidth, cw: e.clientWidth, font: getComputedStyle(e).fontFamily }));
+      expect(m.font, path).toContain('Oxanium');
+      expect(m.h, path).toBeLessThan(m.lh * 1.5);
+      expect(m.w, path).toBeLessThanOrEqual(m.cw);
+    }
   }, 60_000);
 });

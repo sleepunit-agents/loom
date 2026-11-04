@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon Noir's faces, type, corners and glow.** An agent's face keeps its
+  body and its expression and becomes dark glass rim-lit in its mark's neon
+  (six marks re-pointed per look, `--mark-*`), with a soft glow that is the same
+  in every state: the expression says the state. Titles are Oxanium, reading
+  is Figtree, and numbers, ids and times are IBM Plex Mono (self-hosted Latin
+  subsets, fetched only when Neon is worn). The app's hard-coded tile corners
+  are tokens, Neon's radii step down, an agent's card has a 45° cut corner lit
+  in its colour, and the dock, the launcher and an app's tile are dark keys
+  with a neon edge (the current one lit solid). The depth background's lines
+  glow. Glow sits on edges and what's current only, never on a state or a
+  status, and goes under `prefers-contrast: more` (checked in a test).
 - **Neon Noir, the page's new look, and the default.** Appearance has a
   Look: Neon Noir (dark only: a night-city control room, light from edges and
   states) or 000h (light or dark, as before). Neon is what a person who hasn't

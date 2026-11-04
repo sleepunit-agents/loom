@@ -23,7 +23,7 @@ function looks(): Plugin {
       // The CSS entry's empty script: nothing loads it.
       for (const [k, f] of Object.entries(bundle)) if (f.type === 'chunk' && f.name === 'neon' && !f.code.trim().replace(/\/\/.*$/gm, '').trim()) delete bundle[k];
       const css = `/app/${neon.fileName}`;
-      const src = readFileSync(path.resolve(__dirname, 'src/looks/boot.js'), 'utf-8')
+      const src = readFileSync(path.resolve(import.meta.dirname, 'src/looks/boot.js'), 'utf-8')
         .replace(/^\s*\/\/.*$/gm, '').replace(/\s*\/\*.*?\*\//g, '').replace(/\n\s*/g, '').replace(/__NEON_CSS__/g, css);
       const fileName = `assets/look-${createHash('sha256').update(src).digest('base64url').slice(0, 8)}.js`;
       this.emitFile({ type: 'asset', fileName, source: src });
@@ -41,9 +41,9 @@ function looks(): Plugin {
 export default defineConfig({
   base: '/app/',
   plugins: [react(), tailwindcss(), looks()],
-  resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   build: {
     outDir: '../dist/web', emptyOutDir: true,
-    rollupOptions: { input: { index: path.resolve(__dirname, 'index.html'), neon: path.resolve(__dirname, 'src/looks/neon.css') } },
+    rollupOptions: { input: { index: path.resolve(import.meta.dirname, 'index.html'), neon: path.resolve(import.meta.dirname, 'src/looks/neon.css') } },
   },
 });
