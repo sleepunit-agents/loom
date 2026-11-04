@@ -200,9 +200,10 @@ hand):
      a file over 100 MB); a smaller one is `bundles/<name>`. The parts must
      rejoin, byte for byte, to the drilled file before anything is
      committed.
-5. **Prune** to `keep` nights plus each month's first: the earliest bundle
-   still kept in that calendar month (so a month whose 1st failed keeps its
-   2nd). A night's parts are kept or pruned together, by their stamp.
+5. **Prune** to `keep` nights plus each month's first: a night is a date in
+   `tz`, and keeps its newest bundle (its retries replace its earlier tries);
+   the month's first is its earliest night still kept (so a month whose 1st
+   failed keeps its 2nd). A night's parts are kept or pruned together.
 6. **Push (git).** The branch is `main`, and it's always **one commit**:
    the remote tree from step 4 (any file that isn't a bundle is kept as it
    was) with the kept bundles, `RESTORE.md` and `.loom-backup`, committed
@@ -540,8 +541,10 @@ Jonathan turns the old one off.
   nights plus each month's first are kept.
 - A target holding files and no `.loom-backup` is refused before export, a
   git repo with branches but no `main` too, and a path that doesn't exist.
-- Due: not before `at` in `tz`, once a day, and only one of two schedulers
-  racing for the lock runs.
+- Due: not before `at` in `tz`, once a night; a night whose runs all failed
+  is due again an hour after the last one ended, three tries at most; only one
+  of two schedulers racing for the lock runs. A night's tries keep one bundle,
+  its newest, and its failures are one alert.
 - The Inbox has one backup alert after a failed run, one after 26 hours with
   none, one (the failure) when both hold, and none after a good run. Setup's
   Health shows the last run and drill.
