@@ -410,7 +410,6 @@
     --input: var(--v-beige);
     --ring: var(--v-brand);
     --destructive: var(--v-danger-fill);
-    --destructive-foreground: #fff;
     --chart-1: var(--v-yellow);
     --chart-2: var(--v-pink);
     --chart-3: var(--v-olive);
@@ -418,10 +417,7 @@
     --chart-5: var(--v-ink);
     --sidebar: var(--v-structure);
     --sidebar-foreground: var(--on-structure);
-    --sidebar-muted: #B4BDCA;
     --sidebar-primary: var(--v-pink);
-    --muted-foreground-ink: #2E2A24;
-    --muted-foreground-tinted: #4A443C;
 }
 
   @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));

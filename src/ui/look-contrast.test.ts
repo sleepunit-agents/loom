@@ -50,6 +50,8 @@ const PAIRS: Array<[string, string, number]> = [
   ...SURFACES.flatMap((s) => [['--v-edge', s, 3], ['--sel-edge', s, 3]] as Array<[string, string, number]>),
   ...['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((a) => ['--v-on-accent', a, 4.5] as [string, string, number]),
   ['--v-brand', '--v-canvas', 3],
+  // The structure (the rail): its text and its quiet text on it.
+  ['--on-structure', '--v-structure', 4.5], ['--structure-text', '--v-structure', 4.5], ['--sidebar-muted', '--v-structure', 4.5],
   ['--loom-count-ink', '--loom-count', 4.5],
 ];
 // Neon's own: its status inks on their washes, and the inks it adds on its ground.
