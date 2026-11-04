@@ -31,8 +31,10 @@ export class BackupError extends Error {}
 export const DIR = 'backup';
 /** A file the git host takes (GitHub refuses one over 100 MB). */
 export const SPLIT_AT = 90 * 1000 * 1000;
-/** git's http.postBuffer for the push: over the largest push a night makes (a bundle in parts plus the rest). */
-export const POST_BUFFER = 512 * 1024 * 1024;
+/** git's http.postBuffer for the push, at most: git allocates all of it, so it's sized to the night's push (below). */
+export const POST_BUFFER_MAX = 512 * 1024 * 1024;
+/** The push's buffer: what's new tonight (the bundle) and room for the rest, never over the cap. */
+export const postBufferFor = (bytes: number) => Math.min(POST_BUFFER_MAX, Math.max(1, Math.ceil(bytes)) + 16 * 1024 * 1024);
 /** No good run in this long, while the backup is set: it's missed. */
 export const MISSED_MS = 26 * 3600_000;
 /** A condition still going: the alert command hears of it again this often. */
@@ -476,8 +478,9 @@ function gitWrite(repo: string, remote: string | null, files: Array<{ path: stri
     const commit = git(['-C', repo, 'commit-tree', '--no-gpg-sign', tree, '-m', `household bundle ${stamp} (drilled)`], { env: genv }).trim();
     beforePush?.();
     // One sized POST, not a chunked one: GitHub hung up on chunked pushes of ~50 MB over a lossy uplink twice on
-    // 2026-11-04, and the same push with a 512 MB buffer went through.
-    git(['-C', repo, '-c', `http.postBuffer=${POST_BUFFER}`, 'push', '-q', `--force-with-lease=refs/heads/${BRANCH}:${remote ?? ''}`, 'origin', `${commit}:refs/heads/${BRANCH}`], { env });
+    // 2026-11-04, and the same push with a large buffer went through. The buffer is the night's bundle plus 16 MB.
+    const newBytes = files.reduce((n, f) => n + statSync(f.path).size, 0);
+    git(['-C', repo, '-c', `http.postBuffer=${postBufferFor(newBytes)}`, 'push', '-q', `--force-with-lease=refs/heads/${BRANCH}:${remote ?? ''}`, 'origin', `${commit}:refs/heads/${BRANCH}`], { env });
     git(['-C', repo, 'update-ref', `refs/remotes/origin/${BRANCH}`, commit], { env });
     // What the old commits held and the new one doesn't: gone from the clone too, so it doesn't grow a bundle a night.
     spawnSync('git', ['-C', repo, 'prune', '--expire=now'], { env });
