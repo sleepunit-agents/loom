@@ -288,10 +288,25 @@ export function lastSlot(s: Pick<BackupSettings, 'at' | 'tz'>, nowMs: number): n
 }
 
 /** Due: the latest slot has passed, and no run has started since it. */
-export function isDue(s: Pick<BackupSettings, 'at' | 'tz'>, st: Pick<BackupState, 'lastStart'>, nowMs: number): boolean {
+/** A night's run that failed is tried again this long after, this many times in all, before the next night's. */
+export const RETRY_AFTER_MS = 60 * 60_000;
+export const TRIES_A_NIGHT = 3;
+
+/**
+ * Due: the latest slot has passed and no run has started since it; or the runs since it all failed, there have been
+ * fewer than TRIES_A_NIGHT, and the last was RETRY_AFTER_MS ago (a push the network dropped is tried again tonight,
+ * not tomorrow).
+ */
+export function isDue(s: Pick<BackupSettings, 'at' | 'tz'>, st: Pick<BackupState, 'lastStart' | 'runs'>, nowMs: number): boolean {
   const slot = lastSlot(s, nowMs);
   const started = Date.parse(st.lastStart ?? '');
-  return Number.isNaN(started) || started < slot;
+  if (Number.isNaN(started) || started < slot) return true;
+  const tonight = st.runs.filter((r) => Date.parse(r.at) >= slot);
+  if (!tonight.length || tonight.some((r) => r.ok) || tonight.length >= TRIES_A_NIGHT) return false;
+  // An hour after the last try ended (its start and how long it took), not after it started or after the slot.
+  const last = tonight[0];
+  const ended = Date.parse(last.at) + (last.ms ?? 0);
+  return Date.parse(st.lastStart ?? '') <= Date.parse(last.at) && nowMs - ended >= RETRY_AFTER_MS;
 }
 
 /** A bundle's stamp, in the backup's time zone: YYYYMMDD-HHMM. */
@@ -301,14 +316,19 @@ export function stampOf(ms: number, tz: string): string {
   return `${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
 }
 
-/** Which stamps stay: the newest `keep`, and the first of each month. */
+/**
+ * Which stamps stay: a night is a date (a night's tries share it), and each night kept keeps its newest bundle; the
+ * newest `keep` nights, and the first night of each month.
+ */
 export function keptStamps(stamps: string[], keep: number): Set<string> {
-  const all = [...new Set(stamps)].sort();
-  const out = new Set(all.slice(-keep));
+  const byNight = new Map<string, string>();
+  for (const s of [...new Set(stamps)].sort()) byNight.set(s.slice(0, 8), s); // sorted: the night's newest wins
+  const nights = [...byNight.keys()].sort();
+  const kept = new Set(nights.slice(-keep));
   const firstOfMonth = new Map<string, string>();
-  for (const s of all) if (!firstOfMonth.has(s.slice(0, 6))) firstOfMonth.set(s.slice(0, 6), s);
-  for (const s of firstOfMonth.values()) out.add(s);
-  return out;
+  for (const n of nights) if (!firstOfMonth.has(n.slice(0, 6))) firstOfMonth.set(n.slice(0, 6), n);
+  for (const n of firstOfMonth.values()) kept.add(n);
+  return new Set([...kept].map((n) => byNight.get(n)!));
 }
 
 const BUNDLE_NAME = /^loom-household-(\d{8}-\d{4})\.bundle(\.part-\d{2})?$/;
@@ -679,6 +699,10 @@ export function alertCommand(env: NodeJS.ProcessEnv, a: CoreAlert): boolean {
 /** After a run: a failure is said (each failed run is news); a good one after a failure or a miss says it's over. */
 function sayRun(env: NodeJS.ProcessEnv, st: BackupState, run: BackupRun, alert: NonNullable<RunDeps['alert']>, home: string, nowMs: number): void {
   if (!run.ok) {
+    // One failure alert a night: a night's retries that fail too are in the state, not said again.
+    const s0 = readSettings(loadHousehold(home)!).settings;
+    const slot = s0 ? lastSlot(s0, Date.parse(run.at)) : NaN;
+    if (st.said?.failed && Number.isFinite(slot) && Date.parse(st.said.failed) >= slot) return;
     alert(env, { source: 'loom-backup', severity: 'bad', summary: `The nightly backup failed: ${run.why ?? 'no reason given'}`,
       facts: { at: run.at, drill: run.drill ? (run.drill.ok ? 'passed' : 'failed') : 'not run', missing: run.missing?.join(',') } });
     updateState(home, (s) => { s.said = { ...s.said, failed: new Date(nowMs).toISOString() }; });

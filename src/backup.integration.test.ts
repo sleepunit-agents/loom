@@ -365,12 +365,43 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(new Date(lastSlot(s, Date.parse('2026-11-04T08:50:00Z'))).toISOString()).toBe('2026-11-03T08:55:00.000Z');
     // In summer it's CDT: 07:55 UTC.
     expect(new Date(lastSlot(s, Date.parse('2026-07-04T12:00:00Z'))).toISOString()).toBe('2026-07-04T07:55:00.000Z');
-    expect(isDue(s, {}, Date.parse('2026-11-04T09:00:00Z'))).toBe(true);
-    expect(isDue(s, { lastStart: '2026-11-04T08:56:00Z' }, Date.parse('2026-11-04T20:00:00Z'))).toBe(false);
-    expect(isDue(s, { lastStart: '2026-11-04T08:56:00Z' }, Date.parse('2026-11-05T08:54:00Z'))).toBe(false);
-    expect(isDue(s, { lastStart: '2026-11-04T08:56:00Z' }, Date.parse('2026-11-05T08:56:00Z'))).toBe(true);
+    expect(isDue(s, { runs: [] }, Date.parse('2026-11-04T09:00:00Z'))).toBe(true);
+    expect(isDue(s, { lastStart: '2026-11-04T08:56:00Z', runs: [] }, Date.parse('2026-11-04T20:00:00Z'))).toBe(false);
+    expect(isDue(s, { lastStart: '2026-11-04T08:56:00Z', runs: [] }, Date.parse('2026-11-05T08:54:00Z'))).toBe(false);
+    expect(isDue(s, { lastStart: '2026-11-04T08:56:00Z', runs: [] }, Date.parse('2026-11-05T08:56:00Z'))).toBe(true);
     expect(stampOf(Date.parse('2026-11-04T08:55:00Z'), 'America/Chicago')).toBe('20261104-0255');
     expect([...keptStamps(['20261001-0400', '20261015-0400', '20261102-0400', '20261103-0400'], 1)].sort()).toEqual(['20261001-0400', '20261102-0400', '20261103-0400']);
+  });
+
+  it('a night whose run failed is tried again an hour after it ended, three tries at most; a good one isn\'t', () => {
+    const s = { at: '02:55', tz: 'America/Chicago' };
+    const slot = Date.parse('2026-11-04T08:55:00Z');
+    const fail = (min: number, took = 0) => ({ at: new Date(slot + min * 60_000).toISOString(), ok: false, ms: took * 60_000 });
+    const st = (runs: Array<{ at: string; ok: boolean; ms?: number }>) => ({ lastStart: runs[0]?.at ?? new Date(slot + 60_000).toISOString(), runs });
+    expect(isDue(s, st([fail(1)]), slot + 30 * 60_000)).toBe(false);
+    expect(isDue(s, st([fail(1)]), slot + 62 * 60_000)).toBe(true);
+    // From its end: a try that took 50 minutes is due an hour after that, not an hour after it began.
+    expect(isDue(s, st([fail(1, 50)]), slot + 62 * 60_000)).toBe(false);
+    expect(isDue(s, st([fail(1, 50)]), slot + 112 * 60_000)).toBe(true);
+    expect(isDue(s, st([fail(62), fail(1)]), slot + 123 * 60_000)).toBe(true);
+    expect(isDue(s, st([fail(123), fail(62), fail(1)]), slot + 300 * 60_000)).toBe(false);
+    expect(isDue(s, st([{ at: new Date(slot + 60_000).toISOString(), ok: true }]), slot + 300 * 60_000)).toBe(false);
+    // A run started tonight with only yesterday's failures recorded (it was cut off): not a retry.
+    expect(isDue(s, { lastStart: new Date(slot + 60_000).toISOString(), runs: [fail(-60)] }, slot + 300 * 60_000)).toBe(false);
+  });
+
+  it('a night\'s tries keep one bundle, its newest; the alert command hears one failure a night', async () => {
+    // keep 1: the newest night (the 5th), and the month's first night (the 4th), each by its newest try.
+    expect([...keptStamps(['20261104-0255', '20261104-0355', '20261104-0455', '20261105-0255'], 1)].sort()).toEqual(['20261104-0455', '20261105-0255']);
+    const dir = join(work, 'stick'); mkdirSync(dir);
+    settings(`path:${dir}`, { at: '02:55', tz: 'UTC' });
+    const night = Date.parse('2026-11-04T02:56:00Z');
+    await runBackup({ home: h.home, env, now: () => new Date(night), deps: fakes({ drills: [false, false, false, false] }) });
+    await runBackup({ home: h.home, env, now: () => new Date(night + 70 * 60_000), deps: fakes({ drills: [false, false] }) });
+    expect(alerts.filter((a) => /failed/.test(a.summary))).toHaveLength(1);
+    await runBackup({ home: h.home, env, now: () => new Date(night + 140 * 60_000), deps: fakes() });
+    await runBackup({ home: h.home, env, now: () => new Date(night + 200 * 60_000), deps: fakes() });
+    expect(readdirSync(dir).filter((n) => n.endsWith('.bundle'))).toEqual(['loom-household-20261104-0616.bundle']);
   });
 
   it('only one of two racing for the lock gets it; a lock whose pid is gone is taken over', () => {
@@ -432,7 +463,8 @@ describe.skipIf(!hasTools)('loom backup', () => {
     await runBackup({ home: h.home, env, deps: noAlert });
     await new Promise((r) => setTimeout(r, 300));
     expect(existsSync(join(work, 'planted'))).toBe(false);
-    await runBackup({ home: h.home, env: { ...env, LOOM_ALERT_COMMAND: JSON.stringify([cmd]) }, now: () => new Date(Date.now() + 60_000), deps: noAlert });
+    // The next night (a night's second failure isn't said again).
+    await runBackup({ home: h.home, env: { ...env, LOOM_ALERT_COMMAND: JSON.stringify([cmd]) }, now: () => new Date(Date.now() + 86_400_000), deps: noAlert });
     for (let i = 0; i < 50 && !existsSync(heard); i++) await new Promise((r) => setTimeout(r, 100));
     const argv = readFileSync(heard, 'utf-8').split('\n');
     expect(argv.slice(0, 5)).toEqual(['loom-backup', '--severity', 'bad', '--summary', expect.stringMatching(/^The nightly backup failed: the drill/)]);
