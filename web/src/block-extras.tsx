@@ -33,7 +33,7 @@ export function Pager({ page, pages, shown, to, total }: { page: number; pages: 
         ])}
         <PaginationItem><PaginationNext disabled={page === pages - 1} onClick={() => to(page + 1)} /></PaginationItem>
       </PaginationContent>
-      {total !== undefined && <p className="mt-1 text-xs opacity-60">{total.toLocaleString()} in all</p>}
+      {total !== undefined && <p className="mt-1 text-xs opacity-60"><span className="loom-data">{total.toLocaleString()}</span> in all</p>}
     </Pagination>
   );
 }

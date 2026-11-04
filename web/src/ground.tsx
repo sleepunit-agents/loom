@@ -16,8 +16,9 @@ export function Contours() {
 /** The other trial ground: 000h's depth background, its contour look (contours on three planes, drifting with the
  * pointer and the scroll), over the wash. Jonathan, 2026-10-29: "lets enable that as one of our choices too". */
 export function Depth() {
+  const look = useLook();
   return <div aria-hidden className="loom-ground pointer-events-none fixed inset-0 -z-10"><DepthBackground variant="contour" density={1} intensity={1} />
-    {useLook() === 'neon' && <NeonGlow />}</div>;
+    {look === 'neon' && <NeonGlow />}</div>;
 }
 
 /** Neon Noir's glow on the depth background's lines (neon.css: filter: url(#loom-neon-glow)): each line's own colour,

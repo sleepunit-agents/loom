@@ -75,11 +75,11 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
   const facts: [string, React.ReactNode][] = [];
   const asked = when(i.at);
   // Only an ask is asked: news is when it happened, an alert or a task since when it has stood.
-  if (asked) facts.push([i.kind === 'fyi' ? 'When' : i.kind === 'alert' || i.kind === 'todo' ? 'Since' : 'Asked', asked]);
+  if (asked) facts.push([i.kind === 'fyi' ? 'When' : i.kind === 'alert' || i.kind === 'todo' ? 'Since' : 'Asked', <span className="loom-data">{asked}</span>]);
   if (p.answer) facts.push(['Answer', [p.answer.verdict, p.answer.by && `by ${p.answer.by}`, p.answer.for && `for ${p.answer.for}`].filter(Boolean).join(' ')]);
   else if (i.outcome) facts.push(['Answer', i.outcome]);
   const left = i.expires ? when(i.expires) : undefined;
-  if (left && i.attention) facts.push(['Until', left.split(' · ')[0]]);
+  if (left && i.attention) facts.push(['Until', <span className="loom-data">{left.split(' · ')[0]}</span>]);
   // A Needs you laid out (its ask is the title): why, what happens either way, the approval it waits on, links, details.
   const n = i.needs;
   const why = n ? n.why : tidy(p.why ?? (i.kind !== 'answered' ? i.meta : undefined) ?? '') || undefined;
@@ -127,7 +127,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
               {refs.filter((r) => !(r.t === 'pr' && i.href && shortHref(i.href) === `${r.repo.split('/')[1]}#${r.n}` && i.href.includes(`/${r.repo}/`))).map((r, n) => (
                 <Button key={n} asChild size="sm" variant={r.t === 'conv' ? 'ghost' : 'outline'}>
                   {r.t === 'pr' ? <Link href={githubUrl(r.repo, r.n)}>{r.repo}#{r.n}</Link>
-                    : r.t === 'task' ? <As source={tasks}><Link page={`task/${r.id}`}>Task {r.id}</Link></As>
+                    : r.t === 'task' ? <As source={tasks}><Link page={`task/${r.id}`}>Task <span className="loom-data">{r.id}</span></Link></As>
                     : <As source={{ id: 'loom', base: '/' }}><Link page={`loom:conversation/${(r as { id: string }).id}`}>The conversation</Link></As>}
                 </Button>))}
             </div>
@@ -142,7 +142,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
         )}
         {facts.length > 0 && (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm">
-            {facts.map(([k, v]) => [<dt key={`${k}k`} className="opacity-60">{k}</dt>, <dd key={`${k}v`} className={`min-w-0${['When', 'Since', 'Asked', 'Until'].includes(k) ? ' loom-data' : ''}`}>{v}</dd>])}
+            {facts.map(([k, v]) => [<dt key={`${k}k`} className="opacity-60">{k}</dt>, <dd key={`${k}v`} className="min-w-0">{v}</dd>])}
           </dl>
         )}
       </div>
@@ -164,7 +164,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
 function Ref({ b, tasks }: { b: Bit; tasks: Source }) {
   const cls = 'font-medium underline underline-offset-4';
   if (b.t === 'text') return <span>{b.s}</span>;
-  if (b.t === 'task') return <As source={tasks}><Link page={`task/${b.id}`} className={cls}>{b.id}</Link></As>;
+  if (b.t === 'task') return <As source={tasks}><Link page={`task/${b.id}`} className={`${cls} loom-data`}>{b.id}</Link></As>;
   if (b.t === 'pr') return <Link href={githubUrl(b.repo, b.n)} className={cls}>{b.repo}#{b.n}</Link>;
   if (b.t === 'conv') return <As source={{ id: 'loom', base: '/' }}><Link page={`loom:conversation/${b.id}`} className={cls}>{b.id}</Link></As>;
   return <code className="break-all rounded bg-[color:var(--v-beige)] px-1 text-[0.9em]">{b.s}</code>;

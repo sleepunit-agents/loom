@@ -82,4 +82,13 @@ describe('each look\'s contrast', () => {
     const short = NEON_PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(neon, f), hex(neon, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
     expect(short).toEqual([]);
   });
+  // Neon's lit things: an agent's rim and lit eyes on its card (3:1, a graphic), and a key's icon in its tint on the key's
+  // own 9% wash of that tint over paper (neon.css: the dock, the launcher, an app's tile), a graphic too.
+  it('Neon Noir: agents\' marks on paper, and each tint on its own key', () => {
+    const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
+    const paper = hex(neon, '--v-paper');
+    const marks = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'].map((m) => ({ pair: `--mark-${m} on --v-paper`, ratio: +ratio(hex(neon, `--mark-${m}`), paper).toFixed(2), min: 3 }));
+    const keys = ['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((t) => ({ pair: `${t} on its key`, ratio: +ratio(hex(neon, t), mix(hex(neon, t), paper, 0.09)).toFixed(2), min: 3 }));
+    expect([...marks, ...keys].filter((p) => p.ratio < p.min)).toEqual([]);
+  });
 });

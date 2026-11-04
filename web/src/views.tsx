@@ -70,13 +70,13 @@ function AgentIdentity({ c }: { c: AgentCard }) {
               <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${c.bg} 22%, transparent)` }}>
                 <AnimatedIcon name={iconFor(DOING_ICON[d.kind ?? 'other'])} size="sm" /></span>
               <span className="min-w-0 flex-1"><span className="line-clamp-3 break-words font-medium">{d.text}</span>
-                {(d.where || d.since) && <span className="block truncate text-xs opacity-60">{[d.where, d.since ? ago(d.since) : ''].filter(Boolean).join(' · ')}</span>}</span>
+                {(d.where || d.since) && <span className="block truncate text-xs opacity-60">{d.where}{d.where && d.since ? ' · ' : ''}{d.since && <span className="loom-data">{ago(d.since)}</span>}</span>}</span>
             </Arrive>))}
         </ul>
       )}
       <div className="flex items-center gap-2 border-t px-5 py-3 text-sm">
         <span className="font-medium">Open {c.label}</span><AnimatedIcon name={iconFor('chevron-right')} size="sm" />
-        {c.seen && <span className="loom-data ml-auto truncate text-xs opacity-60">seen {ago(c.seen.at)}{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
+        {c.seen && <span className="ml-auto truncate text-xs opacity-60">seen <span className="loom-data">{ago(c.seen.at)}</span>{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
       </div>
     </Card>
   );

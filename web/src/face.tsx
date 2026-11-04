@@ -12,7 +12,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import './face.css';
 import { useChoreography } from '@/lib/cojeev-motion/choreography';
 import data from './face-data.json';
-import { markColor } from './look';
+import { markColor, markName } from './look';
 
 export type FaceState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
 export type FaceShape = 'pebble' | 'trefoil' | 'clover' | 'drop';
@@ -35,12 +35,15 @@ function mix(a: string, b: string, t: number): string {
   const [x, y] = [p(a), p(b)];
   return `#${x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('')}`;
 }
+/** The rim's width by size (viewBox units): thicker small, so it reads as a lit edge at dock size. */
+const RIM = { dock: 10, row: 7, card: 5 } as const;
 const lum = (h: string) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 
 /**
  * `rim`: Neon Noir's finish (look.ts). The same body and the same expression, the body dark glass lit at its edge in
- * the mark's neon (neon.css --mark-*), the eyes and mouth lit in it too, a soft glow around it (face.css). The glow is
- * the same in every state: the expression says the state, as in 000h's finish.
+ * the mark's neon (neon.css --mark-*), the eyes and mouth lit in it too, a soft glow around it (face.css). The eyes'
+ * small cream highlights are left out (on a lit eye they read as holes), as 000h's dock-size faces leave them out. The
+ * rim and the glow are the same in every state: the expression says the state (src/ui/face-rim.test.ts).
  */
 export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = 'idle', size = 40, label, dark = false, rim = false }: {
   bg: string; fg: string; shape?: FaceShape; eyes?: FaceEyes; state?: FaceState; size?: number; label?: string; dark?: boolean; rim?: boolean;
@@ -70,7 +73,7 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   const loop = live && body.frames ? { d: body.frames } : { d: body.d };
   const loopT = live && body.frames ? { duration: body.dur ?? 3, repeat: Infinity, ease: (body.ease === 'linear' ? 'linear' : 'easeInOut') as 'linear' | 'easeInOut' } : { duration: quiet ? 0 : 0.6 };
   // Neon's rim: the look's own colour for one of loom's marks, else this mark's (lifted on the dark, as above).
-  const mk = markColor(bg) === bg ? base : markColor(bg);
+  const mk = markName(bg) ? markColor(bg) : base;
   const lit = `color-mix(in srgb, ${mk} 72%, #fff)`;
   const paint = (c?: string) => (rim ? (c === 'fg' ? lit : c === 'hi' ? 'none' : c ?? 'none') : c === 'fg' ? ink : c === 'hi' ? hi : c ?? 'none');
   const part = (p: Part, n: number) => {
@@ -95,7 +98,7 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
       </defs>}
       <g className="loom-face__field">
         {rim
-          ? <motion.path initial={false} d={body.d} animate={loop} transition={loopT} style={{ fill: `color-mix(in srgb, ${mk} 16%, var(--v-canvas, #07070C))`, stroke: mk }} strokeWidth={size <= 28 ? 10 : size <= 56 ? 7 : 5} />
+          ? <motion.path initial={false} d={body.d} animate={loop} transition={loopT} style={{ fill: `color-mix(in srgb, ${mk} 16%, var(--v-canvas, #07070C))`, stroke: mk }} strokeWidth={RIM[size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card']} />
           : <motion.path initial={false} d={body.d} animate={loop} transition={loopT} fill={`url(#${id}b)`} stroke={deep} strokeOpacity={0.35} strokeWidth={size <= 28 ? 6 : 2} />}
         <g transform={`translate(${90 + ox} ${80 + oy}) scale(${k}) translate(-90 -80)`}>
           <g className="loom-face__eyes">{eyesParts.map(part)}</g>
