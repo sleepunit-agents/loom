@@ -149,7 +149,7 @@ describe('an agent\'s pixel face', () => {
   });
 
   it.runIf(built && chrome)('in a browser: whole pixels, 2x on the card; the drawn face for an agent without one, and for everyone with Pixel faces off', async () => {
-    const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const page = await ctx.newPage();
     await page.goto(`${base}/`);
