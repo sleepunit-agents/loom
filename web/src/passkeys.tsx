@@ -48,7 +48,7 @@ export function PasskeyAdd({ add, reload }: { add: { csrf: string } | { note: st
         <Input maxLength={60} placeholder="Name it, like Jonathan's phone" aria-label="Name" value={label} onChange={(e) => setLabel(e.target.value)} />
         <Button disabled={!supported || busy} onClick={go}>{busy ? 'Waiting for the device…' : 'Add a passkey'}</Button>
         {!supported && <p className="text-sm opacity-80">This browser has no passkeys.</p>}
-        {msg && <p role="status" className={`text-sm ${msg.bad ? 'text-[color:var(--v-danger-fill,#b42c22)]' : 'opacity-80'}`}>{msg.text}</p>}
+        {msg && <p role="status" className={`text-sm ${msg.bad ? 'text-[color:var(--v-danger-fill)]' : 'opacity-80'}`}>{msg.text}</p>}
       </CardContent>
     </Card>
   );
