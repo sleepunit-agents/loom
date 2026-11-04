@@ -17,6 +17,7 @@ import { markRead, pageHref, type Button as Btn, type Source, type Tone } from '
 import { openItem, plain } from './plain';
 import { tidy } from './tidy';
 import { hasDraft } from './drafts';
+import { markColor } from './look';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
 type Doing = { text: string; kind?: 'talk' | 'lane' | 'task' | 'session' | 'other'; where?: string; since?: string; page?: string; source: Source };
@@ -46,10 +47,10 @@ function AgentIdentity({ c }: { c: AgentCard }) {
     : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
     : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
   return (
-    <Card className="loom-identity cursor-pointer gap-0 p-0" onClick={() => go(`/a/${c.id}`)}>
+    <Card className="loom-identity cursor-pointer gap-0 p-0" style={{ '--acc': markColor(c.bg) } as React.CSSProperties} onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
         <span className="relative shrink-0">
-          <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${c.bg} 55%, transparent)` }} />
+          <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${markColor(c.bg)} 55%, transparent)` }} />
           <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)] loom-dot-live' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
         </span>
         <div className="min-w-0 flex-1">
@@ -75,7 +76,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
       )}
       <div className="flex items-center gap-2 border-t px-5 py-3 text-sm">
         <span className="font-medium">Open {c.label}</span><AnimatedIcon name={iconFor('chevron-right')} size="sm" />
-        {c.seen && <span className="ml-auto truncate text-xs opacity-60">seen {ago(c.seen.at)}{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
+        {c.seen && <span className="loom-data ml-auto truncate text-xs opacity-60">seen {ago(c.seen.at)}{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
       </div>
     </Card>
   );
@@ -232,7 +233,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
       <As key={t.source.id + t.label} source={t.source}>
         <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-[var(--r-card)]"><Card lift className="gap-0 p-0"><Link page={t.page} className="grid gap-0.5 p-4 no-underline">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
-          <span className="text-xl font-semibold">{t.value}</span>
+          <span className="loom-data text-xl font-semibold">{t.value}</span>
           {t.detail && <span className="line-clamp-3 break-words text-xs opacity-60">{t.detail}</span>}
         </Link></Card></Arrive>
       </As>))}

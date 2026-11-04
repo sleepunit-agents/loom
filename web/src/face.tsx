@@ -12,6 +12,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import './face.css';
 import { useChoreography } from '@/lib/cojeev-motion/choreography';
 import data from './face-data.json';
+import { markColor } from './look';
 
 export type FaceState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
 export type FaceShape = 'pebble' | 'trefoil' | 'clover' | 'drop';
@@ -36,8 +37,13 @@ function mix(a: string, b: string, t: number): string {
 }
 const lum = (h: string) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 
-export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = 'idle', size = 40, label, dark = false }: {
-  bg: string; fg: string; shape?: FaceShape; eyes?: FaceEyes; state?: FaceState; size?: number; label?: string; dark?: boolean;
+/**
+ * `rim`: Neon Noir's finish (look.ts). The same body and the same expression, the body dark glass lit at its edge in
+ * the mark's neon (neon.css --mark-*), the eyes and mouth lit in it too, a soft glow around it (face.css). The glow is
+ * the same in every state: the expression says the state, as in 000h's finish.
+ */
+export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = 'idle', size = 40, label, dark = false, rim = false }: {
+  bg: string; fg: string; shape?: FaceShape; eyes?: FaceEyes; state?: FaceState; size?: number; label?: string; dark?: boolean; rim?: boolean;
 }) {
   const id = useId().replace(/:/g, '');
   const { quiet } = useChoreography();
@@ -63,10 +69,15 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   const live = move && inView && shown;
   const loop = live && body.frames ? { d: body.frames } : { d: body.d };
   const loopT = live && body.frames ? { duration: body.dur ?? 3, repeat: Infinity, ease: (body.ease === 'linear' ? 'linear' : 'easeInOut') as 'linear' | 'easeInOut' } : { duration: quiet ? 0 : 0.6 };
-  const paint = (c?: string) => (c === 'fg' ? ink : c === 'hi' ? hi : c ?? 'none');
+  // Neon's rim: the look's own colour for one of loom's marks, else this mark's (lifted on the dark, as above).
+  const mk = markColor(bg) === bg ? base : markColor(bg);
+  const lit = `color-mix(in srgb, ${mk} 72%, #fff)`;
+  const paint = (c?: string) => (rim ? (c === 'fg' ? lit : c === 'hi' ? 'none' : c ?? 'none') : c === 'fg' ? ink : c === 'hi' ? hi : c ?? 'none');
   const part = (p: Part, n: number) => {
     if (drop.has(p.role)) return null;
-    const common = { key: n, fill: p.fill ? paint(p.fill) : 'none', stroke: p.stroke ? paint(p.stroke) : undefined, strokeWidth: p.stroke ? stroke : undefined, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+    const fill = p.fill ? paint(p.fill) : 'none', line = p.stroke ? paint(p.stroke) : undefined;
+    // A colour-mix() is CSS, not an SVG paint: the rim's go in style.
+    const common = { key: n, ...(rim ? { style: { fill, stroke: line } } : { fill, stroke: line }), strokeWidth: p.stroke ? stroke : undefined, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
     if (p.t === 'circle') return <circle {...common} cx={p.cx} cy={p.cy} r={p.r} />;
     if (p.t === 'ellipse') return <ellipse {...common} cx={p.cx} cy={p.cy} rx={p.rx} ry={p.ry} />;
     return <path {...common} d={p.d} />;
@@ -77,13 +88,15 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   return (
     <svg ref={ref} role="img" aria-label={label ? `${label}, ${STATE_WORD[state]}` : STATE_WORD[state]} viewBox="0 0 180 160" width={size} height={size * 160 / 180}
       data-slot="agent-face" data-state={state} data-shape={shape} data-motion={move ? face.motion ?? undefined : undefined} data-live={live || undefined}
-      data-tier={size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card'} style={{ '--face-phase': `${-phaseOf(id)}s` } as React.CSSProperties}
-      className="loom-face shrink-0 overflow-visible">
-      <defs>
+      data-tier={size <= 28 ? 'dock' : size <= 56 ? 'row' : 'card'} style={{ '--face-phase': `${-phaseOf(id)}s`, ...(rim ? { '--mk': mk } : {}) } as React.CSSProperties}
+      className={`loom-face shrink-0 overflow-visible${rim ? ' loom-face--rim' : ''}`}>
+      {!rim && <defs>
         <radialGradient id={`${id}b`} cx=".3" cy=".2" r=".85"><stop stopColor={light} /><stop offset=".5" stopColor={base} /><stop offset="1" stopColor={deep} /></radialGradient>
-      </defs>
+      </defs>}
       <g className="loom-face__field">
-        <motion.path initial={false} d={body.d} animate={loop} transition={loopT} fill={`url(#${id}b)`} stroke={deep} strokeOpacity={0.35} strokeWidth={size <= 28 ? 6 : 2} />
+        {rim
+          ? <motion.path initial={false} d={body.d} animate={loop} transition={loopT} style={{ fill: `color-mix(in srgb, ${mk} 16%, var(--v-canvas, #07070C))`, stroke: mk }} strokeWidth={size <= 28 ? 10 : size <= 56 ? 7 : 5} />
+          : <motion.path initial={false} d={body.d} animate={loop} transition={loopT} fill={`url(#${id}b)`} stroke={deep} strokeOpacity={0.35} strokeWidth={size <= 28 ? 6 : 2} />}
         <g transform={`translate(${90 + ox} ${80 + oy}) scale(${k}) translate(-90 -80)`}>
           <g className="loom-face__eyes">{eyesParts.map(part)}</g>
           {rest.map(part)}

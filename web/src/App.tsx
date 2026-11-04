@@ -39,7 +39,7 @@ const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPane
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
-import { keep, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, LookContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -286,7 +286,7 @@ export default function App() {
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
     value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />, ...(agentDock ? {} : { tint: tint(t.label) }),
-    ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
+    ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const pick = (href: string) => (href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
@@ -343,7 +343,7 @@ export default function App() {
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
 
   return (
-    <TintContext.Provider value={tint}>
+    <LookContext.Provider value={look}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -419,7 +419,7 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </TintContext.Provider>
+    </TintContext.Provider></LookContext.Provider>
   );
 }
 

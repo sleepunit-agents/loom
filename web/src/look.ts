@@ -2,6 +2,7 @@
 // dark only, or 000h, light or dark. With light or dark, the ground and sound, it's the person's (Appearance), kept by
 // loom so it follows them to every device ("if every device I login I have to go and change the theme, that sucks").
 // This device keeps a copy (localStorage) only so its first paint is already right (src/looks/boot.js reads it).
+import { createContext, useContext } from 'react';
 import type { Ground, Mode } from './views';
 
 export type Look = 'neon' | '000h';
@@ -48,3 +49,12 @@ export async function savePrefs(csrf: string, p: Prefs): Promise<number | undefi
     return r.ok ? ((await r.json()) as { prefs?: Prefs }).prefs?.at : undefined;
   } catch { return undefined; }
 }
+
+/** The look being worn, for what draws differently in each (an agent's face: look.ts consumers). */
+export const LookContext = createContext<Look>('neon');
+export const useLook = () => useContext(LookContext);
+
+/** loom's six agent marks (src/household.ts MARKS), by their colour: a look can re-point each (neon.css --mark-*). */
+const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
+/** An agent's mark colour as the look wears it: the look's own for one of loom's marks, else the mark's (000h: always). */
+export const markColor = (bg: string): string => (MARKS[bg.toLowerCase()] ? `var(--mark-${MARKS[bg.toLowerCase()]}, ${bg})` : bg);

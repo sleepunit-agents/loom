@@ -26,9 +26,9 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // app's own (tint.ts), not its place in the grid, so installing a piece moves no other tile's colour.
   const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
     <button key={p.href} type="button" onClick={() => go(p.href)} className="loom-launch group grid min-w-0 content-start justify-items-center gap-1.5 text-center">
-      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[22%] shadow-sm transition-transform group-active:scale-95" data-tint={tint(p.label)}>
+      <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[var(--loom-r-launch)] shadow-sm transition-transform group-active:scale-95" data-tint={tint(p.label)}>
         <AnimatedIcon name={iconFor(icon(p.label))} />
-        {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]">{p.count}</span> : null}
+        {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full loom-data bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]">{p.count}</span> : null}
         {p.tone && p.tone !== 'ok' && <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-[var(--v-paper)] ${DOT[p.tone]}`} />}
       </span>
       <span className="w-full truncate text-sm font-medium">{p.label}</span>

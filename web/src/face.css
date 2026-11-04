@@ -84,3 +84,9 @@
 @media (prefers-reduced-motion: reduce) {
   .loom-face .loom-face__field, .loom-face .loom-face__eyes { animation: none !important; }
 }
+
+/* Neon Noir's rim (face.tsx `rim`): a soft glow in the mark's colour around the lit edge. The same in every state:
+   glow never says anything (the expression says the state). None when more contrast is asked for. */
+.loom-face--rim { filter: drop-shadow(0 0 var(--glow-face, 5px) color-mix(in srgb, var(--mk) 55%, transparent)); }
+.loom-face--rim[data-tier="dock"] { --glow-face: 3px; }
+@media (prefers-contrast: more) { .loom-face--rim { filter: none; } }

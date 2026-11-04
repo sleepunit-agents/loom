@@ -36,6 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
 import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
+import { useLook } from './look';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
@@ -178,6 +179,7 @@ export type Mark = { label: string; bg: string; fg: string; face?: { shape?: str
 export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
 const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
 export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
+  const look = useLook();
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
       style={{ '--c': a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
@@ -187,7 +189,7 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
   return (
     <Suspense fallback={initial}>
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
-        <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} />
+        <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />
       </span>
     </Suspense>
   );
@@ -257,7 +259,7 @@ export function BlockView({ b }: { b: Block }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{(b as Extract<Block, { type: 'stats' }>).items.map((s) => (
         <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-[var(--r-card)]"><Card lift={s.page !== undefined} className="gap-0 p-0">
           <Link page={s.page} className="block p-4 no-underline"><span className="block text-xs opacity-60">{s.label}</span>
-          <span className="flex items-center gap-1.5 text-xl font-semibold">{s.tone && s.tone !== 'muted' && <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[s.tone]}`} />}{s.value}</span>{s.detail && <span className="block text-xs opacity-60 [overflow-wrap:anywhere]">{s.detail}</span>}
+          <span className="loom-data flex items-center gap-1.5 text-xl font-semibold">{s.tone && s.tone !== 'muted' && <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[s.tone]}`} />}{s.value}</span>{s.detail && <span className="block text-xs opacity-60 [overflow-wrap:anywhere]">{s.detail}</span>}
           {s.meter !== undefined && <Suspense fallback={<div className="mt-2 h-2 rounded-full bg-[var(--loom-track)]" />}><Progress className="mt-2" value={Math.round(s.meter * 100)} aria-label={s.label} /></Suspense>}
           {s.spark && <Suspense fallback={<div className="mt-2 h-7" />}><Spark values={s.spark} tone={s.tone} /></Suspense>}</Link></Card></Arrive>))}</div>);
     case 'meter': return (

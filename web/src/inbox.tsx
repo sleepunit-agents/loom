@@ -142,7 +142,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
         )}
         {facts.length > 0 && (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm">
-            {facts.map(([k, v]) => [<dt key={`${k}k`} className="opacity-60">{k}</dt>, <dd key={`${k}v`} className="min-w-0">{v}</dd>])}
+            {facts.map(([k, v]) => [<dt key={`${k}k`} className="opacity-60">{k}</dt>, <dd key={`${k}v`} className={`min-w-0${['When', 'Since', 'Asked', 'Until'].includes(k) ? ' loom-data' : ''}`}>{v}</dd>])}
           </dl>
         )}
       </div>
