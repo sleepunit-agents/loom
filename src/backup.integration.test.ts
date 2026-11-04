@@ -373,6 +373,20 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect([...keptStamps(['20261001-0400', '20261015-0400', '20261102-0400', '20261103-0400'], 1)].sort()).toEqual(['20261001-0400', '20261102-0400', '20261103-0400']);
   });
 
+  it('a night whose run failed is tried again an hour on, three tries at most; a good one isn\'t', () => {
+    const s = { at: '02:55', tz: 'America/Chicago' };
+    const slot = Date.parse('2026-11-04T08:55:00Z');
+    const fail = (min: number) => ({ at: new Date(slot + min * 60_000).toISOString(), ok: false });
+    const st = (runs: Array<{ at: string; ok: boolean }>) => ({ lastStart: runs[0].at, runs });
+    expect(isDue(s, st([fail(1)]), slot + 30 * 60_000)).toBe(false);
+    expect(isDue(s, st([fail(1)]), slot + 62 * 60_000)).toBe(true);
+    expect(isDue(s, st([fail(62), fail(1)]), slot + 123 * 60_000)).toBe(true);
+    expect(isDue(s, st([fail(123), fail(62), fail(1)]), slot + 300 * 60_000)).toBe(false);
+    expect(isDue(s, st([{ at: new Date(slot + 60_000).toISOString(), ok: true }]), slot + 300 * 60_000)).toBe(false);
+    // Yesterday's failures don't count tonight; tonight's slot makes it due anyway.
+    expect(isDue(s, st([fail(-60)]), slot + 60_000)).toBe(true);
+  });
+
   it('only one of two racing for the lock gets it; a lock whose pid is gone is taken over', () => {
     const a = takeLock(h.home);
     expect(a).not.toBeNull();

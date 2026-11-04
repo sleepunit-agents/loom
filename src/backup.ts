@@ -288,10 +288,22 @@ export function lastSlot(s: Pick<BackupSettings, 'at' | 'tz'>, nowMs: number): n
 }
 
 /** Due: the latest slot has passed, and no run has started since it. */
-export function isDue(s: Pick<BackupSettings, 'at' | 'tz'>, st: Pick<BackupState, 'lastStart'>, nowMs: number): boolean {
+/** A night's run that failed is tried again this long after, this many times in all, before the next night's. */
+export const RETRY_AFTER_MS = 60 * 60_000;
+export const TRIES_A_NIGHT = 3;
+
+/**
+ * Due: the latest slot has passed and no run has started since it; or the runs since it all failed, there have been
+ * fewer than TRIES_A_NIGHT, and the last was RETRY_AFTER_MS ago (a push the network dropped is tried again tonight,
+ * not tomorrow).
+ */
+export function isDue(s: Pick<BackupSettings, 'at' | 'tz'>, st: Pick<BackupState, 'lastStart'> & Partial<Pick<BackupState, 'runs'>>, nowMs: number): boolean {
   const slot = lastSlot(s, nowMs);
   const started = Date.parse(st.lastStart ?? '');
-  return Number.isNaN(started) || started < slot;
+  if (Number.isNaN(started) || started < slot) return true;
+  const tonight = (st.runs ?? []).filter((r) => Date.parse(r.at) >= slot);
+  if (!tonight.length || tonight.some((r) => r.ok) || tonight.length >= TRIES_A_NIGHT) return false;
+  return nowMs - started >= RETRY_AFTER_MS;
 }
 
 /** A bundle's stamp, in the backup's time zone: YYYYMMDD-HHMM. */

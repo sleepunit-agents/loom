@@ -240,7 +240,9 @@ loom runs as three listener processes (`loom serve --http` on loopback, the
 tailnet and the LAN; `loom-http*.service`), each its own daemon. Each of them
 checks every 10 minutes whether a run is due
 (the latest `at`, in `tz`, has passed, and no run has started since that
-moment). One of them
+moment). A night whose runs have all failed is tried again an hour after
+the last, three tries in all (a push the network dropped is tried again that
+night, not the next). One of them
 takes `$LOOM_HOME/backup/run.lock` (created with `O_EXCL`, holding its pid
 and when; one whose pid is gone, or older than 6 hours, is stale and taken
 over) and runs the backup in a child process (`loom backup tick`), so a crash
