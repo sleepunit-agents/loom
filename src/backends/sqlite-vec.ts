@@ -9,7 +9,7 @@
  *   vec_memories   — sqlite-vec virtual table, rowid = memories.id
  */
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
@@ -50,7 +50,7 @@ import type {
 import { computeExpiresAt, isExpired } from './ttl.js';
 import { mmrSelect, DEFAULT_DIVERSITY } from './mmr.js';
 import { globToMatcher } from './glob.js';
-import { runMigrations } from './migrations.js';
+import { pendingMigrations, runMigrations } from './migrations.js';
 import { retryWrite } from './retry.js';
 import { computeUniqKey } from './dedup.js';
 import { effectiveScope, isVisibleInProject, recallNameSet } from './scope.js';
@@ -80,6 +80,15 @@ export interface SqliteVecConfig {
    * observation never fails a search.
    */
   onRecall?: (obs: RecallObservation) => void;
+  /**
+   * Open the store read-only (t-1773): no mkdir, a `readonly` handle that must
+   * already exist, no WAL pragma, no schema creation and no migrations. A
+   * missing store, or one at an older schema, throws instead of being made
+   * current. Every write method then fails at SQLite (SQLITE_READONLY).
+   * For read-only callers — memory_audit — that must be safe to point at a
+   * store they are unsure about.
+   */
+  readonly?: boolean;
 }
 
 /** Body snapshots retained per memory; oldest pruned beyond this cap (mirrors knowledge wing). */
@@ -128,6 +137,44 @@ interface VecMatch {
   distance: number;
 }
 
+/**
+ * The read-only open behind `SqliteVecConfig.readonly` (t-1773). Throws, having
+ * created and changed nothing, unless `dbPath` is a store at the current schema.
+ */
+function openReadOnly(dbPath: string): Database {
+  if (!existsSync(dbPath)) {
+    throw new Error(`no memory store at ${dbPath} (read-only open: nothing was created)`);
+  }
+  const db = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    // Connection-local, not a write: wait out a live writer's lock.
+    db.pragma('busy_timeout = 5000');
+    sqliteVec.load(db);
+    const tables = new Set(
+      (db
+        .prepare("SELECT name FROM sqlite_master WHERE name IN ('memories', 'vec_memories')")
+        .all() as { name: string }[]).map((r) => r.name),
+    );
+    if (!tables.has('memories') || !tables.has('vec_memories')) {
+      throw new Error(
+        `no memory store at ${dbPath} (the file has no memories/vec_memories tables)`,
+      );
+    }
+    const pending = pendingMigrations(db);
+    if (pending.length > 0) {
+      throw new Error(
+        `memory store at ${dbPath} is at an older schema (pending migrations: ` +
+          `${pending.map((m) => m.id).join(', ')}). A read-only open will not migrate it; ` +
+          'run `loom migrate` first.',
+      );
+    }
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+}
+
 export class SqliteVecBackend implements MemoryBackend {
   private readonly db: Database;
 
@@ -135,6 +182,10 @@ export class SqliteVecBackend implements MemoryBackend {
     private readonly config: SqliteVecConfig,
     private readonly embedder: EmbeddingProvider,
   ) {
+    if (config.readonly) {
+      this.db = openReadOnly(config.dbPath);
+      return;
+    }
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
     this.db.pragma('journal_mode = WAL');

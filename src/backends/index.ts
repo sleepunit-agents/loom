@@ -74,6 +74,18 @@ export function createBackend(contextDir: string): MemoryBackend {
   return backend;
 }
 
+/**
+ * A fresh, uncached, read-only handle on contextDir's memory store (t-1773).
+ * Creates nothing and migrates nothing: throws if the store is missing or at an
+ * older schema. The caller owns it and must close() it.
+ */
+export function openReadOnlyBackend(contextDir: string): SqliteVecBackend {
+  return new SqliteVecBackend(
+    { dbPath: resolveSqliteDbPath(contextDir), readonly: true },
+    createEmbeddingProvider(),
+  );
+}
+
 /** Close and evict every cached memory backend. For tests and shutdown. */
 export function closeAllBackends(): void {
   for (const backend of [...backendCache.values()]) {

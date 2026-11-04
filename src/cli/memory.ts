@@ -17,7 +17,7 @@ import {
   rejectProposal,
   UnknownProposalError,
 } from '../backends/proposals.js';
-import { createBackend } from '../backends/index.js';
+import { createBackend, openReadOnlyBackend } from '../backends/index.js';
 import {
   readRecallObservations,
   summarizeRecallObservations,
@@ -346,14 +346,24 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       return 2;
     }
     const options = { staleDays, similarityThreshold, maxDuplicates };
-    if (env.json) {
-      const backend = createBackend(env.contextDir);
-      renderJson(io, await backend.audit(options));
+    // Read-only (t-1773): a missing or un-migrated store is an error, never created or migrated.
+    try {
+      if (env.json) {
+        const backend = openReadOnlyBackend(env.contextDir);
+        try {
+          renderJson(io, await backend.audit(options));
+        } finally {
+          backend.close();
+        }
+        return 0;
+      }
+      const text = await memoryAudit(env.contextDir, options);
+      io.stdout(text.endsWith('\n') ? text : text + '\n');
       return 0;
+    } catch (err) {
+      io.stderr(`loom memory audit: ${err instanceof Error ? err.message : String(err)}\n`);
+      return 1;
     }
-    const text = await memoryAudit(env.contextDir, options);
-    io.stdout(text.endsWith('\n') ? text : text + '\n');
-    return 0;
   }
 
   if (sub === 'archive') {

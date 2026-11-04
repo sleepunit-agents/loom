@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCliCaptured } from './test-helpers.js';
@@ -35,6 +35,34 @@ describe('loom memory', () => {
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed.length).toBe(2);
     });
+  });
+
+  // t-1773: audit is read-only — it reports on a store, never creates one.
+  describe('audit', () => {
+    it('reports on an existing store, text and --json', async () => {
+      const text = await runCliCaptured(['memory', 'audit', '--context-dir', tempDir]);
+      expect(text.code).toBe(0);
+      expect(text.stdout).toMatch(/Total memories:\*\* 2/);
+      const json = await runCliCaptured(['memory', 'audit', '--context-dir', tempDir, '--json']);
+      expect(json.code).toBe(0);
+      expect(JSON.parse(json.stdout).totalMemories).toBe(2);
+    });
+
+    for (const flags of [[], ['--json']]) {
+      it(`errors on a stack with no store and creates none ${flags.join(' ')}`, async () => {
+        const empty = await mkdtemp(join(tmpdir(), 'loom-cli-audit-empty-'));
+        try {
+          const { stderr, code } = await runCliCaptured(
+            ['memory', 'audit', '--context-dir', empty, ...flags],
+          );
+          expect(code).toBe(1);
+          expect(stderr).toMatch(/no memory store at/);
+          expect((await readdir(empty)).filter((n) => n.startsWith('memories.db'))).toEqual([]);
+        } finally {
+          await rm(empty, { recursive: true, force: true });
+        }
+      });
+    }
   });
 
   describe('prune', () => {

@@ -2,8 +2,12 @@
  * memory_audit tool — one-shot health report for the memory store.
  * Surfaces counts, stale memories, near-duplicate pairs, and expired refs.
  * Read-only: never deletes. Pair with `forget` / `update` to act on findings.
+ *
+ * Read-only in the strong sense too (t-1773): it opens its own read-only
+ * handle, so it never creates a missing store and never migrates an old one.
+ * Either case is an error naming the path, with nothing on disk changed.
  */
-import { createBackend } from '../backends/index.js';
+import { openReadOnlyBackend } from '../backends/index.js';
 import type { AuditOptions, AuditReport } from '../backends/types.js';
 
 export function formatAuditReport(report: AuditReport): string {
@@ -52,7 +56,10 @@ export async function memoryAudit(
   contextDir: string,
   options?: AuditOptions,
 ): Promise<string> {
-  const backend = createBackend(contextDir);
-  const report = await backend.audit(options);
-  return formatAuditReport(report);
+  const backend = openReadOnlyBackend(contextDir);
+  try {
+    return formatAuditReport(await backend.audit(options));
+  } finally {
+    backend.close();
+  }
 }
