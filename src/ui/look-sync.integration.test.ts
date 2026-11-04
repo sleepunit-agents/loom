@@ -111,7 +111,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     }
   }, 60_000);
 
-  it('Neon\'s chrome: a status bar only under Neon, no sideways scroll at 390 px, a power-on a tap ends, none with reduced motion, no sound unless on', async () => {
+  it('Neon\'s chrome: a status bar only under Neon, no sideways scroll at 390 px, none with reduced motion, no sound unless on', async () => {
     const sounds: string[] = [];
     const neon = await device('reduce', { 'loom-look': 'neon' });
     neon.on('request', (r) => { if (/\/assets\/sound-/.test(r.url())) sounds.push(r.url()); });
@@ -125,12 +125,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     }
     expect(sounds).toEqual([]);
 
-    // With motion allowed: the power-on runs, and a tap ends it at once.
-    const lit = await device('no-preference', { 'loom-look': 'neon' });
-    await lit.goto(`${base}/`);
-    await lit.waitForFunction(() => 'arrive' in document.documentElement.dataset, null, { timeout: 15_000 });
-    await lit.mouse.click(5, 5);
-    await lit.waitForFunction(() => !('arrive' in document.documentElement.dataset), null, { timeout: 800 });
+    // The power-on and its tap: look-neon-chrome.integration.test.ts.
 
     // The same person, choosing 000h (loom's copy wins over a device's, so it's chosen, not just kept): no status bar.
     const plain = await device('reduce');

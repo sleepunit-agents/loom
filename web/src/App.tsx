@@ -349,7 +349,9 @@ export default function App() {
     if (arrived.current || !data || waiting) return;
     arrived.current = true;
     // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
-    if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundOn.current) void import('./sound').then((m) => m.chime('boot'));
+    // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
+    const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
+    if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
   }, [data, waiting]);
 
   // Where you've been, for Find's Recent: each page that opened, by its title.
