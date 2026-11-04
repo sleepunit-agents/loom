@@ -59,7 +59,7 @@ export function Link({ page, href, children, className }: { page?: string; href?
 // ---- actions ---------------------------------------------------------------------------------------
 
 /** A button that sends its action; one that is danger (or says confirm) asks first. */
-export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; size?: 'sm' | 'default'; full?: boolean; onDone?: () => void }) {
+export function ActButton({ b, size = 'sm', full = false, onDone, disabled = false }: { b: Btn; size?: 'sm' | 'default'; full?: boolean; onDone?: () => void; disabled?: boolean }) {
   const { send } = useEnv();
   const [asking, setAsking] = useState(false);
   // The confirm dialog (000h's alert dialog) loads the first time it's asked for, and stays for its closing motion.
@@ -69,7 +69,7 @@ export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; si
   const variant = b.tone === 'danger' ? 'danger' : b.tone === 'primary' ? 'default' : 'outline';
   return (
     <>
-      <Button size={size} variant={variant} disabled={busy} className={full ? 'w-full' : undefined}
+      <Button size={size} variant={variant} disabled={busy || disabled} className={full ? 'w-full' : undefined}
         onClick={() => (b.confirm || b.tone === 'danger' ? (setAsked(true), setAsking(true)) : void fire())}>{b.label}</Button>
       {asked && <Suspense fallback={null}><Confirm b={b} open={asking} onOpenChange={setAsking} fire={() => void fire()} /></Suspense>}
     </>

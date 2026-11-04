@@ -364,6 +364,7 @@ happens either way.
   "why": "The nightly backup has no offsite copy yet.",               // ≤ 240, one line
   "if_yes": "I install both and run the first backup tonight.",       // ≤ 140
   "if_no": "Backups stay on this machine only.",                      // ≤ 140
+  "answers": "yes-no",                                                // or "words"; left off: yes-no when if_yes/if_no
   "href": "https://…",                                                // the exact thing to open
   "refs": ["t-40", "a-7693c00e"],                                     // ≤ 8 ids: t-N, a-…, owner/repo#N, cv-…
   "waits_on": { "approval": "a-7693c00e" } }                          // or {"task": "t-N"}: what resolves it
@@ -384,12 +385,20 @@ happens either way.
 sheet has the whole of it, its links (`needs_owner_href` first; `owner/repo#N`, and `repo#N` under household.json's
 `github`; `t-N`; the conversation), and three answers, each the agent's own action (`/a/<agent>/act/loom`):
 
-- **Reply to <agent>:** the owner's words go into that conversation as a person's message from them, on its own venue
-  and place (`wake` and `session` too), through the runtime's deliver (`deliverAsOwner`, core delivering as `loom`);
+- **Yes** and **No**, for a yes/no ask (`answers: "yes-no"`, or left off with `if_yes` or `if_no`; not when it holds an
+  approval's Allow and Deny): the answer goes into that conversation as the owner's message, `Yes, to: <ask>` and
+  `If yes, you said: <if_yes>` (or No and `if_no`), the same way as a reply (`needs-answer`, `answer` yes or no);
+- **Reply to <agent>** (*Or answer in your own words* under Yes and No): the owner's words go into that conversation as
+  a person's message from them, on its own venue and place (`wake` and `session` too), through the runtime's deliver
+  (`deliverAsOwner`, core delivering as `loom`);
 - **Done:** it's handled; **Dismiss:** it isn't the owner's.
 
-A reply also answers it. `conversation_needs_answers` keeps the digest, how (`replied`, `done`, `dismissed`), who
-and when, never the words. Done and replied ones stay a week in the Inbox's history. A digest rewritten later
+A reply, a Yes or a No also answers it, once it's delivered; if it was answered meanwhile, it still says Sent (the
+words reached the agent). With words in the box, Done is *Send and mark done* and Dismiss waits until they're sent or
+cleared; while one answer is sending the others wait. Closing the sheet keeps unsent words on that device, per item,
+and its row says *Draft not sent* (2026-11-04: a Done pressed mid-reply said the reply had failed when it hadn't).
+`conversation_needs_answers` keeps the digest, how (`replied`, `yes`, `no`, `done`, `dismissed`), who and when, never
+the words. Done and replied ones stay a week in the Inbox's history. A digest rewritten later
 (the same run's, or a later run's) that still needs the owner asks again.
 
 An ask written as the object is headlined by its `ask` (the Inbox row, Home's banner, a push), its `why` under it;

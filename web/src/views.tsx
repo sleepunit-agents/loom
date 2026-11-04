@@ -15,6 +15,7 @@ import { ActButton, AgentAvatar, BlockView, EnvContext, Link, LoomMark, Nothing,
 import { markRead, pageHref, type Button as Btn, type Source, type Tone } from './loom';
 import { openItem, plain } from './plain';
 import { tidy } from './tidy';
+import { hasDraft } from './drafts';
 
 type Reading = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source?: Source };
 type Doing = { text: string; kind?: 'talk' | 'lane' | 'task' | 'session' | 'other'; where?: string; since?: string; page?: string; source: Source };
@@ -143,7 +144,7 @@ export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply'
   /** The exact thing it's about, outside loom (a pull request's URL); and a box to answer its agent in words (core's Needs you). */
   href?: string; reply?: { action: string; label: string; fields: Record<string, string> };
   /** A Needs you laid out (its text is the ask), and the approval it waits on. */
-  needs?: { why?: string; if_yes?: string; if_no?: string; refs: string[]; details: string }; approval?: Approval };
+  needs?: { why?: string; if_yes?: string; if_no?: string; answers?: 'yes-no' | 'words'; refs: string[]; details: string }; approval?: Approval };
 export const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
 
 /** Opening an item (plain.ts opensTo): its own page when it has one; else its sheet, here (`sheet`, in the Inbox) or
@@ -174,7 +175,11 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
           {/* A quote (a memory's words, a reason) reads to three lines; the row opens it whole. */}
           {(p.why ?? i.outcome) && <span className="line-clamp-3 break-words text-sm opacity-70">{tidy(p.why ?? i.outcome ?? '')}</span>}
         </span>
-        <Badge variant={i.attention ? 'pending' : 'default'} className="shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
+        <span className="grid shrink-0 justify-items-end gap-1">
+          <Badge variant={i.attention ? 'pending' : 'default'}>{p.ended ?? KIND[i.kind]}</Badge>
+          {/* A reply typed in its sheet and not sent (drafts.ts): said here, so it isn't forgotten. */}
+          {i.reply && i.attention && hasDraft(i.key) && <span className="text-xs font-medium text-[color:var(--v-pink-deep)]">Draft not sent</span>}
+        </span>
       </button>
     </Arrive>
   );

@@ -26,8 +26,10 @@ process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
   if (process.argv[2] === 'grants') return console.log('{"allow":true}');
   const f = process.env.LOOM_HOME + '/runtime-calls.jsonl';
-  fs.appendFileSync(f, JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(input) }) + '\\n');
-  console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: 2, body: 'resumed' }));
+  const stdin = JSON.parse(input);
+  fs.appendFileSync(f, JSON.stringify({ argv: process.argv.slice(2), stdin }) + '\\n');
+  // A body that's slow to take it (the live one, 2026-11-04: "its body is still starting", 3.5 s).
+  setTimeout(() => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: 2, body: 'resumed' })), /SLOW/.test(stdin.text ?? '') ? 800 : 0);
 });
 `;
 
@@ -189,6 +191,129 @@ describe('a Needs you alert: its sheet replies, marks done and dismisses', () =>
     expect(await press(cookie, d, a, a.reply.action, { ...a.reply.fields, text: 'too late' })).toMatchObject({ ok: false });
     expect(calls()).toEqual([]);
     expect(alertOf(await inbox(cookie)).text).toBe('Art E Fish needs you: Merge art#69 now');
+  });
+});
+
+describe('a yes/no Needs you: Yes and No answer it, and nothing typed is lost to Done', () => {
+  let h: Household;
+  let handle: HttpServeHandle;
+  let base: string;
+  let owner: string;
+  let art: string;
+  let conv: string;
+  const saved = process.env.LOOM_HOME;
+  const ASK = 'Can you review and merge the fix that catches wake bodies that die without finishing?';
+
+  beforeEach(async () => {
+    h = household();
+    process.env.LOOM_HOME = h.home;
+    clearPieceCache();
+    owner = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    art = agentDir(h, 'art');
+    // The live one Jonathan answered on 2026-11-04 (t-1824), as written: an object with if_yes and if_no.
+    conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:night', label: 't-1824: dead rounds', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
+    writeDigest(art, { conversation: conv, run: 'r1' }, {
+      summary: 'Opened art#69.', needs_owner: { ask: ASK, why: 'Two of the backup-setup bodies died silently yesterday.',
+        if_yes: 'I check the hourly checker can reach loom, then close it out.', if_no: 'Dead bodies keep going unnoticed until the nightly reflect.',
+        refs: ['t-1824', 'sleepunit-agents/art#69'], href: 'https://github.com/sleepunit-agents/art/pull/69' },
+    });
+    handle = await startHttpServer({ contextDir: art, host: '127.0.0.1', port: 0, household: h });
+    base = `http://127.0.0.1:${handle.port}`;
+  });
+  afterEach(async () => {
+    await handle.close();
+    await closeAllBackends();
+    clearPieceCache();
+    if (saved === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved;
+    rmSync(h.home, { recursive: true, force: true });
+  });
+
+  const login = async () => {
+    const r = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(owner)}`, redirect: 'manual' });
+    return (r.headers.get('set-cookie') ?? '').split(';')[0];
+  };
+  const inbox = async (cookie: string): Promise<Data> => (await fetch(`${base}/inbox`, { headers: { cookie, accept: 'application/json' } })).json();
+  const alertOf = (d: Data): Data => (d.items as Data[]).find((i) => i.kind === 'alert' && i.attention);
+  /** What the sheet posts (inbox.tsx useAnswer, blocks.tsx ActButton): the action, with the item's reply fields. */
+  const press = async (cookie: string, d: Data, item: Data, action: string, fields: Record<string, string>) => {
+    const r = await fetch(`${base}${item.source.act}`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _csrf: d.ctx.csrf, _action: action, _path: 'loom:inbox', ...fields }).toString(),
+    });
+    expect(r.status).toBe(200);
+    return r.json() as Promise<{ ok: boolean; message: string }>;
+  };
+  const calls = (): Data[] => {
+    const f = join(h.home, 'runtime-calls.jsonl');
+    return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+  };
+
+  it('is a yes/no question: it has if_yes and if_no, so its sheet answers Yes and No', async () => {
+    const a = alertOf(await inbox(await login()));
+    expect(a.needs).toMatchObject({ answers: 'yes-no', if_yes: expect.any(String), if_no: expect.any(String) });
+  });
+
+  it('Yes delivers "Yes" and the ask\'s own if_yes line to the conversation, and answers it: "You said yes"', async () => {
+    const cookie = await login();
+    const d = await inbox(cookie);
+    const a = alertOf(d);
+    expect(await press(cookie, d, a, 'needs-answer', { ...a.reply.fields, answer: 'yes' })).toMatchObject({ ok: true, message: expect.stringMatching(/^Sent\./) });
+    const [call] = calls();
+    expect(call.stdin).toMatchObject({ venue: 'wake', place: 'lane:night', from: { kind: 'person', slug: 'jonathan' }, kind: 'message',
+      text: `Yes, to: ${ASK}\nIf yes, you said: I check the hourly checker can reach loom, then close it out.` });
+    const after = await inbox(cookie);
+    expect(alertOf(after)).toBeUndefined();
+    expect((after.items as Data[]).find((i) => i.kind === 'answered')).toMatchObject({ outcome: 'You said yes', text: ASK });
+  });
+
+  it('No delivers "No" and its if_no line: "You said no"', async () => {
+    const cookie = await login();
+    const d = await inbox(cookie);
+    const a = alertOf(d);
+    expect(await press(cookie, d, a, 'needs-answer', { ...a.reply.fields, answer: 'no' })).toMatchObject({ ok: true });
+    expect(calls()[0].stdin.text).toBe(`No, to: ${ASK}\nIf no, you said: Dead bodies keep going unnoticed until the nightly reflect.`);
+    expect((await inbox(cookie)).items.find((i: Data) => i.kind === 'answered')).toMatchObject({ outcome: 'You said no' });
+  });
+
+  it('an answer other than yes or no is refused, and reaches nobody', async () => {
+    const cookie = await login();
+    const d = await inbox(cookie);
+    const a = alertOf(d);
+    expect(await press(cookie, d, a, 'needs-answer', { ...a.reply.fields, answer: 'maybe' })).toMatchObject({ ok: false });
+    expect(calls()).toEqual([]);
+    expect(alertOf(await inbox(cookie))).toBeDefined();
+  });
+
+  it('an ask marked answers: "words" has no Yes or No, and refuses one', async () => {
+    writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'Asked who reviews.', needs_owner: {
+      ask: 'Should I hand my two fixes to Gabe or Mark to review, or close them?', answers: 'words',
+      if_yes: 'Reply with who reviews them.', if_no: 'Reply close and I close both.' } }, new Date(Date.now() + 1000));
+    const cookie = await login();
+    const d = await inbox(cookie);
+    const a = alertOf(d);
+    expect(a.needs.answers).toBe('words');
+    expect(await press(cookie, d, a, 'needs-answer', { ...a.reply.fields, answer: 'yes' })).toMatchObject({ ok: false, message: expect.stringMatching(/isn't a yes or no/) });
+    expect(calls()).toEqual([]);
+  });
+
+  it('a plain string ask is answered in words, never Yes or No', async () => {
+    writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 's', needs_owner: 'Merge art#69 when you can' }, new Date(Date.now() + 1000));
+    const a = alertOf(await inbox(await login()));
+    expect(a.needs.answers).toBe('words');
+  });
+
+  it('Done pressed while a reply is on its way: the words still reached the agent, so the reply says Sent, not that they didn\'t', async () => {
+    // 2026-11-04, live: a reply took 3.5 s ("its body is still starting"), Done landed 1 s in and answered the ask, and
+    // the reply then failed on the already-answered ask, so the sheet said it hadn't gone. It had.
+    const cookie = await login();
+    const d = await inbox(cookie);
+    const a = alertOf(d);
+    const reply = press(cookie, d, a, a.reply.action, { ...a.reply.fields, text: 'SLOW yes, merge it' });
+    await new Promise((r) => setTimeout(r, 300));
+    const done = a.actions.find((b: Data) => b.label === 'Done');
+    expect(await press(cookie, d, a, done.action, done.fields)).toMatchObject({ ok: true });
+    expect(await reply).toMatchObject({ ok: true, message: expect.stringMatching(/^Sent\./) });
+    expect(calls().map((c) => c.stdin.text)).toEqual(['SLOW yes, merge it']);
   });
 });
 
