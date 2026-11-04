@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { loadHousehold, rawHousehold, type Household } from './household.js';
 import {
-  alertCommandArgv, backupProblem, backupRow, BackupError, ensureDrillKey, isDue, keptStamps, lastSlot, readSettings, readState, runBackup,
+  alertCommandArgv, backupProblem, gitFailure, parseTarget, scrub, backupRow, BackupError, ensureDrillKey, isDue, keptStamps, lastSlot, readSettings, readState, runBackup,
   setSettings, stampOf, takeLock, tickBackup, validateSettings, type CoreAlert, type RunDeps,
 } from './backup.js';
 import { backupAsks } from './ui/handler.js';
@@ -115,6 +115,34 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(() => validateSettings({ ...ok, at: '24:00' })).toThrow(/HH:MM/);
     expect(() => validateSettings({ ...ok, tz: 'Mars/Olympus' })).toThrow(/time zone/);
     expect(validateSettings(ok)).toMatchObject({ at: '03:00', keep: 7 });
+  });
+
+  it('a target URL with credentials in it is refused; git\'s words never carry userinfo or the target URL', () => {
+    expect(() => parseTarget('git:https://u:p@github.com/x/y.git')).toThrow(/carries no credentials/);
+    expect(() => parseTarget('git:https://ghp_abcdefghijklmnop@github.com/x/y.git')).toThrow(/carries no credentials/);
+    expect(() => parseTarget('git:ssh://u:p@host/x.git')).toThrow(/carries no credentials/);
+    expect(parseTarget('git:ssh://git@github.com/x/y.git')).toEqual({ kind: 'git', url: 'ssh://git@github.com/x/y.git' });
+    expect(parseTarget('git:git@github.com:x/y.git')).toEqual({ kind: 'git', url: 'git@github.com:x/y.git' });
+    const said = gitFailure('push', "remote: denied\nfatal: unable to access 'https://u:p@host/org/repo.git/': 403", 'https://github.com/x/backups.git');
+    expect(said).not.toMatch(/u:p/);
+    expect(said).toMatch(/https:\/\/\*\*\*@host/);
+    expect(scrub('fatal: could not read from https://github.com/x/backups.git', 'https://github.com/x/backups.git')).toBe('fatal: could not read from <target backups>');
+    expect(scrub('see http://tok@a.b/c and https://x:y@z/w')).toBe('see http://***@a.b/c and https://***@z/w');
+  });
+
+  it('a git failure in a run reaches the state and the alert without userinfo', async () => {
+    const remote = join(work, 'remote.git');
+    git(['init', '-q', '--bare', remote]);
+    settings(`git:${remote}`);
+    // Point origin of loom's clone somewhere that fails with a URL holding userinfo in git's own words.
+    const deps = fakes();
+    const run0 = await runBackup({ home: h.home, env, deps });
+    expect(run0.ok).toBe(true);
+    git(['--git-dir', join(h.home, 'backup', 'repo.git'), 'config', 'remote.origin.pushurl', 'https://user:sekrit@127.0.0.1:1/x.git']);
+    const run = await runBackup({ home: h.home, env, now: () => new Date(Date.now() + 86_400_000), deps });
+    expect(run.ok).toBe(false);
+    expect(JSON.stringify(readState(h.home))).not.toMatch(/sekrit/);
+    expect(JSON.stringify(alerts)).not.toMatch(/sekrit/);
   });
 
   it('a path inside $LOOM_HOME is refused', () => {

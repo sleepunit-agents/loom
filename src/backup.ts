@@ -71,7 +71,12 @@ export function parseTarget(s: string): Target {
   const t = String(s ?? '').trim();
   if (t.startsWith('git:')) {
     const url = t.slice(4);
-    if (!GIT_URL.test(url) || url.startsWith('-')) throw new BackupError(`${url} isn't a git URL loom pushes to (https://, ssh://, user@host:path, or a local path)`);
+    if (!GIT_URL.test(url) || url.startsWith('-')) throw new BackupError(`${scrub(url)} isn't a git URL loom pushes to (https://, ssh://, user@host:path, or a local path)`);
+    // Credentials come from git's own credential helper or ssh key, never the URL: an https URL with userinfo is refused
+    // (it would sit in household.json and in every bundle). ssh://git@host, a user name alone, is how ssh names one.
+    if (/^https:\/\/[^/]*@/.test(url) || /^ssh:\/\/[^/@]*:[^/@]*@/.test(url) || /^file:\/\/[^/]*@/.test(url)) {
+      throw new BackupError('a target URL carries no credentials (user:pass@ or token@): git\'s credential helper or an ssh key supplies them');
+    }
     return { kind: 'git', url };
   }
   if (t.startsWith('path:')) {
@@ -80,6 +85,20 @@ export function parseTarget(s: string): Target {
     return { kind: 'path', dir };
   }
   throw new BackupError('a target is git:<url> or path:<absolute directory>');
+}
+
+/**
+ * Text from git (or about the target) as it may go into an error, the state, a log or an alert: any URL's userinfo
+ * masked, and the configured target URL itself replaced by its short name.
+ */
+export function scrub(text: string, url?: string): string {
+  let t = String(text ?? '');
+  if (url) t = t.split(url).join(`<target ${shortName(url)}>`);
+  return t.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^@\s/]+@/g, '$1***@');
+}
+
+function shortName(url: string): string {
+  return url.replace(/\.git$/, '').split(/[/:]/).filter(Boolean).pop()?.replace(/^[^@]*@/, '') ?? 'repo';
 }
 
 export function targetString(t: Target): string { return t.kind === 'git' ? `git:${t.url}` : `path:${t.dir}`; }
@@ -346,14 +365,20 @@ branch is always one commit: loom replaces it each night.
 `;
 }
 
-function git(args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string | Buffer } = {}): string {
+/** git's stderr as a failure's words: userinfo masked, the target named by its short name, the last two lines. */
+export function gitFailure(verb: string, stderr: string, url?: string): string {
+  const why = scrub(String(stderr ?? '').trim(), url).split('\n').filter((l) => !/password|token/i.test(l)).slice(-2).join(' ');
+  return `git ${verb} failed: ${why.slice(0, 300)}`;
+}
+
+function git(args: string[], o: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string | Buffer; url?: string } = {}): string {
   const r = spawnSync('git', args, { cwd: o.cwd, env: o.env ?? process.env, input: o.input, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, timeout: 30 * 60_000 });
-  if (r.status !== 0) {
-    const why = `${r.stderr || r.error?.message || `exit ${r.status}`}`.trim().split('\n').filter((l) => !/password|token/i.test(l)).slice(-2).join(' ');
-    throw new BackupError(`git ${args[0] === '-C' ? args[2] : args[0]} failed: ${why.slice(0, 300)}`);
-  }
+  if (r.status !== 0) throw new BackupError(gitFailure(args[0] === '-C' ? args[2] : args[0], `${r.stderr || r.error?.message || `exit ${r.status}`}`, o.url ?? currentUrl));
   return r.stdout;
 }
+
+/** The target URL of the run under way, so every git failure in it is scrubbed of it. */
+let currentUrl: string | undefined;
 
 /** The git target's bare clone, its remote set to the target. */
 function gitRepo(home: string, url: string, env: NodeJS.ProcessEnv): string {
@@ -458,6 +483,7 @@ export async function runBackup(opts: { home: string; env: NodeJS.ProcessEnv; no
     if (!s) throw new BackupError(problem ? `the backup's settings: ${problem}` : 'the backup isn\'t set up (loom backup set)');
     assertOutsideHome(opts.home, s.target);
     if (!before.setAt) throw new BackupError('this household was restored here: run loom backup set to resume its backup on this machine');
+    if (s.target.kind === 'git') currentUrl = s.target.url;
     const key = ensureDrillKey(opts.home, opts.env);
     const recipients = [...s.recipients, key.recipient];
     // The target first: refusing it costs nothing, an export costs minutes.
@@ -504,8 +530,9 @@ export async function runBackup(opts: { home: string; env: NodeJS.ProcessEnv; no
     run.ok = true;
   } catch (e) {
     run.ok = false;
-    run.why = (e as Error).message.slice(0, 500);
+    run.why = scrub((e as Error).message, currentUrl).slice(0, 500);
   } finally {
+    currentUrl = undefined;
     rmSync(work, { recursive: true, force: true });
   }
   run.ms = now().getTime() - started.getTime();

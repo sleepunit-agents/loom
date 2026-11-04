@@ -1625,6 +1625,19 @@ esac
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = async (cookie: string, path: string): Promise<any> => (await page(cookie, path)).json();
 
+  it('the backup\'s alert (its target, its errors) is a household owner\'s: an agent owner\'s Inbox, Home and Find carry none', async () => {
+    const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...raw, backup: { target: 'path:/mnt/secret-nas/backups', recipients: ['age1' + 'q'.repeat(58)], at: '03:00', tz: 'UTC', keep: 7 } }));
+    mkdirSync(join(h.home, 'backup'), { recursive: true });
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ v: 1, setAt: new Date(Date.now() - 3600_000).toISOString(),
+      runs: [{ at: new Date().toISOString(), ok: false, why: 'git push failed: /mnt/secret-nas/backups is full' }] }));
+    const lorenC = await login(loren);
+    const jonC = await login(jonathan);
+    const has = (x: unknown) => JSON.stringify(x).includes('secret-nas') || JSON.stringify(x).includes('nightly backup');
+    expect(has(await data(jonC, '/inbox'))).toBe(true);
+    for (const path of ['/inbox', '/', '/find?q=backup', '/find?q=nightly']) expect(has(await data(lorenC, path)), path).toBe(false);
+  });
+
   it('an agent owner\'s live stream hears of their agents only: art\'s memory moving is no news to Loren', async () => {
     const open = async (cookie: string) => {
       const ac = new AbortController();
