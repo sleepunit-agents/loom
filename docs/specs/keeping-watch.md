@@ -45,8 +45,13 @@ today (loom-box `alerthook.mjs`, t-1830):
    and an FYI says it's over ("OK again after 14 min").
 2. **The owner's alert command**, if one is set: a JSON argv
    (`LOOM_RUNTIME_ALERT_COMMAND` for the runtime, `LOOM_ALERT_COMMAND` in the
-   daemon's environment for core), run detached with
-   `<source> --severity warn|bad --summary <one line> [--fact k=v]...`. In
+   daemon's environment for core, which this work adds with the same
+   rules), run detached and never waited on with
+   `<source> --severity warn|bad --summary <one line> [--fact k=v]...`: a
+   source matches `^[a-z][a-z0-9-]{0,39}$`, a fact key
+   `^[a-z][a-z0-9_-]{0,31}$`, the summary is one line of at most 200
+   characters and each fact value of at most 300; anything else is dropped,
+   and an argv that isn't a JSON array of strings is no command at all. In
    Art's household that's `bin/alert`, which wakes Art on `alert:<source>`
    to triage it (t-1830). A command that fails or isn't set changes nothing
    else. Core's is an environment variable, never a household setting: a
@@ -76,6 +81,10 @@ off-box status board was tried and reverted, loom-box #65).
 
 ### Settings
 
+The backup is a household's: a plain context dir with no `household.json`
+around it has none (`loom backup set` says so), because the drill compares
+against a live household. Such an install keeps `loom export` by hand.
+
 The backup's settings live in `household.json` under `backup`, set with
 `loom backup set` or on the default agent's Setup, and shown there:
 
@@ -95,6 +104,11 @@ The backup's settings live in `household.json` under `backup`, set with
   IANA zone). Defaults `03:00` and the time zone of the machine
   `loom backup set` runs on (`Intl.DateTimeFormat().resolvedOptions()`).
 - **`keep`**: nights kept besides each month's first. Default 7.
+- **`required`**: pieces whose part every bundle must hold, whatever the last
+  good one held: the floor for a fresh machine (Art's: box, clock, secrets,
+  tasks, as `art-loom-bundle` required). Default none.
+- The drill key's own public key is never one of `recipients`: `set`
+  refuses it.
 - **Nothing in the settings is secret.** A bundle carries `household.json`,
   so a restored household keeps its backup settings.
 - **A path target may not be inside `$LOOM_HOME`.**
@@ -163,8 +177,8 @@ hand):
    decrypt, can't read the bundle, can't find the live household) is a
    failure too, with no retry: nothing is pushed. Only a bundle whose drill
    passed is ever written to the target.
-3. **Required parts.** Every piece whose part was in the last good bundle,
-   and that's still installed, must be in this one (a piece the owner
+3. **Required parts.** Every piece in `required`, and every piece whose part
+   was in the last good bundle and that's still installed, must be in this one (a piece the owner
    removed isn't required). The **last good bundle** is the newest run recorded
    with `ok: true`; the state records each run's included pieces. One
    missing is still written (the rest is worth having offsite), and the run
@@ -186,10 +200,14 @@ hand):
      a file over 100 MB); a smaller one is `bundles/<name>`. The parts must
      rejoin, byte for byte, to the drilled file before anything is
      committed.
-5. **Prune** to `keep` nights plus the first bundle of each month.
+5. **Prune** to `keep` nights plus each month's first: the earliest bundle
+   still kept in that calendar month (so a month whose 1st failed keeps its
+   2nd). A night's parts are kept or pruned together, by their stamp.
 6. **Push (git).** The branch is `main`, and it's always **one commit**:
-   the kept bundles, `RESTORE.md` and `.loom-backup`, committed with no
-   parent and pushed with `--force-with-lease=refs/heads/main:<sha>`, where
+   the remote tree from step 4 (any file that isn't a bundle is kept as it
+   was) with the kept bundles, `RESTORE.md` and `.loom-backup`, committed
+   with no parent (`commit-tree --no-gpg-sign`, so a signing git config
+   can't stop it) and pushed with `--force-with-lease=refs/heads/main:<sha>`, where
    `<sha>` is what `git ls-remote` said `main` was at the start of this run
    (empty, so "must not exist", for an empty repo). Bundles are
    ~100 MB a night; a history of them would grow without end (art-vault is
@@ -218,7 +236,8 @@ back: install loom, join the parts with `cat`, `loom restore <bundle>
 loom runs as three listener processes (`loom serve --http` on loopback, the
 tailnet and the LAN; `loom-http*.service`), each its own daemon. Each of them
 checks every 10 minutes whether a run is due
-(`at` has passed today, in `tz`, and no run has started since). One of them
+(the latest `at`, in `tz`, has passed, and no run has started since that
+moment). One of them
 takes `$LOOM_HOME/backup/run.lock` (created with `O_EXCL`, holding its pid
 and when; one whose pid is gone, or older than 6 hours, is stale and taken
 over) and runs the backup in a child process (`loom backup tick`), so a crash
@@ -279,10 +298,12 @@ Each box samples its systemd units each minute: the runner's user's
 read). It reports:
 
 - every unit in state `failed`, with its result and since when;
-- every service whose `NRestarts` has gone up 3 or more times in 15 minutes
-  (a crash loop with `Restart=always` is never `failed`);
-- for each, the last 10 lines of its journal where the runner can read them,
-  with what looks like a secret redacted (as `art-unit-alert` does: webhook
+- every service that's **looping** (defined below: a crash loop with
+  `Restart=always` is never `failed`);
+- for each, the last 10 lines of its own journal where the runner can read
+  them: from the last 50, systemd's own status lines (` systemd[N]: `)
+  dropped so what's left is the process's own words, as `art-unit-alert`
+  did, with what looks like a secret redacted (as `art-unit-alert` does: webhook
   URLs, bearer tokens, `key=value` for password, secret, token and api key,
   `sk-…`), capped at 1200 characters.
 
@@ -334,12 +355,22 @@ it, so the thresholds below mean what they meant there. Everything is read
 without root; what can't be read is left out, never guessed, and the box's
 page lists what wasn't read ("not read: SMART, pools").
 
+**A reading that's missing is unknown, never fine.** A sample that couldn't
+read something (no `zpool`, a `root-health.json` gone stale) neither holds
+nor ends a condition on it: the condition stays as it was, with no "(still)"
+and no "OK again", and the page says the reading is missing. Only a sample
+that reads it and finds it fine ends it. A reading missing for 30 minutes
+that the box had before is its own condition (`unread-<reading>`, warn,
+at once): the watch has gone partly blind.
+
 **A container box reads only what's its own.** In a container (systemd's
 `detect-virt --container`, or `/run/.containerenv`), `/proc/pressure` is the
 host's, and so are the disks and ZFS. A container box takes pressure from its
 own cgroup (`/sys/fs/cgroup/{cpu,io,memory}.pressure`) and leaves out disks,
-ZFS and containers; memory, swap and load come from `/proc` as lxcfs gives
-them (the container's own). The host's readings come from the host's own box,
+ZFS and containers. In an LXC container (`detect-virt` says `lxc`), memory,
+swap and load come from `/proc` as lxcfs gives them (the container's own); in
+any other (podman, docker: no lxcfs), they're the host's, so they're left out
+too. The host's readings come from the host's own box,
 once, never from each container on it.
 
 | Reading | From |
@@ -551,6 +582,15 @@ Jonathan turns the old one off.
   `root-health.json` over 30 minutes old is ignored.
 
 ## Open questions
+
+- **Is the drill key allowed in core?** household.md's test says a secret is
+  never core, with no exception. This spec's argument (above, "Is this
+  core?") is that the drill key opens nothing but core's own backup and
+  gives no one new reach, and that the alert command is the owner's own
+  daemon configuration. That's a reading of the rule, not the rule, and it's
+  Jonathan's to accept. The way out, if not: the drill runs only when the
+  owner's key is at hand, which a nightly job can't do, so the drill moves
+  to the runtime (a piece, holding its own key).
 
 - **A warm standby** (household.md's open question): out of scope. The
   nightly bundle and the owner's key are the USB stick.
