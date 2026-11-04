@@ -18,7 +18,6 @@ import { ArrivalContext, arriveOnce, type Arrivals } from './arrive';
 import { Boundary, Callout, iconFor } from './safe';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
-import { toTop } from './standalone';
 import { Spinner } from '@/components/ui/spinner';
 import { refreshEvery, type Showing } from './refresh';
 // The toasts load with the first one (toasts.tsx).
@@ -134,7 +133,7 @@ export default function App() {
       showing.current = to;
       if (have) {
         if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
-        setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); toTop();
+        setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
       }
       setWaiting(!have); setPending(have ? null : to);
     }
@@ -163,7 +162,7 @@ export default function App() {
     if (r.etag && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
     const flash = r.data.chrome?.flash;
     if (flash) say(flash);
-    if (!quiet && !have) toTop();
+    if (!quiet && !have) window.scrollTo({ top: 0 });
   }, [say]);
 
   // What's new arrives (arrive.tsx): what this page showed at its last answer, against what it shows now.
