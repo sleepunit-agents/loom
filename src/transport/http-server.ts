@@ -44,6 +44,10 @@ import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { WATCH_S } from '../ui/push.js';
+import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
+
+/** How often core checks what open Needs you wait on. */
+const NEEDS_TICK_MS = 60_000;
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
@@ -846,6 +850,17 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`));
   }, WATCH_S * 1000);
   pushTimer?.unref();
+  // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
+  // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
+  const resolveAll = () => {
+    if (!live) return;
+    void resolveNeeds(live(), pieceCheckers(process.env))
+      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`));
+  };
+  const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
+  needsTimer?.unref();
+  const needsFirst = needsTimer ? setTimeout(resolveAll, 2_000) : undefined;
+  needsFirst?.unref();
 
   const http = createServer((req, res) => {
     void (async () => {
@@ -1026,6 +1041,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     host: opts.host,
     async close() {
       if (pushTimer) clearInterval(pushTimer);
+      if (needsTimer) clearInterval(needsTimer);
+      if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);

@@ -110,7 +110,16 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
   /** The exact thing it's about, outside loom (a pull request's URL): its sheet's first button. Core's asks only. */
   href?: string;
   /** Its sheet has a box to answer the agent in words: posted as `action` with `fields` and the words as `text`. Core's only. */
-  reply?: { action: string; label: string; fields: Record<string, string> } }
+  reply?: { action: string; label: string; fields: Record<string, string> };
+  /** A Needs you laid out (its text is the ask): why, what happens either way, the ids it's about, and where it came from. */
+  needs?: NeedsView;
+  /** The approval it waits on, absorbed: that card's words and its own Allow and Deny, posted to its piece. */
+  approval?: ApprovalView;
+  /** The approval id it waits on (core's own; not sent). */
+  waitsOnApproval?: string }
+
+export interface NeedsView { why?: string; if_yes?: string; if_no?: string; refs: string[]; details: string }
+export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source }
 
 // ─── Home, an agent's Today, and the sign-in pages ───
 
@@ -209,6 +218,8 @@ export interface InboxItem {
   outcome?: string;
   href?: string;
   reply?: HomeAsk['reply'];
+  needs?: NeedsView;
+  approval?: ApprovalView;
 }
 
 export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [

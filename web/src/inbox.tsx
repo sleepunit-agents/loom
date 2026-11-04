@@ -8,7 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Textarea } from '@/components/ui/textarea';
 import { ActButton, EnvContext, Link, LoomMark, Nothing } from './blocks';
 import type { Chrome, Source } from './loom';
-import { As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
+import { ApprovalBox, As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 
@@ -79,12 +79,14 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
   else if (i.outcome) facts.push(['Answer', i.outcome]);
   const left = i.expires ? when(i.expires) : undefined;
   if (left && i.attention) facts.push(['Until', left.split(' · ')[0]]);
-  const why = tidy(p.why ?? (i.kind !== 'answered' ? i.meta : undefined) ?? '') || undefined;
+  // A Needs you laid out (its ask is the title): why, what happens either way, the approval it waits on, links, details.
+  const n = i.needs;
+  const why = n ? n.why : tidy(p.why ?? (i.kind !== 'answered' ? i.meta : undefined) ?? '') || undefined;
   const own = i.page !== undefined && i.page !== '';
   // What it names that opens (its pull requests, tasks, conversations), each a link of its own as well as in its words;
   // its own conversation last, when the words don't name it.
   const conv = /^loom:conversation\/(cv-[0-9a-f]{12})$/.exec(i.page ?? '')?.[1];
-  const refs = refsOf(`${i.text} ${i.meta ?? ''}`, github);
+  const refs = refsOf(`${i.text} ${i.meta ?? ''} ${n?.refs.join(' ') ?? ''}`, github);
   if (conv && !refs.some((r) => r.t === 'conv' && r.id === conv)) refs.push({ t: 'conv', id: conv });
   const linked = !!i.href || (i.kind === 'alert' && refs.length > 0);
   const words = (s: string) => bits(s, github).map((b, n) => <Ref key={n} b={b} tasks={tasks} />);
@@ -102,10 +104,17 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
       <div className="grid gap-5 py-2">
         {why && (
           <section className="grid gap-1.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">{i.kind === 'fyi' || i.kind === 'alert' || i.kind === 'todo' ? 'Details' : 'Why'}</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">{!n && (i.kind === 'fyi' || i.kind === 'alert' || i.kind === 'todo') ? 'Details' : 'Why'}</h3>
             <p className="break-words leading-relaxed">{words(why)}</p>
           </section>
         )}
+        {(n?.if_yes || n?.if_no) && (
+          <dl className="grid gap-3 sm:grid-cols-2">
+            {([['If yes', n.if_yes], ['If no', n.if_no]] as const).filter(([, v]) => v).map(([k, v]) => (
+              <div key={k} className="grid gap-1"><dt className="text-xs font-semibold uppercase tracking-wide opacity-60">{k}</dt><dd className="break-words">{words(v!)}</dd></div>))}
+          </dl>
+        )}
+        {i.approval && i.attention && <ApprovalBox a={i.approval} size="default" onDone={onDone} />}
         {linked && (
           <section className="grid gap-2" aria-label="Links">
             <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Links</h3>
@@ -121,6 +130,12 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
           </section>
         )}
         {i.reply && i.attention && <As source={i.source}><ReplyBox r={i.reply} onDone={onDone} /></As>}
+        {n && (
+          <section className="grid gap-1.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Details</h3>
+            <p className="break-words text-sm leading-relaxed opacity-80">{words([n.details, ...n.refs].join(' · '))}</p>
+          </section>
+        )}
         {facts.length > 0 && (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm">
             {facts.map(([k, v]) => [<dt key={`${k}k`} className="opacity-60">{k}</dt>, <dd key={`${k}v`} className="min-w-0">{v}</dd>])}

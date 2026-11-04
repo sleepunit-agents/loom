@@ -53,6 +53,7 @@ import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } from './core.js';
 import { answeredNeeds, answerNeeds, ConversationError, getConversation as conversationOf, isConversationId, openNeeds, type NeedsVerdict } from '../backends/conversations.js';
 import { deliverAsOwner } from '../delivery.js';
+import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
@@ -498,7 +499,7 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
   const hh = opts.household?.();
   const needs = (a: HomeAsk) => a.attention !== false;
-  if (hh) return [...coreAsks(hh), ...pieceAsks(pieces, opts.env)].filter(needs);
+  if (hh) return absorbApprovals([...coreAsks(hh), ...pieceAsks(pieces, opts.env)], opts.env).filter(needs);
   return pieceAsks(pieces, opts.env).filter(needs);
 }
 
@@ -562,11 +563,18 @@ export function conversationAsks(h: Household): HomeAsk[] {
     // and Dismiss, all posted to the agent's own actions (/a/<agent>/act/loom: needsAct).
     return open.map(({ conversation: c, digest: d }): HomeAsk => {
       const fields = { conversation: c.id, digest: d.id };
+      const where = `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`;
+      const n = d.needs;
+      // An ask written as the object reads as itself: the ask is the headline, its why the row's second line
+      // (Jonathan, 2026-11-03: "I don't know wtf that wants from me"). A plain string reads as it always did.
+      const plain = n && !n.legacy;
       return {
-        kind: 'alert', text: `${name} needs you: ${d.needs_owner}`,
-        meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
+        kind: 'alert', text: plain ? n.ask : `${name} needs you: ${d.needs_owner}`,
+        meta: plain ? n.why ?? where : where,
         page: `loom:conversation/${c.id}`, label: 'Open the conversation', agent: a, at: d.at, source: agentSource(a), sourceLabel: 'Conversations',
         ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}),
+        ...(n ? { needs: { ...(plain && n.why ? { why: n.why } : {}), ...(n.if_yes ? { if_yes: n.if_yes } : {}), ...(n.if_no ? { if_no: n.if_no } : {}), refs: n.refs, details: where } } : {}),
+        ...(n?.waits_on && 'approval' in n.waits_on ? { waitsOnApproval: n.waits_on.approval } : {}),
         reply: { action: 'needs-reply', label: `Reply to ${name}`, fields },
         actions: [{ action: 'needs-done', label: 'Done', tone: 'primary', fields }, { action: 'needs-dismiss', label: 'Dismiss', fields }],
       };
@@ -583,7 +591,13 @@ function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
     const name = agentName(agentDir(h, a));
     return done.map(({ conversation: c, digest: d, answer }): InboxItem => {
       const source = agentSource(a);
-      const text = `${name} needs you: ${d.needs_owner}`;
+      const text = d.needs && !d.needs.legacy ? d.needs.ask : `${name} needs you: ${d.needs_owner}`;
+      // One that cleared itself (what it waited on was resolved) is a quiet FYI that says how.
+      if (answer.verdict === 'resolved') {
+        return { key: askKey({ source, text, page: `resolved:${answer.at}` }), kind: 'fyi', attention: false, unread: false, text,
+          meta: `Cleared itself: ${answer.reason ?? 'what it waited on was resolved'}`, at: answer.at, agent: a, source, sourceLabel: 'Conversations',
+          page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
+      }
       return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', attention: false, unread: false, text,
         outcome: answer.verdict === 'replied' ? 'You replied' : 'Done', meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
         at: answer.at, agent: a, source, sourceLabel: 'Conversations', page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
@@ -635,6 +649,28 @@ function needsCount(h: Household, agent: string): number {
   try { return openNeeds(agentDir(h, agent)).length; } catch { return 0; }
 }
 
+/**
+ * One item, not two (t-1778): a Needs you that waits on an approval absorbs that approval's own card (the approvals
+ * piece's ask, found by its Allow's id), so its sheet holds Allow and Deny and the card isn't in the Inbox beside it.
+ * Only the agent's own approval: an ask can't take another agent's card under its words. Allow and Deny still post
+ * to the approvals piece, as the card's would.
+ */
+export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAsk[] {
+  if (!asks.some((a) => a.waitsOnApproval)) return asks;
+  const piece = pieceWithRole(env, 'approvals')?.name;
+  if (!piece) return asks;
+  const src = pieceSource(piece).id;
+  const taken = new Set<HomeAsk>();
+  const out = asks.map((a) => {
+    if (!a.waitsOnApproval) return a;
+    const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
+    if (!card) return a;
+    taken.add(card);
+    return { ...a, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source } };
+  });
+  return out.filter((a) => !taken.has(a));
+}
+
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
 function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
   return [
@@ -673,12 +709,12 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, and
  * what the owner's own actions said (their toasts, as FYI), newest first. */
 function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[] = []): InboxItem[] {
-  const asks = [...coreAsks(h), ...pieceAsks(pieces, env)];
+  const asks = absorbApprovals([...coreAsks(h), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
-      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}) })),
+      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}) })),
     ...pieces.flatMap((p) => {
       const source = pieceSource(p.piece);
       const sourceLabel = p.manifest.tab?.label ?? p.piece;
@@ -703,7 +739,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
 function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[]): Found {
   const needle = q.toLowerCase();
   const hh = opts.household?.();
-  const asks = [...(hh ? coreAsks(hh) : []), ...pieceAsks(pieces, opts.env)];
+  const asks = absorbApprovals([...(hh ? coreAsks(hh) : []), ...pieceAsks(pieces, opts.env)], opts.env);
   const found: Found = {
     do: asks.filter((a) => `${a.text} ${a.label ?? ''} ${a.sourceLabel ?? ''}`.toLowerCase().includes(needle))
       .slice(0, 5).map((a) => ({ label: a.text, href: a.page !== undefined ? pageHref(a.page, a.source) : '/' })),
@@ -1238,6 +1274,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+      // An approval answered: the Needs you that waited on it clears now, not at the next minute's pass.
+      if (result.ok && hh && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
+        await resolveNeeds(hh, pieceCheckers(opts.env)).catch(() => undefined);
+      }
     }
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again
     // What the toast says stays in the Inbox as an FYI (Jonathan, 2026-11-03: "any meaningful toast also leaves an FYI
@@ -1493,7 +1533,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             id: agent, today: t.items.length, active: lastActive(agentDir(hh, agent)),
             waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0),
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })() },
-          asks: [...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))],
+          asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
           thread: t.items.slice(0, HOME_THREAD).map((r) => ({ agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), where: whereLabel(r.where), at: r.created, page: r.page })),

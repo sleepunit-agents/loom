@@ -79,7 +79,9 @@ function AgentIdentity({ c }: { c: AgentCard }) {
   );
 }
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
-type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string };
+type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string; approval?: Approval };
+/** The approval a Needs you waits on, absorbed into it: that card's words and its Allow and Deny, posted to its piece. */
+export type Approval = { text: string; meta?: string; actions: Btn[]; source: Source };
 type ThreadRow = { agent?: string; text: string; meta?: string; where?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
 /** The page's ground (ground.tsx): the contour field, the depth background's contours, or the plain wash. */
@@ -139,7 +141,9 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
 
 export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
   /** The exact thing it's about, outside loom (a pull request's URL); and a box to answer its agent in words (core's Needs you). */
-  href?: string; reply?: { action: string; label: string; fields: Record<string, string> } };
+  href?: string; reply?: { action: string; label: string; fields: Record<string, string> };
+  /** A Needs you laid out (its text is the ask), and the approval it waits on. */
+  needs?: { why?: string; if_yes?: string; if_no?: string; refs: string[]; details: string }; approval?: Approval };
 export const KIND: Record<InboxItem['kind'], string> = { permission: 'Permission', decision: 'Decision', reply: 'Reply', alert: 'Alert', todo: 'To do', fyi: 'FYI', answered: 'Answered' };
 
 /** Opening an item (plain.ts opensTo): its own page when it has one; else its sheet, here (`sheet`, in the Inbox) or
@@ -188,11 +192,31 @@ function Asks({ asks }: { asks: Ask[] }) {
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
             {a.meta && <p className="text-sm opacity-70">{a.meta}</p>}
+            {a.approval && <ApprovalBox a={a.approval} />}
             {a.actions && <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>}
           </CardContent>
         </Card>
       </Arrive></As>))}
     </div>
+  );
+}
+
+/**
+ * What Allow allows, beside Allow (security review, t-1778): an ask that absorbed an approval is the agent's words,
+ * and an agent could word it innocently while the approval grants something else. So its Allow and Deny never stand
+ * under the ask alone: always the approval's own words, whole (never cut), labelled as what you're allowing. With no
+ * words to show, no buttons; the sheet's link is the way in.
+ */
+export function ApprovalBox({ a, size = 'sm', onDone }: { a: Approval; size?: 'sm' | 'default'; onDone?: () => void }) {
+  const text = a.text?.trim();
+  if (!text) return null;
+  return (
+    <section className="grid gap-1.5 rounded-2xl bg-[color:var(--v-beige)] p-3" aria-label="You're allowing">
+      <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">You're allowing</h3>
+      <p className="whitespace-pre-wrap break-words font-medium">{text}</p>
+      {a.meta && <p className="whitespace-pre-wrap break-words text-sm opacity-70">{a.meta}</p>}
+      <As source={a.source}><div className="flex flex-wrap gap-2 pt-1">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div></As>
+    </section>
   );
 }
 
