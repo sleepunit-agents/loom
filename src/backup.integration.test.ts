@@ -487,7 +487,7 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) set
     let theirs = '';
     const run = await runBackup({ home: h.home, env, now: () => new Date('2026-10-03T09:00:00Z'), deps: { ...fakes(), beforePush: () => {
       // Another machine pushes its night meanwhile.
-      const c = join(work, 'other'); git(['clone', '-q', remote, c]);
+      const c = join(work, 'other'); git(['clone', '-q', '-b', 'main', remote, c]);
       writeFileSync(join(c, 'bundles', 'loom-household-20261003-0300.bundle'), 'theirs');
       git(['add', '-A'], c); git(['-c', 'user.name=x', '-c', 'user.email=x@x', 'commit', '-qm', 'theirs'], c); git(['push', '-q', 'origin', 'HEAD:main'], c);
       theirs = git(['rev-parse', 'HEAD'], c);
