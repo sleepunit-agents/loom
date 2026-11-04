@@ -67,7 +67,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
             </Arrive>))}
           {doing.map((d, n) => (
             <Arrive as="li" key={n} k={`do:${c.id}\0${d.text}\0${d.where ?? ''}`} className="flex min-w-0 items-center gap-3 rounded-xl px-2 py-2 text-sm">
-              <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${c.bg} 22%, transparent)` }}>
+              <span className="grid size-8 shrink-0 place-items-center rounded-lg" style={{ background: `color-mix(in oklab, ${markColor(c.bg)} 22%, transparent)` }}>
                 <AnimatedIcon name={iconFor(DOING_ICON[d.kind ?? 'other'])} size="sm" /></span>
               <span className="min-w-0 flex-1"><span className="line-clamp-3 break-words font-medium">{d.text}</span>
                 {(d.where || d.since) && <span className="block truncate text-xs opacity-60">{d.where}{d.where && d.since ? ' · ' : ''}{d.since && <span className="loom-data">{ago(d.since)}</span>}</span>}</span>

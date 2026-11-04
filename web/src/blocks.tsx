@@ -36,7 +36,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
 import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
-import { useLook } from './look';
+import { markColor, useLook } from './look';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
@@ -182,7 +182,7 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
   const look = useLook();
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
-      style={{ '--c': a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
+      style={{ '--c': look === 'neon' ? markColor(a.bg) : a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
   );
