@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon Noir's status bar, sheets, Find, power-on and sound.** Under Neon a
+  status bar heads every page: LOOM//OS, live or offline (in words), how many
+  agents and how many things need you, and the clock. The Inbox's sheet gets a
+  title bar (what it is, who asks, its task), sheets a lit top edge, and Find
+  is a command bar with a prompt and the current row's cyan edge. The
+  once-a-session arrival becomes a power-on (a line opens into the screen and
+  the page flickers on, about a second, cut short by any tap, never under
+  reduced motion). Appearance has Sound, off unless the person turns it on:
+  a WebAudio chime (0.5 KB, loaded only when on) when loom opens and when
+  something they did lands; no opening chime when the opening animation is
+  skipped.
 - **Neon Noir's faces, type, corners and glow.** An agent's face keeps its
   body and its expression and becomes dark glass rim-lit in its mark's neon
   (six marks re-pointed per look, `--mark-*`), with a soft glow that is the same

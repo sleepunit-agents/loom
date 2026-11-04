@@ -39,20 +39,23 @@ function arrive(el: HTMLElement): () => void {
  * title resolves out of noise, all in under a second (index.css [data-arrive]). Never under reduced motion, and never
  * again in that tab's session.
  */
-export function arriveOnce(title: HTMLElement | null): void {
+export function arriveOnce(title: HTMLElement | null): boolean {
   const KEY = 'loom-arrived';
-  try { if (sessionStorage.getItem(KEY)) return; sessionStorage.setItem(KEY, '1'); } catch { return; }
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  try { if (sessionStorage.getItem(KEY)) return false; sessionStorage.setItem(KEY, '1'); } catch { return false; }
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
   const root = document.documentElement;
   root.dataset.arrive = '';
   if (title) decode(title);
-  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens.
-  const done = () => { delete root.dataset.arrive; };
+  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens. A tap cuts it
+  // short (Neon Noir's power-on, neon.css, is a second's black screen: never one you have to wait out).
+  const done = () => { delete root.dataset.arrive; removeEventListener('pointerdown', done, true); removeEventListener('keydown', done, true); };
+  addEventListener('pointerdown', done, true); addEventListener('keydown', done, true);
   requestAnimationFrame(() => {
     const t = setTimeout(done, 3000);
     void Promise.allSettled(document.getAnimations().filter((a) => /^loom-in-/.test((a as CSSAnimation).animationName ?? '')).map((a) => a.finished))
       .then(() => { clearTimeout(t); done(); });
   });
+  return true;
 }
 
 /** Its words resolve out of noise (000h's decode); a text React changes meanwhile is left alone. */

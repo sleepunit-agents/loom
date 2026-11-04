@@ -112,7 +112,7 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
       <div ref={list} id="loom-find-list" role="listbox" aria-label="Results" className="min-h-0 overflow-y-auto overscroll-contain px-2 pb-3">
         {groups.map((g) => (
           <div key={g.label} role="group" aria-label={g.label} className="pt-3">
-            <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[.1em] opacity-60">{g.label}</p>
+            <p className="loom-find-group px-3 pb-1 text-[11px] font-semibold uppercase tracking-[.1em] opacity-60">{g.label}</p>
             {g.rows.map((r) => { n += 1; const i = n; return (
               <button key={r.key} id={`loom-find-${i}`} type="button" role="option" aria-selected={i === sel} data-selected={i === sel ? '' : undefined}
                 onMouseMove={() => setSel(i)} onClick={() => open(r.href)}
