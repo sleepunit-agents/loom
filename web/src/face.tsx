@@ -37,6 +37,18 @@ function mix(a: string, b: string, t: number): string {
 }
 /** The rim's width by size (viewBox units): thicker small, so it reads as a lit edge at dock size. */
 const RIM = { dock: 10, row: 7, card: 5 } as const;
+/**
+ * The face's shading inks, from tokens.css (a look can re-point them): its highlight is the cream that stays cream in
+ * both modes (--cream-fixed), its shadow the ink that stays ink (--ink-fixed). Read as hex because the shading is mixed
+ * here; without a page (a test), 000h's own values.
+ */
+function ink(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
+}
+/** loom's first mark (src/household.ts MARKS: Lilac), for a face given no colour of its own. */
+const LILAC = { bg: '#B8A6FF', fg: '#1D1240' };
 const lum = (h: string) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
 
 /**
@@ -57,11 +69,12 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   const body = fam[state] ?? fam.idle;
   const face = (faces[eyes] ?? faces.dot)[state] ?? faces.dot.idle;
   // A dark mark lifts on a dark ground, so it doesn't sink into it.
-  const base = /^#[0-9a-f]{6}$/i.test(bg) ? (dark && lum(bg) < 0.2 ? mix(bg, '#ffffff', 0.28) : bg) : '#B8A6FF';
-  const light = mix(base, '#F6EFE2', 0.55), deep = mix(base, '#111111', 0.32);
-  const ink = /^#[0-9a-f]{6}$/i.test(fg) ? fg : '#1D1240';
+  const cream = ink('--cream-fixed', '#F6EFE2'), shade = ink('--ink-fixed', '#111111');
+  const base = /^#[0-9a-f]{6}$/i.test(bg) ? (dark && lum(bg) < 0.2 ? mix(bg, '#ffffff', 0.28) : bg) : LILAC.bg;
+  const light = mix(base, cream, 0.55), deep = mix(base, shade, 0.32);
+  const eyeInk = /^#[0-9a-f]{6}$/i.test(fg) ? fg : LILAC.fg;
   // The highlight in an eye is cream on a dark ink, the deep shade on a light one.
-  const hi = lum(ink) > 0.5 ? deep : '#F6EFE2';
+  const hi = lum(eyeInk) > 0.5 ? deep : cream;
   // Small sizes: a bigger face with thicker lines, and no brows or highlights at dock size.
   const tier = size <= 28 ? data.sizes.dock : size <= 56 ? data.sizes.row : data.sizes.card;
   const drop = new Set((tier as { drop?: string[] }).drop ?? []);
@@ -75,7 +88,7 @@ export default function Face({ bg, fg, shape = 'pebble', eyes = 'dot', state = '
   // Neon's rim: the look's own colour for one of loom's marks, else this mark's (lifted on the dark, as above).
   const mk = markName(bg) ? markColor(bg) : base;
   const lit = `color-mix(in srgb, ${mk} 72%, #fff)`;
-  const paint = (c?: string) => (rim ? (c === 'fg' ? lit : c === 'hi' ? 'none' : c ?? 'none') : c === 'fg' ? ink : c === 'hi' ? hi : c ?? 'none');
+  const paint = (c?: string) => (rim ? (c === 'fg' ? lit : c === 'hi' ? 'none' : c ?? 'none') : c === 'fg' ? eyeInk : c === 'hi' ? hi : c ?? 'none');
   const part = (p: Part, n: number) => {
     if (drop.has(p.role)) return null;
     const fill = p.fill ? paint(p.fill) : 'none', line = p.stroke ? paint(p.stroke) : undefined;

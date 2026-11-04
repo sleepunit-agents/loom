@@ -91,4 +91,11 @@ describe('each look\'s contrast', () => {
     const keys = ['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((t) => ({ pair: `${t} on its key`, ratio: +ratio(hex(neon, t), mix(hex(neon, t), paper, 0.09)).toFixed(2), min: 3 }));
     expect([...marks, ...keys].filter((p) => p.ratio < p.min)).toEqual([]);
   });
+  // A rim-lit face's eyes and mouth (face.tsx: the mark 72% toward white) on its body (the mark 16% over the canvas).
+  it('Neon Noir: a face\'s lit eyes on its body, every mark', () => {
+    const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
+    const canvas = hex(neon, '--v-canvas');
+    const short = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'].map((m) => { const mk = hex(neon, `--mark-${m}`); return { mark: m, ratio: +ratio(mix(mk, '#ffffff', 0.72), mix(mk, canvas, 0.16)).toFixed(2) }; }).filter((x) => x.ratio < 3);
+    expect(short).toEqual([]);
+  });
 });

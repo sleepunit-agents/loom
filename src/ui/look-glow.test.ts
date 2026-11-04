@@ -10,7 +10,9 @@ import { describe, it, expect } from 'vitest';
 
 const web = new URL('../../web/src/', import.meta.url);
 const css = (p: string) => readFileSync(new URL(p, web), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
-const SHEETS = { 'looks/neon.css': css('looks/neon.css'), 'face.css': css('face.css') };
+// Neon's own sheet, the face's, and any Neon rule loom's own stylesheet carries (its rules under [data-look="neon"]).
+const neonRulesOf = (s: string) => [...s.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].includes('data-look="neon"')).map((m) => m[0]).join('\n');
+const SHEETS = { 'looks/neon.css': css('looks/neon.css'), 'face.css': css('face.css'), 'index.css (Neon\'s rules)': neonRulesOf(css('index.css')) };
 
 /** A sheet split into what's inside @media (prefers-contrast: more) and what isn't. */
 function split(s: string): { more: string; rest: string } {
@@ -36,15 +38,22 @@ describe('Neon Noir\'s glow', () => {
       expect(raw).toEqual([]);
     });
     it(`${file}: every --glow-* token is off when more contrast is asked for`, () => {
+      if (!rest.trim()) return;
       const defined = new Set([...rest.matchAll(/(--glow-[\w-]+)\s*:/g)].map((m) => m[1]));
       const off = new Set([...more.matchAll(/(--glow-[\w-]+)\s*:\s*(none|0 0 0 0)\s*[;}]/g)].map((m) => m[1]));
       expect([...defined].filter((g) => !off.has(g))).toEqual([]);
     });
     it(`${file}: no glow rule is chosen by a state, a tone or a status; no text-shadow`, () => {
       const bad = rules(rest).filter((r) => decls(r.body).some((d) => lit(d.prop, d.value) || /^--glow-/.test(d.prop))
-        && /data-state|data-tone|tone|status|warn|bad|danger|working|data-off/.test(r.sel.replace(/:not\([^)]*\)/g, ''))).map((r) => r.sel);
+        // A :not() that only leaves out a kind of button (.-danger) says nothing of state; one naming a state does.
+        && /data-state|data-tone|tone|status|warn|bad|danger|working|data-off/.test(r.sel.replace(/:not\((?![^)]*(data-state|data-tone|status|data-off))[^)]*\)/g, ''))).map((r) => r.sel);
       expect(bad).toEqual([]);
       expect(s).not.toMatch(/text-shadow/);
     });
   }
+
+  it('the check catches a state hidden in a :not()', () => {
+    const sel = '[data-slot="agent-face"]:not([data-state="idle"])';
+    expect(/data-state/.test(sel.replace(/:not\((?![^)]*(data-state|data-tone|status|data-off))[^)]*\)/g, ''))).toBe(true);
+  });
 });
