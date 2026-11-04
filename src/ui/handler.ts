@@ -34,6 +34,7 @@
  * message is kept in memory under a random id for a minute.
  */
 import { changed, openStream, type Sees } from './live.js';
+import { backupFyi, backupProblem } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -500,7 +501,8 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   const { pieces } = await pieceManifests(opts.env);
   const hh = opts.household?.();
   const needs = (a: HomeAsk) => a.attention !== false;
-  if (hh) return absorbApprovals([...coreAsks(hh), ...pieceAsks(pieces, opts.env)], opts.env).filter(needs);
+  // Push: the watch's own `hears` lets only household owners hear an ask with no agent (the backup's).
+  if (hh) return absorbApprovals([...coreAsks(hh, { householdOwner: !opts.ownerScope }), ...pieceAsks(pieces, opts.env)], opts.env).filter(needs);
   return pieceAsks(pieces, opts.env).filter(needs);
 }
 
@@ -547,8 +549,20 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
 }
 
 /** loom's own asks for every agent: memory proposals, then conversations that need the owner. */
-export function coreAsks(h: Household): HomeAsk[] {
-  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h)];
+export function coreAsks(h: Household, o: { householdOwner?: boolean } = {}): HomeAsk[] {
+  // The backup's alert names its target and its errors: a household owner's only, never an agent owner's (ownerScope).
+  return [...proposalAsks(h, Object.fromEntries(h.agents.map((a) => [a, pendingProposals(h, a)]))), ...conversationAsks(h), ...(o.householdOwner ? backupAsks(h) : [])];
+}
+
+/**
+ * The nightly backup's alert (src/backup.ts; docs/specs/keeping-watch.md): its last run failed, or there's been none
+ * good in 26 hours. Its text holds while it lasts (pushed once); why is its meta. The household owner's, so no agent.
+ */
+export function backupAsks(h: Household, nowMs = Date.now()): HomeAsk[] {
+  let p: ReturnType<typeof backupProblem>;
+  try { p = backupProblem(h, nowMs); } catch { return []; }
+  if (!p) return [];
+  return [{ kind: 'alert', text: p.text, meta: p.meta.slice(0, 300), at: p.at, page: `loom:a/${h.default}/setup`, label: 'Look', source: CORE, sourceLabel: 'Backup' }];
 }
 
 /**
@@ -725,8 +739,8 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
 
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, and
  * what the owner's own actions said (their toasts, as FYI), newest first. */
-function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[] = []): InboxItem[] {
-  const asks = absorbApprovals([...coreAsks(h), ...pieceAsks(pieces, env)], env);
+function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[] = [], householdOwner = false): InboxItem[] {
+  const asks = absorbApprovals([...coreAsks(h, { householdOwner }), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
@@ -743,6 +757,9 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
       ];
     }),
     ...answeredAsks(h),
+    // The backup back to good (src/backup.ts): an FYI, the household owner's.
+    ...(() => { if (!householdOwner) return []; const f = backupFyi(h); return f ? [{ key: askKey({ source: CORE, text: f.text, page: `fyi:${f.at}` }), kind: 'fyi' as const, attention: false, unread: false,
+      text: f.text, meta: f.meta, at: f.at, source: CORE, sourceLabel: 'Backup', page: `loom:a/${h.default}/setup` } satisfies InboxItem] : []; })(),
     ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', attention: false, unread: false,
       text: d.text, meta: d.ok ? 'You did this' : 'You tried this; it wasn’t done', at: new Date(d.at * 1000).toISOString(),
       source: d.source, sourceLabel: d.sourceLabel ?? 'loom', ...(d.page ? { page: d.page } : {}) })),
@@ -756,7 +773,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
 function findAll(q: string, req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[]): Found {
   const needle = q.toLowerCase();
   const hh = opts.household?.();
-  const asks = absorbApprovals([...(hh ? coreAsks(hh) : []), ...pieceAsks(pieces, opts.env)], opts.env);
+  const asks = absorbApprovals([...(hh ? coreAsks(hh, { householdOwner: !opts.ownerScope }) : []), ...pieceAsks(pieces, opts.env)], opts.env);
   const found: Found = {
     do: asks.filter((a) => `${a.text} ${a.label ?? ''} ${a.sourceLabel ?? ''}`.toLowerCase().includes(needle))
       .slice(0, 5).map((a) => ({ label: a.text, href: a.page !== undefined ? pageHref(a.page, a.source) : '/' })),
@@ -856,7 +873,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const back = backFor(new URL(req.url ?? '/', 'http://loom.invalid').pathname, places, h);
   if (h) {
     const marks = agentMarks(h);
-    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a), 0) - absorbedCount(h, pieces, opts.env);
+    const asks = needs + h.agents.filter((a) => pendingProposals(h, a) > 0).length + h.agents.reduce((n, a) => n + needsCount(h, a), 0) - absorbedCount(h, pieces, opts.env)
+      + (opts.ownerScope ? 0 : backupAsks(h).length);
     const scope = /^a\/([^/]+)/.exec(current)?.[1] ?? scopeOf(req, h);
     return {
       agent: h.owner ? `${h.owner}'s household` : 'household',
@@ -1430,7 +1448,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
-      const waiting = inboxItems(hh, pieces, opts.env).filter((it) => it.attention);
+      const waiting = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).filter((it) => it.attention);
       // Unread as the Inbox says it: Home's banner is the first one's row there.
       if (waiting[0]) waiting[0].unread = !storeFor(opts).openedKeys(readerFor(opts, who)).has(waiting[0].key);
       const cards = agentCards(hh, pieces, agents, nowMs);
@@ -1482,7 +1500,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const nowMs = Date.now();
       const store = storeFor(opts);
       const reader = readerFor(opts, who);
-      const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader));
+      const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), !opts.ownerScope);
       const folder = (INBOX_FOLDERS.find((f) => f.id === query.f)?.id ?? 'needs') as InboxFolder;
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
       // Opening an attention item reads it; nothing else is ever unread.

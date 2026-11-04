@@ -45,6 +45,7 @@ import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
+import { spawnBackupTick } from '../backup-tick.js';
 
 /** How often core checks what open Needs you wait on. */
 const NEEDS_TICK_MS = 60_000;
@@ -861,6 +862,14 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   needsTimer?.unref();
   const needsFirst = needsTimer ? setTimeout(resolveAll, 2_000) : undefined;
   needsFirst?.unref();
+  // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
+  // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
+  // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
+  const backupTick = () => { try { if (live) spawnBackupTick(live(), process.env); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
+  backupTimer?.unref();
+  const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
+  backupFirst?.unref();
 
   const http = createServer((req, res) => {
     void (async () => {
@@ -1042,6 +1051,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     async close() {
       if (pushTimer) clearInterval(pushTimer);
       if (needsTimer) clearInterval(needsTimer);
+      if (backupTimer) clearInterval(backupTimer);
+      if (backupFirst) clearTimeout(backupFirst);
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);

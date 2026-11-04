@@ -205,6 +205,8 @@ export async function exportBundle(opts: {
     // Never the audit log or its key (docs/specs/conversations.md, "Where it lives"): nothing
     // above copies them, and this makes sure nothing ever does.
     assertNoAuditFiles(stage);
+    // Nor the backup's own directory (src/backup.ts: its drill key, its clone): nothing above copies it either.
+    if (existsSync(join(stage, 'backup'))) throw new BundleError('the bundle would carry loom\'s backup/ directory (the drill key); it never leaves this machine');
     // tar and gzip, then encrypt; only the encrypted file leaves the temp dir.
     const plain = join(work, 'household.tar.gz');
     run(tar, ['-C', stage, '-czf', plain, '.'], 'tar');
@@ -224,6 +226,7 @@ function assertNoAuditFiles(dir: string): void {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (AUDIT_FILES.includes(name)) throw new BundleError(`the bundle would carry ${name}; the audit log and its key never leave this machine`);
+
     if (lstatSync(p).isDirectory()) assertNoAuditFiles(p);
   }
 }

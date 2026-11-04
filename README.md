@@ -766,6 +766,34 @@ part in `pieces-pending/`.
 result with the live household: identities, memory counts, every card,
 knowledge, tokens. Nothing live is touched.
 
+### The nightly backup
+
+```bash
+loom backup set --target git:https://github.com/you/household-backup.git --recipient age1… \
+  --at 02:55 --tz America/Chicago --keep 7 [--require box --require secrets]
+loom backup status            # the last good one, its drill, what's wrong now
+loom backup run               # one now
+```
+
+**`loom backup`** does the bundle every night by itself
+(docs/specs/keeping-watch.md): it exports the household, encrypted to your keys
+and to the machine's own drill key (`$LOOM_HOME/backup/drill.key`, made there,
+never in a bundle), restores it into a throwaway home and compares it with the
+live one, and only then writes it to the target:
+
+- `git:<url>`: a repo loom owns. The branch is always one commit holding the
+  newest `--keep` nights and each month's first, force-pushed with a lease. A
+  bundle over 90 MB goes in parts. It pushes with this user's own git
+  credentials; loom stores none, and refuses a URL that carries one.
+- `path:<dir>`: a directory (a USB stick, a NAS), the same bundles as files.
+
+A target holding anything loom didn't write (no `.loom-backup`) is refused. The
+default agent's Setup shows the last run; a failed or missed one (none good in
+26 hours) is an alert in the household owner's Inbox, and the daemon's
+`LOOM_ALERT_COMMAND` (a JSON argv in its environment, never a household
+setting) hears it as `loom-backup --severity bad --summary …`. A household
+restored from a bundle waits for `loom backup set` before it pushes anywhere.
+
 A restore trusts what's in the bundle. age encrypts, but it doesn't prove who
 made the file, so only restore bundles you made. Needs the `age` and `tar`
 programs.

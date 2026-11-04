@@ -42,6 +42,7 @@ Commands:
   token             Mint, list and revoke the household's tokens
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
+  backup            The nightly backup: set it, run one, see how it's going
   store             A piece's own store in loom: get, list, put, del, history, revert
 
 Pieces: \`loom <name> ...\` runs an installed extension, loom-<name> (managed, then PATH)
@@ -243,6 +244,10 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'restore': {
       const { runRestore } = await import('./bundle.js');
       return runRestore(rest, io);
+    }
+    case 'backup': {
+      const { runBackupCli } = await import('./backup.js');
+      return runBackupCli(rest, io);
     }
     case 'store': {
       const { runStore } = await import('./store.js');
