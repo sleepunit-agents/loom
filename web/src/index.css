@@ -410,7 +410,6 @@
     --input: var(--v-beige);
     --ring: var(--v-brand);
     --destructive: var(--v-danger-fill);
-    --destructive-foreground: #fff;
     --chart-1: var(--v-yellow);
     --chart-2: var(--v-pink);
     --chart-3: var(--v-olive);
@@ -418,10 +417,7 @@
     --chart-5: var(--v-ink);
     --sidebar: var(--v-structure);
     --sidebar-foreground: var(--on-structure);
-    --sidebar-muted: #B4BDCA;
     --sidebar-primary: var(--v-pink);
-    --muted-foreground-ink: #2E2A24;
-    --muted-foreground-tinted: #4A443C;
 }
 
   @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
@@ -455,11 +451,21 @@
 [data-accent="blue"] { --v-pink: var(--v-blue); --v-pink-soft: var(--v-blue-soft); --v-pink-deep: var(--v-blue-deep); }
 [data-accent="olive"] { --v-pink: var(--v-olive); --v-pink-soft: var(--v-olive-soft); --v-pink-deep: var(--v-olive-deep); --v-accent-ink: var(--v-olive-ink); }
 [data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
+/* loom's own colours that were literals (Neon Noir's sweep, 2026-11-04): a status dot (ok, warn, bad, muted), a working
+   agent's dot and its pulse, a section's warning ring, a count's badge, an unread dot, and how far the dark dims the
+   ground. Tailwind's own values, so 000h draws as it did; a look (src/looks/) re-points them. */
+:root { --loom-ok: oklch(69.6% .17 162.48); --loom-warn: oklch(76.9% .188 70.08); --loom-bad: oklch(63.7% .237 25.331); --loom-muted: oklch(70.8% 0 none);
+  --loom-live: oklch(68.5% .169 237.323); --loom-live-pulse: #0ea5e9; --loom-ring-bad: oklch(70.4% .191 22.216); --loom-ring-warn: oklch(82.8% .189 84.429);
+  --loom-ring-warn-soft: oklch(87.9% .169 91.605); --loom-count: #e5484d;
+  --loom-ok-ink: oklch(50.8% .118 165.612); --loom-warn-ink: oklch(55.5% .163 48.998); --loom-bad-ink: oklch(50.5% .213 27.518); --loom-muted-wash: oklch(55.6% 0 none); --loom-count-ink: #fff; --loom-unread: #2563eb; --loom-ground-dim: .55; --loom-wash-dim: .35;
+  /* A meter's track while its bar loads (was bg-black/10). */
+  --loom-track: color-mix(in oklab, #000 10%, transparent); }
+:root[data-mode="dark"] { --loom-ok-ink: oklch(84.5% .143 164.978); --loom-warn-ink: oklch(87.9% .169 91.605); --loom-bad-ink: oklch(80.8% .114 19.571); }
 /* The page's ground: 000h's docs wash (three soft pools on the canvas); quieter in the dark. */
 .loom-wash { background: radial-gradient(at 18% 35%, color-mix(in srgb, var(--v-pink) 65%, transparent), transparent 62%),
   radial-gradient(at 82% 72%, color-mix(in srgb, var(--v-blue) 60%, transparent), transparent 62%),
   radial-gradient(at 56% 8%, color-mix(in srgb, var(--v-yellow) 40%, transparent), transparent 56%), var(--v-canvas); }
-[data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: .35; }
+[data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: var(--loom-wash-dim); }
 [data-mode="dark"] .loom-wash { background-color: var(--v-canvas); }
 body { background: var(--v-canvas); }
 /* No top bar: the page's head sits on the ground and scrolls with it. */
@@ -553,11 +559,11 @@ body { background: var(--v-canvas); }
 .loom-side .loom-side-back { height: auto; min-height: var(--nav-row); padding-block: 8px; padding-inline-start: 12px; background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 18%, transparent); }
 .loom-side .loom-side-back:hover { background: color-mix(in oklab, var(--loom-accent, var(--v-pink)) 30%, transparent); }
 /* An agent's state on its mark: a dot; a working one breathes. */
-@keyframes loom-dot-live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #0ea5e9 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
+@keyframes loom-dot-live { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--loom-live-pulse) 55%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
 .loom-dot-live { animation: loom-dot-live 1.8s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .loom-dot-live { animation: none; } }/* The contour field over the wash (ground.tsx): its own paper off, so the wash shows through its lines; quieter in the dark. */
 .loom-ground .v-contour-field { background: transparent; }
-[data-mode="dark"] .loom-ground { opacity: .55; }
+[data-mode="dark"] .loom-ground { opacity: var(--loom-ground-dim); }
 /* How much terrain the contour field shows: 1 is 000h's (three big hills to a screen); more is further out. */
 .loom-ground { --field-zoom: 2.2; }
 

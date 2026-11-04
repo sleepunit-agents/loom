@@ -40,7 +40,7 @@ function tilesOf(which: 'places' | 'setup', pieces: P[]): Array<[string, string]
   const env = { ctx: { source: { id: 'loom', base: '/' }, path: '/', query: {}, csrf: '' }, send: async () => true, go: () => {}, wide: false, withSource: () => env };
   const html = renderToStaticMarkup(h(EnvContext.Provider, { value: env as never },
     h(TintContext.Provider, { value: tintsOf(s.pieces) },
-      h(SheetView, { which, chrome: { agent: '', nav: [], clock: '', csrf: '', skipped: [], shell: s } as never, icon: () => 'circle', mode: 'auto', setMode: () => {}, ground: 'none' as never, setGround: () => {} }))));
+      h(SheetView, { which, chrome: { agent: '', nav: [], clock: '', csrf: '', skipped: [], shell: s } as never, icon: () => 'circle', mode: 'auto', setMode: () => {}, ground: 'none' as never, setGround: () => {}, look: 'neon', setLook: () => {} }))));
   return [...html.matchAll(/data-tint="([a-z]+)".*?<span class="w-full truncate text-sm font-medium">([^<]+)</g)].map((m) => [m[2], m[1]]);
 }
 const headerTint = (label: string, pieces: P[]) => {

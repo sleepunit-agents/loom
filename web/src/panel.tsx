@@ -11,8 +11,8 @@ import { ActButton, BlockView, Link, Who, useEnv } from './blocks';
 import Form from './form';
 import { tidy } from './tidy';
 import type { Block, PanelRow, Tone } from './loom';
+import { DOT, HEALTH } from './tones';
 
-const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
 
 /** A sheet: a bottom drawer on a phone, a centred editor on a desktop. */
 export function Sheet({ open, set, title, note, children }: { open: boolean; set: (o: boolean) => void; title: string; note?: string; children: ReactNode }) {
@@ -138,11 +138,9 @@ export default function Panel({ b }: { b: Extract<Block, { type: 'panel' }> }) {
 /** A status screen's headline: its state in a word or two, big, with a shape as well as a colour (never colour alone). */
 export function Health({ b }: { b: Extract<Block, { type: 'health' }> }) {
   const icon = b.tone === 'ok' ? 'check' : b.tone === 'bad' ? 'x' : b.tone === 'warn' ? 'alert-triangle' : 'minus';
-  const ring: Record<Tone, string> = { ok: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300', warn: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-    bad: 'bg-red-500/15 text-red-700 dark:text-red-300', muted: 'bg-neutral-500/15 opacity-80' };
   return (
     <div className="flex items-center gap-4" data-slot="health" data-tone={b.tone} role="status">
-      <span className={`grid size-14 shrink-0 place-items-center rounded-full ${ring[b.tone]}`}><AnimatedIcon name={icon} size="lg" /></span>
+      <span className={`grid size-14 shrink-0 place-items-center rounded-full ${HEALTH[b.tone]}`}><AnimatedIcon name={icon} size="lg" /></span>
       <span className="grid min-w-0 gap-0.5">
         <span className="text-2xl font-semibold leading-tight [overflow-wrap:anywhere]">{tidy(b.text)}</span>
         {b.detail && <span className="text-sm opacity-70 [overflow-wrap:anywhere]">{tidy(b.detail)}</span>}
@@ -156,7 +154,7 @@ export function Spark({ values, tone }: { values: number[]; tone?: Tone }) {
   if (values.length < 2) return null;
   const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 1;
   const pts = values.map((v, i) => `${(i / (values.length - 1)) * 100},${28 - ((v - lo) / span) * 24}`).join(' ');
-  const stroke = tone === 'bad' ? 'var(--v-danger, #c0392b)' : tone === 'warn' ? 'var(--v-yellow-deep, #b8860b)' : 'currentColor';
+  const stroke = tone === 'bad' ? 'var(--v-danger)' : tone === 'warn' ? 'var(--v-yellow-deep)' : 'currentColor';
   return (
     <svg aria-hidden viewBox="0 0 100 30" preserveAspectRatio="none" className="mt-2 h-7 w-full opacity-70">
       <polyline points={pts} fill="none" stroke={stroke} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />

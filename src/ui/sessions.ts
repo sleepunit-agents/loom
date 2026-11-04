@@ -11,6 +11,8 @@
  *     (a session still dies with its token: rotate or revoke it and they stop);
  * one-time sign-in links (`loom token link`), also by hash: single use, and
  * gone after their few minutes whether used or not;
+ * each person's Appearance (the look, light or dark, the ground, sound), so
+ * it follows them to every device: a preference they chose, never what they browsed;
  * and in `ui-cookie.key` (0600), the key that binds an anti-forgery token to
  * its session, so a form opened before a restart still posts after it.
  *
@@ -53,9 +55,34 @@ interface File {
    * Another member's own `seen` and `opened` (docs/specs/owners.md): one member's reading doesn't
    * read it for another. The first household owner keeps the household's `seen` and `opened` above.
    */
-  members?: Record<string, { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[] }>;
+  members?: Record<string, { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[]; prefs?: Prefs }>;
+  /** The first household owner's Appearance (a member's own is under `members`): a preference, never what they browsed. */
+  prefs?: Prefs;
   /** What the owner's actions said (their toasts), kept as FYI items in the Inbox (Jonathan, 2026-11-03). */
   done?: Done[];
+}
+
+/**
+ * A person's Appearance (web/src/look.ts; Jonathan, 2026-11-04: "if every device I login I have to go and change the
+ * theme, that sucks"): the look, 000h's light or dark, the ground, and sound. Only what they chose; kept per member
+ * like `seen`, so it follows them to every device they sign in on.
+ */
+export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean;
+  /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
+  at?: number }
+const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
+  look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false],
+};
+/** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
+export function prefsOf(body: Record<string, unknown>): Prefs | null {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (k === '_csrf') continue;
+    // Its own keys only: a body's "constructor" or "__proto__" is no Appearance choice.
+    if (!Object.hasOwn(PREF_VALUES, k) || !PREF_VALUES[k as keyof typeof PREF_VALUES].includes(v)) return null;
+    out[k] = v;
+  }
+  return out as Prefs;
 }
 
 /** One action's outcome, as its toast said it: an FYI item in the Inbox afterwards. */
@@ -90,7 +117,7 @@ export const SEEN_GAP_S = 15 * 60;
 export const DONE_MAX = 50;
 
 /** Where a reader's `seen` and `opened` live: the household's for the first owner (no reader), else their own. */
-function readerOf(f: File, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[] } {
+function readerOf(f: File, reader: string | undefined): { seen?: { at: number; since: number }; opened?: Record<string, number>; done?: Done[]; prefs?: Prefs } {
   if (!reader) return f;
   f.members ??= {};
   return (f.members[reader] ??= {});
@@ -323,6 +350,24 @@ export class SessionStore {
   doneItems(reader?: string): Done[] {
     if (!existsSync(this.file)) return [];
     return this.withLock((f) => [...(readerOf(f, reader).done ?? [])]);
+  }
+
+  /** This reader's Appearance, as they last chose it (none chosen: empty). */
+  prefs(reader?: string): Prefs {
+    // A read, not a locked write: every page asks it. A torn read (mid-rename can't happen: writes land by rename) is none.
+    if (!existsSync(this.file)) return {};
+    const f = this.read();
+    return { ...((reader ? f.members?.[reader]?.prefs : f.prefs) ?? {}) };
+  }
+
+  /** Change some of this reader's Appearance; what's not given stays as it was. */
+  setPrefs(p: Prefs, reader?: string, nowMs = Date.now()): Prefs {
+    return this.withLock((f) => {
+      const r = readerOf(f, reader);
+      // Strictly later than the last change, even within a millisecond: the version a device compares.
+      r.prefs = { ...(r.prefs ?? {}), ...p, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
+      return { ...r.prefs };
+    });
   }
 
   /** The items this reader's Inbox has opened. */
