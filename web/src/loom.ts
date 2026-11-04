@@ -22,7 +22,8 @@ export type Block =
   | { type: 'panel'; title?: string; rows: PanelRow[]; action?: Button }
   | { type: 'link'; text: string; page?: string; href?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
-  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
+  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
+      submits?: { label: string; fields?: Record<string, string>; tone?: 'primary' | 'danger' }[] }
   | { type: 'buttons'; items: Button[] }
   | { type: 'meter'; items: { label: string; value: number; detail?: string; tone?: Tone }[] }
   | { type: 'status'; items: { label: string; tone?: Tone; text?: string; meta?: string }[] }

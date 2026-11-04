@@ -57,7 +57,9 @@ export type Block =
   | ({ type: 'link'; text: string } & Target)
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
-  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
+  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
+      /** More ways to send it, beside `submit`: each posts the form's fields with its own (Yes and No over a box of words). */
+      submits?: FormSubmit[] }
   | { type: 'buttons'; items: Button[] }
   | { type: 'meter'; items: Array<{ label: string; value: number; detail?: string; tone?: Tone }> }
   | { type: 'code'; text: string; label?: string }
@@ -207,6 +209,8 @@ export const LIMITS = {
   doing: 8,
   fields: 30,
   hidden: 20,
+  // A form's extra submits: a Yes, a No, and one more.
+  formSubmits: 3,
   options: 50,
   query: 10,
   queryValue: 200,
@@ -385,6 +389,16 @@ function strMap(v: unknown, what: string, max: number): Record<string, string> |
   const out: Record<string, string> = {};
   for (const k of keys) out[name(k, `${what} key`)] = str(o[k], `${what}.${k}`);
   return out;
+}
+
+/** One more way to send a form: its label, its own fields (answer: yes), and a tone. */
+export interface FormSubmit { label: string; fields?: Record<string, string>; tone?: 'primary' | 'danger' }
+function formSubmit(x: unknown): FormSubmit {
+  const o = obj(x, 'form.submits item');
+  const t = o.tone;
+  if (t !== undefined && t !== 'primary' && t !== 'danger') throw new Invalid('form.submits tone must be primary or danger');
+  const fields = strMap(o.fields, 'form.submits fields', LIMITS.hidden);
+  return { label: str(o.label, 'form.submits label'), ...(fields ? { fields } : {}), ...(t ? { tone: t as 'primary' | 'danger' } : {}) };
 }
 
 function button(x: unknown): Button {
@@ -602,6 +616,7 @@ function block(v: unknown, depth = 0): Block {
         title: optStr(b.title, 'form.title'),
         note: optStr(b.note, 'form.note'),
         hidden: strMap(b.hidden, 'form.hidden', LIMITS.hidden),
+        ...(b.submits === undefined ? {} : { submits: arr(b.submits, 'form.submits', LIMITS.formSubmits).map(formSubmit) }),
       };
     case 'buttons':
       return {
