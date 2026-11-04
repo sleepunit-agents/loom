@@ -613,8 +613,22 @@ body { background: var(--v-canvas); }
 @keyframes loom-lean { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
 @keyframes loom-shake { 0%, 20%, 100% { transform: translateX(0); } 5% { transform: translateX(-4px); } 10% { transform: translateX(4px); } 15% { transform: translateX(-3px); } }
 
-/* An iPhone's home-screen app (standalone.ts): the document stays still and #root scrolls. iOS moves a fixed bar with
-   the page when the document is what scrolls, so the dock sat too high on opening and dropped once the page scrolled.
-   Heights are the screen's (100%: the app has no browser bars); the dock stays fixed, bottom 0, over its safe area. */
-html.loom-ios-app, html.loom-ios-app body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-html.loom-ios-app #root { height: 100%; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; }
+/* An iPhone's home-screen app (standalone.ts; Jonathan, 2026-11-03: the dock sat too high). iOS 26 shortens a home-screen
+   app's viewport by the status bar's height (viewport-fit=cover with a black-translucent status bar: WebKit bug 301108)
+   while the document is no taller than that short viewport, and a fixed bar's bottom: 0 is that viewport's bottom. So the
+   document is never shorter than the screen there: 100% plus the top inset is the whole screen when iOS has shortened it,
+   and 100lvh caps it at the screen when it hasn't, so nothing scrolls that wouldn't. The document scrolls as anywhere
+   else; the dock stays fixed, bottom 0, over env(safe-area-inset-bottom) once (App.tsx). (#470 had the document stop
+   scrolling and #root scroll instead: that pinned the document at exactly the short height, so the dock never came down.)
+   The media query is there before the first layout; the class (navigator.standalone) for an iOS that doesn't match it. */
+@media (display-mode: standalone) { html { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); } }
+html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top))); }
+
+/* Toasts on a phone (toasts.tsx; Jonathan, 2026-11-03: one covered the whole screen): a strip at the top centre, under
+   the status bar and clear of the dock; a desktop keeps toast.css's bottom right. toast.css's .v-toaster sits in
+   @layer cojeev-states, which comes after Tailwind's utilities, so a utility class can't move it: its bottom and right
+   won over max-lg:bottom-auto and max-lg:right-auto, and a viewport with a top and a bottom stretched the toast to the
+   screen's height. This rule is unlayered, so it wins. */
+@media (width < 64rem) {
+  .v-toaster[data-slot="toast-viewport"] { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; left: 0; right: 0; margin-inline: auto; }
+}

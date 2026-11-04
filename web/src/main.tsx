@@ -7,7 +7,7 @@ import { markIosApp } from './standalone';
 // The worker that keeps the last copy of each page for when loom can't be reached, and shows push (src/ui/pwa.ts).
 if ('serviceWorker' in navigator && window.isSecureContext) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
-// On an iPhone's home screen the app scrolls inside #root, so the dock is at the bottom from the first paint (standalone.ts).
+// On an iPhone's home screen the document is kept the screen's height, so the dock is at its bottom (standalone.ts).
 markIosApp();
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);
