@@ -10,7 +10,7 @@
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './comms.css';
-import { useEnv, type Mark } from './blocks';
+import { AgentAvatar, useEnv, type Mark } from './blocks';
 import { markColor } from './look';
 import { reducedMotion } from './access';
 import { bits, githubUrl } from './plain';
@@ -31,7 +31,9 @@ export type Thread = {
 export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' | 'ask' | 'error'; from: string; id: string; text: string | null;
   card: Record<string, unknown> | null; run: string | null; delivered: boolean | null };
 export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string;
-  threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[] };
+  threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
+  /** household.json's github: a bare repo#N in a reply links under it. */
+  github?: string };
 
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 /** A message's id: 16 characters of RFC 4648 base32, lowercased (comms.md, "The message id"). */
@@ -70,8 +72,9 @@ const INSIDE = 'https://loom.invalid/';
  * conversation). note:<path> is set as code (loom has no note page yet). Links go only to https or inside loom: the
  * renderer (src/ui/prose.ts) drops anything else, and an http:// link is left as its words.
  */
-export function replyHtml(text: string): string {
-  const linked = bits(text).map((b) => b.t === 'task' ? `[${b.id}](${INSIDE}p/tasks/${b.id})`
+export function replyHtml(text: string, owner?: string): string {
+  // As the Inbox's sheet links them (inbox.tsx Ref): a task's page in the tasks piece, task/<id>.
+  const linked = bits(text, owner).map((b) => b.t === 'task' ? `[${b.id}](${INSIDE}p/tasks/task/${b.id})`
     : b.t === 'pr' ? `[${b.repo}#${b.n}](${githubUrl(b.repo, b.n)})`
       : b.t === 'conv' ? `[${b.id}](${INSIDE}conversation/${b.id})`
         : b.t === 'path' ? `\`${b.s}\`` : b.s).join('')
@@ -85,7 +88,7 @@ export function replyHtml(text: string): string {
 }
 
 /** The loom pages a reply may link to: a task's, a conversation's. Nothing with a scheme, a leading slash, .. or //. */
-const INSIDE_PAGES = /^(?:p\/tasks\/t-\d{1,9}|conversation\/cv-[0-9a-f]{12})$/;
+const INSIDE_PAGES = /^(?:p\/tasks\/task\/t-\d{1,9}|conversation\/cv-[0-9a-f]{12})$/;
 export const insidePath = (path: string) => INSIDE_PAGES.test(path);
 
 /** Whether an inside link really stays inside: this origin, and one of the allowed pages. */
@@ -96,9 +99,9 @@ export function staysInside(href: string, here: string = location.href): boolean
   } catch { return false; }
 }
 
-function Reply({ text }: { text: string }) {
+function Reply({ text, owner }: { text: string; owner?: string }) {
   const { go } = useEnv();
-  const html = useMemo(() => replyHtml(text), [text]);
+  const html = useMemo(() => replyHtml(text, owner), [text, owner]);
   return (
     <div className="loom-prose comms-reply" dangerouslySetInnerHTML={{ __html: html }}
       onClick={(e) => {
@@ -132,22 +135,39 @@ export function faceOf(s: { failed: boolean; asking: boolean; talking: boolean; 
 type Link = 'ok' | 'lost' | 'none';
 const LINK_WORDS: Record<Link, string> = { ok: 'LINK OK', lost: 'LINK LOST', none: 'NO CARRIER' };
 
-function CommScreen({ agent, mark, channel, face, talk, link, you, compact, wide }: {
+function CommScreen({ agent, mark, channel, face: base, talk, link, you, compact, wide }: {
   agent: string; mark: Mark; channel: number; face: FaceState; talk: { n: number; key: number } | null; link: Link; you?: string; compact: boolean; wide: boolean;
 }) {
   const [signal, setSignal] = useState(false);
   const [talkNow, setTalkNow] = useState<{ n: number; key: number } | undefined>();
+  // The talking run's phase, as the face plays it (talking, then done, then back to the thread's own state).
+  const [phase, setPhase] = useState<'talking' | 'complete' | null>(null);
+  const [anim, setAnim] = useState<string | undefined>();
+  const sprite = mark.face?.sprite;
   // A reply lands: the signal's static and roll for 250 ms, then the talking beats (none of it with reduced motion).
   useEffect(() => {
     if (!talk || reducedMotion()) return;
     setSignal(true);
-    const t = setTimeout(() => { setSignal(false); setTalkNow(talk); }, 250);
+    const t = setTimeout(() => {
+      setSignal(false); setTalkNow(talk);
+      // A drawn face has no beats to follow: its run is timed, a beat about 1.5 s and a breath about 0.8 s, then done.
+      if (!sprite) setPhase('talking');
+    }, 250);
     return () => clearTimeout(t);
   }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const sprite = mark.face?.sprite;
+  useEffect(() => {
+    if (sprite || !phase || !talkNow) return;
+    const ms = phase === 'talking' ? talkNow.n * 1530 + (talkNow.n - 1) * 800 : 900;
+    const t = setTimeout(() => setPhase(phase === 'talking' ? 'complete' : null), ms);
+    return () => clearTimeout(t);
+  }, [phase, talkNow, sprite]);
+  const onShown = useCallback((st: FaceState) => setPhase(st === 'talking' ? 'talking' : st === 'complete' ? 'complete' : null), []);
+  // An error, and an ask waiting, win over talking (comms.md's precedence); else the run's phase, else the thread's state.
+  const face: FaceState = base === 'error' || base === 'needs-input' ? base : phase ?? base;
   // Whole-number scales only, 2x at least (comms.md, "The comm screen"): the compact strip shrinks its box, not the pixels.
   const scale = 2;
   const size = 96 * scale;
+  const small = <AgentAvatar a={mark} size={32} />;
   const drawn = (
     <Suspense fallback={<span className="comms-screen__initial">{mark.label[0]}</span>}>
       <DrawnFace bg={mark.bg} shape={mark.face?.shape as never} eyes={mark.face?.eyes as never} state={face} size={compact ? 96 : 160} label={mark.label} dark />
@@ -156,13 +176,13 @@ function CommScreen({ agent, mark, channel, face, talk, link, you, compact, wide
   const name = mark.label.toUpperCase();
   const meter = link === 'ok' ? 4 : link === 'lost' ? 1 : 0;
   return (
-    <section className="comms-screen" data-compact={compact || undefined} data-face={face} data-signal={signal ? 'on' : undefined}
+    <section className="comms-screen" data-compact={compact || undefined} data-face={face} data-anim={sprite ? anim : undefined} data-signal={signal ? 'on' : undefined}
       style={{ '--c': markColor(mark.bg) } as React.CSSProperties} aria-label={`${mark.label}'s comm screen`}>
       <div className="comms-screen__frame">
         <div className="comms-screen__glass">
-          {sprite ? (
+          {compact ? small : sprite ? (
             <Suspense fallback={drawn}>
-              <PixelFace sprite={sprite} state={face} size={size} scale={scale} label={mark.label} fallback={drawn} talk={talkNow} />
+              <PixelFace sprite={sprite} state={phase ?? base} size={size} scale={scale} label={mark.label} fallback={drawn} talk={talkNow} onShown={onShown} onFrom={setAnim} />
             </Suspense>
           ) : drawn}
           <span className="comms-screen__scan" aria-hidden />
@@ -189,17 +209,19 @@ function CommScreen({ agent, mark, channel, face, talk, link, you, compact, wide
 function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thread; marks: Record<string, Mark>; current: boolean; onOpen: () => void; onArchive: () => void; onPin: () => void }) {
   const press = useRef<number>(0);
   const touch = useRef<{ x: number; y: number } | null>(null);
+  // A swipe or a long press acted already: the tap that ends it doesn't open the thread too.
+  const acted = useRef(false);
   const mark = marks[t.agent];
   return (
     <li className="comms-row" data-current={current || undefined} data-unread={t.unread || undefined}
-      onTouchStart={(e) => { touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; press.current = window.setTimeout(onPin, 600); }}
+      onTouchStart={(e) => { acted.current = false; touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; press.current = window.setTimeout(() => { acted.current = true; onPin(); }, 600); }}
       onTouchMove={() => clearTimeout(press.current)}
       onTouchEnd={(e) => {
         clearTimeout(press.current);
         const s = touch.current; touch.current = null;
-        if (s && s.x - e.changedTouches[0].clientX > 80 && Math.abs(s.y - e.changedTouches[0].clientY) < 40) onArchive();
+        if (s && s.x - e.changedTouches[0].clientX > 80 && Math.abs(s.y - e.changedTouches[0].clientY) < 40) { acted.current = true; onArchive(); }
       }}>
-      <button type="button" className="comms-row__btn" onClick={onOpen}>
+      <button type="button" className="comms-row__btn" onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
         <span className="comms-row__face" style={{ '--c': mark ? markColor(mark.bg) : undefined } as React.CSSProperties}>{(mark?.label ?? t.agent)[0]}</span>
         <span className="comms-row__main">
           <span className="comms-row__title">{t.title ?? `New thread with ${agentName(t.agent, marks)}`}</span>
@@ -280,15 +302,15 @@ function Composer({ onSend, disabled, accent, placeholder }: { onSend: (text: st
 
 // ---- one thread ----------------------------------------------------------------------------------
 
-function Message({ m, marks, agent }: { m: Msg; marks: Record<string, Mark>; agent: string }) {
+function Message({ m, marks, agent, owner }: { m: Msg; marks: Record<string, Mark>; agent: string; owner?: string }) {
   const who = m.kind === 'message' ? 'you' : m.from === 'loom' ? 'loom' : agentName(m.from, marks).toLowerCase();
   if (m.kind === 'error') return <li className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p></li>;
   if (m.kind === 'ask') return <li className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {who}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></li>;
   const mine = m.kind === 'message';
   return (
     <li className={`comms-msg ${mine ? 'comms-msg--mine' : 'comms-msg--agent'}`} data-undelivered={mine && m.delivered === false ? '' : undefined}>
-      <span className="comms-msg__meta loom-data">{hhmm(m.at)} · {who}</span>
-      {m.text === null ? <p className="comms-msg__gone">(older than this thread keeps)</p> : mine ? <p className="comms-msg__text">{m.text}</p> : <Reply text={m.text} />}
+      <span className="comms-msg__meta loom-data">{!mine && marks[m.from] && <AgentAvatar a={marks[m.from]} size={22} className="comms-msg__face" />}{hhmm(m.at)} · {who}</span>
+      {m.text === null ? <p className="comms-msg__gone">(older than this thread keeps)</p> : mine ? <p className="comms-msg__text">{m.text}</p> : <Reply text={m.text} owner={owner} />}
     </li>
   );
 }
@@ -321,15 +343,14 @@ function grouped(messages: Msg[]): Array<{ key: string; msg?: Msg; cards?: Msg[]
   return out;
 }
 
-function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged }: {
-  initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean;
+function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, github }: {
+  initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
   onBack: () => void; onChanged: () => void;
 }) {
   const [thread, setThread] = useState(initial.thread);
   const [messages, setMessages] = useState(initial.messages);
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
-  const [talking, setTalking] = useState(false);
   const [menu, setMenu] = useState(false);
   const [compact, setCompact] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -356,10 +377,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged }: {
     const reply = r.messages.filter((m) => m.kind === 'reply' && m.seq > seenReply.current).at(-1);
     if (reply) {
       seenReply.current = reply.seq;
-      const n = r.messages.filter((m) => m.kind === 'reply' && m.seq > 0).reduce((k, m) => k + talkBeats((m.text ?? '').length), 0);
-      setTalk({ n: Math.min(4, n), key: reply.seq });
-      setTalking(true);
-      setTimeout(() => setTalking(false), Math.min(4, n) * 2300 + 250);
+      // The beats for what landed now; the player adds them to a run already going and stops at 4 (PIXEL.talkMax).
+      const n = r.messages.filter((m) => m.kind === 'reply').reduce((k, m) => k + talkBeats((m.text ?? '').length), 0);
+      setTalk({ n, key: reply.seq });
       setLink('ok');
     }
     onChanged();
@@ -432,7 +452,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged }: {
   const lastMine = messages.filter((m) => m.kind === 'message').at(-1);
   const lastReply = messages.filter((m) => m.kind === 'reply').at(-1);
   const waitingOnAgent = !!lastMine && lastMine.delivered !== false && (!lastReply || lastReply.seq < lastMine.seq);
-  const face = faceOf({ failed: thread.state.failed, asking: false, talking, working: thread.state.working, waitingOnAgent });
+  const face = faceOf({ failed: thread.state.failed, asking: false, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
   const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} you={member} compact={!wide && compact} wide={wide} />;
@@ -464,7 +484,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged }: {
             </li>
           ) : null}
           {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
-            <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} />
+            <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} />
           ))}
           {lastMine?.delivered === false && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
           {thread.state.working && <li className="comms-working loom-data">{mark.label.toUpperCase()} · working · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</li>}
@@ -527,7 +547,7 @@ export function CommsView({ data }: { data: CommsData }) {
   const open = (id: string) => go(`/comms/${id}`);
   const back = () => { setMaking(false); go('/comms'); };
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} />
-    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} />
+    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} github={data.github} />
       : null;
   const list = <ThreadList threads={threads} marks={marks} current={data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;

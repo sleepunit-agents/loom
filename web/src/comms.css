@@ -116,6 +116,6 @@
 .comms-screen[data-compact] { flex-direction: row; }
 .comms-screen[data-compact] .comms-screen__frame { flex: 1; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; padding: 6px; }
 .comms-screen[data-compact] .comms-screen__glass { width: 56px; height: 56px; aspect-ratio: auto; }
-.comms-screen[data-compact] .comms-screen__glass canvas { transform: scale(.32); }
+.comms-msg__face { display: inline-grid; vertical-align: middle; margin-right: 6px; }
 .comms-screen[data-compact] .comms-screen__label { margin-top: 0; }
 .comms-thread__strip .comms-screen:not([data-compact]) .comms-screen__glass { max-height: 34dvh; }

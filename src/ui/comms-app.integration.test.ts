@@ -23,6 +23,18 @@ const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bi
 const built = existsSync(`${root}dist/web/index.html`);
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
 
+describe.runIf(built)('the Comms chunk', () => {
+  it('is its own: the first page carries none of it', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const assets = readdirSync(`${root}dist/web/assets`);
+    expect(assets.some((f) => /^comms-.*\.js$/.test(f))).toBe(true);
+    const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
+    for (const f of assets.filter((x) => /^index-.*\.js$/.test(x) && index.includes(x))) {
+      expect(readFileSync(`${root}dist/web/assets/${f}`, 'utf-8')).not.toContain('comms-screen__glass');
+    }
+  });
+});
+
 describe.runIf(built && chrome && hasAge)('the Comms app', () => {
   let h: Household;
   let handle: HttpServeHandle;
@@ -91,7 +103,9 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.locator('.comms-screen').waitFor();
       expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · CH 01 · LINK (OK|LOST)/);
       expect(await page.locator('.comms-steps__line').textContent()).toMatch(/2 steps · Ran the tests/);
-      expect(await page.locator('.comms-reply').innerHTML()).toContain('href="/p/tasks/t-12"');
+      expect(await page.locator('.comms-reply').innerHTML()).toContain('href="/p/tasks/task/t-12"');
+      // Each agent message carries the agent's face.
+      expect(await page.locator('.comms-msg--agent .comms-msg__face').count()).toBeGreaterThan(0);
       // The YOU panel is the desktop's; a phone leaves it out.
       expect(await page.locator('.comms-screen__you').count()).toBe(0);
       const comp = await page.locator('.comms-composer').boundingBox();
@@ -116,8 +130,19 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       const seen = page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-signal') === 'on', undefined, { timeout: 5000 });
       adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'And a scanline roll when a reply lands.' });
       await seen;
+      const signalAt = Date.now();
       await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'talking', undefined, { timeout: 3000 });
+      // The signal plays first, for its 250 ms: talking never starts with it.
+      expect(Date.now() - signalAt).toBeGreaterThanOrEqual(150);
       expect(await page.locator('.comms-msg--agent').last().textContent()).toContain('scanline roll');
+      // Then done, then back to the thread's own state.
+      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'complete', undefined, { timeout: 6000 });
+      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 3000 });
+      // No runtime installed here: a message from the composer can't be delivered, and the link says so.
+      await page.locator('.comms-composer textarea').fill('Can you hear me?');
+      await page.locator('.comms-composer__send').click();
+      await page.waitForFunction(() => /NO CARRIER/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });
+      expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('error');
       expect(await noSideways(page)).toBe(true);
       expect(errors).toEqual([]);
     } finally { await ctx.close(); }

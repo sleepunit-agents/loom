@@ -131,9 +131,13 @@ describe('the comm screen\'s rules', () => {
   it('message ids are 16 base32 characters', () => {
     for (let i = 0; i < 50; i++) expect(newId()).toMatch(/^[a-z2-7]{16}$/);
   });
+  it('a bare repo#N links under the household\'s GitHub owner, and is words without one', () => {
+    expect(replyHtml('Merged app#7.', 'acme')).toContain('href="https://github.com/acme/app/issues/7"');
+    expect(replyHtml('Merged app#7.')).not.toContain('href=');
+  });
   it('a reply\'s links: tasks, PRs and conversations inside or on GitHub; http and javascript stay words', () => {
     const h = replyHtml('See t-12, acme/app#3 and cv-0123456789ab, note:pond/plan, [x](http://evil.example) and [y](javascript:alert(1)).');
-    expect(h).toContain('data-inside="" href="/p/tasks/t-12"');
+    expect(h).toContain('data-inside="" href="/p/tasks/task/t-12"');
     expect(h).toContain('href="https://github.com/acme/app/issues/3"');
     expect(h).toContain('data-inside="" href="/conversation/cv-0123456789ab"');
     expect(h).toContain('<code>note:pond/plan</code>');
@@ -145,13 +149,14 @@ describe('the comm screen\'s rules', () => {
     for (const path of evil) {
       const h = replyHtml(`[go](https://loom.invalid/${path})`);
       expect(h, path).not.toContain('data-inside');
-      expect(h, path).not.toMatch(/href="\/(?!\/p\/tasks\/t-\d+")/);
+      expect(h, path).not.toMatch(/href="\/(?!\/p\/tasks\/task\/t-\d+")/);
     }
     // A task named in the reply is the inside link loom makes; one an agent spells out as a URL is never trusted as one.
-    expect(replyHtml('See t-12.')).toContain('data-inside="" href="/p/tasks/t-12"');
+    expect(replyHtml('See t-12.')).toContain('data-inside="" href="/p/tasks/task/t-12"');
     expect(replyHtml('[t](https://loom.invalid/p/tasks/t-12)')).not.toContain('href="https://loom.invalid');
     const here = 'https://loom.example/comms/th:aaaaaaaaaa';
-    expect(staysInside('/p/tasks/t-12', here)).toBe(true);
+    expect(staysInside('/p/tasks/task/t-12', here)).toBe(true);
+    expect(staysInside('/p/tasks/t-12', here)).toBe(false);
     expect(staysInside('/conversation/cv-0123456789ab', here)).toBe(true);
     for (const href of ['//evil.com/p/tasks/t-1', '/\\evil.com', 'https://evil.com/p/tasks/t-1', 'javascript:alert(1)', '/../x', '/p/tasks/t-1/../../admin', '/p/notes/x']) {
       expect(staysInside(href, here), href).toBe(false);

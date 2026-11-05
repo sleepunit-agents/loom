@@ -787,6 +787,20 @@ Each step ships on its own.
 4. **Asks inline,** with the approvals piece's `--conversation` (12).
 5. **Stretch, later:** several agents in one thread.
 
+## As built (the app, t-1876)
+
+Points the first version settled or left for later:
+
+- **Task links** go to the tasks piece's page for the task (`/p/tasks/task/t-N`), as the Inbox's sheet links them.
+- **`note:<path>`** is set as code, not linked: loom has no note page yet.
+- **Inside links** are links only to the allowed pages (a task, a conversation), checked again on the click against
+  this origin. An inside-looking URL an agent writes is left as its words.
+- **Later:** new messages don't yet decode in through `arrive.tsx`; Find (⌘K) lists the Comms app but not threads by
+  title; a swiped-away row has no Undo toast (a long press pins; a swipe or long press never also opens the row); the
+  phone keyboard inset isn't covered by a browser test.
+- **The comm screen's** compact strip shows the agent's small static avatar (`AgentAvatar`), never the portrait scaled
+  down; its `data-face` follows the player's own beats (talking, then done, then the thread's state).
+
 ## Open questions
 
 - **Token-by-token streaming:** not in this design (see section 4). Revisit once he's used it.

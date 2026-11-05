@@ -107,7 +107,8 @@ const view = (t: Thread) => ({
 async function asView(c: CommsContext, which: 'list' | 'thread', pathname: string): Promise<Record<string, unknown>> {
   if (!c.chrome) return {};
   const chrome = await c.chrome();
-  return { view: 'comms', which, chrome, ctx: { source: { id: 'loom', base: '/' }, path: pathname.slice(1), query: {}, csrf: chrome.csrf, agents: c.agents ?? {} } };
+  return { view: 'comms', which, chrome, ctx: { source: { id: 'loom', base: '/' }, path: pathname.slice(1), query: {}, csrf: chrome.csrf, agents: c.agents ?? {} },
+    ...(c.household.github ? { github: c.household.github } : {}) };
 }
 
 /** Whether a /comms page load names a thread the member may not see: the same 403 as its JSON form (rule 3). */
