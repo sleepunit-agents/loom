@@ -197,6 +197,21 @@ Where it comes from:
   - it has 15 s, and answers `{ok, id?}`;
   - it's sent first, then the agent's turn is recorded with outcome `answered` (`failed` if `send` failed after one
     retry), and the body is told of a failure.
+  - **Two more adapter calls, as built** (loom-box `src/delivery.mjs`, `src/policy.mjs`), on the same argv and
+    limits. `send --describe` answers `{ok: true, guest?, peer?, venue?, readers?, notes?}`: the place's rules for
+    the brief. It's asked before a body starts, and if it fails no body starts. `send --status working|done
+    [--message <delivery id>]…` is sent with the delivery ids when messages reach a body, every 15 s while it's
+    busy, and with `done` when its turn ends. It answers `{ok: true, stop?: true}`, and `stop: true` ends that body.
+  - **A venue core adapts itself** (`loom`, [comms.md](comms.md)) has no bin. Its row in `GET /api/loom/venues`
+    says `"adapter": "core"` instead of `send`. For it, the runtime makes the same three calls (post, describe,
+    status) as `POST /api/loom/comms/adapter` `{op, place, agent, …}` with its own token. They have the same limits,
+    the same retry rule and the same answer shapes. A delivery on `loom` from core's own source `loom` comes only
+    from one of the agent's owners, so the runtime takes its sender as tier 3 without reading the gates.
+- **Activity, for `loom` conversations only** ([comms.md](comms.md), "Activity"). The runtime reads a body's own
+  harness record (Claude's session transcript, Codex's `events.jsonl`) and turns each tool step into a plain card
+  `{id, at, tool, summary ≤ 120, state}`, from a fixed table and never from a model. It never carries a tool's output, a
+  file's contents, a command line or an environment value. The body host adds cards to its `body-sync` report, and the
+  runtime posts them to `POST /api/loom/comms/activity`. No other venue's bodies are read this way.
 - **Continuity slots hold raw session state** (a harness needs its history to resume). So, alongside the audit log:
   - slots are encrypted at rest to the runtime's own key;
   - each is kept only for its venue's continuity window, at most 14 days, then deleted;

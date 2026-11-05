@@ -709,6 +709,11 @@ passes its answer back (`src/delivery.ts`).
     declares (not `relay`); `from: {kind: agent}` only from the runtime, the
     installed piece offering `delivery` (a block's `role` alone isn't it).
     A second `role: runtime` piece is refused at install.
+  - core's own delivery (source `loom`: the owner's words from loom's page, the Inbox's Reply and Comms;
+    `deliverAsOwner` in `src/delivery.ts`) isn't a piece's. It skips two piece checks above: a declared venue, and
+    `from: {kind: person}` only from an adapter. The agent must still be the household's. It comes only from a
+    signed-in member's page action. Comms delivers only for a member who owns the agent
+    ([specs/comms.md](specs/comms.md)).
 - **No delivery piece installed:** a 503 with the reason.
 - **Idempotent:** the same calling piece and `id` within 24 hours,
   whichever of the piece's credentials calls (the runtime has two), gets the
@@ -727,8 +732,9 @@ passes its answer back (`src/delivery.ts`).
   contract's, is a 502, a timeout a 504, the delivery pool full a 503. None of them is
   kept, so the source may retry with the same `id`.
 - **`GET /api/loom/venues`,** for the runtime's token only: every venue,
-  `{"venues": [{name, label, kind, piece, send?, orphaned?}]}`. Core's own
-  (`session`, `wake`) come first, with piece `loom`. `send` is the venue's
+  `{"venues": [{name, label, kind, piece, send?, adapter?, orphaned?}]}`. Core's own
+  (`session`, `wake`, `loom`) come first, with piece `loom`. `loom` (Comms threads) has `adapter: "core"` in place of
+  `send`: the runtime posts to it through `POST /api/loom/comms/adapter` ([specs/comms.md](specs/comms.md)). `send` is the venue's
   declared argv while its piece is installed, so the runtime never reads
   another piece's piece.json.
 

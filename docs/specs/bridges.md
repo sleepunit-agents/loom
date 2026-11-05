@@ -95,6 +95,10 @@ continuity.
   talking (their People card, as the agent knows them), where, and what the
   agent may do for them.
 
+**The `loom` venue** ([comms.md](comms.md)) is the one core carries itself: Comms threads in loom's app, for an
+agent's owners only. Core is its adapter, and it keeps the adapters' rules: one turn per delivered message, presence
+through `status`, and a refusal for good marked `permanent`.
+
 ### Bodies: sessions in the agent's house, not a house each
 
 The scaling answer is to separate houses from conversations:
