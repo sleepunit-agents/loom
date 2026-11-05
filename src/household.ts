@@ -796,12 +796,16 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
   if (scale !== undefined && !(typeof scale === 'number' && scale >= 0.5 && scale <= 1.2)) bad('has a "scale" that isn\'t a number from 0.5 to 1.2');
   if (offset !== undefined && !(Array.isArray(offset) && offset.length === 2 && offset.every((n) => Number.isInteger(n) && n >= -32 && n <= 32))) bad('has an "offset" that isn\'t [x, y], whole pixels from -32 to 32');
   const [cw, ch] = cell as [number, number];
-  const av = avatar as { x?: unknown; y?: unknown; w?: unknown; h?: unknown } | undefined;
-  if (avatar !== undefined && !(av && typeof av === 'object' && [av.x, av.y, av.w, av.h].every((n) => Number.isInteger(n))
-    && (av.x as number) >= 0 && (av.y as number) >= 0 && (av.w as number) >= 8 && (av.h as number) >= 8
-    && (av.x as number) + (av.w as number) <= cw && (av.y as number) + (av.h as number) <= ch)) bad('has an "avatar" that isn\'t { x, y, w, h }: whole pixels inside the cell, 8 or more across');
+  let crop: SpriteManifest['avatar'];
+  if (avatar !== undefined) {
+    const { x, y, w, h } = (avatar ?? {}) as Record<string, unknown>;
+    const whole = [x, y, w, h].every((n) => Number.isInteger(n));
+    const [ax, ay, aw, ah] = [x, y, w, h] as number[];
+    if (!whole || ax < 0 || ay < 0 || aw < 8 || ah < 8 || ax + aw > cw || ay + ah > ch) bad('has an "avatar" that isn\'t { x, y, w, h }: whole pixels inside the cell, 8 or more across');
+    crop = { x: ax, y: ay, w: aw, h: ah };
+  }
   const out: SpriteManifest = { cell: cell as [number, number], states: {},
-    ...(avatar !== undefined ? { avatar: { x: av!.x as number, y: av!.y as number, w: av!.w as number, h: av!.h as number } } : {}),
+    ...(crop ? { avatar: crop } : {}),
     ...(scale !== undefined && scale !== 1 ? { scale: scale as number } : {}),
     ...(offset !== undefined && (offset as number[]).some((n) => n !== 0) ? { offset: offset as [number, number] } : {}) };
   for (const [st, byFacing] of Object.entries(m.states as Record<string, unknown>)) {

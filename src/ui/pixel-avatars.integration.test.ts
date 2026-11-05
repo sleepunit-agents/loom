@@ -18,7 +18,8 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, manifestFromPixelLab, setSprite, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
-import { avatarCrop, avatarScale } from '../../web/src/pixel-face';
+import { AVATAR_SIDE, avatarCrop, avatarScale } from '../../web/src/pixel-face';
+import { checkSpriteManifest, HouseholdError } from '../household.js';
 import { sheet } from './pixel-sheet.fixture.js';
 
 const root = new URL('../../', import.meta.url).pathname;
@@ -32,6 +33,13 @@ describe('a small pixel avatar', () => {
     expect(avatarCrop(m, (x, y) => x >= 10 && x < 46 && y >= 20 && y < 64)).toEqual({ x: 16, y: 20, w: 24, h: 24 });
     expect(avatarCrop(m, () => false)).toEqual({ x: 16, y: 0, w: 24, h: 24 });
     expect(avatarCrop({ ...m, avatar: { x: 4, y: 6, w: 32, h: 32 } }, () => true)).toEqual({ x: 4, y: 6, w: 32, h: 32 });
+  });
+  it('a manifest\'s crop is kept, checked: whole pixels inside the cell, 8 or more across', () => {
+    const m = { cell: [56, 84], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } } };
+    expect(checkSpriteManifest({ ...m, avatar: { x: 4, y: 6, w: 32, h: 32 } }).avatar).toEqual({ x: 4, y: 6, w: 32, h: 32 });
+    expect(checkSpriteManifest(m).avatar).toBeUndefined();
+    for (const avatar of [{ x: 40, y: 0, w: 24, h: 24 }, { x: 0, y: 0, w: 4, h: 24 }, { x: 0.5, y: 0, w: 24, h: 24 }, { x: 0, y: 0, w: 24 }, 'top'])
+      expect(() => checkSpriteManifest({ ...m, avatar }), JSON.stringify(avatar)).toThrow(HouseholdError);
   });
   it('is drawn at a whole-pixel scale: the nearest whole number, never under 1', () => {
     expect([22, 24, 28, 32, 35, 48].map((s) => avatarScale(s, 24))).toEqual([1, 1, 1, 1, 1, 2]);
@@ -80,7 +88,16 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
 
   async function device(width: number, pixel = true): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height: width < 600 ? 844 : 800 }, reducedMotion: 'no-preference', serviceWorkers: 'block' });
-    await ctx.addInitScript(() => { sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); });
+    await ctx.addInitScript(() => {
+      sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');
+      // Every draw onto a small avatar's canvas, counted: one is drawn once and never again.
+      const draw = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function (this: CanvasRenderingContext2D, ...a: unknown[]) {
+        const c = this.canvas as HTMLCanvasElement;
+        if (c.closest?.('.loom-pixel-avatar')) c.dataset.draws = String(Number(c.dataset.draws ?? 0) + 1);
+        return (draw as (...x: unknown[]) => void).apply(this, a);
+      } as typeof draw;
+    });
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     p.on('pageerror', (e) => errors.push(`${width}: ${e.message}`));
@@ -102,14 +119,15 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
   const settle = async (p: Page) => { await p.waitForTimeout(900); await p.waitForFunction(() => [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].every((c) => c.dataset.scale), null, { timeout: 10_000 }); };
   /** Art in pixels, never drawn; Mark drawn, never in pixels; each small one a 24-pixel crop at a whole-pixel scale. */
   function check(at: string, f: Awaited<ReturnType<typeof faces>>, o: { art?: boolean; small?: boolean } = {}) {
+    if (f.wide !== undefined && at !== 'the desktop' && at !== 'a window') expect(f.wide, `${at}: wider than 390`).toBeLessThanOrEqual(390);
     expect(f.drawn.filter((w) => w === 'Art E Fish'), `${at}: Art drawn`).toEqual([]);
     expect(f.pixels.filter((w) => w !== 'Art E Fish'), `${at}: someone else in pixels`).toEqual([]);
     if (o.art !== false) expect(f.pixels.filter((w) => w === 'Art E Fish').length, `${at}: Art in pixels`).toBeGreaterThan(0);
     if (o.small) expect(f.small.length, `${at}: a small one`).toBeGreaterThan(0);
     for (const s of f.small) {
-      expect([s.w, s.h, s.render], at).toEqual([24, 24, 'pixelated']);
+      expect([s.w, s.h, s.render], at).toEqual([AVATAR_SIDE, AVATAR_SIDE, 'pixelated']);
       expect(Number.isInteger(s.scale) && s.scale >= 1, at).toBe(true);
-      expect(s.shown, at).toBeCloseTo(24 * s.scale, 1);
+      expect(s.shown, at).toBeCloseTo(AVATAR_SIDE * s.scale, 0);
       expect(s.scale, at).toBe(Math.max(1, Math.round(s.box / 24)));
     }
   }
@@ -143,17 +161,18 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     await p.context().close();
   }, 120_000);
 
-  it('a small one stays still', async () => {
+  it('a small one is the rest frame\'s crop, pixel for pixel, drawn once and never again', async () => {
     const p = await device(390);
     await p.goto(`${base}/inbox`);
     await settle(p);
-    const snap = () => p.evaluate(() => [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].map((c) => c.toDataURL()));
-    const a = await snap();
-    expect(a.length).toBeGreaterThan(0);
-    // It draws the sheet (the fixture's cyan), not an empty square.
-    expect(await p.evaluate(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-pixel-avatar canvas')!; const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; return d.some((v, i) => i % 4 === 3 && v > 0); })).toBe(true);
-    await p.waitForTimeout(2500);
-    expect(await snap()).toEqual(a);
+    // The crop (x 16, y 20, 24 square) of the rest frame: cyan, with the rest frame's own magenta mark at (4, 1); a
+    // squashed whole cell would have the cell's empty margin at its corners, another frame no mark.
+    const px = await p.evaluate(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-pixel-avatar canvas')!; const g = c.getContext('2d')!;
+      const at = (x: number, y: number) => [...g.getImageData(x, y, 1, 1).data].join(','); return { tl: at(0, 0), mark: at(4, 1), off: at(6, 1), br: at(23, 23), draws: c.dataset.draws }; });
+    expect(px).toEqual({ tl: '46,230,240,255', mark: '255,61,168,255', off: '46,230,240,255', br: '46,230,240,255', draws: '1' });
+    await p.waitForTimeout(3000);
+    expect(await p.evaluate(() => [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].map((c) => c.dataset.draws))).toEqual(expect.arrayContaining(['1']));
+    expect(await p.evaluate(() => [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].every((c) => c.dataset.draws === '1'))).toBe(true);
     await p.context().close();
   }, 60_000);
 
