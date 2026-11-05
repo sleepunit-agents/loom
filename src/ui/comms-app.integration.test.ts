@@ -143,8 +143,13 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'complete', undefined, { timeout: 6000 });
       await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 3000 });
       // No runtime installed here: a message from the composer can't be delivered, and the link says so.
-      await page.locator('.comms-composer textarea').fill('Can you hear me?');
-      await page.locator('.comms-composer__send').click();
+      // Shift+Enter is a new line; Enter sends (a desktop's keyboard; the Send button is the phone's).
+      const box = page.locator('.comms-composer textarea');
+      await box.fill('Can you hear me?');
+      await box.press('Shift+Enter');
+      await box.pressSequentially('Over.');
+      expect(await box.inputValue()).toBe('Can you hear me?\nOver.');
+      await box.press('Enter');
       await page.waitForFunction(() => /NO CARRIER/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });
       expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('error');
       expect(await noSideways(page)).toBe(true);

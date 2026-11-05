@@ -305,9 +305,14 @@ function Composer({ onSend, disabled, accent, placeholder }: { onSend: (text: st
   };
   return (
     <form className="comms-composer" style={{ '--c': accent } as React.CSSProperties} onSubmit={(e) => { e.preventDefault(); void send(); }}>
-      <span className="comms-composer__prompt loom-data" aria-hidden>&gt;</span>
       <textarea ref={area} rows={1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
-        onChange={(e) => setText(e.target.value)} />
+        onChange={(e) => setText(e.target.value)}
+        // Enter sends and Shift+Enter is a new line, where there's a hardware keyboard. A phone's keyboard has no Shift
+        // to reach for, so its Enter stays a new line and the Send button sends. Never mid-composition (an IME's Enter).
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || matchMedia('(pointer: coarse)').matches) return;
+          e.preventDefault(); void send();
+        }} />
       <button type="submit" disabled={disabled || busy || !text.trim()} className="comms-composer__send">Send</button>
     </form>
   );
