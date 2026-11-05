@@ -48,7 +48,6 @@ import { resolveRepoRoot } from '../config.js';
 import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
-import { threadsOf } from '../comms.js';
 import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
