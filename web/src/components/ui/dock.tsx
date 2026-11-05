@@ -64,7 +64,6 @@ export function Dock({
   ref,
   dir,
   onPointerMove,
-  onPointerOver,
   onPointerLeave,
   onPointerDownCapture,
   onPointerUpCapture,
@@ -184,12 +183,6 @@ export function Dock({
 
   const handlePointerMove = (event: React.PointerEvent<HTMLElement>) => {
     onPointerMove?.(event);
-    track(event);
-  };
-  // loom: where the pointer is, from a move or from its arrival (pointerover): the first move after the page has
-  // changed under a still pointer can be hit-tested to the page before the dock, so a key it came onto knows by its
-  // pointerover alone.
-  const track = (event: React.PointerEvent<HTMLElement>) => {
     if (event.defaultPrevented || quiet || event.pointerType === "touch")
       return;
     const axis = variant === "rail" ? "y" : "x";
@@ -211,24 +204,6 @@ export function Dock({
     setPointerIndex(over);
     setScales(focusScales(over));
   };
-
-  // loom: a pointer that left without a pointerleave (a page change drew over the dock mid-move: desk.tsx's window
-  // shrinking into its key, a view transition, the dock drawn again under it) still lets go of its key, at its next
-  // move anywhere off the dock.
-  const focusIndexNow = React.useRef(focusIndex);
-  focusIndexNow.current = focusIndex;
-  const focusScalesNow = React.useRef(focusScales);
-  focusScalesNow.current = focusScales;
-  React.useEffect(() => {
-    if (pointerIndex === null) return;
-    const off = (event: PointerEvent) => {
-      if (event.target instanceof Node && root.current?.contains(event.target)) return;
-      setPointerIndex(null);
-      setScales(focusScalesNow.current(focusIndexNow.current));
-    };
-    document.addEventListener("pointermove", off, true);
-    return () => document.removeEventListener("pointermove", off, true);
-  }, [pointerIndex]);
 
   const handlePointerLeave = (event: React.PointerEvent<HTMLElement>) => {
     onPointerLeave?.(event);
@@ -295,10 +270,6 @@ export function Dock({
       className={cn("v-dock", className)}
       style={customStyle}
       onPointerMove={handlePointerMove}
-      onPointerOver={(event) => {
-        onPointerOver?.(event);
-        track(event);
-      }}
       onPointerLeave={handlePointerLeave}
       onPointerDownCapture={(event) => {
         onPointerDownCapture?.(event);

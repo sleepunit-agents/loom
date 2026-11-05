@@ -259,20 +259,21 @@ function keyFor(href: string): HTMLElement | null {
 
 /** Where each app was left when its window was minimized, by its dock key (the key's href): the page, its query, and
  * how far down it was. This session's, in this tab (sessionStorage, read once; in memory alone where it can't be kept). */
-type Left = Record<string, { url: string; top: number }>;
+/** Where a minimized window was: its page (path and query) and how far down it was scrolled. */
+export type Place = { url: string; top: number };
+type Left = Record<string, Place>;
 const LEFT = 'loom-desk-left';
 const left: Left = (() => { try { const v = JSON.parse(sessionStorage.getItem(LEFT) ?? '{}') as unknown; return v && typeof v === 'object' ? v as Left : {}; } catch { return {}; } })();
 const keepLeft = () => { try { sessionStorage.setItem(LEFT, JSON.stringify(left)); } catch { /* a private window: in memory only */ } };
 
-/** Minimize (Jonathan, 2026-11-05: "like a real OS"): the app whose key is `key` is kept where it is, and the window
- * shrinks back into that key (deskGo's close), the desktop behind it. Without a key (a window opened from Find) it
- * simply goes. */
-export function deskMinimize(key: string | undefined, url: string, top: number, go: (href: string) => void) {
-  if (key) { left[key] = { url, top: Math.max(0, Math.round(top)) }; keepLeft(); }
-  go('/');
+/** Minimize (Jonathan, 2026-11-05: "like a real OS"): the app whose key is `key` is kept where it is (App.tsx then goes
+ * home, and the window shrinks back into that key: deskGo's close). */
+export function deskMinimize(key: string, at: Place) {
+  left[key] = { url: at.url, top: Math.max(0, Math.round(at.top)) };
+  keepLeft();
 }
 /** Where the app under `key` was minimized, if it was: taken, so the window opened there again is open, not kept. */
-export function deskRestore(key: string): { url: string; top: number } | undefined {
+export function deskRestore(key: string): Place | undefined {
   const l = left[key];
   if (l) { delete left[key]; keepLeft(); }
   return l;

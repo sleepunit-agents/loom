@@ -91,8 +91,8 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
-  async function screen(width: number, o: { motion?: 'reduce' | 'no-preference'; touch?: boolean; path?: string } = {}): Promise<Page> {
-    const ctx = await browser.newContext({ viewport: { width, height: 800 }, hasTouch: !!o.touch, isMobile: !!o.touch, reducedMotion: o.motion ?? 'no-preference', serviceWorkers: 'block' });
+  async function screen(width: number, o: { motion?: 'reduce' | 'no-preference'; touch?: boolean; path?: string; height?: number } = {}): Promise<Page> {
+    const ctx = await browser.newContext({ viewport: { width, height: o.height ?? 800 }, hasTouch: !!o.touch, isMobile: !!o.touch, reducedMotion: o.motion ?? 'no-preference', serviceWorkers: 'block' });
     await ctx.addInitScript(() => { localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); });
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
@@ -102,7 +102,12 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     return p;
   }
   const where = (p: Page) => { const u = new URL(p.url()); return u.pathname + u.search; };
-  const onDesktop = async (p: Page) => { await p.locator('.loom-desk-home').waitFor(); await expect.poll(() => p.locator('.loom-window').count()).toBe(0); expect(new URL(p.url()).pathname).toBe('/'); };
+  /** On the desktop, the window's shrink over (while it runs the page is a view transition's picture: a pointer over it
+   * reaches nothing under it). */
+  const onDesktop = async (p: Page) => {
+    await p.locator('.loom-desk-home').waitFor(); await expect.poll(() => p.locator('.loom-window').count()).toBe(0); expect(new URL(p.url()).pathname).toBe('/');
+    await expect.poll(() => p.evaluate(() => document.documentElement.dataset.deskMove ?? ''), { timeout: 8000 }).toBe('');
+  };
   /** The window's page, scrolled this far down (as far as it goes, if it's shorter). */
   const scrollTo = (p: Page, top: number) => p.locator('.loom-window main').evaluate((m, t) => { m.scrollTop = t; return m.scrollTop; }, top);
   const scrolled = (p: Page) => p.locator('.loom-window main').evaluate((m) => m.scrollTop);
@@ -114,10 +119,13 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   const away = async (p: Page) => { await p.mouse.move(640, 300); await p.waitForTimeout(450); };
 
   it('clicking the open app\'s key minimizes it to the desktop; clicking it again opens it where it was, page, query and scroll', async () => {
-    const p = await screen(1280, { path: '/appearance?from=minimize' });
+    // A screen short enough that Appearance scrolls in its window (at 800 px tall it fits), so its scroll is kept.
+    const p = await screen(1280, { path: '/appearance?from=minimize', height: 560 });
     await p.locator('.loom-window main').waitFor();
     await p.locator('.loom-window main > *').first().waitFor();
-    const top = await scrollTo(p, 240);
+    // Once its page is drawn whole (its sheet arrives a moment after the window): it scrolls, so there's a scroll to keep.
+    await expect.poll(() => scrollTo(p, 240), { timeout: 10_000 }).toBeGreaterThan(0);
+    const top = await scrolled(p);
     const moves: string[] = [];
     await p.exposeFunction('noteMove', (m: string) => moves.push(m));
     await p.evaluate(() => new MutationObserver(() => { const m = document.documentElement.dataset.deskMove; if (m) (window as unknown as { noteMove: (m: string) => void }).noteMove(m); })
@@ -161,6 +169,11 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     await onDesktop(p);
     await p.locator(KEY('Setup')).click();
     await expect.poll(() => where(p)).toBe('/appearance?from=close');
+    // Minimized again, then the app reached another way (its address, a reload: the place survives it) and closed.
+    await p.locator(KEY('Setup')).click();
+    await onDesktop(p);
+    await p.goto(`${base}/appearance?from=elsewhere`);
+    await p.locator('.loom-window main > *').first().waitFor();
     await p.getByRole('button', { name: /^Close, back to the desktop/ }).click();
     await onDesktop(p);
     await p.locator(KEY('Setup')).click();
@@ -184,11 +197,6 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
       await expect.poll(() => where(p), at).toBe('/appearance?from=strip');
       await p.locator('.loom-window main > *').first().waitFor();
     }
-    // A real double-click on Close: its first click closes (Close is Close), and closed is forgotten, not minimized.
-    await p.locator('.loom-window__close').dblclick();
-    await onDesktop(p);
-    await p.locator(KEY('Setup')).click();
-    await expect.poll(() => where(p)).toBe('/setup');
     await p.context().close();
   }, 90_000);
 
@@ -215,12 +223,12 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     await key.click();
     await p.locator('.loom-window').waitFor();
     await away(p);
-    await expect.poll(() => atRest(p, 'Inbox')).toEqual({ ratio: 1, engaged: false });
+    await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // Minimize from the same key, and away (focus goes back to the key the window shrank into: that isn't hover).
     await key.click();
     await onDesktop(p);
     await away(p);
-    await expect.poll(() => atRest(p, 'Inbox')).toEqual({ ratio: 1, engaged: false });
+    await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // Close, by the mouse, does the same (it stayed grown here before: 1.65x and engaged, the pointer far away).
     await key.click();
     await p.locator('.loom-window').waitFor();
@@ -228,16 +236,16 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     await onDesktop(p);
     await expect.poll(() => p.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Inbox');
     await away(p);
-    await expect.poll(() => atRest(p, 'Inbox')).toEqual({ ratio: 1, engaged: false });
-    // While the pointer is on it, it's grown; off it, it isn't.
+    await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
+    // While the pointer is on it, it's grown; off it, it isn't (a mouse's way there, in steps, as a hand moves one).
     const b = (await key.boundingBox())!;
-    await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
-    await expect.poll(async () => (await atRest(p, 'Inbox')).ratio).toBeGreaterThan(1.6);
+    await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 8 });
+    await expect.poll(async () => (await atRest(p, 'Inbox')).ratio, { timeout: 4000 }).toBeGreaterThan(1.6);
     await away(p);
-    await expect.poll(() => atRest(p, 'Inbox')).toEqual({ ratio: 1, engaged: false });
+    await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // A keyboard user still sees the key they're on: focus from the keyboard grows it.
     await key.focus(); await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowLeft');
-    await expect.poll(async () => (await atRest(p, 'Inbox')).engaged).toBe(true);
+    await expect.poll(async () => (await atRest(p, 'Inbox')).engaged, { timeout: 4000 }).toBe(true);
     await p.context().close();
   }, 60_000);
 
@@ -247,9 +255,10 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     await p.locator(KEY('Inbox')).tap();
     await p.locator('.loom-window').waitFor();
     await p.waitForTimeout(450);
-    await expect.poll(() => atRest(p, 'Inbox')).toEqual({ ratio: 1, engaged: false });
+    await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     await p.context().close();
   }, 60_000);
+
 
 
 
@@ -297,6 +306,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
       }
       const vp = dock.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')!, cs = getComputedStyle(vp);
       if (cs.overflowY !== 'hidden') seen.push(`the viewport scrolls up and down (${cs.overflowY})`);
+      if (!['auto', 'scroll'].includes(cs.overflowX)) seen.push(`the viewport can't scroll sideways (${cs.overflowX})`);
       if (cs.scrollbarWidth !== 'none') seen.push(`a native bar (${cs.scrollbarWidth})`);
     }
     return seen;

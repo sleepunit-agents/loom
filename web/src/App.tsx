@@ -361,7 +361,11 @@ export default function App() {
   // minimizes it, kept where it is; that key opens it there again; Close and Esc close it, forgetting. Home always
   // goes to the desktop (minimizing what's open, as a desktop's "show desktop" does). An agent's own dock is its own.
   const deskKey = () => deskNow.current && !agentDock && location.pathname !== '/' && lit && new URL(lit, location.href).pathname !== '/' ? lit : undefined;
-  const minimize = () => { if (desk$) desk$.deskMinimize(deskKey(), location.pathname + location.search, mainRef.current?.scrollTop ?? 0, go); else go('/'); };
+  const minimize = () => {
+    const key = deskKey();
+    if (key) desk$?.deskMinimize(key, { url: location.pathname + location.search, top: mainRef.current?.scrollTop ?? 0 });
+    go('/');
+  };
   const closeWindow = () => { desk$?.deskForget(deskKey()); go('/'); };
   const pick = (href: string) => {
     buzz(haptics, true);
@@ -431,7 +435,7 @@ export default function App() {
 
   // A desktop's page scrolls inside its own space (desk.css): a new page opens at its top.
   const mainRef = useRef<HTMLElement>(null);
-  const restoreTo = useRef<{ url: string; top: number } | null>(null);
+  const restoreTo = useRef<import('./desk').Place | null>(null);
   useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [url]);
   // ... unless it's a minimized window opened again (pick, above): back where it was, once its page is drawn.
   useLayoutEffect(() => {
