@@ -739,6 +739,18 @@ export function threadOfConversation(home: string, conversation: string): Thread
   return r ? threadOf(r) : undefined;
 }
 
+/**
+ * The thread of `agent`'s own loom conversation `conversation`: only when the thread is that agent's and the id is
+ * exactly its conversation over agent · loom · place. The agent comes from the caller's own context (the MCP server's
+ * agent dir), never from what it sends; a conversation id named at identity is just a claim. Within one agent, that
+ * claim is trusted as conversation_digest trusts it: the MCP session can't see the runtime's body key, so a body that
+ * names another of its own agent's threads at identity reaches that one. No agent ever reaches another agent's.
+ */
+export function threadOfAgentConversation(home: string, agent: string, conversation: string): Thread | undefined {
+  const t = threadOfConversation(home, conversation);
+  return t && t.agent === agent && conversationId(agent, COMMS_VENUE, t.id) === conversation ? t : undefined;
+}
+
 /** The conversations of `agent`'s threads filed under project `slug` (the hub counts them, comms.md "Project"). */
 export function filedThreads(home: string, agent: string, slug: string): string[] {
   if (!existsSync(join(home, 'household.db'))) return [];
@@ -749,8 +761,8 @@ export function filedThreads(home: string, agent: string, slug: string): string[
  * comms_title (an MCP tool, comms.md "Title"): a body names its own thread, once it knows what it's about. Only in a
  * `loom` conversation; never over the member's own name for it.
  */
-export function titleFromAgent(home: string, conversation: string, title: unknown, now: Date = new Date()): Thread {
-  const t = threadOfConversation(home, conversation);
+export function titleFromAgent(home: string, agent: string, conversation: string, title: unknown, now: Date = new Date()): Thread {
+  const t = threadOfAgentConversation(home, agent, conversation);
   if (!t) return fail('comms_title names a Comms thread, and this conversation isn\'t one');
   const h = householdAt(home);
   return setTitle(h, t, title, 'agent', now);

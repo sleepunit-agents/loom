@@ -70,7 +70,7 @@ import {
 import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
 import { conversationsList, conversationView, homeFor } from './conversations.js';
-import { CommsError, threadOfConversation, titleFromAgent } from './comms.js';
+import { CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
 import { householdOf } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
@@ -1449,7 +1449,8 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async (input) => convText(() => {
       // A Comms thread's own project is the fallback for a digest that names none (comms.md, "Project").
       const home = here ? homeFor(contextDir) : undefined;
-      const project = home && here ? threadOfConversation(home, here.conversation)?.project ?? null : null;
+      const self = householdOf(contextDir)?.agent;
+      const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
       return writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
     }),
   );
@@ -1468,9 +1469,11 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ title }) => {
       const home = homeFor(contextDir);
-      if (!here || !home) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'call identity with this body\'s conversation and run first' }) }], isError: true };
+      // Whose body this is: the server's own agent dir, never anything the caller sends.
+      const self = householdOf(contextDir)?.agent;
+      if (!here || !home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'call identity with this body\'s conversation and run first' }) }], isError: true };
       try {
-        const t = titleFromAgent(home, here.conversation, title);
+        const t = titleFromAgent(home, self, here.conversation, title);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, thread: t.id, title: t.title }) }] };
       } catch (e) {
         if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };

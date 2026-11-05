@@ -13,7 +13,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLoomServer } from './server.js';
 import { agentDir, loadHousehold, type Household } from './household.js';
-import { createConversationTables, getConversation, recordTurn, writeDigest } from './backends/conversations.js';
+import { conversationId, createConversationTables, getConversation, recordTurn, writeDigest } from './backends/conversations.js';
 import { openThread, setTitle, threadFor } from './comms.js';
 import { conversationsSection } from './conversations.js';
 import { isCoreMcpTool } from './offers.js';
@@ -48,13 +48,13 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
   afterEach(() => { if (saved === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved; rmSync(h.home, { recursive: true, force: true }); });
 
   /** A thread with its conversation recorded (as the runtime's first turn would). */
-  const thread = (n: number, project?: string) => {
-    const o = openThread(h, process.env, jonathan(), { agent: 'art', id: `aaaaaaaaaaaaaaa${'abcdefgh'[n]}`, text: 'hi', ...(project ? { project } : {}) });
-    recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: o.thread.id, at: at(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message', label: 'New thread' } as never, 'runtime:runtime');
+  const thread = (n: number, project?: string, agent = 'art') => {
+    const o = openThread(h, process.env, jonathan(), { agent, id: `aaaaaaaaaaaaaaa${'abcdefghijklmnop'[n]}`, text: 'hi', ...(project ? { project } : {}) });
+    recordTurn(agentDir(h, agent), agent, { venue: 'loom', place: o.thread.id, at: at(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message', label: 'New thread' } as never, 'runtime:runtime');
     return o.thread;
   };
-  const call = async (conversation: string | null, title: unknown) => {
-    const { server } = createLoomServer({ contextDir: agentDir(h, 'art') });
+  const call = async (conversation: string | null, title: unknown, agent = 'art') => {
+    const { server } = createLoomServer({ contextDir: agentDir(h, agent) });
     const client = new Client({ name: 'comms-title-test', version: '1' });
     const [c, s] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(s), client.connect(c)]);
@@ -87,6 +87,23 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
       expect((await call(t.conversation, 'The agent\'s')).body.error).toMatch(/owner named this thread/);
       expect(threadFor(h, jonathan(), t.id).title).toBe('Mine');
       expect(getConversation(agentDir(h, 'art'), t.conversation)?.label).toBe('Mine');
+    });
+
+    it('a body can retitle only its own thread: never another agent\'s, never another of its own agent\'s', async () => {
+      const arts = thread(5);
+      const other = thread(6);
+      const marks = thread(7, undefined, 'mark');
+      // mark's body, naming art's conversation at identity: refused, and art's thread keeps no title.
+      expect((await call(arts.conversation, 'Hijacked', 'mark')).body.error).toMatch(/isn't one/);
+      expect(threadFor(h, jonathan(), arts.id).title).toBeNull();
+      // art's body in one thread can't retitle another, whatever it claims: the claim must be its own conversation.
+      const forged = conversationId('art', 'loom', other.id).replace(/.$/, (c) => (c === '0' ? '1' : '0'));
+      expect((await call(forged, 'Wrong thread')).error).toBe(true);
+      expect(threadFor(h, jonathan(), other.id).title).toBeNull();
+      // mark's own body retitles mark's own thread.
+      expect((await call(marks.conversation, 'Mark\'s own', 'mark')).body).toMatchObject({ ok: true, title: 'Mark\'s own' });
+      // and art's own body, its own.
+      expect((await call(arts.conversation, 'Art\'s own')).body).toMatchObject({ ok: true, title: 'Art\'s own' });
     });
 
     it('is a core tool name, so no piece may offer one by it', () => {
