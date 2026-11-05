@@ -1,16 +1,14 @@
-// Nothing on a page may take the app down: an icon 000h doesn't have becomes a plain one, and a part
+// Nothing on a page may take the app down: an icon nothing has becomes a plain one, and a part
 // that fails to draw says so (with a reload a tap away) instead of blanking everything.
 import { Alert, AlertActions, AlertBody, AlertDescription, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Component, type ReactNode } from 'react';
-import { Icon, iconNames } from '@/components/ui/icon';
+import { Icon } from '@/components/ui/icon';
 import { Spinner } from '@/components/ui/spinner';
 
-const KNOWN = new Set(iconNames);
-const FALLBACK = ['circle', 'dot', 'square'].find((n) => KNOWN.has(n)) ?? iconNames[0];
-
-/** A name 000h can draw: the one asked for, else a plain fallback. */
-export const iconFor = (name: string | undefined) => (name && KNOWN.has(name) ? name : FALLBACK);
+/** A name to draw: the one asked for, or "circle" when there's none. Icon itself draws a plain one for a name nothing
+ * has (icon.tsx fallbackGeometry), once the Lucide pack is here to say so: its 1,700 names aren't on the first page. */
+export const iconFor = (name: string | undefined) => name || 'circle';
 
 type Tone = 'info' | 'ok' | 'warn' | 'danger';
 const TONE_ICON: Record<Tone, string> = { info: 'info', ok: 'circle-check', warn: 'triangle-alert', danger: 'circle-alert' };
