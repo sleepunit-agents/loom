@@ -18,6 +18,12 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 export const filterId = (tint: Tint, state: 'n' | 'ni' | 'l') => `loom-pix-${tint}-${state}`;
 
 let defs: SVGSVGElement | null = null;
+
+/** Which filter an icon wears, one rule per tint and state, from the same TINTS the filters are made from. A lit key's
+ * rule comes after a line-only one's (the same weight), so a line-only icon on the lit key isn't inverted. */
+export const filterRules = (): string => TINTS.map((t) => `.loom-pix[data-tint="${t}"]{filter:url(#${filterId(t, 'n')})}`
+  + `.loom-pix[data-tint="${t}"][data-line]{filter:url(#${filterId(t, 'ni')})}`
+  + `.loom-pix[data-tint="${t}"][data-lit]{filter:url(#${filterId(t, 'l')})}`).join('\n');
 let probe: HTMLDivElement | null = null;
 
 /** The look's colours as they're computed now: a hidden probe wears each token, and the browser resolves it. */
@@ -53,7 +59,7 @@ function paint(): void {
     + filter(filterId(t, 'l'), keys[t], true, false)).join('') + '</defs>';
 }
 
-/** The filters, once: in an SVG of no size at the end of <body>, rebuilt when <html>'s look, mode or contrast change. */
+/** The filters, once: in an SVG of no size at the end of <body> (their rules in a <style> in <head>), rebuilt when <html>'s look, mode or contrast change. */
 function install(): void {
   if (defs) return;
   defs = document.createElementNS(SVG_NS, 'svg');
@@ -63,6 +69,10 @@ function install(): void {
   defs.setAttribute('data-loom-pix', '');
   defs.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
   document.body.append(defs);
+  const style = document.createElement('style');
+  style.dataset.loomPix = '';
+  style.textContent = filterRules();
+  document.head.append(style);
   paint();
   new MutationObserver(paint).observe(document.documentElement, { attributes: true, attributeFilter: ['data-look', 'data-mode', 'data-contrast'] });
 }

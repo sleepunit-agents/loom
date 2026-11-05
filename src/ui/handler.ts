@@ -66,7 +66,7 @@ import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
-import { iconFile, iconSetOf } from '../icon-set.js';
+import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
@@ -119,12 +119,17 @@ export interface UiOptions {
   member?: Member;
 }
 
+/** An app's pixel icon (src/icon-set.ts): /pixel-icons/<app>.png, the app as ICON_APP has it. */
+const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\.png$`);
+
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
   return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
+    // The household's pixel icons: an agent owner is a member, and their shell names them as anyone's does.
+    || pathname.startsWith('/pixel-icons/')
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
     || pathname.startsWith('/conversation/')
@@ -1364,7 +1369,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   // An app's pixel icon (src/icon-set.ts): the household's art, so only for someone signed in (this is past the sign-in
   // check), never public like the app's own icons under /icons/. The page asks with the set's version (?v=).
-  const pix = /^\/pixel-icons\/([a-z][a-z0-9-]{0,40})\.png$/.exec(pathname);
+  const pix = PIXEL_ICON.exec(pathname);
   if (pix) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
     const file = hh ? iconFile(hh, pix[1]) : undefined;

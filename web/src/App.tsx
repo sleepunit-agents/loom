@@ -394,7 +394,11 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <><AppIcon label={t.href === '/setup' ? 'Setup' : t.label} name={iconFor(icon(t.label))} active={t.current} lit={t.current && !agentDock} /><HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
+    value: t.href, label: t.label, icon: <>{agentDock
+      // An agent's own dock wears the agent's colour, not an app's tint (looks.css): the pixel ramps are the apps' tints,
+      // so its keys keep their line icons.
+      ? <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />
+      : <AppIcon label={t.href === '/setup' ? 'Setup' : t.label} name={iconFor(icon(t.label))} active={t.current} lit={t.current} />}<HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
     ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';

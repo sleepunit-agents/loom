@@ -6,14 +6,24 @@ const MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export class PngError extends Error {}
 
-/** Its width, height and pixels, RGBA, row by row. */
+/** Its width, height and pixels, RGBA, row by row. Anything malformed (a chunk past the end, data that won't inflate) is a
+ * PngError saying so, never a RangeError or zlib's own. */
 export function decodePng(png: Buffer): { width: number; height: number; rgba: Uint8Array } {
+  try { return decode(png); } catch (err) {
+    if (err instanceof PngError) throw err;
+    throw new PngError('is damaged (it can\'t be read as a PNG)');
+  }
+}
+
+function decode(png: Buffer): { width: number; height: number; rgba: Uint8Array } {
   if (png.length < 33 || !png.subarray(0, 8).equals(MAGIC)) throw new PngError('isn\'t a PNG');
   let at = 8;
   let width = 0, height = 0, channels = 0;
   const idat: Buffer[] = [];
+  let ended = false;
   while (at + 8 <= png.length) {
     const len = png.readUInt32BE(at);
+    if (at + 12 + len > png.length) throw new PngError('is cut short');
     const type = png.toString('latin1', at + 4, at + 8);
     const data = png.subarray(at + 8, at + 8 + len);
     if (type === 'IHDR') {
@@ -23,9 +33,10 @@ export function decodePng(png: Buffer): { width: number; height: number; rgba: U
       channels = colour === 6 ? 4 : 3;
       if (!width || !height || width > 4096 || height > 4096) throw new PngError('is larger than 4096 pixels a side');
     } else if (type === 'IDAT') idat.push(data);
-    else if (type === 'IEND') break;
+    else if (type === 'IEND') { ended = true; break; }
     at += 12 + len;
   }
+  if (!ended) throw new PngError('is cut short');
   if (!channels || !idat.length) throw new PngError('has no image data');
   const raw = inflateSync(Buffer.concat(idat));
   const stride = width * channels;

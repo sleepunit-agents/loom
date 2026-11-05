@@ -5,7 +5,7 @@
  * a line-only icon is inverted first on a dark key, and not on the lit one. An app without one keeps its line icon.
  *
  * The set here is made in the test (pixel-ramp's arithmetic needs known pixels): Home has black, grey and white bands;
- * Inbox is line-only (black ink, a white strip); Activity and Members are plain. Knowledge has none.
+ * Inbox is line-only (black ink, a white strip); Activity, Members and People (yellow) are plain. Knowledge has none.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -18,6 +18,7 @@ import { agentDir, createToken, loadHousehold, type Household } from '../househo
 import { runHousehold } from '../cli/household.js';
 import { iconSetOf, lineOnly } from '../icon-set.js';
 import { decodePng } from '../png.js';
+import { encodePng } from '../png.fixture.js';
 import { mapPixel, parseColor, rampFor, type RGB } from '../../web/src/pixel-ramp';
 
 const root = new URL('../../', import.meta.url).pathname;
@@ -46,6 +47,7 @@ describe('the household\'s pixel icons', () => {
   let handle: HttpServeHandle;
   let base: string;
   let token: string;
+  let samToken: string;
   let browser: Browser | undefined;
   let set: string;
   const saved = process.env.LOOM_HOME;
@@ -55,17 +57,19 @@ describe('the household\'s pixel icons', () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-pixicons-'));
     mkdirSync(join(home, 'agents', 'art'), { recursive: true });
     writeFileSync(join(home, 'agents', 'art', 'IDENTITY.md'), '# Art E Fish\n');
-    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['art'] }] }));
     process.env.LOOM_HOME = home;
     // No pieces from this machine: the page is this household's alone.
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    samToken = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
     set = mkdtempSync(join(tmpdir(), 'loom-pixicons-set-'));
     writeFileSync(join(set, 'home.png'), HOME);
     writeFileSync(join(set, 'inbox.png'), INBOX);
     writeFileSync(join(set, 'activity.png'), PLAIN);
     writeFileSync(join(set, 'members.png'), PLAIN);
+    writeFileSync(join(set, 'people.png'), PLAIN);
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     if (built && chrome) browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -96,21 +100,20 @@ describe('the household\'s pixel icons', () => {
     const r = await cli('icons', 'install', set, '--name', 'test');
     expect(r.err).toBe('');
     expect(r.code).toBe(0);
-    expect(r.out).toContain('Icon set test: 4 icons (activity, home, inbox, members), in use.');
+    expect(r.out).toContain('Icon set test: 5 icons (activity, home, inbox, members, people), in use.');
     expect(r.out).toContain('Line-only, inverted on a dark key: inbox.');
     expect(JSON.parse(readFileSync(join(h.home, 'icons', 'test', 'manifest.json'), 'utf-8'))).toEqual({
-      icons: { activity: 'activity.png', home: 'home.png', inbox: 'inbox.png', members: 'members.png' }, line: ['inbox'] });
-    expect(iconSetOf(h)?.apps).toEqual({ activity: {}, home: {}, inbox: { line: true }, members: {} });
-    expect((await cli('icons', 'list')).out).toBe('test (in use: 4 icons)\n');
+      icons: { activity: 'activity.png', home: 'home.png', inbox: 'inbox.png', members: 'members.png', people: 'people.png' }, line: ['inbox'] });
+    expect(iconSetOf(h)?.apps).toEqual({ activity: {}, home: {}, inbox: { line: true }, members: {}, people: {} });
+    expect((await cli('icons', 'list')).out).toBe('test (in use: 5 icons)\n');
   });
 
-  it('refuses an icon that isn\'t 32×32, writing nothing', async () => {
+  it('refuses an icon that isn\'t 32×32, by name and size, writing nothing', async () => {
     const bad = mkdtempSync(join(tmpdir(), 'loom-pixicons-bad-'));
-    const big = Buffer.from(HOME); big.writeUInt32BE(64, 16); // a header that says 64 wide
-    writeFileSync(join(bad, 'home.png'), big);
+    writeFileSync(join(bad, 'home.png'), encodePng(16, 16, new Uint8Array(16 * 16 * 4).fill(255), 4));
     const r = await cli('icons', 'install', bad, '--name', 'bad');
     expect(r.code).toBe(1);
-    expect(r.err).toMatch(/home\.png/);
+    expect(r.err).toBe('home.png is 16×16; an icon is 32×32\n');
     expect(existsSync(join(h.home, 'icons', 'bad'))).toBe(false);
     rmSync(bad, { recursive: true, force: true });
   });
@@ -128,11 +131,23 @@ describe('the household\'s pixel icons', () => {
     expect(ok.headers.get('cache-control')).toMatch(/^private/);
     expect(Buffer.from(await ok.arrayBuffer()).equals(HOME)).toBe(true);
     expect((await fetch(`${base}/pixel-icons/knowledge.png`, { headers: { cookie } })).status).toBe(404);
-    // Nothing but an app's icon: a path that climbs out is never a file of the household's.
-    expect((await fetch(`${base}/pixel-icons/..%2Fhousehold.png`, { headers: { cookie } })).headers.get('content-type')).not.toMatch(/image|json/);
+    // Nothing but an app's icon: a PNG that is there, beside the set and at the household's top, is never served by a path
+    // that climbs out to it, however it's spelled.
+    writeFileSync(join(h.home, 'icons', 'secret.png'), HOME);
+    writeFileSync(join(h.home, 'secret.png'), HOME);
+    for (const climb of ['..%2Fsecret.png', '%2E%2E%2Fsecret.png', '..%2F..%2Fsecret.png', '..%5Csecret.png', 'test%2F..%2F..%2Fsecret.png']) {
+      const r = await fetch(`${base}/pixel-icons/${climb}`, { headers: { cookie } });
+      expect(r.headers.get('content-type') ?? '', climb).not.toMatch(/image/);
+    }
+    // An agent owner is a member too: their shell names the icons, and they can fetch them.
+    const samCookie = ((await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: `token=${encodeURIComponent(samToken)}`, redirect: 'manual' })).headers.get('set-cookie') ?? '').split(';')[0];
+    const sam = await fetch(`${base}/pixel-icons/home.png?v=1`, { headers: { cookie: samCookie } });
+    expect(sam.status).toBe(200);
+    expect(sam.headers.get('content-type')).toBe('image/png');
     // The shell names the set for the page, with each line-only icon.
     const page = await (await fetch(`${base}/`, { headers: { cookie, accept: 'application/json' } })).json() as { chrome: { shell: { icons?: { v: string; apps: Record<string, unknown> } } } };
-    expect(page.chrome.shell.icons?.apps).toEqual({ activity: {}, home: {}, inbox: { line: true }, members: {} });
+    expect(page.chrome.shell.icons?.apps).toEqual({ activity: {}, home: {}, inbox: { line: true }, members: {}, people: {} });
   });
 
   describe.runIf(built && chrome)('in a browser', () => {
@@ -164,11 +179,11 @@ describe('the household\'s pixel icons', () => {
       const probe = document.createElement('i');
       document.body.append(probe);
       const c = (v: string, tint?: string) => { if (tint) probe.dataset.tint = tint; else delete probe.dataset.tint; probe.style.color = v; return getComputedStyle(probe).color; };
-      const out = { mode: document.documentElement.dataset.mode, canvas: c('var(--v-canvas)'), ink: c('var(--v-ink)'), on: c('var(--v-on-accent)'), pink: c('var(--t)', 'pink'), blue: c('var(--t)', 'blue') };
+      const out = { mode: document.documentElement.dataset.mode, canvas: c('var(--v-canvas)'), ink: c('var(--v-ink)'), on: c('var(--v-on-accent)'), pink: c('var(--t)', 'pink'), blue: c('var(--t)', 'blue'), yellow: c('var(--t)', 'yellow') };
       probe.remove();
       return out;
     });
-    const keyColours = (t: Awaited<ReturnType<typeof tokens>>, tint: 'pink' | 'blue') =>
+    const keyColours = (t: Awaited<ReturnType<typeof tokens>>, tint: 'pink' | 'blue' | 'yellow') =>
       ({ mode: t.mode === 'light' ? 'light' as const : 'dark' as const, canvas: parseColor(t.canvas), ink: parseColor(t.ink), onAccent: parseColor(t.on), tint: parseColor(t[tint]) });
 
     it('off by default: the dock, the tiles and Appearance\'s choice', async () => {
@@ -200,6 +215,11 @@ describe('the household\'s pixel icons', () => {
       await p.goto(`${base}/setup`);
       await p.locator('.loom-launch-tile img.loom-pix[data-app="members"]').waitFor();
       expect(await p.locator('.loom-launch-tile', { has: p.locator('[data-app]') }).count()).toBe(1);
+      // Places' tiles: People wears its (yellow) icon, Knowledge its line icon.
+      await p.goto(`${base}/places`);
+      await p.locator('.loom-launch-tile img.loom-pix[data-app="people"][data-tint="yellow"]').waitFor();
+      expect(await p.locator('.loom-launch-tile img.loom-pix[data-app="activity"]').count()).toBe(1);
+      expect(await p.locator('.loom-launch-tile', { has: p.locator('svg') }).count()).toBeGreaterThan(0);
       await p.goto(`${base}/find`);
       await p.getByRole('combobox').or(p.getByRole('searchbox')).or(p.locator('input')).first().fill('activ');
       await p.locator('.loom-app-tile img.loom-pix[data-app="activity"]').first().waitFor();
@@ -221,8 +241,12 @@ describe('the household\'s pixel icons', () => {
         near(homeLit[0], mapPixel([0, 0, 0], ramp, false, false), 'Home lit, its black');
         near(homeLit[1], mapPixel([128, 128, 128], ramp, false, false), 'Home lit, its grey');
         near(homeLit[2], mapPixel([255, 255, 255], ramp, false, false), 'Home lit, its white');
-        // The lit ramp's ends are the key's ink and white.
-        near(homeLit[0], pink.mode === 'dark' ? pink.onAccent : homeLit[0], 'lit shadow is the key\'s ink');
+        if (look === 'neon') {
+          // Pinned to Neon's own colours, written out (looks.css), not computed: the lit key's ink and white.
+          expect([t.canvas, t.ink, t.on, t.pink]).toEqual(['rgb(7, 7, 12)', 'rgb(243, 241, 255)', 'rgb(10, 9, 18)', 'rgb(255, 61, 168)']);
+          near(homeLit[0], [10, 9, 18], 'Neon lit, black is the key\'s ink');
+          near(homeLit[2], [255, 255, 255], 'Neon lit, white is white');
+        }
         const inboxNormal = await drawn(p, '.loom-dock-bar [aria-label="Inbox"] img.loom-pix', [5, 29]);
         const n = rampFor(blue, false);
         if (look === 'daylight') {
@@ -249,13 +273,23 @@ describe('the household\'s pixel icons', () => {
         near(homeNormal[1], mapPixel([128, 128, 128], hn, false, false), 'Home normal, its grey is the tint');
         near(homeNormal[1], pink.tint, 'Home normal, its grey is near the tint');
         near(homeNormal[2], hn[2], 'Home normal, its white the highlight');
+        if (look === 'neon') {
+          near(homeNormal[0], [7, 7, 12], 'Neon normal, black is the canvas');
+          near(homeNormal[1], [255, 61, 168], 'Neon normal, grey is the magenta');
+          near(homeNormal[2], [243, 241, 255], 'Neon normal, white is the ink');
+          near(inboxNormal[0], [243, 241, 255], 'Neon normal, a line-only icon\'s ink glows');
+        }
+        // People's key (yellow): a fourth tint's filter, its grey on the yellow.
+        const people = await drawn(p, '.loom-dock-bar [aria-label="People"] img.loom-pix', [5]);
+        near(people[0], keyColours(t, 'yellow' as never).tint, 'People normal, its grey is the yellow');
 
         // Higher contrast: a stronger ramp, its ends pushed to black and white.
         await p.evaluate(() => { document.documentElement.dataset.contrast = 'more'; });
         const more = rampFor(keyColours(await tokens(p), 'pink'), false, true);
-        const homeMore = await drawn(p, '.loom-dock-bar [aria-label="Home"] img.loom-pix', [5, 26]);
+        const homeMore = await drawn(p, '.loom-dock-bar [aria-label="Home"] img.loom-pix', [5, 15, 26]);
         near(homeMore[0], more[0], 'Home, more contrast, its black');
-        near(homeMore[1], more[2], 'Home, more contrast, its white');
+        near(homeMore[1], mapPixel([128, 128, 128], more, false, true), 'Home, more contrast, its grey');
+        near(homeMore[2], more[2], 'Home, more contrast, its white');
         await ctx.close();
       }, 60_000);
     }
@@ -266,9 +300,13 @@ describe('the household\'s pixel icons', () => {
         for (const at of ['/', '/places', '/setup', '/appearance', '/inbox']) {
           await p.goto(`${base}${at}`);
           await p.locator('.loom-dock-bar img.loom-pix').first().waitFor();
-          const wide = await p.evaluate(() => [document.documentElement.scrollWidth, ...[...document.querySelectorAll('body *')].map((e) => e.getBoundingClientRect().right)
-            .filter((r) => r > innerWidth + 0.5)].length === 1 ? document.documentElement.scrollWidth : -1);
-          expect(wide, `${look} ${at}`).toBeLessThanOrEqual(390);
+          // Every key, every icon and the page's own content inside the screen. (The dock's scroller itself reaches 18 px past
+          // each edge, clipped, with or without pixel icons: room for a key magnified under a pointer.)
+          const { scroll, over } = await p.evaluate(() => ({ scroll: document.documentElement.scrollWidth,
+            over: [...document.querySelectorAll('.loom-dock-bar [data-part="item"], .loom-dock-bar [data-part="visual"], .loom-pix, main *')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > innerWidth + 0.5; })
+              .map((e) => `${e.tagName.toLowerCase()}.${String((e as HTMLElement).className).split(' ')[0]}`) }));
+          expect(scroll, `${look} ${at}: the page`).toBeLessThanOrEqual(390);
+          expect(over, `${look} ${at}: past the right edge`).toEqual([]);
         }
         await ctx.close();
       }

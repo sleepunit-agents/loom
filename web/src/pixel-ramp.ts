@@ -9,7 +9,8 @@
 // bright key. Daylight's normal key is light: there, light lines would vanish, so they aren't inverted either.
 //
 // No React and no DOM: pixel-icons.tsx turns a ramp into an SVG filter (feColorMatrix to luminance, then a table per
-// channel), drawn by the browser on every repaint at no cost to the page; tests check the arithmetic here.
+// channel), drawn by the browser on every repaint at no cost to the page. src/ui/pixel-ramp.test.ts pins the ramps to
+// the looks' own colours; src/ui/pixel-icons.integration.test.ts checks what Chrome draws against them.
 
 export type RGB = [number, number, number];
 export type Ramp = [RGB, RGB, RGB];
@@ -81,7 +82,3 @@ export function tablesFor(r: Ramp, invert: boolean, more: boolean): [number[], n
   }
   return out;
 }
-
-/** The app an icon is for, from a label as the page shows it (src/icon-set.ts iconApp; Today is Home). */
-export const pixelApp = (label: string): string => (label === 'Today' ? 'home'
-  : label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));

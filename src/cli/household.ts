@@ -140,8 +140,7 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       if (!h) return 1;
       const [verb, ...args] = rest;
       if (verb === 'install' && args[0]) {
-        const at = args.indexOf('--name');
-        const r = installIconSet(h, args[0], at === -1 ? undefined : args[at + 1]);
+        const r = installIconSet(h, args[0], flag(args, '--name'));
         io.stdout(`Icon set ${r.set}: ${r.apps.length} icons (${r.apps.join(', ')}), in use.\n`
           + (r.line.length ? `Line-only, inverted on a dark key: ${r.line.join(', ')}.\n` : ''));
         return 0;

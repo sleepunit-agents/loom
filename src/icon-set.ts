@@ -11,14 +11,16 @@
  * fill): the page inverts those before mapping their colours, so their lines glow on a dark key (web/src/pixel-ramp.ts).
  * Left out, install works it out from each icon's pixels (lineOnly).
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { HouseholdError, rawHousehold, writeHouseholdKey, type Household } from './household.js';
 import { decodePng, PngError } from './png.js';
 
 export const ICON_APP = /^[a-z][a-z0-9-]{0,40}$/;
 export const ICON_SET = /^[a-z0-9][a-z0-9-]{0,40}$/;
+/** `icons use none` means no set, so no set is named none. */
+const isSetName = (s: string) => ICON_SET.test(s) && s !== 'none';
 const ICON_FILE = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
 const ICON_MAX_BYTES = 64 * 1024;
 export const ICON_SIZE = 32;
@@ -76,8 +78,8 @@ function checkIcon(name: string, png: Buffer): Uint8Array {
  * checked before anything is written; the set replaces one of the same name whole. The line-only icons are the
  * manifest's "line" when it gives one, else worked out from the pixels.
  */
-export function installIconSet(h: Household, dir: string, name = iconApp(basename(dir))): { set: string; apps: string[]; line: string[] } {
-  if (!ICON_SET.test(name)) throw new HouseholdError(`${name} isn't a set name (lowercase letters, digits, dashes)`);
+export function installIconSet(h: Household, dir: string, name = iconApp(basename(resolve(dir)))): { set: string; apps: string[]; line: string[] } {
+  if (!isSetName(name)) throw new HouseholdError(`${JSON.stringify(name)} isn't a set name (lowercase letters, digits, dashes; not "none"): give one with --name`);
   const mf = join(dir, 'manifest.json');
   let given: IconManifest;
   let lineGiven = false;
@@ -87,28 +89,37 @@ export function installIconSet(h: Household, dir: string, name = iconApp(basenam
     given = checkIconManifest(raw);
     lineGiven = (raw as { line?: unknown }).line !== undefined;
   } else {
-    const pngs = readdirSync(dir).filter((f) => f.endsWith('.png')).sort();
-    const icons = Object.fromEntries(pngs.filter((f) => ICON_FILE.test(f) && ICON_APP.test(f.slice(0, -4))).map((f) => [f.slice(0, -4), f]));
+    const pngs = readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.png')).sort();
+    const odd = pngs.filter((f) => !ICON_FILE.test(f) || !ICON_APP.test(f.slice(0, -4)));
+    if (odd.length) throw new HouseholdError(`${odd.join(', ')} ${odd.length === 1 ? 'isn\'t' : 'aren\'t'} named for an app (<app>.png: lowercase letters, digits, dashes, starting with a letter)`);
+    const icons = Object.fromEntries(pngs.map((f) => [f.slice(0, -4), f]));
     if (!Object.keys(icons).length) throw new HouseholdError(`${dir} has no manifest.json and no <app>.png icons`);
     given = { icons, line: [] };
   }
   const line: string[] = [];
+  const bytes = new Map<string, Buffer>();
   for (const [app, file] of Object.entries(given.icons)) {
     const p = join(dir, file);
     if (!existsSync(p)) throw new HouseholdError(`the manifest names ${file}, which isn't in ${dir}`);
-    const rgba = checkIcon(file, readFileSync(p));
+    const png = bytes.get(file) ?? readFileSync(p);
+    bytes.set(file, png);
+    const rgba = checkIcon(file, png);
     if (lineGiven ? given.line.includes(app) : lineOnly(rgba)) line.push(app);
   }
-  // Written beside the set, then swapped in, so a page never reads half a set.
+  // The bytes checked are the bytes kept, written beside the set and swapped in: the old set is moved aside first, so a
+  // page reads the old set or the new one, and for a moment between two renames, none (its icons fall back to lines).
   mkdirSync(iconsDir(h), { recursive: true, mode: 0o700 });
   const next = join(iconsDir(h), `.${name}.new`);
+  const old = join(iconsDir(h), `.${name}.old`);
   rmSync(next, { recursive: true, force: true });
+  rmSync(old, { recursive: true, force: true });
   mkdirSync(next, { mode: 0o700 });
-  for (const file of new Set(Object.values(given.icons))) { copyFileSync(join(dir, file), join(next, file)); }
+  for (const [file, png] of bytes) writeFileSync(join(next, file), png, { mode: 0o600 });
   const manifest: IconManifest = { icons: given.icons, line: line.sort() };
   writeFileSync(join(next, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { mode: 0o600 });
-  rmSync(setDir(h, name), { recursive: true, force: true });
+  if (existsSync(setDir(h, name))) renameSync(setDir(h, name), old);
   renameSync(next, setDir(h, name));
+  rmSync(old, { recursive: true, force: true });
   writeHouseholdKey(h, 'icons', name);
   return { set: name, apps: Object.keys(manifest.icons).sort(), line: manifest.line };
 }
@@ -131,7 +142,7 @@ export function setIcon(h: Household, app: string, png: Buffer): { set: string; 
 /** Wear another installed set, or none. */
 export function useIconSet(h: Household, set: string | null): void {
   if (set !== null) {
-    if (!ICON_SET.test(set) || !existsSync(join(setDir(h, set), 'manifest.json'))) throw new HouseholdError(`no icon set named ${set} is installed (${installedIconSets(h).join(', ') || 'none'})`);
+    if (!isSetName(set) || !existsSync(join(setDir(h, set), 'manifest.json'))) throw new HouseholdError(`no icon set named ${set} is installed (${installedIconSets(h).join(', ') || 'none'})`);
     readManifest(h, set);
   }
   writeHouseholdKey(h, 'icons', set ?? undefined);
@@ -139,13 +150,13 @@ export function useIconSet(h: Household, set: string | null): void {
 
 /** The sets installed, by name. */
 export function installedIconSets(h: Household): string[] {
-  try { return readdirSync(iconsDir(h)).filter((d) => ICON_SET.test(d) && existsSync(join(setDir(h, d), 'manifest.json'))).sort(); } catch { return []; }
+  try { return readdirSync(iconsDir(h)).filter((d) => isSetName(d) && existsSync(join(setDir(h, d), 'manifest.json'))).sort(); } catch { return []; }
 }
 
 /** household.json's `icons`: the set in use, if it names one. */
 export function iconSetName(h: Household): string | undefined {
   const v = rawHousehold(h.home).icons;
-  return typeof v === 'string' && ICON_SET.test(v) ? v : undefined;
+  return typeof v === 'string' && isSetName(v) ? v : undefined;
 }
 
 function readManifest(h: Household, set: string): IconManifest {
