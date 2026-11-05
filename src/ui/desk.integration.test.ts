@@ -2,8 +2,8 @@
  * Neon on a big screen (Jonathan, 2026-11-05, the desktop OS prototype's Level 1, "Shell"): in a real browser at
  * 1280x800 and 1920x1080, over a household with two agents and things waiting. Home is a desktop: widgets on the
  * ground, no scrolling page and no page header past the bars; what needs you is answered where it stands; the dock sits
- * at the bottom centre with no rail beside it; nothing scrolls sideways. 000h at the same width keeps its rail and its
- * page, and a screen under 1024 px keeps a phone's layout.
+ * at the bottom centre with no rail beside it; nothing scrolls sideways. Low Light and Daylight are the same desktop
+ * in their own colours, and a screen under 1024 px keeps a phone's layout.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -77,7 +78,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   });
 
   /** A screen in a look, signed in, its arrival already had unless `boot`. */
-  async function screen(look: 'neon' | '000h', width: number, height: number, o: { motion?: 'reduce' | 'no-preference'; boot?: boolean } = {}): Promise<Page> {
+  async function screen(look: Look, width: number, height: number, o: { motion?: 'reduce' | 'no-preference'; boot?: boolean } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: o.motion ?? 'reduce', serviceWorkers: 'block' });
     await ctx.addInitScript(([l, boot]) => { localStorage.setItem('loom-look', l as string); if (!boot) sessionStorage.setItem('loom-arrived', '1'); }, [look, !!o.boot] as const);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
@@ -282,8 +283,9 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     await p.context().close();
   }, 60_000);
 
-  it('000h at the same width, and Neon under 1024 px, open apps as pages: no window', async () => {
-    for (const [look, w] of [['000h', 1280], ['neon', 1000]] as const) {
+  it('under 1024 px, apps open as pages: no window', async () => {
+    {
+      const [look, w] = ['neon', 1000] as const;
       const p = await screen(look, w, 800);
       for (const path of ['/inbox', '/setup']) {
         await p.goto(`${base}${path}`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(300);
@@ -394,8 +396,9 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     await p.context().close();
   }, 60_000);
 
-  it('no boot under reduced motion, in 000h, or under 1024 px', async () => {
-    for (const [look, w, motion] of [['neon', 1280, 'reduce'], ['000h', 1280, 'no-preference'], ['neon', 1000, 'no-preference']] as const) {
+  it('no boot under reduced motion, or under 1024 px', async () => {
+    for (const [w, motion] of [[1280, 'reduce'], [1000, 'no-preference']] as const) {
+      const look = 'neon';
       const p = await screen(look, w, 800, { motion, boot: true });
       await fresh(p);
       await p.locator('.loom-top h1').waitFor();
@@ -405,13 +408,18 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }
   }, 90_000);
 
-  it('000h at the same width keeps its rail and its page; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
-    const o = await screen('000h', 1280, 800);
-    await o.goto(`${base}/`); await o.locator('.loom-top h1').waitFor(); await o.waitForTimeout(300);
-    expect(await o.locator('.loom-desk, .loom-desk-home, .loom-w').count()).toBe(0);
-    expect(await o.locator('.loom-dock-bar').count()).toBe(0);
-    await o.locator('.loom-side').waitFor();   // the rail is its own chunk: it comes a moment after the page
-    await o.context().close();
+  it('Low Light and Daylight at the same width are the same desktop: widgets, the window, no rail, nothing sideways; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
+    for (const look of ['lowlight', 'daylight'] as const) {
+      const o = await screen(look, 1280, 800);
+      await home(o);
+      expect(await o.evaluate(() => document.documentElement.dataset.look), look).toBe(look);
+      expect(await o.locator('.loom-desk .loom-w').count(), look).toBeGreaterThan(1);
+      expect(await o.locator('.loom-side').count(), look).toBe(0);
+      expect(await o.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), look).toBeLessThanOrEqual(0);
+      await o.goto(`${base}/inbox`);
+      await o.locator('.loom-window').waitFor();
+      await o.context().close();
+    }
     const n = await screen('neon', 1000, 800);
     await n.goto(`${base}/`); await n.locator('.loom-top h1').waitFor(); await n.waitForTimeout(300);
     expect(await n.locator('.loom-desk, .loom-desk-home').count()).toBe(0);

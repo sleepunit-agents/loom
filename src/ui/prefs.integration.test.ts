@@ -58,15 +58,33 @@ describe('Appearance, kept per person', () => {
     // Nothing chosen yet: nothing said, so a device paints its default (Neon) or its own copy.
     expect((await view(laptop)).chrome.prefs).toEqual({});
     const csrf = (await view(phone)).chrome.csrf;
-    const r = await save(phone, { _csrf: csrf, look: '000h', mode: 'light' });
+    const r = await save(phone, { _csrf: csrf, look: 'daylight' });
     expect(r.status).toBe(200);
     const first = (await view(laptop)).chrome.prefs;
-    expect(first).toMatchObject({ look: '000h', mode: 'light' });
+    expect(first).toMatchObject({ look: 'daylight' });
     // A later choice changes only what it names, and its version moves on (a device applies only a newer one).
     expect((await save(laptop, { _csrf: (await view(laptop)).chrome.csrf, sound: true })).status).toBe(200);
     const second = (await view(phone)).chrome.prefs;
-    expect(second).toMatchObject({ look: '000h', mode: 'light', sound: true });
+    expect(second).toMatchObject({ look: 'daylight', sound: true });
     expect(second.at).toBeGreaterThan(first.at);
+  });
+
+  it('a device still on the app from before Low Light and Daylight saves 000h: kept as the look nearest it, never refused', async () => {
+    const old = await signIn();
+    const csrf = (await view(old)).chrome.csrf;
+    expect((await save(old, { _csrf: csrf, look: '000h', mode: 'light' })).status).toBe(200);
+    expect((await view(old)).chrome.prefs).toMatchObject({ look: 'daylight' });
+    for (const mode of ['dark', 'auto']) {
+      expect((await save(old, { _csrf: csrf, look: '000h', mode })).status).toBe(200);
+      expect((await view(old)).chrome.prefs, mode).toMatchObject({ look: 'lowlight' });
+    }
+    // The old app's light, later, is Daylight: 000h is kept as sent, and read as the look nearest it.
+    expect((await save(old, { _csrf: csrf, mode: 'light' })).status).toBe(200);
+    expect((await view(old)).chrome.prefs).toMatchObject({ look: 'daylight' });
+    // A look chosen now holds whatever an old light or dark says.
+    expect((await save(old, { _csrf: csrf, look: 'lowlight' })).status).toBe(200);
+    expect((await save(old, { _csrf: csrf, mode: 'light' })).status).toBe(200);
+    expect((await view(old)).chrome.prefs).toMatchObject({ look: 'lowlight' });
   });
 
   it('keeps only Appearance\'s own choices, with the form token, from loom\'s own page', async () => {
@@ -80,10 +98,10 @@ describe('Appearance, kept per person', () => {
         body: `{"_csrf":"${csrf}","${k}":1}` })).status, k).toBe(400);
     }
     expect((await save(cookie, { _csrf: csrf })).status).toBe(400);
-    expect((await save(cookie, { _csrf: 'stale', look: '000h' })).status).toBe(403);
-    expect((await save(cookie, { _csrf: csrf, look: '000h' }, 'https://elsewhere.example')).status).toBe(403);
+    expect((await save(cookie, { _csrf: 'stale', look: 'lowlight' })).status).toBe(403);
+    expect((await save(cookie, { _csrf: csrf, look: 'lowlight' }, 'https://elsewhere.example')).status).toBe(403);
     // Signed out: refused, as every page's POST is (401), never a save.
-    expect((await fetch(`${base}/appearance/prefs`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{"look":"000h"}', redirect: 'manual' })).status).toBe(401);
+    expect((await fetch(`${base}/appearance/prefs`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{"look":"lowlight"}', redirect: 'manual' })).status).toBe(401);
     expect((await view(cookie)).chrome.prefs).toEqual({});
   });
 });
@@ -123,10 +141,10 @@ describe('Appearance, kept per member of a household', () => {
 
   it('each member\'s own, on each of their devices: one member\'s choice is never another\'s', async () => {
     const [jPhone, jLaptop, sPhone, sLaptop] = [await signIn('jonathan'), await signIn('jonathan'), await signIn('sam'), await signIn('sam')];
-    expect((await save(jPhone, { look: '000h', mode: 'light' })).status).toBe(200);
+    expect((await save(jPhone, { look: 'daylight' })).status).toBe(200);
     expect((await save(sPhone, { look: 'neon', sound: true })).status).toBe(200);
     const j = (await view(jLaptop)).chrome.prefs, s = (await view(sLaptop)).chrome.prefs;
-    expect(j).toMatchObject({ look: '000h', mode: 'light' });
+    expect(j).toMatchObject({ look: 'daylight' });
     expect(j.sound).toBeUndefined();
     expect(s).toMatchObject({ look: 'neon', sound: true });
     expect(s.mode).toBeUndefined();

@@ -1,0 +1,363 @@
+/* loom's looks (Jonathan, 2026-11-05: "give them a less severe version of neon instead where we can just swap colors and
+   such instead of redoing the universe"). One structure, Neon Noir's (2026-11-04: "neon noir with a few things borrowed
+   from terminal hud"): its bars, dock, keys, cards, sheets, Find and power-on are below, for every look. A look is only
+   a set of tokens: colours, a few corners, its glow and its type.
+     Neon Noir (neon)     dark: a night-city control room, light from edges and states, never from surfaces
+     Low Light (lowlight) dark and calm: 000h's soft dark colours, no glow but a face's, Figtree for titles
+     Daylight (daylight)  light: ink on warm paper, the tints deepened to read on it, no glow
+   boot.js sets <html data-look> and its data-mode (light or dark) before first paint; tokens.css is the base under each.
+   Every token block is under :root[data-look=…][data-mode], which outranks tokens.css's :root[data-mode="dark"]; the
+   structure is under :root[data-look] (every look), at the weight it had when it was Neon's alone.
+   src/ui/look-contrast.test.ts measures each set's pairs, with and without Higher contrast. */
+
+/* ======== every look ======== (each look's own blocks come after, so they win) */
+:root[data-look][data-mode]{
+--font-text:"Figtree",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+--font-sans:var(--font-text);--default-font-family:var(--font-text);
+/* mono for numbers, ids and times only (.loom-data); --font-mono (code, breadcrumbs) stays 000h's system stack */
+--loom-font-data:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+/* Oxanium is wider and squarer than Bricolage: titles drop the tight tracking. Rechecked at 390 px (2026-11-04): app-header's
+   size step (text-3xl, text-2xl past 28 characters) still holds; the longest built-in titles (Appearance, Knowledge,
+   Subscriptions) fit one line at text-3xl, and a 28-character title wraps to two lines. */
+/* ---- shape: radii step down (cards 20 to 12, tiles to 12px); pills and circles stay round ---- */
+--radius:.45rem;--r-xs:3px;--r-sm:6px;--r-md:10px;--r-card-sm:10px;--r-card:12px;--r-panel:14px;--r-sheet:16px;--r-frame:20px;
+--loom-r-launch:12px;--loom-r-tile:12px;--loom-r-state:12px;--loom-r-side:14px;--loom-r-soft:8px;--loom-r-icon:8px;
+/* ---- what every look has unless it says otherwise: no glow (a focused control a plain 1px ring in its colour, a sheet
+   a quiet shadow), the ground's three pools faint. Neon Noir's own come after and win. ---- */
+--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 1px;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;
+--glow-sheet:0 -8px 24px -14px;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0;
+--wash-1:16%;--wash-2:14%;--wash-3:8%;
+}
+
+/* ======== Neon Noir ======== */
+:root[data-look="neon"][data-mode]{
+color-scheme:dark;
+/* surfaces: #07070C, not #000, so an OLED screen doesn't smear when it scrolls */
+--v-canvas:#07070C;--v-paper:#12111C;--v-beige:#1C1A2A;--v-beige-2:#15141F;--v-cream-pill:#12111C;--card:var(--v-paper);--popover:var(--v-paper);
+/* ink and text */
+--v-ink:#F3F1FF;--v-ink-soft:#BDB8D6;--v-on-ink:#07070C;--v-on-accent:#0A0912;--v-text:#F3F1FF;--v-text-2:#BDB8D6;--v-text-3:#8F8AAD;
+--alert-ink:#BDB8D6;--nav-group-ink:#8F8AAD;--unavail-ink:#8F8AAD;--btn-disabled-ink:#8F8AAD;
+/* edges: border is a hairline between surfaces; edge is a control's boundary (3:1 or better) */
+--v-border:#2B2940;--v-edge:#6E6896;--v-brand:#2EE6F0;--v-scrim:rgba(4,3,10,.72);
+/* the four tints: magenta, cyan, amber, violet (the olive slot) */
+--v-pink:#FF3DA8;--v-pink-deep:#E0348F;--v-pink-soft:#2E1630;
+--v-blue:#2EE6F0;--v-blue-deep:#22C3CC;--v-blue-soft:#102A31;
+--v-yellow:#FFC23D;--v-yellow-deep:#E0A82F;--v-yellow-soft:#2E2512;
+--v-olive:#A27DFF;--v-olive-deep:#8D6AE6;--v-olive-soft:#221C3A;--v-olive-ink:#B79BFF;
+--v-accent-ink:#FF6BBE;--accent-foreground:var(--v-on-accent);
+/* danger */
+--v-danger:#FF5468;--v-danger-fill:#C9203E;--v-danger-ink:#FF7A8A;--v-danger-soft:#2E1219;--destructive:var(--v-danger-fill);
+/* structure */
+--v-structure:#0D0C15;--on-structure:#F3F1FF;--structure-quiet:#1C1A2A;--structure-line:#3A3754;--structure-text:#E2DEF5;--sidebar:var(--v-structure);
+--sidebar-muted:#A9A4C4;--muted-foreground-ink:#BDB8D6;--muted-foreground-tinted:#BDB8D6;--glide-bg:#0D0C15;--glide-fg:#F3F1FF;--ink-fixed:#0D0C15;--cream-fixed:#F3F1FF;
+/* states */
+--v-skel-face:#1C1A2A;--v-skel-sheen:#12111C;--v-skel-edge:#2B2940;--v-disabled-ink:#8F8AAD;--v-disabled-face:#1C1A2A;--v-disabled-edge:#6E6896;
+--v-disabled-fill:#1C1A2A;--switch-knob:#12111C;--switch-knob-on:#07070C;--sel-bg:#2E1630;--sel-edge:#FF3DA8;--sel-ink:#F3F1FF;
+/* semantic surfaces */
+--surface-quiet:#12111C;--surface-work:#101F2A;--surface-automation:#221D14;--surface-memory:#1B1730;--surface-library:#25132A;--surface-ai:#101F2A;--surface-alert:#2A1219;
+/* status: ok is its own green here (the olive slot is violet), so "fine" still reads as fine */
+--status-ok:#3DF5A6;--status-ok-bg:#0F2A22;--status-ok-ink:#3DF5A6;--status-warn-bg:#2A2210;--status-warn-ink:#FFC23D;--status-danger-bg:#2E1219;--status-danger-ink:#FF8A98;
+--status-info-bg:#102A31;--status-info-ink:#2EE6F0;--status-pending-bg:#1C1A2A;--status-pending-ink:#BDB8D6;--status-danger:var(--v-danger);
+/* loom's own (index.css): the status dots, rings and counts */
+--loom-ok:#3DF5A6;--loom-warn:#FFC23D;--loom-bad:#FF5468;--loom-muted:#8F8AAD;--loom-live:#2EE6F0;--loom-live-pulse:#2EE6F0;
+--loom-ok-ink:#3DF5A6;--loom-warn-ink:#FFC23D;--loom-bad-ink:#FF8A98;--loom-muted-wash:#8F8AAD;
+--loom-ring-bad:#FF5468;--loom-ring-warn:#FFC23D;--loom-ring-warn-soft:#FFC23D;--loom-count:#FF3DA8;--loom-count-ink:#0A0912;--loom-unread:#2EE6F0;
+/* the ground: brighter than 000h's dark, since neon is light given off against the dark */
+--loom-track:color-mix(in srgb,#fff 10%,transparent);--loom-ground-dim:.9;--loom-wash-dim:.5;
+/* elevation */
+--shadow-float:0 12px 32px -12px rgba(0,0,0,.7);
+/* the ground's three pools */
+--wash-1:24%;--wash-2:20%;--wash-3:8%;
+/* loom's six agent marks, lit (face.tsx rim, look.ts markColor) */
+--mark-lilac:#B49BFF;--mark-plum:#FF4FB0;--mark-pine:#2EF2C4;--mark-mustard:#FFC23D;--mark-denim:#4D9BFF;--mark-coral:#FF7A59;
+}
+/* The wash: three pools (magenta, cyan, amber in Neon), as strong as the look's --wash-* say. */
+:root[data-look] .loom-wash{background:radial-gradient(at 18% 30%,color-mix(in srgb,var(--v-pink) var(--wash-1),transparent),transparent 60%),
+  radial-gradient(at 82% 72%,color-mix(in srgb,var(--v-blue) var(--wash-2),transparent),transparent 62%),
+  radial-gradient(at 56% 8%,color-mix(in srgb,var(--v-yellow) var(--wash-3),transparent),transparent 56%),var(--v-canvas)}
+
+/* ---- type: Oxanium for Neon's titles, Figtree to read, IBM Plex Mono for numbers, ids and times (Terminal HUD's borrow).
+   Self-hosted, Latin subsets (fontsource, OFL: fonts/*-OFL.txt); each fetched only when something on the page uses it. ---- */
+@font-face{font-family:"Oxanium";src:url('./fonts/oxanium-latin-wght-normal.woff2') format("woff2");font-weight:200 800;font-style:normal;font-display:swap;
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Figtree";src:url('./fonts/figtree-latin-wght-normal.woff2') format("woff2");font-weight:300 900;font-style:normal;font-display:swap;
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Mono";src:url('./fonts/ibm-plex-mono-latin-400-normal.woff2') format("woff2");font-weight:400;font-style:normal;font-display:swap;
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"IBM Plex Mono";src:url('./fonts/ibm-plex-mono-latin-600-normal.woff2') format("woff2");font-weight:500 700;font-style:normal;font-display:swap;
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+:root[data-look="neon"][data-mode]{
+--font-display:"Oxanium",ui-sans-serif,system-ui,sans-serif;--ls-display:0em;--fw-display:600;
+/* ---- glow: on edges and on what's current or chosen, the same whatever anything's state; never behind text, never the
+   only sign of anything. Every glow is one of these, so more contrast (below) turns them all off. src/ui/look-glow.test.ts ---- */
+--glow-key:0 0 14px -6px;--glow-on:0 0 22px -3px;--glow-btn:0 0 22px -6px;--glow-focus:0 0 12px -2px;--glow-tick:0 0 6px;--glow-bar:0 0 10px;
+--glow-ground:url(#loom-neon-glow);
+}
+/* numbers, ids and times */
+:root[data-look] .loom-data{font-family:var(--loom-font-data);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+:root[data-look] .loom-top h1{letter-spacing:0}
+
+/* ---- keys: the dock, the launcher and an app's tile are dark keys with a neon edge; the current one is lit solid ---- */
+:root[data-look] [data-tint="pink"]{--t:var(--loom-tint-pink)} :root[data-look] [data-tint="blue"]{--t:var(--loom-tint-blue)}
+:root[data-look] [data-tint="yellow"]{--t:var(--loom-tint-yellow)} :root[data-look] [data-tint="olive"]{--t:var(--loom-tint-olive)}
+:root[data-look] :is(.loom-launch-tile,.loom-app-tile)[data-tint]{
+  background:color-mix(in srgb,var(--t) 9%,var(--v-paper));color:var(--t);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 75%,transparent),var(--glow-key) var(--t)}
+/* a dock key: the mockup's (8% of the tint, a 70% edge) */
+:root[data-look] .v-dock[data-variant] [data-part="lane"][data-tint] [data-part="visual"]{
+  background:color-mix(in srgb,var(--t) 8%,var(--v-paper));color:var(--t);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent),var(--glow-key) var(--t)}
+:root[data-look] .v-dock[data-variant] [data-part="lane"][data-tint][data-active="true"] [data-part="visual"]{
+  background:var(--t);color:var(--v-on-accent);box-shadow:var(--glow-on) var(--t)}
+:root[data-look] .loom-me-dock.v-dock [data-part="lane"]:last-child [data-part="visual"]{
+  background:color-mix(in srgb,var(--v-pink) 8%,var(--v-paper));color:var(--v-pink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--v-pink) 70%,transparent),var(--glow-key) var(--v-pink)}
+
+/* ---- the primary button: solid neon with a halo (the one thing on a screen it asks you to do); the focus ring is cyan ---- */
+:root[data-look] .v-btn[data-slot]:not(.-accent):not(.-secondary):not(.-ghost):not(.-outline):not(.-danger):not(:disabled):not([aria-disabled="true"]){box-shadow:var(--glow-btn) var(--v-pink)}
+:root[data-look] :focus-visible{outline-color:var(--v-blue);box-shadow:var(--glow-focus) var(--v-blue)}
+
+/* ---- an agent's card: a 45° cut corner, its edge lit in the agent's colour, and a lit tick on its top edge ---- */
+:root[data-look] .loom-identity{position:relative;clip-path:polygon(0 0,calc(100% - 18px) 0,100% 18px,100% 100%,0 100%)}
+:root[data-look] .loom-identity::before{content:"";position:absolute;left:calc(100% - 18px);top:0;width:25.5px;height:2px;
+  background:var(--acc,var(--v-pink));transform-origin:0 0;rotate:45deg;translate:0 -1px;box-shadow:var(--glow-tick) var(--acc,var(--v-pink));pointer-events:none}
+/* its face (a pixel face at 2x is wider than its 72 px place): never closer than this to the card's edge or its words */
+:root[data-look] .loom-identity__face{margin-inline:4px 8px}
+:root[data-look] .loom-identity::after{content:"";position:absolute;left:16px;top:0;width:64px;height:2px;
+  background:var(--acc,var(--v-pink));box-shadow:var(--glow-bar) var(--acc,var(--v-pink));pointer-events:none}
+
+/* ---- the ground: the depth background's lines glow (ground.tsx draws the filter under Neon). The contour field shows
+   brighter through --loom-ground-dim above. ---- */
+:root[data-look] .v-depth-background__contour{filter:var(--glow-ground)}
+
+/* More contrast asked for: every glow off (each is a --glow-* above). */
+@media (prefers-contrast:more){
+  :root[data-look][data-mode]{--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;--glow-faces:none}
+}
+
+/* Higher contrast (Accessibility: data-contrast="more", or the phone's own while followed): Neon's texts brighter, its
+   hairlines at 3:1 and control edges at 4.5:1, measured by src/ui/look-contrast.test.ts; the glows are off (above). */
+:root[data-look="neon"][data-mode][data-contrast="more"]{
+--v-text:#FFFFFF;--v-ink:#FFFFFF;--v-text-2:#E4E1F5;--v-ink-soft:#E4E1F5;--v-text-3:#CFCBE6;--alert-ink:#E4E1F5;--nav-group-ink:#CFCBE6;--unavail-ink:#CFCBE6;--btn-disabled-ink:#CFCBE6;
+--v-disabled-ink:#CFCBE6;--muted-foreground-ink:#E4E1F5;--muted-foreground-tinted:#E4E1F5;--sidebar-muted:#D6D2EA;--structure-text:#FFFFFF;--status-pending-ink:#E4E1F5;
+--v-border:#7A74A6;--v-skel-edge:#7A74A6;--structure-line:#7A74A6;--v-edge:#A9A3D4;--v-disabled-edge:#A9A3D4;--loom-muted:#CFCBE6;--loom-muted-wash:#CFCBE6}
+:root[data-look][data-contrast="more"] .loom-pbar__info::after{opacity:1}
+
+/* ---- LOOM//OS and live-or-offline, in words (the phone bar's, phone-bar.tsx) ---- */
+:root[data-look] .loom-pbar__brand{font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
+:root[data-look] .loom-pbar__brand i{font-style:normal;color:var(--v-pink)}
+:root[data-look] .loom-tick__live{display:inline-flex;align-items:center;gap:6px}
+:root[data-look] .loom-tick__live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--loom-ok)}
+:root[data-look] .loom-tick__live[data-off]::before{background:var(--loom-warn)}
+
+/* ---- the Inbox's sheet (inbox.tsx): a lit top edge, and a title bar (ALERT · who · its task) ---- */
+:root[data-look="neon"][data-mode]{--glow-sheet:0 -10px 40px -12px;--glow-find:0 10px 40px -10px;--glow-field:0 0 16px -6px;--glow-line:0 0 18px}
+:root[data-look] :is([data-slot="drawer-content"],[data-slot="dialog-content"]){border-top:1px solid var(--v-pink);box-shadow:var(--glow-sheet) color-mix(in srgb,var(--v-pink) 45%,transparent)}
+:root[data-look] .loom-sheet-bar{display:flex;align-items:center;gap:8px;min-width:0;padding-bottom:10px;border-bottom:1px solid var(--v-border);
+  font-family:var(--loom-font-data);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
+:root[data-look] .loom-sheet-bar b{color:var(--v-pink);font-weight:500}
+:root[data-look] .loom-sheet-bar>span{overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-sheet-bar>span::before{content:"·";margin-right:8px;color:var(--v-text-3)}
+
+/* ---- Find as a command bar: a prompt, a cyan field, the current row's cyan edge ---- */
+:root[data-look] .loom-find{box-shadow:var(--glow-find) color-mix(in srgb,var(--v-blue) 40%,transparent),inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-find-field{margin:10px 10px 0;border:1px solid var(--v-blue);border-radius:10px;box-shadow:var(--glow-field) var(--v-blue)}
+:root[data-look] .loom-find-field input{background:transparent;box-shadow:none}
+:root[data-look] .loom-find-field::before{content:"›";font-family:var(--loom-font-data);font-size:20px;line-height:1;color:var(--v-blue)}
+:root[data-look] .loom-find-group{font-family:var(--loom-font-data);font-weight:500}
+:root[data-look] .loom-find-row[data-selected]{background:color-mix(in srgb,var(--v-blue) 10%,transparent);box-shadow:inset 2px 0 0 var(--v-blue);border-radius:4px}
+
+/* ---- power-on (arrive.tsx arriveOnce: once a session, cut short by a tap, never under reduced motion): a line opens into
+   the screen, then the page flickers on. About a second. Only with motion allowed, here as in arrive.tsx. ---- */
+@media (prefers-reduced-motion:no-preference){
+:root[data-look][data-arrive] body::before{content:"";position:fixed;inset:0;z-index:2147483646;background:var(--v-canvas);pointer-events:none;
+  animation:loom-in-neon-boot 1s ease-out both}
+:root[data-look][data-arrive] body::after{content:"";position:fixed;left:0;right:0;top:50%;height:2px;z-index:2147483647;background:var(--v-text);pointer-events:none;
+  box-shadow:var(--glow-line) var(--v-pink);transform:scaleX(0);animation:loom-in-neon-line 1s ease-out both}
+:root[data-look][data-arrive] :is(.loom-top,main>*,main>div>*>*,.loom-dock-bar,.loom-find-pill){animation:loom-in-neon-flick .5s steps(1) .55s both}
+:root[data-look][data-arrive] :is(.loom-wash,.loom-ground){animation:loom-in-fade .4s ease-out .45s both}
+}
+@keyframes loom-in-neon-boot{0%,45%{opacity:1}100%{opacity:0}}
+@keyframes loom-in-neon-line{0%{transform:scaleX(0);opacity:1}35%{transform:scaleX(1);opacity:1}55%{transform:scaleX(1) scaleY(60);opacity:0}100%{opacity:0}}
+@keyframes loom-in-neon-flick{0%{opacity:0}30%{opacity:.6}45%{opacity:.1}60%,100%{opacity:1}}
+
+@media (prefers-contrast:more){
+  :root[data-look][data-mode]{--glow-sheet:0 0 0 0;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0}
+}
+
+/* ---- a phone's bar (phone-bar.tsx, Neon at a phone's width): right under the phone's own status bar, at its inset and
+   no more; the page's name on the left, the ticker between, LOOM//OS and the needs-you count on the right ---- */
+:root[data-look] .loom-top--bar{padding-top:env(safe-area-inset-top)}
+/* iOS's home-screen app (Jonathan, 2026-11-04): a touch nearer the phone's own bar (its inset ends a little below the
+   status icons), and a little narrower than the page, so the two bars read as one */
+html.loom-ios-app:root[data-look] .loom-top--bar{padding-top:max(0px,calc(env(safe-area-inset-top) - 8px))}
+html.loom-ios-app:root[data-look] .loom-top--bar .loom-pbar{padding-inline:10px}
+:root[data-look] .loom-pbar{display:flex;align-items:center;gap:8px;min-width:0;height:24px;font-size:11px;color:var(--v-text-2);white-space:nowrap}
+:root[data-look] .loom-pbar__name{display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0;max-width:38%}
+:root[data-look] .loom-pbar__name h1{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-display);font-weight:700;font-size:13px;line-height:24px;letter-spacing:.02em}
+/* its max-width counts the 8px its margin gives back (a plain 100% cut "Boxes" to "Bo…" next to its ⓘ) */
+:root[data-look] .loom-pbar__info{display:flex;align-items:flex-start;max-width:calc(100% + 8px);min-width:0;padding:10px 8px 10px 0;margin:-10px -8px -10px 0;color:inherit;font:inherit;letter-spacing:inherit;text-align:left}
+:root[data-look] .loom-pbar__title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-pbar__info::after{content:"ⓘ";content:"ⓘ"/"";flex:none;margin:1px 0 0 2px;font-family:var(--font-text);font-size:9.5px;font-weight:600;line-height:1;opacity:.9}
+:root[data-look] .loom-pbar__back{display:grid;place-items:center;width:24px;height:24px;margin-left:-6px;flex:none;color:inherit}
+:root[data-look] .loom-pbar__brand{flex:none}
+:root[data-look] .loom-pbar__needs{flex:none;display:grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;
+  background:var(--loom-count);color:var(--loom-count-ink);text-decoration:none;font-size:10.5px;font-weight:600;box-shadow:var(--glow-tick) var(--loom-count)}
+/* ---- wider than a phone (system-bar.tsx): loom's own status bar where a phone's would be, over the phone's bar and
+   across the page's column (so the clock is over the page's name and the glyphs over LOOM//OS and the count, as on a
+   phone); it
+   scrolls away with the page's header. Its clock small and bold on the left, a few monochrome glyphs on the right, each
+   with its words on hover or keyboard focus; dimmed is "look at this". Not on iOS's home-screen app (an iPad draws its
+   own there, and the bar sits at its inset, as on a phone). ---- */
+:root[data-look] .loom-top--desk{padding-top:calc(env(safe-area-inset-top) + 8px)}
+:root[data-look] .loom-sys{display:flex;align-items:center;justify-content:space-between;gap:12px;height:26px;color:var(--v-text);white-space:nowrap}
+:root[data-look] .loom-sys__clock{font-family:var(--font-text);font-size:13px;font-weight:700;letter-spacing:.01em;font-variant-numeric:tabular-nums}
+:root[data-look] .loom-sys__icons{display:flex;align-items:center;gap:6px;margin-right:-3px}
+:root[data-look] .loom-sys__icon{position:relative;display:inline-flex;align-items:center;gap:3px;height:26px;padding-inline:3px;color:inherit;text-decoration:none;outline-offset:-2px}
+:root[data-look] .loom-sys__icon[data-dim]{color:var(--v-text-3)}
+:root[data-look] .loom-sys__n{font-size:11px;font-weight:600;line-height:1}
+:root[data-look] .loom-sys__tip{position:absolute;top:calc(100% + 2px);right:0;z-index:40;width:max-content;max-width:min(320px,80vw);padding:3px 8px;border-radius:6px;
+  background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-edge);font-family:var(--loom-font-data);font-size:11px;line-height:1.3;white-space:normal;
+  opacity:0;transition:opacity .12s ease-out;pointer-events:none}
+:root[data-look] .loom-sys__icon:focus-visible .loom-sys__tip{opacity:1}
+@media (hover:hover) and (pointer:fine){:root[data-look] .loom-sys__icon:hover .loom-sys__tip{opacity:1}}
+/* to a finger (a tablet's width, a touch laptop): each glyph 44px wide, and its hit area reaching 9px over the bar's
+   top and 4px under it. A trade-off, chosen: 39px tall, not 44, since any lower it takes taps meant for the count right
+   under it, and a taller bar is no longer a thin one; each glyph's place is also a row in the side panel or the dock. */
+@media (pointer:coarse){
+:root[data-look] .loom-sys__icons{gap:0;margin-right:-12px}
+:root[data-look] .loom-sys__icon{min-width:44px;justify-content:center}
+:root[data-look] .loom-sys__icon::before{content:"";position:absolute;inset:-9px 0 -4px}
+}
+html.loom-ios-app:root[data-look] .loom-sys{display:none}
+/* the ticker: its words fit, they stand still (cut with an ellipsis if they must be); they don't, they loop, slowly */
+:root[data-look] .loom-tick{position:relative;flex:1 1 0;min-width:24px;overflow:hidden;letter-spacing:.02em}
+:root[data-look] .loom-tick__track{display:block;width:100%}
+:root[data-look] .loom-tick__line{display:block;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-tick__part::before{content:"·";margin:0 .5em;color:var(--v-text-3)}
+:root[data-look] .loom-tick__part[data-tone="warn"]{color:var(--loom-warn-ink)} :root[data-look] .loom-tick__part[data-tone="bad"]{color:var(--loom-bad-ink)}
+:root[data-look] .loom-tick[data-run]{-webkit-mask-image:linear-gradient(90deg,transparent,#000 10px,#000 calc(100% - 14px),transparent);mask-image:linear-gradient(90deg,transparent,#000 10px,#000 calc(100% - 14px),transparent)}
+:root[data-look] .loom-tick[data-run] .loom-tick__track{display:flex;width:max-content}
+:root[data-look] .loom-tick[data-run] .loom-tick__line{overflow:visible;padding-right:var(--tick-gap)}
+@media (prefers-reduced-motion:no-preference){
+:root[data-look] .loom-tick[data-run] .loom-tick__track{animation:loom-tick var(--tick-s,20s) linear 1.5s infinite}
+:root[data-look] .loom-tick[data-paused] .loom-tick__track{animation-play-state:paused}
+}
+@keyframes loom-tick{to{transform:translateX(-50%)}}
+
+/* ---- the dock (the mockup, Jonathan 2026-11-04): no tray under it, a thin magenta rule above the row; keys are dark
+   squares with a neon edge, the current one lit; no names under them: a key's name shows on hover, on keyboard focus,
+   or held down a moment (each key keeps its aria-label) ---- */
+:root[data-look] .loom-dock-bar{pointer-events:none}
+:root[data-look] .loom-dock-bar [data-part="item"]{pointer-events:auto}
+:root[data-look] .loom-dock-bar::before{content:"";position:absolute;left:14px;right:14px;top:22px;height:1px;
+  background:color-mix(in srgb,var(--v-pink) 35%,var(--v-border));box-shadow:var(--glow-bar) color-mix(in srgb,var(--v-pink) 30%,transparent);pointer-events:none}
+:root[data-look] .loom-dock-bar .v-dock :is([data-part="shelf-plane"],[data-part="shelf-edge"],[data-part="active-indicator"]){display:none}
+/* room above the keys for a held key's name (the rule sits 10px over them; a name shows over the rule) */
+:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="stage"]{padding-block:32px 8px}
+/* the keys sit 8px over the phone's home-bar inset and no more (Jonathan, 2026-11-04: 34px of stacked padding under
+   them: the bar's own 8 on top of the inset, the dock scroller's 20, the stage's 6) */
+:root[data-look] .loom-dock-bar{padding-bottom:env(safe-area-inset-bottom)}
+:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="viewport"]{padding-bottom:0}
+/* a key magnified under the pointer (dock.tsx: 1.65x, lifted) and its name over it reach up to 70px over the key's own
+   top, past the stage's 32px: the scroller and its viewport clip, so their clip reaches the dock's own reserved lift
+   (dock.tsx --dock-reserved-lift, 48px at 52px keys) further up, with no change to where anything sits (the padding gives
+   back what the margin takes). Jonathan, 2026-11-05: "when the icons grow on hover, the top of them is cut off". The bar
+   takes no pointer (above), so the room steals no taps from the page; while a key is engaged the bar sits over Find's
+   pill, so a key grown toward it, or its name, isn't under it. */
+:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) :is(.v-dock__scroll,[data-part="viewport"]){margin-top:calc(-1 * var(--dock-reserved-lift));padding-top:var(--dock-reserved-lift)}
+:root[data-look] .loom-dock-bar:has([data-part="lane"][data-engaged]){z-index:41}
+:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="lane"]{block-size:var(--dock-item-size)}
+:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="item"]{display:grid;block-size:var(--dock-item-size);-webkit-touch-callout:none;user-select:none}
+:root[data-look] .loom-dock-bar .v-dock[data-variant] [data-part="visual"]{border-radius:12px}
+:root[data-look] .loom-dock-bar .loom-me-dock.v-dock [data-part="lane"]:last-child [data-part="visual"]{border-radius:999px}
+:root[data-look] .loom-me-dock.v-dock [data-part="lane"]:last-child[data-active] [data-part="visual"]{background:var(--v-pink);color:var(--v-on-accent);box-shadow:var(--glow-on) var(--v-pink)}
+:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="label"]{position:absolute;display:block;
+  /* over the key as it's drawn: magnified and lifted (dock.tsx sets both on the item), 6px clear of its top */
+  bottom:calc(100% + 6px + var(--dock-item-lift,0px) + (var(--dock-item-scale,1) - 1) * var(--dock-item-size));top:auto;left:50%;right:auto;translate:-50% 0;
+  max-inline-size:none;width:max-content;padding:3px 8px;border-radius:6px;background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-edge);
+  font-family:var(--loom-font-data);font-size:11px;line-height:1.3;opacity:0;pointer-events:none;
+  /* it rises with the key as the key grows (dock.css: transform .18s) */
+  transition:opacity .12s ease-out,bottom .18s cubic-bezier(.2,.8,.2,1)}
+/* to a finger the keys don't magnify (dock.css's touch block): a held key's name sits right over the key */
+@media (hover:none),(pointer:coarse){:root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="label"]{bottom:calc(100% + 6px)}}
+:root[data-look] .loom-dock-bar .v-dock [data-part="lane"]:first-child [data-part="label"]{left:0;translate:0 0}
+:root[data-look] .loom-dock-bar .v-dock [data-part="lane"]:last-child [data-part="label"]{left:auto;right:0;translate:0 0}
+:root[data-look] .loom-dock-bar .v-dock [data-part="item"]:focus-visible [data-part="label"]{opacity:1}
+:root[data-look] .loom-dock-bar .v-dock [data-part="item"]:active [data-part="label"]{opacity:1;transition-delay:.45s}
+@media (hover:hover) and (pointer:fine){:root[data-look] .loom-dock-bar .v-dock [data-part="lane"][data-engaged] [data-part="label"]{opacity:1}}
+/* the keys: 8% of the tint, a 70% edge in it, a soft glow; the current one lit solid. An agent's dock wears its mark. */
+:root[data-look] .loom-agent-dock.v-dock [data-part="lane"]{--t:var(--loom-accent-lit,var(--loom-accent))}
+:root[data-look] .loom-agent-dock.v-dock [data-part="lane"] [data-part="visual"]{background:color-mix(in srgb,var(--t) 8%,var(--v-paper));color:var(--t);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent),var(--glow-key) var(--t)}
+:root[data-look] .loom-agent-dock.v-dock [data-part="lane"][data-active] [data-part="visual"]{background:var(--t);color:var(--v-on-accent);box-shadow:var(--glow-on) var(--t)}
+/* Find's pill sits over the rule, clear of a held key's name (the dock is shorter without its names and its tray) */
+:root[data-look] .loom-find-pill{bottom:calc(96px + env(safe-area-inset-bottom))}
+
+/* ======== Low Light ========
+   Neon's structure, calmer: 000h's soft dark colours (tokens.css :root[data-mode="dark"], which this sits on), no glow
+   on keys, buttons or the ground (every look's default, above), Figtree for titles. For anyone Neon is too much for; 000h's dark became it. */
+:root[data-look="lowlight"][data-mode]{
+--font-display:"Figtree",ui-sans-serif,system-ui,sans-serif;--ls-display:-.01em;--fw-display:600;
+--loom-ground-dim:.7;--loom-wash-dim:.45;
+/* the count: pink with dark ink (000h's white on red was 3.91:1) */
+--loom-count:#F0A4CC;--loom-count-ink:#14171B;--loom-unread:#95BAE8;--loom-live:#95BAE8;--loom-live-pulse:#95BAE8;
+/* loom's six agent marks, soft: each 3:1 or better on paper */
+--mark-lilac:#B8A6FF;--mark-plum:#E58DB8;--mark-pine:#7FCDB5;--mark-mustard:#E3B341;--mark-denim:#8FAAE3;--mark-coral:#F09A7A;
+}
+/* Higher contrast: 000h dark's own raise */
+:root[data-look="lowlight"][data-mode][data-contrast="more"]{
+--v-text:#ffffff;--v-ink:#ffffff;--v-text-2:#e2e5e8;--v-ink-soft:#e2e5e8;--v-text-3:#d0d4d8;--alert-ink:#e2e5e8;--nav-group-ink:#d0d4d8;--unavail-ink:#d0d4d8;--btn-disabled-ink:#d0d4d8;
+--v-disabled-ink:#c4c8cd;--v-border:#8c9094;--v-skel-edge:#8c9094;--structure-line:#8c9094;--v-edge:#b5b9bd;--v-disabled-edge:#b5b9bd;
+--sel-edge:#f6c3de;--loom-muted-wash:oklch(82% 0 none);--sidebar-muted:#dde3eb;--status-pending-ink:#e2e5e8;--status-off:#d0d4d8}
+
+/* ======== Daylight ========
+   Neon's structure on light: ink on warm paper, its four tints deepened (magenta, teal, amber, violet) so a key's glyph
+   and a lit edge read on it, white on a lit key, no glow. 000h's light became it. */
+:root[data-look="daylight"][data-mode]{
+color-scheme:light;
+/* surfaces */
+--v-canvas:#F5F3EE;--v-paper:#FFFFFF;--v-beige:#ECE8E1;--v-beige-2:#F1EEE8;--v-cream-pill:#FFFFFF;--card:var(--v-paper);--popover:var(--v-paper);
+/* ink and text */
+--v-ink:#1F1D27;--v-ink-soft:#45424F;--v-on-ink:#F5F3EE;--v-on-accent:#FFFFFF;--v-text:#1F1D27;--v-text-2:#45424F;--v-text-3:#57545F;
+--alert-ink:#45424F;--nav-group-ink:#57545F;--unavail-ink:#57545F;--btn-disabled-ink:#57545F;
+/* edges */
+--v-border:#D3CEC5;--v-edge:#75717C;--v-brand:#C2185B;--v-scrim:rgba(31,29,39,.46);
+/* the four tints, deep: magenta, teal, amber, violet (the olive slot) */
+--v-pink:#C2185B;--v-pink-deep:#A3134C;--v-pink-soft:#FBE6EF;
+--v-blue:#00727C;--v-blue-deep:#005E66;--v-blue-soft:#E1F2F3;
+--v-yellow:#8A5A00;--v-yellow-deep:#734B00;--v-yellow-soft:#FBF0D9;
+--v-olive:#6741C8;--v-olive-deep:#5533AD;--v-olive-soft:#EEE8FB;--v-olive-ink:#5A36B8;
+--v-accent-ink:#A3134C;--accent-foreground:var(--v-on-accent);
+/* danger */
+--v-danger:#C62839;--v-danger-fill:#B3202F;--v-danger-ink:#A8182A;--v-danger-soft:#FBE5E7;--destructive:var(--v-danger-fill);
+/* structure */
+--v-structure:#1F1D27;--on-structure:#F7F5FF;--structure-quiet:#2E2B38;--structure-line:#4A4657;--structure-text:#E6E3F0;--sidebar:var(--v-structure);
+--sidebar-muted:#BDB8CC;--muted-foreground-ink:#45424F;--muted-foreground-tinted:#45424F;--glide-bg:#1F1D27;--glide-fg:#F7F5FF;--ink-fixed:#1F1D27;--cream-fixed:#F7F5FF;
+/* states */
+--v-skel-face:#ECE8E1;--v-skel-sheen:#FFFFFF;--v-skel-edge:#D3CEC5;--v-disabled-ink:#57545F;--v-disabled-face:#ECE8E1;--v-disabled-edge:#75717C;
+--v-disabled-fill:#ECE8E1;--switch-knob:#FFFFFF;--switch-knob-on:#FFFFFF;--sel-bg:#FBE6EF;--sel-edge:#C2185B;--sel-ink:#1F1D27;
+/* semantic surfaces */
+--surface-quiet:#FFFFFF;--surface-work:#EAF4F5;--surface-automation:#FBF3E3;--surface-memory:#F1ECFB;--surface-library:#FCEBF2;--surface-ai:#EAF4F5;--surface-alert:#FCEBEC;
+/* status */
+--status-ok:#1E9E63;--status-ok-bg:#E4F4EA;--status-ok-ink:#17663F;--status-warn-bg:#FBF0D9;--status-warn-ink:#7A4F00;--status-danger-bg:#FBE5E7;--status-danger-ink:#A8182A;
+--status-info-bg:#E1F2F3;--status-info-ink:#005E66;--status-pending-bg:#ECE8E1;--status-pending-ink:#45424F;--status-danger:var(--v-danger);
+/* loom's own (index.css): the status dots, rings and counts */
+--loom-ok:#1E9E63;--loom-warn:#C98500;--loom-bad:#D9364A;--loom-muted:#75717C;--loom-live:#00838F;--loom-live-pulse:#00838F;
+--loom-ok-ink:#17663F;--loom-warn-ink:#7A4F00;--loom-bad-ink:#A8182A;--loom-muted-wash:#75717C;
+--loom-ring-bad:#D9364A;--loom-ring-warn:#C98500;--loom-ring-warn-soft:#E8B64A;--loom-count:#C2185B;--loom-count-ink:#FFFFFF;--loom-unread:#00727C;
+--loom-track:color-mix(in oklab,#000 10%,transparent);--loom-ground-dim:1;--loom-wash-dim:1;--wash-1:12%;--wash-2:10%;--wash-3:10%;
+/* a window's title strip (desk.css): a light one, where Neon's is its structure's near-black */
+--loom-bar:var(--v-beige);
+/* elevation */
+--shadow-float:0 12px 32px -12px rgba(31,29,39,.22);
+/* loom's six agent marks, deepened: each 3:1 or better on paper; a face's lit eyes go toward ink, not white (face.tsx) */
+--mark-lilac:#6F55D6;--mark-plum:#B0246E;--mark-pine:#0E7C66;--mark-mustard:#8A6400;--mark-denim:#2F5FB3;--mark-coral:#C2502E;--face-lit:#1F1D27;
+/* type and glow: Figtree for titles, and nothing glows, a face either (the rest: every look's, above) */
+--font-display:"Figtree",ui-sans-serif,system-ui,sans-serif;--ls-display:-.01em;--fw-display:600;--glow-faces:none;
+}
+/* Higher contrast: the texts darker, hairlines at 3:1 and control edges at 4.5:1 */
+:root[data-look="daylight"][data-mode][data-contrast="more"]{
+--v-text:#121018;--v-ink:#121018;--v-text-2:#2B2934;--v-ink-soft:#2B2934;--v-text-3:#3A3743;--alert-ink:#2B2934;--nav-group-ink:#3A3743;--unavail-ink:#3A3743;--btn-disabled-ink:#3A3743;
+--v-disabled-ink:#3A3743;--muted-foreground-ink:#2B2934;--muted-foreground-tinted:#2B2934;--status-pending-ink:#2B2934;
+--v-border:#827D8A;--v-skel-edge:#827D8A;--v-edge:#55525D;--v-disabled-edge:#55525D;--sel-edge:#8F0F43;--loom-muted:#55525D;--loom-muted-wash:#55525D;
+--v-danger-ink:#8C1222;--v-olive-ink:#472A99;--v-accent-ink:#8F0F43;--status-ok-ink:#11502F;--status-warn-ink:#5E3D00;--status-danger-ink:#8C1222;--status-info-ink:#004A51}

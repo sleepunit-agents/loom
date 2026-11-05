@@ -1,8 +1,7 @@
 /**
- * Neon Noir's chrome in a real browser, over a household with something waiting (an ask from Art, task t-738): the
- * Inbox's sheet has its title bar under Neon (and none in 000h), Find is a command bar, the power-on ends at a tap well
- * before it would end by itself (and 000h's arrival is never cut short), and sound plays only when the person has
- * turned it on and the opening animation runs.
+ * Neon Noir's chrome, every look's since 2026-11-05, in a real browser, over a household with something waiting (an ask
+ * from Art, task t-738): the Inbox's sheet has its title bar, Find is a command bar, the power-on ends at a tap well
+ * before it would end by itself, and sound plays only when the person has turned it on and the opening animation runs.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -12,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -57,7 +57,7 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
   });
 
   /** A device: its own sign-in, this device's copy of the look, and a record of the arrival and of every tone played. */
-  async function device(motion: 'reduce' | 'no-preference', look: 'neon' | '000h'): Promise<Page> {
+  async function device(motion: 'reduce' | 'no-preference', look: Look): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
     await ctx.addInitScript((l) => {
       localStorage.setItem('loom-look', l);
@@ -80,20 +80,22 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
     expect(await p.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...(b as object) }) })).status, [csrf, prefs] as const)).toBe(200);
   }
 
-  it('the Inbox\'s sheet: a title bar under Neon (what, who, its task), none in 000h', async () => {
-    for (const look of ['neon', '000h'] as const) {
+  it('the Inbox\'s sheet: a title bar (what, who, its task), in every look', async () => {
+    for (const look of ['neon', 'lowlight', 'daylight'] as const) {
       const p = await device('reduce', look);
       await choose(p, { look });
       await p.goto(`${base}/inbox`);
       await p.getByText('OK to turn off the recycle bin').first().click();
       const bar = p.locator('.loom-sheet-bar');
       await bar.waitFor({ state: 'attached' });
-      if (look === 'neon') {
-        await bar.waitFor();
-        expect((await bar.innerText()).replace(/\s+/g, ' ')).toMatch(/ALERT|ASK|PERMISSION|DECISION/);
-        expect(await bar.innerText()).toMatch(/t-738/i);
-        expect(await bar.locator('.loom-data').getAttribute('aria-hidden')).toBeNull();
-      } else expect(await bar.isVisible()).toBe(false);
+      await bar.waitFor();
+      expect((await bar.innerText()).replace(/\s+/g, ' '), look).toMatch(/ALERT|ASK|PERMISSION|DECISION/);
+      expect(await bar.innerText()).toMatch(/t-738/i);
+      expect(await bar.locator('.loom-data').getAttribute('aria-hidden')).toBeNull();
+      // The sheet stands off the page in every look: a lit edge in Neon, a quiet shadow in the others, never none.
+      const shadow = await p.locator('[data-slot="drawer-content"],[data-slot="dialog-content"]').first().evaluate((e) => getComputedStyle(e).boxShadow);
+      expect(shadow, look).toMatch(/\d+px \d+px$|px -?\d+px -?\d+px/);
+      expect(shadow, look).not.toMatch(/^none$|0px 0px 0px 0px$/);
       await p.context().close();
     }
   }, 60_000);
@@ -109,8 +111,8 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
     await p.context().close();
   }, 60_000);
 
-  it('the power-on: a tap ends it long before it would end by itself; 000h\'s arrival isn\'t cut short', async () => {
-    const run = async (look: 'neon' | '000h', tap: boolean) => {
+  it('the power-on: a tap ends it long before it would end by itself, in every look', async () => {
+    const run = async (look: Look, tap: boolean) => {
       const p = await device('no-preference', look);
       await p.goto(`${base}/`);
       await p.waitForFunction(() => (window as unknown as { arrive: { set?: number } }).arrive.set !== undefined, null, { timeout: 15_000 });
@@ -124,8 +126,12 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
     const natural = await run('neon', false), tapped = await run('neon', true);
     expect(natural).toBeGreaterThan(900);
     expect(tapped).toBeLessThan(natural / 2);
-    const p1 = await device('reduce', '000h'); await choose(p1, { look: '000h' }); await p1.context().close();
-    expect(await run('000h', true)).toBeGreaterThan(600);
+    for (const look of ['lowlight', 'daylight'] as const) {
+      const p1 = await device('reduce', look); await choose(p1, { look }); await p1.context().close();
+      const left = await run(look, false), tapped = await run(look, true);
+      expect(left, look).toBeGreaterThan(900);
+      expect(tapped, look).toBeLessThan(left / 2);
+    }
   }, 90_000);
 
   it('sound: chimes at the opening only once the person turns it on, and never when the opening is skipped', async () => {

@@ -1,6 +1,6 @@
 /**
  * The Accessibility app (Jonathan, 2026-11-05: "lets do all except text size"), in a real browser at 390 px with touch,
- * under Neon and 000h: its tile is in More beside Appearance and in Find; Allow zoom has moved there from Appearance,
+ * in every look: its tile is in More beside Appearance and in Find; Allow zoom has moved there from Appearance,
  * and a choice made before the move still holds; Reduce motion (Follow the phone, On, Off) is one switch for everything
  * that moves (a page's move, the ticker, the arrival, the faces): On stills them in a browser that asks for motion, Off
  * runs them in one that asks for less, and Follow obeys the phone as it changes; Higher contrast raises the tokens to
@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, manifestFromPixelLab, setSprite, type Household } from '../household.js';
 import { createConversationTables } from '../backends/conversations.js';
@@ -25,7 +26,6 @@ const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
 
-type Look = 'neon' | '000h';
 type Follow = 'follow' | 'on' | 'off';
 type Prefs = { look?: Look; mode?: 'auto' | 'light' | 'dark'; zoom?: boolean; motion?: Follow; contrast?: Follow };
 
@@ -210,11 +210,11 @@ describe.runIf(built && chrome)('the Accessibility app', () => {
     await p.locator('.loom-find [role="option"]', { hasText: 'Accessibility' }).first().waitFor();
     await p.locator('.loom-find [role="option"]', { hasText: 'Accessibility' }).first().click();
     await expect.poll(() => p.evaluate(() => location.pathname)).toBe('/accessibility');
-    // 000h: the same page, its header with the line and the ⓘ.
-    await choose(p, { look: '000h' });
+    // Daylight: the same page, the same bar.
+    await choose(p, { look: 'daylight' });
     await open(p, '/accessibility');
-    expect((await html(p)).look).toBe('000h');
-    expect(await p.locator('.loom-top').innerText()).toContain('Make loom easier to see and use.');
+    expect((await html(p)).look).toBe('daylight');
+    expect(await p.locator('.loom-pbar').count()).toBe(1);
     expect((await seen(p)).wide).toBeLessThanOrEqual(390);
     await p.context().close();
   }, 90_000);
@@ -320,9 +320,9 @@ describe.runIf(built && chrome)('the Accessibility app', () => {
     await p.context().close();
   }, 90_000);
 
-  for (const [look, mode] of [['neon', 'dark'], ['000h', 'light'], ['000h', 'dark']] as const) {
-    it(`Higher contrast, ${look === 'neon' ? 'Neon' : `000h ${mode}`}: the tokens rise to 7:1 and 4.5:1, no faded words, a stronger focus ring`, async () => {
-      const p = await phone({ prefs: { look, mode, motion: 'follow', contrast: 'off' } });
+  for (const look of ['neon', 'lowlight', 'daylight'] as const) {
+    it(`Higher contrast, ${look}: the tokens rise to 7:1 and 4.5:1, no faded words, a stronger focus ring`, async () => {
+      const p = await phone({ prefs: { look, motion: 'follow', contrast: 'off' } });
       await open(p, '/accessibility');
       const TOKENS = ['--v-text', '--v-text-2', '--v-text-3', '--v-edge', '--v-border', '--v-canvas', '--v-paper', '--v-beige'];
       const tokens = () => p.evaluate((names) => Object.fromEntries(names.map((n) => [n, getComputedStyle(document.documentElement).getPropertyValue(n).trim()])), TOKENS);

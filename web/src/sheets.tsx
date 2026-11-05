@@ -8,16 +8,16 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { EnvContext } from './blocks';
 import type { Chrome, Tone } from './loom';
-import { Mark, PressCard, type Ground, type Mode } from './views';
+import { Mark, PressCard, type Ground } from './views';
 import { DOT } from './tones';
 import { placesOf, settingsOf } from './nav';
 import { useTint } from './tint';
-import type { Look } from './look';
+import { LOOKS, type Look } from './look';
 import type { Follow } from './access';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
+export function SheetView({ which, chrome, icon, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -46,7 +46,7 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
+  if (which === 'appearance') return <AppearanceApp ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
   // Accessibility: an app of its own beside Appearance (Jonathan, 2026-11-05), the person's too.
   if (which === 'accessibility') return <AccessibilityApp zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} />;
   if (which === 'scope' && s) {
@@ -62,14 +62,6 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
     );
   }
   return <p className="opacity-70">Nothing here.</p>;
-}
-
-export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) => void }) {
-  return (
-    <ToggleGroup type="single" className="v-seg" aria-label="Appearance" value={mode} onValueChange={(m) => { if (m) setMode(m as Mode); }}>
-      {(['auto', 'light', 'dark'] as Mode[]).map((m) => <ToggleGroupItem key={m} value={m}>{m === 'auto' ? 'Auto' : m === 'light' ? 'Light' : 'Dark'}</ToggleGroupItem>)}
-    </ToggleGroup>
-  );
 }
 
 /** A setting's row: its name and a line saying what it does, its control beside them (under them when there isn't room). */
@@ -103,16 +95,15 @@ function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContr
   );
 }
 
-/** The Appearance app: the look, light or dark (000h's), and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, sprites }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
+/** The Appearance app: the look, and the ground behind every page. The person's, on every device. */
+function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, sprites }: { ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
   return (
     <Card id="appearance">
       <CardContent className="grid divide-y">
-        {row('Look', look === 'neon' ? 'Neon Noir is dark only. For a light page, choose 000h.' : '000h, light or dark.', (
+        {row('Look', 'Neon Noir is loud and lit; Low Light is the same, calmer; Daylight is light.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Look" value={look} onValueChange={(l) => { if (l) setLook(l as Look); }}>
-            <ToggleGroupItem value="neon">Neon Noir</ToggleGroupItem><ToggleGroupItem value="000h">000h</ToggleGroupItem></ToggleGroup>
+            {LOOKS.map((l) => <ToggleGroupItem key={l.look} value={l.look}>{l.name}</ToggleGroupItem>)}</ToggleGroup>
         ))}
-        {look === '000h' && row('Light or dark', 'Auto follows this device.', <Appearance mode={mode} setMode={setMode} />)}
         {row('Background', 'What’s behind every page.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Background" value={ground} onValueChange={(g) => { if (g) setGround(g as Ground); }}>
             {([['depth', 'Depth'], ['contours', 'Contours'], ['wash', 'Wash']] as const).map(([g, l]) => <ToggleGroupItem key={g} value={g}>{l}</ToggleGroupItem>)}</ToggleGroup>

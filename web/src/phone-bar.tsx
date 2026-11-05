@@ -16,7 +16,7 @@ import { motionQuery, reducedMotion } from './access';
 
 /** How fast the ticker moves, in CSS pixels a second (his "slow, ~20-30 px/s"). */
 const TICK_PX_S = 24;
-/** The space between the end of the words and their start again, as it loops (CSS px; set on the ticker as --tick-gap, neon.css). */
+/** The space between the end of the words and their start again, as it loops (CSS px; set on the ticker as --tick-gap, looks/looks.css). */
 const TICK_GAP = 40;
 
 /** A tile's value that's only a time of day (the Clock piece's): the phone already shows the time. */
@@ -95,8 +95,8 @@ function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: 
 export type PageInfo = { line?: string; more?: string };
 
 /** The page's name, and when the page says something about itself, the way to read it (Jonathan, 2026-11-05: "I like
- * the idea of the helper icon thing but right now it's also wasting vertical space"): the name is the button (44 px tall to a finger, neon.css, in a 24 px bar), a small ⓘ
- * after it (neon.css: drawn, so it's not part of the name), and it opens a sheet with the page's line and its intro. Without either, a plain name. */
+ * the idea of the helper icon thing but right now it's also wasting vertical space"): the name is the button (44 px tall to a finger, looks/looks.css, in a 24 px bar), a small ⓘ
+ * after it (looks/looks.css: drawn, so it's not part of the name), and it opens a sheet with the page's line and its intro. Without either, a plain name. */
 function PageName({ title, info, where }: { title: string; info?: PageInfo; where: string }) {
   const haptics = useHaptics();
   const [open, setOpen] = useState(false);

@@ -1,6 +1,6 @@
 /**
  * A phone's app, not a web page (Jonathan, 2026-11-05: "We need to disable anything that lets me break the illusion"),
- * in a real browser at 390 px with touch, under Neon and 000h: the viewport doesn't zoom and iOS's pinch
+ * in a real browser at 390 px with touch, in every look: the viewport doesn't zoom and iOS's pinch
  * (gesturestart) is turned down, unless the person allows zoom (Accessibility), and then neither is; every field is at
  * least 16 px, so iOS doesn't zoom in on focus; the app's chrome (the bar, the dock, Find's pill, buttons, chips, a
  * card's head) doesn't select and has no long-press menu or tap flash, while a message's words still select; the page
@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -29,7 +30,6 @@ const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
 
-type Look = 'neon' | '000h';
 
 describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
   let h: Household;
@@ -68,7 +68,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
 
   /** A phone (390 × 844, touch) in a look, with Allow zoom as given, said to loom as the person's Appearance; the widest
    * the document has been is watched. */
-  async function phone(o: { look?: Look; mode?: 'light' | 'dark'; zoom?: boolean; width?: number; touch?: boolean; fresh?: boolean } = {}): Promise<Page> {
+  async function phone(o: { look?: Look; zoom?: boolean; width?: number; touch?: boolean; fresh?: boolean } = {}): Promise<Page> {
     const look = o.look ?? 'neon';
     const touch = o.touch ?? true;
     const ctx = await browser.newContext({ viewport: { width: o.width ?? 390, height: 844 }, reducedMotion: 'reduce', isMobile: touch, hasTouch: touch, serviceWorkers: 'block' });
@@ -86,7 +86,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     await p.goto(`${base}/appearance`);
     await p.locator('.loom-top h1').waitFor();
     const csrf = await p.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
-    const prefs = { look, zoom: o.zoom ?? false, ...(o.mode ? { mode: o.mode } : {}) };
+    const prefs = { look, zoom: o.zoom ?? false };
     expect(await p.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...b }) })).status, [csrf, prefs] as const)).toBe(200);
     return p;
   }
@@ -166,14 +166,14 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     await p.context().close();
 
     // A device that has never heard of it takes loom's copy: here, allowed.
-    const q = await phone({ look: '000h', zoom: true });
+    const q = await phone({ look: 'lowlight', zoom: true });
     await q.evaluate(() => localStorage.removeItem('loom-zoom'));
     await open(q, '/');
     await expect.poll(() => viewport(q)).toBe('width=device-width, initial-scale=1.0, viewport-fit=cover');
     await q.context().close();
   }, 90_000);
 
-  for (const look of ['neon', '000h'] as const) {
+  for (const look of ['neon', 'lowlight', 'daylight'] as const) {
     it(`${look}: every field is at least 16 px, so iOS doesn't zoom in on focus (Find, an ask's reply, a form)`, async () => {
       const p = await phone({ look });
       const seen: { what: string; px: number }[] = [];
@@ -287,11 +287,11 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     await p.context().close();
   }, 60_000);
 
-  for (const [look, mode, canvas] of [['neon', undefined, '#07070c'], ['000h', 'light', '#f8f6f1'], ['000h', 'dark', '#15171a']] as const) {
-    it(`${look}${mode ? ` ${mode}` : ''}: no rubber band or pull to refresh, the canvas past the edges is the app's, and the browser's bar wears it`, async () => {
-      const p = await phone({ look, mode });
+  for (const [look, mode, canvas] of [['neon', 'dark', '#07070c'], ['lowlight', 'dark', '#15171a'], ['daylight', 'light', '#f5f3ee']] as const) {
+    it(`${look}: no rubber band or pull to refresh, the canvas past the edges is the app's, and the browser's bar wears it`, async () => {
+      const p = await phone({ look });
       await open(p, '/');
-      await expect.poll(() => p.evaluate(() => document.documentElement.dataset.mode)).toBe(mode ?? 'dark');
+      await expect.poll(() => p.evaluate(() => document.documentElement.dataset.mode)).toBe(mode);
       const page = await p.evaluate(() => {
         const [h, b] = [document.documentElement, document.body].map((e) => getComputedStyle(e));
         return { html: h.overscrollBehaviorY + ' ' + h.overscrollBehaviorX, body: b.overscrollBehaviorY + ' ' + b.overscrollBehaviorX, bg: b.backgroundColor, htmlBg: h.backgroundColor,

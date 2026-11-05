@@ -1,7 +1,7 @@
 // Accessibility (Jonathan, 2026-11-05): Reduce motion and Higher contrast, each the person's, kept by loom like their
 // Appearance: Follow the phone (the default), On or Off. One place decides each, on <html>:
 //   data-motion="reduce" | "full"     everything that moves asks this, never the media query itself
-//   data-contrast="more" | "normal"   the high-contrast tokens (index.css, looks/neon.css) and the glows' off switch
+//   data-contrast="more" | "normal"   the high-contrast tokens (looks/looks.css) and the glows' off switch
 // CSS: the build rewrites every @media (prefers-reduced-motion: …) and (prefers-contrast: more) into a selector on these
 // attributes (vite.config.ts, accessMedia), so a stylesheet written for the media query obeys the choice. JS: what
 // moves asks reducedMotion() or motionQuery() here. Before first paint, looks/boot.js sets both from this device's copy;

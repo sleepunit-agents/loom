@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MAX_SESSIONS, SEEN_GAP_S, SessionStore } from './sessions.js';
@@ -64,5 +64,20 @@ describe('the page\'s sessions on disk', () => {
     expect(store.lookedAt(t0 + 60)).toBe(t0);            // a reload a minute later keeps the boundary
     expect(store.lookedAt(t0 + 60 + SEEN_GAP_S)).toBe(t0 + 60); // back after a while: new since the last look
     expect(store.lookedAt(t0 + 120 + SEEN_GAP_S)).toBe(t0 + 60);
+  });
+});
+
+describe('a look kept from before Low Light and Daylight', () => {
+  it('reads back as the look nearest it: Daylight if its mode was light, else Low Light; the others as they are', async () => {
+    // A file written before 2026-11-05: the household's owner on 000h light, a member on 000h dark.
+    const dir = mkdtempSync(join(tmpdir(), 'loom-prefs-'));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'ui-sessions.json'), JSON.stringify({ v: 1, sessions: {}, prefs: { look: '000h', mode: 'light', at: 1 }, members: { sam: { prefs: { look: '000h', mode: 'dark', at: 1 } } } }));
+    const store = new SessionStore(dir);
+    expect(store.prefs()).toMatchObject({ look: 'daylight' });
+    expect(store.prefs('sam')).toMatchObject({ look: 'lowlight' });
+    // Another choice saved leaves the 000h on disk as it was (an app that knew 000h still finds it), read back mapped.
+    expect(store.setPrefs({ sound: true })).toMatchObject({ look: 'daylight', sound: true });
+    expect(JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).prefs).toMatchObject({ look: '000h', mode: 'light', sound: true });
   });
 });

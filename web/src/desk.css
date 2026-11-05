@@ -1,160 +1,160 @@
-/* Neon Noir on a big screen (desk.tsx, App.tsx): the desktop. Loaded with the desk's own chunk, so a phone never
-   fetches it. Everything is under .loom-desk, which App.tsx sets only under Neon at 1024 px and wider.
+/* A big screen (desk.tsx, App.tsx): the desktop, in every look (each its own colours: looks/looks.css). Loaded with the
+   desk's own chunk, so a phone never fetches it. Everything is under .loom-desk, which App.tsx sets at 1024 px and wider,
+   in a household.
 
    The screen is the bars on top, the desktop between them and the dock, and the dock: one screen's height, never a
    scrolling page. A widget column that has more than fits scrolls inside itself. */
-:root[data-look="neon"] .loom-desk{--desk-gutter:24px;--desk-dock:104px;--desk-cut:14px}
-:root[data-look="neon"] .loom-desk .loom-page-clip{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
+:root[data-look] .loom-desk{--desk-gutter:24px;--desk-dock:104px;--desk-cut:14px}
+:root[data-look] .loom-desk .loom-page-clip{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
 /* the bars span the screen, not a phone's column */
-:root[data-look="neon"] .loom-desk .loom-top>div{max-width:none;padding-inline:var(--desk-gutter)}
-:root[data-look="neon"] .loom-desk .loom-top{flex:none}
-:root[data-look="neon"] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
+:root[data-look] .loom-desk .loom-top>div{max-width:none;padding-inline:var(--desk-gutter)}
+:root[data-look] .loom-desk .loom-top{flex:none}
+:root[data-look] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
   padding:14px var(--desk-gutter) var(--desk-dock);display:flex;flex-direction:column;gap:12px;overflow:hidden}
 
 
 /* ---- the desktop's layout: what needs you on the left, the agents in the middle, vitals on the right. The side columns
    keep a readable width from 1024 to 2560; the middle takes the rest, and its agents fill it two or three across. ---- */
-:root[data-look="neon"] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
+:root[data-look] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
   grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px)}
-@media (min-width:1600px){:root[data-look="neon"] .loom-desk-home{grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(300px,380px);gap:20px}}
-:root[data-look="neon"] .loom-desk-col{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;scrollbar-width:thin;
+@media (min-width:1600px){:root[data-look] .loom-desk-home{grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(300px,380px);gap:20px}}
+:root[data-look] .loom-desk-col{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;scrollbar-width:thin;
   padding:2px 4px 8px;margin:-2px -4px 0}
-:root[data-look="neon"] .loom-desk-agents{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
-:root[data-look="neon"] .loom-desk-headline{font-family:var(--font-display);font-weight:600;font-size:22px;letter-spacing:.01em;line-height:1.2;color:var(--v-text)}
+:root[data-look] .loom-desk-agents{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
+:root[data-look] .loom-desk-headline{font-family:var(--font-display);font-weight:600;font-size:22px;letter-spacing:.01em;line-height:1.2;color:var(--v-text)}
 
 /* ---- a widget: a dark panel over the ground, a hairline edge, a lit tick in its tint on the top edge, a cut corner ---- */
-:root[data-look="neon"] .loom-w{--t:var(--v-pink);position:relative;display:flex;flex-direction:column;min-width:0;flex:none;
+:root[data-look] .loom-w{--t:var(--v-pink);position:relative;display:flex;flex-direction:column;min-width:0;flex:none;
   background:color-mix(in srgb,var(--v-paper) 86%,transparent);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
   box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(0 0,calc(100% - var(--desk-cut)) 0,100% var(--desk-cut),100% 100%,0 100%);color:var(--v-text)}
-:root[data-look="neon"] .loom-w[data-tint]{--t:var(--loom-tint-pink)}
-:root[data-look="neon"] .loom-w[data-tint="blue"]{--t:var(--v-blue)} :root[data-look="neon"] .loom-w[data-tint="yellow"]{--t:var(--v-yellow)}
-:root[data-look="neon"] .loom-w[data-tint="olive"]{--t:var(--v-olive)} :root[data-look="neon"] .loom-w[data-tint="pink"]{--t:var(--v-pink)}
-:root[data-look="neon"] .loom-w::before{content:"";position:absolute;left:14px;top:0;width:56px;height:2px;background:var(--t);box-shadow:var(--glow-bar) var(--t);pointer-events:none}
-:root[data-look="neon"] .loom-w::after{content:"";position:absolute;right:0;top:0;width:calc(var(--desk-cut) * 1.414);height:1px;background:var(--t);
+:root[data-look] .loom-w[data-tint]{--t:var(--loom-tint-pink)}
+:root[data-look] .loom-w[data-tint="blue"]{--t:var(--v-blue)} :root[data-look] .loom-w[data-tint="yellow"]{--t:var(--v-yellow)}
+:root[data-look] .loom-w[data-tint="olive"]{--t:var(--v-olive)} :root[data-look] .loom-w[data-tint="pink"]{--t:var(--v-pink)}
+:root[data-look] .loom-w::before{content:"";position:absolute;left:14px;top:0;width:56px;height:2px;background:var(--t);box-shadow:var(--glow-bar) var(--t);pointer-events:none}
+:root[data-look] .loom-w::after{content:"";position:absolute;right:0;top:0;width:calc(var(--desk-cut) * 1.414);height:1px;background:var(--t);
   transform-origin:100% 0;rotate:45deg;translate:0 0;opacity:.8;pointer-events:none}
-:root[data-look="neon"] .loom-w__head{display:flex;align-items:center;gap:8px;min-width:0;padding:12px 16px 10px;border-bottom:1px solid var(--v-border)}
-:root[data-look="neon"] .loom-w__head h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--loom-font-data);font-size:11px;font-weight:500;
+:root[data-look] .loom-w__head{display:flex;align-items:center;gap:8px;min-width:0;padding:12px 16px 10px;border-bottom:1px solid var(--v-border)}
+:root[data-look] .loom-w__head h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--loom-font-data);font-size:11px;font-weight:500;
   letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
-:root[data-look="neon"] .loom-w__dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--t);box-shadow:var(--glow-tick) var(--t)}
-:root[data-look="neon"] .loom-w__more{margin-left:auto;margin-right:var(--desk-cut);flex:none;font-size:12.5px;color:var(--v-text-2);text-decoration:none}
-:root[data-look="neon"] .loom-w__quiet{padding:14px 16px;font-size:14px;color:var(--v-text-2)}
-:root[data-look="neon"] .loom-w__foot{display:block;padding:10px 16px;border-top:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
+:root[data-look] .loom-w__dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--t);box-shadow:var(--glow-tick) var(--t)}
+:root[data-look] .loom-w__more{margin-left:auto;margin-right:var(--desk-cut);flex:none;font-size:12.5px;color:var(--v-text-2);text-decoration:none}
+:root[data-look] .loom-w__quiet{padding:14px 16px;font-size:14px;color:var(--v-text-2)}
+:root[data-look] .loom-w__foot{display:block;padding:10px 16px;border-top:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
 
 /* ---- needs you: a stack, each answerable where it stands ---- */
-:root[data-look="neon"] .loom-needs{display:grid}
-:root[data-look="neon"] .loom-need{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:14px 16px;border-top:1px solid var(--v-border)}
-:root[data-look="neon"] .loom-need:first-child{border-top:0}
-:root[data-look="neon"] .loom-need__body{display:grid;gap:8px;min-width:0}
-:root[data-look="neon"] .loom-need__title{display:flex;align-items:flex-start;gap:8px;text-align:left;font-weight:600;font-size:14.5px;line-height:1.35;color:var(--v-text);
+:root[data-look] .loom-needs{display:grid}
+:root[data-look] .loom-need{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:14px 16px;border-top:1px solid var(--v-border)}
+:root[data-look] .loom-need:first-child{border-top:0}
+:root[data-look] .loom-need__body{display:grid;gap:8px;min-width:0}
+:root[data-look] .loom-need__title{display:flex;align-items:flex-start;gap:8px;text-align:left;font-weight:600;font-size:14.5px;line-height:1.35;color:var(--v-text);
   overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
-:root[data-look="neon"] .loom-need__unread{display:inline-block;flex:none;width:7px;height:7px;margin:.45em 6px 0 0;border-radius:50%;background:var(--loom-unread);vertical-align:top}
-:root[data-look="neon"] .loom-need__why{font-size:13px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
-:root[data-look="neon"] .loom-need__acts{display:flex;flex-wrap:wrap;gap:8px}
+:root[data-look] .loom-need__unread{display:inline-block;flex:none;width:7px;height:7px;margin:.45em 6px 0 0;border-radius:50%;background:var(--loom-unread);vertical-align:top}
+:root[data-look] .loom-need__why{font-size:13px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+:root[data-look] .loom-need__acts{display:flex;flex-wrap:wrap;gap:8px}
 /* its own buttons under it: its words whole */
-:root[data-look="neon"] .loom-need[data-whole] :is(.loom-need__title,.loom-need__why){display:block;-webkit-line-clamp:none;overflow:visible}
-:root[data-look="neon"] .loom-need__fine{font-size:12px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere}
+:root[data-look] .loom-need[data-whole] :is(.loom-need__title,.loom-need__why){display:block;-webkit-line-clamp:none;overflow:visible}
+:root[data-look] .loom-need__fine{font-size:12px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere}
 
 /* ---- an agent: its face big on the left, how it is and its name beside it, the one thing it's on under them ---- */
-:root[data-look="neon"] a.loom-w--agent{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "line line" "foot foot";
+:root[data-look] a.loom-w--agent{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "line line" "foot foot";
   align-items:center;column-gap:18px;text-decoration:none;--t:var(--acc,var(--v-pink));cursor:pointer;transition:box-shadow .15s ease-out}
-:root[data-look="neon"] a.loom-w--agent::before{width:72px}
-:root[data-look="neon"] .loom-agent__face{grid-area:face;display:grid;place-items:center;width:112px;height:112px;margin:18px 0 6px 18px;
+:root[data-look] a.loom-w--agent::before{width:72px}
+:root[data-look] .loom-agent__face{grid-area:face;display:grid;place-items:center;width:112px;height:112px;margin:18px 0 6px 18px;
   background:radial-gradient(closest-side,color-mix(in srgb,var(--t) 16%,transparent),transparent)}
-:root[data-look="neon"] .loom-agent__who{grid-area:who;display:grid;gap:4px;min-width:0;padding:18px 18px 6px 0}
-:root[data-look="neon"] .loom-agent__eyebrow{font-family:var(--loom-font-data);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
-:root[data-look="neon"] .loom-agent__eyebrow[data-trouble]{color:var(--loom-bad-ink)}
-:root[data-look="neon"] .loom-agent__name{font-family:var(--font-display);font-weight:600;font-size:24px;line-height:1.15;color:var(--v-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:root[data-look="neon"] .loom-agent__line{grid-area:line;display:flex;align-items:flex-start;gap:10px;margin:8px 16px 14px;padding:10px 12px;
+:root[data-look] .loom-agent__who{grid-area:who;display:grid;gap:4px;min-width:0;padding:18px 18px 6px 0}
+:root[data-look] .loom-agent__eyebrow{font-family:var(--loom-font-data);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
+:root[data-look] .loom-agent__eyebrow[data-trouble]{color:var(--loom-bad-ink)}
+:root[data-look] .loom-agent__name{font-family:var(--font-display);font-weight:600;font-size:24px;line-height:1.15;color:var(--v-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-agent__line{grid-area:line;display:flex;align-items:flex-start;gap:10px;margin:8px 16px 14px;padding:10px 12px;
   background:color-mix(in srgb,var(--t) 7%,var(--v-beige-2));box-shadow:inset 2px 0 0 var(--t);font-size:14px;line-height:1.35;color:var(--v-text)}
-:root[data-look="neon"] .loom-agent__line[data-tone="bad"]{--t:var(--loom-bad)} :root[data-look="neon"] .loom-agent__line[data-tone="warn"]{--t:var(--loom-warn)}
-:root[data-look="neon"] .loom-agent__line>span{display:grid;gap:2px;min-width:0}
-:root[data-look="neon"] .loom-agent__text{overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-:root[data-look="neon"] .loom-agent__where{font-size:12px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:root[data-look="neon"] .loom-agent__foot{grid-area:foot;display:flex;align-items:center;gap:12px;min-width:0;padding:10px 18px;border-top:1px solid var(--v-border);
+:root[data-look] .loom-agent__line[data-tone="bad"]{--t:var(--loom-bad)} :root[data-look] .loom-agent__line[data-tone="warn"]{--t:var(--loom-warn)}
+:root[data-look] .loom-agent__line>span{display:grid;gap:2px;min-width:0}
+:root[data-look] .loom-agent__text{overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+:root[data-look] .loom-agent__where{font-size:12px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-agent__foot{grid-area:foot;display:flex;align-items:center;gap:12px;min-width:0;padding:10px 18px;border-top:1px solid var(--v-border);
   font-size:13px;color:var(--v-text-2);white-space:nowrap}
-:root[data-look="neon"] .loom-agent__foot>span:first-child{color:var(--v-text);font-weight:500}
-:root[data-look="neon"] .loom-agent__foot>span+span{margin-left:auto;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+:root[data-look] .loom-agent__foot>span:first-child{color:var(--v-text);font-weight:500}
+:root[data-look] .loom-agent__foot>span+span{margin-left:auto;overflow:hidden;text-overflow:ellipsis;font-size:12px}
 
 /* ---- vitals: the pieces' tiles, a row each ---- */
-:root[data-look="neon"] .loom-vitals{display:grid}
-:root[data-look="neon"] .loom-vitals>li+li{border-top:1px solid var(--v-border)}
-:root[data-look="neon"] .loom-vital{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:2px;padding:11px 16px;color:var(--v-text);text-decoration:none}
-:root[data-look="neon"] .loom-vital__label{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;font-size:14px}
-:root[data-look="neon"] .loom-vital__value{font-size:13px;color:var(--t);text-align:right}
-:root[data-look="neon"] .loom-vital__detail{grid-column:1/-1;font-size:12.5px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-vitals{display:grid}
+:root[data-look] .loom-vitals>li+li{border-top:1px solid var(--v-border)}
+:root[data-look] .loom-vital{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:2px;padding:11px 16px;color:var(--v-text);text-decoration:none}
+:root[data-look] .loom-vital__label{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;font-size:14px}
+:root[data-look] .loom-vital__value{font-size:13px;color:var(--t);text-align:right}
+:root[data-look] .loom-vital__detail{grid-column:1/-1;font-size:12.5px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-:root[data-look="neon"] .loom-backup{display:flex;align-items:center;gap:10px;padding:14px 16px;font-size:14px}
-:root[data-look="neon"] .loom-backup[data-tone="bad"]{color:var(--loom-bad-ink);font-weight:600}
-:root[data-look="neon"] .loom-backup[data-tone="warn"]{color:var(--loom-warn-ink)}
+:root[data-look] .loom-backup{display:flex;align-items:center;gap:10px;padding:14px 16px;font-size:14px}
+:root[data-look] .loom-backup[data-tone="bad"]{color:var(--loom-bad-ink);font-weight:600}
+:root[data-look] .loom-backup[data-tone="warn"]{color:var(--loom-warn-ink)}
 
 /* ---- what's moving: a strip, its label a lit key ---- */
-:root[data-look="neon"] .loom-w--tape{flex-direction:row;align-items:stretch}
-:root[data-look="neon"] .loom-tape__label{flex:none;display:grid;place-items:center;padding:0 12px;background:var(--t);color:var(--v-on-accent);
+:root[data-look] .loom-w--tape{flex-direction:row;align-items:stretch}
+:root[data-look] .loom-tape__label{flex:none;display:grid;place-items:center;padding:0 12px;background:var(--t);color:var(--v-on-accent);
   font-family:var(--loom-font-data);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
-:root[data-look="neon"] .loom-tape{display:grid;gap:4px;min-width:0;padding:10px 14px;font-size:13px;color:var(--v-text-2)}
-:root[data-look="neon"] .loom-tape b{color:var(--v-text);font-weight:600}
-:root[data-look="neon"] .loom-tape>li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+:root[data-look] .loom-tape{display:grid;gap:4px;min-width:0;padding:10px 14px;font-size:13px;color:var(--v-text-2)}
+:root[data-look] .loom-tape b{color:var(--v-text);font-weight:600}
+:root[data-look] .loom-tape>li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---- More contrast: no glass, no glow ---- */
 @media (prefers-contrast:more){
-  :root[data-look="neon"] .loom-w{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
+  :root[data-look] .loom-w{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
 }
-:root[data-look="neon"][data-contrast="more"] .loom-w{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
 
 /* ---- the dock, at the bottom centre: its rule spans the keys and a little more, not the screen ---- */
-:root[data-look="neon"] .loom-desk .loom-dock-bar::before{display:none}
-:root[data-look="neon"] .loom-desk .loom-dock-bar .loom-dock-swap{position:relative}
-:root[data-look="neon"] .loom-desk .loom-dock-bar .loom-dock-swap::before{content:"";position:absolute;left:-40px;right:-40px;top:22px;height:1px;
+:root[data-look] .loom-desk .loom-dock-bar::before{display:none}
+:root[data-look] .loom-desk .loom-dock-bar .loom-dock-swap{position:relative}
+:root[data-look] .loom-desk .loom-dock-bar .loom-dock-swap::before{content:"";position:absolute;left:-40px;right:-40px;top:22px;height:1px;
   background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--v-pink) 45%,var(--v-border)) 12%,color-mix(in srgb,var(--v-pink) 45%,var(--v-border)) 88%,transparent);pointer-events:none}
 
 /* hover only where there's a pointer that hovers (ui-app.md: hover effects only on fine pointers) */
 @media (hover:hover) and (pointer:fine){
-  :root[data-look="neon"] :is(.loom-w__more,.loom-w__foot):hover{color:var(--v-text)}
-  :root[data-look="neon"] .loom-need__title:hover{text-decoration:underline;text-underline-offset:3px}
-  :root[data-look="neon"] a.loom-w--agent:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
-  :root[data-look="neon"] .loom-vital:hover{background:color-mix(in srgb,var(--t) 6%,transparent)}
+  :root[data-look] :is(.loom-w__more,.loom-w__foot):hover{color:var(--v-text)}
+  :root[data-look] .loom-need__title:hover{text-decoration:underline;text-underline-offset:3px}
+  :root[data-look] a.loom-w--agent:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
+  :root[data-look] .loom-vital:hover{background:color-mix(in srgb,var(--t) 6%,transparent)}
 }
-:root[data-look="neon"] a.loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
-:root[data-look="neon"] .loom-tape__meta{color:var(--v-text-3)}
+:root[data-look] a.loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
+:root[data-look] .loom-tape__meta{color:var(--v-text-3)}
 /* ---- an app's window (App.tsx): one big frame over the ground, between the bars and the dock. A chassis: a hairline
    edge in the app's colour, two cut corners, a ruled strip down its left side, a title strip with the app's key, its
    name and where it is, and Close. The page inside reads at a page's width, never a phone's, and scrolls inside. ---- */
-:root[data-look="neon"] .loom-window{--t:var(--v-pink);--cut:18px;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative;
+:root[data-look] .loom-window{--t:var(--v-pink);--cut:18px;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative;
   margin:12px var(--desk-gutter) var(--desk-dock);background:color-mix(in srgb,var(--v-canvas) 90%,transparent);
   -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
   clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 55%,var(--v-border)),inset 0 0 60px -30px color-mix(in srgb,var(--t) 40%,transparent)}
 /* the cut corners' own edges, lit */
-:root[data-look="neon"] .loom-window::before,:root[data-look="neon"] .loom-window::after{content:"";position:absolute;width:calc(var(--cut) * 1.4142);height:1px;
+:root[data-look] .loom-window::before,:root[data-look] .loom-window::after{content:"";position:absolute;width:calc(var(--cut) * 1.4142);height:1px;
   background:var(--t);box-shadow:var(--glow-tick) var(--t);pointer-events:none;z-index:2}
-:root[data-look="neon"] .loom-window::before{left:0;top:var(--cut);transform-origin:0 0;rotate:-45deg}
-:root[data-look="neon"] .loom-window::after{right:0;bottom:var(--cut);transform-origin:100% 100%;rotate:-45deg}
-:root[data-look="neon"] .loom-window__bar{flex:none;display:flex;align-items:center;gap:12px;height:40px;padding-right:6px;border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));
-  background:color-mix(in srgb,var(--t) 5%,var(--v-structure))}
-:root[data-look="neon"] .loom-window__key{display:grid;place-items:center;align-self:stretch;width:60px;padding-left:10px;background:var(--t);color:var(--v-on-accent);
+:root[data-look] .loom-window::before{left:0;top:var(--cut);transform-origin:0 0;rotate:-45deg}
+:root[data-look] .loom-window::after{right:0;bottom:var(--cut);transform-origin:100% 100%;rotate:-45deg}
+:root[data-look] .loom-window__bar{flex:none;display:flex;align-items:center;gap:12px;height:40px;padding-right:6px;border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));
+  background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
+:root[data-look] .loom-window__key{display:grid;place-items:center;align-self:stretch;width:60px;padding-left:10px;background:var(--t);color:var(--v-on-accent);
   clip-path:polygon(var(--cut) 0,100% 0,calc(100% - 12px) 100%,0 100%,0 var(--cut))}
-:root[data-look="neon"] .loom-window__bar h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;font-size:13px;
+:root[data-look] .loom-window__bar h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;font-size:13px;
   letter-spacing:.14em;text-transform:uppercase;color:var(--v-text);outline:none}
-:root[data-look="neon"] .loom-window__bar h2:focus-visible{text-decoration:underline;text-decoration-color:var(--v-blue);text-underline-offset:4px}
-:root[data-look="neon"] .loom-window__path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--v-text-3)}
-:root[data-look="neon"] .loom-window__close{margin-left:auto;display:grid;place-items:center;width:36px;height:32px;flex:none;color:var(--v-text-2);
+:root[data-look] .loom-window__bar h2:focus-visible{text-decoration:underline;text-decoration-color:var(--v-blue);text-underline-offset:4px}
+:root[data-look] .loom-window__path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--v-text-3)}
+:root[data-look] .loom-window__close{margin-left:auto;display:grid;place-items:center;width:36px;height:32px;flex:none;color:var(--v-text-2);
   box-shadow:inset 0 0 0 1px var(--v-border)}
-:root[data-look="neon"] .loom-window__close:hover{color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
-:root[data-look="neon"] .loom-window__body{flex:1 1 auto;min-height:0;display:flex;
+:root[data-look] .loom-window__close:hover{color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
+:root[data-look] .loom-window__body{flex:1 1 auto;min-height:0;display:flex;
   background:linear-gradient(90deg,transparent 0 10px,var(--v-border) 10px 11px,transparent 11px) no-repeat,
     repeating-linear-gradient(180deg,color-mix(in srgb,var(--t) 40%,transparent) 0 1px,transparent 1px 8px) 0 0/6px 100% no-repeat}
-:root[data-look="neon"] .loom-window main.loom-desk-main{flex:1 1 auto;min-width:0;height:auto;overflow:auto;scrollbar-gutter:stable;padding:24px 28px 40px 40px;display:block}
-:root[data-look="neon"] .loom-window main.loom-desk-main>*{width:100%;max-width:72rem;margin-inline:auto}
-:root[data-look="neon"] .loom-window main.loom-desk-main>*+*{margin-top:16px}
+:root[data-look] .loom-window main.loom-desk-main{flex:1 1 auto;min-width:0;height:auto;overflow:auto;scrollbar-gutter:stable;padding:24px 28px 40px 40px;display:block}
+:root[data-look] .loom-window main.loom-desk-main>*{width:100%;max-width:72rem;margin-inline:auto}
+:root[data-look] .loom-window main.loom-desk-main>*+*{margin-top:16px}
 /* where you've been lately, beside the page, on a screen with room for it */
-:root[data-look="neon"] .loom-window__side{display:none}
+:root[data-look] .loom-window__side{display:none}
 @media (min-width:1600px){
-  :root[data-look="neon"] .loom-window__side{display:block;flex:none;width:240px;overflow:auto;padding:22px 18px;border-left:1px solid var(--v-border)}
-  :root[data-look="neon"] .loom-window__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
-  :root[data-look="neon"] .loom-window__side ul{display:grid;gap:2px}
-  :root[data-look="neon"] .loom-window__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
+  :root[data-look] .loom-window__side{display:block;flex:none;width:240px;overflow:auto;padding:22px 18px;border-left:1px solid var(--v-border)}
+  :root[data-look] .loom-window__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
+  :root[data-look] .loom-window__side ul{display:grid;gap:2px}
+  :root[data-look] .loom-window__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
     text-decoration:none;box-shadow:inset 1px 0 0 var(--v-border)}
-  :root[data-look="neon"] .loom-window__side a:hover{color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
+  :root[data-look] .loom-window__side a:hover{color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
 }
 
 /* ---- the window, opened and closed (desk.tsx deskGo): it grows out of its dock key and shrinks back into it;
@@ -177,7 +177,7 @@ html[data-desk-move="close"]::view-transition-old(loom-win):only-child{animation
 @keyframes loom-win-grow{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
 @keyframes loom-win-shrink{from{opacity:1;transform:none}to{opacity:0;transform:scale(.96)}}
 /* the title takes focus when a window opens (for a screen reader), not a ring: it isn't a control */
-:root[data-look="neon"] .loom-window__bar h2:focus{outline:none;box-shadow:none}
+:root[data-look] .loom-window__bar h2:focus{outline:none;box-shadow:none}
 
 /* ---- the boot (desk.tsx DeskBoot): once a session, never under reduced motion, any key or tap skips it. It takes the
    taps while it stands (so one that skips it presses nothing under it), none while it leaves. ---- */

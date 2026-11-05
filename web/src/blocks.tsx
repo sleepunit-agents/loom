@@ -39,7 +39,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
 import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
-import { markColor, PixelContext, useLook } from './look';
+import { markColor, markName, PixelContext } from './look';
 import type { Sprite } from './pixel-face';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
@@ -183,13 +183,12 @@ export type Mark = { label: string; bg: string; fg: string; face?: { shape?: str
 export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
 const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
 export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
-  const look = useLook();
   // An agent with a pixel sheet wears it (unless the person turned Pixel faces off): its whole face, alive, from 36 px
   // (1x, 2x from 64); smaller, a still crop of its head (pixel-face.tsx PixelAvatar). Without one, the drawn face.
   const sprite = useContext(PixelContext) ? a.face?.sprite : undefined;
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
-      style={{ '--c': look === 'neon' ? markColor(a.bg) : a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
+      style={{ '--c': markColor(a.bg), color: markName(a.bg) ? 'var(--v-on-accent)' : a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
   );
@@ -197,7 +196,7 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
     <Suspense fallback={initial}>
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
         {(() => {
-          const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />;
+          const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} />;
           return !sprite ? drawn : size >= 36 ? <PixelFace sprite={sprite} state={state} size={size} label={a.label} fallback={drawn} /> : <PixelAvatar sprite={sprite} size={size} label={a.label} fallback={drawn} />;
         })()}
       </span>

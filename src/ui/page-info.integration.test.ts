@@ -3,7 +3,7 @@
  * but right now it's also wasting vertical space"), in a real browser at 390 px with touch: no line under the bar; the
  * page's name is a button ("About <page>") exactly when the page has a line or an intro, and opens a sheet with the
  * line first, then the intro; a page without either has a plain name; a sub-page keeps its way back beside the name;
- * nothing is wider than 390 px; a wide screen under Neon does the same; 000h keeps its header, its line and its ⓘ.
+ * nothing is wider than 390 px; a wide screen does the same, and so does every look (Low Light, Daylight).
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -22,7 +23,6 @@ const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
 
-type Look = 'neon' | '000h';
 
 describe.runIf(built && chrome)('a page\'s info behind its name in Neon\'s phone bar', () => {
   let h: Household;
@@ -59,7 +59,7 @@ describe.runIf(built && chrome)('a page\'s info behind its name in Neon\'s phone
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
-  async function device(o: { look?: 'neon' | '000h'; width?: number } = {}): Promise<Page> {
+  async function device(o: { look?: Look; width?: number } = {}): Promise<Page> {
     const w = o.width ?? 390, touch = w < 600;
     const ctx = await browser.newContext({ viewport: { width: w, height: 844 }, reducedMotion: 'reduce', isMobile: touch, hasTouch: touch, serviceWorkers: 'block' });
     await ctx.addInitScript((l) => {
@@ -190,16 +190,17 @@ describe.runIf(built && chrome)('a page\'s info behind its name in Neon\'s phone
     await p.context().close();
   }, 60_000);
 
-  for (const [look, width] of [['000h', 390], ['000h', 1280]] as const) {
-    it(`${look} at ${width} px: the header as it was, its line under the title and its ⓘ`, async () => {
+  for (const [look, width] of [['lowlight', 390], ['daylight', 1280]] as const) {
+    it(`${look} at ${width} px: the same bar, the name the way to the page's line`, async () => {
       const p = await device({ look, width });
       await open(p, '/members');
-      expect(await p.locator('.loom-pbar').count()).toBe(0);
-      expect(await p.locator('.loom-top h1').textContent()).toBe('Members');
-      expect(await p.locator('.loom-top h1 button').count()).toBe(0);
-      expect(await p.locator('.loom-top p', { hasText: 'The people who own this household' }).count()).toBe(1);
-      await p.getByRole('button', { name: 'What this is' }).click();
-      expect(await p.locator('.loom-head-more').textContent()).toContain('A household owner owns every agent');
+      expect(await p.evaluate(() => document.documentElement.dataset.look)).toBe(look);
+      expect(await p.locator('.loom-pbar').count()).toBe(1);
+      expect(await p.locator('.loom-top p', { hasText: 'The people who own this household' }).count()).toBe(0);
+      await p.getByRole('button', { name: 'About Members' }).click();
+      const sheet = p.getByRole('dialog');
+      await sheet.waitFor();
+      expect(await sheet.innerText()).toContain('The people who own this household');
       if (width <= 390) expect(await wide(p)).toBeLessThanOrEqual(390);
       await p.context().close();
     }, 60_000);

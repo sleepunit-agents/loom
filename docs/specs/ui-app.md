@@ -90,8 +90,8 @@ targets, nothing important only in a tooltip.
 The shootout's 000h build was heavy: 242 KB of JS and 341 KB of CSS gzipped,
 because each component brings its whole stylesheet. Budget for the real app:
 under 250 KB of JS and 120 KB of CSS gzipped for the first page, enforced in CI.
-We install only the components we use, and trim their CSS. The default look's
-own stylesheet (Neon Noir, `web/src/looks/neon.css`) counts toward the CSS, and
+We install only the components we use, and trim their CSS. The looks
+(`web/src/looks/looks.css`, in the app's stylesheet) count toward the CSS, and
 the script that puts the look on before first paint (`web/src/looks/boot.js`)
 stays under 1 KB gzipped (`src/ui/look-boot.test.ts`).
 
@@ -174,12 +174,15 @@ been used.
   sign-in, on a LAN or a tailnet, and the app shell is cached by the service
   worker). Revisit if first loads feel slow on a phone.
 - **loom's looks** (Jonathan, 2026-11-04: "neon noir with a few things borrowed
-  from terminal hud"): Neon Noir is the default, dark only, a stylesheet of its
-  own over 000h's tokens (`web/src/looks/`); 000h stays a choice and the light
-  look. The look, light or dark, the ground and sound are the person's, kept by
+  from terminal hud"; 2026-11-05: "give them a less severe version of neon instead
+  where we can just swap colors"): one structure, Neon Noir's, and a look is only
+  a set of tokens over 000h's (`web/src/looks/looks.css`): Neon Noir (the
+  default, dark), Low Light (dark, calm: 000h's soft dark colours) and Daylight
+  (light). A look kept as 000h before then is Daylight if it was light, else Low
+  Light. The look, the ground and sound are the person's, kept by
   loom per member and carried on every page's chrome (`POST /appearance/prefs`);
   so is Accessibility's (Allow zoom, Reduce motion, Higher contrast).
-- **loom's own look inside 000h**: 000h's look, whole. Each agent's pages take
+- **loom's own look inside 000h's components**: Each agent's pages take
   their own accent from 000h's palette (Jonathan, accepting: "agents could get
   different accents if you guys like the 000h options"): an agent's mark color
   becomes one of 000h's accents, and its pages, its dock and its sheets wear it.
