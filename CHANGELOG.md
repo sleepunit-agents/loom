@@ -368,6 +368,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`memory_audit` is read-only for real now.** It carried `readOnlyHint`, but
+  it opened the store's write handle: on a path with no store it made the
+  directory and an empty store, and on a store at an older schema it ran the
+  migrations, all before reading a row. It now opens its own `readonly`
+  handle (`SqliteVecConfig.readonly`, `openReadOnlyBackend`): no mkdir, no WAL
+  pragma, no schema, no migrations. A missing store is `no memory store at
+  <path>`, an older one names its pending migrations and says to run `loom
+  migrate`, and nothing on disk changes. `loom memory audit` (text and
+  `--json`) prints that error and exits 1 (t-1773).
 - **Adding an agent kept only `agents`, `default` and `owner`** in
   household.json, dropping `marks` and anything else. It now keeps them.
 - **An agent's Setup per its board.** Health first (Memory, Last active, Tokens
