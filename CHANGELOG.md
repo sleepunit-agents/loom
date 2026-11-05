@@ -410,8 +410,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   into a throwaway home and handed taskstore its part with the caller's environment, which named the live store;
   it didn't write there only by luck. A restore now hands a part only to a piece it installed into the home it
   restores to, with that piece's settings from the restored household or its defaults, never the caller's
-  environment, and refuses a piece whose setting names a store already on the machine outside that home (its
-  part waits in `pieces-pending/`, its services don't start). A piece found on PATH keeps its part pending too.
+  environment, and refuses a piece whose setting names a path outside that home (its part waits in
+  `pieces-pending/`, its services don't start). `loom restore --allow-outside`, for the owner's own restore onto a
+  new machine, lets one name a path that isn't there yet; one that is, a live store, is refused even then. A piece found on PATH keeps its part pending too.
   And a restore starts services only into this machine's own household: a piece's units are named for it in the
   caller's systemd dir, so a restore into a throwaway `--to` would have repointed the live household's units.
 - **Adding an agent kept only `agents`, `default` and `owner`** in

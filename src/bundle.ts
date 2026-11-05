@@ -25,7 +25,7 @@ import {
   realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveRepoRoot, resolveSqliteDbPath } from './config.js';
 import {
@@ -357,9 +357,11 @@ function withoutSettings(env: NodeJS.ProcessEnv, rec: PieceRecord): NodeJS.Proce
   return out;
 }
 
-/** Whether `p` is `home` or inside it, links followed. */
+/** Whether `p` is `home` or inside it, links followed (for a path not there yet, its nearest ancestor that is). */
 function within(home: string, p: string): boolean {
-  const rel = relative(realpathSync(home), realpathSync(p));
+  let q = p;
+  while (!existsSync(q) && dirname(q) !== q) q = dirname(q);
+  const rel = relative(realpathSync(home), join(realpathSync(q), relative(q, p)));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
@@ -368,12 +370,13 @@ function within(home: string, p: string): boolean {
  * into a throwaway home on the live machine (the backup drill, loom#488) gave taskstore the
  * caller's environment, which named the live store; it only didn't write there by luck. So
  * its settings come from the restored settings.json or its defaults (under its home), never
- * the caller's environment, and one that still names a path outside `home` that's already
- * there (a live store) is refused: on a fresh machine nothing is, so the owner's own paths
- * still restore. A relative one is its piece home's: its import runs there, as its services do
+ * the caller's environment. One that names a path outside `home` is refused: a bundle is
+ * encrypted, not signed, so one anyone made could name a new file for its part to land in.
+ * The owner's real restore onto a fresh machine keeps their own paths with `allowOutside`,
+ * and even then one that's already there (a live store) is refused. A relative one is its piece home's: its import runs there, as its services do
  * (WorkingDirectory), a directory the install made, not the bundle. No piece home, no run.
  */
-function restoreEnvFor(path: string, env: NodeJS.ProcessEnv, home: string, rec: PieceRecord): { env: NodeJS.ProcessEnv; cwd: string } | { reason: string } {
+function restoreEnvFor(path: string, env: NodeJS.ProcessEnv, home: string, rec: PieceRecord, allowOutside: boolean): { env: NodeJS.ProcessEnv; cwd: string } | { reason: string } {
   const out = pieceEnvFor(path, withoutSettings(env, rec));
   const cwd = out.LOOM_PIECE_HOME;
   if (!cwd || !existsSync(cwd) || !within(home, cwd)) return { reason: `${path} has no piece home inside ${home}` };
@@ -381,9 +384,10 @@ function restoreEnvFor(path: string, env: NodeJS.ProcessEnv, home: string, rec: 
     const v = out[n];
     if (!v) continue;
     const p = resolve(cwd, v);
-    if (existsSync(p) && !within(home, p)) {
-      return { reason: `its setting ${n} is ${v === p ? v : `${v} (${p})`}, which is outside ${home} and already there: a restore never writes into a store it didn't make` };
-    }
+    if (within(home, p)) continue;
+    const what = `its setting ${n} is ${v === p ? v : `${v} (${p})`}, which is outside ${home}`;
+    if (existsSync(p)) return { reason: `${what} and already there: a restore never writes into a store it didn't make` };
+    if (!allowOutside) return { reason: `${what}: restore with --allow-outside if it's yours, onto a machine where nothing is there yet` };
   }
   return { env: out, cwd };
 }
@@ -402,6 +406,8 @@ export async function restoreBundle(opts: {
   catalog?: CatalogEntry[];
   /** Start an installed piece's services (syncServices), once every part is in. */
   startServices?: (env: NodeJS.ProcessEnv, name: string) => unknown;
+  /** The owner's own restore: a piece's settings may name paths outside the home that aren't there yet. */
+  allowOutside?: boolean;
 }): Promise<RestoreReport> {
   const home = resolve(opts.home);
   // The restored household's own pieces: managed ones land in its pieces/, searched before PATH.
@@ -465,7 +471,7 @@ export async function restoreBundle(opts: {
     // Only a piece this restore installed, into `home`: one found on PATH writes wherever its own settings say.
     const rec = pieceOfPath(env, path);
     if (!rec) { pending(); pieces.push({ name: part.name, restored: false, reason: `${path} isn't one this restore installed, so where it would write isn't known; its part is in pieces-pending/` }); continue; }
-    const pe = restoreEnvFor(path, { ...env, LOOM_IMPORT_IDENTITY: resolve(opts.identity) }, home, rec);
+    const pe = restoreEnvFor(path, { ...env, LOOM_IMPORT_IDENTITY: resolve(opts.identity) }, home, rec, opts.allowOutside === true);
     if ('reason' in pe) { pending(); pieces.push({ name: part.name, restored: false, reason: `${pe.reason}; its part is in pieces-pending/` }); continue; }
     const r = await pieceRun(path, 'import', pe.env, readFileSync(blob), pe.cwd);
     if (r.ok) { rmSync(blob); pieces.push({ name: part.name, restored: true }); } else { pending(); pieces.push({ name: part.name, restored: false, reason: r.reason }); }
@@ -484,7 +490,7 @@ export async function restoreBundle(opts: {
     for (const p of toStart) {
       const rec = readRecord(env, p.name);
       const bin = managedBinDir(env);
-      const pe = rec && bin && rec.bins.length ? restoreEnvFor(join(bin, rec.bins[0]), env, home, rec) : { reason: 'its install left no record or bin to check its settings by' };
+      const pe = rec && bin && rec.bins.length ? restoreEnvFor(join(bin, rec.bins[0]), env, home, rec, opts.allowOutside === true) : { reason: 'its install left no record or bin to check its settings by' };
       if ('reason' in pe) { notes.push(`${p.name}'s services not started: ${pe.reason}`); continue; }
       start(withoutSettings(env, rec!), p.name);
     }

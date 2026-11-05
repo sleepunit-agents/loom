@@ -183,7 +183,7 @@ esac
     // A piece's services start only after every part is in (the rebuild drill, t-1607: the box
     // piece's service wrote an empty state first, and its part was refused).
     const order: string[] = [];
-    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), LOOM_HOME: to }, install, catalog,
+    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), LOOM_HOME: to }, install, catalog, allowOutside: true,
       startServices: (_e, name) => { order.push(`services ${name} (part in: ${existsSync(join(work, 'fresh-imported'))})`); } });
     expect(installs).toEqual([{ name: 'vault', commit: 'b'.repeat(40) }]);
     expect(order).toEqual(['services vault (part in: true)']);
@@ -272,6 +272,21 @@ esac
       expect(r.pieces).toEqual([]);
       expect(started).toEqual([]);
       expect(r.notes).toEqual([expect.stringMatching(/^vault's services not started: its setting VAULT_DIR is /)]);
+    });
+
+    // A bundle is encrypted, not signed: one made by anyone with the owner's public key could
+    // name a path that isn't there yet (a new unit, an autostart file) for its part to land in.
+    it('a setting naming a path outside the home that isn\'t there yet is refused, unless the owner allows it', async () => {
+      const fresh = join(work, 'elsewhere', 'vault');
+      await exportWith({ VAULT_DIR: fresh });
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog, startServices: () => {} });
+      expect(existsSync(fresh)).toBe(false);
+      expect(r.pieces).toEqual([{ name: 'vault', restored: false, reason: expect.stringMatching(/outside .*: restore with --allow-outside/) }]);
+      // The owner's real restore onto a fresh machine, keeping their own paths.
+      const to2 = join(work, 'restored-2');
+      const r2 = await restoreBundle({ file, identity: owner.identity, home: to2, env: sealed(), install, catalog, startServices: () => {}, allowOutside: true });
+      expect(r2.pieces).toEqual([{ name: 'vault', restored: true }]);
+      expect(readFileSync(join(fresh, 'store.db'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
     });
 
     it('a restored setting that points at a store already on this machine, outside the home, is refused', async () => {

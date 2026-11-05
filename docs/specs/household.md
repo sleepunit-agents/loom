@@ -222,9 +222,12 @@ out of a fire.
   down, then hands each piece its part through `import`. Only a piece the
   restore installed into that home gets a part, with its settings from the
   restored household (or its defaults, under its home), never the caller's
-  environment; one whose setting still names a path outside the home that's
-  already there (a live store, when the drill runs on the live machine) gets
-  nothing, and its services don't start. A refused part waits in
+  environment; one whose setting names a path outside the home gets
+  nothing, and its services don't start. A bundle is encrypted, not signed,
+  so one anyone made could name a new file for a part to land in: the owner's
+  own restore onto a new machine passes `--allow-outside` to keep their paths,
+  and a path that's already there (a live store, when the drill runs on the
+  live machine) is refused even then. A refused part waits in
   `pieces-pending/` with the reason. Services start only when the home is
   this machine's household (`$LOOM_HOME`, or `~/.config/loom`): a piece's
   units live in the caller's systemd dir under its name, so a restore into a
