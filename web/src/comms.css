@@ -2,7 +2,7 @@
    prompt line, the agent's accent on its frame and its prompt. Loaded with the Comms chunk only. */
 
 .comms { --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); min-height: 0; }
-.comms[data-wide] { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: 100%; min-height: calc(100dvh - 220px); border: 1px solid var(--comms-line); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
+.comms[data-wide] { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: calc(100dvh - 300px); min-height: 440px; border: 1px solid var(--comms-line); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
 .comms[data-phone] { padding-bottom: calc(var(--dock-h) + 84px + env(safe-area-inset-bottom)); }
 
 /* ---- the list ---- */
@@ -78,7 +78,9 @@
 
 /* ---- the composer: above the dock on a phone, clear of the keyboard ---- */
 .comms-composer { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--comms-line); background: var(--v-paper); }
-.comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 35; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px)); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 25; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px));
+  /* Its surface runs down behind the dock, so no message shows through between them. */
+  box-shadow: 0 var(--dock-h) 0 0 var(--v-paper); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
 .comms-composer__prompt { color: var(--c, var(--v-pink)); font-size: 16px; line-height: 40px; text-shadow: 0 0 8px var(--c, var(--v-pink)); }
 .comms-composer textarea { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 16px; line-height: 1.4; padding: 9px 0; background: transparent; border: 0; outline: none; color: var(--v-text); max-height: 180px; }
 .comms-composer__send { font-size: 14px; padding: 0 14px; height: 40px; border-radius: 10px; color: var(--v-on-accent); background: var(--c, var(--v-pink)); }
@@ -118,4 +120,4 @@
 .comms-screen[data-compact] .comms-screen__glass { width: 56px; height: 56px; aspect-ratio: auto; }
 .comms-msg__face { display: inline-grid; vertical-align: middle; margin-right: 6px; }
 .comms-screen[data-compact] .comms-screen__label { margin-top: 0; }
-.comms-thread__strip .comms-screen:not([data-compact]) .comms-screen__glass { max-height: 34dvh; }
+.comms-thread__strip .comms-screen:not([data-compact]) .comms-screen__glass { aspect-ratio: auto; height: min(30dvh, 240px); }
