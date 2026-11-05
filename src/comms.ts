@@ -742,7 +742,9 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
   if (op === 'describe') {
     if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s`, permanent: true };
     const name = r.member[0].toUpperCase() + r.member.slice(1);
-    const lines = [`A private thread in loom's app with your owner, ${name}. Only they read it. They can see your tool use as you work.`];
+    // Tasks made here show in the thread's panel by their source (comms.md, "Made here"); a house's taskstore call
+    // carries no environment, so the brief names the conversation itself.
+    const lines = [`A private thread in loom's app with your owner, ${name}. Only they read it. They can see your tool use as you work. A task you create or change here: add --source conversation:${r.conversation}.`];
     if (r.project) lines.push(`The thread is filed under the project ${r.project}.`);
     if (!r.title) lines.push('Give the thread a short title once you know what it\'s about: call comms_title.');
     return { ok: true, brief: lines, readers: [r.member] };
