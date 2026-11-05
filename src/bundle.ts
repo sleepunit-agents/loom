@@ -357,11 +357,17 @@ function withoutSettings(env: NodeJS.ProcessEnv, rec: PieceRecord): NodeJS.Proce
   return out;
 }
 
-/** Whether `p` is `home` or inside it, links followed (for a path not there yet, its nearest ancestor that is). */
+/**
+ * Whether `p` is `home` or inside it, links followed (for a path not there yet, its nearest
+ * ancestor that is). A link counts as there even when it leads nowhere yet: a write through it
+ * lands where it points, so one that can't be followed is outside.
+ */
 function within(home: string, p: string): boolean {
   let q = p;
-  while (!existsSync(q) && dirname(q) !== q) q = dirname(q);
-  const rel = relative(realpathSync(home), join(realpathSync(q), relative(q, p)));
+  while (!lstatExists(q) && dirname(q) !== q) q = dirname(q);
+  let real: string;
+  try { real = realpathSync(q); } catch { return false; }
+  const rel = relative(realpathSync(home), join(real, relative(q, p)));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 

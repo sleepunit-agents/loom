@@ -289,6 +289,18 @@ esac
       expect(readFileSync(join(fresh, 'store.db'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
     });
 
+    it('a path inside the home through a link that leads out (even to nothing yet) is outside', async () => {
+      await exportWith({});
+      const out = join(work, 'elsewhere', 'data');
+      const linking = async (e: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string) => {
+        await install(e, source, name);
+        symlinkSync(out, join(e.LOOM_HOME!, 'pieces', name, 'data'));
+      };
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install: linking, catalog, startServices: () => {} });
+      expect(existsSync(out)).toBe(false);
+      expect(r.pieces).toEqual([{ name: 'vault', restored: false, reason: expect.stringMatching(/its setting VAULT_DIR is .*, which is outside/) }]);
+    });
+
     it('a restored setting that points at a store already on this machine, outside the home, is refused', async () => {
       await exportWith({ VAULT_DIR: live });
       const started: string[] = [];
