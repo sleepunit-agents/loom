@@ -22,6 +22,8 @@ export type Block =
   | { type: 'health'; tone: Tone; text: string; detail?: string }
   | { type: 'panel'; title?: string; rows: PanelRow[]; action?: Button }
   | { type: 'link'; text: string; page?: string; href?: string }
+  /** Drawn by loom before a page is sent (src/comms-work.ts resolveFrom); one that reaches the app says only this much. */
+  | { type: 'from'; conversation: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
       submits?: { label: string; fields?: Record<string, string>; tone?: 'primary' | 'danger' }[] }
