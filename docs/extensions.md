@@ -268,11 +268,12 @@ own data. Core only runs the feed and shows what it answers, keyed
 `piece:<name>`, after the core sections, by piece name.
 
 - **The arguments**, in this order: `--project <slug> --since <iso>`, then
-  `--epic <id>` when the card has one, `--name <alias>` for each alias and
-  `--venue <v>` for each venue, in the card's order. `since` is no earlier than
+  `--epic <id>` when the card has one, `--name <alias>` for each alias,
+  `--venue <v>` for each venue and `--repo <r>` for each repo selector, in the
+  card's order. `since` is no earlier than
   8 days ago and is passed as UTC, `YYYY-MM-DDTHH:MM:SSZ`.
-- **The answer** is `{"groups": [{"title", "items": [{"title", "when", "who",
-  "person", "status", "ref", "body"}]}]}`: at most 8 groups and 50 items, every
+- **The answer** is `{"groups": [{"title", "waiting", "items": [{"title", "when", "who",
+  "person", "status", "ref", "page", "href", "body"}]}]}`: at most 8 groups and 50 items, every
   key known, each string within its cap (projects.md, "Output"). `{"groups": []}`
   is a present, empty section.
 - **A failure is that section's alone.** An answer that isn't valid, a non-zero

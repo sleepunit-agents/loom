@@ -1,6 +1,10 @@
 # Projects: a body of work, and everything about it in one place
 
-*2026-11-02. Status: **proposed**. This is a design doc in the `docs/specs/` sense: it says what loom will build and
+*2026-11-02; updated 2026-11-05. Status: **in progress**. Built: the store, tools, CLI, recall resolution, the
+identity block, the section seam and the `conversations` section (criteria 1–15). Specified here and not yet built:
+repo selectors, the `--repo` feed argument, `waiting` groups and linked items (16–18, which extend 10–11), and the
+Projects app (19–23).
+Home's Unfiled list is still to come. This is a design doc in the `docs/specs/` sense: it says what loom will build and
 the acceptance criteria the implementation's vitest suite must pin. It follows person cards
 ([person-cards.md](person-cards.md)) closely, on purpose. A project card does for a body of work what a person card
 does for a human. Where this doc says "as person cards", person-cards.md is the rule and this doc only adds to it.*
@@ -86,7 +90,7 @@ _Avoid_: transcript (that's the session), summary (that's a card field), episode
     "aliases": ["on-pond", "toad"],      // other project names: memory tags that mean this project
     "notes":   ["pond"],                 // note path prefixes; absent: [slug]
     "epic":    "t-210",                  // passed to piece feeds as --epic; loom gives it no meaning
-    "repos":   ["acme/pond"],            // shown, never fetched
+    "repos":   ["github:acme/pond"],     // repo selectors: passed to feeds as --repo; core never fetches them
     "venues":  ["slack:C0POND"]          // passed to piece feeds as --venue
   }
 }
@@ -99,8 +103,16 @@ _Avoid_: transcript (that's the session), summary (that's a card field), episode
   `stale_after_days`) except `value`, which here is **a string only, ≤ 400 chars**. No numbers, booleans or arrays: a
   project's state is prose.
 - `links.aliases`: ≤ 16 project names, each following the slug rule. `links.notes`: ≤ 16 entries, each ≤ 200 chars and a
-  valid note path prefix (`NOTE_PATH` in `src/notes.ts`), stored without a trailing slash. `links.repos` and `links.venues`:
+  valid note path prefix (`NOTE_PATH` in `src/notes.ts`), stored without a trailing slash. `links.venues`:
   ≤ 16 strings, each ≤ 200. `links.epic`: one string, ≤ 64.
+- `links.repos`: ≤ 16 **repo selectors** ([changes.md](changes.md), "Ids"). An entry is split at its first `:` when
+  that comes before any `/`: the part before is the `forge`, `[a-z][a-z0-9-]{0,23}`, and the rest the locator. An entry
+  with no such `:` is the **bare form**, `<owner>/<repo>` (written before selectors existed), and means
+  `github:<owner>/<repo>`. A locator (or the bare form) is **literal**, as changes.md's "Ids": two to four
+  `/`-separated segments of `[A-Za-z0-9._-]`, ≤ 120 chars, so nothing in it reads as a pattern.
+  Reads return what was written; feeds get the bare form as `github:…`. Two entries equal after that are rejected.
+  Core checks the syntax only: which forges exist, and whether a locator's case matters, is the reading piece's
+  business.
 - Reserved names: person cards' list (`tier`, `field`, `projects`, `scope`, `trust`) may not be a slug, an alias or a
   `where` field name.
 - **A slug is a project's for good.** `projects` is keyed by slug, archived rows included, so a slug is never reused.
@@ -121,7 +133,7 @@ _Avoid_: transcript (that's the session), summary (that's a card field), episode
 - `merge: false`: the card becomes exactly what was passed. `name` is required. An omitted `status` is `active`, and
   omitted sections are empty.
 - **`status` vs archive.** `paused` and `done` are states of a live project: it keeps its names, its hub and its feeds,
-  and the Projects tab lists it under its status. Archiving retires it: hidden, names freed. `done` is "finished,
+  and the Projects app lists it under its status. Archiving retires it: hidden, names freed. `done` is "finished,
   still findable"; archive is "gone".
 - No-op detection, timestamps (`updated`; `synthesized_at`, moved by passing `summary`), staleness markers,
   archive/restore and revisions follow person cards. The implementation shares that code.
@@ -207,9 +219,10 @@ copy of that block in the piece's `piece.json`: the installer already writes one
 - loom passes feeds a `since` no earlier than 8 days ago (a longer `since` still reaches the core sections; feeds get
   8 days), so a day-grouped feed never needs more than 8 groups. `since` is passed as UTC, `YYYY-MM-DDTHH:MM:SSZ`.
 - loom runs `argv` plus `--project <slug> --since <iso>` and, when the card has them, `--epic <id>`, then `--name <n>`
-  for every alias and `--venue <v>` for every venue, each in the card's order. It runs in the piece's own environment, through the same runner
+  for every alias, `--venue <v>` for every venue and `--repo <r>` for every repo selector (normalized: a bare
+`owner/repo` passed as `github:owner/repo`), each in the card's order. It runs in the piece's own environment, through the same runner
   as manifests (extensions.md "Limits"): **3 s**, the process group killed afterwards, at most 6 pieces at once.
-  Results are not cached.
+  Results are not cached, with one exception: the Projects index's counts (below).
 - `"unfiled": true` says the piece can also be asked with `--unfiled --since <iso>`, for items that belong to no
   project. loom's Home asks it with `since` 7 days ago, through the same runner, and shows the result as "Unfiled".
 
@@ -218,6 +231,7 @@ copy of that block in the piece's `piece.json`: the installer already writes one
 ```jsonc
 { "groups": [
     { "title": "Waiting on you",                          // required, ≤ 80
+      "waiting": true,                                    // optional: these items wait on the owner (counted below)
       "items": [
         { "title": "Approve the WAF exception",           // required, ≤ 200
           "when": "2026-11-02T14:10:00Z",                 // optional, ISO-8601 UTC
@@ -225,10 +239,14 @@ copy of that block in the piece's `piece.json`: the installer already writes one
           "person": ["loren-smith"],                      // optional, ≤ 8 person slugs (the page shows their avatars)
           "status": "open",                               // optional, ≤ 24, free text the page shows as a badge
           "ref": "t-1271",                                // optional, ≤ 200, shown as text
+          "page": "task/t-1271",                          // optional, ≤ 200: a page of this piece, or loom:<page>
+          "href": "https://…",                            // optional, ≤ 500, https only: opens outside
           "body": "…" } ] } ] }                           // optional, ≤ 600, shown folded
 ```
 
-≤ 8 groups and ≤ 50 items in total. Keys not listed here are rejected (so a typo fails loudly, not silently). The
+≤ 8 groups and ≤ 50 items in total. An item has at most one of `page` and `href`. A `page` follows the page path rule
+(extensions.md, "Pages"), optionally with a `?query`; it links to the feed's own piece (`/p/<piece>/<page>`) unless it
+starts with `loom:`, which follows the manifest's `loom:` rule. Keys not listed here are rejected (so a typo fails loudly, not silently). The
 piece decides its own grouping and order; loom renders what it's given.
 
 ## Conversation digests
@@ -275,12 +293,42 @@ best-effort as person cards: a missing, archived or unreadable card gives the li
 or `_(project <name> is unreadable)_`, never a failure. A body
 working in a project's repo or conversation passes it, the way a bridge passes `people`.
 
-**loom's page** (its own PR, after the store and tools):
-- **A Projects tab.** Active projects come first, by activity. Each row has the name, status, the `where.now` line
-  with its marker, and the count of `new` items in the core sections. Feeds run only when a project page is opened,
-  never for the list.
-- **A project page** shows the card, then the sections.
-- **An "Unfiled" list on Home** comes from every feed that declares `unfiled`.
+**loom's page: the Projects app.**
+
+- **Where it lives.** A tile in **Places**, `Projects` (icon `folder-kanban`), after People. It's somewhere the owner
+  goes regularly ("what's queued up for pond"), so it's a place, not Setup, and it is the household's, like People: a
+  member who owns only some agents (an agent owner, owners.md) doesn't get it, as with Knowledge and People. A loom
+  without a household has it too, beside Mind and People.
+- **The index**, `/projects`: summary, then drill in. One `list` row per live project, from every agent in the
+  household (each row carrying its agent's mark when the household has more than one), ordered: projects with
+  something waiting on the owner first, then those with a section error, then by activity. Each row: the name, and as
+  its meta, the status (when not active), what's waiting on you in words ("2 waiting on you"), and the last activity
+  as an age. It links to the hub. Paused and done projects are in a folded "Paused and done" section. With no projects:
+  one line saying what a project is and that an agent makes one with `project_write`.
+- **What's waiting on you**, per project, is the number of open `needs_owner` asks in its `conversations` section and
+  of items in its feed groups marked `waiting`, as those sections return them (their caps apply). To count, the index
+  runs each project's feeds with `since` 7 days ago, through the same runner and its pool (6 at once across the whole
+  index), and keeps each project's result 60 s in the daemon's memory, keyed by agent and slug. The index waits at most
+  5 s for them: a project whose feeds haven't answered by then, or one that failed, shows "couldn't count" instead of a
+  number and sorts with the errors. The hub page never reads or writes that cache.
+- **A project's hub** is `/projects/<agent>/<slug>` in a household (the index always links this form) and
+  `/projects/<slug>` without one. In a household, `/projects/<slug>` resolves when exactly one agent has a live project
+  whose slug or alias that is, and is not found otherwise. The card's name is the title and its summary the intro.
+  Both pages only read: no actions, no buttons (the card is written by agents, with `project_write`). Then, in this order, each only when its section is present:
+  1. **Goal and where it stands**: `kv` of the goal and each `where` field with its marker in words ("checked 2 days
+     ago", "not checked", "stale for 9 days").
+  2. **Waiting on you**: every `waiting` feed item and every open `needs_owner` ask, one list, tone `warn`.
+  3. **Each piece section**, under its `label` (Changes, Tasks…), its groups as lists, items linking by their `page`
+     or `href`, with `when` (as an age), `who` and `ref` in the row's meta, `status` as its badge, the first `person`'s
+     avatar, and `body` folded under the row. Groups marked `waiting` are left out here, since they're shown above. A `{key, error}` section is a
+     muted line, "<label> couldn't answer: <why>".
+  4. **People**: each person (avatar), the field and its value.
+  5. **Conversations**: each with its digest's summary, linking to `loom:conversation/<id>`.
+  6. **Notes** and **Memories**: folded, newest first, memories linking to their page.
+  A missing project is the not-found page; an archived one says it's archived.
+- The page's `since` is 7 days (the open question below still stands).
+- **No new block types**, so the app adds nothing to the first page's script: the pages are drawn by loom's existing
+  blocks, and the tile's icon comes from the lazily loaded icon set (its name is the only thing the shell gains).
 
 ## Storage
 
@@ -344,15 +392,33 @@ them or rolls back. Cards belong to the database, as people do.
     lists an archived project's former names, and leaves out a live project's. `project_list` returns `links`, and
     its `memories_since_synthesis` excludes archived, expired and older memories.
 15. The CLI's four verbs with `--json` and the exit codes above.
+16. Repo selectors: `github:acme/app`, `forgejo:codeberg.org/acme/app` and a bare `acme/app` are accepted; a space, `#`,
+    `@`, an empty locator, an uppercase or over-long forge, and two selectors equal after normalizing are rejected,
+    naming the field. A feed gets `--repo github:acme/app` for a bare `acme/app`, after the venues, in the card's order.
+17. Feed output: `waiting` must be a boolean; `page` and `href` are each checked (path rule, `loom:` rule, https only,
+    caps), an item with both is rejected, and an unknown key still is.
+18. A feed item's `page` links to its piece's page (`/p/<piece>/<page>`), and a `loom:` one to loom's page.
+19. The Projects tile is in Places after People for a household's owner, absent for a member who owns only some
+    agents, and present in a loom without a household.
+20. The index orders projects with waiting items first, then errors and "couldn't count", then by activity; counts
+    `waiting` items plus open `needs_owner` asks; folds paused and done; and, loaded twice within 60 s, runs each
+    project's feeds once (a fake feed counts its runs). A feed slower than 5 s gives "couldn't count", not a slow page.
+21. The hub page shows its sections in the order above, leaves out an absent one, shows a failed feed as its line,
+    lists a `waiting` group's items once (under Waiting on you), and runs the feeds on every load, whatever the index
+    has cached.
+22. In a household, `/projects/<agent>/<slug>` reaches that agent's project; `/projects/<slug>` reaches it when only
+    one agent has the slug and is a 404 when two do; an unknown slug is a 404.
+23. The web app gains no block type, and its budget test still passes.
 
 ## First slice
 
 1. The store, tools, CLI, recall resolution and identity block: criteria 1–9 and 12–15.
-2. The section seam (10–11), with the tasks piece's `project-feed` as the pilot.
+2. The section seam (10–11), with the tasks piece's `project-feed` as the pilot; then repo selectors, `--repo`,
+   `waiting` and item links (16–18).
 3. Digests are core's ([conversations.md](conversations.md)), and so is the `conversations` section. An agent
    whose bodies are told to message the owner on every request drops that instruction in favour of digests (the
    agent's own configuration, outside loom).
-4. The Projects tab and Home's Unfiled list.
+4. The Projects app (criteria 19–23), then Home's Unfiled list.
 
 **Done**, outside loom's tests:
 - an owner opens a seeded project and sees what's queued (the tasks feed), the week's conversations with their
