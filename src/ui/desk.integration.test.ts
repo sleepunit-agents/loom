@@ -63,6 +63,10 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00000001' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00000001' } }] }] }));
     writeFileSync(join(bin, 'loom-permit'), `#!/bin/sh\ncase "$1 $2" in "ui --json") cat "${join(bin, 'permit.json')}" ;; *) echo '{"title":"Permit","sections":[]}' ;; esac\n`);
     chmodSync(join(bin, 'loom-permit'), 0o755);
+    // A Boxes place, quiet: the right column's Vitals widget, so all three columns have a first widget to line up.
+    writeFileSync(join(bin, 'boxes.json'), JSON.stringify({ v: 2, tab: { label: 'Boxes' }, tile: { label: 'Boxes', value: '3 boxes', page: '' } }));
+    writeFileSync(join(bin, 'loom-runtime'), `#!/bin/sh\ncase "$1 $2" in "ui --json") cat "${join(bin, 'boxes.json')}" ;; *) echo '{"title":"Boxes","sections":[]}' ;; esac\n`);
+    chmodSync(join(bin, 'loom-runtime'), 0o755);
     process.env.PATH = `${bin}:${savedPath}`;
     handle = await startHttpServer({ contextDir: art, host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
@@ -124,6 +128,34 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       const left = Math.min(...keys.map((k) => k.l)), right = Math.max(...keys.map((k) => k.r));
       expect(Math.abs((left + right) / 2 - w / 2)).toBeLessThanOrEqual(2);
       expect(Math.max(...keys.map((k) => k.t))).toBeGreaterThan(ht - 90);
+      await p.context().close();
+    }, 90_000);
+  }
+
+  for (const [w, ht] of SIZES) {
+    it(`${w}x${ht}: the three columns' first widgets share a top edge, the headline above them all, and no Moving strip`, async () => {
+      const p = await screen('neon', w, ht);
+      await home(p);
+      // Each column's first widget: Needs you, the first agent, Vitals (Jonathan, 2026-11-05: the headline sat in the
+      // middle column and pushed the agents down).
+      const firsts = await p.locator('.loom-desk-col').evaluateAll((cols) => cols.map((c) => {
+        const f = c.querySelector('.loom-w');
+        return f ? { cls: f.className, top: f.getBoundingClientRect().top } : null;
+      }));
+      expect(firsts.length).toBe(3);
+      expect(firsts.every(Boolean), JSON.stringify(firsts)).toBe(true);
+      const tops = firsts.map((f) => f!.top);
+      expect(Math.max(...tops) - Math.min(...tops), JSON.stringify(firsts)).toBeLessThanOrEqual(1);
+      // The headline: across the top, its bottom above every column's first widget, wider than any one column.
+      const head = (await p.locator('.loom-desk-headline').boundingBox())!;
+      expect((await p.locator('.loom-desk-headline').innerText()).trim()).toBe('Everyone\u2019s fine');
+      expect(head.y + head.height).toBeLessThanOrEqual(Math.min(...tops));
+      expect(await p.locator('.loom-desk-col .loom-desk-headline').count()).toBe(0);
+      const mid = (await p.locator('.loom-desk-col--mid').boundingBox())!;
+      expect(head.width).toBeGreaterThan(mid.width);
+      // What each agent is on is its card's: nothing repeats it in a strip.
+      expect(await p.locator('.loom-w--tape').count()).toBe(0);
+      expect(await p.getByText('Moving', { exact: true }).count()).toBe(0);
       await p.context().close();
     }, 90_000);
   }

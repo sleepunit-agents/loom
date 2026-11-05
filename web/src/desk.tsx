@@ -24,7 +24,7 @@ import { reducedMotion } from './access';
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
   doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string } };
-export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[]; moving: { agent?: string; text: string; meta?: string }[] };
+export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 
 const ago = (iso?: string) => {
   const t = iso ? Date.parse(iso) : NaN;
@@ -193,20 +193,6 @@ function BackupW({ b }: { b: NonNullable<Shell['backup']> }) {
   );
 }
 
-/** What's moving: the agents' work as the pieces report it, a line each. */
-function Tape({ rows }: { rows: DeskHomeData['moving'] }) {
-  const { ctx } = useEnv();
-  const agents = ctx.agents ?? {};
-  return (
-    <section className="loom-w loom-w--tape" data-tint="olive" aria-label="What's moving">
-      <span className="loom-tape__label" aria-hidden>Moving</span>
-      <ul className="loom-tape">{rows.filter((r, n) => rows.findIndex((x) => x.agent === r.agent && x.text === r.text) === n).slice(0, 6).map((r, n) => (
-        <li key={n}><b>{(r.agent && agents[r.agent]?.label) || r.agent}</b> {r.text}{r.meta && <span className="loom-tape__meta"> · {r.meta}</span>}</li>))}
-      </ul>
-    </section>
-  );
-}
-
 function NoAgents() {
   const { go } = useEnv();
   return <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one."><Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>;
@@ -225,14 +211,15 @@ export function DeskHome({ home, shell }: { home: DeskHomeData; shell: Shell }) 
   const backup = shell.backup;
   return (
     <div className="loom-desk-home">
+      {/* How everyone is, across the top: above all three columns, never inside one, so their first widgets share a
+          top edge (Jonathan, 2026-11-05). What each agent is on is its own card's: no strip repeats it. */}
+      <p className="loom-desk-headline">{home.headline}</p>
       <div className="loom-desk-col loom-desk-col--left">
         <Needs d={home} />
       </div>
       <div className="loom-desk-col loom-desk-col--mid">
-        <p className="loom-desk-headline">{home.headline}</p>
         {home.cards.length === 0 ? <NoAgents />
           : <div className="loom-desk-agents">{home.cards.map((c) => <Agent key={c.id} c={c} />)}</div>}
-        {home.moving.length > 0 && <Tape rows={home.moving} />}
       </div>
       <div className="loom-desk-col loom-desk-col--right">
         <Vitals shell={shell} />

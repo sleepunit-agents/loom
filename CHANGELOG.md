@@ -341,6 +341,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Desktop Home: the three columns line up, and no Moving strip** (t-1884). How everyone is ("Everyone's fine")
+  reads across the top, above all three columns, so Needs you, the first agent card and Vitals share a top edge; it
+  used to sit in the middle column and push the agents down. The Moving strip under the agent cards is gone: each
+  card already says what its agent is on.
+
 - **Catalog: shuttle at bb5e92b.** A relay's words are quoted under a one-line
   header that says it carries none of the person's authority.
 - **Catalog: shuttle at df79324.** Relay: a body asks the body that owns
