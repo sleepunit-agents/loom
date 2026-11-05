@@ -209,6 +209,14 @@ describe.skipIf(!hasAge)('Comms', () => {
       expect(r.status).toBe(403);
     });
 
+    it('gives a member\'s Comms view only the agents they own, never another owner\'s', async () => {
+      const r = await page(tok.loren, 'GET', '/comms');
+      expect(r.status).toBe(200);
+      expect(Object.keys((r.body.ctx as { agents: Record<string, unknown> }).agents)).toEqual(['pond-bot']);
+      expect(r.body.agents).toEqual(['pond-bot']);
+      expect(JSON.stringify(r.body.ctx)).not.toMatch(/"art"|"mark"/);
+    });
+
     it('refuses a page load of another member\'s thread as its JSON is refused', async () => {
       const t = await open();
       for (const who of [tok.loren, tok.sam]) {

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms, the app** (t-1876). A Comms key in the dock (for a member who owns an agent, with their unread threads),
+  the thread list leading to a thread on a phone and the two side by side on a desktop, and each thread's comm screen:
+  the agent's pixel portrait at 2x in a Neon OS frame (`NAME · CH nn · LINK OK`, a signal meter, a YOU panel on a
+  desktop), its face following the thread (thinking, working, talking, done, waiting, error), a burst of static
+  when a reply lands, and talking as a bounded run of 1-4 beats with a breath between. Pixel faces gain `talking`,
+  which a manifest without it plays as `done`, then `working`. Activity cards fold to one line per run.
 - **Comms: `comms_title`, and threads in their project's hub** (t-1876). A body names its Comms thread with
   `comms_title` (60 characters, one line, never over the owner's own name for it), and a thread's title is its
   conversation's label. A thread filed under a project is its digests' project when they name none, ahead of

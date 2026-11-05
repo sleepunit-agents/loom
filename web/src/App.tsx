@@ -34,6 +34,8 @@ import { SystemBar } from './system-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
+// Comms (docs/specs/comms.md): its own chunk, loaded only when it opens.
+const CommsView = lazy(() => import('./comms').then((m) => ({ default: m.CommsView })));
 // A big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide (so it's
 // here by the time the first page is), and never on a phone.
 let desk$: typeof import('./desk') | null = null;
@@ -59,7 +61,7 @@ const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
-  Appearance: 'palette', Accessibility: 'accessibility', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round', Projects: 'folder-kanban',
+  Appearance: 'palette', Accessibility: 'accessibility', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round', Projects: 'folder-kanban', Comms: 'radio-tower',
 };
 // A piece's own icon (its manifest's tab.icon) first, then loom's for that name.
 const iconsOf = (chrome?: Chrome) => {
@@ -91,7 +93,11 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
   // Find isn't a tab (Jonathan, 2026-11-03: "on phone, Find feels different from the dock's apps"): it's the search
   // pill over the dock on Home and Places, and an overlay (find.tsx). The dock's last place is the member's avatar.
-  const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
+  // Comms, for a member who owns an agent (docs/specs/comms.md): beside the Inbox, with its unread threads.
+  const comms = s.core.find((p) => p.href === '/comms');
+  // After Places, so a narrow phone keeps Places in its dock (Comms is in More there); from about 430 px it's a key.
+  const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current && p.href !== '/comms') },
+    ...(comms ? [{ ...comms, current: location.pathname.startsWith('/comms') }] : []),
     { label: 'More', href: '/setup', current: setup.current }];
   return matchMedia('(min-width: 1024px)').matches
     ? { tabs: [home, inbox, ...places, setup], more: settings }
@@ -389,7 +395,7 @@ export default function App() {
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
   const title = error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
-    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
@@ -551,6 +557,7 @@ export default function App() {
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
+                  : data.view === 'comms' ? <Suspense fallback={<Spinner appearance="orbit" />}><CommsView data={data as never} /></Suspense>
                   : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
                   : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <AccountView me={(data.me as { name: string; role: string }) ?? { name: chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}

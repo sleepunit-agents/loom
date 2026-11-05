@@ -25,7 +25,11 @@ import { motionQuery, reducedMotion } from './access';
 export const PIXEL = {
   frameMs: 90,
   /** Between beats, per state (ms): a random gap in the range, per face. */
-  gaps: { idle: [4000, 9000], working: [600, 1800], thinking: [3000, 5000], 'needs-input': [4000, 6000], error: [12000, 20000] } as Record<string, [number, number]>,
+  gaps: { idle: [4000, 9000], working: [600, 1800], thinking: [3000, 5000], 'needs-input': [4000, 6000], error: [12000, 20000],
+    // A breath between talking beats (the owner, 2026-11-05: "small breaks between the talking loops"; the preview's v5).
+    talking: [400, 1200] } as Record<string, [number, number]>,
+  /** A talking run, at most (comms.md, "How talking plays"): one beat per 150 characters of the reply, 1 to 4. */
+  talkMax: 4,
   /** Error's rest frame, counted from its animation's end (the worried pose: 13 of Art's 17); every other state rests on 0. */
   errorHoldFromEnd: 4,
   /** The box every agent's cell is centred in, so faces of different cell sizes line up (Art 56×84, Mark 96×80). */
@@ -50,7 +54,16 @@ type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement> };
 export type Sprite = { facings: string[]; v: string; base: string };
 
 /** loom's states by the manifest's names. */
-const NAME: Record<FaceState, string> = { idle: 'idle', working: 'working', thinking: 'thinking', 'needs-input': 'waiting', complete: 'done', error: 'error' };
+const NAME: Record<FaceState, string> = { idle: 'idle', working: 'working', thinking: 'thinking', 'needs-input': 'waiting', complete: 'done', error: 'error', talking: 'talking' };
+
+/**
+ * The manifest state a face state plays from: its own, else (talking only, comms.md) done's, then working's. A talking
+ * sheet added to the manifest later is then the whole change.
+ */
+export function stateFrom(m: Manifest, st: FaceState): string {
+  if (st !== 'talking' || m.states.talking) return NAME[st];
+  return m.states.done ? 'done' : m.states.working ? 'working' : 'idle';
+}
 const fileOf = (v: Variant) => v.sheet ?? 'sheet.png';
 
 const sheets = new Map<string, Promise<Sheet | null>>();
@@ -76,7 +89,7 @@ function sheetOf(s: Sprite): Promise<Sheet | null> {
 /** A state's animations in a facing: its own; with none, that state's south (else idle's south, the base). A face
  * whose sheets have no south-west at all wears south-east's, mirrored, there. Waiting on you is south only. */
 export function variantsFor(m: Manifest, st: FaceState, f: Facing): { list: Variant[]; flip: boolean } {
-  const byF = m.states[NAME[st]] ?? {};
+  const byF = m.states[stateFrom(m, st)] ?? {};
   const face = st === 'needs-input' ? 'south' : f;
   if (byF[face]?.length) return { list: byF[face]!, flip: false };
   const noSouthWest = !Object.values(m.states).some((x) => x?.['south-west']?.length);
@@ -103,49 +116,65 @@ export function pick(list: Variant[], last: Variant | undefined, r = Math.random
 /** What a player needs from the world: a clock, timers, and chance. A page's are the real ones; a test's are fake. */
 export type PlayerEnv = { now: () => number; setTimeout: (f: () => void, ms: number) => number; clearTimeout: (t: number) => void; random: () => number };
 /** What a player draws: an animation (none: nothing to draw), its frame, the facing, mirrored or not. */
-export type Frame = { v: Variant | undefined; frame: number; facing: Facing; flip: boolean; /** part of a beat (else a rest) */ beat: boolean };
+export type Frame = { v: Variant | undefined; frame: number; facing: Facing; flip: boolean; /** part of a beat (else a rest) */ beat: boolean;
+  /** the manifest state it's drawn from (a talking face without a talking sheet: done's, or working's) */ from: string };
 
 /**
  * One face's motion, apart from any canvas (so it can be tested on a fake clock): the beats, the rests, the gaps, the
  * variants by weight, and the turns. `want` asks for a state (taken up at once while resting, or when the beat in
  * progress ends); `live` says whether it may move (on screen, a visible page, motion allowed). Still, it rests facing south.
  */
-export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => void, env: PlayerEnv) {
+export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => void, env: PlayerEnv,
+  /** Told each time the state it shows changes (the comm screen's data-face follows talking, then done, then idle). */
+  onShown?: (st: FaceState) => void) {
   const rnd = ([a, b]: [number, number]) => a + env.random() * (b - a);
   let want = first;
   // A face that first appears done is simply at rest (done is a moment, not a place).
-  let shown: FaceState = first === 'complete' ? 'idle' : first;
+  let shownNow: FaceState = first === 'complete' ? 'idle' : first;
+  // Every change of what it shows goes through here, so onShown hears each one.
+  const setShown = (st: FaceState) => { if (st !== shownNow) { shownNow = st; onShown?.(st); } };
   let facing: Facing = 'south', awaySince = 0, frame = 0, playing = false, live = false;
   let timer = 0, roll = 0;
   // The animation playing, if one is, and the last one played (a rare one is never followed by a rare one).
   let anim: Variant | undefined, last: Variant | undefined;
-  const southOnly = () => shown === 'needs-input';
+  const southOnly = () => shownNow === 'needs-input';
   // At rest: the state's usual animation in this facing (its weightiest, never a rare one); error rests on its worried frame.
-  const usual = () => usualOf(variantsFor(m, shown, facing).list);
+  const usual = () => usualOf(variantsFor(m, shownNow, facing).list);
   // Its rest frame: the manifest's, else 0 (error: its worried pose, 4 from its end, as both sheets end on the neutral one).
-  const rest = () => { const u = usual(); return u?.rest ?? (shown === 'error' ? Math.max(0, (u?.frames ?? 1) - PIXEL.errorHoldFromEnd) : 0); };
-  const paint = (i: number) => { const { flip } = variantsFor(m, shown, facing); draw({ v: anim ?? usual(), frame: i, facing, flip, beat: !!anim }); };
+  const rest = () => { const u = usual(); return u?.rest ?? (shownNow === 'error' ? Math.max(0, (u?.frames ?? 1) - PIXEL.errorHoldFromEnd) : 0); };
+  const paint = (i: number) => { const { flip } = variantsFor(m, shownNow, facing); draw({ v: anim ?? usual(), frame: i, facing, flip, beat: !!anim, from: stateFrom(m, shownNow) }); };
+  // A talking run (talk): beats still owed, and beats played in this run (never more than PIXEL.talkMax in all).
+  let talkLeft = 0, talkPlayed = 0;
   const clear = () => { env.clearTimeout(timer); env.clearTimeout(roll); timer = 0; roll = 0; };
   const still = () => { clear(); facing = 'south'; paint(rest()); };
   // A beat: the animation's frames at frameMs, then rest. A state asked for meanwhile is taken up after it.
   const beat = () => {
     env.clearTimeout(roll); roll = 0;
     if (southOnly()) facing = 'south';
-    anim = pick(variantsFor(m, shown, facing).list, last, env.random());
+    anim = pick(variantsFor(m, shownNow, facing).list, last, env.random());
     last = anim;
     playing = true; frame = 0; paint(0);
     const step = () => {
       frame++;
       if (frame < anim!.frames) { paint(frame); timer = env.setTimeout(step, PIXEL.frameMs); return; }
       playing = false; anim = undefined;
-      const played = shown;
+      const played = shownNow;
+      // A talking beat: a breath, then the next, until the run is spent; then the done beat, then rest as idle.
+      if (shownNow === 'talking' && want === 'talking') {
+        talkPlayed++; talkLeft--;
+        if (!live) { talkLeft = 0; talkPlayed = 0; want = 'idle'; setShown('idle'); return still(); }
+        if (talkLeft > 0) { paint(rest()); timer = env.setTimeout(beat, rnd(PIXEL.gaps.talking)); return; }
+        talkPlayed = 0; want = 'complete';
+        return enter('complete');
+      }
+      if (shownNow === 'talking') { talkLeft = 0; talkPlayed = 0; }
       // Done plays once, then rests as idle: asked for once, it's had.
-      if (shown === 'complete') { shown = 'idle'; if (want === 'complete') want = 'idle'; }
+      if (shownNow === 'complete') { setShown('idle'); if (want === 'complete') want = 'idle'; }
       // No longer live: stop at rest; a newer state is drawn still, and taken up when it's live again.
-      if (!live) { if (want !== played) shown = want === 'complete' ? 'idle' : want; return still(); }
+      if (!live) { if (want !== played) setShown(want === 'complete' ? 'idle' : want); return still(); }
       // A state asked for during the beat (done too, unless it was done that just played).
-      if (want !== shown) return enter(want);
-      paint(rest()); resting(rnd(PIXEL.gaps[shown] ?? PIXEL.gaps.idle), false);
+      if (want !== shownNow) return enter(want);
+      paint(rest()); resting(rnd(PIXEL.gaps[shownNow] ?? PIXEL.gaps.idle), false);
     };
     timer = env.setTimeout(step, PIXEL.frameMs);
   };
@@ -165,8 +194,8 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
   };
   const enter = (st: FaceState) => {
     clear();
-    shown = st; anim = undefined; last = undefined;
-    if (st === 'complete' || st === 'error' || st === 'needs-input') return beat();
+    setShown(st); anim = undefined; last = undefined;
+    if (st === 'complete' || st === 'error' || st === 'needs-input' || st === 'talking') return beat();
     paint(rest());
     // The first gap in a state is a random part of a whole one, so faces that start together don't move together.
     resting(rnd(PIXEL.gaps[st] ?? PIXEL.gaps.idle) * (0.2 + env.random() * 0.8), true);
@@ -175,14 +204,28 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
   return {
     want(st: FaceState) {
       want = st;
-      if (!live) { shown = st === 'complete' ? 'idle' : st; return still(); }
-      if (!playing && st !== shown) enter(st);
+      if (!live) { setShown(st === 'complete' ? 'idle' : st); return still(); }
+      if (!playing && st !== shownNow) enter(st);
+    },
+    /**
+     * A reply landed: `n` talking beats (comms.md, "How talking plays"), added to a run already going, never past
+     * PIXEL.talkMax in one run. Still (reduced motion, off screen): no beats at all.
+     */
+    talk(n: number) {
+      if (!live) return;
+      const room = PIXEL.talkMax - talkPlayed - talkLeft;
+      const add = Math.max(0, Math.min(Math.max(1, Math.round(n)), room));
+      if (!add) return;
+      talkLeft += add;
+      if (want === 'talking') return;
+      want = 'talking';
+      if (!playing) enter('talking');
     },
     live(on: boolean) {
       if (on === live) return;
       live = on;
       if (!live) { if (!playing) still(); return; }
-      if (!playing) enter(want === 'complete' && shown === 'idle' ? 'idle' : want);
+      if (!playing) enter(want === 'complete' && shownNow === 'idle' ? 'idle' : want);
     },
     dispose: clear,
   };
@@ -197,20 +240,29 @@ function useSheet(sprite: Sprite): { sheet: Sheet | null; failed: boolean } {
   return got;
 }
 
-export default function PixelFace({ sprite, state = 'idle', size, label, fallback }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode }) {
+export default function PixelFace({ sprite, state = 'idle', size, label, fallback, talk, scale: fixed, onShown, onFrom }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode;
+  /** A reply landed: `n` talking beats; `key` changes for each reply (comms.md, "How talking plays"). */
+  talk?: { n: number; key: number };
+  /** A whole-number scale of its own (the comm screen's 2x or more), instead of the size's. */
+  scale?: number;
+  /** The state it shows, as it changes, and the manifest state each frame is drawn from (the comm screen's data-face, data-anim). */
+  onShown?: (st: FaceState) => void; onFrom?: (from: string) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const { sheet, failed } = useSheet(sprite);
   const want = useRef(state);
   want.current = state;
   const player = useRef<ReturnType<typeof createPlayer> | null>(null);
-  const scale = size >= 64 ? 2 : 1;
+  const scale = fixed && Number.isInteger(fixed) && fixed >= 1 ? fixed : size >= 64 ? 2 : 1;
 
   useEffect(() => {
     const cv = canvas.current;
     if (!sheet || !cv) return;
     const g = cv.getContext('2d')!;
     const [bw, bh] = PIXEL.box;
-    const draw = ({ v, frame, flip }: Frame) => {
+    let lastFrom = '';
+    const draw = ({ v, frame, flip, from }: Frame) => {
+      cv.dataset.anim = from;
+      if (from !== lastFrom) { lastFrom = from; onFrom?.(from); }
       g.clearRect(0, 0, cv.width, cv.height);
       if (!v) return;
       const img = sheet.imgs[fileOf(v)], [cw, ch] = sheet.m.cell, cols = Math.max(1, Math.floor(img.width / cw));
@@ -221,7 +273,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
       g.drawImage(img, (f % cols) * cw, v.row * ch, cw, ch, Math.round((bw - cw) / 2), Math.round((bh - ch) / 2), cw, ch);
       g.restore();
     };
-    const p = createPlayer(sheet.m, want.current, draw, pageEnv);
+    const p = createPlayer(sheet.m, want.current, draw, pageEnv, (st) => onShown?.(st));
     player.current = p;
     // Only on screen, in a visible page, with motion allowed.
     let seen = false;
@@ -236,6 +288,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   }, [sheet]);
 
   useEffect(() => { player.current?.want(state); }, [state]);
+  useEffect(() => { if (talk) player.current?.talk(talk.n); }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
   if (failed) return <>{fallback}</>;
@@ -251,7 +304,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   );
 }
 
-const STATE_WORDS: Record<FaceState, string> = { idle: 'quiet', thinking: 'thinking', working: 'working', 'needs-input': 'waiting on you', complete: 'done', error: 'needs a look' };
+const STATE_WORDS: Record<FaceState, string> = { idle: 'quiet', thinking: 'thinking', working: 'working', 'needs-input': 'waiting on you', complete: 'done', error: 'needs a look', talking: 'talking' };
 
 /** The rest frame a face shows at idle, facing south: its usual animation, on its rest frame (the manifest's, else 0). */
 const restOf = (m: Manifest): { v: Variant; frame: number } | undefined => { const v = usualOf(m.states.idle?.south ?? []); return v && { v, frame: v.rest ?? 0 }; };

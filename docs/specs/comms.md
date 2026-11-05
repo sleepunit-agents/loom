@@ -266,7 +266,8 @@ So the activity cards need a new capture:
 What Comms streams in is the turn as it happens:
 
 - the working line, from the runtime's `status` calls;
-- the activity cards, within about 3 s of each step (the 2 s sync, then the live event);
+- the activity cards, within a few seconds of each step (the house's 2 s sync, then the runtime's 5 s tick, then the
+  live event);
 - each reply the body sends, whole, the moment it's posted. A body may send several replies in one run.
 
 **Token-by-token text is not in this design.** It would need a body that runs `claude -p --output-format stream-json
@@ -476,7 +477,8 @@ reader is the member who said half of it.
 ## The app
 
 **One app, "Comms", in the dock** for a member who owns at least one agent. It's absent for a member who owns none.
-Its dock key carries the number of unread threads, as the Inbox's carries its asks.
+Its dock key carries the number of unread threads, as the Inbox's carries its asks. On a phone it comes after Places, so
+a narrow phone (one whose dock holds four keys) keeps Places and finds Comms under More; from about 430 px it's a key.
 
 ### Phone
 
@@ -784,6 +786,20 @@ Each step ships on its own.
 3. **The app:** phone, then desktop, with the comm screen (17–19).
 4. **Asks inline,** with the approvals piece's `--conversation` (12).
 5. **Stretch, later:** several agents in one thread.
+
+## As built (the app, t-1876)
+
+Points the first version settled or left for later:
+
+- **Task links** go to the tasks piece's page for the task (`/p/tasks/task/t-N`), as the Inbox's sheet links them.
+- **`note:<path>`** is set as code, not linked: loom has no note page yet.
+- **Inside links** are links only to the allowed pages (a task, a conversation), checked again on the click against
+  this origin. An inside-looking URL an agent writes is left as its words.
+- **Later:** new messages don't yet decode in through `arrive.tsx`; Find (⌘K) lists the Comms app but not threads by
+  title; a swiped-away row has no Undo toast (a long press pins; a swipe or long press never also opens the row); the
+  phone keyboard inset isn't covered by a browser test.
+- **The comm screen's** compact strip shows the agent's small static avatar (`AgentAvatar`), never the portrait scaled
+  down; its `data-face` follows the player's own beats (talking, then done, then the thread's state).
 
 ## Open questions
 

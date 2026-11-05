@@ -1,0 +1,121 @@
+/* Comms (docs/specs/comms.md, "The app"): Neon OS chat. A real chat with a terminal's flavour: mono timestamps and a
+   prompt line, the agent's accent on its frame and its prompt. Loaded with the Comms chunk only. */
+
+.comms { --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); min-height: 0; }
+.comms[data-wide] { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: 100%; min-height: calc(100dvh - 220px); border: 1px solid var(--comms-line); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
+.comms[data-phone] { padding-bottom: calc(var(--dock-h) + 84px + env(safe-area-inset-bottom)); }
+
+/* ---- the list ---- */
+.comms-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 12px 10px; }
+.comms[data-wide] .comms-list { border-right: 1px solid var(--comms-line); }
+.comms-list__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 6px 10px; }
+.comms-list__head h2 { font-size: 12px; letter-spacing: .14em; color: var(--v-text-2); }
+.comms-new { font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--v-pink) 60%, transparent); color: var(--v-text); background: color-mix(in srgb, var(--v-pink) 12%, transparent); min-height: 36px; }
+.comms-group { margin-top: 6px; }
+.comms-group__label { font-size: 10px; letter-spacing: .16em; color: var(--v-text-3); padding: 8px 8px 4px; }
+.comms-group ul { list-style: none; margin: 0; padding: 0; }
+.comms-row__btn { width: 100%; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 10px; text-align: left; position: relative; min-height: 52px; }
+.comms-row__btn:hover { background: color-mix(in srgb, var(--v-text) 6%, transparent); }
+.comms-row[data-current] .comms-row__btn { background: color-mix(in srgb, var(--v-pink) 14%, transparent); }
+.comms-row__face { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; color: var(--v-on-accent); background: var(--c, var(--v-pink)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c, var(--v-pink)) 60%, transparent), 0 0 12px -2px var(--c, var(--v-pink)); }
+.comms-row__main { display: flex; flex-direction: column; min-width: 0; }
+.comms-row__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; color: var(--v-text); }
+.comms-row[data-unread] .comms-row__title { font-weight: 650; }
+.comms-row__sub { font-size: 11px; color: var(--v-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comms-row__time { font-size: 11px; color: var(--v-text-3); }
+.comms-row__pin { position: absolute; top: 6px; right: 6px; font-size: 8px; color: var(--v-text-3); }
+.comms-row__dot { position: absolute; right: 8px; bottom: 12px; width: 8px; height: 8px; border-radius: 99px; background: var(--v-pink); box-shadow: 0 0 8px var(--v-pink); }
+.comms-empty { color: var(--v-text-2); font-size: 14px; padding: 16px 8px; }
+.comms-archived { margin-top: auto; align-self: flex-start; font-size: 12px; color: var(--v-text-3); padding: 12px 8px; min-height: 44px; }
+.comms-blank { display: grid; place-items: center; color: var(--v-text-3); font-size: 12px; letter-spacing: .14em; }
+
+/* ---- a thread ---- */
+.comms-thread { display: flex; flex-direction: column; min-height: 0; min-width: 0; container-type: inline-size; }
+.comms-thread__head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--comms-line); position: relative; }
+.comms-back { font-size: 24px; line-height: 1; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; }
+.comms-thread__title { flex: 1; min-width: 0; text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; min-height: 40px; }
+.comms-thread__project { font-size: 11px; color: var(--v-text-2); border: 1px solid var(--comms-line); border-radius: 6px; padding: 2px 6px; }
+.comms-stop { font-size: 12px; border: 1px solid var(--v-danger, #f55); color: var(--v-danger, #f55); border-radius: 8px; padding: 4px 10px; min-height: 36px; }
+.comms-menu { width: 40px; height: 40px; border-radius: 10px; font-size: 18px; }
+.comms-menu__list { position: absolute; right: 10px; top: 52px; z-index: 30; display: flex; flex-direction: column; min-width: 160px; padding: 6px; border-radius: 12px; border: 1px solid var(--comms-line); background: var(--v-paper); box-shadow: 0 12px 30px -12px rgba(0, 0, 0, .6); }
+.comms-menu__list button { text-align: left; padding: 10px 12px; border-radius: 8px; min-height: 44px; font-size: 14px; }
+.comms-menu__list button:hover { background: color-mix(in srgb, var(--v-text) 7%, transparent); }
+.comms-danger { color: var(--v-danger, #f55); }
+
+.comms-thread__body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+.comms-thread[data-wide] .comms-thread__body { overflow: hidden; }
+@container (min-width: 760px) {
+  .comms-thread[data-wide] .comms-thread__body { grid-template-columns: minmax(0, 1fr) 260px; }
+  .comms-thread[data-wide] .comms-thread__side { border-left: 1px solid var(--comms-line); padding: 14px; overflow-y: auto; }
+}
+@container (max-width: 759px) {
+  .comms-thread[data-wide] .comms-thread__body { grid-template-rows: auto minmax(0, 1fr); }
+  .comms-thread[data-wide] .comms-thread__side { order: -1; padding: 10px 12px 0; }
+}
+.comms-thread[data-wide] .comms-msgs { overflow-y: auto; }
+.comms-thread__strip { position: sticky; top: 0; z-index: 5; padding: 8px 12px 0; background: linear-gradient(var(--v-canvas, transparent) 70%, transparent); }
+
+/* ---- messages ---- */
+.comms-msgs { list-style: none; margin: 0; padding: 14px 14px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.comms-msg { display: flex; flex-direction: column; gap: 3px; max-width: min(640px, 86%); min-width: 0; }
+.comms-msg__meta, .comms-msg > .loom-data { font-size: 10.5px; letter-spacing: .06em; color: var(--v-text-3); }
+.comms-msg--mine { align-self: flex-end; align-items: flex-end; }
+.comms-msg--mine .comms-msg__text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 12px 12px 4px 12px; background: color-mix(in srgb, var(--v-text) 9%, transparent); }
+.comms-msg[data-undelivered] .comms-msg__text { opacity: .6; border: 1px dashed var(--v-danger, #f55); }
+.comms-msg--agent { align-self: flex-start; }
+.comms-msg--agent .comms-reply { padding: 2px 0 0; overflow-wrap: anywhere; }
+.comms-msg__gone { color: var(--v-text-3); font-style: italic; font-size: 13px; }
+.comms-msg--error { align-self: stretch; max-width: none; border-left: 2px solid var(--v-danger, #f55); padding: 4px 10px; color: var(--v-text-2); font-size: 13px; }
+.comms-msg--ask { align-self: stretch; max-width: none; border-left: 2px solid var(--v-yellow); padding: 4px 10px; font-size: 13px; }
+.comms-earlier { border: 1px dashed var(--comms-line); border-radius: 10px; padding: 10px 12px; color: var(--v-text-2); font-size: 13px; }
+.comms-earlier .loom-data { font-size: 10px; letter-spacing: .14em; color: var(--v-text-3); display: block; margin-bottom: 4px; }
+.comms-steps { align-self: flex-start; font-size: 12.5px; color: var(--v-text-2); max-width: 100%; }
+.comms-steps__line { text-align: left; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--comms-line); min-height: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.comms-steps ol { list-style: none; margin: 6px 0 0 6px; padding: 0 0 0 10px; border-left: 1px solid var(--comms-line); display: flex; flex-direction: column; gap: 3px; }
+.comms-steps li[data-state="failed"] { color: var(--v-danger, #f55); }
+.comms-working { font-size: 11px; letter-spacing: .1em; color: var(--c, var(--v-pink)); }
+.comms-resend button { font-size: 12px; color: var(--v-danger, #f55); padding: 4px 0; min-height: 36px; }
+
+/* ---- the composer: above the dock on a phone, clear of the keyboard ---- */
+.comms-composer { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--comms-line); background: var(--v-paper); }
+.comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 35; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px)); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.comms-composer__prompt { color: var(--c, var(--v-pink)); font-size: 16px; line-height: 40px; text-shadow: 0 0 8px var(--c, var(--v-pink)); }
+.comms-composer textarea { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 16px; line-height: 1.4; padding: 9px 0; background: transparent; border: 0; outline: none; color: var(--v-text); max-height: 180px; }
+.comms-composer__send { font-size: 14px; padding: 0 14px; height: 40px; border-radius: 10px; color: var(--v-on-accent); background: var(--c, var(--v-pink)); }
+.comms-composer__send:disabled { opacity: .4; }
+.comms-pick { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 14px; }
+.comms-pick__agent { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 12px; border: 1px solid var(--comms-line); min-height: 48px; }
+.comms-pick__agent[data-on] { border-color: var(--c, var(--v-pink)); box-shadow: 0 0 0 1px var(--c, var(--v-pink)) inset; }
+.comms-new-thread { min-height: 50dvh; }
+
+/* ---- the comm screen ---- */
+.comms-screen { display: flex; flex-direction: column; gap: 10px; }
+.comms-screen__frame { position: relative; padding: 8px; border-radius: 6px; background: linear-gradient(135deg, color-mix(in srgb, var(--c) 30%, #000), #05060a 60%);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 70%, transparent), 0 0 24px -8px var(--c); }
+.comms-screen__frame::before { content: ""; position: absolute; inset: 3px; pointer-events: none; clip-path: inherit; border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.comms-screen__glass { position: relative; display: grid; place-items: center; overflow: hidden; aspect-ratio: 96 / 84; background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--c) 22%, #020308), #020308 75%); image-rendering: pixelated; }
+.comms-screen__glass .loom-pixel-face { width: auto !important; height: auto !important; }
+.comms-screen__scan { position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, .28) 0 1px, transparent 1px 3px); mix-blend-mode: multiply; }
+.comms-screen__static { position: absolute; inset: 0; pointer-events: none; animation: comms-static 250ms steps(5) 1;
+  background: repeating-linear-gradient(0deg, rgba(255, 255, 255, .18) 0 2px, transparent 2px 4px), radial-gradient(circle, color-mix(in srgb, var(--c) 50%, transparent), transparent 70%); }
+@keyframes comms-static { 0% { transform: translateY(-100%); opacity: 1 } 60% { opacity: .9 } 100% { transform: translateY(100%); opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .comms-screen__static { display: none; } }
+.comms-screen__initial { font-size: 48px; font-weight: 800; color: var(--c); }
+.comms-screen__label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px; letter-spacing: .12em; color: color-mix(in srgb, var(--c) 85%, white); text-shadow: 0 0 6px color-mix(in srgb, var(--c) 60%, transparent); white-space: nowrap; overflow: hidden; }
+.comms-screen__label > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.comms-screen__meter { display: inline-flex; gap: 2px; align-items: flex-end; flex: none; }
+.comms-screen__meter i { width: 3px; background: color-mix(in srgb, var(--c) 30%, transparent); }
+.comms-screen__meter i:nth-child(1) { height: 4px } .comms-screen__meter i:nth-child(2) { height: 7px } .comms-screen__meter i:nth-child(3) { height: 10px } .comms-screen__meter i:nth-child(4) { height: 13px }
+.comms-screen__meter i[data-on] { background: var(--c); box-shadow: 0 0 4px var(--c); }
+.comms-screen[data-face="error"] .comms-screen__meter i[data-on] { animation: comms-flicker 1s steps(2) infinite; }
+@keyframes comms-flicker { 50% { opacity: .3 } }
+.comms-screen__you { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 6px; border: 1px solid var(--comms-line); font-size: 10.5px; letter-spacing: .12em; color: var(--v-text-2); }
+.comms-screen__you-face { width: 32px; height: 32px; border-radius: 6px; display: grid; place-items: center; font-weight: 700; background: color-mix(in srgb, var(--v-text) 12%, transparent); color: var(--v-text); }
+/* The phone's strip: a band at the top of the thread, collapsing to the small face once the messages scroll under. */
+.comms-screen[data-compact] { flex-direction: row; }
+.comms-screen[data-compact] .comms-screen__frame { flex: 1; display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 10px; padding: 6px; }
+.comms-screen[data-compact] .comms-screen__glass { width: 56px; height: 56px; aspect-ratio: auto; }
+.comms-msg__face { display: inline-grid; vertical-align: middle; margin-right: 6px; }
+.comms-screen[data-compact] .comms-screen__label { margin-top: 0; }
+.comms-thread__strip .comms-screen:not([data-compact]) .comms-screen__glass { max-height: 34dvh; }
