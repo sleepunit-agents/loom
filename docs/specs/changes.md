@@ -148,6 +148,8 @@ people(changeId)    -> [Person]       who's involved (also on Change; split so a
 | `CHANGES_AGENTS` | none | JSON: which changes are an agent's, `{"art": {"logins": ["art-e-fish"], "branches": ["art/"]}}`. A change is the agent's when its author's login is listed, or when its head ref starts with a listed prefix **and** its author is one of `CHANGES_OWNER_LOGINS` (an agent that opens changes under the owner's account). A branch name alone never makes anyone's change an agent's, so nobody outside can name a branch to get a Yes button |
 | `CHANGES_OWNER_LOGINS` | none | JSON list: the owner's own forge logins, so their own changes read "yours" |
 | `CHANGES_PROJECTS` | `loom project list --json` | The command that lists project cards. The default lists loom's default agent's; another agent's projects' repos are read only if this command lists them |
+| `CHANGES_TASKS` | `loom tasks` | The tasks piece's command; its `export` is read once a sync for citations |
+| `CHANGES_GH` | `gh` | The GitHub CLI to run, when the one on `PATH` is a wrapper |
 | `CHANGES_APPROVALS` | the approvals piece's bin | The approvals command, found as loom finds pieces (`$LOOM_HOME/pieces/bin`, then `PATH`) |
 
 Settings are the owner's (loom's page, pieces-install.md). None holds a secret. A credential is never a setting (pieces-install.md: there's no secret kind).
@@ -238,11 +240,13 @@ answer always fits projects.md's caps. A project with no `--repo` gets
 ### Linked tasks
 
 A change cites a task when its title, body or head ref contains a task id (`t-<digits>`, as a word: `t-12` in
-`art/t-12-fix` and `(t-12)`, not in `at-12`). A task cites a change when its description or a comment contains the
+`art/t-12-fix` and `(t-12)`, not in `at-12`), or its head ref has a segment that starts `t<digits>` and a `-`, `_` or
+`/` (`art/t1781-summary`: agents' branches name tasks that way). A task cites a change when its description or a comment contains the
 change's id or its GitHub short form, `<owner>/<repo>#<n>` (the short form maps to `github:`). Both directions are
-shown on the change's page as one list, deduplicated, each linking to `loom:p/tasks/task/<id>` when the tasks piece is
-installed. The piece reads task text through the tasks piece's own CLI (`loom-tasks search`, read-only); without it,
-only the change's own citations are listed, unlinked.
+shown on the change's page as one list, deduplicated, each linking to `loom:p/tasks/task/<id>`. The piece reads task
+text once a sync through the tasks piece's own CLI, read-only (`CHANGES_TASKS export`, default `loom tasks export`: its
+search doesn't reach comments), and keeps only the citations in the snapshot; without it, only the change's own
+citations are listed.
 
 The tasks piece shows a task's changes on its own page when Changes is installed, by asking it `loom-changes
 cited-by <task id> --json` (`[{id, title, state words, page}]`, from the snapshot). That is the tasks piece's change,
@@ -372,7 +376,9 @@ That replaces "may I merge" asks in words. It widens no write access.
    approvals piece's `rule` action for `project:<the first project's slug>` with tier `do` and the owner's caller,
    then the same grant as Yes. Refresh needs only the owner.
 8. The section feed answers by the projects.md schema, groups in the documented order, `waiting: true` on "Waiting on
-   you", `page` on each item, and `{"groups": []}` with no `--repo`.
+   you", `page` on each item, every cap held against data that would break it (long titles and words, over 50
+   changes); with no `--repo`, the project's repos as the snapshot read them, and `{"groups": []}` for a project the
+   snapshot doesn't know.
 9. Task citations: the word rule (`t-12` in a branch and in parentheses, not inside another word), both directions,
    deduplicated; `cited-by` answers from the snapshot.
 
