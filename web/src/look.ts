@@ -7,7 +7,7 @@ import type { Ground, Mode } from './views';
 
 export type Look = 'neon' | '000h';
 /** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. */
-export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** loom's version of them: when they last changed */ at?: number };
+export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (off unless turned on: immersion.ts) */ zoom?: boolean; /** loom's version of them: when they last changed */ at?: number };
 
 const root = () => document.documentElement;
 
@@ -26,13 +26,14 @@ export function wearLook(l: Look): void {
   paintBar();
 }
 
-/** The browser's own bar matches the page: Neon's canvas (its token, once its stylesheet is on), else index.html's own
- * pair (000h's paper and ink). */
-function paintBar(): void {
-  const neon = root().dataset.look === 'neon' ? getComputedStyle(root()).getPropertyValue('--v-canvas').trim() : '';
+/** The browser's own bar matches the page: the look's canvas as it's worn now (Neon's, once its stylesheet is on;
+ * 000h's light or dark, whichever the person chose, not only the one the device prefers), else index.html's own pair.
+ * Run again when light or dark changes (App.tsx). */
+export function paintBar(): void {
+  const canvas = getComputedStyle(root()).getPropertyValue('--v-canvas').trim();
   for (const m of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
     m.dataset.own ??= m.content;
-    m.content = neon || m.dataset.own;
+    m.content = canvas || m.dataset.own;
   }
 }
 

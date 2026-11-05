@@ -45,7 +45,8 @@ import { useGestures } from './gestures';
 import { canMove, moveTo, scrub, type Move } from './transitions';
 import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
-import { keep, LookContext, markColor, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { allowZoom } from './immersion';
+import { keep, LookContext, markColor, paintBar, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -124,7 +125,7 @@ export default function App() {
   // The look (look.ts): Neon Noir unless the person chose 000h. Neon is dark only; Light or Dark is 000h's.
   const [look, setLookState] = useState<Look>(shownLook);
   const effective = look === 'neon' ? 'dark' : mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
-  useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
+  useEffect(() => { document.documentElement.dataset.mode = effective; paintBar(); }, [effective]);
   useEffect(() => { wearLook(look); }, [look]);
   // A choice is the person's: saved to loom (every device they sign in on gets it), and this device keeps a copy.
   const csrf = useRef('');
@@ -145,6 +146,10 @@ export default function App() {
   const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
   const setHaptics = (on: boolean) => { setHapticsState(on); keep('loom-haptics', on ? 'on' : 'off'); save({ haptics: on }); if (on) buzz(true); };
   useEffect(() => { if (!haptics || navigator.maxTouchPoints < 1) return; const t = setTimeout(warmHaptics, 1500); return () => clearTimeout(t); }, [haptics]);
+  // Allow zoom (immersion.ts): off unless the person turns it on, for anyone who needs to zoom to read.
+  const [zoom, setZoomState] = useState(() => { try { return localStorage.getItem('loom-zoom') === 'on'; } catch { return false; } });
+  const setZoom = (on: boolean) => { setZoomState(on); keep('loom-zoom', on ? 'on' : 'off'); save({ zoom: on }); };
+  useEffect(() => { allowZoom(zoom); }, [zoom]);
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -277,6 +282,7 @@ export default function App() {
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
     if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
+    if (p.zoom !== undefined) { setZoomState(p.zoom); keep('loom-zoom', p.zoom ? 'on' : 'off'); }
   }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -475,7 +481,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}

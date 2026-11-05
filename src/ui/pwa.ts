@@ -25,8 +25,11 @@ export const MANIFEST = JSON.stringify({
   start_url: '/',
   scope: '/',
   display: 'standalone',
-  background_color: '#0E0E0D',
-  theme_color: '#0E0E0D',
+  // A phone's app holds one way up (Jonathan, 2026-11-05: an OS, not a web page). iOS's home screen ignores this.
+  orientation: 'portrait',
+  // Neon Noir's canvas (web/src/looks/neon.css --v-canvas): the look loom opens in, so its splash is already it.
+  background_color: '#07070C',
+  theme_color: '#07070C',
   icons: [
     { src: '/icons/loom-192.png', sizes: '192x192', type: 'image/png' },
     { src: '/icons/loom-512.png', sizes: '512x512', type: 'image/png' },
@@ -77,7 +80,7 @@ async function page(req) {
 async function kept() {
   const hit = await (await caches.open(PAGES)).match(APP);
   if (hit) return hit;
-  return new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>loom</title><body style="font:16px system-ui;padding:24px;background:#0E0E0D;color:#F2F1EC"><h1 style="font-size:22px">Can\\u2019t reach loom</h1><p>loom isn\\u2019t saved on this device yet. It opens when there\\u2019s a connection.</p></body>',
+  return new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>loom</title><body style="font:16px system-ui;padding:24px;background:#07070C;color:#F2F1EC"><h1 style="font-size:22px">Can\\u2019t reach loom</h1><p>loom isn\\u2019t saved on this device yet. It opens when there\\u2019s a connection.</p></body>',
     { status: 503, headers: { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } });
 }
 // The app's view of a page (Accept: application/json): the network first; the kept copy, stamped, when loom can't be reached.

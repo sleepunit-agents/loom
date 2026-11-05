@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **loom on a phone holds still like an app** (t-1862). No pinch or
+  double-tap zoom, no zoom-in when a field takes focus (every field is 16 px
+  or more on a touch screen), no long-press menu or link preview on the bars,
+  the dock, buttons, links and images, no selecting the app's own chrome (a
+  message's or a note's words still select), no grey flash on a tap, and no
+  rubber band or pull to refresh past the page's ends. Appearance gains
+  **Allow zoom** (off by default) for anyone who needs to zoom to read. The
+  browser's bar wears the look as it's worn (000h's light or dark as chosen),
+  and the installed app holds portrait.
 - **A phone's gestures, page moves and haptics** (t-1855). Swipe sideways to
   move between Home, Inbox, Places and More in the dock's order; swipe up from
   the dock for Find. A page change slides by the dock's order (a push into a
