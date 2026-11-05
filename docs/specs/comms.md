@@ -196,7 +196,8 @@ choice, and the body's brief. The new parts follow.
   - `post` is `{ok: false, permanent: true}`, with the reason in words, for: a place that isn't a thread of that
     agent, an archived or deleted thread, empty text, or text over 40,000 characters.
   - `describe` answers `brief`, whose first line is "A private thread in loom's app with your owner, <their name>. Only
-    they read it. They can see your tool use as you work.", and `readers: [<member>]`.
+    they read it. They can see your tool use as you work. A task you create or change here: add --source
+    conversation:<cv>." (the thread's conversation, "Work in this thread"), and `readers: [<member>]`.
   - `status: working` shows the thread's working line, and `done` clears it. After the member presses Stop, the next
     `status` call answers `stop: true` once.
 - **The sender's trust.** For a delivery on `loom` from source `loom`, the runtime takes the sender as **tier 3**,

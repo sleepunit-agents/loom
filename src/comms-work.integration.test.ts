@@ -245,6 +245,17 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
     });
   });
 
+  describe('the brief names the source to pass', () => {
+    it('describe\'s first line gives the thread\'s conversation as --source', async () => {
+      const t = await open('brief me');
+      const r = await fetch(`${base}/api/loom/comms/adapter`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.runtime}` },
+        body: JSON.stringify({ op: 'describe', place: t.id, agent: 'art' }) });
+      const brief = ((await r.json()) as { brief: string[] }).brief;
+      expect(brief[0]).toContain(`--source conversation:${t.conversation}`);
+      expect(brief[0].length).toBeLessThanOrEqual(300);
+    });
+  });
+
   describe('criterion 22: from', () => {
     it('draws the block per viewer: a link for the thread\'s member, words for anyone else, nothing of the thread', async () => {
       const t = await open('the frame');
