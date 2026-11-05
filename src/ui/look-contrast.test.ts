@@ -105,6 +105,11 @@ describe('each look\'s contrast', () => {
   });
   // The structure reads tokens with no fallback (a key's glow, the ground's pools): a set that left one out would drop the
   // whole declaration. Each look has every one, from the base under it, every look's defaults, or its own.
+  it('every look\'s defaults come before any look\'s own (same weight: the later wins)', () => {
+    const shared = looks.indexOf(':root[data-look][data-mode]{');
+    expect(shared).toBeGreaterThan(-1);
+    for (const l of ['neon', 'lowlight', 'daylight']) expect(shared, l).toBeLessThan(looks.indexOf(`:root[data-look="${l}"][data-mode]{`));
+  });
   it('every token the structure reads is set in every look', () => {
     const shared = block(looks, ':root[data-look][data-mode]');
     const structure = looks.replace(/:root\[data-look="\w+"\][^{]*\{[^}]*\}/g, '');
