@@ -537,6 +537,9 @@ A real chat, with a terminal's flavour:
   - tier 3 for `loom` from source `loom`;
   - activity capture in the Claude and Codex runners and the body host.
 - **The approvals piece:** `--conversation` on request, and in its manifest's ask.
+- **src/household.ts:** household.json's `comms_days` (1–14, default 14), checked when the household loads.
+- **src/bundle.ts:** `comms.db`, `comms.key` and `comms.salt` are left out, and an export refuses a staging that holds
+  them, as for the audit log.
 - **CONTEXT.md:** Comms, Thread, Message (in Comms), Activity.
 
 ## Acceptance criteria
@@ -611,7 +614,7 @@ A real chat, with a terminal's flavour:
    - Under B, `GET /comms/<thread>` shows the thread's digests in place of the swept words.
    - Text decrypts with `comms.key`, and not with another age identity.
    - A planted message's words appear in no file under `$LOOM_HOME` except `comms.db` (and the audit log, encrypted).
-   - A bundle and `loom export` contain neither `comms.db` nor `comms.key`.
+   - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**
     - A reply sends `message {seq}` on the thread's stream within 250 ms.
     - The event's data has exactly the key `seq`.
@@ -649,6 +652,8 @@ A real chat, with a terminal's flavour:
 
 17. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
     the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes.
+    The dock has a Comms key for a member who owns an agent, with the unread count, and none for a member who owns
+    none.
 18. The JS and CSS budgets still pass. Comms loads as its own chunk.
 
 ## Order
