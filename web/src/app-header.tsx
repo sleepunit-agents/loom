@@ -43,21 +43,6 @@ function useMore(where: string, context?: string, more?: string) {
   return { open, toggle: () => setOpen((o) => !o), extra };
 }
 
-/** Under Neon's phone bar, which has the title (phone-bar.tsx): only the page's one line and its ⓘ; nothing without them. */
-export function HeaderLine({ context, more, where }: { context?: string; more?: string; where: string }) {
-  const { open, toggle, extra } = useMore(where, context, more);
-  if (!context && !extra) return null;
-  return (
-    <div className="grid gap-2 pt-1">
-      <div className="flex items-center gap-3">
-        <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm opacity-70">{context}</p>
-        {extra && <InfoButton open={open} toggle={toggle} />}
-      </div>
-      {extra && open && <InfoMore text={extra} />}
-    </div>
-  );
-}
-
 export function AppHeader({ title, lead, context, more, crumb, go, actions, where }: {
   title: string; lead?: ReactNode; context?: string; more?: string; crumb?: { label: string; href: string };
   go: (href: string) => void; actions?: ReactNode; where: string;

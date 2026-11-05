@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon on a phone: a page's info is behind its name** (t-1863). The line
+  under the phone bar is gone; when a page has a line or an intro, its name
+  in the bar wears a small ⓘ and opens a sheet with both (with a haptic tick).
+  A page without either has a plain name. 000h and wide screens are as they
+  were.
 - **loom on a phone holds still like an app** (t-1862). No pinch or
   double-tap zoom, no zoom-in when a field takes focus (every field is 16 px
   or more on a touch screen), no long-press menu or link preview on the bars,
