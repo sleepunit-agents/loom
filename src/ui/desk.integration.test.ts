@@ -160,7 +160,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     await o.goto(`${base}/`); await o.locator('.loom-top h1').waitFor(); await o.waitForTimeout(300);
     expect(await o.locator('.loom-desk, .loom-desk-home, .loom-w').count()).toBe(0);
     expect(await o.locator('.loom-dock-bar').count()).toBe(0);
-    expect(await o.locator('.loom-side').count()).toBe(1);
+    await o.locator('.loom-side').waitFor();   // the rail is its own chunk: it comes a moment after the page
     await o.context().close();
     const n = await screen('neon', 1000, 800);
     await n.goto(`${base}/`); await n.locator('.loom-top h1').waitFor(); await n.waitForTimeout(300);
