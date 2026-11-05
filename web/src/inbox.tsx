@@ -1,4 +1,5 @@
 // The Inbox: its own chunk, loaded when it opens (it and its folder switch aren't on the first page).
+import { buzz, HapticLabel, useHaptics } from './haptic';
 import { useContext, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -221,12 +222,14 @@ function useAnswer(i: InboxItem | undefined, onDone: () => void): Answer | undef
 /** Answer the agent: Yes or No (a yes/no question), or in words, posted as the owner's own message into its
  * conversation. */
 export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
+  const haptics = useHaptics();
+  const answer = (v: 'yes' | 'no') => { buzz(haptics, true); void a.say(v); };
   return (
     <section className="grid gap-3">
       {yesNo && (
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="Your answer">
-          <Button disabled={a.busy} onClick={() => void a.say('yes')}>Yes</Button>
-          <Button disabled={a.busy} onClick={() => void a.say('no')}>No</Button>
+          <Button className="relative" disabled={a.busy} onClick={() => answer('yes')}>Yes<HapticLabel on={haptics && !a.busy} /></Button>
+          <Button className="relative" disabled={a.busy} onClick={() => answer('no')}>No<HapticLabel on={haptics && !a.busy} /></Button>
         </div>
       )}
       <label htmlFor="loom-reply" className="text-xs font-semibold uppercase tracking-wide opacity-60">{yesNo ? 'Or answer in your own words' : a.label}</label>

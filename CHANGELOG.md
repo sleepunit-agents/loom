@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A phone's gestures, page moves and haptics** (t-1855). Swipe sideways to
+  move between Home, Inbox, Places and More in the dock's order; swipe up from
+  the dock for Find. A page change slides by the dock's order (a push into a
+  page, a pop back out), with the bar and the dock left still, and a swipe
+  drives the same move under the finger; reduced motion crossfades. The dock's
+  keys slide down and up when they swap for an agent's own. Appearance gains
+  **Haptics** (on by default): a tick on Android, and on iOS a real tap on a
+  dock key or an ask's Yes and No.
 - **Neon on a phone: one bar under the phone's own** (t-1849). At a phone's
   width the page's name sits small under the phone's clock, LOOM//OS and the
   needs-you count under its status icons, and between them a ticker (live, the

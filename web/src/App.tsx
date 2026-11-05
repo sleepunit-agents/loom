@@ -1,6 +1,7 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 // An agent's state beside its name (a desktop's alone): its own chunk.
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 // The ground (contour field), on its own (ground.tsx).
@@ -40,6 +41,10 @@ const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPane
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
+import { useGestures } from './gestures';
+import { canMove, moveTo, scrub, type Move } from './transitions';
+import { DockSwap } from './dock-swap';
+import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { keep, LookContext, markColor, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
@@ -136,6 +141,10 @@ export default function App() {
   const [pixel, setPixelState] = useState(() => { try { return localStorage.getItem('loom-pixel') !== 'off'; } catch { return true; } });
   const setPixel = (on: boolean) => { setPixelState(on); keep('loom-pixel', on ? 'on' : 'off'); save({ pixel: on }); };
   const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
+  // Haptics (haptic.tsx): on unless the person turns them off; their chunk loads once the first page is up, while on.
+  const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
+  const setHaptics = (on: boolean) => { setHapticsState(on); keep('loom-haptics', on ? 'on' : 'off'); save({ haptics: on }); if (on) buzz(true); };
+  useEffect(() => { if (!haptics || navigator.maxTouchPoints < 1) return; const t = setTimeout(warmHaptics, 1500); return () => clearTimeout(t); }, [haptics]);
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -224,7 +233,21 @@ export default function App() {
   }, [every]); 
 
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
-  useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // How a page change moves (transitions.ts): by the dock's order between its own pages, else a push into a page and a
+  // pop back out of one. What it's read against is the page shown (set as each one draws, below).
+  const moveFrom = useRef<{ pages: string[]; path: string; active: number; crumb?: string }>({ pages: [], path: '/', active: -1 });
+  const moveFor = (to: string, back = false): Move | undefined => {
+    const { pages, path, active, crumb } = moveFrom.current;
+    if (to === path) return undefined;
+    const here = pages.indexOf(path), b = pages.indexOf(to);
+    if (here >= 0 && b >= 0) return b > here ? 'right' : 'left';
+    // Back up: the crumb, a page this one is under, the dock's own key for where you are, or the browser's Back.
+    if (back || to === crumb || path.startsWith(to === '/' ? '/' : `${to}/`) || (b >= 0 && b === active)) return 'pop';
+    if (b >= 0 && active >= 0) return b > active ? 'right' : 'left';
+    return 'push';
+  };
+  const showWith = (how: Move | undefined, to: string, push: boolean) => moveTo(how, () => flushSync(() => { void load(to, push); }));
+  useEffect(() => { void load(url, false); const f = () => void showWith(moveFor(location.pathname, true), location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ⌘K / Ctrl-K: Find, from anywhere.
   useEffect(() => {
@@ -236,8 +259,8 @@ export default function App() {
     // Find is an overlay over the page you're in, not a page of its own (find.tsx).
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
-    void load(u.pathname + u.search, true);
-  }, [load]);
+    showWith(moveFor(u.pathname), u.pathname + u.search, true);
+  }, [load]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const chrome = data?.chrome;
   // loom's copy of the person's Appearance wins once a page lands, and this device's copy follows it. Only a newer
@@ -253,6 +276,7 @@ export default function App() {
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
+    if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
   }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -303,11 +327,11 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />, ...(agentDock ? {} : { tint: tint(t.label) }),
+    value: t.href, label: t.label, icon: <><AnimatedIcon name={iconFor(icon(t.label))} active={t.current} /><HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
     ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
-  const pick = (href: string) => (href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
+  const pick = (href: string) => (buzz(haptics, true), href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
   const backTile: DockItem | null = agentDock && accent ? {
@@ -364,9 +388,37 @@ export default function App() {
   // Neon on a phone's width: the bar merges with the phone's own (phone-bar.tsx); wider keeps the status bar and the big header.
   const phoneBar = look === 'neon' && vw < 640 && !!chrome?.shell;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
+  // A phone's gestures (gestures.ts): sideways between the dock's own pages, in its order; up from the dock for Find.
+  const dockPages = !agentDock ? nav.tabs.map((t) => t.href).filter((h) => !h.startsWith('#')) : [];
+  const homeIndex = dockPages.indexOf(path);
+  const activeTab = dockPages.indexOf(current(phoneTabs)), crumbHref = chrome?.shell?.back?.href;
+  useLayoutEffect(() => { moveFrom.current = { pages: dockPages, path, active: activeTab, crumb: crumbHref }; });
+  // A swipe's page, shown under the finger (gestures.ts begin): its address only once the swipe commits; run back,
+  // the page it left is shown again.
+  const begin = (href: string, how: Move) => {
+    if (!canMove()) return null;
+    const from = location.pathname + location.search;
+    const vt = showWith(how, href, false);
+    if (!vt) return null;
+    const held = scrub(vt);
+    return { to: held.to, end: async (commit: boolean) => {
+      if (commit && location.pathname + location.search !== href) history.pushState(null, '', href);
+      return held.end(commit, () => flushSync(() => { void load(from, false); }));
+    } };
+  };
+  // The dock's next and last pages are fetched a moment after one lands, so a swipe opens on the page, not its shape.
+  useEffect(() => {
+    if (wide || homeIndex < 0) return;
+    const t = setTimeout(() => { for (const n of [dockPages[homeIndex - 1], dockPages[homeIndex + 1]]) if (n && !kept.current.has(n)) void load(n, false, true); }, 1200);
+    return () => clearTimeout(t);
+  }, [wide, homeIndex, dockPages.join(' ')]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useGestures(!wide && !!chrome?.shell, {
+    pages: dockPages, here: error ? -1 : homeIndex, sub: !!chrome?.shell?.back, go, find: () => setFinding(true),
+    busy: () => finding || more || !!document.querySelector('[role="dialog"],[role="alertdialog"]'), buzz: () => buzz(haptics), begin,
+  });
 
   return (
-    <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><TintContext.Provider value={tint}>
+    <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -374,7 +426,7 @@ export default function App() {
         {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
         {ground === 'depth' && <Suspense fallback={null}><Depth /></Suspense>}
         {wide && chrome && <Suspense fallback={null}><LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} /></Suspense>}
-        <div className="min-w-0">
+        <div className="loom-page-clip min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           {phoneBar && chrome?.shell ? (
@@ -423,14 +475,14 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
             {!waiting && !error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>
 
-          {!wide && chrome && <div aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
+          {!wide && chrome && <div aria-hidden className="loom-fade pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
           {pill && (
             // A phone's Find (as a phone's home screen has its Search over the dock): on the launch screens, Home and
             // Places, a pill just above the dock that opens Find over the page. Not a tile: it isn't a place you go.
@@ -439,10 +491,12 @@ export default function App() {
           )}
           {!wide && chrome && (
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
-              <Dock key={agentDock ? `agent:${accent?.id}` : 'household'} variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
+              <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
+              <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
                 items={backTile ? [backTile, ...dockItems(phoneTabs)] : me ? [...dockItems(phoneTabs), me] : dockItems(phoneTabs)}
                 value={accountOpen && me ? '/account' : current(phoneTabs)} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
+              </DockSwap>
             </nav>
           )}
         </div>
@@ -455,7 +509,7 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </TintContext.Provider></PixelContext.Provider></LookContext.Provider>
+    </TintContext.Provider></HapticsContext.Provider></PixelContext.Provider></LookContext.Provider>
   );
 }
 

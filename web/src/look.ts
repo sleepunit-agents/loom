@@ -7,7 +7,7 @@ import type { Ground, Mode } from './views';
 
 export type Look = 'neon' | '000h';
 /** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. */
-export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** loom's version of them: when they last changed */ at?: number };
+export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** loom's version of them: when they last changed */ at?: number };
 
 const root = () => document.documentElement;
 
