@@ -24,13 +24,29 @@ export function oneLine(intro?: string): string | undefined {
   return first && first.length <= 80 ? first : undefined;
 }
 
-export function AppHeader({ title, lead, context, more, crumb, go, actions, where }: {
+export function AppHeader({ title, lead, context, more, crumb, go, actions, where, bare }: {
   title: string; lead?: ReactNode; context?: string; more?: string; crumb?: { label: string; href: string };
   go: (href: string) => void; actions?: ReactNode; where: string;
+  /** Neon's phone bar has the title (phone-bar.tsx): only the one line and the ⓘ, and nothing at all without them. */
+  bare?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [where]);
   const extra = more && more.trim() !== context ? more : undefined;
+  if (bare) return context || extra ? (
+    <div className="loom-top-line grid gap-2 pt-1">
+      <div className="flex min-h-10 items-center gap-3">
+        <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm opacity-70">{context}</p>
+        {extra && (
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={open ? 'Hide what this is' : 'What this is'}
+            className="loom-head-action grid size-10 shrink-0 place-items-center rounded-full">
+            <AnimatedIcon name={iconFor(open ? 'x' : 'info')} size="sm" />
+          </button>
+        )}
+      </div>
+      {extra && open && <p className="loom-head-more max-w-prose rounded-2xl px-4 py-3 text-sm leading-relaxed">{extra}</p>}
+    </div>
+  ) : null;
   return (
     <div className="grid gap-3">
       <div className="flex items-center gap-3">

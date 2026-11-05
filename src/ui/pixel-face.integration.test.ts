@@ -88,6 +88,15 @@ describe('an agent\'s pixel face', () => {
     expect(() => checkSpriteManifest({ cell: [56, 84], states: { idle: { south: [{ row: 0, frames: 2, weight: 1, rare: 'yes' }] } } })).toThrow(HouseholdError);
   });
 
+  it('a face\'s own scale and offset are kept (t-1849: Mark\'s reads bigger than Art\'s), checked, and left out when they change nothing', () => {
+    const idle = { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } };
+    expect(checkSpriteManifest({ cell: [96, 80], states: idle, scale: 0.85, offset: [0, 3] })).toMatchObject({ scale: 0.85, offset: [0, 3] });
+    const plain = checkSpriteManifest({ cell: [96, 80], states: idle, scale: 1, offset: [0, 0] });
+    expect('scale' in plain || 'offset' in plain).toBe(false);
+    for (const bad of [{ scale: 0.2 }, { scale: '0.9' }, { offset: [0] }, { offset: [0, 40] }, { offset: [0.5, 0] }])
+      expect(() => checkSpriteManifest({ cell: [96, 80], states: idle, ...bad })).toThrow(HouseholdError);
+  });
+
   it('picks an animation by weight at each beat, never the same rare one twice in a row; a facing with none uses south', () => {
     const usual = { row: 7, frames: 17, weight: 85 }, rare = { sheet: 'idle-rare.png', row: 0, frames: 12, weight: 15, rare: true };
     const m = { cell: [56, 84] as [number, number], states: { idle: { south: [usual, rare], 'south-east': [{ row: 8, frames: 17, weight: 1 }] }, error: { south: [{ row: 1, frames: 17, weight: 1 }], 'south-east': [{ row: 2, frames: 17, weight: 1 }] }, waiting: { south: [{ row: 16, frames: 17, weight: 1 }] } } };

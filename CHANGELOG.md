@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon on a phone: one bar under the phone's own** (t-1849). At a phone's
+  width the page's name sits small under the phone's clock, LOOM//OS and the
+  needs-you count under its status icons, and between them a ticker (live, the
+  agents and what each is up to, each place's tile). The ticker moves only when
+  its words don't fit, at 24 px/s, stops while touched or hidden, and stands
+  still under reduced motion; the count never moves. The big header stays on
+  wider screens and in 000h.
+- **Neon's dock, as the mockup**: no tray, a thin magenta rule over the row,
+  dark keys with a neon edge and the current one lit, no names under them (a
+  key's name shows on hover, keyboard focus, or held a moment).
+- **A pixel face's own `scale` and `offset`** in its manifest, so a face that
+  reads bigger than the others is tuned without a deploy; Neon's agent card
+  keeps a minimum gap between the face and its words.
+
 - **Pixel faces.** An agent can have a pixel face (Jonathan's PixelLab
   portraits for Art): a manifest and its sprite sheets kept with the
   household's marks (`faces/<agent>/`, set with `loom household sprite`),
