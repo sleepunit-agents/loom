@@ -86,7 +86,8 @@ $LOOM_HOME/                     (default ~/.config/loom)
   dashes; 40 at most).
 - **An agent's pixel face** (`faces/<agent>/`, web/src/pixel-face.tsx): a
   manifest and the sprite sheets it names. Per state (`idle`, `working`,
-  `thinking`, `waiting`, `done`, `error`) and facing (`south`, `south-east`,
+  `thinking`, `waiting`, `done`, `error`, and optionally `talking`, which a face
+  without it plays as `done`, then `working`: [comms.md](comms.md)) and facing (`south`, `south-east`,
   `south-west`; `waiting` is south only), a list of animations, each a row of a
   sheet (`sheet.png` unless it names another), its frame count and a weight:
   `{"cell": [56, 84], "states": {"idle": {"south": [{"row": 7, "frames": 17,

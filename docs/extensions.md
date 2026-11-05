@@ -710,7 +710,8 @@ passes its answer back (`src/delivery.ts`).
     installed piece offering `delivery` (a block's `role` alone isn't it).
     A second `role: runtime` piece is refused at install.
   - core's own delivery (source `loom`: the owner's words from loom's page, the Inbox's Reply and Comms;
-    `deliverAsOwner` in `src/delivery.ts`) isn't a piece's, and skips the piece checks above. It comes only from a
+    `deliverAsOwner` in `src/delivery.ts`) isn't a piece's. It skips two piece checks above: a declared venue, and
+    `from: {kind: person}` only from an adapter. The agent must still be the household's. It comes only from a
     signed-in member's page action. Comms delivers only for a member who owns the agent
     ([specs/comms.md](specs/comms.md)).
 - **No delivery piece installed:** a 503 with the reason.

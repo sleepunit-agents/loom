@@ -611,9 +611,8 @@ These slices settled these points the doc left open:
   process them (Review, step 2).
 - **Model names inside text.** Redaction covers the names core knows. A model describing itself can still leak its
   family to a grader: blind as far as we can make it.
-- **Comms history.** A Comms thread's words, kept for its member to scroll back through, would be a new copy of raw
-  text outside the audit log. [comms.md](comms.md), "History", puts the choice to the owner: keep them an hour, keep 14 days,
-  or keep them for the thread's life.
+- **Comms history.** Settled (the owner, 2026-11-05): a thread's words are kept 14 days at most, rule 4's one
+  exception ([comms.md](comms.md), "History").
 - **Harness transcripts.** A harness's own local transcript files (outside loom) still hold raw text. The runtime spec
   decides whether they're deleted once their turns are in the audit log.
 

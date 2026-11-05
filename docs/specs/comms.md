@@ -68,7 +68,8 @@ _Avoid_: log, trace, transcript
    - the list route returns only the member's own threads with agents they own;
    - opening a thread with an agent the member doesn't own is a `403`;
    - a thread id that doesn't exist is a `403` too, the same answer as another member's thread, so a route never says
-     whether a thread exists. Only the member of a thread they deleted gets `404` for it.
+     whether a thread exists. Only the member of a thread they deleted gets `404` for it: a delete leaves a tombstone,
+     `comms_deleted` (the thread id, its member and when), holding no words and nothing else.
    This holds whether the request is the app's JSON view or a page load. The UI also hides those agents, but hiding
    isn't the protection.
 4. **The live streams.** A thread's live updates come on its own stream, `GET /comms/<thread>/events`, which the app
@@ -93,7 +94,7 @@ in and out.
 | Route | What it does |
 |---|---|
 | `GET /comms` | the member's threads (rule 3), with each one's unread state |
-| `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member, agent, `id` and text again answer the same thread; the same `id` with another agent or other text is a `409` |
+| `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member, agent, `id` and text again answer the same thread; the same `id` with another agent or other text is a `409`. The thread row keeps its first message's id and a SHA-256 of its text (`first_id`, `first_sha`) for the thread's life, which is how a repeat is known |
 | `GET /comms/<thread>` | the thread and its newest 100 messages |
 | `GET /comms/<thread>/since/<seq>` | the messages after `seq`, and the thread's state |
 | `GET /comms/<thread>/before/<seq>` | the 100 messages before `seq`, newest last: scrolling up |
@@ -250,7 +251,8 @@ So the activity cards need a new capture:
   {conversation, run, cards: [1–50]}` (role `runtime`).
   - Core accepts them only for a `loom` conversation whose thread is live (not archived or deleted). Otherwise it
     answers `409`.
-  - A post of more than 50 cards, or with any card breaking the shape above, is refused whole (`400`).
+  - A post of more than 50 cards, or with any card breaking the shape above (a non-printable character in `summary`
+    included), is refused whole (`400`).
   - A card whose `id` the thread already has updates that card's `state`. It doesn't add a second one.
 - **Only `tool_use` entries and tool items become cards.** A Claude `text` or `thinking` entry, a Codex
   `agent_message` or `reasoning` item, and every result are skipped whole.
@@ -301,9 +303,9 @@ nothing like Claude Code's own "allow this tool?" ever reaches a venue. The asks
 A reply is drawn as the app's markdown (`web/src/markdown.tsx`). These become links, by the same rules as the Needs-you
 sheet (conversations.md):
 
-- `t-N` opens the task in the tasks piece's page;
+- `t-N` opens the task in the tasks piece's page (as the sheet's, and so are the next two);
 - `owner/repo#N` opens GitHub, and so does `repo#N`, under household.json's `github`;
-- `note:<path>` opens the note;
+- `note:<path>` opens the note (Comms' own addition: the sheet has no note links);
 - `cv-…` opens the conversation;
 - `https://` URLs stay links. Nothing else is a link.
 
@@ -321,7 +323,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | `body: "queued"`, and no `status: working` within 2 minutes | "Art is busy with other work; this is waiting its turn." |
 | A loop pause (the runtime's `deferred` note turn) | "Paused: Art was repeating itself." The Inbox's Resume and Dismiss are on it |
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
-| No `age` program (the send is refused with `503`, nothing delivered) | "loom can't keep messages safely right now: the age program is missing." |
+| No `age` program (the send is refused with `503`, nothing delivered, nothing stored but the error) | "loom can't keep messages safely right now: the age program is missing." |
 | The stream dropped | "Reconnecting…" while it's down, then the missed messages, fetched by `seq` |
 
 A refused action that isn't a delivery (a `400` or `409` from a route: a ninth pin, a send to an archived thread)
@@ -359,9 +361,14 @@ Messages (`comms_messages`):
   "id": "…",                       // a message's client id; a reply's delivery ref; a card's id
   "text": "<age blob or null>",    // words, kept per "History"; null once swept
   "card": null,                    // a card: {tool, state} (its summary is in text); an ask: {approval} or {digest}
+  "run": "…",                      // on a card or reply: the body run it came from (the runtime's run id)
   "delivered": true }              // on a member's message: false while its delivery failed
 ```
 
+- **Who it's from.** A `message` is from the member. A `reply`, `card` or `ask` is from the agent. An `error` is from
+  `loom`, and stores its fixed code and the runtime's reason in `card` (`{error, reason}`), plainly: those are loom's
+  words, not the conversation's, so they need no `age`. Within one thread, a member's message `id` with different text
+  is a `409`.
 - **Opening a thread** is a first message: picking an agent, then sending. A thread exists from its first message, so
   there are no empty threads.
 - **Title.**
@@ -496,8 +503,11 @@ A real chat, with a terminal's flavour:
 - **The member's messages** are right-aligned and plain, with no avatar.
 - **Each message** has a mono timestamp line, `14:02 · art`.
 - **The composer** is a mono prompt line, `> `, in the agent's accent.
-- **Activity cards** sit between messages, collapsed by default to one line per turn ("▸ 6 steps: read 3 files, ran
-  the tests"). They open to the list of summaries, each with its state.
+- **Activity cards** sit between messages, grouped by `run` and collapsed by default to one line per run: "▸ N steps"
+  and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to its summaries, each with its state.
+- **The working line** is one mono line under the newest message, `ART · working · 0:42` (the agent's name in capitals
+  and the seconds since `status: working` began). It shows while the runtime's `status` says working, and goes on
+  `done`. The list row shows "working…" at the same time.
 - **New things arrive** as `web/src/arrive.tsx` draws them (decode, focus, one glow). Reduced motion: they simply
   appear.
 - **Nothing new in the vocabulary.** Comms is loom's own app, not a piece page, so it adds no block type to `vocab.ts`.
@@ -514,8 +524,9 @@ Neon OS's own, not copied from any game.
   An agent with no sprite gets its drawn face (`face.tsx`) in the same frame.
 - **The frame** has chassis edges in the agent's tint, a scanline overlay, a small signal meter, and a mono label with
   the agent's name and the channel: `ART E FISH · CH 03 · LINK OK`.
-  - The channel number is the thread's position in the member's list of that agent's threads, by `opened`, two
-    digits.
+  - The channel number is given when the thread opens: one more than the highest number among that member's threads
+    with that agent, deleted ones included (the tombstone keeps it), from 1. It's never reused or changed, and it's
+    shown with at least two digits (`CH 03`, `CH 112`).
   - The link word is `LINK OK` while the thread's stream is open, `LINK LOST` while it reconnects, and `NO CARRIER`
     when the last delivery failed. The signal meter goes with it: full, flickering low, empty.
 - **Where it sits:**
@@ -534,13 +545,17 @@ Neon OS's own, not copied from any game.
   | an ask pending in the thread | `needs-input` (waiting, always facing south) |
   | the last delivery or post failed, or a loop pause | `error` |
 
-  A pending ask wins over everything except `error`.
+  A pending ask wins over everything except `error`: with an ask pending, `working` and `talking` show as
+  `needs-input`, and an `error` still shows as `error`.
+- **What a test can see.** The screen carries `data-face` (the state's name in the table) and `data-anim` (the
+  manifest state actually played: `talking`, or the one it fell back to). During the signal transition it carries
+  `data-signal="on"`.
 - **Talking is a manifest state the player falls back from.** There's no talking animation yet. `talking` joins the
   face states, and the player uses a manifest's `talking` animations when it has them. Without them, it uses `done`'s,
   then `working`'s. So when the owner makes a talking sheet in PixelLab, adding it to the agent's manifest is the
   whole change.
-- **The signal transition.** When a reply arrives, the screen plays a short burst of static and a scanline roll, about
-  250 ms, before the talking beat. With reduced motion there's no transition, and the face shows its rest frames only,
+- **The signal transition.** When a reply arrives, the screen plays a short burst of static and a scanline roll, for
+  250 ms, before the talking beat starts. With reduced motion there's no transition, and the face shows its rest frames only,
   as the player already does.
 - **YOU, the other side.** A small panel in the same frame style shows the member's avatar or initial, labelled `YOU`.
   It's on the desktop column only; a phone leaves it out.
@@ -632,6 +647,7 @@ Neon OS's own, not copied from any game.
      another salt the same member, agent and id give another place, and no place equals the unkeyed SHA-256's.
    - `new` with the same id and another agent, or other text, is a `409`.
    - A thread id that never existed, and another member's thread, both answer `403`, with the same body.
+   - In one thread, the same message `id` with different text is a `409`.
    - A member's title over 60 characters, or with a line break, is a `400`.
    - With the runtime answering `503`, the message is kept with `delivered: false`, and Send again with the same id
      delivers it once.
@@ -668,11 +684,17 @@ Neon OS's own, not copied from any game.
      runtime sees it), and refuses sends
      (`409`) until it's unarchived.
    - Delete removes the row and every message of it. After it, the thread's routes answer `404` to its member.
+   - A deleted thread leaves exactly a `comms_deleted` row (id, member, at), and another member asking for it gets
+     the same `403` as for one that never existed.
    - `comms.db` has `secure_delete` on (`PRAGMA secure_delete` answers 1), and after a delete the file holds none of a
      planted message's bytes.
 9. **History.**
    - After the sweep, a message or card older than `comms_days` (14 by default) has `text` null, and its row stays.
-     With `comms_days: 3`, it sweeps at 3 days.
+     With `comms_days: 3`, it sweeps at 3 days. A household with `comms_days` 0, 15 or not a whole number fails to
+     load, naming the setting.
+   - The sweep runs at daemon start: a message stored 15 days ago in a stopped daemon's `comms.db` has no text once the
+     daemon is up.
+   - `comms.key` and `comms.salt` are made with mode 0600.
    - `GET /comms/<thread>` shows the thread's digests in place of the swept words.
    - Text decrypts with `comms.key`, and not with another age identity.
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
@@ -683,7 +705,8 @@ Neon OS's own, not copied from any game.
     - `since/<seq>` returns exactly the messages after `seq`, in order.
 11. **Push.**
     - A reply, while the member has had no app in front for 2 minutes, pushes to that member's subscriptions only.
-    - The payload's title and body hold no message text.
+    - The payload's title and body hold no message text. An untitled thread's push says "Art replied in a new
+      thread".
     - With a `read` call on that thread in the last 2 minutes, no push is sent. With `read` calls only on another
       thread, the push is sent.
 12. **Asks.**
@@ -710,6 +733,9 @@ Neon OS's own, not copied from any game.
     - A Bash call shows its `description` and never its command.
     - A `text` or `thinking` entry, and a Codex `agent_message`, make no card, and none of their words reach one.
     - A file read shows a path relative to the repo, never one starting with `/`.
+    - A Claude `tool_use` makes a `running` card, its `tool_result` makes it `done`, and one with `is_error: true`
+      makes it `failed`. A Codex `item.started` makes a `running` card, and `item.completed` with `status:
+      "completed"` or `"failed"` makes it `done` or `failed`. Each card's `run` is the body's run.
     - No result or output text reaches any card.
     - Nothing is captured for a `slack` conversation.
 
