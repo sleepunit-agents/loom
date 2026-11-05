@@ -32,12 +32,16 @@ export interface VenueRow {
   render?: string[];
   /** When its piece was removed (or stopped declaring it); absent while it's installed. */
   orphaned?: string;
+  /** A venue core carries itself (`loom`, docs/specs/comms.md): the runtime posts to core's adapter route, not an argv. */
+  adapter?: 'core';
 }
 
 /** Core's own venues (conversations.md: `session` is live, `wake` scheduled). Never in the table. */
 export const CORE_VENUE_ROWS: Readonly<Record<string, VenueRow>> = Object.freeze(Object.assign(Object.create(null) as Record<string, VenueRow>, {
   session: { name: 'session', piece: 'loom', label: 'Session', kind: 'live' },
   wake: { name: 'wake', piece: 'loom', label: 'Wake', kind: 'scheduled' },
+  // Comms threads (docs/specs/comms.md): core is its adapter, at POST /api/loom/comms/adapter.
+  loom: { name: 'loom', piece: 'loom', label: 'loom', kind: 'live', adapter: 'core' },
 }));
 
 /** Core's own venue `name`, by own key only: a venue named "constructor" is no core venue. */
@@ -273,6 +277,8 @@ export interface VenueEntry {
   piece: string;
   /** Its declared `send` argv (agent-runtime.md, "Delivery", Outbound), while its piece is installed. */
   send?: string[];
+  /** `core` for a venue core carries itself (`loom`): post to POST /api/loom/comms/adapter instead of a send argv. */
+  adapter?: 'core';
   /** When its piece was removed; an orphaned venue has no send. */
   orphaned?: string;
 }
@@ -289,7 +295,7 @@ export function venueDirectory(env: NodeJS.ProcessEnv): VenueEntry[] {
   for (const p of managedPieces(env)) {
     for (const [name, v] of Object.entries(p.loom.venues ?? {})) sends.set(name, { piece: p.name, ...(v.send ? { send: [...v.send] } : {}) });
   }
-  const core = Object.values(CORE_VENUE_ROWS).map((v): VenueEntry => ({ name: v.name, label: v.label, kind: v.kind, piece: v.piece }));
+  const core = Object.values(CORE_VENUE_ROWS).map((v): VenueEntry => ({ name: v.name, label: v.label, kind: v.kind, piece: v.piece, ...(v.adapter ? { adapter: v.adapter } : {}) }));
   const rows = home ? listVenues(home) : [];
   return [...core, ...rows.map((v): VenueEntry => {
     const live = sends.get(v.name);

@@ -85,7 +85,7 @@ export const MAX_INPUT_SCHEMA_BYTES = 16 * 1024;
 const VENUE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 /** Venues core keeps for itself (conversations.md): `session` (live) and `wake` (scheduled). */
-export const CORE_VENUES: readonly string[] = ['session', 'wake'];
+export const CORE_VENUES: readonly string[] = ['session', 'wake', 'loom'];
 /** The venue only the runtime (`"role": "runtime"`) may declare. */
 export const RUNTIME_VENUE = 'relay';
 /**

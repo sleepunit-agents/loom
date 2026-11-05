@@ -59,6 +59,8 @@ import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
+import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
+import { watchComms } from '../ui/comms-live.js';
 import { takeAudit } from '../audit-take.js';
 import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
@@ -376,6 +378,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (!live) return;
     const h = live();
     try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
+    try { sweepComms(h); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
     for (const day of recentDays()) {
       try { computeMeasures(h, day); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
     }
@@ -383,6 +386,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   sweepAll();
   const sweepTimer = setInterval(sweepAll, 60 * 60 * 1000);
   sweepTimer.unref();
+  // Comms (docs/specs/comms.md): the words' sweep and a queued message's busy line, each minute; and every
+  // listener watches for thread moves, so a member's own shared stream hears of their threads.
+  const commsTimer = live && !opts.createServer ? setInterval(() => { try { sweepComms(live!()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
+  commsTimer?.unref();
+  if (live && !opts.createServer) watchComms(live().home);
 
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
@@ -695,7 +703,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     `rv-${createHash('sha256').update((header ?? '').replace(/^Bearer\s+/i, '').trim()).digest('hex').slice(0, 16)}`;
 
   /** The body cap per core route: raw text for the audit write, refs for done, small for the rest. */
-  const bodyCap = (subpath: string) => subpath === 'audit' ? 256 * 1024 : subpath === 'audit/done' ? 64 * 1024 : 4 * 1024;
+  const bodyCap = (subpath: string) => subpath === 'audit' || subpath === 'comms/adapter' ? 256 * 1024 : subpath === 'audit/done' || subpath === 'comms/activity' ? 64 * 1024 : 4 * 1024;
 
   const auditFail = (res: ServerResponse, e: unknown, what: string) => {
     if (e instanceof AuditError || e instanceof ConversationError) return sendError(res, e.status, `${statusWord(e.status)}: ${e.message}`);
@@ -742,6 +750,17 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
     if (subpath === 'audit' && (role.kind === 'runtime' || role.kind === 'agent')) {
       try { return sendJson(res, 200, writeAudit(live!(), role, body)); } catch (e) { return auditFail(res, e, 'write the audit entry'); }
+    }
+    // Venue loom's adapter calls and tool cards (docs/specs/comms.md, sections 1 and 3): the runtime's only.
+    if ((subpath === 'comms/adapter' || subpath === 'comms/activity') && role.kind === 'runtime') {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return sendError(res, 400, 'bad-input: a JSON object');
+      try {
+        return sendJson(res, 200, subpath === 'comms/adapter' ? commsAdapter(live!(), process.env, body as Record<string, unknown>) : postActivity(live!(), process.env, body as Record<string, unknown>));
+      } catch (e) {
+        if (e instanceof CommsError) return sendError(res, e.status, e.message.startsWith(`${statusWord(e.status)}:`) ? e.message : `${statusWord(e.status)}: ${e.message}`);
+        process.stderr.write(`loom: a Comms runtime call failed: ${(e as Error).name}\n`);
+        return sendError(res, 503, 'unavailable: Comms couldn\'t answer; see the daemon log');
+      }
     }
     // The review run's routes (docs/specs/conversations.md, "Review tokens"), all scoped to its run.
     if (role.kind === 'review') {
@@ -1056,6 +1075,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
+      if (commsTimer) clearInterval(commsTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

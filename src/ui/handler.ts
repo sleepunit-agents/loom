@@ -55,6 +55,7 @@ import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } 
 import { answeredNeeds, answerNeeds, ConversationError, getConversation as conversationOf, isConversationId, openNeeds, type NeedsVerdict } from '../backends/conversations.js';
 import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
+import { commsRoute } from './comms-routes.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
@@ -122,7 +123,9 @@ function scopedPathOk(pathname: string): boolean {
     || pathname.startsWith('/faces/')
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
-    || pathname.startsWith('/conversation/');
+    || pathname.startsWith('/conversation/')
+    // Comms (docs/specs/comms.md): every route checks the member owns the thread's agent itself.
+    || pathname === '/comms' || pathname.startsWith('/comms/');
 }
 
 /**
@@ -186,7 +189,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
 /** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
 const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
 
-const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -301,6 +304,11 @@ function callerOf(who: Who): ApiCaller | undefined {
  * another port on this host (same-site, so the cookie rides along), must not
  * make loom run a piece.
  */
+/** A GET for the app's page rather than its JSON or a stream (Comms' routes answer JSON; a page load gets the app). */
+function wantsPage(req: IncomingMessage): boolean {
+  return !/application\/json|text\/event-stream/i.test(String(req.headers.accept ?? ''));
+}
+
 function allowedGet(req: IncomingMessage): boolean {
   const site = req.headers['sec-fetch-site'];
   if (site === undefined || site === 'same-origin' || site === 'none') return true;
@@ -1195,7 +1203,18 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const a = h.agents.find((x) => abs.startsWith(agentDir(h, x) + sep));
       return a ? [a] : '*';
     };
-    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place });
+    return openStream(res, scopedEnv, home, SECURITY_HEADERS, { sees: opts.ownerScope ?? '*', session: streamOwner(req, who), place, ...(who.member ? { member: who.member.person } : {}) });
+  }
+
+  // Comms (docs/specs/comms.md): JSON routes, each checking the member owns the thread's agent and opened it.
+  if (full && (pathname === '/comms' || pathname.startsWith('/comms/')) && !(req.method === 'GET' && wantsPage(req))) {
+    const guard = (r: IncomingMessage, body: Record<string, unknown>): string | null => {
+      if (!sameOrigin(r)) return 'forbidden: cross-site request';
+      if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return 'forbidden: this page is stale; reload and try again';
+      return null;
+    };
+    await commsRoute(req, res, pathname, { household: full, member: who.member, env: opts.env, session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+    return;
   }
 
   // Adding a passkey: a browser session only (it signs in as that session's token), with its form token.

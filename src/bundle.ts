@@ -35,6 +35,7 @@ import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-hou
 import { HOUSEHOLD_DB } from './household-store.js';
 import { findProgram as findProgramPath } from './programs.js';
 import { AUDIT_FILES } from './audit.js';
+import { COMMS_FILES } from './comms.js';
 import { listPieces } from './cli/pieces.js';
 import { installPiece, managedPieces, pieceEnvFor, readCatalog, readRecord, readSettings, syncServices, type CatalogEntry } from './cli/pieces-managed.js';
 
@@ -226,6 +227,7 @@ function assertNoAuditFiles(dir: string): void {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (AUDIT_FILES.includes(name)) throw new BundleError(`the bundle would carry ${name}; the audit log and its key never leave this machine`);
+    if (COMMS_FILES.includes(name)) throw new BundleError(`the bundle would carry ${name}; a Comms thread's words and their key never leave this machine`);
 
     if (lstatSync(p).isDirectory()) assertNoAuditFiles(p);
   }
