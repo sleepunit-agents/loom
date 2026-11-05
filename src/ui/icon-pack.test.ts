@@ -44,8 +44,8 @@ describe('icons, with the Lucide pack lazy', () => {
     const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
     const first = [...index.matchAll(/(?:src|href)="\/app\/(assets\/[^"]+\.js)"/g)].map((m) => m[1]);
     expect(first.length).toBeGreaterThan(1);
-    // Two names no authored icon or alias has, next to each other as the list had them.
-    const hits = first.filter((f) => readFileSync(`${root}dist/web/${f}`, 'utf-8').includes('"a-arrow-down","a-arrow-up"'));
+    // A name only Lucide has (no authored icon or alias): in the build only the lazy pack may spell it.
+    const hits = first.filter((f) => readFileSync(`${root}dist/web/${f}`, 'utf-8').includes('a-large-small'));
     expect(hits).toEqual([]);
   });
 });
