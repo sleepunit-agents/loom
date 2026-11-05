@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "f773544356f63f279ea32c03c5bf75edd5c7e3cf",
+      "commit": "41554d0ce4eeed83a1d6e9ec4add1c9d5d1d6d06",
       "version": "0.6.1",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "49d7b657e1a52c5ba46d687675f25d64600db3c5",
+      "commit": "c2e798a702668c2f1175ea72f3f574217870aa9d",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
