@@ -13,7 +13,7 @@ import { managedPieceSections } from '../project-feeds.js';
 import { fieldState } from '../backends/cards.js';
 import type { FeedGroup } from '../offers.js';
 import { agoText } from './render.js';
-import { validPath, type Block, type Page, type Section } from './vocab.js';
+import { splitPage, validPath, type Block, type Page, type Section } from './vocab.js';
 
 export interface ProjectsOwner {
   /** The agent's id in a household, or undefined in a loom without one. */
@@ -145,10 +145,22 @@ function memoryHref(o: ProjectsOwner, ref: string): string | undefined {
   return validPath(p) ? p : undefined;
 }
 
-/** A feed item's link, as the hub page draws it: its piece's page, or loom's with `loom:`; else its href. */
-function feedLink(piece: string, it: { page?: string; href?: string }): { page?: string; href?: string } {
-  if (it.page) return { page: it.page.startsWith('loom:') ? it.page.slice('loom:'.length) : `p/${piece}/${it.page}` };
-  if (it.href) return { href: it.href };
+/**
+ * A feed item's link, as the hub page draws it. Every link goes through splitPage, as every other piece link does: a
+ * `loom:` one keeps its prefix and is drawn only when splitPage says it's one of loom's pages (CORE_PAGES); a piece's
+ * own becomes `p/<piece>/<path>` only when the path is valid. An https href stays an href. Anything else is dropped.
+ */
+export function feedLink(piece: string, it: { page?: string; href?: string }): { page?: string; href?: string } {
+  if (it.page !== undefined) {
+    const s = splitPage(it.page);
+    if (!s || !validPath(s.path)) return {};
+    if (it.page.startsWith('loom:')) return s.core ? { page: it.page } : {};
+    if (s.agent || s.household || !/^[a-z][a-z0-9-]{0,39}$/.test(piece)) return {};
+    const q = it.page.indexOf('?');
+    const link = `p/${piece}${s.path ? `/${s.path}` : ''}${q === -1 ? '' : it.page.slice(q)}`;
+    return splitPage(link) ? { page: link } : {};
+  }
+  if (it.href && /^https:\/\/[^\s<>"]+$/.test(it.href)) return { href: it.href };
   return {};
 }
 

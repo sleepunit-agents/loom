@@ -12,7 +12,7 @@ import { loadHousehold } from '../household.js';
 import { closeAllBackends } from '../backends/index.js';
 import { openProjectsStore, type ProjectWriteInput } from '../backends/projects.js';
 import { clearPieceCache } from './pieces.js';
-import { forgetProjectCounts, projectHubPage, projectsIndex } from './projects-pages.js';
+import { feedLink, forgetProjectCounts, projectHubPage, projectsIndex } from './projects-pages.js';
 import type { ProjectHubResult } from '../tools/project.js';
 
 const TOKEN = 'projects-owner-token';
@@ -191,6 +191,19 @@ describe('the Projects pages, directly', () => {
     expect((hub.sections[1].blocks[0] as any).items.map((i: any) => i.text)).toEqual(['a', 'b', 'Pick a date']);
     expect((hub.sections[3].blocks[0] as any).text).toBe("tasks couldn't answer: timed out");
     expect(await projectHubPage({ dir }, 'missing', { hub: hubWith([], calls) })).toBeNull();
+  });
+
+  it('a feed item\'s link is drawn only when it is one: loom\'s pages by CORE_PAGES, a piece\'s by validPath', () => {
+    expect(feedLink('changes', { page: 'c/github/acme/app/1' })).toEqual({ page: 'p/changes/c/github/acme/app/1' });
+    expect(feedLink('changes', { page: 'c/x?tab=ci' })).toEqual({ page: 'p/changes/c/x?tab=ci' });
+    expect(feedLink('tasks', { page: 'loom:p/tasks/task/t-1' })).toEqual({ page: 'loom:p/tasks/task/t-1' });
+    expect(feedLink('tasks', { page: 'loom:people/ada' })).toEqual({ page: 'loom:people/ada' });
+    for (const bad of ['loom://evil.com', 'loom:/x', 'loom:../x', '//host/x', 'a/../b', '../x', 'loom:act/approvals', 'loom:login', 'agent:art/x', 'A/B']) {
+      expect(feedLink('changes', { page: bad }), bad).toEqual({});
+    }
+    expect(feedLink('changes', { href: 'https://github.com/a/b/pull/1' })).toEqual({ href: 'https://github.com/a/b/pull/1' });
+    expect(feedLink('changes', { href: 'javascript:alert(1)' })).toEqual({});
+    expect(feedLink('changes', { href: 'http://x' })).toEqual({});
   });
 
   it('with no projects, one line says what a project is', async () => {

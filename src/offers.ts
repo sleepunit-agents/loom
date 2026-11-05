@@ -296,7 +296,9 @@ const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 /** A feed item's `page`: an optional `loom:`, a page path (lowercase letters, digits and . _ ~ / -, no `..` segment),
  * an optional `?key=value&…` query. The page draws it through splitPage, which checks what a `loom:` may reach. */
-const FEED_PAGE = /^(?:loom:)?(?!.*(?:^|\/)\.\.(?:\/|$|\?))[a-z0-9._~/-]*(?:\?[a-z0-9_-]+=[^&#\s]*(?:&[a-z0-9_-]+=[^&#\s]*)*)?$/;
+const FEED_PAGE = /^(?:loom:)?(?:[a-z0-9._~-]+(?:\/[a-z0-9._~-]+)*)?(?:\?[a-z0-9_-]+=[^&#\s]*(?:&[a-z0-9_-]+=[^&#\s]*)*)?$/;
+/** No `..` segment, anywhere. */
+const DOTDOT = /(?:^|:|\/)\.\.(?:\/|\?|$)/;
 const HTTPS = /^https:\/\/[^\s<>"]+$/;
 
 function strList(v: unknown, maxItems: number, maxLen: number, re?: RegExp): v is string[] {
@@ -335,7 +337,7 @@ export function parseFeed(v: unknown): Feed | string {
       if (it.person !== undefined && !strList(it.person, 8, 80, SLUG)) return `${at}.person is at most 8 person slugs`;
       if (it.status !== undefined && !str(it.status, 24)) return `${at}.status is at most 24 characters`;
       if (it.ref !== undefined && !str(it.ref, 200)) return `${at}.ref is at most 200 characters`;
-      if (it.page !== undefined && !(str(it.page, 200) && FEED_PAGE.test(it.page))) return `${at}.page is a page path (or loom:<page>), at most 200 characters`;
+      if (it.page !== undefined && !(str(it.page, 200) && FEED_PAGE.test(it.page) && !DOTDOT.test(it.page))) return `${at}.page is a page path (or loom:<page>), at most 200 characters`;
       if (it.href !== undefined && !(str(it.href, 500) && HTTPS.test(it.href))) return `${at}.href is an https URL, at most 500 characters`;
       if (it.page !== undefined && it.href !== undefined) return `${at} has a page or an href, not both`;
       if (it.body !== undefined && !str(it.body, 600)) return `${at}.body is at most 600 characters`;
