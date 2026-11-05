@@ -278,6 +278,8 @@ body { background: var(--v-canvas); }
 /* An agent's pixel face (pixel-face.tsx): whole pixels, centred on its place (a 2x face is wider than a card's slot). */
 .loom-pixel-face { position: relative; display: block; overflow: visible; }
 .loom-pixel-face canvas { position: absolute; left: 50%; top: 50%; translate: -50% -50%; image-rendering: pixelated; max-width: none; pointer-events: none; }
+/* A small one (PixelAvatar, under 36 px): its crop at a whole-pixel scale, cut to its box where the scale overshoots it. */
+.loom-pixel-avatar { overflow: hidden; }
 /* Neon Noir's sheet title bar (inbox.tsx): only a look that draws it shows it (looks/neon.css). */
 .loom-sheet-bar { display: none; }
 /* An app's tile (app-header.tsx AppTile): its header, Find's rows. */

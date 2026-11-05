@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Pixel faces wherever an agent's face shows.** Under 36 px (Inbox rows, the
+  desktop's widgets, a window's title, the side panel), an agent with a sprite
+  sheet now wears a still pixel avatar: a crop of its rest frame, 24 sheet
+  pixels square over the top of what's drawn (or the manifest's own
+  `"avatar": {"x", "y", "w", "h"}`), at a whole-pixel scale, never smoothed,
+  never moving. Agents without a sheet, and everyone with Pixel faces off, keep
+  the drawn face; letter badges stay.
 - **Neon on a big screen boots** (t-1868). With the app's arrival, once a
   session and never under reduced motion, a desktop shows a second or two of
   LOOM//OS™ coming up, licensed to the household owner by name, with chatter

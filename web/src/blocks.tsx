@@ -17,6 +17,7 @@ const ChartBlock = lazy(() => import('./chart'));
 const Face = lazy(() => import('./face'));
 // An agent's pixel face, where it has a sheet (pixel-face.tsx): its own chunk, its sheet loaded when drawn.
 const PixelFace = lazy(() => import('./pixel-face'));
+const PixelAvatar = lazy(() => import('./pixel-face').then((m) => ({ default: m.PixelAvatar })));
 const Panel = lazy(() => import('./panel'));
 const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health })));
 const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
@@ -183,8 +184,9 @@ export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'compl
 const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
 export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
   const look = useLook();
-  // A pixel face is at least its 48-pixel square: drawn at 1x from 36 px, 2x from 64; smaller, the drawn face.
-  const pixel = useContext(PixelContext) && !!a.face?.sprite && size >= 36;
+  // An agent with a pixel sheet wears it (unless the person turned Pixel faces off): its whole face, alive, from 36 px
+  // (1x, 2x from 64); smaller, a still crop of its head (pixel-face.tsx PixelAvatar). Without one, the drawn face.
+  const sprite = useContext(PixelContext) ? a.face?.sprite : undefined;
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
       style={{ '--c': look === 'neon' ? markColor(a.bg) : a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
@@ -196,7 +198,7 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
       <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
         {(() => {
           const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />;
-          return pixel ? <PixelFace sprite={a.face!.sprite!} state={state} size={size} label={a.label} fallback={drawn} /> : drawn;
+          return !sprite ? drawn : size >= 36 ? <PixelFace sprite={sprite} state={state} size={size} label={a.label} fallback={drawn} /> : <PixelAvatar sprite={sprite} size={size} label={a.label} fallback={drawn} />;
         })()}
       </span>
     </Suspense>

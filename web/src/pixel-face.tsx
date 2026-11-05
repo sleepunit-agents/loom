@@ -41,7 +41,12 @@ type Variant = { sheet?: string; row: number; frames: number; weight: number; ra
 /** The agent's manifest (src/household.ts SpriteManifest): its states by PixelLab's names. */
 type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>>;
   /** drawn smaller or larger (src/household.ts: 0.5 to 1.5), and moved, in the sheet's pixels: tuned per agent in the file */
-  scale?: number; offset?: [number, number] };
+  scale?: number; offset?: [number, number];
+  /** A small avatar's crop of its rest frame (idle, south), in the cell's pixels; else a 24-pixel square over the top
+   * of what's drawn there (PixelAvatar). */
+  avatar?: Crop };
+/** A box in a cell, in the sheet's pixels. */
+export type Crop = { x: number; y: number; w: number; h: number };
 type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement> };
 export type Sprite = { facings: string[]; v: string; base: string };
 
@@ -81,6 +86,12 @@ export function variantsFor(m: Manifest, st: FaceState, f: Facing): { list: Vari
   return { list: m.states.idle?.south ?? [], flip: false };
 }
 
+/** A state's usual animation in a facing: its weightiest, never a rare one (unless all are). What it rests on. */
+export function usualOf(list: Variant[]): Variant | undefined {
+  const plain = list.filter((v) => !v.rare);
+  return (plain.length ? plain : list).reduce<Variant | undefined>((x, y) => (!x || y.weight > x.weight ? y : x), undefined);
+}
+
 /** One animation by weight, among the facing's own. After a rare one (marked rare in the manifest), the next is never
  * rare, so a rare one never plays twice running (the preview's pick(): VARIANTS, lastRare). */
 export function pick(list: Variant[], last: Variant | undefined, r = Math.random()): Variant {
@@ -111,7 +122,7 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
   let anim: Variant | undefined, last: Variant | undefined;
   const southOnly = () => shown === 'needs-input';
   // At rest: the state's usual animation in this facing (its weightiest, never a rare one); error rests on its worried frame.
-  const usual = () => { const { list } = variantsFor(m, shown, facing); const plain = list.filter((v) => !v.rare); return (plain.length ? plain : list).reduce((x, y) => (y.weight > x.weight ? y : x), list[0]); };
+  const usual = () => usualOf(variantsFor(m, shown, facing).list);
   // Its rest frame: the manifest's, else 0 (error: its worried pose, 4 from its end, as both sheets end on the neutral one).
   const rest = () => { const u = usual(); return u?.rest ?? (shown === 'error' ? Math.max(0, (u?.frames ?? 1) - PIXEL.errorHoldFromEnd) : 0); };
   const paint = (i: number) => { const { flip } = variantsFor(m, shown, facing); draw({ v: anim ?? usual(), frame: i, facing, flip, beat: !!anim }); };
@@ -180,17 +191,21 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
 
 const pageEnv: PlayerEnv = { now: () => performance.now(), setTimeout: (f, ms) => window.setTimeout(f, ms), clearTimeout: (t) => window.clearTimeout(t), random: Math.random };
 
+/** This sprite's manifest and sheets once they're here, and whether they can't be had. */
+function useSheet(sprite: Sprite): { sheet: Sheet | null; failed: boolean } {
+  const [got, setGot] = useState<{ sheet: Sheet | null; failed: boolean }>({ sheet: null, failed: false });
+  useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) setGot({ sheet: s, failed: !s }); }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
+  return got;
+}
+
 export default function PixelFace({ sprite, state = 'idle', size, label, fallback }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [sheet, setSheet] = useState<Sheet | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { sheet, failed } = useSheet(sprite);
   const want = useRef(state);
   want.current = state;
   const player = useRef<ReturnType<typeof createPlayer> | null>(null);
   const scale = size >= 64 ? 2 : 1;
   const look = useLook();
-
-  useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) { setSheet(s); setFailed(!s); } }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const cv = canvas.current;
@@ -241,3 +256,69 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
 }
 
 const STATE_WORDS: Record<FaceState, string> = { idle: 'quiet', thinking: 'thinking', working: 'working', 'needs-input': 'waiting on you', complete: 'done', error: 'needs a look' };
+
+/** The rest frame a face shows at idle, facing south: its usual animation, on its rest frame (the manifest's, else 0). */
+const restOf = (m: Manifest): { v: Variant; frame: number } | undefined => { const v = usualOf(m.states.idle?.south ?? []); return v && { v, frame: v.rest ?? 0 }; };
+/** The side of a small avatar's square when the manifest names no crop: 24 sheet pixels, 1x at 24 px, 2x at 48. */
+export const AVATAR_SIDE = 24;
+
+/**
+ * Where a small avatar is cut from the rest frame: the manifest's crop, else a square of AVATAR_SIDE over the top of
+ * what's drawn (centred on it across, from its top down: the head, and the shoulders where they fit). `opaque` says
+ * whether a cell pixel has anything drawn.
+ */
+export function avatarCrop(m: Manifest, opaque: (x: number, y: number) => boolean): Crop {
+  if (m.avatar) return m.avatar;
+  const [cw, ch] = m.cell;
+  let left = cw, right = -1, top = ch;
+  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (opaque(x, y)) { left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); }
+  const side = Math.min(AVATAR_SIDE, cw, ch);
+  if (right < 0) return { x: Math.round((cw - side) / 2), y: 0, w: side, h: side };
+  const x = Math.max(0, Math.min(cw - side, Math.round((left + right + 1) / 2 - side / 2)));
+  return { x, y: Math.max(0, Math.min(ch - side, top)), w: side, h: side };
+}
+/** A whole-pixel scale for a crop in a box: the nearest whole number of screen pixels per sheet pixel, never under 1. */
+export const avatarScale = (size: number, side: number) => Math.max(1, Math.round(size / side));
+
+/**
+ * An agent's small pixel avatar (under 36 px, where a whole 48-pixel sprite would swamp the words beside it; Jonathan,
+ * 2026-11-05: "anywhere we currently have the 0000h face should be the pixel art guy now"): a still crop of its rest
+ * frame (avatarCrop), drawn at a whole-pixel scale (avatarScale: 24 at 1x, 48 at 2x), never smoothed, centred in its
+ * box; a crop bigger than its box shows its middle. It's drawn once and doesn't move: quieter in a list, and cheaper.
+ * A sheet that can't be had: its drawn face.
+ */
+export function PixelAvatar({ sprite, size, label, fallback }: { sprite: Sprite; size: number; label?: string; fallback: React.ReactNode }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const { sheet, failed } = useSheet(sprite);
+  const [crop, setCrop] = useState<Crop | null>(null);
+  const rest = sheet && restOf(sheet.m);
+  useEffect(() => {
+    const cv = canvas.current;
+    if (!sheet || !cv || !rest) return;
+    const { v, frame } = rest;
+    const img = sheet.imgs[fileOf(v)], [cw, ch] = sheet.m.cell, cols = Math.max(1, Math.floor(img.width / cw));
+    const sx = (frame % cols) * cw, sy = v.row * ch;
+    // The rest frame, alone, to find what's drawn in it.
+    const cell = document.createElement('canvas');
+    cell.width = cw; cell.height = ch;
+    const cg = cell.getContext('2d', { willReadFrequently: true })!;
+    cg.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+    let data: Uint8ClampedArray | null = null;
+    try { data = cg.getImageData(0, 0, cw, ch).data; } catch { /* a tainted sheet: the default square */ }
+    const c = avatarCrop(sheet.m, (x, y) => !!data && data[(y * cw + x) * 4 + 3] > 0);
+    cv.width = c.w; cv.height = c.h;
+    const g = cv.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, c.w, c.h);
+    g.drawImage(img, sx + c.x, sy + c.y, c.w, c.h, 0, 0, c.w, c.h);
+    setCrop(c);
+  }, [sheet]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (failed || (sheet && !rest)) return <>{fallback}</>;
+  const k = crop ? avatarScale(size, Math.max(crop.w, crop.h)) : 1;
+  return (
+    <span className="loom-pixel-face loom-pixel-avatar" style={{ width: size, height: size }}>
+      <canvas ref={canvas} role="img" aria-label={label} data-scale={crop ? k : undefined}
+        style={crop ? { width: crop.w * k, height: crop.h * k } : { width: 0, height: 0 }} />
+    </span>
+  );
+}

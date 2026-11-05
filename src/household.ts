@@ -763,7 +763,9 @@ export function faceOf(h: Household, agent: string): AgentFace {
  *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15, "rare": true }], "south-east": [...] }, "waiting": { "south": [...] } } }
  * A variant's sheet is "sheet.png" unless it names another; a rare one never plays twice running (after a rare beat the
  * next is never rare). "scale" (0.5-1.2) and "offset" ([x, y] in the sheet's pixels) tune where a face sits and how big
- * it reads beside the others (t-1849: Mark's fills more of his cell than Art's). An agent without a manifest keeps its drawn face.
+ * it reads beside the others (t-1849: Mark's fills more of his cell than Art's). "avatar" ({ x, y, w, h } in the cell's
+ * pixels) is where a small avatar (under 36 px) is cut from the rest frame; without it, a 24-pixel square over the top of
+ * what's drawn there. An agent without a manifest keeps its drawn face.
  */
 export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
 export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
@@ -773,7 +775,9 @@ export type SpriteManifest = { cell: [number, number]; states: Partial<Record<ty
   /** Drawn smaller or larger than the others (0.5 to 1.2; default 1: past 1.2 a 2x face overruns its card's room), so a sprite that fills more of its cell reads the same size. */
   scale?: number;
   /** Moved, in the sheet's own pixels (x right, y down; each -32 to 32), so it sits where the others do. */
-  offset?: [number, number] };
+  offset?: [number, number];
+  /** A small avatar's crop of the rest frame (idle, south, frame 0), in the cell's pixels. */
+  avatar?: { x: number; y: number; w: number; h: number } };
 const SPRITE_MAX_BYTES = 4 * 1024 * 1024;
 const SHEET_NAME = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -788,10 +792,20 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
   const cell = m.cell;
   if (!Array.isArray(cell) || cell.length !== 2 || !cell.every((n) => Number.isInteger(n) && n > 0 && n <= 512)) bad('needs "cell": [width, height]');
   if (!m.states || typeof m.states !== 'object') bad('needs "states"');
-  const { scale, offset } = m as { scale?: unknown; offset?: unknown };
+  const { scale, offset, avatar } = m as { scale?: unknown; offset?: unknown; avatar?: unknown };
   if (scale !== undefined && !(typeof scale === 'number' && scale >= 0.5 && scale <= 1.2)) bad('has a "scale" that isn\'t a number from 0.5 to 1.2');
   if (offset !== undefined && !(Array.isArray(offset) && offset.length === 2 && offset.every((n) => Number.isInteger(n) && n >= -32 && n <= 32))) bad('has an "offset" that isn\'t [x, y], whole pixels from -32 to 32');
+  const [cw, ch] = cell as [number, number];
+  let crop: SpriteManifest['avatar'];
+  if (avatar !== undefined) {
+    const { x, y, w, h } = (avatar ?? {}) as Record<string, unknown>;
+    const whole = [x, y, w, h].every((n) => Number.isInteger(n));
+    const [ax, ay, aw, ah] = [x, y, w, h] as number[];
+    if (!whole || ax < 0 || ay < 0 || aw < 8 || ah < 8 || ax + aw > cw || ay + ah > ch) bad('has an "avatar" that isn\'t { x, y, w, h }: whole pixels inside the cell, 8 or more across');
+    crop = { x: ax, y: ay, w: aw, h: ah };
+  }
   const out: SpriteManifest = { cell: cell as [number, number], states: {},
+    ...(crop ? { avatar: crop } : {}),
     ...(scale !== undefined && scale !== 1 ? { scale: scale as number } : {}),
     ...(offset !== undefined && (offset as number[]).some((n) => n !== 0) ? { offset: offset as [number, number] } : {}) };
   for (const [st, byFacing] of Object.entries(m.states as Record<string, unknown>)) {
