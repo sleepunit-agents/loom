@@ -25,6 +25,7 @@ import type { Household, Member } from '../household.js';
 import type { Chrome } from './render.js';
 import { findPiece } from '../cli/pieces.js';
 import { managedPieces } from '../cli/pieces-managed.js';
+import { threadWork } from '../comms-work.js';
 import { openThreadStream } from './comms-live.js';
 import { pieceApi, type PieceInfo } from './pieces.js';
 
@@ -219,6 +220,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
         openThreadStream(res, c.headers, h.home, { thread: t.id, session: c.session, from, may: () => { const now = c.live(); return !!now && stillSees(now, person, t.id); } });
         return true;
       }
+      // Work in this thread (comms.md, "The panel"): live from the pieces, for this member only.
+      if (verb === 'work' && dir === undefined) return send(200, await threadWork(h, c.env, t, m!)), true;
       if (verb) return send(404, { error: 'not-found' }), true;
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
       const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});

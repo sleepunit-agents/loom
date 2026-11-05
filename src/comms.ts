@@ -24,6 +24,7 @@ import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { findProgram } from './programs.js';
 import { agentDir, loadHousehold, type Household, type Member } from './household.js';
 import { withHouseholdDb } from './household-store.js';
+import { dropRefs, noteRefs } from './comms-work.js';
 import { conversationId, digestsOf, openConversationsReadonly, projectLookup, setConversationLabel } from './backends/conversations.js';
 
 export const COMMS_VENUE = 'loom';
@@ -476,13 +477,16 @@ export function onBump(f: () => void): () => void { listeners.add(f); return () 
 
 function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending' }, now: Date): number {
   const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
-  return withMessages(home, (db) => db.transaction(() => {
+  const seq = withMessages(home, (db) => db.transaction(() => {
     const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
     db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
       m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null);
     return seq;
   }).immediate());
+  // The work it names, as refs only, beside the thread (comms.md, "The refs index").
+  noteRefs(home, thread, seq, nowIso(now), m.kind, m.text);
+  return seq;
 }
 
 /** Whether `slug` is one of `agent`'s live projects. */
@@ -696,6 +700,7 @@ export function deleteThread(h: Household, t: Thread, now: Date = new Date()): v
     db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at) VALUES (?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now));
     db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
   }).immediate());
+  dropRefs(h.home, t.id);
   bump(h.home);
 }
 
