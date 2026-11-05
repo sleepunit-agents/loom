@@ -163,6 +163,10 @@ color-scheme:dark;
 /* ---- a phone's bar (phone-bar.tsx, Neon at a phone's width): right under the phone's own status bar, at its inset and
    no more; the page's name on the left, the ticker between, LOOM//OS and the needs-you count on the right ---- */
 :root[data-look="neon"] .loom-top--bar{padding-top:env(safe-area-inset-top)}
+/* iOS's home-screen app (Jonathan, 2026-11-04): a touch nearer the phone's own bar (its inset ends a little below the
+   status icons), and a little narrower than the page, so the two bars read as one */
+html.loom-ios-app:root[data-look="neon"] .loom-top--bar{padding-top:max(0px,calc(env(safe-area-inset-top) - 8px))}
+html.loom-ios-app:root[data-look="neon"] .loom-top--bar .loom-pbar{padding-inline:10px}
 :root[data-look="neon"] .loom-pbar{display:flex;align-items:center;gap:8px;min-width:0;height:24px;font-size:11px;color:var(--v-text-2);white-space:nowrap}
 :root[data-look="neon"] .loom-pbar__name{display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0;max-width:38%}
 :root[data-look="neon"] .loom-pbar__name h1{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-display);font-weight:700;font-size:13px;line-height:24px;letter-spacing:.02em}

@@ -94,6 +94,13 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     // Right under the phone's own bar: at the inset (47 px), no more.
     expect(await p.evaluate(() => getComputedStyle(document.querySelector('.loom-top')!).paddingTop)).toBe('47px');
     expect(Math.round((await p.locator('.loom-pbar').boundingBox())!.y)).toBe(47);
+    // iOS's home-screen app: 8 px nearer the phone's own bar and 10 px narrower on each side than the page's gutter.
+    const pageX = Math.round((await p.locator('.loom-pbar').boundingBox())!.x);
+    await p.evaluate(() => document.documentElement.classList.add('loom-ios-app'));
+    expect(await p.evaluate(() => getComputedStyle(document.querySelector('.loom-top')!).paddingTop)).toBe('39px');
+    const ios = (await p.locator('.loom-pbar__name').boundingBox())!;
+    expect(Math.round(ios.x)).toBe(pageX + 10);
+    await p.evaluate(() => document.documentElement.classList.remove('loom-ios-app'));
     const needs = p.locator('.loom-pbar__needs');
     expect(await needs.innerText()).toBe('1');
     expect(await needs.getAttribute('aria-label')).toBe('1 needs you');
