@@ -203,12 +203,13 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await open(p, '/');
     const tick = p.locator('.loom-tick');
     const state = () => tick.evaluate((e) => ({ run: e.hasAttribute('data-run'), w: e.clientWidth, over: (e.querySelector('.loom-tick__line') as HTMLElement).scrollWidth > e.clientWidth + 1 }));
-    const s = await state();
-    expect(s.w).toBeGreaterThan(500);
-    expect(s.run).toBe(s.over);
+    // Measured once its typeface is in (the words' width changes with it), and settled, even on a busy machine.
+    await p.waitForFunction(() => document.fonts.status === 'loaded');
+    expect((await state()).w).toBeGreaterThan(500);
+    await expect.poll(async () => { const s = await state(); return s.run === s.over; }, { timeout: 10_000 }).toBe(true);
     // Crowded, it moves.
     await tick.evaluate((e) => { (e as HTMLElement).style.flex = 'none'; (e as HTMLElement).style.width = '120px'; });
-    await expect.poll(async () => (await state()).run).toBe(true);
+    await expect.poll(async () => (await state()).run, { timeout: 10_000 }).toBe(true);
     await p.context().close();
 
     const q = await device('neon', 'reduce', 1280);
