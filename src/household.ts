@@ -780,7 +780,7 @@ export function faceOf(h: Household, agent: string): AgentFace {
  * what's drawn there. An agent without a manifest keeps its drawn face.
  */
 export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
-export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
+export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error', 'talking'] as const;
 export type SpriteFacing = typeof SPRITE_FACINGS[number];
 export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; /** the frame it rests on (default: 0; error's, 4 from its end) */ rest?: number };
 export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>>;

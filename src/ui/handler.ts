@@ -67,6 +67,7 @@ import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
+import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -113,6 +114,8 @@ export interface UiOptions {
   ownerScope?: string[];
   /** The member signed in, for the account menu (docs/specs/owners.md). */
   viewer?: string;
+  /** The member signed in, whole: Comms is theirs (docs/specs/comms.md), so the dock's Comms key and its count are too. */
+  member?: Member;
 }
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
@@ -296,6 +299,11 @@ function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id:
 /** The caller a piece's page or action is told about: the member, and what they own. */
 function callerOf(who: Who): ApiCaller | undefined {
   return who?.member ? { kind: 'owner', who: who.member.person, agents: who.member.agents } : undefined;
+}
+
+/** A member's Comms threads with an unread reply (the dock key's count); 0 when the store can't say. */
+function commsUnread(h: Household, m: Member): number {
+  try { return threadsOf(h, m).filter((t) => t.unread).length; } catch { return 0; }
 }
 
 /** A GET for the app's page rather than its JSON or a stream (Comms' routes answer JSON; a page load gets the app). */
@@ -968,6 +976,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
             // The household's, like People (docs/specs/projects.md, "the Projects app").
             { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
           ]),
+          // Comms (docs/specs/comms.md): a member who owns an agent talks with it here; its count is their unread threads.
+          ...(opts.member && h.agents.some((a) => owns(opts.member, a)) ? [{ label: 'Comms', href: '/comms', current: current.startsWith('comms'), count: commsUnread(h, opts.member) }] : []),
         ],
         pieces: places,
       },
@@ -1160,6 +1170,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const full = opts.household?.();
   // The account menu names who's signed in; the first household owner keeps the household's name for them.
   if (full && who?.member && who.member.person !== firstOwner(full).person) opts = { ...opts, viewer: who.member.person };
+  if (full && who?.member) opts = { ...opts, member: who.member };
   if (full && who?.member && who.member.agents !== '*') {
     const own = who.member.agents;
     if (!scopedPathOk(pathname)) return send(res, 403, 'text/plain', 'That page is the household\'s: ask a household owner.');
@@ -1222,7 +1233,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return 'forbidden: this page is stale; reload and try again';
       return null;
     };
-    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+    const commsChrome = async (): Promise<Chrome & { prefs?: unknown }> => {
+      const { pieces: all, skipped } = await pieceManifests(scopedEnv);
+      const ch = chrome(req, opts, forOwner(all, opts.ownerScope), skipped.map((x) => x.piece), 'comms', csrf);
+      return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
+    };
+    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome, agents: agentsOf(full) ?? {}, session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
     return;
   }
 

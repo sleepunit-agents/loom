@@ -14,13 +14,13 @@ import { useChoreography } from '@/lib/cojeev-motion/choreography';
 import data from './face-data.json';
 import { markColor, markName } from './look';
 
-export type FaceState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
+export type FaceState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error' | 'talking';
 export type FaceShape = 'pebble' | 'trefoil' | 'clover' | 'drop';
 export type FaceEyes = 'dot' | 'oval';
 export const SHAPES: FaceShape[] = ['pebble', 'trefoil', 'clover', 'drop'];
 export const EYES: FaceEyes[] = ['dot', 'oval'];
 export const STATE_WORD: Record<FaceState, string> = {
-  idle: 'quiet', thinking: 'thinking', working: 'working', 'needs-input': 'waiting on you', complete: 'done', error: 'needs a look',
+  idle: 'quiet', thinking: 'thinking', working: 'working', 'needs-input': 'waiting on you', complete: 'done', error: 'needs a look', talking: 'talking',
 };
 
 type Part = { t: 'circle' | 'ellipse' | 'path'; role: string; cx?: number; cy?: number; r?: number; rx?: number; ry?: number; d?: string; fill?: string; stroke?: string };
@@ -57,8 +57,10 @@ export default function Face({ bg, shape = 'pebble', eyes = 'dot', state = 'idle
   const inView = useInView(ref, { margin: '40px' });
   const shown = useVisible();
   const fam = families[shape] ?? families.pebble;
-  const body = fam[state] ?? fam.idle;
-  const face = (faces[eyes] ?? faces.dot)[state] ?? faces.dot.idle;
+  // The drawn face has no talking expression of its own: it talks as it looks done (comms.md, "The comm screen").
+  const drawnState: FaceState = state === 'talking' ? 'complete' : state;
+  const body = fam[drawnState] ?? fam.idle;
+  const face = (faces[eyes] ?? faces.dot)[drawnState] ?? faces.dot.idle;
   // A dark mark lifts on a dark ground, so it doesn't sink into it.
   const base = /^#[0-9a-f]{6}$/i.test(bg) ? (dark && lum(bg) < 0.2 ? mix(bg, '#ffffff', 0.28) : bg) : LILAC.bg;
   // Small sizes: a bigger face with thicker lines, and no brows or highlights at dock size.

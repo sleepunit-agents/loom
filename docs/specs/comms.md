@@ -266,7 +266,8 @@ So the activity cards need a new capture:
 What Comms streams in is the turn as it happens:
 
 - the working line, from the runtime's `status` calls;
-- the activity cards, within about 3 s of each step (the 2 s sync, then the live event);
+- the activity cards, within a few seconds of each step (the house's 2 s sync, then the runtime's 5 s tick, then the
+  live event);
 - each reply the body sends, whole, the moment it's posted. A body may send several replies in one run.
 
 **Token-by-token text is not in this design.** It would need a body that runs `claude -p --output-format stream-json
@@ -476,7 +477,8 @@ reader is the member who said half of it.
 ## The app
 
 **One app, "Comms", in the dock** for a member who owns at least one agent. It's absent for a member who owns none.
-Its dock key carries the number of unread threads, as the Inbox's carries its asks.
+Its dock key carries the number of unread threads, as the Inbox's carries its asks. On a phone it comes after Places, so
+a narrow phone (one whose dock holds four keys) keeps Places and finds Comms under More; from about 430 px it's a key.
 
 ### Phone
 

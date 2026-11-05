@@ -22,6 +22,7 @@ import {
 } from '../comms.js';
 import { deliverAsOwner } from '../delivery.js';
 import type { Household, Member } from '../household.js';
+import type { Chrome } from './render.js';
 import { findPiece } from '../cli/pieces.js';
 import { managedPieces } from '../cli/pieces-managed.js';
 import { openThreadStream } from './comms-live.js';
@@ -38,6 +39,10 @@ export interface CommsContext {
   headers: Record<string, string>;
   /** Refuses a write that isn't the session's own (its form token, its origin): the reason, or null when it's fine. */
   guard: (req: IncomingMessage, body: Record<string, unknown>) => string | null;
+  /** The page's chrome (its shell, dock and form token), for a GET the app draws as a view. */
+  chrome?: () => Promise<Chrome>;
+  /** The household's agents' marks (labels, colours, faces), as every view's ctx carries them. */
+  agents?: Record<string, unknown>;
 }
 
 const MAX_BODY = 200 * 1024;
@@ -95,6 +100,16 @@ const view = (t: Thread) => ({
   opened: t.opened, last: t.last, read_seq: t.read_seq, channel: t.channel, conversation: t.conversation, state: stateOf(t),
 });
 
+/**
+ * What makes a Comms answer a view the app draws (web/src/comms.tsx): `view: 'comms'`, which part, the page's chrome
+ * and its ctx. The API's own fields sit beside them.
+ */
+async function asView(c: CommsContext, which: 'list' | 'thread', pathname: string): Promise<Record<string, unknown>> {
+  if (!c.chrome) return {};
+  const chrome = await c.chrome();
+  return { view: 'comms', which, chrome, ctx: { source: { id: 'loom', base: '/' }, path: pathname.slice(1), query: {}, csrf: chrome.csrf, agents: c.agents ?? {} } };
+}
+
 /** Whether a /comms page load names a thread the member may not see: the same 403 as its JSON form (rule 3). */
 export function pageRefused(pathname: string, household: Household, member: Member | undefined): string | null {
   const m = /^\/comms\/([^/]+)/.exec(pathname);
@@ -120,8 +135,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const archived = new URL(req.url ?? '/', 'http://x').searchParams.get('archived') === '1';
       const threads = threadsOf(h, m, { archived });
       const unread = archived ? threadsOf(h, m).filter((t) => t.unread).length : threads.filter((t) => t.unread).length;
-      send(200, { threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
-        agents: h.agents.filter((a) => m.agents === '*' || m.agents.includes(a)) });
+      send(200, { ...(await asView(c, 'list', pathname)), threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
+        agents: h.agents.filter((a) => m.agents === '*' || m.agents.includes(a)), member: m.person });
       return true;
     }
     if (pathname === '/comms/new') {
@@ -154,7 +169,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
       const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
       const swept = messages.some((x) => x.text === null && x.kind !== 'error');
-      send(200, { thread: view(t), messages, ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}) });
+      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}), member: m!.person });
       return true;
     }
     if (req.method !== 'POST' || !verb) return send(405, { error: 'method not allowed' }), true;
