@@ -63,6 +63,7 @@ import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdSuggestPeople, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
+import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
@@ -185,7 +186,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
 /** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
 const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
 
-const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -802,6 +803,7 @@ function backFor(path: string, places: Array<{ label: string; href: string }>, h
   const seg = path.split('/').filter(Boolean);
   if (seg[0] === 'knowledge' && seg.length > 1) return { label: 'Knowledge', href: '/knowledge' };
   if (seg[0] === 'people' && seg.length > 1) return { label: 'People', href: '/people' };
+  if (seg[0] === 'projects' && seg.length > 1) return { label: 'Projects', href: '/projects' };
   if (seg[0] === 'memory') return { label: 'Mind', href: '/mind' };
   if (seg[0] === 'p' && seg.length > 2) {
     const top = places.find((x) => x.href === `/p/${seg[1]}`);
@@ -950,6 +952,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           ...(opts.ownerScope ? [] : [
             { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
             { label: 'People', href: '/people', current: current.startsWith('people') },
+            // The household's, like People (docs/specs/projects.md, "the Projects app").
+            { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
           ]),
         ],
         pieces: places,
@@ -977,6 +981,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       core: [
         { label: 'Mind', href: '/mind', current: current === 'mind' },
         { label: 'People', href: '/people', current: current.startsWith('people') },
+        { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
       ],
       pieces: places,
     },
@@ -1612,6 +1617,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
     }
     if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
+    // The Projects app (docs/specs/projects.md): the household's, not an agent owner's.
+    if (!opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) {
+      const owners = hh.agents.filter((x) => existsSync(agentDir(hh, x))).map((x) => ({ agent: x, dir: agentDir(hh, x) }));
+      if (pathname === '/projects') return send200(await projectsIndex(owners, { env: opts.env }), 'projects', ctxOf('projects'));
+      const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
+      const ok = seg.every((x) => /^[a-z0-9][a-z0-9-]*$/.test(x)) && seg.length <= 2;
+      const o = ok ? ownerOf(owners, seg[seg.length - 1], seg.length === 2 ? seg[0] : undefined) : null;
+      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env }) : null;
+      return send200(page ?? notFound, 'projects', ctxOf(pathname.slice(1)));
+    }
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));
@@ -1721,6 +1736,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const page = piecesPage(opts.env, query);
     { const ctx = { source: CORE, path: 'pieces', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash);
       return view('page', { page, ctx, chrome: ch }); }
+  }
+
+  if (pathname === '/projects' || /^\/projects\/[a-z0-9][a-z0-9-]*$/.test(pathname)) {
+    const owner = { dir: opts.contextDir };
+    const page = pathname === '/projects' ? await projectsIndex([owner], { env: opts.env })
+      : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env });
+    const ctx = { source: CORE, path: pathname.slice(1), query, csrf };
+    const ch = chrome(req, opts, pieces, skippedNames, 'projects', csrf, flash);
+    return view('page', { page: page ?? notFound, ctx, chrome: ch }, page ? 200 : 404);
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';

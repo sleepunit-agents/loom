@@ -281,14 +281,23 @@ export interface FeedItem {
   person?: string[];
   status?: string;
   ref?: string;
+  /** A page of the feed's own piece, or `loom:<page>` (projects.md, "Output"). */
+  page?: string;
+  /** An https URL that opens outside. */
+  href?: string;
   body?: string;
 }
-export interface FeedGroup { title: string; items: FeedItem[] }
+/** `waiting`: these items wait on the owner; the Projects index counts them. */
+export interface FeedGroup { title: string; waiting?: boolean; items: FeedItem[] }
 export interface Feed { groups: FeedGroup[] }
 
 export const FEED_MAX_BYTES = 64 * 1024;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
+/** A feed item's `page`: an optional `loom:`, a page path (lowercase letters, digits and . _ ~ / -, no `..` segment),
+ * an optional `?key=value&…` query. The page draws it through splitPage, which checks what a `loom:` may reach. */
+const FEED_PAGE = /^(?:loom:)?(?!.*(?:^|\/)\.\.(?:\/|$|\?))[a-z0-9._~/-]*(?:\?[a-z0-9_-]+=[^&#\s]*(?:&[a-z0-9_-]+=[^&#\s]*)*)?$/;
+const HTTPS = /^https:\/\/[^\s<>"]+$/;
 
 function strList(v: unknown, maxItems: number, maxLen: number, re?: RegExp): v is string[] {
   return Array.isArray(v) && v.length <= maxItems && v.every((x) => str(x, maxLen) && (!re || re.test(x)));
@@ -307,17 +316,18 @@ export function parseFeed(v: unknown): Feed | string {
   const groups: FeedGroup[] = [];
   for (const [gi, g] of v.groups.entries()) {
     if (!isObject(g)) return `groups[${gi}] is not an object`;
-    const bg = unknownKey(g, ['title', 'items']);
+    const bg = unknownKey(g, ['title', 'waiting', 'items']);
     if (bg !== undefined) return `groups[${gi}]: unknown key ${JSON.stringify(bg)}`;
     if (!str(g.title, 80)) return `groups[${gi}].title is required, at most 80 characters`;
     if (!Array.isArray(g.items)) return `groups[${gi}].items is a list`;
+    if (g.waiting !== undefined && typeof g.waiting !== 'boolean') return `groups[${gi}].waiting is true or false`;
     items += g.items.length;
     if (items > 50) return 'at most 50 items in all';
     const out: FeedItem[] = [];
     for (const [ii, it] of g.items.entries()) {
       const at = `groups[${gi}].items[${ii}]`;
       if (!isObject(it)) return `${at} is not an object`;
-      const bi = unknownKey(it, ['title', 'when', 'who', 'person', 'status', 'ref', 'body']);
+      const bi = unknownKey(it, ['title', 'when', 'who', 'person', 'status', 'ref', 'page', 'href', 'body']);
       if (bi !== undefined) return `${at}: unknown key ${JSON.stringify(bi)}`;
       if (!str(it.title, 200)) return `${at}.title is required, at most 200 characters`;
       if (it.when !== undefined && !(typeof it.when === 'string' && ISO_UTC.test(it.when))) return `${at}.when is an ISO-8601 UTC time`;
@@ -325,10 +335,13 @@ export function parseFeed(v: unknown): Feed | string {
       if (it.person !== undefined && !strList(it.person, 8, 80, SLUG)) return `${at}.person is at most 8 person slugs`;
       if (it.status !== undefined && !str(it.status, 24)) return `${at}.status is at most 24 characters`;
       if (it.ref !== undefined && !str(it.ref, 200)) return `${at}.ref is at most 200 characters`;
+      if (it.page !== undefined && !(str(it.page, 200) && FEED_PAGE.test(it.page))) return `${at}.page is a page path (or loom:<page>), at most 200 characters`;
+      if (it.href !== undefined && !(str(it.href, 500) && HTTPS.test(it.href))) return `${at}.href is an https URL, at most 500 characters`;
+      if (it.page !== undefined && it.href !== undefined) return `${at} has a page or an href, not both`;
       if (it.body !== undefined && !str(it.body, 600)) return `${at}.body is at most 600 characters`;
       out.push(it as unknown as FeedItem);
     }
-    groups.push({ title: g.title, items: out });
+    groups.push({ title: g.title, ...(g.waiting === true ? { waiting: true } : {}), items: out });
   }
   return { groups };
 }
