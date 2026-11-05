@@ -25,7 +25,8 @@ export interface ProjectsOwner {
 interface Count { at: number; waiting: number; error?: string }
 
 const CACHE_MS = 60_000;
-const INDEX_WAIT_MS = 5_000;
+/** The index waits this long for counts, however many projects there are (docs/specs/projects.md). */
+export const INDEX_WAIT_MS = 5_000;
 const counts = new Map<string, Count>();
 
 /** For tests: forget the index's cached counts. */
@@ -39,8 +40,9 @@ function waitingIn(sections: HubSection[]): { waiting: number; error?: string } 
   let waiting = 0;
   const errors: string[] = [];
   for (const s of sections as PieceSection[]) {
-    if (s.key === 'conversations' && 'items' in s) {
-      waiting += ((s as unknown as { items: Array<{ needs_owner: string | null }> }).items).filter((c) => c.needs_owner).length;
+    if (s.key === 'conversations') {
+      if (s.error) errors.push('conversations');
+      else if ('items' in s) waiting += ((s as unknown as { items: Array<{ needs_owner: string | null }> }).items).filter((c) => c.needs_owner).length;
     } else if (s.key.startsWith('piece:')) {
       if (s.error) errors.push(s.key.slice('piece:'.length));
       for (const g of s.groups ?? []) if (g.waiting) waiting += g.items.length;
@@ -121,7 +123,8 @@ export function ownerOf(owners: ProjectsOwner[], slug: string, agent?: string): 
   if (agent) return owners.find((o) => o.agent === agent) ?? null;
   const has = owners.filter((o) => {
     try {
-      return listProjects(o.dir).some((p) => p.slug === slug) || projectAlias(o.dir, slug);
+      // Archived ones too (by slug), so an archived project's page can say it's archived.
+      return listProjects(o.dir, { include_archived: true }).some((p) => p.slug === slug) || projectAlias(o.dir, slug);
     } catch {
       return false;
     }
@@ -137,8 +140,8 @@ function projectAlias(dir: string, name: string): boolean {
   }
 }
 
-const stateWords = (st: { kind: string; days?: number }): string =>
-  st.kind === 'ok' ? 'checked' : st.kind === 'stale' ? `stale for ${st.days} days` : 'not checked';
+const stateWords = (st: { kind: string; days?: number }, verified: string | undefined, nowMs: number): string =>
+  st.kind === 'ok' ? `checked ${agoText(verified, nowMs) || 'just now'}` : st.kind === 'stale' ? `stale for ${st.days} days` : 'not checked';
 
 function memoryHref(o: ProjectsOwner, ref: string): string | undefined {
   const p = o.agent ? `a/${o.agent}/memory/${ref}` : `memory/${ref}`;
@@ -165,7 +168,9 @@ export function feedLink(piece: string, it: { page?: string; href?: string }): {
 }
 
 function feedRow(piece: string, it: FeedGroup['items'][number], nowMs: number) {
-  const meta = [it.when ? agoText(it.when, nowMs) : undefined, ...(it.who ?? []), it.ref].filter(Boolean).join(' · ');
+  // body, folded: after the meta, on its own line (a row runs to two lines, and opens whole when tapped).
+  const meta = [[it.when ? agoText(it.when, nowMs) : undefined, ...(it.who ?? []), it.ref].filter(Boolean).join(' · '), it.body]
+    .filter(Boolean).join('\n');
   return { text: it.title, ...(meta ? { meta } : {}), ...(it.status ? { badge: it.status } : {}),
     ...(it.person?.[0] ? { person: it.person[0] } : {}), ...feedLink(piece, it) };
 }
@@ -188,7 +193,7 @@ export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env
   if (card.goal) facts.push({ label: 'Goal', value: card.goal });
   if (card.status && card.status !== 'active') facts.push({ label: 'Status', value: card.status });
   for (const [k, env] of Object.entries(card.where ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
-    facts.push({ label: k.replace(/_/g, ' '), value: `${env.value} (${stateWords(fieldState(env, nowMs) as { kind: string; days?: number })})` });
+    facts.push({ label: k.replace(/_/g, ' '), value: `${env.value} (${stateWords(fieldState(env, nowMs) as { kind: string; days?: number }, env.verified_at, nowMs)})` });
   }
   if (facts.length) sections.push({ id: 'card', blocks: [{ type: 'kv', items: facts }] });
 
@@ -206,7 +211,14 @@ export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env
   }
   if (waiting.length) sections.push({ id: 'waiting', title: 'Waiting on you', tone: 'warn', blocks: [{ type: 'list', wrap: true, items: waiting.slice(0, 200) as never }] });
 
-  for (const s of pieces.slice(0, 6)) {
+  // Ten sections a page (extensions.md): the core ones present keep their places, and the pieces get the rest; one
+  // more than fits is named on the last piece's section, never dropped silently.
+  const coreCount = (facts.length ? 1 : 0) + (waiting.length ? 1 : 0)
+    + ['people', 'conversations', 'notes', 'memories'].filter((k) => { const x = bySection(k) as { items?: unknown[] } | undefined; return !!x?.items?.length; }).length;
+  const room = Math.max(1, 10 - coreCount);
+  const shown = pieces.slice(0, room);
+  const over = pieces.slice(room).map((s) => s.label ?? s.key.slice('piece:'.length));
+  for (const s of shown) {
     const piece = s.key.slice('piece:'.length);
     const label = s.label ?? piece;
     if (s.error) {
@@ -219,7 +231,8 @@ export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env
       blocks.push({ type: 'list', wrap: true, items: g.items.map((it) => feedRow(piece, it, nowMs)) });
     }
     if (!blocks.length) blocks.push({ type: 'text', tone: 'muted', text: (s.groups ?? []).length ? 'Only what waits on you, above.' : 'Nothing here.' });
-    sections.push({ id: s.key.replace(':', '-'), title: label, blocks: blocks.slice(0, 20) });
+    if (s === shown[shown.length - 1] && over.length) blocks.push({ type: 'text', tone: 'muted', text: `More sections than fit here: ${over.join(', ')}.` });
+    sections.push({ id: s.key.replace(':', '-'), title: label, blocks: blocks.length > 20 ? [...blocks.slice(0, 19), blocks[blocks.length - 1]] : blocks });
   }
 
   const people = bySection('people') as { items: Array<{ slug: string; name: string; field: string; value: unknown; marker: string }> } | undefined;

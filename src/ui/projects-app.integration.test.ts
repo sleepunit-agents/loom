@@ -12,7 +12,7 @@ import { loadHousehold } from '../household.js';
 import { closeAllBackends } from '../backends/index.js';
 import { openProjectsStore, type ProjectWriteInput } from '../backends/projects.js';
 import { clearPieceCache } from './pieces.js';
-import { feedLink, forgetProjectCounts, projectHubPage, projectsIndex } from './projects-pages.js';
+import { feedLink, forgetProjectCounts, INDEX_WAIT_MS, projectHubPage, projectsIndex } from './projects-pages.js';
 import type { ProjectHubResult } from '../tools/project.js';
 
 const TOKEN = 'projects-owner-token';
@@ -130,7 +130,7 @@ describe('the Projects app', () => {
     expect(JSON.stringify(changes)).not.toContain('Ship it');
     expect(changes[1].items[0]).toMatchObject({ text: 'app#2 Later', href: 'https://example.com/2', badge: 'CI running' });
     expect(changes[1].items[0].meta).toContain('Ada');
-    // The page's links resolve: a piece page under /p/, loom's own as loom's.
+    // Drawn on loom's own page (its links are loom's: p/changes/… is the piece's page, through /p/).
     expect(body.ctx.source.base).not.toMatch(/^\/p\//);
   });
 
@@ -187,7 +187,7 @@ describe('the Projects pages, directly', () => {
     expect((page.sections.find((s) => s.id === 'active')!.blocks[0] as any).items[0].meta).toContain('3 waiting on you');
     const hub = (await projectHubPage({ dir }, 'p', { hub: hubWith(sections, calls), nowMs: NOW }))!;
     expect(hub.sections.map((s) => s.id)).toEqual(['card', 'waiting', 'piece-changes', 'piece-tasks', 'conversations']);
-    expect((hub.sections[0].blocks[0] as any).items).toEqual([{ label: 'Goal', value: 'G' }, { label: 'now', value: 'soaking (checked)' }]);
+    expect((hub.sections[0].blocks[0] as any).items).toEqual([{ label: 'Goal', value: 'G' }, { label: 'now', value: 'soaking (checked 24h ago)' }]);
     expect((hub.sections[1].blocks[0] as any).items.map((i: any) => i.text)).toEqual(['a', 'b', 'Pick a date']);
     expect((hub.sections[3].blocks[0] as any).text).toBe("tasks couldn't answer: timed out");
     expect(await projectHubPage({ dir }, 'missing', { hub: hubWith([], calls) })).toBeNull();
@@ -204,6 +204,45 @@ describe('the Projects pages, directly', () => {
     expect(feedLink('changes', { href: 'https://github.com/a/b/pull/1' })).toEqual({ href: 'https://github.com/a/b/pull/1' });
     expect(feedLink('changes', { href: 'javascript:alert(1)' })).toEqual({});
     expect(feedLink('changes', { href: 'http://x' })).toEqual({});
+  });
+
+  it('orders waiting first, then errors and couldn\'t count, then activity; waits 5 s by default', async () => {
+    expect(INDEX_WAIT_MS).toBe(5000);
+    write(dir, { slug: 'newest', name: 'Newest' });                     // newest activity, nothing waiting
+    write(dir, { slug: 'broken', name: 'Broken' });
+    write(dir, { slug: 'waits', name: 'Waits' });
+    const s = openProjectsStore(dir, { now: () => NOW + 60_000 })!;
+    try { s.write({ slug: 'newest', summary: 'touched later' }); } finally { s.close(); }
+    const per: Record<string, unknown[]> = {
+      newest: [],
+      broken: [{ key: 'conversations', error: 'unreadable' }],
+      waits: [{ key: 'piece:changes', label: 'Changes', groups: [{ title: 'Waiting on you', waiting: true, items: [{ title: 'x' }] }] }],
+    };
+    const hub = async (d: string, slug: string) => hubWith(per[slug], { n: 0 })(d, slug);
+    const page = await projectsIndex([{ dir }], { hub, nowMs: NOW + 120_000 });
+    const items = (page.sections.find((x) => x.id === 'active')!.blocks[0] as any).items;
+    expect(items.map((i: any) => i.text)).toEqual(['Waits', 'Broken', 'Newest']);
+    expect(items[1].meta).toContain("couldn't count");
+  });
+
+  it('a feed item\'s body shows under its row; a loom: link stays loom\'s; sections beyond ten are named, not lost', async () => {
+    write(dir, { slug: 'p', name: 'P', goal: 'G' });
+    const pieces = Array.from({ length: 12 }, (_, i) => ({ key: `piece:p${String(i).padStart(2, '0')}`, label: `P${i}`,
+      groups: [{ title: 'Things', items: [{ title: `t${i}`, body: 'the detail', page: 'loom:p/tasks/task/t-1' }] }] }));
+    const hub = (await projectHubPage({ dir }, 'p', { hub: hubWith(pieces, { n: 0 }), nowMs: NOW }))!;
+    expect(hub.sections.length).toBe(10);
+    const first = hub.sections[1].blocks[1] as any;
+    expect(first.items[0]).toMatchObject({ text: 't0', page: 'loom:p/tasks/task/t-1' });
+    expect(first.items[0].meta).toContain('the detail');
+    expect(JSON.stringify(hub.sections[9])).toContain('More sections than fit here: P9, P10, P11.');
+  });
+
+  it('an archived project\'s page says so', async () => {
+    write(dir, { slug: 'gone', name: 'Gone' });
+    const s = openProjectsStore(dir, { now: () => NOW })!;
+    try { s.archive({ slug: 'gone', reason: 'done with it', actor: 'art' }); } finally { s.close(); }
+    const page = await projectHubPage({ dir }, 'gone', { hub: async () => ({ found: true, archived: true }) });
+    expect(JSON.stringify(page)).toContain('This project is archived.');
   });
 
   it('with no projects, one line says what a project is', async () => {

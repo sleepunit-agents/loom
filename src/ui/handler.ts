@@ -1617,8 +1617,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
     }
     if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
-    // The Projects app (docs/specs/projects.md): the household's, not an agent owner's.
-    if (!opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) {
+    // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the
+    // not-found page here, never the single-agent route below.
+    if (opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) return send200(notFound, '', ctxOf(''));
+    if (pathname === '/projects' || pathname.startsWith('/projects/')) {
       const owners = hh.agents.filter((x) => existsSync(agentDir(hh, x))).map((x) => ({ agent: x, dir: agentDir(hh, x) }));
       if (pathname === '/projects') return send200(await projectsIndex(owners, { env: opts.env }), 'projects', ctxOf('projects'));
       const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
