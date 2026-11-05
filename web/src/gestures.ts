@@ -16,6 +16,7 @@
 // nothing follows the finger, and the pages still change (with the tap's crossfade).
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Move, Scrub } from './transitions';
+import { reducedMotion } from './access';
 
 export type GestureSetup = {
   /** The dock's own pages, in its order (hrefs); empty where sideways swipes don't apply. */
@@ -39,7 +40,7 @@ export const SIDE = 60, UP = 50, EDGE = 24;
 /** How much of the finger's travel the page follows, and at the end of the row (nowhere to go). */
 const FOLLOW = 0.35, END = 0.12;
 
-const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const reduced = reducedMotion;
 const standalone = () => document.documentElement.classList.contains('loom-ios-app') || matchMedia('(display-mode: standalone)').matches;
 
 let probe: HTMLElement | null = null;

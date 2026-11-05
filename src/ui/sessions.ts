@@ -11,8 +11,8 @@
  *     (a session still dies with its token: rotate or revoke it and they stop);
  * one-time sign-in links (`loom token link`), also by hash: single use, and
  * gone after their few minutes whether used or not;
- * each person's Appearance (the look, light or dark, the ground, sound), so
- * it follows them to every device: a preference they chose, never what they browsed;
+ * each person's Appearance (the look, light or dark, the ground, sound) and
+ * Accessibility (zoom, motion, contrast), so it follows them to every device: a preference they chose, never what they browsed;
  * and in `ui-cookie.key` (0600), the key that binds an anti-forgery token to
  * its session, so a form opened before a restart still posts after it.
  *
@@ -68,12 +68,17 @@ interface File {
  * like `seen`, so it follows them to every device they sign in on.
  */
 export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
-  /** Allow zoom: pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
+  /** Allow zoom (Accessibility): pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
   zoom?: boolean;
+  /** Reduce motion (Accessibility, web/src/access.ts): follow the phone's own setting (the default), or on, or off. */
+  motion?: 'follow' | 'on' | 'off';
+  /** Higher contrast (Accessibility, web/src/access.ts): follow the phone's prefers-contrast (the default), or on, or off. */
+  contrast?: 'follow' | 'on' | 'off';
   /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
   at?: number }
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
   look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false], zoom: [true, false],
+  motion: ['follow', 'on', 'off'], contrast: ['follow', 'on', 'off'],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
 export function prefsOf(body: Record<string, unknown>): Prefs | null {

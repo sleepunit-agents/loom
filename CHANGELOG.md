@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   shows 15 at a time, with numbered pages and its action under them. The
   Secrets page's 61-row store had been one 6,500 px wall; it's now 2,500 px
   and the sections under it can be reached.
+- **An Accessibility app, beside Appearance** (t-1867). Its own tile in More
+  and in Find, its own page and intro. **Allow zoom** moves there from
+  Appearance (a choice already made carries over). **Reduce motion** (Follow
+  the phone, On, Off) is one switch for everything that moves: On crossfades
+  pages, stills the ticker, skips the opening animation, holds faces on their
+  rest frame, fades the dock swap and drops the follow-the-finger swipes, even
+  where the phone allows motion; Off runs them all, even where the phone asks
+  for less. **Higher contrast** (Follow the phone, On, Off) raises Neon's and
+  000h's light and dark tokens to 7:1 for text and 4.5:1 for the quieter texts
+  and control edges, unfades hint text, thickens focus rings, puts solid
+  ground behind words that sat on see-through surfaces, and turns Neon's glows
+  off. Both are the person's, kept by loom on every device, and worn before
+  the first paint. Under the hood every `prefers-reduced-motion` and
+  `prefers-contrast: more` query, 000h's own included, is rewritten at build
+  onto `<html data-motion>` and `<html data-contrast>`, and scripts ask
+  `web/src/access.ts`.
 - **Neon on a phone: a page's info is behind its name** (t-1863). The line
   under the phone bar is gone; when a page has a line or an intro, its name
   in the bar wears a small ⓘ and opens a sheet with both (with a haptic tick).

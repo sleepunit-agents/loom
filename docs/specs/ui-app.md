@@ -156,6 +156,10 @@ been used.
   console errors and no sideways scroll, the dock and rail reach every tab, and
   each pop-up opens and closes.
 - With reduced motion, nothing moves.
+- Reduced motion and more contrast are the person's (the Accessibility app: Follow the
+  phone, On, Off), worn as `<html data-motion>` and `<html data-contrast>`; the build
+  rewrites every `prefers-reduced-motion` and `prefers-contrast: more` query onto them
+  (`web/vite.config.ts` accessMedia), and JS asks `web/src/access.ts`, never the query.
 - The JS and CSS stay inside the budget.
 
 ## Open questions
@@ -167,7 +171,8 @@ been used.
   from terminal hud"): Neon Noir is the default, dark only, a stylesheet of its
   own over 000h's tokens (`web/src/looks/`); 000h stays a choice and the light
   look. The look, light or dark, the ground and sound are the person's, kept by
-  loom per member and carried on every page's chrome (`POST /appearance/prefs`).
+  loom per member and carried on every page's chrome (`POST /appearance/prefs`);
+  so is Accessibility's (Allow zoom, Reduce motion, Higher contrast).
 - **loom's own look inside 000h**: 000h's look, whole. Each agent's pages take
   their own accent from 000h's palette (Jonathan, accepting: "agents could get
   different accents if you guys like the 000h options"): an agent's mark color

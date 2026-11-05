@@ -47,13 +47,14 @@ import { canMove, moveTo, scrub, type Move } from './transitions';
 import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { allowZoom } from './immersion';
+import { keptFollow, wearContrast, wearMotion, type Follow } from './access';
 import { keep, LookContext, markColor, paintBar, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
-  Appearance: 'palette', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round',
+  Appearance: 'palette', Accessibility: 'accessibility', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round',
 };
 // A piece's own icon (its manifest's tab.icon) first, then loom's for that name.
 const iconsOf = (chrome?: Chrome) => {
@@ -79,7 +80,7 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const settings = s.pieces.filter((p) => p.kind === 'setting');
   const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
   const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
-  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || settings.some((p) => p.current) };
+  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || s.tab === 'accessibility' || settings.some((p) => p.current) };
   // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, More. Places is where you go regularly; More is the
   // house's settings and Setup (Jonathan, 2026-10-31: "places holds the things you actually go to regularly, ... the
   // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
@@ -147,10 +148,18 @@ export default function App() {
   const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
   const setHaptics = (on: boolean) => { setHapticsState(on); keep('loom-haptics', on ? 'on' : 'off'); save({ haptics: on }); if (on) buzz(true); };
   useEffect(() => { if (!haptics || navigator.maxTouchPoints < 1) return; const t = setTimeout(warmHaptics, 1500); return () => clearTimeout(t); }, [haptics]);
-  // Allow zoom (immersion.ts): off unless the person turns it on, for anyone who needs to zoom to read.
+  // Accessibility (sheets.tsx AccessibilityApp). Allow zoom (immersion.ts): off unless the person turns it on, for anyone
+  // who needs to zoom to read.
   const [zoom, setZoomState] = useState(() => { try { return localStorage.getItem('loom-zoom') === 'on'; } catch { return false; } });
   const setZoom = (on: boolean) => { setZoomState(on); keep('loom-zoom', on ? 'on' : 'off'); save({ zoom: on }); };
   useEffect(() => { allowZoom(zoom); }, [zoom]);
+  // Reduce motion and Higher contrast (access.ts): follow the phone unless the person chooses; worn on <html>.
+  const [motion, setMotionState] = useState<Follow>(() => keptFollow('loom-motion'));
+  const setMotion = (v: Follow) => { setMotionState(v); keep('loom-motion', v); save({ motion: v }); };
+  useEffect(() => { wearMotion(motion); }, [motion]);
+  const [contrast, setContrastState] = useState<Follow>(() => keptFollow('loom-contrast'));
+  const setContrast = (v: Follow) => { setContrastState(v); keep('loom-contrast', v); save({ contrast: v }); };
+  useEffect(() => { wearContrast(contrast); }, [contrast]);
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -271,8 +280,10 @@ export default function App() {
   const chrome = data?.chrome;
   // loom's copy of the person's Appearance wins once a page lands, and this device's copy follows it. Only a newer
   // version than this tab has (its `at`) is applied: an answer that was already on its way when a choice was made, or
-  // that landed before the choice's own save came back, carries an older one and doesn't undo it.
-  useEffect(() => {
+  // that landed before the choice's own save came back, carries an older one and doesn't undo it. Before the page that
+  // carried it paints (a layout effect): a device that has never been told draws it the person's way, and Reduce motion
+  // is worn at once, so the arrival (below) never runs for someone who turned motion down elsewhere.
+  useLayoutEffect(() => {
     if (chrome?.csrf) csrf.current = chrome.csrf;
     const p = chrome?.prefs;
     if (!p?.at || p.at <= heard.current) return;
@@ -284,6 +295,8 @@ export default function App() {
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
     if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
     if (p.zoom !== undefined) { setZoomState(p.zoom); keep('loom-zoom', p.zoom ? 'on' : 'off'); }
+    if (p.motion) { setMotionState(p.motion); keep('loom-motion', p.motion); wearMotion(p.motion); }
+    if (p.contrast) { setContrastState(p.contrast); keep('loom-contrast', p.contrast); wearContrast(p.contrast); }
   }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -360,7 +373,8 @@ export default function App() {
   const path = (waiting && pending ? pending : url).split('?')[0];
   const place = placeAt(path);
   const shownTitle = title || ((error || waiting) && place ? place.label : '');
-  const intro = !error && data?.view === 'page' ? (data.page as Page).intro : undefined;
+  // A sheet (Accessibility) can carry an intro too, as a page does.
+  const intro = error ? undefined : data?.view === 'page' ? (data.page as Page).intro : data?.view === 'sheet' ? (data.intro as string | undefined) : undefined;
   const context = error || waiting ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
     ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
   const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
@@ -487,7 +501,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}

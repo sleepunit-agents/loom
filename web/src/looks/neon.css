@@ -115,6 +115,13 @@ color-scheme:dark;
   :root[data-look="neon"][data-mode]{--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none}
 }
 
+/* Higher contrast (Accessibility: data-contrast="more", or the phone's own while followed): Neon's texts brighter, its
+   hairlines at 3:1 and control edges at 4.5:1, measured by src/ui/look-contrast.test.ts; the glows are off (above). */
+:root[data-look="neon"][data-mode][data-contrast="more"]{
+--v-text:#FFFFFF;--v-ink:#FFFFFF;--v-text-2:#E4E1F5;--v-ink-soft:#E4E1F5;--v-text-3:#CFCBE6;--alert-ink:#E4E1F5;--nav-group-ink:#CFCBE6;--unavail-ink:#CFCBE6;--btn-disabled-ink:#CFCBE6;
+--v-disabled-ink:#CFCBE6;--muted-foreground-ink:#E4E1F5;--muted-foreground-tinted:#E4E1F5;--sidebar-muted:#D6D2EA;--structure-text:#FFFFFF;--status-pending-ink:#E4E1F5;
+--v-border:#7A74A6;--v-skel-edge:#7A74A6;--structure-line:#7A74A6;--v-edge:#A9A3D4;--v-disabled-edge:#A9A3D4;--loom-muted:#CFCBE6;--loom-muted-wash:#CFCBE6}
+
 /* ---- LOOM//OS and live-or-offline, in words (the phone bar's, phone-bar.tsx) ---- */
 :root[data-look="neon"] .loom-pbar__brand{font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
 :root[data-look="neon"] .loom-pbar__brand i{font-style:normal;color:var(--v-pink)}
