@@ -28,7 +28,7 @@ import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, 
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
-import { AppHeader, AppTile, HeaderLine, oneLine } from './app-header';
+import { AppHeader, AppTile, oneLine } from './app-header';
 import { PhoneBar } from './phone-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
@@ -436,13 +436,14 @@ export default function App() {
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           {phoneBar && chrome?.shell ? (
-            // Neon on a phone: one small bar right under the phone's own (phone-bar.tsx), the page's name in it; under
-            // it, only the page's one line and its ⓘ, when it has them.
+            // Neon on a phone: one small bar right under the phone's own (phone-bar.tsx), the page's name in it, and
+            // nothing under it: the page's line and its intro are behind the name (Jonathan, 2026-11-05). The Inbox's
+            // "N need you" is the bar's own count already, so it isn't info there.
             <header className="loom-top loom-top--bar" data-accent={appAccent}>
               <div className="mx-auto max-w-5xl px-4">
-                <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt}
+                <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt} where={url}
+                  info={{ line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
-                <HeaderLine where={url} context={profileLeads ? undefined : context} more={intro} />
               </div>
             </header>
           ) : (

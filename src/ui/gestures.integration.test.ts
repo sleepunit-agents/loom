@@ -154,7 +154,8 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     expect(held[0].t).toBeLessThan(280);
     await f.p.waitForTimeout(1500);
     await forget(f);
-    await drag(f, [80, 520], [320, 530]);
+    // On the Inbox's page itself: with no line under a phone's bar the page ends 24 px higher, and y 520 was below it.
+    await drag(f, [80, 460], [320, 470]);
     await expect.poll(() => where(f)).toBe('/');
     s = await seen(f);
     expect(s.moves).toContain('left');

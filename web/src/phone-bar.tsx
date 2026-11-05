@@ -7,6 +7,9 @@
 // don't fit, slowly (TICK_PX_S); it stops while it's touched and while the tab is hidden; under reduced motion it stands
 // still, cut short with an ellipsis.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { buzz, HapticLabel, useHaptics } from './haptic';
 import type { Shell } from './loom';
 
 /** How fast the ticker moves, in CSS pixels a second (his "slow, ~20-30 px/s"). */
@@ -87,9 +90,49 @@ function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: 
   );
 }
 
-/** The bar itself: the page's name (in its app's colour, or its agent's), the ticker, LOOM//OS, and the count. */
-export function PhoneBar({ title, color, crumb, go, shell, offline }: {
+/** What a page says about itself: its one line, then its longer intro (when that says more than the line). */
+export type PageInfo = { line?: string; more?: string };
+
+/** The page's name, and when the page says something about itself, the way to read it (Jonathan, 2026-11-05: "I like
+ * the idea of the helper icon thing but right now it's also wasting vertical space"): the name is the button (44 px tall to a finger, neon.css, in a 24 px bar), a small ⓘ
+ * after it (neon.css: drawn, so it's not part of the name), and it opens a sheet with the page's line and its intro. Without either, a plain name. */
+function PageName({ title, info, where }: { title: string; info?: PageInfo; where: string }) {
+  const haptics = useHaptics();
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [where]);
+  const line = info?.line?.trim() || undefined;
+  // The intro past its line: a page's line is often its intro's first sentence, said once.
+  const full = info?.more?.trim();
+  const more = (full && line && full.startsWith(line) ? full.slice(line.length).trim() : full) || undefined;
+  if (!line && !more) return <h1>{title}</h1>;
+  return (
+    <>
+      <h1>
+        <button type="button" className="loom-pbar__info relative" aria-label={`About ${title}`} aria-haspopup="dialog" aria-expanded={open}
+          onClick={() => { buzz(haptics, true); setOpen(true); }}>
+          <span className="loom-pbar__title">{title}</span>
+          <HapticLabel on={haptics} />
+        </button>
+      </h1>
+      <Drawer open={open} onOpenChange={setOpen}>
+        <DrawerContent className="loom-page-info">
+          <DrawerHeader className="flex-col items-stretch gap-2">
+            <DrawerTitle className="mb-0 break-words text-left leading-snug">{title}</DrawerTitle>
+            {line && <DrawerDescription className="break-words text-left">{line}</DrawerDescription>}
+            {more && <p className="loom-page-info__more max-w-prose break-words text-left text-sm leading-relaxed opacity-80">{more}</p>}
+          </DrawerHeader>
+          <DrawerFooter><DrawerClose asChild><Button variant="outline">Close</Button></DrawerClose></DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+    </>
+  );
+}
+
+/** The bar itself: the page's name (in its app's colour, or its agent's; the way to its info when it has some), the
+ * ticker, LOOM//OS, and the count. */
+export function PhoneBar({ title, color, crumb, go, shell, offline, info, where }: {
   title: string; color: string; crumb?: { label: string; href: string }; go: (href: string) => void; shell: Shell; offline: boolean;
+  info?: PageInfo; where: string;
 }) {
   const asks = shell.asks;
   return (
@@ -100,7 +143,7 @@ export function PhoneBar({ title, color, crumb, go, shell, offline }: {
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>
           </button>
         )}
-        <h1>{title}</h1>
+        <PageName title={title} info={info} where={where} />
       </div>
       <Ticker live={!offline} parts={tickerParts(shell)} />
       <span className="loom-pbar__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
