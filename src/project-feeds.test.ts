@@ -74,10 +74,10 @@ describe('project section feeds (criteria 10-11)', () => {
   });
 
   describe('10. a feed is run with exactly the documented arguments, in its environment, and checked', () => {
-    it('--project --since (clamped to 8 days, UTC to the second), --epic, then --name and --venue in the card\'s order', async () => {
+    it('--project --since (clamped to 8 days, UTC to the second), --epic, then --name, --venue and --repo in the card\'s order', async () => {
       const seen = join(tmp, 'seen');
       await piece('tasks', feedOf('loom-tasks'), { 'loom-tasks': recording(seen) });
-      write({ slug: 'pond', name: 'Pond', links: { aliases: ['toad', 'on-pond'], epic: 't-210', venues: ['slack:C0POND', 'discord:123'], repos: ['acme/pond'], notes: ['pond'] } });
+      write({ slug: 'pond', name: 'Pond', links: { aliases: ['toad', 'on-pond'], epic: 't-210', venues: ['slack:C0POND', 'discord:123'], repos: ['acme/pond', 'forgejo:codeberg.org/acme/pond-ui'], notes: ['pond'] } });
 
       const ss = await sections('pond', { since: new Date(NOW - 30 * DAY).toISOString() });
       expect(pieceSections(ss)).toEqual([{ key: 'piece:tasks', label: 'Tasks', groups: [{ title: 'Ready', items: [{ title: 'one', ref: 't-1', status: 'open' }] }] }]);
@@ -87,6 +87,8 @@ describe('project section feeds (criteria 10-11)', () => {
         '--epic', 't-210',
         '--name', 'toad', '--name', 'on-pond',
         '--venue', 'slack:C0POND', '--venue', 'discord:123',
+        // A bare owner/repo goes as github's (projects.md, links.repos); a selector with a forge as written.
+        '--repo', 'github:acme/pond', '--repo', 'forgejo:codeberg.org/acme/pond-ui',
         'name=tasks greeting=hello', '',
       ]);
     });

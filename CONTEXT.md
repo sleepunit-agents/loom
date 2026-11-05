@@ -229,6 +229,16 @@ _Avoid_: tag (that's the memory field a name matches), key
 A managed piece's contribution to a hub: a command loom runs that returns grouped items for one project.
 _Avoid_: plugin, integration, widget
 
+**Repo selector**:
+A project card's `links.repos` entry, `<forge>:<locator>` (`github:acme/app`; a bare `acme/app` is GitHub's). Core
+checks its syntax and passes it to feeds as `--repo`; a piece reads the repo (docs/specs/changes.md).
+_Avoid_: repo link, remote
+
+**Change**:
+A proposed change to one repo, open for review, on whatever forge hosts it (a pull or merge request). The Changes
+piece lists them; a standing rule in the approvals piece says whether an agent asks before merging one.
+_Avoid_: PR (that's GitHub's word), patch
+
 **Conversation digest**:
 A body run's own summary of its conversation, a core record: see **Digest** under Conversations.
 _Avoid_: transcript (that's the session), summary (that's a card field), episode (that's a 48h memory)
