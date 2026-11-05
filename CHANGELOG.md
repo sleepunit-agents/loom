@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A long panel pages like a list.** A piece's panel of more than 15 rows
+  shows 15 at a time, with numbered pages and its action under them. The
+  Secrets page's 61-row store had been one 6,500 px wall; it's now 2,500 px
+  and the sections under it can be reached.
 - **Neon on a phone: a page's info is behind its name** (t-1863). The line
   under the phone bar is gone; when a page has a line or an intro, its name
   in the bar wears a small ⓘ and opens a sheet with both (with a haptic tick).

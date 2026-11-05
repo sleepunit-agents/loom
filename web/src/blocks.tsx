@@ -112,11 +112,11 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
   );
 }
 
-/** Long tables and lists a page at a time (000h's pagination): PAGE_ROWS rows, then numbered pages. */
+/** Long tables, lists and panels a page at a time (000h's pagination): PAGE_ROWS rows, then numbered pages. */
 const PAGE_ROWS = 15;
 /** Where a list or table that pages itself is (the piece serves one page; loom asks for ?<param>=<n>). */
 type Pages = { param: string; at: number; count: number; total?: number };
-function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } {
+export function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } {
   const { ctx, go } = useEnv();
   const [at, setAt] = useState(0);
   // The piece's own pages (0-based here), else ours over what it sent.
