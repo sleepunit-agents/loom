@@ -554,6 +554,15 @@ Neon OS's own, not copied from any game.
   face states, and the player uses a manifest's `talking` animations when it has them. Without them, it uses `done`'s,
   then `working`'s. So when the owner makes a talking sheet in PixelLab, adding it to the agent's manifest is the
   whole change.
+- **How talking plays** (the owner, 2026-11-05: small breaks between the talking loops):
+  - **A bounded run.** When a reply lands, the face plays one talking beat per 150 characters of the reply, rounded
+    up, at least 1 and at most 4. Then it plays the done beat, then rests as idle. A reply arriving mid-run adds its
+    beats to the run, still capped at 4 in all.
+  - **A breath between beats.** After each talking beat (one animation, about 1.5 s), the face holds its rest frame
+    for a random 400–1200 ms before the next one. That's not a continuous loop, and not idle's multi-second gaps.
+  - **Which talking animation** is picked by its manifest weight at each beat, and a rare one is never played twice
+    in a row (the player's existing rule). Art's sheet weights them talking 70, animated 20 and smug aside 10 (rare).
+  - **Reduced motion:** no talking beats at all; the face holds its rest frame.
 - **The signal transition.** When a reply arrives, the screen plays a short burst of static and a scanline roll, for
   250 ms, before the talking beat starts. With reduced motion there's no transition, and the face shows its rest frames only,
   as the player already does.
@@ -749,6 +758,9 @@ Neon OS's own, not copied from any game.
     - A reply sets `data-signal="on"` for 250 ms (±50) before `data-face` becomes `talking`. With reduced motion it's
       never set.
     - A manifest without `talking` shows `data-anim="done"` for it, and one with neither shows `working`.
+    - A 400-character reply plays exactly 3 talking beats, then done. A 2,000-character one plays 4. A second reply
+      landing during the second beat of a 3-beat run ends it at 4. Each gap between two talking beats is 400–1200 ms
+      of the rest frame. With reduced motion, no talking beat plays.
     - The frame's label reads `<NAME> · CH <nn> · LINK OK` with the stream open, `LINK LOST` with it closed, and
       `NO CARRIER` after a failed delivery. A member's third thread with an agent is `CH 03`, and stays `CH 03` after
       the first is deleted.
