@@ -34,6 +34,8 @@ describe('the system bar', () => {
     expect(said(shell({ agents: [agent('art', true), agent('mark')] }))[1]).toMatchObject({ label: '1 of 2 agents at work', count: '1' });
     expect(said(shell({ agents: [agent('art', true), agent('mark', true)] }))[1]).toMatchObject({ label: 'All 2 agents are at work', count: '2' });
     expect(said(shell({ agents: [agent('art', true)] }))[1]).toMatchObject({ label: 'The agent is at work', count: '1' });
+    // A lone agent's loom (no household): nothing to count, no glyph.
+    expect(said(shell({ household: false, agents: [agent('agent')] })).map((i) => i.key)).toEqual(['signal']);
   });
 
   it('the boxes: how many, dimmed while one of their alerts is open; only with the Boxes piece, by its id not its label', () => {

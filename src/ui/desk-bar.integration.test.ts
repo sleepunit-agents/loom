@@ -27,8 +27,10 @@ const built = existsSync(`${root}dist/web/index.html`);
 /** A stand-in Boxes piece (the runtime): its tile says how many, one of its asks is an alert, and it reports art at work. */
 function boxes(dir: string) {
   writeFileSync(join(dir, 'boxes.manifest.json'), JSON.stringify({ v: 2, tab: { label: 'Boxes' }, tile: { label: 'Boxes', value: '3 boxes', page: '' },
-    asks: [{ text: 'loom-http failed on mini', page: '', label: 'Look', kind: 'alert' }],
-    agents: { art: { state: 'working', readings: [] } } }));
+    // No kind and no buttons: an alert all the same (docs/extensions.md).
+    asks: [{ text: 'loom-http failed on mini', page: '', label: 'Look' }],
+    // art at work (something it's doing); mark said broken by this piece, though another says it's doing something.
+    agents: { art: { readings: [], doing: [{ text: 'Checking a pull request' }] }, mark: { state: 'broken', reason: 'Its box is dark', readings: [] } } }));
   writeFileSync(join(dir, 'boxes.page.json'), JSON.stringify({ title: 'Boxes', sections: [{ id: 's', blocks: [{ type: 'text', text: 'Three boxes.' }] }] }));
   writeFileSync(join(dir, 'loom-runtime'), `#!/bin/sh
 d=$(dirname "$0")
@@ -39,6 +41,13 @@ case "$1 $2" in
 esac
 `);
   chmodSync(join(dir, 'loom-runtime'), 0o755);
+}
+
+/** A second piece that says mark is doing something (the runtime says mark is broken: worst wins, as on its card). */
+function busy(dir: string) {
+  writeFileSync(join(dir, 'busy.manifest.json'), JSON.stringify({ v: 2, agents: { mark: { readings: [], doing: [{ text: 'Rendering props' }] } } }));
+  writeFileSync(join(dir, 'loom-busy'), `#!/bin/sh\ncase "$1 $2" in\n"ui --json") cat "$(dirname "$0")/busy.manifest.json" ;;\n*) exit 2 ;;\nesac\n`);
+  chmodSync(join(dir, 'loom-busy'), 0o755);
 }
 
 describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under loom\'s own system bar', () => {
@@ -61,6 +70,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const bin = join(home, 'bin');
     mkdirSync(bin);
     boxes(bin);
+    busy(bin);
     for (const k of ['PATH', 'LOOM_HOME', 'XDG_CONFIG_HOME', 'LOOM_TIMEZONE']) saved[k] = process.env[k];
     process.env.PATH = [bin, process.env.PATH].join(delimiter);
     process.env.LOOM_HOME = home;

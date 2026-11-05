@@ -68,7 +68,7 @@ import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, typ
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
-import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
+import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 
 const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
@@ -718,10 +718,9 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
  * and what loom itself knows: when it was last on the tape, and where.
  */
 function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { label: string; bg: string; fg: string }>, nowMs: number): AgentCard[] {
-  const rank: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
   return h.agents.map((a) => {
     const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
-    const worst = reports.filter((x) => x.r.state).sort((x, y) => rank[y.r.state!] - rank[x.r.state!])[0];
+    const worst = reports.filter((x) => x.r.state).sort((x, y) => STATE_RANK[y.r.state!] - STATE_RANK[x.r.state!])[0];
     const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
@@ -734,6 +733,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     if (worst && (worst.r.state === 'broken' || worst.r.state === 'unavailable') && worst.r.reason && !problems.some((p) => p.text.includes(worst.r.reason!))) {
       problems.unshift({ text: worst.r.reason, tone: worst.r.state === 'broken' ? 'bad' : 'warn', source: pieceSource(worst.p.piece) });
     }
+    // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
     const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
     return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6) };
@@ -746,7 +746,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   const asks = absorbApprovals([...coreAsks(h, { householdOwner }), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
-    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
+    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
       ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}) })),
     ...pieces.flatMap((p) => {
@@ -858,9 +858,13 @@ function scopeOf(_req: IncomingMessage, _h: Household | undefined): string {
   return 'household';
 }
 
+/** An ask's kind: its own, else a decision only if it has something to choose with (its buttons), else an alert
+ * (docs/extensions.md; the Inbox's folders). */
+const askKind = (a: { kind?: AskKind; actions?: unknown[] }): AskKind => a.kind ?? (a.actions?.length ? 'decision' : 'alert');
+
 /** A piece's asks that say something's wrong (an alert, counted), for the system bar (web/src/system-bar.tsx). */
 function alertsOf(p: PieceInfo): { alerts?: number } {
-  const n = p.manifest.asks.filter((a) => a.kind === 'alert' && a.attention !== false).length;
+  const n = p.manifest.asks.filter((a) => askKind(a) === 'alert' && a.attention !== false).length;
   return n ? { alerts: n } : {};
 }
 
@@ -873,9 +877,18 @@ function backupOf(h: Household, nowMs = Date.now()): { backup?: Shell['backup'] 
   } catch { return {}; }
 }
 
-/** An agent at work, as the pieces report it (the same as its Home card's WORKING): a state of working, or something it has going. */
+/** An agent's state as its Home card says it (agentCards): the worst any piece reports, else working if a piece has
+ * something it's doing, else available. */
+const STATE_RANK: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
+function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
+  const reports = pieces.flatMap((p) => (p.manifest.agents?.[agent] ? [p.manifest.agents[agent]] : []));
+  const worst = reports.filter((r) => r.state).sort((x, y) => STATE_RANK[y.state!] - STATE_RANK[x.state!])[0];
+  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0) ? 'working' : 'available');
+}
+
+/** An agent at work, as its Home card would say it (agentStateOf). */
 function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
-  return pieces.some((p) => { const r = p.manifest.agents?.[agent]; return r && (r.state === 'working' || (r.doing?.length ?? 0) > 0); }) ? { working: true } : {};
+  return agentStateOf(pieces, agent) === 'working' ? { working: true } : {};
 }
 
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {

@@ -86,12 +86,13 @@ type Item = { key: string; label: string; glyph: React.ReactNode; count?: string
 /** The Boxes piece: the runtime (its id, /p/runtime; /p/box before the catalog renamed it). */
 const BOXES = ['/p/runtime', '/p/box'];
 
-/** What each glyph says: only what the shell knows. Agents always; Boxes when its piece is installed; the backup to a household owner. */
+/** What each glyph says: only what the shell knows. A household's agents; Boxes when its piece is installed; the backup to a household owner. */
 export function statusItems(shell: Shell, offline: boolean): Item[] {
   const items: Item[] = [{ key: 'signal', glyph: <Signal live={!offline} />, dim: offline,
     label: offline ? 'Offline: can’t reach loom, showing a saved copy' : 'Live: connected to loom' }];
+  // A household's agents (a lone agent's loom has no pieces' word on it to count).
   const all = shell.agents.length, working = shell.agents.filter((a) => a.working).length;
-  items.push({ key: 'agents', glyph: <Agents />, count: String(working), href: shell.home,
+  if (shell.household) items.push({ key: 'agents', glyph: <Agents />, count: String(working), href: shell.home,
     label: working === 0 ? `No agent at work right now (${all} in all)` : working === all ? `${all === 1 ? 'The agent is' : `All ${all} agents are`} at work`
       : `${working} of ${all} agents at work` });
   const boxes = shell.pieces.find((p) => BOXES.includes(p.href));
