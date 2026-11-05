@@ -434,6 +434,18 @@ html[data-look]::view-transition-new(loom-title) { animation-name: loom-move-nam
 .loom-dock-swap { display: grid; justify-items: center; }
 .loom-dock-swap > * { grid-area: 1 / 1; min-width: 0; }
 .loom-dock-gone { pointer-events: none; }
+/* loom: a dock never shows a scrollbar (Jonathan, 2026-11-05: "that tiny scroll bar ... above the dock, lets murder
+   that"). Its scroll area always mounts a vertical bar, so Radix writes overflow-y: scroll on the viewport (inline,
+   over dock.css's own overflow-y: hidden): whenever the stage ran a pixel taller (a key growing, the keys rising in), the dock scrolled up
+   and down and drew its thumb, grip and all, at the row's end. Up and down it never scrolls; sideways it scrolls,
+   when it must, with no bar, as a phone's does. Unlayered, so a swap's overflow: visible (just below, while the keys slide) still wins. */
+.v-dock:not([data-variant="rail"]) [data-part="viewport"] {
+  overflow-y: hidden !important;
+}
+.v-dock:not([data-variant="rail"])
+  :is([data-slot="scroll-area-scrollbar"], [data-slot="scroll-area-corner"]) {
+  display: none !important;
+}
 .loom-dock-swap[data-swap] :is(.v-dock__scroll, [data-part="viewport"], [data-radix-scroll-area-viewport]) { overflow: visible !important; }
 .loom-dock-swap [data-part="lane"]:nth-child(1) { --i: 0; } .loom-dock-swap [data-part="lane"]:nth-child(2) { --i: 1; }
 .loom-dock-swap [data-part="lane"]:nth-child(3) { --i: 2; } .loom-dock-swap [data-part="lane"]:nth-child(4) { --i: 3; }

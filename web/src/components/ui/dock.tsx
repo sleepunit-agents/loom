@@ -64,6 +64,7 @@ export function Dock({
   ref,
   dir,
   onPointerMove,
+  onPointerOver,
   onPointerLeave,
   onPointerDownCapture,
   onPointerUpCapture,
@@ -183,6 +184,12 @@ export function Dock({
 
   const handlePointerMove = (event: React.PointerEvent<HTMLElement>) => {
     onPointerMove?.(event);
+    track(event);
+  };
+  // loom: where the pointer is, from a move or from its arrival (pointerover): the first move after the page has
+  // changed under a still pointer can be hit-tested to the page before the dock, so a key it came onto knows by its
+  // pointerover alone.
+  const track = (event: React.PointerEvent<HTMLElement>) => {
     if (event.defaultPrevented || quiet || event.pointerType === "touch")
       return;
     const axis = variant === "rail" ? "y" : "x";
@@ -205,6 +212,24 @@ export function Dock({
     setScales(focusScales(over));
   };
 
+  // loom: a pointer that left without a pointerleave (a page change drew over the dock mid-move: desk.tsx's window
+  // shrinking into its key, a view transition, the dock drawn again under it) still lets go of its key, at its next
+  // move anywhere off the dock.
+  const focusIndexNow = React.useRef(focusIndex);
+  focusIndexNow.current = focusIndex;
+  const focusScalesNow = React.useRef(focusScales);
+  focusScalesNow.current = focusScales;
+  React.useEffect(() => {
+    if (pointerIndex === null) return;
+    const off = (event: PointerEvent) => {
+      if (event.target instanceof Node && root.current?.contains(event.target)) return;
+      setPointerIndex(null);
+      setScales(focusScalesNow.current(focusIndexNow.current));
+    };
+    document.addEventListener("pointermove", off, true);
+    return () => document.removeEventListener("pointermove", off, true);
+  }, [pointerIndex]);
+
   const handlePointerLeave = (event: React.PointerEvent<HTMLElement>) => {
     onPointerLeave?.(event);
     pointerPress.current = false;
@@ -220,8 +245,13 @@ export function Dock({
         : null;
     if (!target) return;
     const index = Number(target.dataset.dockIndex);
-    setFocusIndex(index);
-    setScales(focusScales(index));
+    // loom: only focus you can see grows a key (:focus-visible: the keyboard's, or a script's after the keyboard). A
+    // key a click or a tap focused, or one focus is sent back to after a click (desk.tsx: a window that shrank into
+    // it), would otherwise stay grown, engaged and named until something else took focus, the pointer long gone
+    // (Jonathan, 2026-11-05: "the dock key stays magnified").
+    const seen = target.matches(":focus-visible");
+    setFocusIndex(seen ? index : null);
+    setScales(focusScales(seen ? index : pointerIndex));
     if (!pointerPress.current)
       target.scrollIntoView({
         block: "nearest",
@@ -265,6 +295,10 @@ export function Dock({
       className={cn("v-dock", className)}
       style={customStyle}
       onPointerMove={handlePointerMove}
+      onPointerOver={(event) => {
+        onPointerOver?.(event);
+        track(event);
+      }}
       onPointerLeave={handlePointerLeave}
       onPointerDownCapture={(event) => {
         onPointerDownCapture?.(event);

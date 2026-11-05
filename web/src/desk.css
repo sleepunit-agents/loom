@@ -129,6 +129,8 @@
   background:var(--t);box-shadow:var(--glow-tick) var(--t);pointer-events:none;z-index:2}
 :root[data-look] .loom-window::before{left:0;top:var(--cut);transform-origin:0 0;rotate:-45deg}
 :root[data-look] .loom-window::after{right:0;bottom:var(--cut);transform-origin:100% 100%;rotate:-45deg}
+/* a double-click on the strip minimizes the window (desk.tsx): it selects no words of the title on the way */
+:root[data-look] .loom-window__bar{-webkit-user-select:none;user-select:none}
 :root[data-look] .loom-window__bar{flex:none;display:flex;align-items:center;gap:12px;height:40px;padding-right:6px;border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));
   background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
 :root[data-look] .loom-window__key{display:grid;place-items:center;align-self:stretch;width:60px;padding-left:10px;background:var(--t);color:var(--v-on-accent);

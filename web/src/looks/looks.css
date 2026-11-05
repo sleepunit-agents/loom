@@ -266,6 +266,16 @@ html.loom-ios-app:root[data-look] .loom-sys{display:none}
    pill, so a key grown toward it, or its name, isn't under it. */
 :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) :is(.v-dock__scroll,[data-part="viewport"]){margin-top:calc(-1 * var(--dock-reserved-lift));padding-top:var(--dock-reserved-lift)}
 :root[data-look] .loom-dock-bar:has([data-part="lane"][data-engaged]){z-index:41}
+/* sideways too (Jonathan, 2026-11-05: the edge keys' glow is cut at the sides): the first and last keys, grown and lit,
+   reach about 48px past their own sides (17 of key, 31 of glow at 1.65x), past the stage's 24: the scroller's clip
+   reaches the dock's reserved lift and 12px more out to each side, the stage's padding giving it back, so no key moves.
+   Only where keys grow (a pointer that hovers): a finger's keys don't, and a phone's dock is as it was. */
+@media (hover:hover) and (pointer:fine){
+  :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]){--dock-edge-room:calc(var(--dock-reserved-lift) + 12px)}
+  :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) .v-dock__scroll[data-slot="scroll-area"]{margin-inline:calc(var(--s-6) - var(--dock-edge-room));
+    width:calc(100% + 2 * (var(--dock-edge-room) - var(--s-6)));max-width:none}
+  :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="stage"]{padding-inline:var(--dock-edge-room)}
+}
 :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="lane"]{block-size:var(--dock-item-size)}
 :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="item"]{display:grid;block-size:var(--dock-item-size);-webkit-touch-callout:none;user-select:none}
 :root[data-look] .loom-dock-bar .v-dock[data-variant] [data-part="visual"]{border-radius:12px}

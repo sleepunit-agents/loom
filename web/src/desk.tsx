@@ -255,6 +255,33 @@ function keyFor(href: string): HTMLElement | null {
   return t ? document.querySelector<HTMLElement>(`.loom-dock-bar [data-part="item"][aria-label="${CSS.escape(t.label)}"]`) : null;
 }
 
+// ---- minimized: a window shrunk back into its key, kept where it was -------------------------------------------
+
+/** Where each app was left when its window was minimized, by its dock key (the key's href): the page, its query, and
+ * how far down it was. This session's, in this tab (sessionStorage, read once; in memory alone where it can't be kept). */
+type Left = Record<string, { url: string; top: number }>;
+const LEFT = 'loom-desk-left';
+const left: Left = (() => { try { const v = JSON.parse(sessionStorage.getItem(LEFT) ?? '{}') as unknown; return v && typeof v === 'object' ? v as Left : {}; } catch { return {}; } })();
+const keepLeft = () => { try { sessionStorage.setItem(LEFT, JSON.stringify(left)); } catch { /* a private window: in memory only */ } };
+
+/** Minimize (Jonathan, 2026-11-05: "like a real OS"): the app whose key is `key` is kept where it is, and the window
+ * shrinks back into that key (deskGo's close), the desktop behind it. Without a key (a window opened from Find) it
+ * simply goes. */
+export function deskMinimize(key: string | undefined, url: string, top: number, go: (href: string) => void) {
+  if (key) { left[key] = { url, top: Math.max(0, Math.round(top)) }; keepLeft(); }
+  go('/');
+}
+/** Where the app under `key` was minimized, if it was: taken, so the window opened there again is open, not kept. */
+export function deskRestore(key: string): { url: string; top: number } | undefined {
+  const l = left[key];
+  if (l) { delete left[key]; keepLeft(); }
+  return l;
+}
+/** Closed, not minimized: its key opens the app at its start again. */
+export function deskForget(key: string | undefined) {
+  if (key && left[key]) { delete left[key]; keepLeft(); }
+}
+
 type VT = { finished: Promise<void> };
 type Doc = Document & { startViewTransition?: (update: () => void) => VT };
 
@@ -290,26 +317,30 @@ const popUpOpen = () => !!document.querySelector(':is([role="dialog"],[role="ale
 /** A field has the keys. */
 const typing = () => { const a = document.activeElement as HTMLElement | null; return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable); };
 
-/** The desktop's keys: Esc closes the window back to the desktop, not while a sheet, a dialog, a list or a menu is open
- * (Esc closes that), nor while a field has the keys (Esc there is the field's). And the dock's places, for keyFor. */
-export function DeskKeys({ go, places }: { go: (href: string) => void; places: Tab[] }) {
+/** The desktop's keys: Esc closes the window back to the desktop (`close`: App.tsx, which forgets where it was), not
+ * while a sheet, a dialog, a list or a menu is open (Esc closes that), nor while a field has the keys (Esc there is the
+ * field's). And the dock's places, for keyFor. */
+export function DeskKeys({ close, places }: { close: () => void; places: Tab[] }) {
   tabs = places;
+  const now = useRef(close);
+  now.current = close;
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || location.pathname === '/' || popUpOpen() || typing()) return;
       e.preventDefault();
-      go('/');
+      now.current();
     };
     addEventListener('keydown', f); return () => removeEventListener('keydown', f);
-  }, [go]);
+  }, []);
   return null;
 }
 
 /** One big window over the ground (desk.css): its title strip in the app's colour (its key, its name, where it is),
- * Close (and Esc) back to the desktop; on a wide enough screen, where you've been lately beside it. Focus goes to its
- * title as each page opens in it, once per page (a page drawn again, Try again or a refresh, leaves focus be). */
-export function DeskWindow({ tint, lead, title, url, waiting, go, children }: { tint: string; lead: React.ReactNode; title: string; url: string; waiting: boolean;
-  go: (href: string) => void; children: React.ReactNode }) {
+ * Close (and Esc) back to the desktop; a double-click on the strip (not on a control in it) minimizes it, as its open
+ * key does (App.tsx); on a wide enough screen, where you've been lately beside it. Focus goes to its title as each page
+ * opens in it, once per page (a page drawn again, Try again or a refresh, leaves focus be). */
+export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimize, children }: { tint: string; lead: React.ReactNode; title: string; url: string; waiting: boolean;
+  go: (href: string) => void; close: () => void; minimize: () => void; children: React.ReactNode }) {
   const head = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef('');
   useEffect(() => {
@@ -321,11 +352,15 @@ export function DeskWindow({ tint, lead, title, url, waiting, go, children }: { 
   const path = url.split('?')[0];
   return (
     <section className="loom-window" aria-labelledby="loom-window-title" style={{ '--t': tint } as React.CSSProperties}>
-      <div className="loom-window__bar">
+      <div className="loom-window__bar" onDoubleClick={(e) => {
+        if (e.button !== 0 || (e.target as Element).closest('button, a, input, select, textarea, [role="button"]')) return;
+        e.preventDefault();
+        minimize();
+      }}>
         <span className="loom-window__key" aria-hidden>{lead}</span>
         <h2 id="loom-window-title" tabIndex={-1} ref={head}>{title || ' '}</h2>
         <span className="loom-window__path loom-data" aria-hidden>loom{path}</span>
-        <button type="button" className="loom-window__close" aria-label="Close, back to the desktop" title="Close (Esc)" onClick={() => go('/')}>
+        <button type="button" className="loom-window__close" aria-label="Close, back to the desktop" title="Close (Esc)" onClick={close}>
           <AnimatedIcon name={iconFor('x')} size="sm" /></button>
       </div>
       <div className="loom-window__body">

@@ -354,9 +354,27 @@ export default function App() {
     ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
-  const pick = (href: string) => (buzz(haptics, true), href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
+  const lit = accountOpen && me ? '/account' : current(phoneTabs);
+  // A desktop's window and the household key it's open under (desk.tsx): its open key, or a double-click on its strip,
+  // minimizes it, kept where it is; that key opens it there again; Close and Esc close it, forgetting. Home always
+  // goes to the desktop (minimizing what's open, as a desktop's "show desktop" does). An agent's own dock is its own.
+  const deskKey = () => deskNow.current && !agentDock && location.pathname !== '/' && lit && new URL(lit, location.href).pathname !== '/' ? lit : undefined;
+  const minimize = () => { if (desk$) desk$.deskMinimize(deskKey(), location.pathname + location.search, mainRef.current?.scrollTop ?? 0, go); else go('/'); };
+  const closeWindow = () => { desk$?.deskForget(deskKey()); go('/'); };
+  const pick = (href: string) => {
+    buzz(haptics, true);
+    if (href === '#more') { setMoreAsked(true); setMore(true); return; }
+    if (href === '#back') { go('/'); return; }
+    if (deskNow.current && !agentDock && desk$) {
+      const home = new URL(href, location.href).pathname === '/';
+      if (location.pathname !== '/' && (href === deskKey() || home)) { minimize(); return; }
+      const was = home ? undefined : desk$.deskRestore(href);
+      if (was) { restoreTo.current = was; go(was.url); return; }
+    }
+    go(href);
+  };
   const backTile: DockItem | null = agentDock && accent ? {
     value: '#back', label: 'Back',
     icon: <span className="loom-back-mark" aria-hidden><AgentAvatar a={accent} size={36} state={accent.asks ? 'needs-input' : 'idle'} /></span>,
@@ -413,7 +431,15 @@ export default function App() {
 
   // A desktop's page scrolls inside its own space (desk.css): a new page opens at its top.
   const mainRef = useRef<HTMLElement>(null);
+  const restoreTo = useRef<{ url: string; top: number } | null>(null);
   useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [url]);
+  // ... unless it's a minimized window opened again (pick, above): back where it was, once its page is drawn.
+  useLayoutEffect(() => {
+    const r = restoreTo.current;
+    if (!r || waiting) return;
+    restoreTo.current = null;
+    if (url === r.url && mainRef.current) mainRef.current.scrollTop = r.top;
+  }, [url, waiting, data]);
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
   // The phone's bar at every width (phone-bar.tsx). On a phone it merges with the phone's own status bar; wider,
@@ -497,7 +523,7 @@ export default function App() {
           )}
 
           <Wrap on={inWindow && !!D} wrap={(page) => D && (
-            <D.DeskWindow url={url} waiting={waiting} go={go} title={shownTitle || place?.label || ''}
+            <D.DeskWindow url={url} waiting={waiting} go={go} close={closeWindow} minimize={minimize} title={shownTitle || place?.label || ''}
               tint={accent ? markColor(accent.bg) : `var(--loom-tint-${appTint ?? 'pink'})`}
               lead={accent ? <AgentAvatar a={accent} size={22} /> : <AnimatedIcon name={iconFor(icon(tileLabel || ''))} size="sm" />}>{page}</D.DeskWindow>
           )}>
@@ -547,7 +573,7 @@ export default function App() {
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
                 items={backTile ? [backTile, ...dockItems(phoneTabs)] : me ? [...dockItems(phoneTabs), me] : dockItems(phoneTabs)}
-                value={accountOpen && me ? '/account' : current(phoneTabs)} onValueChange={pick}
+                value={lit} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
               </DockSwap>
             </nav>
@@ -555,7 +581,7 @@ export default function App() {
         </div>
       </div>
 
-      {desk && D && <D.DeskKeys go={go} places={[...nav.tabs, ...nav.more]} />}
+      {desk && D && <D.DeskKeys close={closeWindow} places={[...nav.tabs, ...nav.more]} />}
       {booting && D && chrome?.shell && <D.DeskBoot shell={chrome.shell} offline={!!savedAt} onDone={() => {
         setBooting(false);
         if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundOn.current) void import('./sound').then((m) => m.chime('boot'));
