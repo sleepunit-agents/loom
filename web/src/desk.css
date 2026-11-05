@@ -16,12 +16,12 @@
 /* ---- the desktop's layout: what needs you on the left, the agents in the middle, vitals on the right. The side columns
    keep a readable width from 1024 to 2560; the middle takes the rest, and its agents fill it two or three across. ---- */
 :root[data-look] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
-  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px)}
+  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px);grid-template-rows:auto minmax(0,1fr)}
 @media (min-width:1600px){:root[data-look] .loom-desk-home{grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(300px,380px);gap:20px}}
 :root[data-look] .loom-desk-col{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;scrollbar-width:thin;
   padding:2px 4px 8px;margin:-2px -4px 0}
 :root[data-look] .loom-desk-agents{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
-:root[data-look] .loom-desk-headline{font-family:var(--font-display);font-weight:600;font-size:22px;letter-spacing:.01em;line-height:1.2;color:var(--v-text)}
+:root[data-look] .loom-desk-headline{grid-column:1/-1;font-family:var(--font-display);font-weight:600;font-size:22px;letter-spacing:.01em;line-height:1.2;color:var(--v-text)}
 
 /* ---- a widget: a dark panel over the ground, a hairline edge, a lit tick in its tint on the top edge, a cut corner ---- */
 :root[data-look] .loom-w{--t:var(--v-pink);position:relative;display:flex;flex-direction:column;min-width:0;flex:none;
@@ -88,13 +88,6 @@
 :root[data-look] .loom-backup[data-tone="bad"]{color:var(--loom-bad-ink);font-weight:600}
 :root[data-look] .loom-backup[data-tone="warn"]{color:var(--loom-warn-ink)}
 
-/* ---- what's moving: a strip, its label a lit key ---- */
-:root[data-look] .loom-w--tape{flex-direction:row;align-items:stretch}
-:root[data-look] .loom-tape__label{flex:none;display:grid;place-items:center;padding:0 12px;background:var(--t);color:var(--v-on-accent);
-  font-family:var(--loom-font-data);font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
-:root[data-look] .loom-tape{display:grid;gap:4px;min-width:0;padding:10px 14px;font-size:13px;color:var(--v-text-2)}
-:root[data-look] .loom-tape b{color:var(--v-text);font-weight:600}
-:root[data-look] .loom-tape>li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---- More contrast: no glass, no glow ---- */
 @media (prefers-contrast:more){
@@ -115,7 +108,6 @@
   :root[data-look] .loom-vital:hover{background:color-mix(in srgb,var(--t) 6%,transparent)}
 }
 :root[data-look] a.loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
-:root[data-look] .loom-tape__meta{color:var(--v-text-3)}
 /* ---- an app's window (App.tsx): one big frame over the ground, between the bars and the dock. A chassis: a hairline
    edge in the app's colour, two cut corners, a ruled strip down its left side, a title strip with the app's key, its
    name and where it is, and Close. The page inside reads at a page's width, never a phone's, and scrolls inside. ---- */
