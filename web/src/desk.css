@@ -12,7 +12,6 @@
 :root[data-look] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
   padding:14px var(--desk-gutter) var(--desk-dock);display:flex;flex-direction:column;gap:12px;overflow:hidden}
 
-
 /* ---- the desktop's layout: what needs you on the left, the agents in the middle, vitals on the right. The side columns
    keep a readable width from 1024 to 2560; the middle takes the rest, and its agents fill it two or three across. ---- */
 :root[data-look] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
@@ -87,7 +86,6 @@
 :root[data-look] .loom-backup{display:flex;align-items:center;gap:10px;padding:14px 16px;font-size:14px}
 :root[data-look] .loom-backup[data-tone="bad"]{color:var(--loom-bad-ink);font-weight:600}
 :root[data-look] .loom-backup[data-tone="warn"]{color:var(--loom-warn-ink)}
-
 
 /* ---- More contrast: no glass, no glow ---- */
 @media (prefers-contrast:more){
