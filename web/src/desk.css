@@ -132,7 +132,7 @@
 /* (a double-click on the strip minimizes the window, desk.tsx: it selects no words of the title on the way) */
 :root[data-look] .loom-window__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:12px;height:40px;padding-right:6px;border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));
   background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
-:root[data-look] .loom-window__key{display:grid;place-items:center;align-self:stretch;width:60px;padding-left:10px;background:var(--t);color:var(--v-on-accent);
+:root[data-look] .loom-window__key{flex:none;display:grid;place-items:center;align-self:stretch;width:60px;padding-left:10px;background:var(--t);color:var(--v-on-accent);
   clip-path:polygon(var(--cut) 0,100% 0,calc(100% - 12px) 100%,0 100%,0 var(--cut))}
 :root[data-look] .loom-window__bar h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;font-size:13px;
   letter-spacing:.14em;text-transform:uppercase;color:var(--v-text);outline:none}
@@ -147,15 +147,37 @@
 :root[data-look] .loom-window main.loom-desk-main{flex:1 1 auto;min-width:0;height:auto;overflow:auto;scrollbar-gutter:stable;padding:24px 28px 40px 40px;display:block}
 :root[data-look] .loom-window main.loom-desk-main>*{width:100%;max-width:72rem;margin-inline:auto}
 :root[data-look] .loom-window main.loom-desk-main>*+*{margin-top:16px}
-/* where you've been lately, beside the page, on a screen with room for it */
+/* Back and Forward in the app's own history, then the trail to where it is (desk.tsx Trail): the app, the page this one
+   is under, this one. The trail folds its middle into "…" when it's longer than the strip, and the title is cut short:
+   the strip never scrolls. The address after it gives way first. */
+:root[data-look] .loom-window__steps{flex:none;display:flex;margin-left:-6px}
+:root[data-look] .loom-window__step{display:grid;place-items:center;width:30px;height:32px;color:var(--v-text-2)}
+:root[data-look] .loom-window__step:disabled{color:var(--v-text-3);opacity:.45}
+:root[data-look] .loom-window__where{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden}
+:root[data-look] .loom-window__trail{flex:none;min-width:0}
+:root[data-look] .loom-window__trail ol{display:flex;align-items:center;gap:8px}
+:root[data-look] .loom-window__trail li{flex:none;display:flex;align-items:center;gap:8px;max-width:14em;min-width:0}
+:root[data-look] .loom-window__trail li::after{content:"›";flex:none;color:var(--v-text-3)}
+:root[data-look] .loom-window__trail a{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:600;font-size:12px;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--v-text-2);text-decoration:none}
+:root[data-look] .loom-window__where h2{flex:0 1 auto;min-width:5em}
+:root[data-look] .loom-window__path{flex-shrink:100}
+@media (hover:hover) and (pointer:fine){
+  :root[data-look] .loom-window__step:not(:disabled):hover{color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
+  :root[data-look] .loom-window__trail a:hover{color:var(--v-text);text-decoration:underline;text-underline-offset:3px}
+}
+/* The side column (desk.tsx DeskWindow; App.tsx SIDE_COLUMN): the page's own side sections, or Recent here. A fixed
+   width, its own scroll down, never sideways: what's in it wraps, or is cut short with an ellipsis (index.css
+   .loom-side-col). */
 :root[data-look] .loom-window__side{display:none}
-@media (min-width:1600px){
-  :root[data-look] .loom-window__side{display:block;flex:none;width:240px;overflow:auto;padding:22px 18px;border-left:1px solid var(--v-border)}
-  :root[data-look] .loom-window__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
-  :root[data-look] .loom-window__side ul{display:grid;gap:2px}
-  :root[data-look] .loom-window__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
+@media (min-width:1280px){
+  :root[data-look] .loom-window__side{display:block;flex:none;width:300px;max-width:300px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;
+    padding:22px 16px 40px;border-left:1px solid var(--v-border)}
+  :root[data-look] nav.loom-window__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
+  :root[data-look] nav.loom-window__side ul{display:grid;gap:2px}
+  :root[data-look] nav.loom-window__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
     text-decoration:none;box-shadow:inset 1px 0 0 var(--v-border)}
-  :root[data-look] .loom-window__side a:hover{color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
+  :root[data-look] nav.loom-window__side a:hover{color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
 }
 
 /* ---- the window, opened and closed (desk.tsx deskGo): it grows out of its dock key and shrinks back into it;

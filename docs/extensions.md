@@ -438,7 +438,7 @@ a fetch from another site, but a link can still open one.) It answers:
 { "title": "Work", "intro": "One line under the title.",
   "sections": [
     { "id": "yours", "title": "Your call", "tone": "warn", "blocks": [ ... ] },
-    { "id": "facts", "side": true, "blocks": [ ... ] }
+    { "id": "facts", "place": "side", "blocks": [ ... ] }
   ] }
 ```
 
@@ -450,7 +450,22 @@ something is changing (an install running, a sign-in being checked), and drop
 it once it's settled. A `callout` with `"busy": true` says what's under way,
 with a spinner in its icon's place.
 
-A section with `"side": true` goes in the side column. One with `"fold": "open"` or
+A section with `"place": "side"` goes in the side column (`"main"`, the
+default, is the page itself; the older `"side": true` still means the side, and
+the two disagreeing refuses the page). Put there what helps with the page rather
+than what the page is: its filters and sort, a small chart, what changed lately.
+On a desktop window 1280 px wide or more, the side column is the window's own
+right-hand column, a fixed width, scrolling down on its own beside the page.
+Narrower, and on a phone, the side sections fold together into one block at the
+top of the page, closed until it's opened ("Filters & more" when one of them
+holds a `filters` block, else "Details & more"). A chart there is drawn shorter.
+Nothing in the side column scrolls sideways: words wrap and long ones break. A
+side section is only a placement: it's checked, gated and drawn block by block
+exactly as a main one is. A page that puts nothing in its side column gets
+Recent here in a desktop window instead: the pages of the same app opened lately
+on that device.
+
+One with `"fold": "open"` or
 `"closed"` folds under its title (it needs one), starting that way; the viewer's
 last open or close on that page sticks, on that device. `tone` gives the whole
 section that tone's look, such as amber for "needs you".

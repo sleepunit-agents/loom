@@ -1,7 +1,7 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal, flushSync } from 'react-dom';
 // An agent's state beside its name (a desktop's alone): its own chunk.
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 // The ground (contour field), on its own (ground.tsx).
@@ -47,6 +47,8 @@ const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetV
 const FindOverlay = lazy(() => import('./find'));
 const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPanel })));
 import { noteRecent } from './recent';
+import * as trail from './trail';
+import { InSide } from './side';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
 import { useGestures } from './gestures';
@@ -69,12 +71,17 @@ const iconsOf = (chrome?: Chrome) => {
   return (label: string) => own[label] ?? ICON[label] ?? 'circle';
 };
 
-function useWide() {
-  const q = '(min-width: 1024px)';
-  const [wide, set] = useState(() => matchMedia(q).matches);
-  useEffect(() => { const m = matchMedia(q); const f = () => set(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
-  return wide;
+function useMedia(q: string) {
+  const [on, set] = useState(() => matchMedia(q).matches);
+  useEffect(() => { const m = matchMedia(q); const f = () => set(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, [q]);
+  return on;
 }
+const useWide = () => useMedia('(min-width: 1024px)');
+/** Where a page's side sections stand (docs/extensions.md, "Pages"): 1280 px and wider, a column of their own (a desktop
+ * window's right-hand one, else beside the page); narrower, folded together at the top of the page. 1280, not the old
+ * Lately's 1600: the common laptop widths (1280 to 1536) get the column, and a window there still leaves the page about
+ * 860 px, wider than its rows need. Below it, the page would be squeezed under 700. */
+const SIDE_COLUMN = '(min-width: 1280px)';
 
 type Tab = { label: string; href: string; current: boolean; count?: number };
 
@@ -106,6 +113,7 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
 
 export default function App() {
   const wide = useWide();
+  const sideWide = useMedia(SIDE_COLUMN);
   const [vw, setVw] = useState(() => innerWidth);
   useEffect(() => { const f = () => setVw(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
   const [url, setUrl] = useState(() => location.pathname + location.search);
@@ -267,7 +275,26 @@ export default function App() {
     return 'push';
   };
   const showWith = (how: Move | undefined, to: string, push: boolean) => moveTo(how, () => flushSync(() => { void load(to, push); }));
-  useEffect(() => { void load(url, false); const f = () => void showWith(moveFor(location.pathname, true), location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Each app's own history (trail.ts): the app the page shown is in (set as each one draws, below), how the next page
+  // is being reached, and where to scroll it to once it's drawn (Back, Forward, or a minimized window opened again).
+  const appKeyRef = useRef<string | undefined>(undefined);
+  const intent = useRef<{ how: trail.How; url: string } | null>(null);
+  const restoreTo = useRef<trail.Visit | null>(null);
+  const scrolled = () => (deskNow.current && mainRef.current ? mainRef.current.scrollTop : scrollY);
+  useEffect(() => {
+    void load(url, false);
+    const f = () => {
+      // The browser's Back or Forward: the page it leaves is still the one shown. Its history and the app's agree when
+      // it lands on the app's page before or after this one, and that page comes back where it was.
+      const to = location.pathname + location.search;
+      trail.keepTop(appKeyRef.current, showing.current, scrolled());
+      intent.current = { how: 'pop', url: to };
+      const near = [trail.step(appKeyRef.current, -1), trail.step(appKeyRef.current, 1)].find((p) => p?.url === to);
+      if (near) restoreTo.current = near;
+      void showWith(moveFor(location.pathname, true), to, false);
+    };
+    addEventListener('popstate', f); return () => removeEventListener('popstate', f);
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Whether this is a desktop, for go (worked out below): read when it runs.
   const deskNow = useRef(false);
@@ -276,14 +303,17 @@ export default function App() {
     const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); } };
     addEventListener('keydown', f); return () => removeEventListener('keydown', f);
   }, []);
-  const go = useCallback((href: string) => {
+  const go = useCallback((href: string, o?: { how?: 'back' | 'forward' }) => {
     const u = new URL(href, location.href);
     // Find is an overlay over the page you're in, not a page of its own (find.tsx).
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
+    // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
+    trail.keepTop(appKeyRef.current, location.pathname + location.search, scrolled());
+    intent.current = { how: o?.how ?? 'go', url: u.pathname + u.search };
     // A desktop (desk.css): the window grows out of its dock key on the way into an app, and back into it on the way home.
     if (deskNow.current && desk$?.deskGo(location.pathname, u.pathname, () => flushSync(() => { void load(u.pathname + u.search, true); }))) return;
-    showWith(moveFor(u.pathname), u.pathname + u.search, true);
+    showWith(moveFor(u.pathname, o?.how === 'back'), u.pathname + u.search, true);
   }, [load]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const chrome = data?.chrome;
@@ -369,10 +399,10 @@ export default function App() {
   const deskKey = () => deskNow.current && !agentDock && location.pathname !== '/' && lit && new URL(lit, location.href).pathname !== '/' ? lit : undefined;
   const minimize = () => {
     const key = deskKey();
-    if (key) desk$?.deskMinimize(key, { url: location.pathname + location.search, top: mainRef.current?.scrollTop ?? 0 });
+    if (key) trail.minimize(key, { url: location.pathname + location.search, top: scrolled() });
     go('/');
   };
-  const closeWindow = () => { desk$?.deskForget(deskKey()); go('/'); };
+  const closeWindow = () => { trail.forget(deskKey()); go('/'); };
   const pick = (href: string) => {
     buzz(haptics, true);
     if (href === '#more') { setMoreAsked(true); setMore(true); return; }
@@ -380,7 +410,7 @@ export default function App() {
     if (deskNow.current && !agentDock && desk$) {
       const home = new URL(href, location.href).pathname === '/';
       if (location.pathname !== '/' && (href === deskKey() || home)) { minimize(); return; }
-      const was = home ? undefined : desk$.deskRestore(href);
+      const was = home ? undefined : trail.restore(href);
       if (was) { restoreTo.current = was; go(was.url); return; }
     }
     go(href);
@@ -441,14 +471,15 @@ export default function App() {
 
   // A desktop's page scrolls inside its own space (desk.css): a new page opens at its top.
   const mainRef = useRef<HTMLElement>(null);
-  const restoreTo = useRef<import('./desk').Place | null>(null);
   useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [url]);
-  // ... unless it's a minimized window opened again (pick, above): back where it was, once its page is drawn.
+  // ... unless it's a minimized window opened again (pick, above), or a page come back to with Back or Forward: back
+  // where it was, once its page is drawn. A desktop's window scrolls inside itself, a phone's page the whole screen.
   useLayoutEffect(() => {
     const r = restoreTo.current;
     if (!r || waiting) return;
     restoreTo.current = null;
-    if (url === r.url && mainRef.current) mainRef.current.scrollTop = r.top;
+    if (url !== r.url) return;
+    if (deskNow.current && mainRef.current) mainRef.current.scrollTop = r.top; else scrollTo({ top: r.top });
   }, [url, waiting, data]);
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
@@ -462,6 +493,46 @@ export default function App() {
   useLayoutEffect(() => { deskNow.current = desk; });
   // Every page but Home is in the window; Home never is, even one that didn't load (it says so on the desktop).
   const inWindow = desk && path !== '/';
+
+  // The app the page shown is in, for its own history (trail.ts): on a desktop the dock key its window is open under,
+  // as minimizing keys it; an agent's pages are that agent's; else the place it's under.
+  const appKey = path === '/' ? undefined : desk && !agentDock && lit && lit.split('?')[0] !== '/' ? lit
+    : accent ? `/a/${accent.id}` : place?.href ?? `/${path.split('/')[1]}`;
+  useLayoutEffect(() => { if (!waiting) appKeyRef.current = appKey; });
+  const [, setMoved] = useState(0);
+  useEffect(() => {
+    if (error || waiting || !data || !appKey) return;
+    const i = intent.current;
+    const mine = i?.url === url;
+    if (mine) intent.current = null;
+    if (trail.note(appKey, url, mine ? i!.how : 'go', title || undefined)) setMoved((n) => n + 1);
+  }, [url, data, waiting, error, appKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Back and Forward in the app's history: to the page as it was left (its query, how far down).
+  const move = (by: -1 | 1) => {
+    const p = trail.step(appKeyRef.current, by);
+    if (!p) return;
+    restoreTo.current = p;
+    go(p.url, { how: by < 0 ? 'back' : 'forward' });
+  };
+  const back = chrome?.shell?.back;
+  const pathOf = (h: string) => h.split('?')[0];
+  // A window's trail (desk.tsx): the app, then the page this one is under, then this one. A crumb goes to that page as
+  // it was last left in this app's history (the list with its filters), else to its start.
+  // An agent's pages start at the agent.
+  const top = place ?? (accent ? { label: accent.label, href: `/a/${accent.id}` } : undefined);
+  const crumbs = inWindow ? [...(top && top.href !== path ? [top] : []),
+    ...(back && pathOf(back.href) !== path && pathOf(back.href) !== top?.href ? [back] : [])]
+    .map((c) => ({ label: c.label, href: trail.lastAt(appKey, pathOf(c.href))?.url ?? c.href })) : [];
+  // A phone's back chevron (phone-bar.tsx), on a page under another: the page before this one in the same app, as it
+  // was left; opened from somewhere else (a link, Find, the Inbox), the page it's under, as before. A desktop's window
+  // has its own Back, so its bar has no chevron.
+  const prevHere = back && !inWindow ? trail.step(appKey, -1) : undefined;
+  const phoneCrumb = inWindow ? undefined : prevHere ? { label: prevHere.label ?? back!.label, href: prevHere.url } : back;
+  // Where the page's side sections stand (SIDE_COLUMN): a desktop window's own right-hand column at 1280 and wider,
+  // beside the page wider than that elsewhere, else folded at its top.
+  const [sideEl, setSideEl] = useState<HTMLElement | null>(null);
+  const pageSide = !!(data as { page?: Page } | null)?.page?.sections?.some(isSide);
+  const sideAt: SideAt = !sideWide ? 'fold' : inWindow ? (pageSide ? { el: sideEl } : 'fold') : 'column';
   // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
   const [D, setD] = useState(desk$);
   useEffect(() => { if (desk && !D) void deskChunk().then(setD); }, [desk, D]);
@@ -517,7 +588,7 @@ export default function App() {
                 {/* Wider than a phone: loom's own status bar over it, across the page's column, so its clock sits over
                     the page's name and its glyphs over LOOM//OS and the count, as a phone's do (system-bar.tsx). */}
                 {deskBar && <SystemBar shell={chrome.shell} clock={{ text: chrome.clock, tz: chrome.tz }} offline={!!savedAt} go={go} />}
-                <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt} where={url}
+                <PhoneBar title={shownTitle ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={url}
                   info={{ line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
               </div>
@@ -534,6 +605,8 @@ export default function App() {
 
           <Wrap on={inWindow && !!D} wrap={(page) => D && (
             <D.DeskWindow url={url} waiting={waiting} go={go} close={closeWindow} minimize={minimize} title={shownTitle || place?.label || ''}
+              crumbs={crumbs} back={trail.step(appKey, -1)} forward={trail.step(appKey, 1)} move={move}
+              side={sideWide ? { has: pageSide, el: setSideEl, app: appKey, under: top?.href } : undefined}
               tint={accent ? markColor(accent.bg) : `var(--loom-tint-${appTint ?? 'pink'})`}
               lead={accent ? <AgentAvatar a={accent} size={22} /> : <AnimatedIcon name={iconFor(icon(tileLabel || ''))} size="sm" />}>{page}</D.DeskWindow>
           )}>
@@ -551,7 +624,7 @@ export default function App() {
               <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
             )}
             {!waiting && !error && data && env && (
-              <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
+              <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><SideAtContext.Provider value={sideAt}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   : data.view === 'house-home' && desk && chrome?.shell ? (D ? <D.DeskHome home={data.home as never} shell={chrome.shell} /> : <Skeleton />)
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
@@ -566,7 +639,7 @@ export default function App() {
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
                   : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
-              </Boundary></EnvContext.Provider></ArrivalContext.Provider>
+              </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
             )}
             {!waiting && !error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>
@@ -616,9 +689,31 @@ const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
 const FoldCard = lazy(() => import('./fold'));
 
+/** Where a page's side sections go (App's sideAt): folded at its top, a column beside it, or a desktop window's own
+ * right-hand column (drawn into it). */
+type SideAt = 'fold' | 'column' | { el: HTMLElement | null };
+const SideAtContext = createContext<SideAt>('fold');
+/** A section in the side column: `place: side`, or a kept copy from before it had a name (`side`). */
+const isSide = (s: Page['sections'][number]) => s.place === 'side' || !!s.side;
+
+/** The side sections folded together at the top of a page with no room for their column (a phone, a narrow window):
+ * one block, closed, named for what's in it. */
+function SideFold({ side, children }: { side: Page['sections']; children: React.ReactNode }) {
+  const filters = side.some((s) => s.blocks.some((b) => b.type === 'filters'));
+  const what = side.map((s) => s.title).filter(Boolean).join(' · ');
+  return (
+    <details className="loom-side-fold">
+      <summary><span className="loom-side-fold__name">{filters ? 'Filters & more' : 'Details & more'}</span>
+        {what && <span className="loom-side-fold__what">{what}</span>}</summary>
+      <div className="loom-side-col grid content-start gap-4">{children}</div>
+    </details>
+  );
+}
+
 function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
-  const main = page.sections.filter((s) => !s.side);
-  const side = page.sections.filter((s) => s.side);
+  const at = useContext(SideAtContext);
+  const main = page.sections.filter((s) => !isSide(s));
+  const side = page.sections.filter(isSide);
   const card = (s: Page['sections'][number]) => (s.fold ? (
     // Its title while its chunk loads, so the page doesn't jump.
     <Suspense key={s.id} fallback={<Card className={sectionRing(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
@@ -628,17 +723,21 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
       <CardContent className="grid min-w-0 gap-4">{s.blocks.map((b, n) => <BlockView key={n} b={b} />)}</CardContent>
     </Card>
   ));
+  const sideCards = <InSide.Provider value={true}>{side.map(card)}</InSide.Provider>;
+  const column = at === 'column' && side.length > 0;
   return (
     // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
-    <div className={`grid grid-cols-[minmax(0,1fr)] gap-4 ${side.length ? 'lg:grid-cols-[minmax(0,1fr)_20rem]' : ''}`}>
+    <div className={`grid gap-4 ${column ? 'grid-cols-[minmax(0,1fr)_17.5rem]' : 'grid-cols-[minmax(0,1fr)]'}`}>
       <div className="grid min-w-0 content-start gap-4">
+        {side.length > 0 && at === 'fold' && <SideFold side={side}>{sideCards}</SideFold>}
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
         {page.sections.length === 0 && (page.title === 'Not found'
           ? <StateCard quiet icon="map-pin-off" tint="pink" title="There’s no page here" text="It may have moved, or it was never there." />
           : <StateCard quiet icon="sparkles" app={page.title} title={`Nothing in ${page.title} yet`} text="When there’s something to show, it’ll be here." />)}
         {main.map(card)}
       </div>
-      {side.length > 0 && <aside className="grid min-w-0 content-start gap-4">{side.map(card)}</aside>}
+      {column && <aside className="loom-side-col grid content-start gap-4" aria-label="More on this page">{sideCards}</aside>}
+      {side.length > 0 && typeof at === 'object' && at.el && createPortal(<div className="loom-side-col grid content-start gap-4">{sideCards}</div>, at.el)}
     </div>
   );
 }

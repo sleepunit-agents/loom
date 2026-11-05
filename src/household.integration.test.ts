@@ -1108,7 +1108,7 @@ describe('the household page', () => {
     expect(prof.stats).toContainEqual({ label: 'ways to reach', value: '2' });
     expect(d.page.intro).toBeUndefined();
     // No side column: the change log is gone, and what's left is the page's width.
-    expect((d.page.sections as Data[]).filter((s) => s.side)).toEqual([]);
+    expect((d.page.sections as Data[]).filter((s) => s.side || s.place === 'side')).toEqual([]);
     expect((d.page.sections as Data[]).map((s) => s.id)).not.toContain('changes');
     expect((sectionOf(d, 'agents').blocks as Data[])[0].wrap).toBe(true);
     // A label is a string of at most 200.
