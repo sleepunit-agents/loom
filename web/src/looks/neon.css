@@ -240,10 +240,13 @@ html.loom-ios-app:root[data-look="neon"] .loom-sys{display:none}
 :root[data-look="neon"] .loom-dock-bar{padding-bottom:env(safe-area-inset-bottom)}
 :root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="viewport"]{padding-bottom:0}
 /* a key magnified under the pointer (dock.tsx: 1.65x, lifted) and its name over it reach up to 70px over the key's own
-   top, past the stage's 32px: the scroller and its viewport clip, so their clip reaches 44px further up, with no change
-   to where anything sits (the padding gives back what the margin takes). Jonathan, 2026-11-05: "when the icons grow
-   on hover, the top of them is cut off". The bar takes no pointer (above), so the room steals no taps from the page. */
-:root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) :is(.v-dock__scroll,[data-part="viewport"]){margin-top:-44px;padding-top:44px}
+   top, past the stage's 32px: the scroller and its viewport clip, so their clip reaches the dock's own reserved lift
+   (dock.tsx --dock-reserved-lift, 48px at 52px keys) further up, with no change to where anything sits (the padding gives
+   back what the margin takes). Jonathan, 2026-11-05: "when the icons grow on hover, the top of them is cut off". The bar
+   takes no pointer (above), so the room steals no taps from the page; while a key is engaged the bar sits over Find's
+   pill, so a key grown toward it, or its name, isn't under it. */
+:root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) :is(.v-dock__scroll,[data-part="viewport"]){margin-top:calc(-1 * var(--dock-reserved-lift));padding-top:var(--dock-reserved-lift)}
+:root[data-look="neon"] .loom-dock-bar:has([data-part="lane"][data-engaged]){z-index:41}
 :root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="lane"]{block-size:var(--dock-item-size)}
 :root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="item"]{display:grid;block-size:var(--dock-item-size);-webkit-touch-callout:none;user-select:none}
 :root[data-look="neon"] .loom-dock-bar .v-dock[data-variant] [data-part="visual"]{border-radius:12px}
@@ -253,7 +256,9 @@ html.loom-ios-app:root[data-look="neon"] .loom-sys{display:none}
   /* over the key as it's drawn: magnified and lifted (dock.tsx sets both on the item), 6px clear of its top */
   bottom:calc(100% + 6px + var(--dock-item-lift,0px) + (var(--dock-item-scale,1) - 1) * var(--dock-item-size));top:auto;left:50%;right:auto;translate:-50% 0;
   max-inline-size:none;width:max-content;padding:3px 8px;border-radius:6px;background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-edge);
-  font-family:var(--loom-font-data);font-size:11px;line-height:1.3;opacity:0;transition:opacity .12s ease-out;pointer-events:none}
+  font-family:var(--loom-font-data);font-size:11px;line-height:1.3;opacity:0;pointer-events:none;
+  /* it rises with the key as the key grows (dock.css: transform .18s) */
+  transition:opacity .12s ease-out,bottom .18s cubic-bezier(.2,.8,.2,1)}
 /* to a finger the keys don't magnify (dock.css's touch block): a held key's name sits right over the key */
 @media (hover:none),(pointer:coarse){:root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="label"]{bottom:calc(100% + 6px)}}
 :root[data-look="neon"] .loom-dock-bar .v-dock [data-part="lane"]:first-child [data-part="label"]{left:0;translate:0 0}
