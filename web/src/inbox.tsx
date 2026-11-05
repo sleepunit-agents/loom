@@ -99,7 +99,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
   return (
     <DrawerContent className="lg:mx-auto lg:max-w-xl">
       <DrawerHeader className="flex-col items-stretch gap-3">
-        {/* Neon Noir's title bar (index.css hides it in 000h). What it is and who asks are the row's below too, so a screen
+        {/* The sheet's title bar (looks.css). What it is and who asks are the row's below too, so a screen
             reader hears those once; its task is said here, as an item's task may be nowhere else on the sheet. */}
         <div className="loom-sheet-bar"><b aria-hidden>{p.ended ?? KIND[i.kind]}</b><span aria-hidden>{who}</span>{task && <span className="loom-data">{task}</span>}</div>
         <div className="flex min-w-0 items-center gap-3">

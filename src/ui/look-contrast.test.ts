@@ -1,9 +1,11 @@
 /**
- * Each look's colours read (Jonathan, 2026-11-04, Neon Noir): text at 4.5:1 or better on every surface it sits on,
- * a control's edge at 3:1 or better, and the ink on each of the four tints at 4.5:1. Measured from the stylesheets
- * themselves, for every look and mode loom ships: 000h light and dark (web/src/styles/cojeev/tokens.css) and Neon Noir
- * (web/src/looks/neon.css, over 000h's dark). And each one's Higher contrast (Accessibility, <html data-contrast="more">):
- * text at 7:1, the quieter texts and a control's edge at 4.5:1, a hairline at 3:1, and nothing weaker than without it.
+ * Each look's colours read (Jonathan, 2026-11-04, Neon Noir; 2026-11-05, the looks as token sets): text at 4.5:1 or
+ * better on every surface it sits on, a control's edge at 3:1 or better, the ink on each of the four tints at 4.5:1,
+ * the status inks on their washes, an agent's mark and each tint on its key at 3:1, and a face's lit eyes on its body.
+ * Measured from the stylesheets themselves, for every look loom ships (web/src/looks/looks.css, over tokens.css): Neon
+ * Noir and Low Light over its dark, Daylight over its light. And each one's Higher contrast (Accessibility, <html
+ * data-contrast="more">): text at 7:1, the quieter texts and a control's edge at 4.5:1, a hairline at 3:1, and nothing
+ * weaker than without it.
  */
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
@@ -20,19 +22,17 @@ function block(css: string, sel: string): Record<string, string> {
 }
 
 const tokens = read('styles/cojeev/tokens.css');
+const looks = read('looks/looks.css');
 // loom's own (index.css --loom-*: the count badge and the rest swept from literals) over 000h's.
 const own = read('index.css');
 const loomBlock = (sel: string) => Object.fromEntries([...own.slice(own.indexOf(sel)).split('}')[0].matchAll(/(--loom-[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
 const light = { ...block(tokens, ':root'), ...loomBlock(':root { --loom-ok:') };
-const dark = { ...light, ...block(tokens, ':root[data-mode="dark"]') };
-const neon = { ...dark, ...block(read('looks/neon.css'), ':root[data-look="neon"][data-mode]') };
-const LOOKS = { '000h light': light, '000h dark': dark, 'Neon Noir': neon } as const;
-// Higher contrast: each look's set raised (index.css for 000h's two, looks/neon.css for Neon's).
-const MORE = {
-  '000h light': { ...light, ...block(own, ':root[data-contrast="more"]:not([data-mode="dark"])') },
-  '000h dark': { ...dark, ...block(own, ':root[data-mode="dark"][data-contrast="more"]:not([data-look="neon"])') },
-  'Neon Noir': { ...neon, ...block(read('looks/neon.css'), ':root[data-look="neon"][data-mode][data-contrast="more"]') },
-} as const;
+const dark = { ...light, ...block(tokens, ':root[data-mode="dark"]'), ...loomBlock(':root[data-mode="dark"] { --loom-ok-ink') };
+const set = (look: string) => block(looks, `:root[data-look="${look}"][data-mode]`);
+const more = (look: string) => block(looks, `:root[data-look="${look}"][data-mode][data-contrast="more"]`);
+const neon = { ...dark, ...set('neon') }, lowlight = { ...dark, ...set('lowlight') }, daylight = { ...light, ...set('daylight') };
+const LOOKS = { 'Neon Noir': neon, 'Low Light': lowlight, Daylight: daylight } as const;
+const MORE = { 'Neon Noir': { ...neon, ...more('neon') }, 'Low Light': { ...lowlight, ...more('lowlight') }, Daylight: { ...daylight, ...more('daylight') } } as const;
 
 function hex(t: Record<string, string>, name: string): string {
   let v = t[name];
@@ -61,22 +61,12 @@ const PAIRS: Array<[string, string, number]> = [
   ['--on-structure', '--v-structure', 4.5], ['--structure-text', '--v-structure', 4.5], ['--sidebar-muted', '--v-structure', 4.5],
   ['--loom-count-ink', '--loom-count', 4.5],
 ];
-// Neon's own: its status inks on their washes, and the inks it adds on its ground.
-const NEON_PAIRS: Array<[string, string, number]> = [
+// Each look's status inks on their washes, and the inks on its ground.
+const OWN_PAIRS: Array<[string, string, number]> = [
   ['--status-ok-ink', '--status-ok-bg', 4.5], ['--status-warn-ink', '--status-warn-bg', 4.5], ['--status-danger-ink', '--status-danger-bg', 4.5],
   ['--status-info-ink', '--status-info-bg', 4.5], ['--status-pending-ink', '--status-pending-bg', 4.5],
   ['--v-danger-ink', '--v-paper', 4.5], ['--v-accent-ink', '--v-paper', 4.5], ['--v-olive-ink', '--v-paper', 4.5], ['--sel-ink', '--sel-bg', 4.5],
 ];
-
-/**
- * Short of the floor today, and kept so on purpose: 000h's count badge (white on #e5484d, 11px semibold) is 3.91:1.
- * Neon Noir was asked to leave 000h drawing exactly as it did (Jonathan, 2026-11-04), so it stays here, named, until
- * 000h's own palette is changed; Neon's count passes. Anything new short of the floor fails.
- */
-const KNOWN: Record<string, Array<{ pair: string; ratio: number; min: number }>> = {
-  '000h light': [{ pair: '--loom-count-ink on --loom-count', ratio: 3.91, min: 4.5 }],
-  '000h dark': [{ pair: '--loom-count-ink on --loom-count', ratio: 3.91, min: 4.5 }],
-};
 
 // Higher contrast's floors: body text 7:1; the quieter texts, a control's edge and a selection's 4.5:1; a hairline 3:1.
 const MORE_PAIRS: Array<[string, string, number]> = [
@@ -84,33 +74,38 @@ const MORE_PAIRS: Array<[string, string, number]> = [
   ...SURFACES.flatMap((s) => [['--v-edge', s, 4.5], ['--sel-edge', s, 4.5], ['--v-border', s, 3]] as Array<[string, string, number]>),
 ];
 
+const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
+const MARKS = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'];
+
 describe('each look\'s contrast', () => {
+  it('ships three looks, each a token set and nothing else', () => {
+    expect(Object.keys(LOOKS)).toEqual(['Neon Noir', 'Low Light', 'Daylight']);
+    // A look's own blocks hold custom properties only: what differs between looks is tokens, never layout.
+    const own = [...looks.matchAll(/:root\[data-look="(\w+)"\][^{]*\{([^}]*)\}/g)];
+    expect(new Set(own.map((m) => m[1]))).toEqual(new Set(['neon', 'lowlight', 'daylight']));
+    for (const m of own) expect(m[2].replace(/\/\*[\s\S]*?\*\//g, '').split(';').map((d) => d.trim()).filter((d) => d && !d.startsWith('--') && !d.startsWith('color-scheme')), m[0].slice(0, 60)).toEqual([]);
+  });
   for (const [name, t] of Object.entries(LOOKS)) {
-    it(`${name}: text 4.5:1, control edges 3:1, ink on the tints and the count 4.5:1`, () => {
-      const short = PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(t, f), hex(t, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
-      expect(short).toEqual(KNOWN[name] ?? []);
+    it(`${name}: text 4.5:1, control edges 3:1, ink on the tints and the count 4.5:1, its status inks`, () => {
+      const short = [...PAIRS, ...OWN_PAIRS].map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(t, f), hex(t, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
+      expect(short).toEqual([]);
+    });
+    // Lit things: an agent's rim and lit eyes on its card (3:1, a graphic), and a key's icon in its tint on the key's own
+    // 9% wash of that tint over paper (looks.css: the dock, the launcher, an app's tile), a graphic too.
+    it(`${name}: agents' marks on paper, and each tint on its own key`, () => {
+      const paper = hex(t, '--v-paper');
+      const marks = MARKS.map((m) => ({ pair: `--mark-${m} on --v-paper`, ratio: +ratio(hex(t, `--mark-${m}`), paper).toFixed(2), min: 3 }));
+      const keys = ['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((k) => ({ pair: `${k} on its key`, ratio: +ratio(hex(t, k), mix(hex(t, k), paper, 0.09)).toFixed(2), min: 3 }));
+      expect([...marks, ...keys].filter((p) => p.ratio < p.min)).toEqual([]);
+    });
+    // A rim-lit face's eyes and mouth (face.tsx: the mark 72% toward --face-lit, white unless the look says) on its body
+    // (the mark 16% over the canvas).
+    it(`${name}: a face's lit eyes on its body, every mark`, () => {
+      const canvas = hex(t, '--v-canvas'), lit = t['--face-lit'] ? hex(t, '--face-lit') : '#ffffff';
+      const short = MARKS.map((m) => { const mk = hex(t, `--mark-${m}`); return { mark: m, ratio: +ratio(mix(mk, lit, 0.72), mix(mk, canvas, 0.16)).toFixed(2) }; }).filter((x) => x.ratio < 3);
+      expect(short).toEqual([]);
     });
   }
-  it('Neon Noir: its status inks and its own inks', () => {
-    const short = NEON_PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(neon, f), hex(neon, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
-    expect(short).toEqual([]);
-  });
-  // Neon's lit things: an agent's rim and lit eyes on its card (3:1, a graphic), and a key's icon in its tint on the key's
-  // own 9% wash of that tint over paper (neon.css: the dock, the launcher, an app's tile), a graphic too.
-  it('Neon Noir: agents\' marks on paper, and each tint on its own key', () => {
-    const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
-    const paper = hex(neon, '--v-paper');
-    const marks = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'].map((m) => ({ pair: `--mark-${m} on --v-paper`, ratio: +ratio(hex(neon, `--mark-${m}`), paper).toFixed(2), min: 3 }));
-    const keys = ['--v-pink', '--v-blue', '--v-yellow', '--v-olive'].map((t) => ({ pair: `${t} on its key`, ratio: +ratio(hex(neon, t), mix(hex(neon, t), paper, 0.09)).toFixed(2), min: 3 }));
-    expect([...marks, ...keys].filter((p) => p.ratio < p.min)).toEqual([]);
-  });
-  // A rim-lit face's eyes and mouth (face.tsx: the mark 72% toward white) on its body (the mark 16% over the canvas).
-  it('Neon Noir: a face\'s lit eyes on its body, every mark', () => {
-    const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
-    const canvas = hex(neon, '--v-canvas');
-    const short = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'].map((m) => { const mk = hex(neon, `--mark-${m}`); return { mark: m, ratio: +ratio(mix(mk, '#ffffff', 0.72), mix(mk, canvas, 0.16)).toFixed(2) }; }).filter((x) => x.ratio < 3);
-    expect(short).toEqual([]);
-  });
   for (const [name, t] of Object.entries(MORE)) {
     const base = LOOKS[name as keyof typeof LOOKS];
     it(`${name}, higher contrast: text 7:1, the quieter texts and control edges 4.5:1, hairlines 3:1, on every surface`, () => {
@@ -118,8 +113,7 @@ describe('each look\'s contrast', () => {
       expect(short).toEqual([]);
     });
     it(`${name}, higher contrast: every pair the look is held to still passes, none weaker than without it (the count too)`, () => {
-      const pairs = name === 'Neon Noir' ? [...PAIRS, ...NEON_PAIRS] : PAIRS;
-      const rows = pairs.map(([f, b, min]) => ({ pair: `${f} on ${b}`, more: +ratio(hex(t, f), hex(t, b)).toFixed(2), was: +ratio(hex(base, f), hex(base, b)).toFixed(2), min }));
+      const rows = [...PAIRS, ...OWN_PAIRS].map(([f, b, min]) => ({ pair: `${f} on ${b}`, more: +ratio(hex(t, f), hex(t, b)).toFixed(2), was: +ratio(hex(base, f), hex(base, b)).toFixed(2), min }));
       expect(rows.filter((r) => r.more < r.min)).toEqual([]);
       expect(rows.filter((r) => r.more < r.was)).toEqual([]);
       // The texts are brighter, not only as bright: each one moved further from every surface it sits on.

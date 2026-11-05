@@ -3,7 +3,6 @@
 // we might at least try that to see how it feels"; then "we're too zoomed in" (--field-zoom).
 import { ContourField } from '@/components/ui/contour-field';
 import { DepthBackground } from '@/components/ui/depth-background';
-import { useLook } from './look';
 
 /** --field-zoom (index.css) sets how much terrain shows; a dev knob, localStorage 'loom-contour-zoom', tries others. */
 export function Contours() {
@@ -16,13 +15,12 @@ export function Contours() {
 /** The other trial ground: 000h's depth background, its contour look (contours on three planes, drifting with the
  * pointer and the scroll), over the wash. Jonathan, 2026-10-29: "lets enable that as one of our choices too". */
 export function Depth() {
-  const look = useLook();
   return <div aria-hidden className="loom-ground pointer-events-none fixed inset-0 -z-10"><DepthBackground variant="contour" density={1} intensity={1} />
-    {look === 'neon' && <NeonGlow />}</div>;
+    <NeonGlow /></div>;
 }
 
-/** Neon Noir's glow on the depth background's lines (neon.css: filter: url(#loom-neon-glow)): each line's own colour,
- * blurred under it. Only under Neon. */
+/** The glow on the depth background's lines (looks.css: filter: var(--glow-ground), url(#loom-neon-glow) where a look
+ * glows): each line's own colour, blurred under it. */
 function NeonGlow() {
   return <svg width="0" height="0" className="absolute" aria-hidden focusable="false"><filter id="loom-neon-glow" x="-10%" y="-10%" width="120%" height="120%">
     <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter></svg>;

@@ -64,11 +64,15 @@ interface File {
 
 /**
  * A person's Appearance (web/src/look.ts; Jonathan, 2026-11-04: "if every device I login I have to go and change the
- * theme, that sucks"): the look, 000h's light or dark, the ground, sound, pixel faces and haptics, and their
+ * theme, that sucks"): the look (Neon Noir, Low Light or Daylight), the ground, sound, pixel faces and haptics, and their
  * Accessibility (Allow zoom, Reduce motion, Higher contrast). Only what they chose; kept per member
  * like `seen`, so it follows them to every device they sign in on.
+ *
+ * `look: '000h'` and `mode` are from before 2026-11-05, when 000h was a look with a light and a dark: a device still
+ * running that app may send them, so both are still taken, and 000h is kept and read back as the look nearest it
+ * (lookOf: Daylight if its mode was light, else Low Light). Nothing else reads `mode`.
  */
-export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
+export interface Prefs { look?: Look | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
   /** Allow zoom (Accessibility): pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
   zoom?: boolean;
   /** Reduce motion (Accessibility, web/src/access.ts): follow the phone's own setting (the default), or on, or off. */
@@ -77,8 +81,13 @@ export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark
   contrast?: 'follow' | 'on' | 'off';
   /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
   at?: number }
+export type Look = 'neon' | 'lowlight' | 'daylight';
+/** A kept look as loom serves it now: 000h as the look nearest it (web/src/look.ts lookOf, the same rule). */
+export function lookOf(look: Prefs['look'], mode: Prefs['mode']): Look | undefined {
+  return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : look;
+}
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
-  look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false], zoom: [true, false],
+  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false], zoom: [true, false],
   motion: ['follow', 'on', 'off'], contrast: ['follow', 'on', 'off'],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
@@ -365,7 +374,9 @@ export class SessionStore {
     // A read, not a locked write: every page asks it. A torn read (mid-rename can't happen: writes land by rename) is none.
     if (!existsSync(this.file)) return {};
     const f = this.read();
-    return { ...((reader ? f.members?.[reader]?.prefs : f.prefs) ?? {}) };
+    const p = { ...((reader ? f.members?.[reader]?.prefs : f.prefs) ?? {}) };
+    if (p.look) p.look = lookOf(p.look, p.mode);
+    return p;
   }
 
   /** Change some of this reader's Appearance; what's not given stays as it was. */
@@ -373,7 +384,9 @@ export class SessionStore {
     return this.withLock((f) => {
       const r = readerOf(f, reader);
       // Strictly later than the last change, even within a millisecond: the version a device compares.
-      r.prefs = { ...(r.prefs ?? {}), ...p, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
+      const next = { ...(r.prefs ?? {}), ...p };
+      if (next.look) next.look = lookOf(next.look, next.mode);
+      r.prefs = { ...next, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
       return { ...r.prefs };
     });
   }

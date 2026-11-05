@@ -22,12 +22,12 @@ describe('one source of truth for motion and contrast', () => {
     expect(css.length).toBeGreaterThan(1);
     expect(css.filter(([, s]) => /prefers-(reduced-motion|contrast)/.test(s)).map(([f]) => f)).toEqual([]);
     const all = css.map(([, s]) => s).join('\n');
-    // Some of what they held, now under the attribute: a page's crossfade, 000h's own stillness, the ticker's loop
-    // (motion allowed), Neon's glows off (more contrast).
+    // Some of what they held, now under the attribute: a page's crossfade, the library's own stillness, the ticker's loop
+    // (motion allowed), every look's glows off (more contrast).
     expect(all).toMatch(/html:where\(\[data-motion=["']?reduce["']?\]\)\[data-move\]::view-transition-old\(loom-page\)\{[^}]*loom-move-fade-out/);
     expect(all).toMatch(/:root:where\(\[data-motion=["']?reduce["']?\]\)\{[^}]*--t-micro:0/);
-    expect(all).toMatch(/:root:where\(\[data-motion=["']?full["']?\]\)\[data-look=["']?neon["']?\] \.loom-tick\[data-run\] \.loom-tick__track\{animation:loom-tick/);
-    expect(all).toMatch(/:root:where\(\[data-contrast=["']?more["']?\]\)\[data-look=["']?neon["']?\]\[data-mode\]\{--glow-key:0 0 0 0/);
+    expect(all).toMatch(/:root:where\(\[data-motion=["']?full["']?\]\)\[data-look\] \.loom-tick\[data-run\] \.loom-tick__track\{animation:loom-tick/);
+    expect(all).toMatch(/:root:where\(\[data-contrast=["']?more["']?\]\)\[data-look\]\[data-mode\]\{--glow-key:0 0 0 0/);
   });
 
   it('no script of the app names either query except access.ts and the boot script, however it\'s written', () => {

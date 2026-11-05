@@ -1,7 +1,8 @@
 /**
  * A person's look follows them in a real browser (Jonathan, 2026-11-04: "if every device I login I have to go and change
- * the theme, that sucks"). Two devices, each its own browser and sign-in: one picks 000h in Appearance; the other,
- * which has nothing kept yet, paints Neon first, wears 000h once its page lands, and paints 000h straight away after.
+ * the theme, that sucks"). Two devices, each its own browser and sign-in: one picks Daylight in Appearance; the other,
+ * which has nothing kept yet, paints Neon first, wears Daylight (light) once its page lands, and paints it straight away
+ * after. Each look keeps one structure: the same bars and dock, no sideways scroll at 390 px.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -55,18 +56,18 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
   }
   const look = (p: Page) => p.evaluate(() => [document.documentElement.dataset.look, document.documentElement.dataset.mode]);
 
-  it('saved from one, worn by the other: Neon until its page lands, then 000h, and 000h from its first paint after', async () => {
+  it('saved from one, worn by the other: Neon until its page lands, then Daylight, and Daylight from its first paint after', async () => {
     const phone = await device();
     const laptop = await device();
     await phone.goto(`${base}/appearance`);
-    await phone.getByRole('radio', { name: '000h' }).waitFor();
+    await phone.getByRole('radio', { name: 'Daylight' }).waitFor();
     expect(await look(phone)).toEqual(['neon', 'dark']);
     const saving = phone.waitForResponse((r) => r.url().endsWith('/appearance/prefs') && r.request().method() === 'POST');
-    await phone.getByRole('radio', { name: '000h' }).click();
+    await phone.getByRole('radio', { name: 'Daylight' }).click();
     expect((await saving).status()).toBe(200);
-    expect((await look(phone))[0]).toBe('000h');
+    expect(await look(phone)).toEqual(['daylight', 'light']);
 
-    // Nothing kept on the laptop yet: its first paint is Neon (the boot script), then loom's answer says 000h. Its
+    // Nothing kept on the laptop yet: its first paint is Neon (the boot script), then loom's answer says Daylight. Its
     // page's answer is held until the first paint is seen, so the order is the test's, not the network's.
     let land!: () => void;
     const held = new Promise<void>((r) => { land = r; });
@@ -77,15 +78,16 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     await laptop.goto(`${base}/`);
     expect((await look(laptop))[0]).toBe('neon');
     land();
-    await laptop.waitForFunction(() => document.documentElement.dataset.look === '000h', null, { timeout: 15_000 });
-    expect(await laptop.evaluate(() => localStorage.getItem('loom-look'))).toBe('000h');
-    // And from now on it paints 000h before anything else runs.
+    await laptop.waitForFunction(() => document.documentElement.dataset.look === 'daylight', null, { timeout: 15_000 });
+    expect(await look(laptop)).toEqual(['daylight', 'light']);
+    expect(await laptop.evaluate(() => localStorage.getItem('loom-look'))).toBe('daylight');
+    await laptop.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--v-canvas').trim().toUpperCase() === '#F5F3EE');
+    // And from now on it paints Daylight before anything else runs.
     await laptop.reload({ waitUntil: 'commit' });
     await laptop.waitForFunction(() => document.documentElement.dataset.look !== undefined);
-    expect((await look(laptop))[0]).toBe('000h');
-    expect(await laptop.evaluate(() => !!document.getElementById('loom-look-neon'))).toBe(false);
+    expect(await look(laptop)).toEqual(['daylight', 'light']);
 
-    // And back: Neon chosen on the phone reaches the laptop, which kept 000h, stylesheet and all.
+    // And back: Neon chosen on the phone reaches the laptop, which kept Daylight.
     await laptop.unroute('**/*');
     const back = phone.waitForResponse((r) => r.url().endsWith('/appearance/prefs') && r.request().method() === 'POST');
     await phone.getByRole('radio', { name: 'Neon Noir' }).click();
@@ -96,7 +98,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     expect(await look(laptop)).toEqual(['neon', 'dark']);
   }, 60_000);
 
-  // Oxanium is wider than Bricolage: at 390 px, the built-in titles stay on one line, as in 000h.
+  // Oxanium is wider than Figtree: at 390 px, the built-in titles stay on one line.
   it('Neon\'s titles fit at 390 px', async () => {
     const page = await device('reduce', { 'loom-look': 'neon' });
     for (const path of ['/appearance', '/places', '/inbox', '/']) {
@@ -111,31 +113,30 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     }
   }, 60_000);
 
-  // Neon's bar is the phone bar (phone-bar.tsx, t-1849) at every width; wider than a phone, loom's system bar over it.
-  it('Neon\'s chrome: a status bar only under Neon, no sideways scroll at 390 px, none with reduced motion, no sound unless on', async () => {
+  // The phone bar (phone-bar.tsx, t-1849) at every width, in every look; wider than a phone, loom's system bar over it.
+  it('every look\'s chrome: the phone bar, no sideways scroll at 390 px, none with reduced motion, no sound unless on', async () => {
     const sounds: string[] = [];
-    const neon = await device('reduce', { 'loom-look': 'neon' });
-    neon.on('request', (r) => { if (/\/assets\/sound-/.test(r.url())) sounds.push(r.url()); });
-    for (const path of ['/', '/places', '/setup', '/inbox', '/appearance']) {
-      await neon.goto(`${base}${path}`);
-      await neon.locator('.loom-top h1').waitFor();
-      const m = await neon.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, bar: !!document.querySelector('.loom-pbar'), arrive: 'arrive' in document.documentElement.dataset }));
-      expect(m.sw, path).toBeLessThanOrEqual(m.cw);
-      expect(m.bar, path).toBe(true);
-      expect(m.arrive, `${path}: no power-on with reduced motion`).toBe(false);
+    for (const l of ['neon', 'lowlight', 'daylight']) {
+      const page = await device('reduce', { 'loom-look': l });
+      page.on('request', (r) => { if (/\/assets\/sound-/.test(r.url())) sounds.push(r.url()); });
+      // Chosen, not only kept: loom's copy of the person's choice wins over a device's.
+      await page.goto(`${base}/appearance`);
+      await page.getByRole('radio', { name: { neon: 'Neon Noir', lowlight: 'Low Light', daylight: 'Daylight' }[l]! }).click();
+      await page.waitForFunction((x) => document.documentElement.dataset.look === x, l);
+      for (const path of ['/', '/places', '/setup', '/inbox', '/appearance']) {
+        await page.goto(`${base}${path}`);
+        await page.locator('.loom-top h1').waitFor();
+        const m = await page.evaluate(() => ({ look: document.documentElement.dataset.look, sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, bar: !!document.querySelector('.loom-pbar'), dock: !!document.querySelector('.loom-dock-bar .v-dock'), arrive: 'arrive' in document.documentElement.dataset }));
+        const at = `${l} ${path}`;
+        expect(m.look, at).toBe(l);
+        expect(m.sw, at).toBeLessThanOrEqual(m.cw);
+        expect([m.bar, m.dock], at).toEqual([true, true]);
+        expect(m.arrive, `${at}: no power-on with reduced motion`).toBe(false);
+      }
     }
     expect(sounds).toEqual([]);
 
     // The power-on and its tap: look-neon-chrome.integration.test.ts.
 
-    // The same person, choosing 000h (loom's copy wins over a device's, so it's chosen, not just kept): no status bar.
-    const plain = await device('reduce');
-    await plain.goto(`${base}/appearance`);
-    await plain.getByRole('radio', { name: '000h' }).click();
-    await plain.waitForFunction(() => document.documentElement.dataset.look === '000h');
-    await plain.goto(`${base}/`);
-    await plain.locator('.loom-top h1').waitFor();
-    expect((await plain.evaluate(() => document.documentElement.dataset.look))).toBe('000h');
-    expect(await plain.evaluate(() => !!document.querySelector('.loom-pbar'))).toBe(false);
   }, 90_000);
 });

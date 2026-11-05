@@ -1,5 +1,5 @@
-// A tone's colours, in one place (Neon Noir's sweep, 2026-11-04): each is a token (index.css --loom-*) whose 000h value
-// is the Tailwind colour these used to name, so 000h draws as it did and a look (looks/) re-points them.
+// A tone's colours, in one place (Neon Noir's sweep, 2026-11-04): each is a token (index.css --loom-*), first the
+// Tailwind colour these used to name, which each look (looks/looks.css) re-points or keeps.
 // src/ui/web-app.test.ts checks the tokens against Tailwind's palette and this map against the classes it replaced.
 import type { Page, Tone } from './loom';
 

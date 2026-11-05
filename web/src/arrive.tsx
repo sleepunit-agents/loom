@@ -47,12 +47,10 @@ export function arriveOnce(title: HTMLElement | null): boolean {
   const root = document.documentElement;
   root.dataset.arrive = '';
   const stop = title ? decode(title) : () => {};
-  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens. Under Neon a tap
-  // or a key cuts it short, title and all (its power-on, neon.css, is a second's dark screen: never one you have to wait
-  // out); 000h's arrival is as it was.
-  // Neon is asked at the tap, not now: the look a page lands on can still change before then (loom's saved choice).
+  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens. A tap or a key
+  // cuts it short, title and all (its power-on, looks.css, is a second's dark screen: never one you have to wait out).
   const done = () => { delete root.dataset.arrive; removeEventListener('pointerdown', tap, true); removeEventListener('keydown', tap, true); };
-  const tap = () => { if (root.dataset.look === 'neon') { stop(); done(); } };
+  const tap = () => { stop(); done(); };
   addEventListener('pointerdown', tap, true); addEventListener('keydown', tap, true);
   requestAnimationFrame(() => {
     const t = setTimeout(done, 3000);

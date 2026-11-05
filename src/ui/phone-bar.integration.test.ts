@@ -2,8 +2,8 @@
  * Neon's phone bar, its ticker and its dock (t-1849), in a real browser at a phone's width, over a household with two
  * agents and something waiting: the bar sits at the safe-area inset with the page's name in it; the ticker moves only
  * when its words don't fit, and never under reduced motion, and stops while touched or hidden; the needs-you count is
- * never part of what moves; the dock's keys have names but show none; nothing is wider than 390 px. 000h keeps the big
- * header (and its dock's names); a wide screen wears the same bar under loom's system bar (desk-bar.integration.test.ts).
+ * never part of what moves; the dock's keys have names but show none; nothing is wider than 390 px. Every look has the
+ * same bar and dock (Low Light, Daylight); a wide screen wears the same bar under loom's system bar (desk-bar.integration.test.ts).
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -58,7 +58,7 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
   });
 
   /** A device in a look, its arrival already had; at a phone's width with an iPhone's top inset, unless it's wide. */
-  async function device(look: 'neon' | '000h', motion: 'reduce' | 'no-preference', width = 390): Promise<Page> {
+  async function device(look: 'neon' | 'lowlight' | 'daylight', motion: 'reduce' | 'no-preference', width = 390): Promise<Page> {
     const phone = width < 640;
     const ctx = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, reducedMotion: motion, isMobile: phone, hasTouch: phone, serviceWorkers: 'block' });
     await ctx.addInitScript((l) => { localStorage.setItem('loom-look', l); sessionStorage.setItem('loom-arrived', '1'); }, look);
@@ -165,7 +165,7 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await p.context().close();
   }, 60_000);
 
-  it('the dock: every key named, no names showing, no tray; 000h keeps its names, its tray and its big header', async () => {
+  it('the dock: every key named, no names showing, no tray, in every look', async () => {
     const keys = async (p: Page) => p.locator('.loom-dock-bar [data-part="item"]').evaluateAll((bs) => bs.map((b) => ({
       name: b.getAttribute('aria-label') ?? '', shown: getComputedStyle(b.querySelector('[data-part="label"]')!).opacity })));
     const p = await device('neon', 'reduce');
@@ -200,13 +200,14 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     expect(pill.y + pill.height).toBeLessThan(kb.y);
     await p.context().close();
 
-    const q = await device('000h', 'reduce');
-    await open(q, '/');
-    expect((await keys(q)).every((k) => k.name.trim().length > 0 && k.shown === '1')).toBe(true);
-    expect(await q.locator('.loom-dock-bar [data-part="shelf-plane"]').evaluate((e) => getComputedStyle(e).display)).not.toBe('none');
-    expect(await q.locator('.loom-pbar').count()).toBe(0);
-    expect(await q.locator('.loom-top h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(28);
-    await q.context().close();
+    for (const look of ['lowlight', 'daylight'] as const) {
+      const q = await device(look, 'reduce');
+      await open(q, '/');
+      expect((await keys(q)).every((k) => k.name.trim().length > 0 && k.shown === '0'), look).toBe(true);
+      expect(await q.locator('.loom-dock-bar [data-part="shelf-plane"]').evaluate((e) => getComputedStyle(e).display), look).toBe('none');
+      expect(await q.locator('.loom-pbar').count(), look).toBe(1);
+      await q.context().close();
+    }
   }, 90_000);
 
   it('a name with its ⓘ isn\'t cut short ("Members", not "Memb…")', async () => {

@@ -26,7 +26,7 @@ const Toasts = lazy(() => import('./toasts'));
 import type { Note } from './toasts';
 import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
-import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
+import { type Ground, DashboardView, HouseHomeView } from './views';
 import { placesOf, settingsOf } from './nav';
 import { AppHeader, AppTile, oneLine } from './app-header';
 import { PhoneBar } from './phone-bar';
@@ -34,11 +34,11 @@ import { SystemBar } from './system-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
-// Neon on a big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide under Neon (so it's
+// A big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide (so it's
 // here by the time the first page is), and never on a phone.
 let desk$: typeof import('./desk') | null = null;
 const deskChunk = () => import('./desk').then((m) => (desk$ = m));
-if (matchMedia('(min-width: 1024px)').matches && document.documentElement.dataset.look === 'neon') void deskChunk();
+if (matchMedia('(min-width: 1024px)').matches) void deskChunk();
 // The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
 // Find, over whatever you're in (find.tsx): loads the first time it opens.
@@ -53,7 +53,7 @@ import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { allowZoom } from './immersion';
 import { keptFollow, wearContrast, wearMotion, type Follow } from './access';
-import { keep, LookContext, markColor, paintBar, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, lookOf, markColor, modeOf, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -113,13 +113,10 @@ export default function App() {
   const [more, setMore] = useState(false);
   const [moreAsked, setMoreAsked] = useState(false);
   const [finding, setFinding] = useState(false);
-  // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept by loom for the person (look.ts).
-  const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
   // are a choice in the Appearance app, kept by loom for the person.
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
   const setGround = (g: Ground) => { setGroundState(g); keep('loom-ground', g); save({ ground: g }); };
-  const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
   // What the first page leaves out (forms, details, the More drawer, a table's pages) is fetched once the browser is
   // idle a moment after it, so the first tap on one doesn't wait on the network.
   useEffect(() => {
@@ -128,18 +125,15 @@ export default function App() {
     const t = setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(warm, { timeout: 4000 }) : warm()), 2500);
     return () => clearTimeout(t);
   }, []);
-  useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
-  // The look (look.ts): Neon Noir unless the person chose 000h. Neon is dark only; Light or Dark is 000h's.
+  // The look (look.ts): Neon Noir unless the person chose Low Light or Daylight; each is light or dark of its own.
   const [look, setLookState] = useState<Look>(shownLook);
-  const effective = look === 'neon' ? 'dark' : mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
-  useEffect(() => { document.documentElement.dataset.mode = effective; paintBar(); }, [effective]);
+  const effective = modeOf(look);
   useEffect(() => { wearLook(look); }, [look]);
   // A choice is the person's: saved to loom (every device they sign in on gets it), and this device keeps a copy.
   const csrf = useRef('');
   // loom's version of the person's choices this tab has (look.ts Prefs.at): only a newer one is applied.
   const heard = useRef(0);
   const save = (p: Prefs) => { if (csrf.current) void savePrefs(csrf.current, p).then((at) => { if (at) heard.current = Math.max(heard.current, at); }); };
-  const setMode = (m: Mode) => { setModeState(m); keep('loom-mode', m); save({ mode: m }); };
   const setLook = (l: Look) => { setLookState(l); keep('loom-look', l); save({ look: l }); };
   // Sound (sound.ts): off unless the person turns it on; its chunk loads only then.
   const [sound, setSoundState] = useState(() => { try { return localStorage.getItem('loom-sound') === 'on'; } catch { return false; } });
@@ -297,8 +291,8 @@ export default function App() {
     const p = chrome?.prefs;
     if (!p?.at || p.at <= heard.current) return;
     heard.current = p.at;
-    if (p.look) { setLookState(p.look); keep('loom-look', p.look); }
-    if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
+    // A look loom kept from before Low Light and Daylight (000h) comes across as the nearest one (look.ts lookOf).
+    if (p.look) { const l = lookOf(p.look, p.mode); setLookState(l); keep('loom-look', l); }
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
@@ -422,13 +416,13 @@ export default function App() {
   useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [url]);
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
-  // Neon: the phone's bar at every width (phone-bar.tsx). On a phone it merges with the phone's own status bar; wider,
-  // there's none, so loom draws one over it (system-bar.tsx; Jonathan, 2026-11-05). 000h keeps its big header.
-  const phoneBar = look === 'neon' && !!chrome?.shell;
-  // Neon at 1024 px and wider, in a household (desk.tsx): a desktop. Home is widgets on the ground, the dock sits at the
+  // The phone's bar at every width (phone-bar.tsx). On a phone it merges with the phone's own status bar; wider,
+  // there's none, so loom draws one over it (system-bar.tsx; Jonathan, 2026-11-05). A page with no shell keeps the big header.
+  const phoneBar = !!chrome?.shell;
+  // 1024 px and wider, in a household (desk.tsx): a desktop. Home is widgets on the ground, the dock sits at the
   // bottom centre (no rail), and every other page fills the space between the bars and the dock. 1024 is where the rail
   // took over from the phone's dock before: below it the phone's layout (its dock, its gestures) is unchanged.
-  const desk = look === 'neon' && wide && !!chrome?.shell?.household;
+  const desk = wide && !!chrome?.shell?.household;
   useLayoutEffect(() => { deskNow.current = desk; });
   // Every page but Home is in the window; Home never is, even one that didn't load (it says so on the desktop).
   const inWindow = desk && path !== '/';
@@ -467,7 +461,7 @@ export default function App() {
   });
 
   return (
-    <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
+    <PixelContext.Provider value={pixel}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${desk ? 'loom-desk' : chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -533,7 +527,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -574,7 +568,7 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </TintContext.Provider></HapticsContext.Provider></PixelContext.Provider></LookContext.Provider>
+    </TintContext.Provider></HapticsContext.Provider></PixelContext.Provider>
   );
 }
 
