@@ -63,6 +63,7 @@ bodies locally as today.
 $LOOM_HOME/                     (default ~/.config/loom)
 ├── household.json              agents, owner, the default agent
 ├── tokens.json                 every token: sha256, label, role, created, last used, revoked
+├── faces/<agent>/              an agent's pixel face, if it has one: manifest.json and its sheets (PNG)
 ├── commons/
 │   ├── knowledge.db            facts about the world
 │   └── people.db               the directory: one entry per human
@@ -83,6 +84,31 @@ $LOOM_HOME/                     (default ~/.config/loom)
   `{"v": 1, "agents": ["art", "mark"], "default": "art", "owner": "jonathan"}`.
   Agent names follow the piece-name rule (lowercase letters, digits and
   dashes; 40 at most).
+- **An agent's pixel face** (`faces/<agent>/`, web/src/pixel-face.tsx): a
+  manifest and the sprite sheets it names. Per state (`idle`, `working`,
+  `thinking`, `waiting`, `done`, `error`) and facing (`south`, `south-east`,
+  `south-west`; `waiting` is south only), a list of animations, each a row of a
+  sheet (`sheet.png` unless it names another), its frame count and a weight:
+  `{"cell": [56, 84], "states": {"idle": {"south": [{"row": 7, "frames": 17,
+  "weight": 85}, {"sheet": "idle-rare.png", "row": 0, "frames": 12, "weight":
+  15}], "south-east": [...]}}}`. At each beat the page picks among the facing's
+  own animations by weight (a rare one never twice running); a facing with none
+  for a state uses that state's south (south-west: south-east's mirrored
+  first). Weights are tuned by editing the file: the page sees the change on its
+  next load. A variant marked `"rare": true` is never followed by a rare one;
+  `"rest"` names the frame it rests on (default 0; error's, 4 from its end).
+  Cells may differ by agent (Art's 56×84, Mark's 96×80): the page centres each
+  in one common box, so every face lines up. A face that still reads bigger or
+  sits higher than the others is tuned in the same file: `"scale"` (0.5–1.2,
+  default 1) draws it smaller or larger, and `"offset": [x, y]` moves it, in
+  the sheet's own pixels (each −32 to 32; y down), e.g. `"scale": 0.85,
+  "offset": [0, 2]`. Both apply under Neon Noir wherever the face is drawn;
+  000h draws every face as it always has.
+  `loom household sprite <agent> <sheet.png> <pixellab.json>` seeds one from a
+  PixelLab export (each state's rows, weight 1; `--weight idle=85` and
+  `--variant "Crack Neck=idle:15:rare"` place the rest); `--manifest` replaces it.
+  Served at `/faces/<agent>/` to someone signed in who sees that agent, only
+  the manifest and the sheets it names.
 
 ## Who's asking: tokens
 

@@ -1,6 +1,7 @@
 // A desktop's side of the page, as 000h's own docs have it (Jonathan, 2026-10-29): one panel down the whole side,
-// loom's mark and name at the top, Find under it (⌘K), the pages in groups, and who's signed in at the bottom.
-import { lazy, Suspense, useEffect } from 'react';
+// loom's mark and name at the top, Find under it (⌘K, App.tsx; it opens find.tsx's overlay), the pages in groups, and who's signed in at the bottom (their
+// account menu: passkeys, sign out). Each destination is in one group (nav.ts).
+import { lazy, Suspense } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroupLabel, SidebarHeader, SidebarMenuBadge, SidebarMenuButton, SidebarMenuLabel } from '@/components/ui/sidebar';
 import type { AgentHead, AgentView, Chrome } from './loom';
@@ -8,6 +9,7 @@ import { iconFor } from './safe';
 import { AgentAvatar } from './blocks';
 import { Kbd } from '@/components/ui/kbd';
 import { AccountButton } from './account-button';
+import { placesOf } from './nav';
 const AccountMenu = lazy(() => import('./account-menu'));
 
 type Item = { label: string; href: string; current: boolean; count?: number };
@@ -16,11 +18,6 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
   chrome: Chrome; head?: AgentHead; agent?: AgentView; go: (href: string) => void; icon: (label: string) => string;
 }) {
   const s = chrome.shell;
-  // ⌘K / Ctrl-K: Find, from anywhere.
-  useEffect(() => {
-    const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); go('/find'); } };
-    addEventListener('keydown', f); return () => removeEventListener('keydown', f);
-  }, [go]);
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const row = (t: Item, lead?: React.ReactNode) => (
     <SidebarMenuButton key={t.href} href={t.href} isActive={t.current} onClick={(e) => { e.preventDefault(); go(t.href); }}>
@@ -32,7 +29,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
   const mark = (a: { label: string; bg: string; fg: string }) => <AgentAvatar a={a} size={24} className="shrink-0" />;
   const groups: { label?: string; items: React.ReactNode[] }[] = [];
   if (s) {
-    const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')].filter((p) => p.href !== '/inbox');
+    const places = placesOf(s);
     const settings = s.pieces.filter((p) => p.kind === 'setting');
     // The same swap as a phone's dock (Jonathan, 2026-10-29): on an agent's pages the side is that agent's: its mark
     // with a back chevron first (the household), then its tabs, then the other agents to switch to. On the household's,
@@ -41,8 +38,8 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       groups.push({ items: [(
         <SidebarMenuButton key="#back" href="/" label={`${agent.label}: back to the household`} className="loom-side-back"
           onClick={(e) => { e.preventDefault(); go('/'); }}>
-          <span className="relative grid size-8 shrink-0 place-items-center rounded-[10px] text-sm font-semibold" style={{ background: agent.bg, color: agent.fg }}>
-            {agent.label[0]}
+          <span className="relative grid size-8 shrink-0 place-items-center">
+            <AgentAvatar a={agent} size={32} state={agent.asks ? 'needs-input' : 'idle'} />
             <span className="absolute -left-1.5 -top-1.5 grid size-[18px] place-items-center rounded-full border-2 border-[var(--v-paper)] bg-[var(--v-text)] text-[color:var(--v-canvas)]">
               <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>
             </span>
@@ -57,14 +54,14 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       groups.push({ items: [row({ label: 'Home', href: s.home, current: s.tab === 'home' }), row({ label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks })] });
       if (places.length) groups.push({ label: 'Places', items: places.map((p) => row(p)) });
       groups.push({ label: 'Agents', items: s.agents.map((a) => row({ label: a.label, href: a.href, current: false, count: a.asks }, mark(a))) });
-      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) })] });
+      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || settings.some((p) => p.current) })] });
     }
   }
   return (
     <Sidebar aria-label="loom" className="loom-side sticky top-3 m-3 mr-0 h-[calc(100dvh-24px)] w-[16.5rem] overflow-hidden">
       <SidebarHeader className="mb-4 justify-start gap-3 px-1">
         <a href="/" onClick={(e) => { e.preventDefault(); go('/'); }} className="flex min-w-0 items-center gap-3 no-underline">
-          <img src="/icons/loom-192.png" alt="" width={40} height={40} className="size-10 shrink-0 rounded-[12px]" />
+          <img src="/icons/loom-192.png" alt="" width={40} height={40} className="size-10 shrink-0 rounded-[var(--loom-r-icon)]" />
           <span className="grid min-w-0 leading-tight">
             <span className="text-lg font-semibold">loom</span>
             <span className="truncate text-xs opacity-70">{s?.household ? `${s.owner}'s household` : (s?.owner ?? chrome.agent)}</span>

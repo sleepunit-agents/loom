@@ -14,6 +14,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A phone's gestures, page moves and haptics** (t-1855). Swipe sideways to
+  move between Home, Inbox, Places and More in the dock's order; swipe up from
+  the dock for Find. A page change slides by the dock's order (a push into a
+  page, a pop back out), with the bar and the dock left still, and a swipe
+  drives the same move under the finger; reduced motion crossfades. The dock's
+  keys slide down and up when they swap for an agent's own. Appearance gains
+  **Haptics** (on by default): a tick on Android, and on iOS a real tap on a
+  dock key or an ask's Yes and No.
+- **Neon on a phone: one bar under the phone's own** (t-1849). At a phone's
+  width the page's name sits small under the phone's clock, LOOM//OS and the
+  needs-you count under its status icons, and between them a ticker (live, the
+  agents and what each is up to, each place's tile). The ticker moves only when
+  its words don't fit, at 24 px/s, stops while touched or hidden, and stands
+  still under reduced motion; the count never moves. The big header stays on
+  wider screens and in 000h.
+- **Neon's dock, as the mockup**: no tray, a thin magenta rule over the row,
+  dark keys with a neon edge and the current one lit, no names under them (a
+  key's name shows on hover, keyboard focus, or held a moment).
+- **A pixel face's own `scale` and `offset`** in its manifest (worn under
+  Neon), so a face that reads bigger than the others is tuned without a
+  deploy; Neon's agent card
+  keeps a minimum gap between the face and its words.
+
+- **Pixel faces.** An agent can have a pixel face (Jonathan's PixelLab
+  portraits for Art): a manifest and its sprite sheets kept with the
+  household's marks (`faces/<agent>/`, set with `loom household sprite`),
+  drawn at whole pixels (1x, 2x on a card) in its own lazily loaded chunk.
+  Each state plays as a beat, then rests, with a random gap per face; several
+  weighted animations per state and facing (one picked per beat, a rare one
+  never twice running); a glance to the south-east or south-west now and then
+  while resting, waiting on you always facing you. Nothing moves off screen,
+  in a hidden tab or under reduced motion. Appearance's "Pixel faces" (on by
+  default where a face exists) is the person's, on every device. An agent
+  without one keeps its drawn face.
+- **Neon Noir's status bar, sheets, Find, power-on and sound.** Under Neon a
+  status bar heads every page: LOOM//OS, live or offline (in words), how many
+  agents and how many things need you, and loom's clock. The Inbox's sheet
+  gets a title bar (what it is, who asks, its task) and a lit top edge, and
+  Find is a command bar with a prompt and the current row's cyan edge. Under
+  Neon the once-a-session arrival becomes a power-on (a line opens into the
+  screen and the page flickers on, about a second, cut short by any tap or
+  key, never under reduced motion); 000h's arrival is as it was. Appearance has Sound, off unless the person turns it on:
+  a WebAudio chime (0.5 KB, loaded only when on) when loom opens and when
+  something they did lands (once per outcome); no opening chime when the
+  opening animation is skipped, and a browser that won't play sound before a
+  tap stays quiet.
+- **Neon Noir's faces, type, corners and glow.** An agent's face keeps its
+  body and its expression and becomes dark glass rim-lit in its mark's neon
+  (six marks re-pointed per look, `--mark-*`), with a soft glow that is the same
+  in every state: the expression says the state. Titles are Oxanium, reading
+  is Figtree, and numbers, ids and times are IBM Plex Mono (self-hosted Latin
+  subsets, fetched only when Neon is worn). The app's hard-coded tile corners
+  are tokens, Neon's radii step down, an agent's card has a 45° cut corner lit
+  in its colour, and the dock, the launcher and an app's tile are dark keys
+  with a neon edge (the current one lit solid). The depth background's lines
+  glow. Glow sits on edges and what's current only, never on a state or a
+  status, and goes under `prefers-contrast: more` (checked in a test).
+- **Neon Noir, the page's new look, and the default.** Appearance has a
+  Look: Neon Noir (dark only: a night-city control room, light from edges and
+  states) or 000h (light or dark, as before). Neon is what a person who hasn't
+  chosen sees, so everyone's page changes on update; 000h is one tap away and
+  draws exactly as it did. Its stylesheet is its own file, put on before first
+  paint by a 0.5 KB script in the page's head (loom's CSP allows no inline
+  script), so a page never flashes the other look. A person's Appearance (the
+  look, light or dark, the background) is theirs on every device: kept by loom
+  per member like the Inbox's read state (`ui-sessions.json`, a preference,
+  never what they browsed), saved from any device (`POST /appearance/prefs`),
+  and carried on every page's chrome; a device keeps a copy only for its first
+  paint. Every look's colours are measured in a test (text 4.5:1 on every
+  surface, control edges 3:1, ink on the tints 4.5:1; one exception is named
+  there: 000h's count badge, 3.91:1, left as it was so 000h doesn't change), and the page's last hard-coded colours
+  (status dots, warning rings, counts, the unread dot, how far the dark dims the
+  ground) are tokens a look re-points.
+- **The nightly backup is loom's own.** `loom backup set --target git:<url>|path:<dir>
+  --recipient age1…` (docs/specs/keeping-watch.md): each night at `--at`, one of
+  the listeners exports the household, drills a restore of it with the
+  machine's own drill key, and writes it to the target (a git repo as one
+  force-pushed commit, or a directory). The default agent's Setup has a Backup
+  row; a failed or missed run is an Inbox alert for household owners, and
+  `LOOM_ALERT_COMMAND` hears it. `loom backup run`, `status`, `off`.
+
 - **Two cards that turn out to be one person become one.** `person_merge`
   (an agent of the household that holds both), `loom person merge <from>
   <into> [--dry-run]` (the owner) and `POST /api/loom/people/merge` (a

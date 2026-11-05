@@ -38,11 +38,17 @@ import { Readable } from 'node:stream';
 import { WebStandardStreamableHTTPServerTransport, isInitializeRequest } from '@modelcontextprotocol/server';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { EmptyResultSchema } from '@modelcontextprotocol/core';
-import { createLoomServer } from '../server.js';
+import { createLoomServer, type SessionTool } from '../server.js';
+import { callOfferedTool, offeredTools, type OfferedTool, type ToolCaller } from '../offered-tools.js';
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
 import { WATCH_S } from '../ui/push.js';
+import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
+import { spawnBackupTick } from '../backup-tick.js';
+
+/** How often core checks what open Needs you wait on. */
+const NEEDS_TICK_MS = 60_000;
 import { pieceApi, pieceManifests, type ApiCaller } from '../ui/pieces.js';
 import { findPiece, resolvePieceName } from '../cli/pieces.js';
 import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
@@ -402,27 +408,21 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   const serverFor = (c: Caller | undefined, identity: string) => {
     if (!c) return makeServer({ contextDir: opts.contextDir, gapsDir: opts.gapsDir, identity });
     if (c.role.kind === 'peer') return createKnowledgeOnlyServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, identity: c.role.name });
-    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true, relay: relayAs(c.agent) });
+    return createLoomServer({ contextDir: c.contextDir, gapsDir: opts.gapsDir, remote: true, tools: toolsFor(c.role.kind === 'agent' ? { kind: 'agent', agent: c.agent, ...(c.role.service ? { service: c.role.service } : {}), ...(c.role.house ? { house: c.role.house } : {}) } : { kind: 'agent', agent: c.agent }) });
   };
 
   /**
-   * The relay tool's reach (t-1597): the clock piece's `relay`, called the way
-   * a house calls it, as this session's own agent. An owner session acting
-   * for an agent relays as that agent; it gains nothing the agent's own token
-   * doesn't have.
+   * The tools the installed pieces offer (src/offered-tools.ts), read as the session opens, each
+   * called as this session's own agent. An owner session acting for an agent calls them as that
+   * agent; it gains nothing the agent's own token doesn't have.
    */
-  function relayAs(agent: string) {
-    return async (argv: string[]): Promise<{ ok: boolean; text: string }> => {
-      const path = findPiece('clock', process.env);
-      if (!path) return { ok: false, text: 'relay: this loom has no clock piece' };
-      // A call to a piece as the agent: the grants authority decides first, as for /api (src/grants.ts).
-      const no = await askGrant(process.env, { agent, piece: 'clock', path: 'run' });
-      if (no) return { ok: false, text: `relay: ${no.error}` };
-      const out = await pieceApi(path, { caller: { kind: 'agent', agent }, path: 'run', body: { argv } }, process.env);
-      const b = (out.body ?? {}) as { exit?: number; stdout?: string; stderr?: string; error?: string };
-      const ok = out.status === 200 && b.exit === 0;
-      return { ok, text: (ok ? b.stdout : b.stderr || b.error || b.stdout || `the clock answered ${out.status}`)?.trim() || '(no answer)' };
-    };
+  function toolsFor(as: ToolCaller): SessionTool[] {
+    let offered: OfferedTool[];
+    try { offered = offeredTools(process.env); } catch { offered = []; }
+    return offered.map((t) => ({
+      name: t.name, description: t.offer.description, inputSchema: t.offer.input_schema,
+      call: (args: unknown) => callOfferedTool(process.env, t, as, args),
+    }));
   }
 
   // One transport (+ its connected server) per live MCP session, plus the
@@ -851,6 +851,25 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       .catch((e) => console.error(`[loom:push] watch failed: ${(e as Error).message}`));
   }, WATCH_S * 1000);
   pushTimer?.unref();
+  // Needs you that wait on something (an approval, a task) clear themselves once it's resolved (src/needs-resolve.ts):
+  // checked each minute, and at start, through the pieces' own APIs. Never stops the daemon.
+  const resolveAll = () => {
+    if (!live) return;
+    void resolveNeeds(live(), pieceCheckers(process.env))
+      .catch((e) => console.error(`[loom:needs] the resolve pass failed: ${(e as Error).message}`));
+  };
+  const needsTimer = opts.createServer || !household ? undefined : setInterval(resolveAll, NEEDS_TICK_MS);
+  needsTimer?.unref();
+  const needsFirst = needsTimer ? setTimeout(resolveAll, 2_000) : undefined;
+  needsFirst?.unref();
+  // The nightly backup (docs/specs/keeping-watch.md): every 10 minutes each listener starts `loom backup tick`, a
+  // child process; the one that takes the run lock says a miss and runs a backup that's due. Never stops the daemon.
+  // Never throws out of a timer: a backup that can't start is the backup's to report, not the listener's to die of.
+  const backupTick = () => { try { if (live) spawnBackupTick(live(), process.env); } catch (e) { process.stderr.write(`loom: the backup tick didn't start: ${(e as Error).message}\n`); } };
+  const backupTimer = opts.createServer || !household ? undefined : setInterval(backupTick, 10 * 60_000);
+  backupTimer?.unref();
+  const backupFirst = backupTimer ? setTimeout(backupTick, 60_000) : undefined;
+  backupFirst?.unref();
 
   const http = createServer((req, res) => {
     void (async () => {
@@ -1031,6 +1050,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     host: opts.host,
     async close() {
       if (pushTimer) clearInterval(pushTimer);
+      if (needsTimer) clearInterval(needsTimer);
+      if (backupTimer) clearInterval(backupTimer);
+      if (backupFirst) clearTimeout(backupFirst);
+      if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);

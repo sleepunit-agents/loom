@@ -14,27 +14,32 @@ const LivingLink = lazy(() => import('@/components/ui/living-link').then((m) => 
 const Markdown = lazy(() => import('./markdown'));
 const Profile = lazy(() => import('./profile'));
 const ChartBlock = lazy(() => import('./chart'));
+const Face = lazy(() => import('./face'));
+// An agent's pixel face, where it has a sheet (pixel-face.tsx): its own chunk, its sheet loaded when drawn.
+const PixelFace = lazy(() => import('./pixel-face'));
+const Panel = lazy(() => import('./panel'));
+const Health = lazy(() => import('./panel').then((m) => ({ default: m.Health })));
+const Spark = lazy(() => import('./panel').then((m) => ({ default: m.Spark })));
 const Progress = lazy(() => import('@/components/ui/progress').then((m) => ({ default: m.Progress })));
 const CodeBlock = lazy(() => import('@/components/ui/code-block').then((m) => ({ default: m.CodeBlock })));
+// What Home's first screen never draws loads when a page has it (the first page's weight, web-app.test.ts): forms and
+// their editors (000h's fields, radio chips, switches, checkboxes, dialog), the confirm a danger button asks, a
+// desktop's table and a long list's pages.
+const Form = lazy(() => import('./form'));
+const Confirm = lazy(() => import('./block-extras').then((m) => ({ default: m.Confirm })));
+const Pager = lazy(() => import('./block-extras').then((m) => ({ default: m.Pager })));
+const DetailsBlock = lazy(() => import('./details'));
+const WideTable = lazy(() => import('./block-extras').then((m) => ({ default: m.WideTable })));
 
-import { Checkbox } from '@/components/ui/checkbox';
-import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
-import { Table, TableBody, TableCell, TableContainer, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-const ChoiceSelect = lazy(() => import('./choice-select'));
-import { Field as UiField, FieldDescription, FieldLabel } from '@/components/ui/field';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { createContext, useContext, useState, type ReactNode, lazy, Suspense } from 'react';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import { pageHref, type Block, type Button as Btn, type Ctx, type Field, type ListItem, type Tone } from './loom';
+import { DOT } from './tones';
+import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
+import { markColor, PixelContext, useLook } from './look';
+import type { Sprite } from './pixel-face';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
 export interface Env {
@@ -45,7 +50,6 @@ export interface Env {
 export const EnvContext = createContext<Env | null>(null);
 export const useEnv = () => useContext(EnvContext)!;
 
-const DOT: Record<Tone, string> = { ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', muted: 'bg-neutral-400' };
 const BADGE: Record<string, string> = { running: 'live', wanted: 'pending', starting: 'pending', failed: 'danger', lost: 'danger' };
 
 export function Link({ page, href, children, className }: { page?: string; href?: string; children: ReactNode; className?: string }) {
@@ -59,129 +63,19 @@ export function Link({ page, href, children, className }: { page?: string; href?
 // ---- actions ---------------------------------------------------------------------------------------
 
 /** A button that sends its action; one that is danger (or says confirm) asks first. */
-export function ActButton({ b, size = 'sm', full = false, onDone }: { b: Btn; size?: 'sm' | 'default'; full?: boolean; onDone?: () => void }) {
+export function ActButton({ b, size = 'sm', full = false, onDone, disabled = false }: { b: Btn; size?: 'sm' | 'default'; full?: boolean; onDone?: () => void; disabled?: boolean }) {
   const { send } = useEnv();
   const [asking, setAsking] = useState(false);
+  // The confirm dialog (000h's alert dialog) loads the first time it's asked for, and stays for its closing motion.
+  const [asked, setAsked] = useState(false);
   const [busy, setBusy] = useState(false);
   const fire = async () => { setBusy(true); await send(b.action, b.fields ?? {}); setBusy(false); onDone?.(); };
   const variant = b.tone === 'danger' ? 'danger' : b.tone === 'primary' ? 'default' : 'outline';
   return (
     <>
-      <Button size={size} variant={variant} disabled={busy} className={full ? 'w-full' : undefined}
-        onClick={() => (b.confirm || b.tone === 'danger' ? setAsking(true) : void fire())}>{b.label}</Button>
-      <AlertDialog open={asking} onOpenChange={setAsking}>
-        <AlertDialogContent>
-          <AlertDialogHeader><AlertDialogTitle>{b.label}?</AlertDialogTitle>
-            <AlertDialogDescription>{b.confirm ?? 'This can\'t be undone from here.'}</AlertDialogDescription></AlertDialogHeader>
-          <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void fire()}>{b.label}</AlertDialogAction></AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  );
-}
-
-// ---- forms -----------------------------------------------------------------------------------------
-
-function FieldInput({ f, value, set, id }: { f: Field; value: string; set: (v: string) => void; id: string }) {
-  if (f.kind === 'textarea') return <Textarea id={id} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
-  if (f.kind === 'toggle') return <Switch id={id} checked={value === 'on' || value === 'true'} onCheckedChange={(c) => set(c ? 'on' : '')} />;
-  // One box (000h's checkbox): "on" or "". Several: the ticked values, joined with commas.
-  if (f.kind === 'check') return <Checkbox id={id} checked={value === 'on'} onCheckedChange={(c) => set(c === true ? 'on' : '')}>{f.hint ? null : f.label}</Checkbox>;
-  if (f.kind === 'checks') {
-    const on = new Set(value.split(',').filter(Boolean));
-    return (
-      <div id={id} role="group" aria-label={f.label} className="grid gap-2">{f.options?.map((o) => (
-        <Checkbox key={o.value} checked={on.has(o.value)} onCheckedChange={(c) => {
-          const next = new Set(on); if (c === true) next.add(o.value); else next.delete(o.value);
-          set((f.options ?? []).map((x) => x.value).filter((v) => next.has(v)).join(','));
-        }}>{o.label}</Checkbox>))}
-      </div>
-    );
-  }
-  // A time of day (Jonathan, 2026-10-30: "and the time picker"): the device's own picker, which shows it as its owner
-  // reads time (2:30 PM here); "HH:MM" on the wire. Several: a row each, a way to drop one, and one to add another.
-  if (f.kind === 'time') {
-    const times = value ? value.split(',').map((t) => t.trim()) : [''];
-    const put = (next: string[]) => set(next.filter(Boolean).join(','));
-    return (
-      <div id={id} role="group" aria-label={f.label} className="grid gap-2">
-        {times.map((t, n) => (
-          <div key={n} className="flex items-center gap-2">
-            <Input type="time" aria-label={times.length > 1 ? `${f.label} ${n + 1}` : f.label} value={t} required={f.required && n === 0} className="w-40"
-              onChange={(e) => { const next = [...times]; next[n] = e.target.value; put(next.length ? next : ['']); if (!e.target.value && times.length === 1) set(''); }} />
-            {f.multiple && times.length > 1 && <Button type="button" size="sm" variant="ghost" aria-label={`Remove ${t || 'this time'}`} onClick={() => put(times.filter((_, i) => i !== n))}>Remove</Button>}
-          </div>
-        ))}
-        {f.multiple && times.every(Boolean) && times.length < 12 && (
-          <Button type="button" size="sm" variant="outline" className="justify-self-start" onClick={() => set([...times, ''].join(','))}>Add a time</Button>
-        )}
-      </div>
-    );
-  }
-  // A few choices show at once (000h's radio chips); many go in a select.
-  if (f.kind === 'choice' && (f.options?.length ?? 0) <= 5 && !f.options?.some((o) => o.swatch)) {
-    return (
-      <RadioGroup id={id} value={value || f.options?.[0]?.value || ''} onValueChange={set} className="flex flex-wrap gap-2">
-        {f.options?.map((o) => <RadioGroupItem key={o.value || '_'} value={o.value} appearance="chip">{o.label}</RadioGroupItem>)}
-      </RadioGroup>
-    );
-  }
-  if (f.kind === 'choice') {
-    return (
-      <Suspense fallback={<Input id={id} value={f.options?.find((o) => o.value === value)?.label ?? ''} readOnly />}>
-        <ChoiceSelect id={id} value={value} options={f.options ?? []} set={set} />
-      </Suspense>
-    );
-  }
-  return <Input id={id} type={f.kind === 'secret' ? 'password' : f.kind === 'number' ? 'number' : f.kind === 'date' ? 'date' : 'text'}
-    autoComplete={f.kind === 'secret' ? 'off' : undefined} value={value} required={f.required} onChange={(e) => set(e.target.value)} />;
-}
-
-export function Form({ form, onDone, inDialog = false }: { form: Extract<Block, { type: 'form' }>; onDone?: () => void; inDialog?: boolean }) {
-  const { send } = useEnv();
-  const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(form.fields.map((f) => [f.name, f.value ?? ''])));
-  const [busy, setBusy] = useState(false);
-  const fields = (
-    <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 ${inDialog ? 'max-h-[52dvh] overflow-y-auto pr-1' : ''}`}>
-      {form.fields.map((f) => (
-        <UiField key={f.name} controlId={`${form.action}-${f.name}`}>
-          <FieldLabel htmlFor={`${form.action}-${f.name}`}>{f.label}{f.required ? <span aria-hidden className="opacity-50"> *</span> : null}</FieldLabel>
-          <FieldInput id={`${form.action}-${f.name}`} f={f} value={vals[f.name] ?? ''} set={(v) => setVals((s) => ({ ...s, [f.name]: v }))} />
-          {f.hint && <FieldDescription>{f.hint}</FieldDescription>}
-        </UiField>
-      ))}
-      {form.note && <p className="text-sm opacity-70">{form.note}</p>}
-    </div>
-  );
-  const submit = <Button type="submit" disabled={busy}>{form.submit}</Button>;
-  return (
-    <form className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4" onSubmit={async (e) => {
-      e.preventDefault(); setBusy(true);
-      // A time row added and left empty isn't sent: "07:17," is "07:17".
-      const clean = Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, form.fields.find((f) => f.name === k)?.kind === 'time' ? v.split(',').map((t) => t.trim()).filter(Boolean).join(',') : v]));
-      const ok = await send(form.action, { ...(form.hidden ?? {}), ...clean });
-      setBusy(false); if (ok) onDone?.();
-    }}>
-      {!inDialog && form.title && <h4 className="font-medium">{form.title}</h4>}
-      {fields}
-      {inDialog ? <DialogFooter>{submit}</DialogFooter> : <div>{submit}</div>}
-    </form>
-  );
-}
-
-/** A form behind a button, opened as a focused editor. */
-function EditorButton({ label, title, form, variant = 'outline' }: { label: string; title: string; form: Extract<Block, { type: 'form' }>; variant?: 'outline' | 'default' | 'ghost' }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button size="sm" variant={variant} onClick={() => setOpen(true)}>{label}</Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent appearance="editor" showCloseButton>
-          <DialogHeader><DialogTitle>{title}</DialogTitle>{form.note && <DialogDescription>{form.note}</DialogDescription>}</DialogHeader>
-          <Form form={{ ...form, note: undefined }} inDialog onDone={() => setOpen(false)} />
-        </DialogContent>
-      </Dialog>
+      <Button size={size} variant={variant} disabled={busy || disabled} className={full ? 'w-full' : undefined}
+        onClick={() => (b.confirm || b.tone === 'danger' ? (setAsked(true), setAsking(true)) : void fire())}>{b.label}</Button>
+      {asked && <Suspense fallback={null}><Confirm b={b} open={asking} onOpenChange={setAsking} fire={() => void fire()} /></Suspense>}
     </>
   );
 }
@@ -190,21 +84,28 @@ function EditorButton({ label, title, form, variant = 'outline' }: { label: stri
 
 function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolean }) {
   // One row is 000h's item: its lead (a tone, an agent's avatar), title and description, and what's at the end.
+  // Nothing is cut so it can't be read (Jonathan, 2026-11-03): a row's words run to two lines, and a row that goes
+  // nowhere opens to its whole text on a tap; one that goes somewhere shows it all there.
+  const [open, setOpen] = useState(false);
+  const whole = wrap || open;
+  const linked = i.page !== undefined || !!i.href;
   const body = (
     <ItemContent className="min-w-0 flex-1">
-      <ItemTitle className={`flex min-w-0 gap-2 ${wrap ? 'items-start' : 'items-center'}`}>
+      <ItemTitle className={`flex min-w-0 gap-2 ${whole ? 'items-start' : 'items-center'}`}>
         {i.tone && <span className={`size-2 shrink-0 rounded-full ${DOT[i.tone]}`} />}
         {marked && <Who agent={i.agent} person={i.person} avatar={i.avatar} size={20} />}
-        <span className={wrap ? 'font-medium leading-relaxed [overflow-wrap:anywhere]' : 'truncate font-medium'}>{tidy(i.text)}</span>
+        <span className={whole ? 'font-medium leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]' : 'line-clamp-2 font-medium [overflow-wrap:anywhere]'}>{tidy(i.text)}</span>
         {i.badge && <Badge variant={(BADGE[i.badge] ?? 'default') as 'default'}>{i.badge}</Badge>}
       </ItemTitle>
-      {i.meta && <ItemDescription className="truncate">{tidy(i.meta)}</ItemDescription>}
+      {i.meta && <ItemDescription className={whole ? '[overflow-wrap:anywhere]' : 'line-clamp-2 [overflow-wrap:anywhere]'}>{tidy(i.meta)}</ItemDescription>}
     </ItemContent>
   );
   return (
     <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0">
       <Item as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
-        {i.page !== undefined || i.href ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link> : body}
+        {linked ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link>
+          : wrap ? body
+            : <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{body}</button>}
         {i.act && <ItemTrailing><ActButton b={i.act} /></ItemTrailing>}
       </Item>
     </Arrive>
@@ -231,19 +132,7 @@ function usePaged<T>(all: T[], served?: Pages): { rows: T[]; pager: ReactNode } 
   const shown = [...new Set([0, page - 1, page, page + 1, pages - 1].filter((p) => p >= 0 && p < pages))].sort((x, y) => x - y);
   return {
     rows: served ? all : all.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS),
-    pager: (
-      <Pagination className="mt-2" aria-label="Pages of this list">
-        <PaginationContent>
-          <PaginationItem><PaginationPrevious disabled={page === 0} onClick={() => to(page - 1)} /></PaginationItem>
-          {shown.map((p, i) => [
-            i && p - shown[i - 1] > 1 ? <PaginationItem key={`e${p}`}><PaginationEllipsis /></PaginationItem> : null,
-            <PaginationItem key={p}><PaginationLink isActive={p === page} aria-current={p === page ? 'page' : undefined} onClick={() => to(p)}>{p + 1}</PaginationLink></PaginationItem>,
-          ])}
-          <PaginationItem><PaginationNext disabled={page === pages - 1} onClick={() => to(page + 1)} /></PaginationItem>
-        </PaginationContent>
-        {served?.total !== undefined && <p className="mt-1 text-xs opacity-60">{served.total.toLocaleString()} in all</p>}
-      </Pagination>
-    ),
+    pager: <Suspense fallback={<div className="mt-2 h-9" />}><Pager page={page} pages={pages} shown={shown} to={to} total={served?.total} /></Suspense>,
   };
 }
 
@@ -272,41 +161,9 @@ function TableBlock({ b }: { b: Extract<Block, { type: 'table' }> }) {
     );
   }
   // A desktop: 000h's table (its ledger look), rows as they come.
-  return (
-    <>
-      <TableContainer>
-        <Table>
-          <TableHeader><TableRow>{b.columns.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-          <TableBody>{rows.map((r, n) => <Arrive as="tr" key={n} k={`tr:${JSON.stringify(r)}`} data-slot="table-row">{r.map((c, m) => <TableCell key={m} className="align-middle">{cell(c)}</TableCell>)}</Arrive>)}</TableBody>
-        </Table>
-      </TableContainer>
-      {pager}
-    </>
-  );
+  return <><Suspense fallback={<div className="min-h-24" />}><WideTable columns={b.columns} rows={rows} cell={cell} /></Suspense>{pager}</>;
 }
 
-/** A details, by what it holds: a form is an editor; a list or a table a drawer; anything else a drawer too. */
-function DetailsBlock({ b }: { b: Extract<Block, { type: 'details' }> }) {
-  const forms = b.blocks.filter((x) => x.type === 'form') as Extract<Block, { type: 'form' }>[];
-  const [open, setOpen] = useState(false);
-  if (forms.length === 1 && b.blocks.length === 1) return <EditorButton label={b.summary} title={forms[0].title ?? b.summary} form={forms[0]} />;
-  const count = (b.blocks.find((x) => x.type === 'list' || x.type === 'table') as { items?: unknown[]; rows?: unknown[] } | undefined);
-  const n = count?.items?.length ?? count?.rows?.length;
-  return (
-    <>
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>{b.summary}{n !== undefined ? ` · ${n}` : b.meta ? ` · ${b.meta}` : ''}</Button>
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerContent className="lg:mx-auto lg:max-w-2xl">
-          <DrawerHeader><DrawerTitle>{b.summary}</DrawerTitle>{b.meta && <DrawerDescription>{b.meta}</DrawerDescription>}</DrawerHeader>
-          <div className="grid gap-3">{b.blocks.map((x, k) => (x.type === 'form'
-            ? <EditorButton key={k} label={(x as { title?: string }).title ?? b.summary} title={(x as { title?: string }).title ?? b.summary} form={x as Extract<Block, { type: 'form' }>} variant="default" />
-            : x.type === 'buttons' ? <div key={k} className="grid gap-2">{(x as Extract<Block, { type: 'buttons' }>).items.map((y) => <ActButton key={y.label} b={y} full size="default" onDone={() => setOpen(false)} />)}</div>
-              : <BlockView key={k} b={x} />))}</div>
-        </DrawerContent>
-      </Drawer>
-    </>
-  );
-}
 
 /** Pills that set one query value on this page, and an optional search over them (?q=), the other choices kept. */
 
@@ -319,13 +176,30 @@ function PageLink({ l }: { l: Extract<Block, { type: 'link' }> }) {
   return <Suspense fallback={plain}><LivingLink href={to} direction="forward" onClick={(e: React.MouseEvent) => { if (e.metaKey || e.ctrlKey || to === '#') return; e.preventDefault(); go(to); }}>{l.text}</LivingLink></Suspense>;
 }
 
-/** An agent's mark as 000h's avatar: its initial on its colour, rounded. */
-export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style }: { a: { label: string; bg: string; fg: string }; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties }) {
-  return (
+/** An agent's mark: its face (face.tsx), its shape and eyes its own, its expression its state; its initial on its
+ * colour while the face loads. */
+export type Mark = { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: Sprite } };
+export type MarkState = 'idle' | 'thinking' | 'working' | 'needs-input' | 'complete' | 'error';
+const isDark = () => typeof document !== 'undefined' && document.querySelector('[data-mode]')?.getAttribute('data-mode') === 'dark';
+export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style, state }: { a: Mark; size?: number; shape?: 'circle' | 'rounded' | 'pebble'; className?: string; style?: React.CSSProperties; state?: MarkState }) {
+  const look = useLook();
+  // A pixel face is at least its 48-pixel square: drawn at 1x from 36 px, 2x from 64; smaller, the drawn face.
+  const pixel = useContext(PixelContext) && !!a.face?.sprite && size >= 36;
+  const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
-      style={{ '--c': a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
+      style={{ '--c': look === 'neon' ? markColor(a.bg) : a.bg, color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
+  );
+  return (
+    <Suspense fallback={initial}>
+      <span className={`inline-grid shrink-0 place-items-center ${className ?? ''}`} style={{ width: size, height: size }}>
+        {(() => {
+          const drawn = <Face bg={a.bg} fg={a.fg} shape={a.face?.shape as never} eyes={a.face?.eyes as never} state={state} size={size} label={a.label} dark={isDark()} rim={look === 'neon'} />;
+          return pixel ? <PixelFace sprite={a.face!.sprite!} state={state} size={size} label={a.label} fallback={drawn} /> : drawn;
+        })()}
+      </span>
+    </Suspense>
   );
 }
 
@@ -393,11 +267,13 @@ export function BlockView({ b }: { b: Block }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{(b as Extract<Block, { type: 'stats' }>).items.map((s) => (
         <Arrive key={s.label} k={`st:${s.label}\0${s.value}`} className="rounded-[var(--r-card)]"><Card lift={s.page !== undefined} className="gap-0 p-0">
           <Link page={s.page} className="block p-4 no-underline"><span className="block text-xs opacity-60">{s.label}</span>
-          <span className="block text-xl font-semibold">{s.value}</span>{s.detail && <span className="block text-xs opacity-60">{s.detail}</span>}</Link></Card></Arrive>))}</div>);
+          <span className="loom-data flex items-center gap-1.5 text-xl font-semibold">{s.tone && s.tone !== 'muted' && <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[s.tone]}`} />}{s.value}</span>{s.detail && <span className="block text-xs opacity-60 [overflow-wrap:anywhere]">{s.detail}</span>}
+          {s.meter !== undefined && <Suspense fallback={<div className="mt-2 h-2 rounded-full bg-[var(--loom-track)]" />}><Progress className="mt-2" value={Math.round(s.meter * 100)} aria-label={s.label} /></Suspense>}
+          {s.spark && <Suspense fallback={<div className="mt-2 h-7" />}><Spark values={s.spark} tone={s.tone} /></Suspense>}</Link></Card></Arrive>))}</div>);
     case 'meter': return (
       <div className="grid gap-3">{(b as Extract<Block, { type: 'meter' }>).items.map((m) => (
         <div key={m.label} className="grid gap-1"><div className="flex justify-between text-sm"><span>{m.label}</span><span className="opacity-70">{Math.round(m.value * 100)}%</span></div>
-          <Suspense fallback={<div className="h-2 rounded-full bg-black/10" />}><Progress value={Math.round(Math.min(1, m.value) * 100)} aria-label={m.label} /></Suspense>
+          <Suspense fallback={<div className="h-2 rounded-full bg-[var(--loom-track)]" />}><Progress value={Math.round(Math.min(1, m.value) * 100)} aria-label={m.label} /></Suspense>
           {m.detail && <p className="text-xs opacity-60">{m.detail}</p>}</div>))}</div>);
     case 'status': return (
       <ul className="grid gap-2">{(b as Extract<Block, { type: 'status' }>).items.map((s) => (
@@ -407,9 +283,11 @@ export function BlockView({ b }: { b: Block }) {
     case 'code': { const text = (b as { text: string }).text;
       return <Suspense fallback={<pre className="overflow-x-auto rounded-xl p-3 text-xs">{text}</pre>}><CodeBlock code={text} /></Suspense>; }
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;
-    case 'form': return <Form form={b as Extract<Block, { type: 'form' }>} />;
-    case 'details': return <DetailsBlock b={b as Extract<Block, { type: 'details' }>} />;
+    case 'form': return <Suspense fallback={<div className="min-h-24" />}><Form form={b as Extract<Block, { type: 'form' }>} /></Suspense>;
+    case 'details': return <Suspense fallback={<Button size="sm" variant="ghost" disabled>{(b as { summary: string }).summary}</Button>}><DetailsBlock b={b as Extract<Block, { type: 'details' }>} /></Suspense>;
     case 'chart': return <Suspense fallback={<div className="h-64" />}><ChartBlock b={b as Extract<Block, { type: 'chart' }>} /></Suspense>;
+    case 'panel': return <Suspense fallback={<div className="min-h-24" />}><Panel b={b as Extract<Block, { type: 'panel' }>} /></Suspense>;
+    case 'health': return <Suspense fallback={<div className="min-h-14" />}><Health b={b as Extract<Block, { type: 'health' }>} /></Suspense>;
     case 'filters': return <Suspense fallback={null}><Filters b={b as Extract<Block, { type: 'filters' }>} /></Suspense>;
     default: return <p className="text-sm opacity-60">(a {b.type} block this app can't draw yet)</p>;
   }

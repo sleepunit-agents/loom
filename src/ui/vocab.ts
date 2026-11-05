@@ -20,8 +20,10 @@ export type Cell = string | { text: string; page?: string };
 export interface Field {
   name: string;
   label: string;
-  kind: 'text' | 'textarea' | 'choice' | 'secret' | 'check' | 'checks' | 'time';
+  kind: 'text' | 'textarea' | 'choice' | 'secret' | 'check' | 'checks' | 'time' | 'toggle' | 'segmented' | 'stepper';
   hint?: string;
+  /** `stepper`: the bounds and step of its number, and the unit it's counted in ("days"). */
+  min?: number; max?: number; step?: number; unit?: string;
   /** `time`: more than one time, posted joined with commas ("07:17,19:17"). */
   multiple?: boolean;
   value?: string;
@@ -33,7 +35,12 @@ export interface Field {
 export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
 
 export type Block =
-  | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string }> }
+  // A tile may carry a small trend (`spark`, up to 30 numbers, oldest first) or how full something is (`meter`, 0 to 1).
+  | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string; spark?: number[]; meter?: number }> }
+  // A status screen's headline: how things are, in plain words, at a glance ("All good", "One bridge is down").
+  | { type: 'health'; tone: Tone; text: string; detail?: string }
+  // Settings as an app's panel: each row states its current value and holds at most one control (docs/extensions.md, "Panels").
+  | { type: 'panel'; title?: string; rows: PanelRow[]; action?: Button }
   // Someone, as a profile (000h's profile card, built from its parts): a cover in their colour (an agent's own, else
   // `tone`), their avatar, name and summary, badges, a few numbers, and links out.
   | { type: 'profile'; name: string; initials?: string; agent?: string; tone?: ProfileTone; summary?: string; badges?: string[];
@@ -50,7 +57,9 @@ export type Block =
   | ({ type: 'link'; text: string } & Target)
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
-  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
+  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
+      /** More ways to send it, beside `submit`: each posts the form's fields with its own (Yes and No over a box of words). */
+      submits?: FormSubmit[] }
   | { type: 'buttons'; items: Button[] }
   | { type: 'meter'; items: Array<{ label: string; value: number; detail?: string; tone?: Tone }> }
   | { type: 'code'; text: string; label?: string }
@@ -58,6 +67,20 @@ export type Block =
   // 000h's chart: bars (grouped or stacked), an area or a line over labelled points, each series a 000h colour.
   | { type: 'chart'; kind: ChartKind; variant?: ChartVariant; caption?: string; summary?: { label: string; value: string; detail?: string };
       series: Array<{ key: string; label: string; color?: ChartColor }>; data: Array<{ label: string } & Record<string, number | string | null>> };
+
+/**
+ * One row of a panel: a label and its current value in words, and at most one way to change it. `toggle` switches at
+ * once (posts its action with `on` set to "on" or ""); `choice` is a segmented control that posts at once; `edit` opens a
+ * sheet with a few fields; `sheet` opens a sheet of detail (blocks); `page`/`href` goes there; `act` is a button.
+ */
+export interface PanelRow extends Target {
+  label: string; value?: string; detail?: string; tone?: Tone; agent?: string;
+  toggle?: { action: string; on: boolean; fields?: Record<string, string> };
+  choice?: { action: string; name: string; value: string; options: Array<{ value: string; label: string }>; fields?: Record<string, string> };
+  edit?: { action: string; title?: string; submit?: string; note?: string; fields: Field[]; hidden?: Record<string, string> };
+  sheet?: { title?: string; blocks: Block[] };
+  act?: Button;
+}
 
 export type ChartKind = 'bar' | 'area' | 'line';
 export type ChartVariant = 'grouped' | 'stacked' | 'smooth' | 'step';
@@ -125,6 +148,11 @@ export interface AgentReport { state?: AgentState; reason?: string; readings: Re
 /** Where a piece's tab (or one section) belongs: the household's (the default), or each agent's own pages. */
 export type Level = 'loom' | 'agent';
 
+/** loom's palette, by its tokens' names (--v-pink, …): an app's accent is one of these, so the theme decides the shade
+ * (each palette and light or dark has its own) and the ink on it stays readable. */
+export const ACCENTS = ['pink', 'blue', 'yellow', 'olive'] as const;
+export type Accent = typeof ACCENTS[number];
+
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
   scope?: boolean;
@@ -134,8 +162,11 @@ export interface Manifest {
    * only household owners see the piece at all.
    */
   owners?: 2;
-  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages. */
-  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level };
+  /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages.
+   * icon: a lucide icon's name for its tile and tab (`alarm-clock`); one loom can't draw is a plain one.
+   * accent: its colour everywhere it's drawn (tile, dock, its page's header), one of loom's palette (ACCENTS), so it
+   * holds in light and dark and under every palette; without one, loom's own for a catalog piece, else one from its name. */
+  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string; accent?: Accent };
   /**
    * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
    * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
@@ -172,9 +203,14 @@ export const LIMITS = {
   readings: 4,
   chartSeries: 5,
   chartPoints: 60,
+  spark: 30,
+  /** A segmented control's choices: more than this is a choice field's job. */
+  segments: 5,
   doing: 8,
   fields: 30,
   hidden: 20,
+  // A form's extra submits: a Yes, a No, and one more.
+  formSubmits: 3,
   options: 50,
   query: 10,
   queryValue: 200,
@@ -184,6 +220,7 @@ export const LIMITS = {
 } as const;
 
 const TONES: ReadonlySet<string> = new Set(['ok', 'warn', 'bad', 'muted']);
+const FIELD_KINDS: ReadonlySet<string> = new Set(['text', 'textarea', 'choice', 'secret', 'check', 'checks', 'time', 'toggle', 'segmented', 'stepper']);
 export type ProfileTone = 'pink' | 'yellow' | 'olive' | 'blue';
 const PROFILE_TONES: ReadonlySet<string> = new Set(['pink', 'yellow', 'olive', 'blue']);
 export const ID = /^[a-z][a-z0-9-]{0,39}$/;
@@ -354,6 +391,16 @@ function strMap(v: unknown, what: string, max: number): Record<string, string> |
   return out;
 }
 
+/** One more way to send a form: its label, its own fields (answer: yes), and a tone. */
+export interface FormSubmit { label: string; fields?: Record<string, string>; tone?: 'primary' | 'danger' }
+function formSubmit(x: unknown): FormSubmit {
+  const o = obj(x, 'form.submits item');
+  const t = o.tone;
+  if (t !== undefined && t !== 'primary' && t !== 'danger') throw new Invalid('form.submits tone must be primary or danger');
+  const fields = strMap(o.fields, 'form.submits fields', LIMITS.hidden);
+  return { label: str(o.label, 'form.submits label'), ...(fields ? { fields } : {}), ...(t ? { tone: t as 'primary' | 'danger' } : {}) };
+}
+
 function button(x: unknown): Button {
   const o = obj(x, 'button');
   const t = o.tone;
@@ -370,10 +417,8 @@ function button(x: unknown): Button {
 function field(v: unknown): Field {
   const o = obj(v, 'field');
   const kind = o.kind;
-  if (kind !== 'text' && kind !== 'textarea' && kind !== 'choice' && kind !== 'secret' && kind !== 'check' && kind !== 'checks' && kind !== 'time') {
-    throw new Invalid('field.kind must be text, textarea, choice, secret, check, checks or time');
-  }
-  const f: Field = { name: name(o.name, 'field.name'), label: str(o.label, 'field.label'), kind };
+  if (typeof kind !== 'string' || !FIELD_KINDS.has(kind)) throw new Invalid(`field.kind must be one of ${[...FIELD_KINDS].join(', ')}`);
+  const f: Field = { name: name(o.name, 'field.name'), label: str(o.label, 'field.label'), kind: kind as Field['kind'] };
   const hint = optStr(o.hint, 'field.hint');
   if (hint !== undefined) f.hint = hint;
   // A secret field never carries a value: the page must not be able to show one.
@@ -392,6 +437,29 @@ function field(v: unknown): Field {
   }
   // `check`: one box, posted as "on" or "". `checks`: any of its options, posted as their values joined with commas.
   if (kind === 'check' && f.value !== undefined && f.value !== 'on' && f.value !== '') throw new Invalid('a check field\'s value is "on" or ""');
+  // `toggle`: a switch, posted as "on" or "" like a check. `stepper`: a whole number within min and max, with − and +.
+  if (kind === 'toggle' && f.value !== undefined && f.value !== 'on' && f.value !== '') throw new Invalid('a toggle field\'s value is "on" or ""');
+  if (kind === 'stepper') {
+    const num = (x: unknown, what: string) => {
+      if (x === undefined) return undefined;
+      if (typeof x !== 'number' || !Number.isFinite(x)) throw new Invalid(`${what} must be a number`);
+      return x;
+    };
+    const min = num(o.min, 'field.min'), max = num(o.max, 'field.max'), step = num(o.step, 'field.step');
+    if (min !== undefined && max !== undefined && min > max) throw new Invalid('a stepper\'s min is above its max');
+    if (step !== undefined && step <= 0) throw new Invalid('a stepper\'s step is above 0');
+    if (f.value !== undefined && f.value !== '' && !Number.isFinite(Number(f.value))) throw new Invalid('a stepper\'s value is a number');
+    Object.assign(f, min !== undefined ? { min } : {}, max !== undefined ? { max } : {}, step !== undefined ? { step } : {});
+    const unit = optStr(o.unit, 'field.unit');
+    if (unit !== undefined) f.unit = unit;
+  }
+  if (kind === 'segmented') {
+    f.options = arr(o.options, 'field.options', LIMITS.segments).map((x) => {
+      const opt = obj(x, 'option');
+      return { value: str(opt.value, 'option.value'), label: str(opt.label, 'option.label') };
+    });
+    if (!f.options.length) throw new Invalid('a segmented field needs its options');
+  }
   if (kind === 'choice' || kind === 'checks') {
     f.options = arr(o.options, 'field.options', LIMITS.options).map((x) => {
       const opt = obj(x, 'option');
@@ -435,6 +503,11 @@ function block(v: unknown, depth = 0): Block {
           return {
             label: str(o.label, 'stat.label'), value: str(o.value, 'stat.value'),
             detail: optStr(o.detail, 'stat.detail'), tone: tone(o.tone), page: page(o.page, 'stat.page'),
+            ...(o.spark !== undefined ? { spark: arr(o.spark, 'stat.spark', LIMITS.spark).map((n) => {
+              if (typeof n !== 'number' || !Number.isFinite(n)) throw new Invalid('stat.spark holds numbers');
+              return n;
+            }) } : {}),
+            ...(o.meter !== undefined ? { meter: fraction(o.meter, 'stat.meter') } : {}),
           };
         }),
       };
@@ -543,6 +616,7 @@ function block(v: unknown, depth = 0): Block {
         title: optStr(b.title, 'form.title'),
         note: optStr(b.note, 'form.note'),
         hidden: strMap(b.hidden, 'form.hidden', LIMITS.hidden),
+        ...(b.submits === undefined ? {} : { submits: arr(b.submits, 'form.submits', LIMITS.formSubmits).map(formSubmit) }),
       };
     case 'buttons':
       return {
@@ -575,9 +649,68 @@ function block(v: unknown, depth = 0): Block {
       };
     case 'chart':
       return chart(b);
+    case 'health': {
+      const t = tone(b.tone);
+      if (!t) throw new Invalid('health.tone is ok, warn, bad or muted');
+      return { type: 'health', tone: t, text: str(b.text, 'health.text'), ...(b.detail !== undefined ? { detail: str(b.detail, 'health.detail') } : {}) };
+    }
+    case 'panel':
+      return {
+        type: 'panel',
+        ...(b.title !== undefined ? { title: str(b.title, 'panel.title') } : {}),
+        rows: arr(b.rows, 'panel.rows', LIMITS.items).map((x) => panelRow(x, depth)),
+        ...(b.action !== undefined ? { action: button(b.action) } : {}),
+      };
     default:
       throw new Invalid(`unknown block type ${JSON.stringify(b.type)}`);
   }
+}
+
+function fraction(v: unknown, what: string): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) throw new Invalid(`${what} must be a number from 0 to 1`);
+  return v;
+}
+
+function panelRow(x: unknown, depth: number): PanelRow {
+  const o = obj(x, 'panel row');
+  const row: PanelRow = { label: str(o.label, 'panel.label'), ...target(o, 'panel row') };
+  const value = optStr(o.value, 'panel.value'); if (value !== undefined) row.value = value;
+  const detail = optStr(o.detail, 'panel.detail'); if (detail !== undefined) row.detail = detail;
+  const t = tone(o.tone); if (t) row.tone = t;
+  const ag = agentId(o.agent, 'panel.agent'); if (ag) row.agent = ag;
+  const controls = ['toggle', 'choice', 'edit', 'sheet', 'act'].filter((k) => o[k] !== undefined);
+  if (controls.length + (row.page !== undefined || row.href !== undefined ? 1 : 0) > 1) throw new Invalid(`a panel row holds one control or link, not ${controls.join(' and ')}`);
+  if (o.toggle !== undefined) {
+    const g = obj(o.toggle, 'panel.toggle');
+    if (typeof g.on !== 'boolean') throw new Invalid('panel.toggle.on must be true or false');
+    row.toggle = { action: name(g.action, 'panel.toggle.action'), on: g.on, ...(g.fields !== undefined ? { fields: strMap(g.fields, 'panel.toggle.fields', LIMITS.hidden) } : {}) };
+  }
+  if (o.choice !== undefined) {
+    const c = obj(o.choice, 'panel.choice');
+    const options = arr(c.options, 'panel.choice.options', LIMITS.segments).map((y) => {
+      const op = obj(y, 'panel.choice option');
+      return { value: str(op.value, 'option.value'), label: str(op.label, 'option.label') };
+    });
+    if (options.length < 2) throw new Invalid('panel.choice needs two options or more');
+    row.choice = { action: name(c.action, 'panel.choice.action'), name: name(c.name, 'panel.choice.name'), value: str(c.value, 'panel.choice.value'), options,
+      ...(c.fields !== undefined ? { fields: strMap(c.fields, 'panel.choice.fields', LIMITS.hidden) } : {}) };
+  }
+  if (o.edit !== undefined) {
+    const e = obj(o.edit, 'panel.edit');
+    row.edit = {
+      action: name(e.action, 'panel.edit.action'), fields: arr(e.fields, 'panel.edit.fields', LIMITS.fields).map(field),
+      ...(e.title !== undefined ? { title: str(e.title, 'panel.edit.title') } : {}), ...(e.submit !== undefined ? { submit: str(e.submit, 'panel.edit.submit') } : {}),
+      ...(e.note !== undefined ? { note: str(e.note, 'panel.edit.note') } : {}), ...(e.hidden !== undefined ? { hidden: strMap(e.hidden, 'panel.edit.hidden', LIMITS.hidden) } : {}),
+    };
+    if (!row.edit.fields.length) throw new Invalid('panel.edit needs a field');
+  }
+  if (o.sheet !== undefined) {
+    if (depth > 0) throw new Invalid('a sheet can\'t hold another sheet');
+    const sh = obj(o.sheet, 'panel.sheet');
+    row.sheet = { ...(sh.title !== undefined ? { title: str(sh.title, 'panel.sheet.title') } : {}), blocks: arr(sh.blocks, 'panel.sheet.blocks', LIMITS.blocks).map((y) => block(y, depth + 1)) };
+  }
+  if (o.act !== undefined) row.act = button(o.act);
+  return row;
 }
 
 function chart(b: Record<string, unknown>): Block {
@@ -676,7 +809,12 @@ export function parseManifest(value: unknown): Manifest | string {
       const t = obj(top.tab, 'tab');
       if (t.kind !== undefined && t.kind !== 'place' && t.kind !== 'setting') throw new Invalid('tab.kind must be place or setting');
       const lv = level(t.level, 'tab.level');
-      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}) };
+      const icon = optStr(t.icon, 'tab.icon');
+      if (icon !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(icon)) throw new Invalid('tab.icon must be a lucide icon name (alarm-clock)');
+      const accent = optStr(t.accent, 'tab.accent');
+      if (accent !== undefined && !(ACCENTS as readonly string[]).includes(accent)) throw new Invalid(`tab.accent must be one of loom's palette: ${ACCENTS.join(', ')}`);
+      m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}), ...(icon ? { icon } : {}),
+        ...(accent ? { accent: accent as Accent } : {}) };
     }
     if (top.agentTab !== undefined) {
       const t = obj(top.agentTab, 'agentTab');

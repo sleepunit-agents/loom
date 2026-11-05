@@ -17,11 +17,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import {
-  aboutOf, addAgent, AGENT_NAME, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
+  aboutOf, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
   setMember, type Household, type Member,
-  relayOf, setRelay, markIndexOf,
+  markIndexOf,
 } from '../household.js';
+import { relayOf } from '../relay-pairs.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
+import { backupRow, readSettings, setSettings, targetString, validateSettings } from '../backup.js';
 import { initialsOf, profileLinks, profileTone, reachOf, SERVICE } from './reach.js';
 import { BOXES, boxSection, OWN_FILES, readCreed, withPart, withSection, writeCreed, type Box, type Creed } from './identity-edit.js';
 import { fieldState, PeopleStore, type CardValue } from '../backends/people.js';
@@ -458,6 +460,8 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         { label: 'Last active', tone: Number.isNaN(lastMs) ? 'warn' : nowMs - lastMs < 86_400_000 ? 'ok' : 'warn',
           text: Number.isNaN(lastMs) ? 'nothing in 3 days' : since(last.created, nowMs), ...(last ? { meta: whereLabel(last.where) } : {}) },
         { label: 'Tokens', tone: live.length ? 'ok' : 'warn', text: `${live.length} live`, meta: live.length ? `used ${since(live[0].last_used, nowMs)}` : 'none' },
+        // The household's nightly backup (src/backup.ts), on the default agent's Setup, to a household owner.
+        ...(agent === h.default && opts.ownerTokens === true ? [backupRow(h, nowMs, (iso) => since(iso, nowMs))] : []),
       ] }] },
       // Who it is: the boxes someone filling in their own agent from scratch fills (Jonathan, 2026-10-30). The creed is
       // the owner's (the agent can't change it); a household owner edits it here, an agent owner reads it.
@@ -465,16 +469,15 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         ...(born ? { born: new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: tz }).format(new Date(born)) } : {}),
         harnesses: harnesses.join(', ') || 'none',
       }),
-      // Who it may relay to without asking: the household owner's to set (an agent owner's Setup shows it read-only).
+      // Who it may relay to without asking: the runtime's permissions (agent-runtime.md, "Agent-to-agent relay"),
+      // read here; the household owner sets them on the runtime's page.
       { id: 'relay', title: 'Who it may write to', side: true, blocks: (() => {
         const others = h.agents.filter((a) => a !== agent);
-        const to = relayOf(h, agent);
-        const say = { type: 'text' as const, tone: 'muted' as const, text: others.length
-          ? `It relays to these without asking (wake relay); to any other, it asks you first. ${to.length ? `Now: ${to.join(', ')}.` : 'Now: nobody.'}`
-          : 'There\'s no other agent to write to.' };
-        if (!others.length || opts.ownerTokens === false) return [say];
-        return [say, { type: 'form' as const, action: 'relay-set', submit: 'Save', hidden: { agent }, fields: [
-          { name: 'to', label: 'Agents', kind: 'text' as const, ...(to.length ? { value: to.join(', ') } : {}), hint: `comma separated: ${others.join(', ')}` }] }];
+        const { authority, to } = relayOf(h.home, h.agents, agent);
+        const text = !others.length ? 'There\'s no other agent to write to.'
+          : !authority ? 'No runtime is installed, so it has no relay tool.'
+          : `It relays to these without asking (the relay tool); to any other, it asks you first. ${to.length ? `Now: ${to.join(', ')}.` : 'Now: nobody.'} Who may relay to whom is set on the ${authority} piece's page (Permissions).`;
+        return [{ type: 'text' as const, tone: 'muted' as const, text }];
       })() },
       { id: 'tokens', title: 'Tokens', blocks: (() => {
         // A house's own token ("art · house h-123 on loom"): one per house, revoked when the house ends, so hundreds of
@@ -501,8 +504,26 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
           fields: [{ name: 'label', label: 'Label', kind: 'text', hint: 'Where it goes, e.g. "Art · laptop".', required: true }] }] },
         ];
       })() },
+      // The nightly backup's settings (src/backup.ts): the household owner's, on the default agent's Setup.
+      ...(agent === h.default && opts.ownerTokens === true ? [backupSection(h)] : []),
     ],
   };
+}
+
+/** Setup's Backup section: the form loom backup set is, filled with what's set. */
+function backupSection(h: Household) {
+  const { settings: s } = readSettings(h);
+  return { id: 'backup', title: 'Nightly backup', side: true, blocks: [
+    { type: 'text' as const, tone: 'muted' as const, text: 'Each night loom exports the household, encrypted to your keys, checks it restores, and writes it to a git repo it owns (one commit) or a directory. It pushes with this machine\'s own git login.' },
+    { type: 'details' as const, summary: s ? 'Change it' : 'Set it up', blocks: [{ type: 'form' as const, action: 'backup-set', submit: 'Save', fields: [
+      { name: 'target', label: 'Where', kind: 'text' as const, required: true, ...(s ? { value: targetString(s.target) } : {}), hint: 'git:https://github.com/you/backup.git, or path:/mnt/usb' },
+      { name: 'recipients', label: 'Your keys', kind: 'text' as const, required: true, ...(s ? { value: s.recipients.join(' ') } : {}), hint: 'age public keys (age1…), separated by spaces' },
+      { name: 'at', label: 'At', kind: 'text' as const, value: s?.at ?? '03:00', hint: 'HH:MM, 24-hour' },
+      { name: 'tz', label: 'Time zone', kind: 'text' as const, value: s?.tz ?? uiTimeZone() },
+      { name: 'keep', label: 'Nights kept', kind: 'text' as const, value: String(s?.keep ?? 7), hint: 'besides each month\'s first' },
+      { name: 'required', label: 'Pieces it must hold', kind: 'text' as const, ...(s?.required.length ? { value: s.required.join(' ') } : {}), hint: 'optional, e.g. box secrets' },
+    ] }] },
+  ] };
 }
 
 /**
@@ -518,16 +539,27 @@ function whoItIs(h: Household, agent: string, creed: Creed, edit: boolean, facts
   const about = aboutOf(h, agent) ?? '';
   const known = { type: 'kv' as const, items: [...(facts.born ? [{ label: 'Born', value: facts.born }] : []), { label: 'Harnesses', value: facts.harnesses }] };
   const people = { type: 'list' as const, items: [{ text: 'Its entry in People', meta: 'where to reach it, and how the other agents know it', page: validPath(`people/${agent}`) ? `loom:people/${agent}` : undefined }] };
+  // Settings as a panel (Jonathan, 2026-11-03: "app panels, not web forms"): each part says what it is now, and a tap
+  // opens a sheet to change that one part. Its look (colour, shape, eyes) applies at once.
+  const face = faceOf(h, agent);
+  const part = (name: 'about' | 'purpose' | 'voice' | 'rules' | 'ask', label: string, value: string, hint: string) => ({
+    label, value: value.trim() || 'Not written yet',
+    edit: { action: 'identity-set', title: label, hidden: { agent }, note: hint, fields: [{ name, label, kind: 'textarea' as const, value, ...(name === 'purpose' ? { required: true } : {}) }] },
+  });
   const who: Section = { id: 'who', title: 'Who it is', blocks: edit ? [
-    { type: 'form', action: 'identity-set', submit: 'Save', hidden: { agent }, fields: [
-      { name: 'about', label: 'Description', kind: 'textarea', value: about, hint: 'A line or two the household sees on its profile. It doesn\'t read this; what it\'s for, below, it does.' },
-      { name: 'purpose', label: 'What it\'s for', kind: 'textarea', value: creed.purpose, required: true, hint: 'The opening of its creed: who it is and what it does, in its own words ("You are …").' },
-      { name: 'voice', label: 'Voice', kind: 'textarea', value: box('voice'), hint: 'How it talks.' },
-      { name: 'rules', label: 'Rules', kind: 'textarea', value: box('rules'), hint: 'The lines it never crosses, one per line. Empty: none written.' },
-      { name: 'ask', label: 'When to ask first', kind: 'textarea', value: box('ask'), hint: 'What needs your OK before it acts, and what it may do on its own.' },
+    { type: 'panel', title: 'Its look', rows: [
+      { label: 'Colour', value: MARKS[markIndexOf(h, agent)].name, edit: { action: 'mark-set', title: 'Its colour', submit: 'Use this colour', hidden: { agent },
+        fields: [{ name: 'mark', label: 'Colour', kind: 'choice', value: String(markIndexOf(h, agent)), options: MARKS.map((m, i) => ({ value: String(i), label: m.name, swatch: m.bg })) }] } },
+      { label: 'Shape', choice: { action: 'face-set', name: 'shape', value: face.shape, fields: { agent }, options: FACE_SHAPES.map((x) => ({ value: x, label: x[0].toUpperCase() + x.slice(1) })) } },
+      { label: 'Eyes', choice: { action: 'face-set', name: 'eyes', value: face.eyes, fields: { agent }, options: [{ value: 'dot', label: 'Round' }, { value: 'oval', label: 'Oval' }] } },
     ] },
-    { type: 'form', action: 'mark-set', submit: 'Save', hidden: { agent }, fields: [
-      { name: 'mark', label: 'Color', kind: 'choice', value: String(markIndexOf(h, agent)), options: MARKS.map((m, i) => ({ value: String(i), label: m.name, swatch: m.bg })) }] },
+    { type: 'panel', title: 'Its words', rows: [
+      part('about', 'Description', about, 'A line or two the household sees on its profile. It doesn\'t read this; what it\'s for, below, it does.'),
+      part('purpose', 'What it\'s for', creed.purpose, 'The opening of its creed: who it is and what it does, in its own words ("You are …").'),
+      part('voice', 'Voice', box('voice'), 'How it talks.'),
+      part('rules', 'Rules', box('rules'), 'The lines it never crosses, one per line. Empty: none written.'),
+      part('ask', 'When to ask first', box('ask'), 'What needs your OK before it acts, and what it may do on its own.'),
+    ] },
     known, people,
   ] : [
     { type: 'kv', items: [
@@ -598,6 +630,19 @@ export function newPersonPage(): Page {
   }] }] };
 }
 
+/** The sheet that says what a member owns: every agent and the household, or some agents, by name. */
+function ownsEdit(h: Household, person: string, agents: Member['agents']) {
+  return {
+    action: 'member-set', title: 'What they own', submit: 'Save', hidden: person ? { person } : undefined,
+    fields: [
+      { name: 'scope', label: 'They own', kind: 'segmented' as const, value: agents === '*' ? 'all' : 'some',
+        options: [{ value: 'all', label: 'Everything' }, { value: 'some', label: 'Some agents' }] },
+      { name: 'agents', label: 'Which agents (for "Some agents")', kind: 'checks' as const, value: agents === '*' ? '' : agents.join(','),
+        options: h.agents.map((a) => ({ value: a, label: agentName(agentDir(h, a)) })) },
+    ],
+  };
+}
+
 /** Members (docs/specs/owners.md): who owns what, adding or changing one, and a sign-in link for each. A household owner's page. */
 export function householdMembers(h: Household): Page {
   const dir = directory(h);
@@ -610,26 +655,32 @@ export function householdMembers(h: Household): Page {
       title: 'Members',
       intro: 'The people who own this household\'s agents. A household owner owns every agent and the shared things; an agent owner, only their agents.',
       sections: [
-        { id: 'members', blocks: [{ type: 'list', items: h.members.map((m) => ({
-          text: nameOf(m.person), avatar: initials(nameOf(m.person)), meta: owns(m), page: validPath(`people/${m.person}`) ? `loom:people/${m.person}` : undefined,
-          // The last household owner stays: someone owns the shared things.
-          ...(m.agents === '*' && all === 1 ? {} : { act: { action: 'member-remove', label: 'Remove', tone: 'danger' as const, fields: { person: m.person },
-            confirm: `${nameOf(m.person)} is signed out everywhere, and their tokens stop working.` } }),
-        })) }] },
-        { id: 'links', title: 'Sign-in links', blocks: [
-          { type: 'buttons', items: h.members.map((m) => ({ action: 'member-link', label: `For ${nameOf(m.person)}`, fields: { person: m.person } })) },
-          { type: 'text', tone: 'muted', text: 'One sign-in within 10 minutes, as that member. Send it to them; they can add a passkey once they\'re in.' },
-        ] },
-        { id: 'add', title: 'Add or change a member', blocks: [{
-          type: 'form', action: 'member-set', submit: 'Save',
-          fields: [
-            { name: 'person', label: 'Who', kind: 'choice', required: true, value: '',
-              options: [{ value: '', label: '(pick from People)' }, ...people.map((p) => ({ value: p.slug, label: p.name }))],
-              hint: 'Someone in People. Not there yet? Add them in People first.' },
-            { name: 'agents', label: 'What they own', kind: 'text', required: true, value: '*',
-              hint: `* for every agent and the household, or agents by id, comma-separated: ${h.agents.join(', ')}` },
-          ],
-        }] },
+        // Members as a panel (Jonathan, 2026-11-03): each member a row saying what they own; a tap opens what you can do
+        // about them. "What they own" is a choice and the agents by name, never ids typed into a box.
+        { id: 'members', blocks: [{ type: 'panel', rows: [
+          ...h.members.map((m) => ({
+            label: nameOf(m.person), value: `Owns ${owns(m)}`,
+            sheet: { title: nameOf(m.person), blocks: [
+              { type: 'panel' as const, rows: [
+                { label: 'What they own', value: owns(m), edit: ownsEdit(h, m.person, m.agents) },
+                { label: 'A sign-in link', value: 'One sign-in within 10 minutes, as them. Send it; they can add a passkey once they\'re in.',
+                  act: { action: 'member-link', label: 'Make one', fields: { person: m.person } } },
+                ...(validPath(`people/${m.person}`) ? [{ label: 'Their entry in People', page: `loom:people/${m.person}` }] : []),
+                // The last household owner stays: someone owns the shared things.
+                ...(m.agents === '*' && all === 1 ? [] : [{ label: 'Remove from the household', value: 'Signed out everywhere; their tokens stop working.',
+                  act: { action: 'member-remove', label: 'Remove', tone: 'danger' as const, fields: { person: m.person }, confirm: `${nameOf(m.person)} is signed out everywhere, and their tokens stop working.` } }]),
+              ] },
+            ] },
+          })),
+          ...(people.some((p) => !h.members.some((m) => m.person === p.slug)) ? [{
+            label: 'Add a member', value: 'Someone in People, and what they own',
+            edit: { ...ownsEdit(h, '', '*'), title: 'Add a member', submit: 'Add', fields: [
+              { name: 'person', label: 'Who', kind: 'choice' as const, required: true, value: people.find((p) => !h.members.some((m) => m.person === p.slug))!.slug,
+                options: people.filter((p) => !h.members.some((m) => m.person === p.slug)).map((p) => ({ value: p.slug, label: p.name })),
+                hint: 'Someone in People. Not there yet? Add them in People first.' },
+              ...ownsEdit(h, '', '*').fields] },
+          }] : []),
+        ] }] },
       ],
     };
   } finally {
@@ -685,6 +736,12 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'confirmed', note: 'confirmed from loom\'s page' }, h.owner ?? 'owner');
       return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge/${slug}` } : { ok: false, message: out };
     }
+    if (action === 'backup-set') {
+      const split = (v?: string) => (v ?? '').split(/[\s,]+/).filter(Boolean);
+      const st = validateSettings({ target: fields.target, recipients: split(fields.recipients), at: fields.at, tz: fields.tz, keep: fields.keep, required: split(fields.required) }, uiTimeZone());
+      setSettings(h, st, process.env);
+      return { ok: true, message: `The nightly backup is set: ${targetString(st.target)}, each day at ${st.at} (${st.tz}).`, page: `loom:a/${h.default}/setup` };
+    }
     if (action === 'create-token') {
       const agent = fields.agent ?? '';
       const role = agent === '' ? null : parseRole(`agent:${agent}`);
@@ -698,12 +755,20 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const agent = r?.kind === 'agent' ? r.agent : h.default;
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
     }
+    if (action === 'face-set') {
+      const agent = fields.agent ?? '';
+      if (!h.agents.includes(agent)) return { ok: false, message: 'No such agent.' };
+      const now = faceOf(h, agent);
+      const shape = FACE_SHAPES.find((x) => x === fields.shape) ?? now.shape, eyes = FACE_EYES.find((x) => x === fields.eyes) ?? now.eyes;
+      setFace(h, agent, { shape, eyes });
+      return { ok: true, message: `${agentName(agentDir(h, agent))} looks like this now.`, page: `loom:a/${agent}/setup` };
+    }
     if (action === 'mark-set') {
       const agent = fields.agent ?? '';
       const mark = /^\d$/.test(fields.mark ?? '') ? MARKS[Number(fields.mark)] : undefined;
       if (!h.agents.includes(agent) || !mark) return { ok: false, message: 'Pick an agent and one of the colors.' };
       setMark(h, agent, mark);
-      return { ok: true, message: `${agent} wears ${mark.name}.`, page: `loom:a/${agent}/setup` };
+      return { ok: true, message: `${agentName(agentDir(h, agent))} wears ${mark.name}.`, page: `loom:a/${agent}/setup` };
     }
     // Its creed, a part at a time (Setup's "Who it is" and "Its creed"); every write keeps a backup.
     if (action === 'identity-set' || action === 'identity-section-set' || action === 'identity-section-add') {
@@ -714,7 +779,7 @@ export async function householdAct(h: Household, action: string, fields: Record<
       if (!creed.title) return { ok: false, message: `${agent} has no creed to change (no IDENTITY.md with a # title).` };
       let next = creed;
       if (action === 'identity-set') {
-        next = withPart(next, 'purpose', fields.purpose ?? '');
+        if ('purpose' in fields) next = withPart(next, 'purpose', fields.purpose ?? '');
         for (const b of ['voice', 'rules', 'ask'] as const) if (b in fields) next = withPart(next, b, fields[b] ?? '');
         if ('about' in fields) setAbout(h, agent, fields.about ?? '');
       } else if (action === 'identity-section-set') {
@@ -726,20 +791,15 @@ export async function householdAct(h: Household, action: string, fields: Record<
       return { ok: true, message: action === 'identity-section-add' ? `Added "${(fields.heading ?? '').trim()}" to ${creed.title}'s creed. It reads it from its next session.`
         : `Saved. ${creed.title} reads it from its next session.`, page: `loom:a/${agent}/setup` };
     }
-    if (action === 'relay-set') {
-      const agent = fields.agent ?? '';
-      const to = (fields.to ?? '').split(',').map((a) => a.trim()).filter(Boolean);
-      const now = setRelay(h, agent, to);
-      return { ok: true, message: now.length ? `${agent} writes to ${now.join(', ')} without asking.` : `${agent} asks you before writing to any agent.`, page: `loom:a/${agent}/setup` };
-    }
     if (action === 'member-set') {
       const person = fields.person ?? '';
-      const raw = (fields.agents ?? '').trim();
+      const raw = fields.scope === 'all' ? '*' : (fields.agents ?? '').trim();
       if (!directory(h)?.getRow(person)) return { ok: false, message: 'Pick someone from People.' };
       const agents = raw === '*' ? '*' as const : raw.split(',').map((a) => a.trim()).filter(Boolean);
-      if (agents !== '*' && !agents.length) return { ok: false, message: 'Say what they own: * or agent ids.' };
+      if (agents !== '*' && !agents.length) return { ok: false, message: 'Pick the agents they own, or Everything.' };
       setMember(h, person, agents);
-      return { ok: true, message: `${person} owns ${agents === '*' ? 'every agent' : agents.join(', ')}.`, page: 'loom:members' };
+      const named = directory(h)?.getRow(person)?.card.name ?? person;
+      return { ok: true, message: `${named} owns ${agents === '*' ? 'every agent' : agents.map((a) => h.agents.includes(a) ? agentName(agentDir(h, a)) : a).join(', ')}.`, page: 'loom:members' };
     }
     if (action === 'member-remove') {
       removeMember(h, fields.person ?? '');
@@ -813,6 +873,16 @@ export interface FindMatches {
 const FIND_EACH = 5;
 
 /** Plain text matches for Find: knowledge titles, people's names, and each given agent's memories (titles first). */
+/** Find's suggestions before anything is typed: the household's people (not its agents, which the app has already),
+ * as the People page lists them. */
+export function householdSuggestPeople(h: Household, n = 8): Array<{ name: string; slug: string }> {
+  const dir = directory(h);
+  if (!dir) return [];
+  try {
+    return dir.list().filter((p) => kindOf(dir.getRow(p.slug)?.card ?? { how: {} }) !== 'agent').slice(0, n).map((p) => ({ name: p.name, slug: p.slug }));
+  } finally { dir.close(); }
+}
+
 export function householdFind(h: Household, q: string, agents: string[] = h.agents): FindMatches {
   const out: FindMatches = { knowledge: [], people: [], memories: [] };
   const needle = q.trim().toLowerCase();

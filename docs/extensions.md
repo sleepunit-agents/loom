@@ -27,7 +27,7 @@ life, or about a mechanism?** ([specs/conversations.md](specs/conversations.md))
 - Mechanism (tokens, queues, timers, session-resume state, caches) is the
   piece's, and may die with it.
 
-So the bridges' conversations and the clock's relay threads are core records
+So the bridges' conversations and the agents' relays are core records
 (conversations), tasks stay the tasks piece's under its contract, and secrets,
 box and the model subscriptions are mechanism.
 
@@ -207,11 +207,16 @@ own schema:
   `description` (at most 1000), an `input_schema` (a JSON schema with
   `"type": "object"`, at most 16 KB) and an `argv` that gets the arguments
   as JSON on stdin. It can't be named after one of core's tools, or anything
-  `loom_*`.
+  `loom_*`. A session has a piece's tools only while the piece offers them
+  (read as the session opens). Core runs one as the session's agent: it asks
+  the grants authority first (path `tools/<name>`), then runs the argv plus
+  `--agent <agent>` (and `--house <id>`, `--service <name>` for a house's token), with that agent's store grant. It answers
+  `{text, isError?}` (text at most 64 KB); a non-zero exit with such an answer
+  is that answer, as an error (`src/offered-tools.ts`).
 - **`grants`:** an argv; it makes the piece the grants authority (`false`
   offers nothing; `true`, the placeholder before core could ask, is refused).
-  Before an agent's call to a piece (`/api/<piece>/…`, `/api/<piece>/run`, the
-  relay tool's call to the clock) and before forwarding a delivery for an
+  Before an agent's call to a piece (`/api/<piece>/…`, `/api/<piece>/run`, an
+  offered MCP tool, `tools/<name>`) and before forwarding a delivery for an
   agent, core runs it with `{agent, piece, path}` on stdin (`path` is what
   follows `/api/<piece>/`, or `deliver`). It has 2 s, in a pool of its own
   (eight at once, thirty-two waiting), to answer `{allow: true}` or
@@ -319,7 +324,23 @@ that ignores it keeps working. Outside a household there's no `caller`.
   (`kinds` in loom's `assets/pieces.json`), else a place. Optional `level`: `"loom"` (the default) keeps the
   tab on the household's pages. `"agent"` puts it on each agent's own pages,
   where the piece is called with `LOOM_SCOPE` set. A page's section may carry
-  the same `level` when it's about one agent within a household page.
+  the same `level` when it's about one agent within a household page. Optional `icon`: a
+  [lucide](https://lucide.dev/icons) icon's name (`"alarm-clock"`, `"key-round"`) for the
+  piece's tile and tab; without one, loom's own for its label, else a plain circle.
+  Optional `accent`: the piece's one colour, used wherever it's drawn: its tile
+  in Places or Setup, its dock tile, its page's header tile, and its page's
+  accents (primary buttons, switches, selection). It must be one of loom's palette
+  tokens: `"pink"`, `"blue"`, `"yellow"` or `"olive"` (the green). A hex value or
+  any other name is refused with the manifest. Each palette and light or dark
+  mode has its own shade of each one, and the ink on it stays readable (at least
+  8.6:1 on every palette). A piece that names none gets loom's own colour when
+  it's one of the catalog's (Boxes blue, Clock olive, Secrets yellow, Tasks olive,
+  …: `APP_TINTS` in `web/src/tint.ts`), else a stable colour from its label. The
+  colour never comes from the tile's position, so installing a piece doesn't move
+  any other piece's colour.
+  ```json
+  { "tab": { "label": "Garden", "icon": "sprout", "accent": "olive" } }
+  ```
 - **`agentTab`** (`{ "label": "Clock" }`) puts a tab on each agent's own pages
   too, beside Today, Mind and Setup: served at `/a/<agent>/p/<piece>/<path>`,
   the piece called with `LOOM_SCOPE=<agent>`, its links and actions staying
@@ -440,7 +461,9 @@ outside the page).
 
 | Block | Fields |
 |---|---|
-| `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`. One item alone is the page's hero (its number at the top size) |
+| `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`, `spark` (up to 30 numbers, oldest first: a small trend line under the value), `meter` (0 to 1: a bar under the value, like a disk's use). One item alone is the page's hero (its number at the top size) |
+| `health` | `tone` (required), `text`, optional `detail`. A status screen's headline: how things are in a word or two ("All good", "One bridge is down"), big, with an icon for its tone (never colour alone). Put it first, tiles (`stats`) under it, and the engineering proof in a `details` |
+| `panel` | `rows`, optional `title`, `action` (one `buttons` item: the panel's primary action, at its foot). Settings as an app's panel; see Panels below |
 | `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
@@ -451,12 +474,40 @@ outside the page).
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
-| `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value) |
+| `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value), `submits` (up to 3 more ways to send it, beside `submit`: `label`, optional `fields` (name → value, sent with the form's) and `tone`; a task's Yes and No over a box of words). Words typed in a `textarea` are kept on the device until the form is sent, and the form says "Not sent yet" meanwhile, so leaving the page or pressing another button loses nothing |
 | `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `confirm` (what happens, one sentence: a `danger` button asks first in a sheet that says it), `fields` (name → value) |
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |
 | `code` | `text`, optional `label`. Monospace, with a Copy button: a command, a link to hand someone |
 | `status` | `items`: `label`, optional `tone` (the dot's color; muted by default), `text`, `meta`, `page`. One row per thing that's up, down or stale |
 | `chart` | `kind` (`bar`, `area` or `line`), `series` (1 to 5: `key`, lowercase letters, digits and `_`; `label`; optional `color`: `pink`, `blue`, `olive`, `yellow`, `ink`), `data` (up to 60 points: `label`, and a number or `null` per series key). Optional `variant` (bar: `grouped`, the default, or `stacked`; area: `smooth` or `stacked`; line: `smooth` or `step`), `caption` (what it shows, for a screen reader too), `summary` (`label`, `value`, optional `detail`: the one number it adds up to). 000h's chart: hover or tap a point to read it; a missing value stays missing, never a zero |
+
+#### Panels
+
+A setting is a `panel` row, not a form (Jonathan, 2026-11-03: "app panels, not web forms"). A row says
+what the setting is now, in words people use, and holds **at most one** way to change it:
+
+| Row field | |
+|---|---|
+| `label` | what it is ("When", "Who gets it") |
+| `value`, `detail` | what it is now, as a sentence ("5:17 AM, weekdays"), and a quieter line under it. Both wrap; nothing is cut |
+| `tone`, `agent` | a status dot (with the words saying the same), an agent's mark |
+| `toggle` | `{action, on, fields?}`: a switch that applies at once. It posts `action` with `fields` and `on` set to `"on"` or `""`; if the piece answers `ok: false`, the switch goes back |
+| `choice` | `{action, name, value, options (2 to 5: value, label), fields?}`: a segmented control that applies at once, posting `name` = the chosen value |
+| `edit` | `{action, fields, title?, submit?, note?, hidden?}`: a tap opens a sheet with these fields (a form: keep it to the one or two that change together) |
+| `sheet` | `{title?, blocks}`: a tap opens a sheet of detail: the proof, a log, the raw record. A sheet can't hold a row with another sheet |
+| `page` or `href` | a tap goes there |
+| `act` | one button at the row's end (a danger one asks first) |
+
+A row with two of these is refused, and so is the page it's on. Raw ids, hashes and JSON never go in a
+`label` or `value`: name things the way people do, and put the id in a `sheet` for whoever asks for it.
+
+Fields gain three kinds for sheets and forms: `toggle` (a switch, posted `on` or empty), `segmented`
+(2 to 5 `options` side by side, one chosen) and `stepper` (a whole number with − and +; optional `min`,
+`max`, `step` and `unit`, such as `"days"`). A `checks` field of up to seven short options (four letters
+or fewer, like the days of a week) is drawn as a row of chips.
+
+A row in a `list` runs to two lines; a row that goes nowhere opens to its whole text when tapped, and
+`wrap` shows it whole from the start (comments, notes). A row that goes somewhere shows it all there.
 
 A `list` or `table` longer than a page can send one page at a time and say so with
 `pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
@@ -473,7 +524,7 @@ a row that doesn't is drawn as nobody's yet (a dashed circle), never a gap. A li
 Tones are `ok`, `warn`, `bad` and `muted`. A form field is
 `{name, label, kind, hint?, value?, required?, options?}` with kind
 `text`, `textarea`, `choice` (with `options`: `value`, `label`, optional
-`detail`), `secret`, `check` (one checkbox: posted as `on`, or empty when it's
+`detail`), `toggle`, `segmented`, `stepper` (see Panels), `time`, `secret`, `check` (one checkbox: posted as `on`, or empty when it's
 not ticked; `value` `on` starts it ticked) or `checks` (any number of its
 `options`: posted as the ticked values joined with commas, so an option's
 value can't hold one; `value` the same way). A `secret` field never carries a `value` and is drawn

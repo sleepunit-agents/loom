@@ -44,7 +44,8 @@ export default function Profile({ p }: { p: P }) {
             {p.stats?.map((s) => {
               // A stat may open somewhere (an agent's tiles: Memories its Mind, Clock its schedule), through its own piece.
               const body = <><b className="font-[family-name:var(--font-display)] text-2xl font-semibold leading-none">{s.value}</b><Meta>{s.label}</Meta>
-                {s.detail && <span className="max-w-56 truncate text-xs opacity-60">{s.detail}</span>}</>;
+                {/* A tile's line (the Clock's next wake) reads to three lines; the tile opens the rest. */}
+                {s.detail && <span className="line-clamp-3 max-w-72 break-words text-xs opacity-60">{s.detail}</span>}</>;
               const link = s.page !== undefined ? <Link page={s.page} className="grid rounded-xl no-underline transition-opacity hover:opacity-75">{body}</Link> : <span className="grid">{body}</span>;
               return <span key={s.label} className="grid min-w-0">{s.source ? <As source={s.source}>{link}</As> : link}</span>;
             })}

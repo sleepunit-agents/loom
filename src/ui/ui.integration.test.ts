@@ -490,8 +490,8 @@ describe('loom UI over HTTP', () => {
   });
 
   it('a piece that says it\'s a setting goes under Setup, not Places; the catalog says for box, secrets, subscriptions', async () => {
-    const m = (label: string, kind?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
-    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting')}'`);
+    const m = (label: string, kind?: string, icon?: string, accent?: string) => JSON.stringify({ v: 2, tab: { label, ...(kind ? { kind } : {}), ...(icon ? { icon } : {}), ...(accent ? { accent } : {}) }, tile: { label, value: '1', page: '' }, asks: [] });
+    await piece(bin, 'gizmo', `[ "$1 $2" = "ui --json" ] && echo '${m('Gizmo', 'setting', 'stamp', 'olive')}'`);
     await piece(bin, 'secrets', `[ "$1 $2" = "ui --json" ] && echo '${m('Secrets')}'`);   // no kind: the catalog's
     await piece(bin, 'daily', `[ "$1 $2" = "ui --json" ] && echo '${m('Daily')}'`);
     const cookie = await login();
@@ -502,11 +502,23 @@ describe('loom UI over HTTP', () => {
     expect(v).toMatchObject({ view: 'sheet', which: 'setup' });
     const kinds = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; kind: string }>).map((p) => [p.label, p.kind]));
     expect(kinds).toEqual({ Daily: 'place', Gizmo: 'setting', Secrets: 'setting' });
+    // A piece's own icon (tab.icon) rides along for its tile; one that names none has none.
+    const icons = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; icon?: string }>).map((p) => [p.label, p.icon]));
+    expect(icons).toEqual({ Daily: undefined, Gizmo: 'stamp', Secrets: undefined });
+    // So does its own colour (tab.accent), for its tile, its dock tile and its header (web/src/tint.ts).
+    const accents = Object.fromEntries((v.chrome.shell.pieces as Array<{ label: string; accent?: string }>).map((p) => [p.label, p.accent]));
+    expect(accents).toEqual({ Daily: undefined, Gizmo: 'olive', Secrets: undefined });
     // A lone agent's owner is an admin: Setup keeps its own links (Pieces, Passkeys) beside the settings.
     expect(v.chrome.shell.admin).not.toBe(false);
     expect((await view('/places', cookie)).which).toBe('places');
-    // A kind that isn't one is refused with the manifest.
+    // Appearance is an app in Setup's grid (Jonathan, 2026-11-03): a sheet the app draws, at its own address, its tab its own.
+    const look = await view('/appearance', cookie);
+    expect(look).toMatchObject({ view: 'sheet', which: 'appearance' });
+    expect(look.chrome.shell.tab).toBe('appearance');
+    // A kind that isn't one is refused with the manifest; so is an icon that isn't a lucide name.
     expect(parseManifest({ v: 2, tab: { label: 'x', kind: 'drawer' } })).toMatch(/tab.kind/);
+    expect(parseManifest({ v: 2, tab: { label: 'x', icon: '<svg/>' } })).toMatch(/tab.icon/);
+    expect(parseManifest({ v: 2, tab: { label: 'x', icon: 'stamp' } })).toMatchObject({ tab: { label: 'x', icon: 'stamp' } });
   });
 
   it('a piece page renders its forms and buttons; an action reaches the piece on stdin only', async () => {
@@ -773,7 +785,7 @@ describe('loom UI over HTTP', () => {
     expect([again.status, await again.text()]).toEqual([304, '']);
     // Someone else's fingerprint is no way in: signed out is still the sign-in page.
     expect((await fetch(`${base}/`, { headers: { accept: 'application/json', 'if-none-match': etag }, redirect: 'manual' })).status).toBe(303);
-    const js = /src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
+    const js = /<script type="module"[^>]+src="\/app\/(assets\/[^"]+\.js)"/.exec(await (await fetch(`${base}/app/index.html`)).text())![1];
     for (const [enc, want] of [['br', 'br'], ['gzip', 'gzip'], ['identity', null]] as const) {
       const r = await fetch(`${base}/app/${js}`, { headers: { 'accept-encoding': enc } });
       expect([r.status, r.headers.get('content-encoding'), r.headers.get('vary')], enc).toEqual([200, want, 'accept-encoding']);

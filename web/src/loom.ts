@@ -1,11 +1,13 @@
 // What loom answers (src/ui/handler.ts `view`, docs/specs/ui-app.md): the data each page is drawn from,
 // and how a link or an action reaches loom. Mirrors src/ui/vocab.ts and src/ui/render.ts; no piece code here.
 
+import type { Tint } from './tint';
+import type { Prefs } from './look';
 export type Tone = 'ok' | 'warn' | 'bad' | 'muted';
 export interface Source { id: string; base: string; act?: string }
-export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string }> }
+export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } }> }
 export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
-export interface Field { name: string; label: string; kind: 'text' | 'textarea' | 'secret' | 'choice' | 'number' | 'date' | 'toggle' | 'check' | 'checks' | 'time'; value?: string; hint?: string; required?: boolean; multiple?: boolean; options?: { value: string; label: string; detail?: string; swatch?: string }[] }
+export interface Field { name: string; label: string; kind: 'text' | 'textarea' | 'secret' | 'choice' | 'number' | 'date' | 'toggle' | 'check' | 'checks' | 'time' | 'segmented' | 'stepper'; value?: string; min?: number; max?: number; step?: number; unit?: string; hint?: string; required?: boolean; multiple?: boolean; options?: { value: string; label: string; detail?: string; swatch?: string }[] }
 export type Block =
   | { type: 'text'; text: string; tone?: Tone }
   | { type: 'prose'; text: string }
@@ -16,10 +18,13 @@ export type Block =
   | { type: 'list'; items: ListItem[]; numbered?: boolean; wrap?: boolean; who?: boolean }
   | { type: 'table'; columns: string[]; rows: (string | { text: string; page?: string })[][] }
   | { type: 'kv'; items: { label: string; value: string; page?: string }[] }
-  | { type: 'stats'; items: { label: string; value: string; detail?: string; tone?: Tone; page?: string }[] }
+  | { type: 'stats'; items: { label: string; value: string; detail?: string; tone?: Tone; page?: string; spark?: number[]; meter?: number }[] }
+  | { type: 'health'; tone: Tone; text: string; detail?: string }
+  | { type: 'panel'; title?: string; rows: PanelRow[]; action?: Button }
   | { type: 'link'; text: string; page?: string; href?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
-  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string> }
+  | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
+      submits?: { label: string; fields?: Record<string, string>; tone?: 'primary' | 'danger' }[] }
   | { type: 'buttons'; items: Button[] }
   | { type: 'meter'; items: { label: string; value: number; detail?: string; tone?: Tone }[] }
   | { type: 'status'; items: { label: string; tone?: Tone; text?: string; meta?: string }[] }
@@ -28,19 +33,29 @@ export type Block =
   | { type: 'chart'; kind: 'bar' | 'area' | 'line'; variant?: 'grouped' | 'stacked' | 'smooth' | 'step'; caption?: string; summary?: { label: string; value: string; detail?: string };
       series: { key: string; label: string; color?: 'pink' | 'blue' | 'olive' | 'yellow' | 'ink' }[]; data: ({ label: string } & Record<string, number | string | null>)[] }
   | { type: string; [k: string]: unknown };
+export interface PanelRow {
+  label: string; value?: string; detail?: string; tone?: Tone; agent?: string; page?: string; href?: string;
+  toggle?: { action: string; on: boolean; fields?: Record<string, string> };
+  choice?: { action: string; name: string; value: string; options: { value: string; label: string }[]; fields?: Record<string, string> };
+  edit?: { action: string; title?: string; submit?: string; note?: string; fields: Field[]; hidden?: Record<string, string> };
+  sheet?: { title?: string; blocks: Block[] };
+  act?: Button;
+}
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
 export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; asks?: number; sub?: string }
+export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string }
 export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };
   core: { label: string; href: string; current: boolean; count?: number }[];
-  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting' }[];
+  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint }[];
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
-export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell }
+export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell;
+  /** The signed-in person's Appearance (look.ts), as loom keeps it. */
+  prefs?: Prefs }
 export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];
   id?: string; bio?: string; today?: number; waiting?: number; active?: string }
 
@@ -50,7 +65,8 @@ export type View =
 
 // ---- links: loom's own rule (src/ui/vocab.ts splitPage, render.ts pageHref) ----------------------
 
-const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+))$/;
+// loom's own pages, as src/ui/vocab.ts has them (a conversation's too: a Needs you links to it).
+const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
 
 export function pageHref(link: string, source: Source): string {
   const ag = /^agent:([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(link);
@@ -91,7 +107,7 @@ export async function act(ctx: Ctx, csrf: string, action: string, fields: Record
   }).catch(() => undefined);
   if (!r) return { ok: false, message: 'Can’t reach loom: nothing was sent. Try again when there’s a connection.' };
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) {
-    return { ok: false, message: r.status === 403 ? 'That form is stale: reload and try again.' : `loom answered ${r.status}` };
+    return { ok: false, message: r.status === 403 ? 'That form is stale: reload and try again.' : 'That didn’t go through: loom had a problem. Try again in a moment.' };
   }
   return (await r.json()) as ActResult;
 }

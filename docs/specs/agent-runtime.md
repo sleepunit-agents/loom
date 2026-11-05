@@ -151,6 +151,7 @@ runner. The body:
 | `from`, `kind`, `at` | conversations.md's turn fields (`kind` is `message` or `wake`: a `note` is the agent's own turn, and comes only through its session) |
 | `label` | optional |
 | `text` | the message, ≤ 40,000 chars |
+| `local` | optional, `true`: a wake that needs loom's own machine; its body runs there instead of in a house, when the runtime runs local bodies for that agent (else it refuses, `403`). Only on venue `wake` as a `wake`, so only from a piece that delivers on it (the clock), which sends it only for a wake set on loom's machine. Never inferred from the text |
 | `source` | the calling piece's name: added by core when it forwards, never sent by the caller |
 
 **Idempotent:** the same calling piece and `id` within 24 hours, whichever of the piece's credentials calls, returns

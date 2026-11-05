@@ -5,8 +5,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { BlockView } from './blocks';
 import type { Page } from './loom';
 import '@/styles/cojeev/collapsible.css';
+import { sectionRing } from './tones';
 
-const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined);
 
 /** Whether a folding section is open: the viewer's last say on this page, else the piece's (`fold`). */
 const foldKey = (id: string) => `loom:fold:${location.pathname}:${id}`;
@@ -20,7 +20,7 @@ export default function FoldCard({ s }: { s: Page['sections'][number] }) {
   const [open, setOpen] = useState(() => foldOpen(s));
   const toggle = (v: boolean) => { setOpen(v); try { localStorage.setItem(foldKey(s.id), v ? '1' : '0'); } catch { /* this visit only */ } };
   return (
-    <Card className={ring(s)}>
+    <Card className={sectionRing(s)}>
       <Collapsible open={open} onOpenChange={toggle}>
         {/* Folded, the title is all there is: no room kept below it for a body that isn't there. */}
         <CardHeader className={open ? undefined : 'mb-0'}>

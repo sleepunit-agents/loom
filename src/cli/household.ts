@@ -3,9 +3,11 @@
  * neither is a remote verb, so they never run through /cli. They read and
  * write $LOOM_HOME (default ~/.config/loom) directly.
  */
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import {
   addAgent, agentDir, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
-  expired, parseRole, revokeToken, type Household,
+  expired, parseRole, revokeToken, checkSpriteManifest, manifestFromPixelLab, setSprite, spriteOf, type Household,
 } from '../household.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import { runtimePieces } from './pieces-managed.js';
@@ -19,6 +21,14 @@ const HOUSEHOLD_USAGE = `Usage: loom household <command>
                            Make $LOOM_HOME/<agent> (a context dir) the first agent of a new
                            household: it moves to agents/<agent>, and a symlink stays behind
   add <agent>              Add an agent whose directory already exists under agents/
+  sprite <agent> <sheet.png> <pixellab.json> [--weight <state>=<n>]... [--variant "<animation>=<state>:<weight>[:rare]"]...
+                           Give an agent a pixel face from a PixelLab export: its sheet, and a
+                           manifest seeded from its rows (each state in each facing, weight 1
+                           unless --weight; waiting south only; another named animation only
+                           where --variant places it), kept at faces/<agent>/
+  sprite <agent> --manifest <manifest.json> [<name.png>...]
+                           Replace its manifest (states, facings, animations and their weights;
+                           see docs/specs/household.md), with any sheets it names that are new
   commons                  Move the default agent's knowledge.db to commons/knowledge.db and
                            split every agent's person cards (handles and facts to the commons
                            directory, the rest stays as its relationships). Once, with
@@ -96,6 +106,24 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       if (!agent) { io.stderr(HOUSEHOLD_USAGE); return 2; }
       const next = addAgent(h, agent);
       io.stdout(`Agents: ${next.agents.join(', ')}\n`);
+      return 0;
+    }
+    if (sub === 'sprite') {
+      const h = need(io);
+      if (!h) return 1;
+      const pairs = (name: string) => rest.flatMap((a, i) => (a === name && rest[i + 1] ? [rest[i + 1]] : []));
+      const weights = Object.fromEntries(pairs('--weight').map((w) => { const [k, n] = w.split('='); return [k, Number(n)]; }));
+      const variants = Object.fromEntries(pairs('--variant').map((v) => { const at = v.lastIndexOf('='); const [state, weight, rare] = v.slice(at + 1).split(':'); return [v.slice(0, at), { state, weight: Number(weight), rare: rare === 'rare' }]; }));
+      const [agent, ...files] = rest.filter((a, i) => !['--weight', '--variant'].includes(a) && !['--weight', '--variant'].includes(rest[i - 1]));
+      const at = files.indexOf('--manifest');
+      if (!agent || (at === -1 && files.length !== 2) || (at !== -1 && !files[at + 1])) { io.stderr(HOUSEHOLD_USAGE); return 2; }
+      const read = (f: string) => { try { return JSON.parse(readFileSync(f, 'utf-8')) as unknown; } catch { throw new HouseholdError(`${f} isn't JSON`); } };
+      if (at === -1) setSprite(h, agent, manifestFromPixelLab(read(files[1]), { weights, variants }), { 'sheet.png': readFileSync(files[0]) });
+      else {
+        const pngs = files.filter((_, i) => i !== at && i !== at + 1);
+        setSprite(h, agent, checkSpriteManifest(read(files[at + 1])), Object.fromEntries(pngs.map((f) => [basename(f), readFileSync(f)])));
+      }
+      io.stdout(`${agent}: a pixel face, facing ${spriteOf(h, agent)?.facings.join(', ')}.\n`);
       return 0;
     }
     io.stderr(HOUSEHOLD_USAGE);

@@ -143,7 +143,10 @@ describe('the Pieces page', () => {
     const html = JSON.stringify(v);
     expect(html).toContain('Install Runtime');
     expect(html).toContain('done');
-    expect(html).toContain('needs setup');
+    expect(html).toContain('Needs setup');
+    // A status screen: how the pieces are, in words, and a row a piece (Jonathan, 2026-11-03).
+    expect(html).toContain('"type":"health"');
+    expect(html).toContain('1 needs setup');
     // Its tab is in the nav, and Home asks for the setting it lacks.
     expect(v.chrome.nav).toContainEqual(expect.objectContaining({ label: 'Runtime', href: '/p/runtime' }));
     const home = await page('/', cookie);
@@ -153,7 +156,8 @@ describe('the Pieces page', () => {
     expect((await act(cookie, csrf, 'piece-set', { name: 'runtime', s_loom_runtime_public_url: 'https://loom.example' })).status).toBe(303);
     expect(await page('/', cookie)).not.toContain('Finish setting up Runtime');
     // The setting's field (in its piece's form) carries what was set.
-    expect(await page('/pieces', cookie)).toContain('"name":"s_loom_runtime_public_url","label":"The URL a box joins (LOOM_RUNTIME_PUBLIC_URL)","kind":"text","value":"https://loom.example"');
+    expect(await page('/pieces', cookie)).toContain('"name":"s_loom_runtime_public_url","label":"The URL a box joins","kind":"text"');
+    expect(await page('/pieces', cookie)).toContain('"value":"https://loom.example"');
 
     await act(cookie, csrf, 'piece-remove', { name: 'runtime' });
     expect(existsSync(join(tmp, 'loom-home', 'pieces', 'bin', 'loom-runtime'))).toBe(false);

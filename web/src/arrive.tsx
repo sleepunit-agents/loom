@@ -30,6 +30,39 @@ function arrive(el: HTMLElement): () => void {
   el.classList.remove('loom-arrive');
   void el.offsetWidth;   // restart the animation if it's arriving again
   el.classList.add('loom-arrive');
+  return decode(el);
+}
+
+/**
+ * The app's own arrival (Jonathan, 2026-11-03: "a short, tasteful opening animation on first open of a session"): once
+ * a session, the ground fades up, the header and the cards rise in turn, the dock (or the side) slides in, and the
+ * title resolves out of noise, all in under a second (index.css [data-arrive]). Never under reduced motion, and never
+ * again in that tab's session.
+ */
+export function arriveOnce(title: HTMLElement | null): boolean {
+  const KEY = 'loom-arrived';
+  try { if (sessionStorage.getItem(KEY)) return false; sessionStorage.setItem(KEY, '1'); } catch { return false; }
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  const root = document.documentElement;
+  root.dataset.arrive = '';
+  const stop = title ? decode(title) : () => {};
+  // Off when its animations have run (a frame later, so they've started), or after 3 s whatever happens. Under Neon a tap
+  // or a key cuts it short, title and all (its power-on, neon.css, is a second's dark screen: never one you have to wait
+  // out); 000h's arrival is as it was.
+  // Neon is asked at the tap, not now: the look a page lands on can still change before then (loom's saved choice).
+  const done = () => { delete root.dataset.arrive; removeEventListener('pointerdown', tap, true); removeEventListener('keydown', tap, true); };
+  const tap = () => { if (root.dataset.look === 'neon') { stop(); done(); } };
+  addEventListener('pointerdown', tap, true); addEventListener('keydown', tap, true);
+  requestAnimationFrame(() => {
+    const t = setTimeout(done, 3000);
+    void Promise.allSettled(document.getAnimations().filter((a) => /^loom-in-/.test((a as CSSAnimation).animationName ?? '')).map((a) => a.finished))
+      .then(() => { clearTimeout(t); done(); });
+  });
+  return true;
+}
+
+/** Its words resolve out of noise (000h's decode); a text React changes meanwhile is left alone. */
+function decode(el: HTMLElement): () => void {
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) => (n.nodeValue?.trim() && !n.parentElement?.closest('svg,input,textarea,select,[data-slot=animated-icon]') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT),
   });

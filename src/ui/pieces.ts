@@ -22,7 +22,7 @@ import { householdHome } from '../household.js';
 import { mintGrant } from '../stores.js';
 import { spawn } from 'node:child_process';
 import { realpathSync, statSync } from 'node:fs';
-import { listPieces } from '../cli/pieces.js';
+import { listPieces, resolvePieceName } from '../cli/pieces.js';
 import { pieceEnvFor } from '../cli/pieces-managed.js';
 import { parseActResult, parseManifest, parsePage, type ActResult, type Manifest, type Page } from './vocab.js';
 
@@ -311,12 +311,21 @@ function manifestFor(piece: string, path: string, env: NodeJS.ProcessEnv, nowMs:
 }
 
 /**
+ * The pieces the page shows: every loom-<piece> on PATH, less loom's own name (a piece can't take it) and an old name
+ * that is another piece now (PIECE_ALIASES: the runtime's loom-box bin is the runtime, whose pages /p/box/… already
+ * redirect to, not a second "Boxes" in Places beside the runtime's in Setup).
+ */
+function shownPieces(env: NodeJS.ProcessEnv): Array<{ name: string; path: string }> {
+  return listPieces(env).filter((p) => p.name !== 'loom' && resolvePieceName(env, p.name) === p.name);
+}
+
+/**
  * Ask every piece for its manifest now, whatever the cache holds, and keep the answers (src/ui/live.ts runs
  * this while an app is open). Returns each piece's answer as a fingerprint, so a caller can tell which changed;
  * a piece that changed has its kept pages dropped, so the next look at them is fresh.
  */
 export async function refreshPieceManifests(env: NodeJS.ProcessEnv): Promise<Map<string, string>> {
-  const installed = listPieces(env).filter((p) => p.name !== 'loom');
+  const installed = shownPieces(env);
   const out = new Map<string, string>();
   await Promise.all(installed.map(async (p) => {
     const key = `${p.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(p.path)}`;
@@ -339,8 +348,7 @@ export async function pieceManifests(
   env: NodeJS.ProcessEnv,
   nowMs = Date.now(),
 ): Promise<{ pieces: PieceInfo[]; skipped: PieceSkip[] }> {
-  // "loom" is loom's own name on the page; a piece can't take it.
-  const installed = listPieces(env).filter((p) => p.name !== 'loom');
+  const installed = shownPieces(env);
   const results = await Promise.all(installed.map((p) => manifestFor(p.name, p.path, env, nowMs)));
   const pieces = results.filter((r): r is PieceInfo => 'manifest' in r);
   // A piece with only Inbox history (notices, answered) or readings for the agents' cards has something to show.

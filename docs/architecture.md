@@ -32,7 +32,7 @@ flowchart LR
     KONLY["knowledge-server.ts<br/>createKnowledgeOnlyServer"]
     subgraph wings["Tool wings: src/tools/*"]
       IDW["Identity wing<br/>identity · dossier · update_identity<br/>bootstrap · harness_init · harness_describe"]
-      MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit · memory_recompute_salience<br/>relay (household HTTP)<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
+      MEMW["Memory wing<br/>remember · recall · update · forget<br/>memory_list · memory_prune · episodes<br/>find_similar · memory_audit · memory_recompute_salience<br/>memory_archive · memory_restore · memory_merge<br/>memory_history · memory_revision_restore"]
       PROPW["Capture-propose<br/>memory_propose · memory_proposals<br/>memory_ratify · memory_reject"]
       PEOW["People wing: tools/person.ts<br/>person_write · person_verify · person_archive<br/>person_restore · person · person_list<br/>person_history · person_revision_restore<br/>person_evidence · person_merge"]
       PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
@@ -200,7 +200,7 @@ have fallen behind.
 |---|---|---|
 | `memories.db` | `memories`, `vec_memories` (sqlite-vec), `proposals`, `memory_revisions`, `memory_supersessions`, `memory_deletions` | `sqlite-vec.ts`, schema moves in `migrations.ts` |
 | `memories.db` (people) | `people`, `person_revisions`, `person_merges` (a merged card's redirect: from, into, who, when, what was re-tagged) | `people.ts`, created by the `people_cards` and `person_merges` migrations; in a household `commons/people.db` holds the same tables for the directory |
-| `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md), `findings` (a grader's one line per conversation per UTC day, made by the first) | `src/backends/conversations.ts`, created by the `conversations` migration (`findings` by its first write) |
+| `memories.db` (conversations) | `conversations`, `conversation_turns` (metadata, never text), `conversation_days` (the fold of turns past 90 days), `conversation_digests` (docs/specs/conversations.md), `findings` (a grader's one line per conversation per UTC day, made by the first), `conversation_needs_answers` (how a Needs you was answered: done, dismissed or replied by the owner, or resolved by loom with its reason; who and when, never words) | `src/backends/conversations.ts`, created by the `conversations` migration (`findings` and `conversation_needs_answers` by their first write) |
 | `$LOOM_HOME/household.db` | `venues`: core's copy of every installed piece's venues, orphaned when the piece goes; `audit_reads` (who took which audit entry, never text), `conversation_strangers` (sticky: a turn came from a non-owner), `review_scores` and `scorecards` | `src/household-store.ts`, synced at install, update, remove and daemon start; `src/audit.ts` and `src/review.ts` write the review's tables |
 | `$LOOM_HOME/audit.db` | `audit_entries`: raw turn text, age-encrypted to `review.pub`, deleted on `audit/done` and 7 days after its turn. Never in a bundle or an export, nor are `review.key` and `review.pub` | `src/audit.ts` |
 | `memories.db` (projects) | `projects`, `project_revisions`, `project_names` (every live project's slug and aliases: the primary key is the uniqueness rule) | `projects.ts`, created by the `project_cards` migration |
@@ -229,6 +229,7 @@ have fallen behind.
 | `src/cli/pieces.ts` | `loom <piece>`: git-style dispatch to `loom-<piece>` on PATH; `loom pieces` lists them |
 | `src/ui/household-pages.ts` | The owner's household page: Home across every agent, the commons' knowledge, People with every agent's relationship, each agent's Setup (identity, tokens, health), adding an agent |
 | `src/bundle.ts`, `src/cli/bundle.ts` | The bundle (docs/specs/household.md, "Export and restore"): `loom export` / `loom restore` / `--drill`, age-encrypted, with each piece's own part from `loom-<piece> bundle export` / `bundle import` |
+| `src/backup.ts`, `src/backup-tick.ts`, `src/cli/backup.ts` | The nightly backup (docs/specs/keeping-watch.md): `loom backup` set, run, status, off, a drilled bundle to a git repo (one commit, force-pushed with a lease) or a directory; the daemon's 10-minute tick; core's Inbox alert and Setup's Backup row; `LOOM_ALERT_COMMAND` |
 | `src/household.ts`, `src/cli/household.ts` | The household (docs/specs/household.md): `household.json`, `tokens.json` (roles `agent:`, `owner`, `peer:`; only sha256 stored), the resolver the daemon uses per request, `loom household` and `loom token` |
 | `src/cli/remote.ts` | Remote mode: with `--url`/`LOOM_URL`, the store verbs run on a loom-http via `POST /cli` |
 | `src/blocks/*` | Harness and model manifest blocks for the identity payload |
@@ -259,6 +260,8 @@ have fallen behind.
 | `src/backends/recall-log.ts` | Local recall observation log |
 | `src/backends/recorder-health.ts` | Per-component failure ledger (episodes, cards) |
 | `src/backends/conversations.ts` | Conversations as core records: turns (metadata only, `seq` and `latency_ms` by core), digests, the retention fold, the hub's section and the tape's digests |
+| `src/backends/needs.ts` | A digest's Needs you ask: the object (ask, why, if_yes, if_no, href, refs, waits_on) or a plain string, and the lint that refuses an ask naming internal ids or lane words |
+| `src/needs-resolve.ts` | Needs you that clear themselves: each minute, what an open ask waits on (an approval, a task), read through the approvals and tasks pieces' own APIs |
 | `src/conversations.ts` | Who may write a turn, the venue's render or core's generic one, and who reads which agent's conversations |
 | `src/household-store.ts` | `$LOOM_HOME/household.db`: the venues registry, and the review's tables |
 | `src/audit.ts` | The audit log: writes by a turn's writer, the review key pair, claims, `done`, the 7-day sweep, and the one decrypt function |
@@ -268,5 +271,5 @@ have fallen behind.
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`, `store`. Any other name runs an
+`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`, `store`, `backup`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).

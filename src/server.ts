@@ -96,12 +96,24 @@ export interface LoomServerConfig {
    */
   remote?: boolean;
   /**
-   * Agent to agent (t-1597): the household HTTP server passes a relay that
-   * runs the clock piece's `relay` as this session's own agent (so it reaches
-   * no further than that agent's `wake relay`). Without one there is no
-   * relay tool.
+   * Tools a piece offers (src/offered-tools.ts, agent-runtime.md "Seams", 2, `mcp_tools`): the
+   * household HTTP server passes the installed pieces' tools, each called as this session's own
+   * agent. A tool exists here only when a piece offers it: the runtime's `relay` among them.
    */
-  relay?: (argv: string[]) => Promise<{ ok: boolean; text: string }>;
+  tools?: SessionTool[];
+}
+
+/** One offered tool as a session has it: its JSON schema, and its call as the session's agent. */
+export interface SessionTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  call: (args: unknown) => Promise<{ text: string; isError?: boolean }>;
+}
+
+/** A piece's JSON schema as the SDK takes it; one zod can't read is any object (the piece checks its own arguments). */
+function schemaOf(json: Record<string, unknown>): z.ZodType {
+  try { return z.fromJSONSchema(json as Parameters<typeof z.fromJSONSchema>[0]) as z.ZodType; } catch { return z.looseObject({}); }
 }
 
 export interface LoomServerInstance {
@@ -492,32 +504,22 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
   );
 
-  if (config.relay) {
-    const relay = config.relay;
-    server.registerTool(
-      'relay',
+  for (const t of config.tools ?? []) {
+    // A name already registered (core's own, should one ever slip past install's check) is left out, never the session.
+    try { server.registerTool(
+      t.name,
       {
-        description:
-        'Ask another agent in this household something: it wakes a body of theirs in their house ' +
-        'with your words, framed as a peer\'s request (none of the owner\'s authority). Their answer ' +
-        'comes back the same way, as a wake of yours. Only between agents the household pairs; the ' +
-        'same words twice within the hour are refused. Answer a relay with reply_to set to its id.',
-        inputSchema: {
-          to: z.string().describe('The other agent, e.g. "mark"'),
-          say: z.string().describe('What to tell or ask them (2500 characters at most; point at a PR or file for more)'),
-          why: z.string().optional().describe('One line: why you are asking'),
-          reply_to: z.string().optional().describe('The relay id (r-…) this answers'),
-          from: z.string().optional().describe('Where it was asked, e.g. "discord:#workshop", so the answer can go back there'),
-        },
+        description: t.description,
+        inputSchema: schemaOf(t.inputSchema),
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       },
-      async ({ to, say, why, reply_to, from }) => {
-        const argv = ['relay', '--to', to, '--say', say,
-          ...(why ? ['--why', why] : []), ...(reply_to ? ['--reply-to', reply_to] : []), ...(from ? ['--from', from] : [])];
-        const r = await relay(argv);
-        return { content: [{ type: 'text' as const, text: r.text }], ...(r.ok ? {} : { isError: true }) };
+      async (args: unknown) => {
+        const r = await t.call(args);
+        return { content: [{ type: 'text' as const, text: r.text }], ...(r.isError ? { isError: true } : {}) };
       },
-    );
+    ); } catch (e) {
+      process.stderr.write(`loom: an offered tool ${t.name} wasn't added (${(e as Error).message})\n`);
+    }
   }
 
   server.registerTool(
@@ -1429,7 +1431,17 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
         decisions: z.array(z.string().max(200)).max(8).optional().describe('What was decided.'),
         tasks: z.array(z.string().max(64)).max(16).optional().describe('Task refs made or moved (t-…).'),
         projects: z.array(z.string().max(80)).max(4).optional().describe('Project names (slugs or aliases); omitted: the project whose links.venues names this conversation\'s place, if exactly one does.'),
-        needs_owner: z.string().max(200).nullable().optional().describe('A one-line reason the owner is needed (it shows in their Inbox until a later digest has none), or null.'),
+        needs_owner: z.union([z.string().max(200), z.object({
+          ask: z.string().max(140).describe('The one question or request the owner answers, in plain words, as you\'d ask a person who doesn\'t know your lanes: no ids (a-…, t-…, cv-…, h-…, repo#N), no "round N", no lane words (nudge-watch, chain-check, local-wake). At most 140 characters. Refused with why if it names any.'),
+          why: z.string().max(240).optional().describe('One plain line: why it needs them.'),
+          if_yes: z.string().max(140).optional().describe('What happens if they say yes (or do it), short.'),
+          if_no: z.string().max(140).optional().describe('What happens if they say no (or leave it), short.'),
+          answers: z.enum(['yes-no', 'words']).optional().describe('How they answer. "yes-no": their sheet shows Yes and No buttons, and you get "Yes, to: <ask>" (or "No, …") with your if_yes (or if_no) line, as their message in this conversation. "words": a reply box only, for an ask Yes and No can\'t answer ("Gabe or Mark?"). Left off, an ask with if_yes or if_no is "yes-no", so phrase it as a yes/no question, or say "words".'),
+          href: z.string().max(500).optional().describe('The exact thing to open, https:// (the pull request to merge): the sheet\'s first button.'),
+          refs: z.array(z.string().max(100)).max(8).optional().describe('The ids it\'s about: t-40, a-7693c00e, owner/repo#12, cv-…. They become links and details, never the headline.'),
+          waits_on: z.object({ approval: z.string().max(20).optional(), task: z.string().max(20).optional() }).optional().describe('What resolves it, one of {approval: "a-…"} (allowed, denied or gone) or {task: "t-…"} (closed): core checks and clears the ask, leaving an FYI. An approval shows its Allow and Deny right on the ask, so the owner never hunts for the card. No pull requests: loom can\'t read GitHub, so write needs_owner null in a later digest once it\'s merged.'),
+        }).strict()]).nullable().optional().describe('What you need the owner for, or null. It shows in their Inbox (and on Home), headlined by `ask`, where they can answer Yes or No (a yes/no ask), reply to you in words, mark it done or dismiss it, until a later digest has none or what it waits on is resolved. Write it for them: what decision, why, what happens either way. Like {"ask": "OK to install rclone and restic on loom\'s machine to set up the Google Drive backup?", "why": "The nightly backup has no offsite copy yet.", "if_yes": "I install both and run the first backup tonight.", "if_no": "Backups stay on this machine only.", "refs": ["t-40", "a-7693c00e"], "waits_on": {"approval": "a-7693c00e"}}. A plain one-line string is still taken as the ask alone.'),
+        needs_owner_href: z.string().max(500).nullable().optional().describe('The older name for needs_owner.href: the exact thing to open, as an https:// URL. Give it once, either way.'),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },

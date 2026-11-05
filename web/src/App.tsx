@@ -1,42 +1,63 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AgentState } from '@/components/ui/agent-state';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+// An agent's state beside its name (a desktop's alone): its own chunk.
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 // The ground (contour field), on its own (ground.tsx).
 const Contours = lazy(() => import('./ground').then((m) => ({ default: m.Contours })));
 const Depth = lazy(() => import('./ground').then((m) => ({ default: m.Depth })));
 // The More drawer's menu (000h's navigation menu) loads when it opens.
-const MoreMenu = lazy(() => import('./more-menu'));
+// The More drawer (its menu, 000h's drawer) loads the first time it opens; it stays mounted for its closing motion.
+const MoreSheet = lazy(() => import('./more-sheet'));
 // The rail is a desktop's alone: a phone never draws it, so never loads it.
 const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
-// Passkeys' controls (WebAuthn, push) load with that page only.
-const PasskeyAdd = lazy(() => import('./passkeys').then((m) => ({ default: m.PasskeyAdd })));
-const PushSwitch = lazy(() => import('./passkeys').then((m) => ({ default: m.PushSwitch })));
+// The account's page (passkeys' controls: WebAuthn, push) loads with that page only.
+const AccountView = lazy(() => import('./account').then((m) => ({ default: m.AccountView })));
 const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
-import { ArrivalContext, type Arrivals } from './arrive';
+import { ArrivalContext, arriveOnce, type Arrivals } from './arrive';
 import { Boundary, Callout, iconFor } from './safe';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
-import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Spinner } from '@/components/ui/spinner';
 import { refreshEvery, type Showing } from './refresh';
-import { Toast, ToastAction, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
-import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Flash, type Page, type View } from './loom';
-import { AgentAvatar, BlockView, EnvContext, Nothing, type Env } from './blocks';
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
+// The toasts load with the first one (toasts.tsx).
+const Toasts = lazy(() => import('./toasts'));
+import type { Note } from './toasts';
+import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
+import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
+import { placesOf, settingsOf } from './nav';
+import { AppHeader, AppTile, HeaderLine, oneLine } from './app-header';
+import { PhoneBar } from './phone-bar';
+import { Skeleton, StateCard } from './states';
+import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
-// The sheets (Scope, Places, Find, Setup) load when one opens.
+// The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
+// Find, over whatever you're in (find.tsx): loads the first time it opens.
+const FindOverlay = lazy(() => import('./find'));
+const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPanel })));
+import { noteRecent } from './recent';
+import { TintContext, tintsOf } from './tint';
+import { sectionRing } from './tones';
+import { useGestures } from './gestures';
+import { canMove, moveTo, scrub, type Move } from './transitions';
+import { DockSwap } from './dock-swap';
+import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
+import { keep, LookContext, markColor, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
+  Appearance: 'palette', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round',
 };
-const icon = (label: string) => ICON[label] ?? 'circle';
+// A piece's own icon (its manifest's tab.icon) first, then loom's for that name.
+const iconsOf = (chrome?: Chrome) => {
+  const own = Object.fromEntries((chrome?.shell?.pieces ?? []).filter((p) => p.icon).map((p) => [p.label, p.icon!]));
+  return (label: string) => own[label] ?? ICON[label] ?? 'circle';
+};
 
 function useWide() {
   const q = '(min-width: 1024px)';
@@ -45,7 +66,6 @@ function useWide() {
   return wide;
 }
 
-type Note = { id: number; ok: boolean; message: string; from?: string; undo?: Flash['undo'] };
 type Tab = { label: string; href: string; current: boolean; count?: number };
 
 /** The tabs of this page: an agent's own (its head), else the household's. */
@@ -53,18 +73,20 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   if (head) return { tabs: head.tabs, more: [] };
   const s = chrome.shell;
   if (!s) return { tabs: chrome.nav.map((n) => ({ ...n })), more: [] };
-  const places = [...s.core, ...s.pieces.filter((p) => p.kind !== 'setting')];
+  const places = placesOf(s);
   const settings = s.pieces.filter((p) => p.kind === 'setting');
   const home = { label: 'Home', href: s.home, current: s.tab === 'home' };
   const inbox = { label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks };
-  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || settings.some((p) => p.current) };
+  const setup = { label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || settings.some((p) => p.current) };
   // A phone (docs/specs/ui-app.md): Home, Inbox, Places, Find, More. Places is where you go regularly; More is the
   // house's settings and Setup (Jonathan, 2026-10-31: "places holds the things you actually go to regularly, ... the
   // others"), both a launcher like a phone's home screen. A desktop's rail: all of it.
+  // Find isn't a tab (Jonathan, 2026-11-03: "on phone, Find feels different from the dock's apps"): it's the search
+  // pill over the dock on Home and Places, and an overlay (find.tsx). The dock's last place is the member's avatar.
   const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current) },
-    { label: 'Find', href: '/find', current: s.tab === 'find' }, { label: 'More', href: '/setup', current: setup.current }];
+    { label: 'More', href: '/setup', current: setup.current }];
   return matchMedia('(min-width: 1024px)').matches
-    ? { tabs: [home, inbox, ...places.filter((p) => p.href !== '/inbox'), setup], more: settings }
+    ? { tabs: [home, inbox, ...places, setup], more: settings }
     : { tabs: phone, more: [] };
 }
 
@@ -75,26 +97,67 @@ export default function App() {
   const [url, setUrl] = useState(() => location.pathname + location.search);
   const [data, setData] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // A page with no copy kept yet: the last one dims under Orbit until it lands.
+  // A page with no copy kept yet: its header and its shape (states.tsx Skeleton) until it lands. `pending` is where to.
   const [waiting, setWaiting] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
-  // Appearance: the system's by default (Auto); Light or Dark is a choice in Setup, kept in this browser.
+  const [moreAsked, setMoreAsked] = useState(false);
+  const [finding, setFinding] = useState(false);
+  // Appearance: the system's by default (Auto); Light or Dark is a choice in the Appearance app, kept by loom for the person (look.ts).
   const [mode, setModeState] = useState<Mode>(() => { try { return (localStorage.getItem('loom-mode') as Mode) || 'auto'; } catch { return 'auto'; } });
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
-  // are a choice in Setup, kept in this browser.
+  // are a choice in the Appearance app, kept by loom for the person.
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
-  const setGround = (g: Ground) => { setGroundState(g); try { localStorage.setItem('loom-ground', g); } catch { /* private window */ } };
+  const setGround = (g: Ground) => { setGroundState(g); keep('loom-ground', g); save({ ground: g }); };
   const [systemDark, setSystemDark] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches);
+  // What the first page leaves out (forms, details, the More drawer, a table's pages) is fetched once the browser is
+  // idle a moment after it, so the first tap on one doesn't wait on the network.
+  useEffect(() => {
+    const warm = () => { void import('./form'); void import('./details'); void import('./block-extras'); void import('./more-sheet'); };
+    // Late enough not to share the network with the first screen's own (its faces, its ground).
+    const t = setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(warm, { timeout: 4000 }) : warm()), 2500);
+    return () => clearTimeout(t);
+  }, []);
   useEffect(() => { const m = matchMedia('(prefers-color-scheme: dark)'); const f = () => setSystemDark(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
-  const effective = mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
+  // The look (look.ts): Neon Noir unless the person chose 000h. Neon is dark only; Light or Dark is 000h's.
+  const [look, setLookState] = useState<Look>(shownLook);
+  const effective = look === 'neon' ? 'dark' : mode === 'auto' ? (systemDark ? 'dark' : 'light') : mode;
   useEffect(() => { document.documentElement.dataset.mode = effective; }, [effective]);
-  const setMode = (m: Mode) => { setModeState(m); try { localStorage.setItem('loom-mode', m); } catch { /* private window */ } };
+  useEffect(() => { wearLook(look); }, [look]);
+  // A choice is the person's: saved to loom (every device they sign in on gets it), and this device keeps a copy.
+  const csrf = useRef('');
+  // loom's version of the person's choices this tab has (look.ts Prefs.at): only a newer one is applied.
+  const heard = useRef(0);
+  const save = (p: Prefs) => { if (csrf.current) void savePrefs(csrf.current, p).then((at) => { if (at) heard.current = Math.max(heard.current, at); }); };
+  const setMode = (m: Mode) => { setModeState(m); keep('loom-mode', m); save({ mode: m }); };
+  const setLook = (l: Look) => { setLookState(l); keep('loom-look', l); save({ look: l }); };
+  // Sound (sound.ts): off unless the person turns it on; its chunk loads only then.
+  const [sound, setSoundState] = useState(() => { try { return localStorage.getItem('loom-sound') === 'on'; } catch { return false; } });
+  const soundOn = useRef(sound);
+  soundOn.current = sound;
+  // Pixel faces (pixel-face.tsx), where an agent has a sheet: on unless the person turns them off.
+  const [pixel, setPixelState] = useState(() => { try { return localStorage.getItem('loom-pixel') !== 'off'; } catch { return true; } });
+  const setPixel = (on: boolean) => { setPixelState(on); keep('loom-pixel', on ? 'on' : 'off'); save({ pixel: on }); };
+  const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
+  // Haptics (haptic.tsx): on unless the person turns them off; their chunk loads once the first page is up, while on.
+  const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
+  const setHaptics = (on: boolean) => { setHapticsState(on); keep('loom-haptics', on ? 'on' : 'off'); save({ haptics: on }); if (on) buzz(true); };
+  useEffect(() => { if (!haptics || navigator.maxTouchPoints < 1) return; const t = setTimeout(warmHaptics, 1500); return () => clearTimeout(t); }, [haptics]);
 
   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const say = useCallback((n: Omit<Note, 'id'>) => setNotes((x) => [...x, { ...n, id: Date.now() + Math.random() }]), []);
+  // One toast per outcome: an action that lands on another page says it, and that page's one-time flash says it again.
+  const chimed = useRef({ message: '', at: 0 });
+  const say = useCallback((n: Omit<Note, 'id'>) => {
+    // One chime per outcome, as one toast: the page it lands on saying it again is the same outcome.
+    if (n.ok && soundOn.current && !(chimed.current.message === n.message && Date.now() - chimed.current.at < 5000)) {
+      chimed.current = { message: n.message, at: Date.now() };
+      void import('./sound').then((m) => m.chime('done'));
+    }
+    setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
+    ? x : [...x, { ...n, id: Date.now() + Math.random() }])); }, []);
 
   // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
   // asked behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow").
@@ -108,7 +171,7 @@ export default function App() {
         if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
         setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
       }
-      setWaiting(!have);
+      setWaiting(!have); setPending(have ? null : to);
     }
     const r = await fetchView(to, have?.etag).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }));
     if (!quiet && showing.current === to) setWaiting(false);
@@ -123,7 +186,7 @@ export default function App() {
     if (!r.data) {
       if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
       setSavedAt(undefined); setUrl(to);
-      setError(r.status ? `loom answered ${r.status} for ${to}` : 'This page isn’t saved on this device yet. It opens when there’s a connection.');
+      setError(r.status ? 'server' : 'offline');
       return;
     }
     // A one-time message (?_flash=, after a form's post) is shown once, then leaves the address.
@@ -170,15 +233,51 @@ export default function App() {
   }, [every]); 
 
   useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
-  useEffect(() => { void load(url, false); const f = () => void load(location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // How a page change moves (transitions.ts): by the dock's order between its own pages, else a push into a page and a
+  // pop back out of one. What it's read against is the page shown (set as each one draws, below).
+  const moveFrom = useRef<{ pages: string[]; path: string; active: number; crumb?: string }>({ pages: [], path: '/', active: -1 });
+  const moveFor = (to: string, back = false): Move | undefined => {
+    const { pages, path, active, crumb } = moveFrom.current;
+    if (to === path) return undefined;
+    const here = pages.indexOf(path), b = pages.indexOf(to);
+    if (here >= 0 && b >= 0) return b > here ? 'right' : 'left';
+    // Back up: the crumb, a page this one is under, the dock's own key for where you are, or the browser's Back.
+    if (back || to === crumb || path.startsWith(to === '/' ? '/' : `${to}/`) || (b >= 0 && b === active)) return 'pop';
+    if (b >= 0 && active >= 0) return b > active ? 'right' : 'left';
+    return 'push';
+  };
+  const showWith = (how: Move | undefined, to: string, push: boolean) => moveTo(how, () => flushSync(() => { void load(to, push); }));
+  useEffect(() => { void load(url, false); const f = () => void showWith(moveFor(location.pathname, true), location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ⌘K / Ctrl-K: Find, from anywhere.
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); } };
+    addEventListener('keydown', f); return () => removeEventListener('keydown', f);
+  }, []);
   const go = useCallback((href: string) => {
     const u = new URL(href, location.href);
+    // Find is an overlay over the page you're in, not a page of its own (find.tsx).
+    if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
-    void load(u.pathname + u.search, true);
-  }, [load]);
+    showWith(moveFor(u.pathname), u.pathname + u.search, true);
+  }, [load]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const chrome = data?.chrome;
+  // loom's copy of the person's Appearance wins once a page lands, and this device's copy follows it. Only a newer
+  // version than this tab has (its `at`) is applied: an answer that was already on its way when a choice was made, or
+  // that landed before the choice's own save came back, carries an older one and doesn't undo it.
+  useEffect(() => {
+    if (chrome?.csrf) csrf.current = chrome.csrf;
+    const p = chrome?.prefs;
+    if (!p?.at || p.at <= heard.current) return;
+    heard.current = p.at;
+    if (p.look) { setLookState(p.look); keep('loom-look', p.look); }
+    if (p.mode) { setModeState(p.mode); keep('loom-mode', p.mode); }
+    if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
+    if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
+    if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
+    if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
+  }, [chrome]);
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
   const accent = useMemo(() => {
@@ -206,12 +305,18 @@ export default function App() {
   const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => send(a, f, c), go, wide, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
   const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
+  const icon = useMemo(() => iconsOf(chrome), [chrome]);
+  // Each app's one colour (tint.ts): its tile, its dock tile, its header and its page's accents.
+  const tint = useMemo(() => tintsOf(chrome?.shell?.pieces), [chrome]);
   // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
   // A phone's dock never scrolls (Jonathan, 2026-10-29): as many tiles as the width holds, the one you're on always
   // among them, the rest under More (…). On an agent's pages the dock swaps (his "dock swap" board): the agent's
   // mark with a back chevron on the left, the household a tap away, and its own tabs on the right in its colour.
   const agentDock = !!head && !!accent;
-  const room = agentDock ? Math.max(3, Math.floor((vw - 52) / 60) - 1) : Math.max(4, Math.floor((vw - 40) / 60));
+  // The household's dock ends with who's signed in (Jonathan, 2026-11-03): their avatar, past a divider, opens their
+  // account. It isn't a page among the others, so it takes its own place and never folds into More.
+  const meTile = !agentDock && chrome?.shell ? chrome.shell.owner : null;
+  const room = agentDock ? Math.max(3, Math.floor((vw - 52) / 60) - 1) : Math.max(4, Math.floor((vw - 40 - (meTile ? 58 : 0)) / 60));
   const onPhone = (() => {
     if (nav.tabs.length <= room && !nav.more.length) return nav.tabs;
     const keep = nav.tabs.slice(0, room - 1);
@@ -222,120 +327,206 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />,
-    ...(t.count ? { badge: <span className="text-[10px] font-semibold">{t.count}</span> } : {}),
+    value: t.href, label: t.label, icon: <><AnimatedIcon name={iconFor(icon(t.label))} active={t.current} /><HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
+    ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
-  const pick = (href: string) => (href === '#more' ? setMore(true) : href === '#back' ? go('/') : go(href));
+  const pick = (href: string) => (buzz(haptics, true), href === '#more' ? (setMoreAsked(true), setMore(true)) : href === '#back' ? go('/') : go(href));
+  const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
+  const accountOpen = data?.view === 'passkeys';
   const backTile: DockItem | null = agentDock && accent ? {
     value: '#back', label: 'Back',
-    icon: <span className="loom-back-mark" aria-hidden>{accent.label[0]}</span>,
+    icon: <span className="loom-back-mark" aria-hidden><AgentAvatar a={accent} size={36} state={accent.asks ? 'needs-input' : 'idle'} /></span>,
     badge: <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>,
   } : null;
   // A profile leads with the name itself, big: the page's own title would say it twice (the trail keeps it).
   const profileLeads = (data?.view === 'page' && (data.page as Page).sections[0]?.blocks[0]?.type === 'profile')
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
-  const title = error ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
+  const title = error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
     : data?.view === 'inbox' ? 'Inbox' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
+  // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
+  const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
+  const placeAt = (at: string) => shellPlaces.find((p) => at === p.href) ?? shellPlaces.find((p) => p.href !== '/' && at.startsWith(`${p.href}/`));
+  // On its way, or not opened: the header still says which app (a place's name), not the last page's title.
+  const path = (waiting && pending ? pending : url).split('?')[0];
+  const place = placeAt(path);
+  const shownTitle = title || ((error || waiting) && place ? place.label : '');
+  const intro = !error && data?.view === 'page' ? (data.page as Page).intro : undefined;
+  const context = error || waiting ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
+    ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
+  const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
+    : path === '/' ? 'Home' : place?.label ?? chrome?.shell?.back?.label ?? title;
+  // An app's page wears its colour (tint.ts) past its tile: the header's and the page's accents (buttons, switches,
+  // selection: 000h's --v-pink) take it, as an agent's pages take the agent's. Not the dock or the side: they're the shell's.
+  const appTint = !accent && data?.view !== 'passkeys' && tileLabel ? tint(tileLabel) : undefined;
+  const appAccent = appTint && appTint !== 'pink' ? appTint : undefined;
+  const headLead = accent && chrome?.shell?.household && !chrome.shell.back ? (
+    // An agent's own pages: its mark, with a chevron, is the way back to the household.
+    <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
+      <AnimatedIcon name={iconFor('chevron-left')} size="sm" />
+      {profileLeads ? <span className="pr-2 text-sm">The household</span> : <AgentAvatar a={accent} size={40} state={accent.asks ? 'needs-input' : 'idle'} />}
+    </button>
+  ) : accent ? <AgentAvatar a={accent} size={44} className="shrink-0" state={accent.asks ? 'needs-input' : 'idle'} />
+    : data?.view === 'passkeys' && chrome?.shell ? <MeAvatar name={chrome.shell.owner} size={44} className="shrink-0" />
+    : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
+
+  // The app's arrival, once a session: the first time a page with its header has landed (arrive.tsx arriveOnce).
+  const arrived = useRef(false);
+  useLayoutEffect(() => {
+    if (arrived.current || !data || waiting) return;
+    arrived.current = true;
+    // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
+    // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
+    const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
+    if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
+  }, [data, waiting]);
+
+  // Where you've been, for Find's Recent: each page that opened, by its title.
+  useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
+  // Neon on a phone's width: the bar merges with the phone's own (phone-bar.tsx); wider keeps the status bar and the big header.
+  const phoneBar = look === 'neon' && vw < 640 && !!chrome?.shell;
+  const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
+  // A phone's gestures (gestures.ts): sideways between the dock's own pages, in its order; up from the dock for Find.
+  const dockPages = !agentDock ? nav.tabs.map((t) => t.href).filter((h) => !h.startsWith('#')) : [];
+  const hereIndex = dockPages.indexOf(path);
+  const activeTab = dockPages.indexOf(current(phoneTabs)), crumbHref = chrome?.shell?.back?.href;
+  useLayoutEffect(() => { moveFrom.current = { pages: dockPages, path, active: activeTab, crumb: crumbHref }; });
+  // A swipe's page, shown under the finger (gestures.ts begin): its address only once the swipe commits; run back,
+  // the page it left is shown again.
+  const begin = (href: string, how: Move) => {
+    if (!canMove()) return null;
+    const from = location.pathname + location.search;
+    const vt = showWith(how, href, false);
+    if (!vt) return null;
+    const held = scrub(vt);
+    return { at: held.at, end: async (commit: boolean) => {
+      if (commit && location.pathname + location.search !== href) history.pushState(null, '', href);
+      return held.end(commit, () => flushSync(() => { void load(from, false); }));
+    } };
+  };
+  // The dock's next and last pages are fetched a moment after one lands, so a swipe opens on the page, not its shape.
+  useEffect(() => {
+    if (wide || hereIndex < 0) return;
+    const t = setTimeout(() => { for (const n of [dockPages[hereIndex - 1], dockPages[hereIndex + 1]]) if (n && !kept.current.has(n)) void load(n, false, true); }, 1200);
+    return () => clearTimeout(t);
+  }, [wide, hereIndex, dockPages.join(' ')]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useGestures(!wide && !!chrome?.shell, {
+    pages: dockPages, here: error ? -1 : hereIndex, sub: !!chrome?.shell?.back, go, find: () => setFinding(true),
+    busy: () => finding || more || !!document.querySelector('[role="dialog"],[role="alertdialog"]'), buzz: () => buzz(haptics), begin,
+  });
+
   return (
-    <ToastProvider swipeDirection={wide ? 'right' : 'down'}>
+    <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
-        style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
+        style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
         {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
         {ground === 'depth' && <Suspense fallback={null}><Depth /></Suspense>}
         {wide && chrome && <Suspense fallback={null}><LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} /></Suspense>}
-        <div className="min-w-0">
+        <div className="loom-page-clip min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
-          <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8">
-            <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
-              {chrome?.shell?.back ? null : accent && chrome?.shell?.household ? (
-                // An agent's own pages: its mark, with a chevron, is the way back to the household.
-                <button type="button" aria-label="Back to the household" onClick={() => go('/')} className="-ml-1 flex shrink-0 items-center gap-0.5 rounded-2xl p-1 hover:bg-[color:var(--v-beige)]">
-                  <AnimatedIcon name={iconFor("chevron-left")} size="sm" />
-                  {profileLeads ? <span className="pr-2 text-sm">The household</span> : <AgentAvatar a={accent} size={36} />}
-                </button>
-              ) : accent && !profileLeads ? (
-                <AgentAvatar a={accent} size={40} className="shrink-0" />
-              ) : null}
-              <div className="min-w-0 flex-1">
-                {chrome?.shell?.back && (
-                  // Where this page sits (000h's breadcrumb): the page it's under, then this one.
-                  <Breadcrumb aria-label="You are here" className="text-sm"><BreadcrumbList>
-                    <BreadcrumbItem><BreadcrumbLink href={chrome.shell.back.href} onClick={(e) => { e.preventDefault(); go(chrome.shell!.back!.href); }}>{chrome.shell.back.label}</BreadcrumbLink></BreadcrumbItem>
-                    <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{title}</BreadcrumbPage></BreadcrumbItem>
-                  </BreadcrumbList></Breadcrumb>
-                )}
-                {title && !profileLeads && <h1 className="mt-1 block truncate font-[family-name:var(--font-display)] text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">{title}</h1>}
-                {head?.sub && !profileLeads && <p className="truncate text-sm opacity-70">{head.sub}</p>}
+          {phoneBar && chrome?.shell ? (
+            // Neon on a phone: one small bar right under the phone's own (phone-bar.tsx), the page's name in it; under
+            // it, only the page's one line and its ⓘ, when it has them.
+            <header className="loom-top loom-top--bar" data-accent={appAccent}>
+              <div className="mx-auto max-w-5xl px-4">
+                <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt}
+                  color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
+                <HeaderLine where={url} context={profileLeads ? undefined : context} more={intro} />
               </div>
-              {accent && wide && !profileLeads && <AgentState status={accent.asks ? 'needs-input' : 'idle'} size="sm" label={accent.asks ? `${accent.asks} waiting` : 'Ready'} description={accent.sub} />}
+            </header>
+          ) : (
+          <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
+            <div className="mx-auto max-w-5xl px-4 py-3">
+              {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} clock={chrome.clock} offline={!!savedAt} />}
+              <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
+                lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
+                actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
             </div>
           </header>
+          )}
 
-          {waiting && <div className="pointer-events-none fixed inset-0 z-10 grid place-items-center lg:pl-[17.25rem]" aria-hidden><Spinner appearance="orbit" className="scale-[2.2]" /></div>}
-          <main aria-busy={waiting || undefined} className={`mx-auto max-w-5xl px-4 pb-44 pt-5 transition-opacity duration-300 lg:pb-10 ${waiting ? 'opacity-35' : ''}`}>
+          <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10" data-accent={appAccent}>
+            {waiting && <Skeleton />}
             {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
-              This is how it looked at {new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}. Actions wait for a connection.</Callout>}
-            {error && <Callout tone={/^loom answered/.test(error) ? 'danger' : 'warn'} icon={/^loom answered/.test(error) ? undefined : 'cloud-off'} title={/^loom answered/.test(error) ? 'loom couldn’t open this' : 'Can’t reach loom'}
-              actions={<Button size="sm" variant="outline" onClick={() => void load(location.pathname + location.search, false)}>Try again</Button>}>{error}</Callout>}
+              This is how it looked at <span className="loom-data">{new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>. Actions wait for a connection.</Callout>}
+            {!waiting && error && (error === 'offline'
+              ? <StateCard icon="cloud-off" tint="blue" title="Can’t reach loom" text="This page isn’t saved on this device yet. It opens as soon as there’s a connection."
+                  action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />
+              : <StateCard icon="triangle-alert" tint="yellow" title={`${place?.label ?? 'This page'} didn’t load`} text="loom had trouble opening it. Try again, or come back in a minute."
+                  action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />)}
             {/* Home and the Inbox ask a device that could get Your call and doesn't (passkeys.tsx PushAsk). */}
-            {!error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
+            {!waiting && !error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
               <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
             )}
-            {!error && data && env && (
+            {!waiting && !error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
-                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} /></Suspense>
-                  : data.view === 'passkeys' ? <div className="grid gap-4"><PageView page={data.page as Page} /><Suspense fallback={<Spinner appearance="orbit" />}><PasskeyAdd add={data.add as never} reload={() => void load(url, false, true)} />
-                    <PushSwitch csrf={data.chrome.csrf} /></Suspense></div>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} q={(data.q as string) ?? ''} found={data.found as never} mode={mode} setMode={setMode} ground={ground} setGround={setGround} /></Suspense>
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
+                  : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                    <AccountView me={(data.me as { name: string; role: string }) ?? { name: chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
+                      add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
+                  : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                    <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></EnvContext.Provider></ArrivalContext.Provider>
             )}
-            {!error && data && !env && <NotYet kind={data.view} url={url} />}
+            {!waiting && !error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>
 
-          {!wide && chrome && <div aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
+          {!wide && chrome && <div aria-hidden className="loom-fade pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
+          {pill && (
+            // A phone's Find (as a phone's home screen has its Search over the dock): on the launch screens, Home and
+            // Places, a pill just above the dock that opens Find over the page. Not a tile: it isn't a place you go.
+            <button type="button" onClick={() => setFinding(true)} className="loom-find-pill fixed inset-x-0 z-40 mx-auto flex h-9 w-fit items-center gap-2 rounded-full px-4 text-sm font-medium [bottom:calc(var(--dock-h)_+_28px_+_env(safe-area-inset-bottom))]">
+              <AnimatedIcon name={iconFor('search')} size="sm" />Find</button>
+          )}
           {!wide && chrome && (
-            <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
-              <Dock key={agentDock ? `agent:${accent?.id}` : 'household'} variant="shelf" className={agentDock ? 'loom-agent-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : dockItems(phoneTabs)} value={current(phoneTabs)} onValueChange={pick}
+            <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
+              <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
+              <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : me ? [...dockItems(phoneTabs), me] : dockItems(phoneTabs)}
+                value={accountOpen && me ? '/account' : current(phoneTabs)} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
+              </DockSwap>
             </nav>
           )}
         </div>
       </div>
 
-      <Drawer open={more} onOpenChange={setMore}>
-        <DrawerContent>
-          <DrawerHeader><DrawerTitle>More</DrawerTitle>{head && <DrawerDescription>{head.label}'s other pages</DrawerDescription>}</DrawerHeader>
-          {more && (
-            <Suspense fallback={<div className="grid place-items-center py-6"><Spinner appearance="orbit" /></div>}>
-              <MoreMenu pages={moreTabs} agents={chrome?.shell?.agents ?? []} here={head?.label} icon={icon} go={(href) => { setMore(false); go(href); }} />
-            </Suspense>
-          )}
-        </DrawerContent>
-      </Drawer>
+      {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
+        go={(href) => { setMore(false); go(href); }} /></Suspense>}
 
-      {notes.map((n) => (
-        <Toast key={n.id} variant={n.ok ? 'default' : 'danger'} duration={n.undo ? 8000 : 4000} onOpenChange={(o) => !o && setNotes((x) => x.filter((y) => y.id !== n.id))}>
-          <div className="grid gap-0.5"><ToastTitle>{n.from ? `${n.from}: ` : ''}{n.ok ? 'Done' : 'Not done'}</ToastTitle><ToastDescription>{n.message}</ToastDescription></div>
-          {n.undo && ctx && chrome && (
-            <ToastAction altText={n.undo.label ?? 'Undo'} onClick={() => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); })}>
-              {n.undo.label ?? 'Undo'}</ToastAction>
-          )}
-        </Toast>
-      ))}
-      <ToastViewport className="[bottom:calc(var(--dock-h)_+_24px_+_env(safe-area-inset-bottom))] lg:bottom-6" />
-    </ToastProvider>
+      {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
+
+      {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
+        undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
+    </TintContext.Provider></HapticsContext.Provider></PixelContext.Provider></LookContext.Provider>
+  );
+}
+
+/**
+ * Neon Noir's status bar (Terminal HUD's borrow): LOOM//OS, whether loom is reached, how many agents and how many things
+ * need you, and the clock. Words, not colours: the dot's glow is the same either way and the word says which.
+ */
+function StatusBar({ shell, clock, offline }: { shell: NonNullable<Chrome['shell']>; clock: string; offline: boolean }) {
+  const n = shell.agents.length;
+  return (
+    <div className="loom-status">
+      <span className="loom-status__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
+      <span className="loom-status__live" data-off={offline || undefined}>{offline ? 'offline' : 'live'}</span>
+      <span className="loom-status__what loom-data">{n} agent{n === 1 ? '' : 's'}{shell.asks ? ` · ${shell.asks} need${shell.asks === 1 ? 's' : ''} you` : ''}</span>
+      {/* loom's clock (the household's time zone, as every page says it), from the page's last answer: the time alone. */}
+      <span className="loom-data ml-auto">{/\d{1,2}:\d{2}(\s?[AP]M)?/.exec(clock)?.[0] ?? clock}</span>
+    </div>
   );
 }
 
@@ -343,7 +534,6 @@ export default function App() {
 const ACCENT: Record<string, string> = { '#b8a6ff': 'blue', '#7a2e4f': 'pink', '#2f6b5a': 'olive', '#e3b341': 'yellow', '#3d5a99': 'blue', '#f09a7a': 'pink' };
 const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
-const ring = (s: Page['sections'][number]) => (s.tone === 'bad' ? 'ring-1 ring-red-400' : s.tone === 'warn' ? 'ring-1 ring-amber-400' : undefined);
 
 const FoldCard = lazy(() => import('./fold'));
 
@@ -352,9 +542,9 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const side = page.sections.filter((s) => s.side);
   const card = (s: Page['sections'][number]) => (s.fold ? (
     // Its title while its chunk loads, so the page doesn't jump.
-    <Suspense key={s.id} fallback={<Card className={ring(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
+    <Suspense key={s.id} fallback={<Card className={sectionRing(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
   ) : (
-    <Card key={s.id} className={ring(s)}>
+    <Card key={s.id} className={sectionRing(s)}>
       {s.title && <CardHeader><CardTitle>{s.title}</CardTitle></CardHeader>}
       <CardContent className="grid min-w-0 gap-4">{s.blocks.map((b, n) => <BlockView key={n} b={b} />)}</CardContent>
     </Card>
@@ -365,9 +555,8 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
       <div className="grid min-w-0 content-start gap-4">
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
         {page.sections.length === 0 && (page.title === 'Not found'
-          ? <Nothing title="There’s no page here" text="It may have moved, or it was never there." />
-          : <Nothing title={`${page.title} has nothing yet`} text="When there’s something to show, it’ll be here." />)}
-        {page.intro && <p className="opacity-80">{page.intro}</p>}
+          ? <StateCard quiet icon="map-pin-off" tint="pink" title="There’s no page here" text="It may have moved, or it was never there." />
+          : <StateCard quiet icon="sparkles" app={page.title} title={`Nothing in ${page.title} yet`} text="When there’s something to show, it’ll be here." />)}
         {main.map(card)}
       </div>
       {side.length > 0 && <aside className="grid min-w-0 content-start gap-4">{side.map(card)}</aside>}
@@ -377,10 +566,6 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
 
 /** A kind of page this version of the app doesn't know (a newer loom): said, not blank. */
 function NotYet({ kind, url }: { kind: string; url: string }) {
-  return (
-    <Card><CardContent className="grid gap-3 py-6">
-      <p>The app doesn't draw this page yet ({kind}).</p>
-      <Button variant="outline" onClick={() => location.reload()}>Reload</Button>{void url}
-    </CardContent></Card>
-  );
+  void kind; void url;
+  return <StateCard icon="refresh-cw" tint="olive" title="This page needs a newer app" text="loom has been updated. Reload to get the new version." action={{ label: 'Reload', onClick: () => location.reload() }} />;
 }

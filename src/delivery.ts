@@ -43,7 +43,7 @@ export const DELIVER_MAX_BYTES = 256 * 1024;
  */
 export type DeliverKind = 'message' | 'wake';
 const DELIVER_KINDS: readonly DeliverKind[] = ['message', 'wake'];
-const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text'] as const;
+const DELIVER_KEYS = ['id', 'agent', 'venue', 'place', 'label', 'from', 'kind', 'at', 'text', 'local'] as const;
 
 /** A checked deliver body (agent-runtime.md, "The deliver contract"). */
 export interface DeliverBody {
@@ -56,6 +56,12 @@ export interface DeliverBody {
   kind: DeliverKind;
   at: string;
   text: string;
+  /**
+   * A wake that needs loom's own machine (t-1830): its body runs there, not in a house, if the runtime runs local
+   * bodies for that agent. Only on venue `wake`, as a `wake`, from a piece that delivers on it (the clock), which says
+   * so only for a wake set on loom's machine. A structured field, never read from the text.
+   */
+  local?: true;
 }
 
 export type BodyState = 'fed' | 'resumed' | 'started' | 'queued' | 'failed';
@@ -106,6 +112,8 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   if (typeof raw.text !== 'string' || !raw.text.length || raw.text.length > MAX_DELIVERY_TEXT) return `text is required: the message, 1-${MAX_DELIVERY_TEXT} characters`;
   if (raw.kind === 'note') return 'kind is message or wake: a note is the agent\'s own turn, which a source doesn\'t write';
   if (!DELIVER_KINDS.includes(raw.kind as DeliverKind)) return `kind is one of ${DELIVER_KINDS.join(', ')}`;
+  if (raw.local !== undefined && raw.local !== true) return 'local is true, or left out';
+  if (raw.local === true && (raw.venue !== 'wake' || raw.kind !== 'wake')) return 'local is only for a wake, on venue wake';
   // The key and turn fields are conversations.md's: the turn parser checks them the same way.
   let turn;
   try {
@@ -116,7 +124,7 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
   }
   return {
     id: raw.id, agent: raw.agent, venue: turn.venue, place: turn.place, ...(turn.label !== undefined ? { label: turn.label } : {}),
-    from: turn.from, kind: raw.kind as DeliverKind, at: turn.at, text: raw.text,
+    from: turn.from, kind: raw.kind as DeliverKind, at: turn.at, text: raw.text, ...(raw.local === true ? { local: true as const } : {}),
   };
 }
 
@@ -183,7 +191,7 @@ export async function deliveryRefusal(env: NodeJS.ProcessEnv, h: Household, call
  * the same however its JSON was written. The table keeps this, never the text.
  */
 export function deliveryHash(d: DeliverBody): string {
-  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text];
+  const fields = [d.id, d.agent, d.venue, d.place, d.label ?? null, d.from, d.kind, d.at, d.text, ...(d.local ? ['local'] : [])];
   return createHash('sha256').update(JSON.stringify(fields)).digest('hex');
 }
 
@@ -299,6 +307,33 @@ export async function deliver(env: NodeJS.ProcessEnv, h: Household, caller: Deli
   if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
   const refused = await deliveryRefusal(env, h, caller, d);
   if (refused) return refused;
+  return forwardKept(env, h, caller, d, nowMs);
+}
+
+/** The piece name core delivers as: the owner's own messages from loom's page (deliverAsOwner). No piece takes it. */
+export const OWNER_SOURCE = 'loom';
+
+/**
+ * The owner's message into one of an agent's conversations, from loom's page (the Inbox's Reply; t-1778): a person's
+ * `message` from the signed-in member, on that conversation's own venue and place, whatever the venue is, `wake` and
+ * `session` among them, so it reaches the body that conversation has, or the one the runtime resumes or starts for
+ * it. It's core's own delivery, as source `loom`: the piece checks (a venue the caller declares, `from: person`
+ * only from an adapter) are for pieces, and the page already knows this is the owner, speaking for themselves.
+ * Idempotent on `id` like any delivery.
+ */
+export async function deliverAsOwner(env: NodeJS.ProcessEnv, h: Household, m: { id: string; agent: string; venue: string; place: string; label?: string | null; person: string; text: string },
+  nowMs: () => number = Date.now): Promise<DeliverResult> {
+  if (!h.agents.includes(m.agent)) return refuse(403, `forbidden: ${m.agent} isn't one of this household's agents`);
+  const d = parseDeliver({
+    id: m.id, agent: m.agent, venue: m.venue, place: m.place, ...(m.label ? { label: m.label } : {}),
+    from: { kind: 'person', slug: m.person }, kind: 'message', at: new Date(nowMs()).toISOString(), text: m.text,
+  });
+  if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
+  return forwardKept(env, h, { piece: OWNER_SOURCE }, d, nowMs);
+}
+
+/** A checked delivery to the runtime: once per (piece, id), within the piece's share, its answer kept. */
+async function forwardKept(env: NodeJS.ProcessEnv, h: Household, caller: DeliverCaller, d: DeliverBody, nowMs: () => number): Promise<DeliverResult> {
   const target = deliveryPiece(env);
   if (target.piece === undefined) {
     return refuse(503, target.conflict

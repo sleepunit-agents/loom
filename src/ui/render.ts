@@ -4,7 +4,7 @@
  * the app (web/, docs/specs/ui-app.md); the old HTML renderer went 2026-10-29. Every string that reaches the
  * sign-in pages goes through esc().
  */
-import type { AgentState, Ask, Button, Reading, Tile, Tone, Doing } from './vocab.js';
+import type { Accent, AgentState, Ask, Button, Reading, Tile, Tone, Doing } from './vocab.js';
 import { splitPage } from './vocab.js';
 import { STYLE } from './style.js';
 
@@ -80,8 +80,8 @@ export interface Shell {
   core: Array<{ label: string; href: string; current: boolean; count?: number }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
   /** kind: a place (Places) or a setting (Setup), from the piece's tab.kind or the catalog. */
-  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting' }>;
-  /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope' or ''. */
+  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Accent }>;
+  /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance' or ''. */
   tab: string;
 }
 
@@ -106,7 +106,20 @@ export interface Found {
 }
 
 export interface HomeTile extends Tile { source: Source }
-export interface HomeAsk extends Ask { source: Source; /** The piece's tab label, for the card's source line. */ sourceLabel?: string }
+export interface HomeAsk extends Ask { source: Source; /** The piece's tab label, for the card's source line. */ sourceLabel?: string;
+  /** The exact thing it's about, outside loom (a pull request's URL): its sheet's first button. Core's asks only. */
+  href?: string;
+  /** Its sheet has a box to answer the agent in words: posted as `action` with `fields` and the words as `text`. Core's only. */
+  reply?: { action: string; label: string; fields: Record<string, string> };
+  /** A Needs you laid out (its text is the ask): why, what happens either way, the ids it's about, and where it came from. */
+  needs?: NeedsView;
+  /** The approval it waits on, absorbed: that card's words and its own Allow and Deny, posted to its piece. */
+  approval?: ApprovalView;
+  /** The approval id it waits on (core's own; not sent). */
+  waitsOnApproval?: string }
+
+export interface NeedsView { why?: string; if_yes?: string; if_no?: string; answers: 'yes-no' | 'words'; refs: string[]; details: string }
+export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source }
 
 // ─── Home, an agent's Today, and the sign-in pages ───
 
@@ -203,6 +216,10 @@ export interface InboxItem {
   label?: string;
   actions?: Button[];
   outcome?: string;
+  href?: string;
+  reply?: HomeAsk['reply'];
+  needs?: NeedsView;
+  approval?: ApprovalView;
 }
 
 export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [

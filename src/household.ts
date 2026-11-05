@@ -55,6 +55,11 @@ export interface Household {
    * or a command (1-16 strings of at most 200) that replaces the runtime's job.
    */
   review?: ReviewSetting;
+  /**
+   * household.json's `github`: the GitHub owner (a user or an organization) the household's repos are under, so a bare
+   * `repo#12` in what an agent says links to github.com/<github>/repo/issues/12. Absent: only `owner/repo#12` links.
+   */
+  github?: string;
 }
 
 export type ReviewSetting = 'on' | 'off' | string[];
@@ -188,7 +193,14 @@ export function loadHousehold(home: string): Household | null {
     ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
     tz: parseTz(raw.tz, path),
     review: parseReview(raw.review, path),
+    ...(raw.github !== undefined ? { github: parseGithub(raw.github, path) } : {}),
   };
+}
+
+/** A GitHub user or organization name: letters, digits and single dashes, at most 39. */
+function parseGithub(v: unknown, path: string): string {
+  if (typeof v !== 'string' || !/^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}$/.test(v)) throw new HouseholdError(`${path}: github is a GitHub user or organization name (letters, digits, dashes)`);
+  return v;
 }
 
 function parseTz(v: unknown, path: string): string {
@@ -701,33 +713,8 @@ export const MARKS: ReadonlyArray<{ bg: string; fg: string; name: string }> = [
   { bg: '#E3B341', fg: '#2B1D00', name: 'Mustard' }, { bg: '#3D5A99', fg: '#E6ECFF', name: 'Denim' }, { bg: '#F09A7A', fg: '#3A140A', name: 'Coral' },
 ];
 
-/**
- * Who an agent may relay to without asking (household.json "relay": {sender: [agents]}), the household's
- * other agents only. Each agent's own (its Setup): the household owner's rule, 2026-10-28, that what's
- * shaped like a list of agents belongs to each agent.
- */
-export function relayOf(h: Household, agent: string): string[] {
-  const r = rawHousehold(h.home).relay;
-  const mine = r && typeof r === 'object' && !Array.isArray(r) ? (r as Record<string, unknown>)[agent] : undefined;
-  return Array.isArray(mine) ? mine.filter((a): a is string => typeof a === 'string' && a !== agent && h.agents.includes(a)) : [];
-}
 
-export function setRelay(h: Household, agent: string, to: string[]): string[] {
-  if (!h.agents.includes(agent)) throw new HouseholdError(`no agent ${agent} in this household`);
-  const bad = to.filter((a) => a === agent || !h.agents.includes(a));
-  if (bad.length) throw new HouseholdError(`${bad.join(', ')}: not another agent of this household`);
-  const targets = [...new Set(to)].sort();
-  return withLock(h.home, () => {
-    const raw = rawHousehold(h.home);
-    const relay = raw.relay && typeof raw.relay === 'object' && !Array.isArray(raw.relay) ? { ...(raw.relay as Record<string, unknown>) } : {};
-    if (targets.length) relay[agent] = targets;
-    else delete relay[agent];
-    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, relay }, null, 2) + '\n');
-    return targets;
-  });
-}
-
-function rawHousehold(home: string): Record<string, unknown> {
+export function rawHousehold(home: string): Record<string, unknown> {
   try {
     const raw = JSON.parse(readFileSync(join(home, HOUSEHOLD_FILE), 'utf-8')) as unknown;
     return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
@@ -749,6 +736,161 @@ export function setMark(h: Household, agent: string, mark: { bg: string; fg: str
     const raw = rawHousehold(h.home);
     const marks = raw.marks && typeof raw.marks === 'object' && !Array.isArray(raw.marks) ? raw.marks as Record<string, unknown> : {};
     writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, marks: { ...marks, [agent]: { bg: mark.bg, fg: mark.fg } } }, null, 2) + '\n');
+  });
+}
+
+/** An agent's face (web/src/face.tsx): the shape of its body and its eyes. Its expression is its state. */
+export const FACE_SHAPES = ['pebble', 'trefoil', 'clover', 'drop'] as const;
+export const FACE_EYES = ['dot', 'oval'] as const;
+export type AgentFace = { shape: typeof FACE_SHAPES[number]; eyes: typeof FACE_EYES[number] };
+/** household.json's `faces` for an agent, else one from its place in the household: so two agents differ out of the box. */
+export function faceOf(h: Household, agent: string): AgentFace {
+  const f = rawHousehold(h.home).faces;
+  const mine = f && typeof f === 'object' && !Array.isArray(f) ? (f as Record<string, { shape?: unknown; eyes?: unknown }>)[agent] : undefined;
+  const at = Math.max(0, h.agents.indexOf(agent));
+  const shape = FACE_SHAPES.find((x) => x === mine?.shape) ?? FACE_SHAPES[at % FACE_SHAPES.length];
+  const eyes = FACE_EYES.find((x) => x === mine?.eyes) ?? FACE_EYES[at % FACE_EYES.length];
+  return { shape, eyes };
+}
+
+/**
+ * An agent's pixel face (Jonathan, 2026-11-04: the PixelLab sheets he made for Art): a manifest and its sheets, kept with
+ * the household's other marks at <home>/faces/<agent>/ (manifest.json, and each sheet it names, a PNG). The manifest
+ * says, per state and facing, its animations, each a row of a sheet with its frame count and a weight; at each beat the
+ * page picks one by weight (weights are tuned in the file, no deploy). Facings are south, south-east and south-west;
+ * waiting on you is south only. A state with nothing in a facing uses its south; south is the one every pixel face has.
+ *   { "cell": [56, 84], "states": { "idle": { "south": [{ "row": 7, "frames": 17, "weight": 85 },
+ *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15, "rare": true }], "south-east": [...] }, "waiting": { "south": [...] } } }
+ * A variant's sheet is "sheet.png" unless it names another; a rare one never plays twice running (after a rare beat the
+ * next is never rare). "scale" (0.5-1.2) and "offset" ([x, y] in the sheet's pixels) tune where a face sits and how big
+ * it reads beside the others (t-1849: Mark's fills more of his cell than Art's). An agent without a manifest keeps its drawn face.
+ */
+export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
+export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 'error'] as const;
+export type SpriteFacing = typeof SPRITE_FACINGS[number];
+export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; /** the frame it rests on (default: 0; error's, 4 from its end) */ rest?: number };
+export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>>;
+  /** Drawn smaller or larger than the others (0.5 to 1.2; default 1: past 1.2 a 2x face overruns its card's room), so a sprite that fills more of its cell reads the same size. */
+  scale?: number;
+  /** Moved, in the sheet's own pixels (x right, y down; each -32 to 32), so it sits where the others do. */
+  offset?: [number, number] };
+const SPRITE_MAX_BYTES = 4 * 1024 * 1024;
+const SHEET_NAME = /^[a-z0-9][a-z0-9-]{0,40}\.png$/;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+export const spriteDir = (h: Household, agent: string) => join(h.home, 'faces', agent);
+
+/** A manifest as loom keeps it, checked: known states and facings only, waiting south only, every variant a row, its
+ * frames and a weight, its sheet a plain file name; idle in south at the least. Throws HouseholdError, saying what's wrong. */
+export function checkSpriteManifest(raw: unknown): SpriteManifest {
+  const bad = (why: string): never => { throw new HouseholdError(`that sprite manifest ${why}`); };
+  const m = raw as { cell?: unknown; states?: unknown };
+  if (!m || typeof m !== 'object') bad('isn\'t a JSON object');
+  const cell = m.cell;
+  if (!Array.isArray(cell) || cell.length !== 2 || !cell.every((n) => Number.isInteger(n) && n > 0 && n <= 512)) bad('needs "cell": [width, height]');
+  if (!m.states || typeof m.states !== 'object') bad('needs "states"');
+  const { scale, offset } = m as { scale?: unknown; offset?: unknown };
+  if (scale !== undefined && !(typeof scale === 'number' && scale >= 0.5 && scale <= 1.2)) bad('has a "scale" that isn\'t a number from 0.5 to 1.2');
+  if (offset !== undefined && !(Array.isArray(offset) && offset.length === 2 && offset.every((n) => Number.isInteger(n) && n >= -32 && n <= 32))) bad('has an "offset" that isn\'t [x, y], whole pixels from -32 to 32');
+  const out: SpriteManifest = { cell: cell as [number, number], states: {},
+    ...(scale !== undefined && scale !== 1 ? { scale: scale as number } : {}),
+    ...(offset !== undefined && (offset as number[]).some((n) => n !== 0) ? { offset: offset as [number, number] } : {}) };
+  for (const [st, byFacing] of Object.entries(m.states as Record<string, unknown>)) {
+    if (!(SPRITE_STATES as readonly string[]).includes(st)) bad(`names a state loom doesn't have (${st})`);
+    if (!byFacing || typeof byFacing !== 'object') bad(`has no facings for ${st}`);
+    for (const [f, list] of Object.entries(byFacing as Record<string, unknown>)) {
+      if (!(SPRITE_FACINGS as readonly string[]).includes(f)) bad(`names a facing loom doesn't use (${f})`);
+      if (st === 'waiting' && f !== 'south') bad('turns waiting away from south (waiting on you always faces you)');
+      if (!Array.isArray(list) || !list.length) bad(`has no animations for ${st} ${f}`);
+      const vs = (list as unknown[]).map((v) => {
+        const x = v as SpriteVariant;
+        if (!x || !Number.isInteger(x.row) || x.row < 0 || !Number.isInteger(x.frames) || x.frames < 1 || x.frames > 256 || typeof x.weight !== 'number' || !(x.weight > 0)) bad(`has an animation in ${st} ${f} without a row, frames and a weight`);
+        if (x.sheet !== undefined && (typeof x.sheet !== 'string' || !SHEET_NAME.test(x.sheet))) bad(`names a sheet that isn't a plain .png name (${String(x.sheet)})`);
+        if (x.rare !== undefined && typeof x.rare !== 'boolean') bad(`has an animation in ${st} ${f} whose "rare" isn't true or false`);
+        if (x.rest !== undefined && (!Number.isInteger(x.rest) || x.rest < 0 || x.rest >= x.frames)) bad(`has an animation in ${st} ${f} whose "rest" isn't one of its frames`);
+        return { ...(x.sheet && x.sheet !== 'sheet.png' ? { sheet: x.sheet } : {}), row: x.row, frames: x.frames, weight: x.weight, ...(x.rare ? { rare: true } : {}), ...(x.rest !== undefined ? { rest: x.rest } : {}) };
+      });
+      ((out.states[st as keyof SpriteManifest['states']] ??= {}) as Record<string, SpriteVariant[]>)[f] = vs;
+    }
+  }
+  if (!out.states.idle?.south) bad('needs idle facing south (every pixel face has it)');
+  return out;
+}
+/** The sheet files a manifest uses. */
+export const spriteSheets = (m: SpriteManifest): string[] =>
+  [...new Set(Object.values(m.states).flatMap((byF) => Object.values(byF ?? {}).flat().map((v) => v!.sheet ?? 'sheet.png')))];
+
+/** An agent's pixel face: its facings and a version that changes when its manifest or a sheet does; none without one. */
+export function spriteOf(h: Household, agent: string): { facings: SpriteFacing[]; v: string; sheets: string[] } | undefined {
+  if (!AGENT_NAME.test(agent)) return undefined;
+  const dir = spriteDir(h, agent);
+  try {
+    const raw = readFileSync(join(dir, 'manifest.json'));
+    const m = checkSpriteManifest(JSON.parse(raw.toString('utf-8')));
+    const v = createHash('sha256').update(raw);
+    const sheets = spriteSheets(m);
+    for (const f of sheets) { const st = statSync(join(dir, f)); v.update(`${f}:${st.size}:${st.mtimeMs}`); }
+    const facings = SPRITE_FACINGS.filter((f) => Object.values(m.states).some((byF) => byF?.[f]));
+    return { facings, v: v.digest('base64url').slice(0, 10), sheets };
+  } catch { return undefined; }
+}
+
+/**
+ * A manifest seeded from a PixelLab export: each state's rows by their names (Error, Idle, Thinking, Done, Waiting; a
+ * row named by a whole prompt is Working), one animation per state and facing, weight 1 unless `weights` says; waiting
+ * south only. Any other named row is an extra animation only if `variants` places it (its state, weight, and rare or not).
+ */
+export function manifestFromPixelLab(meta: unknown, opts: { weights?: Record<string, number>; variants?: Record<string, { state: string; weight: number; rare?: boolean }> } = {}): SpriteManifest {
+  const sh = (meta as { spritesheet?: { cell_size?: { width?: number; height?: number }; columns?: number; rows?: Array<{ row: number; type?: string; animation?: string; direction?: string; frame_count?: number }> } })?.spritesheet;
+  if (!sh?.cell_size?.width || !sh.cell_size.height || !Array.isArray(sh.rows)) throw new HouseholdError('that JSON isn\'t a PixelLab sprite sheet\'s (spritesheet.cell_size, rows)');
+  const named: Record<string, typeof SPRITE_STATES[number]> = { error: 'error', idle: 'idle', thinking: 'thinking', done: 'done', waiting: 'waiting', working: 'working' };
+  const states: Record<string, Record<string, SpriteVariant[]>> = {};
+  const extra = Object.fromEntries(Object.entries(opts.variants ?? {}).map(([k, v]) => [k.trim().toLowerCase(), v]));
+  for (const r of sh.rows.filter((x) => x.type === 'animation')) {
+    const name = (r.animation ?? '').trim();
+    const x = extra[name.toLowerCase()];
+    // PixelLab names a row by its animation, or by its whole prompt (Working's describes what it does).
+    const st = x?.state ?? named[name.toLowerCase()] ?? (name.split(/\s+/).length > 6 ? 'working' : undefined);
+    const f = r.direction ?? 'south';
+    if (!st || !(SPRITE_FACINGS as readonly string[]).includes(f) || (st === 'waiting' && f !== 'south')) continue;
+    const v: SpriteVariant = { row: r.row, frames: r.frame_count ?? sh.columns ?? 1, weight: x ? x.weight : opts.weights?.[st] ?? 1, ...(x?.rare ? { rare: true } : {}) };
+    ((states[st] ??= {})[f] ??= []).push(v);
+  }
+  return checkSpriteManifest({ cell: [sh.cell_size.width, sh.cell_size.height], states });
+}
+
+/** Keep an agent's pixel face: its manifest and the sheets it names (name → PNG), all checked before any is written. */
+export function setSprite(h: Household, agent: string, manifest: SpriteManifest, sheets: Record<string, Buffer>): void {
+  if (!AGENT_NAME.test(agent) || !h.agents.includes(agent)) throw new HouseholdError(`${agent} isn't an agent of this household`);
+  const m = checkSpriteManifest(manifest);
+  const dir = spriteDir(h, agent);
+  for (const [name, png] of Object.entries(sheets)) {
+    if (!SHEET_NAME.test(name)) throw new HouseholdError(`${name} isn't a plain .png name (lowercase letters, digits, dashes)`);
+    if (png.length > SPRITE_MAX_BYTES || !png.subarray(0, 8).equals(PNG_MAGIC)) throw new HouseholdError(`${name} isn't a PNG (4 MB at most)`);
+  }
+  const missing = spriteSheets(m).filter((f) => !sheets[f] && !existsSync(join(dir, f)));
+  if (missing.length) throw new HouseholdError(`the manifest names ${missing.join(', ')}, which ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} given or kept`);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const [name, png] of Object.entries(sheets)) writeFileSync(join(dir, name), png, { mode: 0o600 });
+  writeFileSync(join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n', { mode: 0o600 });
+}
+
+/** Set an agent's face in household.json's `faces`. */
+export function setFace(h: Household, agent: string, face: AgentFace): void {
+  if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
+  if (!FACE_SHAPES.includes(face.shape) || !FACE_EYES.includes(face.eyes)) throw new HouseholdError('that isn\'t a face loom knows');
+  withLock(h.home, () => {
+    const raw = rawHousehold(h.home);
+    const faces = raw.faces && typeof raw.faces === 'object' && !Array.isArray(raw.faces) ? raw.faces as Record<string, unknown> : {};
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify({ ...raw, faces: { ...faces, [agent]: { shape: face.shape, eyes: face.eyes } } }, null, 2) + '\n');
+  });
+}
+
+/** Set (or, undefined, remove) one top-level key of household.json, under the household's lock. Core's own keys only. */
+export function writeHouseholdKey(h: Household, key: 'backup', value: unknown): void {
+  withLock(h.home, () => {
+    const raw = { ...rawHousehold(h.home) };
+    if (value === undefined) delete raw[key]; else raw[key] = value;
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify(raw, null, 2) + '\n');
   });
 }
 

@@ -1142,7 +1142,7 @@ describe('the household page', () => {
     expect(setup.page.title).toBe('Art E Fish · Setup');
     // Its forms post to loom's own /act/loom.
     expect(setup.ctx.source).toEqual({ id: 'loom', base: '/' });
-    expect(blocksOf(setup).some((b) => b.type === 'form')).toBe(true);
+    expect(blocksOf(setup).some((b) => b.type === 'panel')).toBe(true);
     // The single-agent addresses land on the default agent.
     const r = await page(cookie, '/mind?category=user');
     expect(r.status).toBe(302);
@@ -1214,21 +1214,18 @@ describe('the household page', () => {
     expect((await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual' })).status).not.toBe(303);
   });
 
-  it("who an agent may write to, and its color, are set on its own Setup", async () => {
+  it("who an agent may write to is the runtime's to say, read on its Setup; its color is set there", async () => {
     const cookie = await login();
     const d = await data(cookie, '/a/mark/setup');
     expect(sectionOf(d, 'relay').title).toBe('Who it may write to');
-    expect(JSON.stringify(sectionOf(d, 'relay'))).toContain('Now: nobody.');
+    // No runtime installed: no relay tool, and no pairs in household.json are read any more.
+    expect(JSON.stringify(sectionOf(d, 'relay'))).toContain('No runtime is installed');
+    expect(JSON.stringify(sectionOf(d, 'relay'))).not.toContain('"form"');
     const csrf = csrfOf(d);
-    const ok = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'art' });
-    expect(ok.headers.get('location')).toMatch(/^\/a\/mark\/setup\?_flash=/);
+    const gone = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'art' });
     const raw = () => JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
-    expect(raw().relay).toEqual({ mark: ['art'] });
-    expect(raw().agents).toEqual(['art', 'mark']);   // the rest of the file as it was
-    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: 'mark, nobody' });
-    expect(raw().relay).toEqual({ mark: ['art'] });   // itself, or no such agent: refused
-    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'relay-set', _path: 'a/mark/setup', agent: 'mark', to: '' });
-    expect(raw().relay).toEqual({});
+    expect(gone.headers.get('location')).toMatch(/_flash=/);
+    expect(raw().relay).toBeUndefined();
     await post(cookie, '/act/loom', { _csrf: csrf, _action: 'mark-set', _path: 'a/mark/setup', agent: 'mark', mark: '2' });
     expect(raw().marks.mark.bg).toBe('#2F6B5A');
   });
@@ -1239,9 +1236,16 @@ describe('the household page', () => {
     const cookie = await login();
     const d = await data(cookie, '/a/mark/setup');
     const who = sectionOf(d, 'who').blocks as Data[];
-    const form = who.find((b) => b.type === 'form' && b.action === 'identity-set')!;
-    expect((form.fields as Data[]).map((f) => f.name)).toEqual(['about', 'purpose', 'voice', 'rules', 'ask']);
-    expect((form.fields as Data[]).find((f) => f.name === 'purpose')!.value).toBe('I am Visual Mark.');
+    // A panel: each part of its creed a row that says what it is now, its edit a sheet for that part alone.
+    const words = who.find((b) => b.type === 'panel' && b.title === 'Its words')!;
+    const rows = words.rows as Data[];
+    expect(rows.map((r) => (r.edit as Data).fields as Data[]).map((f) => f[0].name)).toEqual(['about', 'purpose', 'voice', 'rules', 'ask']);
+    expect(rows.every((r) => (r.edit as Data).action === 'identity-set')).toBe(true);
+    expect(rows.find((r) => r.label === 'What it\'s for')!.value).toBe('I am Visual Mark.');
+    // Its look: colour in a sheet; shape and eyes apply at once. Two agents differ out of the box.
+    const look = who.find((b) => b.type === 'panel' && b.title === 'Its look')!;
+    expect((look.rows as Data[]).map((r) => r.label)).toEqual(['Colour', 'Shape', 'Eyes']);
+    expect(((look.rows as Data[])[1].choice as Data).value).toBe('trefoil');
     // Its own: read, never a form.
     const own = JSON.stringify(sectionOf(d, 'own'));
     expect(own).toContain('Reviewing PRs.');
@@ -1262,6 +1266,14 @@ describe('the household page', () => {
     const bad = await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-set', _path: 'a/mark/setup', agent: 'mark', purpose: ' ' });
     expect(flashOf(await data(cookie, bad.headers.get('location')!))).toContain('can\'t be empty');
     expect(md()).toBe(before);
+    // One part alone changes only that part.
+    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'identity-set', _path: 'a/mark/setup', agent: 'mark', voice: 'Wry.' });
+    expect(md()).toContain('You are Visual Mark, the reviewer.');
+    expect(md()).toContain('## Voice\n\nWry.\n');
+    // Its face: a shape and eyes of its own, kept in household.json; anything else is refused.
+    await post(cookie, '/act/loom', { _csrf: csrf, _action: 'face-set', _path: 'a/mark/setup', agent: 'mark', shape: 'clover' });
+    expect(JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8')).faces).toEqual({ mark: { shape: 'clover', eyes: 'oval' } });
+    expect((await data(cookie, '/a/mark/setup')).ctx.agents.mark.face).toEqual({ shape: 'clover', eyes: 'oval' });
     expect(readFileSync(join(dir, 'self-model.md'), 'utf-8')).toBe('## Strengths\n\nReviewing PRs.\n');   // never touched
   });
 
@@ -1417,6 +1429,9 @@ esac
     expect(d.page.title).toBe('Members');
     expect(JSON.stringify(d.page)).toContain('every agent, and the household');
     expect(JSON.stringify(d.page)).not.toContain('member-remove');  // the one household owner can't be removed
+    // A panel: each member a row; what they own is Everything or agents by name, never ids typed into a box.
+    expect(d.page.sections[0].blocks[0].type).toBe('panel');
+    expect(JSON.stringify(d.page)).not.toContain('(pick from People)');
     const csrf = csrfOf(d);
     const act = async (fields: Record<string, string>) => (await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
@@ -1424,6 +1439,8 @@ esac
     expect(await act({ _action: 'member-set', person: 'nobody', agents: '*' })).toMatchObject({ ok: false });
     expect(await act({ _action: 'member-set', person: 'loren', agents: 'mark' })).toMatchObject({ ok: true });
     expect(loadHousehold(h.home)!.members).toEqual([{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'loren', role: 'owner', agents: ['mark'] }]);
+    expect(await act({ _action: 'member-set', person: 'loren', scope: 'some', agents: '' })).toMatchObject({ ok: false });
+    expect(await act({ _action: 'member-set', person: 'loren', scope: 'some', agents: 'mark' })).toMatchObject({ ok: true });
     // Her link opens a session that sees Mark alone.
     const link = await act({ _action: 'member-link', person: 'loren' });
     const code = /\/login\/([A-Za-z0-9_-]+)/.exec(link.message)?.[1] ?? '';
@@ -1607,6 +1624,20 @@ esac
   const page = async (cookie: string, path: string) => fetch(`${base}${path}`, { headers: { cookie, accept: 'application/json' }, redirect: 'manual' });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data = async (cookie: string, path: string): Promise<any> => (await page(cookie, path)).json();
+
+  it('the backup\'s alert (its target, its errors) is a household owner\'s: an agent owner\'s Inbox, Home and Find carry none', async () => {
+    const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
+    writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...raw, backup: { target: 'path:/mnt/secret-nas/backups', recipients: ['age1' + 'q'.repeat(58)], at: '03:00', tz: 'UTC', keep: 7 } }));
+    mkdirSync(join(h.home, 'backup'), { recursive: true });
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ v: 1, setAt: new Date(Date.now() - 3600_000).toISOString(),
+      runs: [{ at: new Date().toISOString(), ok: false, why: 'git push failed: /mnt/secret-nas/backups is full' }] }));
+    const lorenC = await login(loren);
+    const jonC = await login(jonathan);
+    const has = (x: unknown) => JSON.stringify(x).includes('secret-nas') || JSON.stringify(x).includes('nightly backup');
+    expect(has(await data(jonC, '/inbox'))).toBe(true);
+    for (const path of ['/inbox', '/', '/find?q=backup', '/find?q=nightly', '/a/mark/setup']) expect(has(await data(lorenC, path)), path).toBe(false);
+    expect(has(await data(jonC, '/a/art/setup'))).toBe(true);
+  });
 
   it('an agent owner\'s live stream hears of their agents only: art\'s memory moving is no news to Loren', async () => {
     const open = async (cookie: string) => {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Callout } from './safe';
 
 const enc = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const dec = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
@@ -24,7 +25,7 @@ export function PasskeyAdd({ add, reload }: { add: { csrf: string } | { note: st
   const [msg, setMsg] = useState<{ bad: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const supported = typeof window !== 'undefined' && !!(window.PublicKeyCredential && navigator.credentials);
-  if ('note' in add) return <Card><CardContent className="py-4 text-sm opacity-80">{add.note}</CardContent></Card>;
+  if ('note' in add) return <Callout icon="fingerprint-pattern" title="Adding a passkey isn’t possible here">{add.note}</Callout>;
   const go = async () => {
     setBusy(true); setMsg(null);
     try {
@@ -47,7 +48,7 @@ export function PasskeyAdd({ add, reload }: { add: { csrf: string } | { note: st
         <Input maxLength={60} placeholder="Name it, like Jonathan's phone" aria-label="Name" value={label} onChange={(e) => setLabel(e.target.value)} />
         <Button disabled={!supported || busy} onClick={go}>{busy ? 'Waiting for the device…' : 'Add a passkey'}</Button>
         {!supported && <p className="text-sm opacity-80">This browser has no passkeys.</p>}
-        {msg && <p role="status" className={`text-sm ${msg.bad ? 'text-[color:var(--v-danger-fill,#b42c22)]' : 'opacity-80'}`}>{msg.text}</p>}
+        {msg && <p role="status" className={`text-sm ${msg.bad ? 'text-[color:var(--v-danger-fill)]' : 'opacity-80'}`}>{msg.text}</p>}
       </CardContent>
     </Card>
   );

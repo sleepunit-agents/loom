@@ -32,3 +32,11 @@ describe('an agent\'s words, tidied for reading', () => {
     expect(t('Jonathan asked about Livonia S07: AreaRAE silent, box online')).toBe('Jonathan asked about Livonia S07: AreaRAE silent, box online');
   });
 });
+
+describe('what an id leaves in a list', () => {
+  it('a dropped house id leaves no doubled or stray comma', () => {
+    expect(tidy('Art, h-844, Granted')).toBe('Art, Granted');
+    expect(tidy('h-844, Granted')).toBe('Granted');
+    expect(tidy('Granted to Art, h-844')).toBe('Granted to Art');
+  });
+});
