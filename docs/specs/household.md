@@ -219,7 +219,16 @@ out of a fire.
   opens the whole household. For the secrets piece, the bundle's key is the
   recovery copy t-1482 asked for.
 - **`loom restore <file>`** on an empty `$LOOM_HOME` lays the household back
-  down, then hands each piece its part through `import`.
+  down, then hands each piece its part through `import`. Only a piece the
+  restore installed into that home gets a part, with its settings from the
+  restored household (or its defaults, under its home), never the caller's
+  environment; one whose setting still names a path outside the home that's
+  already there (a live store, when the drill runs on the live machine) gets
+  nothing, and its services don't start. A refused part waits in
+  `pieces-pending/` with the reason. Services start only when the home is
+  this machine's household (`$LOOM_HOME`, or `~/.config/loom`): a piece's
+  units live in the caller's systemd dir under its name, so a restore into a
+  throwaway `--to` would otherwise repoint the live household's (t-1846).
 - **On a schedule,** offsite. The page shows the last bundle's age and the
   last restore drill.
 - **The drill:** restore into a throwaway `$LOOM_HOME` and compare it with

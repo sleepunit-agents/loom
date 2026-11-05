@@ -22,14 +22,14 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync, closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, readSync,
-  renameSync, rmSync, statSync, symlinkSync, writeFileSync,
+  realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { resolveRepoRoot, resolveSqliteDbPath } from './config.js';
 import {
-  AGENT_NAME, agentDir, commonsKnowledgePath, householdOf, loadHousehold, type Household,
+  AGENT_NAME, agentDir, commonsKnowledgePath, householdHome, householdOf, loadHousehold, type Household,
 } from './household.js';
 import { commonsPeoplePath, splitPeopleIntoCommons } from './backends/people-household.js';
 import { HOUSEHOLD_DB } from './household-store.js';
@@ -37,7 +37,7 @@ import { findProgram as findProgramPath } from './programs.js';
 import { AUDIT_FILES } from './audit.js';
 import { COMMS_FILES } from './comms.js';
 import { listPieces } from './cli/pieces.js';
-import { installPiece, managedPieces, pieceEnvFor, readCatalog, readRecord, readSettings, syncServices, type CatalogEntry } from './cli/pieces-managed.js';
+import { installPiece, managedPieces, pieceEnvFor, pieceOfPath, readCatalog, readRecord, readSettings, syncServices, type CatalogEntry, type PieceRecord } from './cli/pieces-managed.js';
 
 export class BundleError extends Error {}
 
@@ -108,7 +108,7 @@ async function copyAgent(from: string, to: string): Promise<void> {
  */
 function pieceRun(path: string, verb: 'export' | 'import', env: NodeJS.ProcessEnv, stdin?: Buffer): Promise<{ ok: true; out: Buffer } | { ok: false; reason: string }> {
   return new Promise((resolveP) => {
-    const child = spawn(path, ['bundle', verb], { env: pieceEnvFor(path, env), stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    const child = spawn(path, ['bundle', verb], { env, stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
     let bytes = 0;
     let err = '';
@@ -193,7 +193,7 @@ export async function exportBundle(opts: {
     const pieces: PiecePart[] = [];
     mkdirSync(join(stage, 'pieces'), { mode: 0o700 });
     for (const p of listPieces(env).filter((x) => x.name !== 'loom')) {
-      const r = await pieceRun(p.path, 'export', { ...env, LOOM_EXPORT_RECIPIENTS: opts.recipients.join(',') });
+      const r = await pieceRun(p.path, 'export', pieceEnvFor(p.path, { ...env, LOOM_EXPORT_RECIPIENTS: opts.recipients.join(',') }));
       if (!r.ok) { pieces.push({ name: p.name, included: false, reason: r.reason }); continue; }
       writeFileSync(join(stage, 'pieces', `${p.name}.part`), r.out, { mode: 0o600 });
       pieces.push({ name: p.name, included: true, bytes: r.out.length, sha256: createHash('sha256').update(r.out).digest('hex') });
@@ -276,6 +276,8 @@ export interface RestoreReport {
   manifest: Manifest;
   pieces: Array<{ name: string; restored: boolean; reason?: string }>;
   installs: Array<{ name: string; commit: string; installed: boolean; reason?: string }>;
+  /** What the restore left undone on purpose, in words for the owner. */
+  notes: string[];
 }
 
 const PIECE_NAME = /^[a-z][a-z0-9-]{0,39}$/;
@@ -348,6 +350,42 @@ function readBundledPieces(home: string): BundledPiece[] {
   } catch { return []; }
 }
 
+/** `env` less the piece's own settings, so they come from its settings.json or its defaults. */
+function withoutSettings(env: NodeJS.ProcessEnv, rec: PieceRecord): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const s of rec.loom.settings) delete out[s.name];
+  return out;
+}
+
+/** Whether `p` is `home` or inside it, links followed. */
+function within(home: string, p: string): boolean {
+  const rel = relative(realpathSync(home), realpathSync(p));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+/**
+ * The environment a restore hands a piece its part with, or why it won't (t-1846). A restore
+ * into a throwaway home on the live machine (the backup drill, loom#488) gave taskstore the
+ * caller's environment, which named the live store; it only didn't write there by luck. So:
+ * only a piece this restore installed, into `home`, gets a part (one found on PATH writes
+ * wherever its own settings say, which loom can't see). Its settings come from the restored
+ * settings.json or its defaults (under its home), never the caller's environment. And one that
+ * still names a path outside `home` that's already there (a live store) gets nothing: on a
+ * fresh machine nothing is, so the owner's own paths still restore.
+ */
+function restoreEnvFor(path: string, env: NodeJS.ProcessEnv, home: string): { env: NodeJS.ProcessEnv } | { reason: string } {
+  const rec = pieceOfPath(env, path);
+  if (!rec) return { reason: `${path} isn't one this restore installed, so where it would write isn't known; its part is in pieces-pending/` };
+  const out = pieceEnvFor(path, withoutSettings(env, rec));
+  for (const n of rec.loom.settings.map((s) => s.name)) {
+    const v = out[n];
+    if (v && isAbsolute(v) && existsSync(v) && !within(home, v)) {
+      return { reason: `its setting ${n} is ${v}, which is outside ${home} and already there: a restore never writes into a store it didn't make; its part is in pieces-pending/` };
+    }
+  }
+  return { env: out };
+}
+
 /**
  * Lay a bundle down in an empty $LOOM_HOME and hand each piece its part
  * (`loom-<piece> bundle import`, with LOOM_IMPORT_IDENTITY naming the key so the
@@ -414,6 +452,8 @@ export async function restoreBundle(opts: {
   rmSync(join(home, 'pieces.json'), { force: true });
   const installed = new Map(listPieces(env).map((p) => [p.name, p.path]));
   const pieces: RestoreReport['pieces'] = [];
+  // Pieces refused their part for where they'd write: their services would write there too.
+  const outside = new Set<string>();
   for (const part of manifest.pieces.filter((p) => p.included)) {
     const blob = join(home, 'pieces', `${part.name}.part`);
     const path = installed.get(part.name);
@@ -422,15 +462,26 @@ export async function restoreBundle(opts: {
       renameSync(blob, join(home, 'pieces-pending', `${part.name}.part`));
     };
     if (!path) { pending(); pieces.push({ name: part.name, restored: false, reason: `loom-${part.name} isn't installed here; its part is in pieces-pending/` }); continue; }
-    const r = await pieceRun(path, 'import', { ...env, LOOM_IMPORT_IDENTITY: resolve(opts.identity) }, readFileSync(blob));
+    const pe = restoreEnvFor(path, { ...env, LOOM_IMPORT_IDENTITY: resolve(opts.identity) }, home);
+    if ('reason' in pe) { pending(); outside.add(part.name); pieces.push({ name: part.name, restored: false, reason: pe.reason }); continue; }
+    const r = await pieceRun(path, 'import', pe.env, readFileSync(blob));
     if (r.ok) { rmSync(blob); pieces.push({ name: part.name, restored: true }); } else { pending(); pieces.push({ name: part.name, restored: false, reason: r.reason }); }
   }
   // Now the pieces just installed may start their services, over their restored state.
+  // Only in this machine's own household: a piece's units live in the caller's systemd dir under
+  // its name, so a drill's --to home starting them would repoint the live household's (t-1846).
   const start = opts.startServices ?? ((e, name) => syncServices(e, name, readRecord(e, name)));
-  for (const p of installs.filter((x) => x.installed)) start(env, p.name);
+  const notes: string[] = [];
+  const toStart = installs.filter((x) => x.installed && !outside.has(x.name));
+  const ownHome = householdHome(opts.env ?? process.env);
+  if (toStart.length && home !== ownHome) {
+    notes.push(`services not started: ${home} isn't this machine's household (${ownHome}), and their units are that household's: once it's the household here, \`loom pieces set <name> NAME=value\` starts them`);
+  } else {
+    for (const p of toStart) { const rec = readRecord(env, p.name); start(rec ? withoutSettings(env, rec) : env, p.name); }
+  }
   // Only the parts go: the managed pieces just installed live in pieces/ too.
   for (const part of manifest.pieces) rmSync(join(home, 'pieces', `${part.name}.part`), { force: true });
-  return { home, manifest, pieces, installs };
+  return { home, manifest, pieces, installs, notes };
 }
 
 // ─── The drill ───────────────────────────────────────────────────────────────
