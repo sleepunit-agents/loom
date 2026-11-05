@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Neon's dock, as the mockup**: no tray, a thin magenta rule over the row,
   dark keys with a neon edge and the current one lit, no names under them (a
   key's name shows on hover, keyboard focus, or held a moment).
-- **A pixel face's own `scale` and `offset`** in its manifest, so a face that
-  reads bigger than the others is tuned without a deploy; Neon's agent card
+- **A pixel face's own `scale` and `offset`** in its manifest (worn under
+  Neon), so a face that reads bigger than the others is tuned without a
+  deploy; Neon's agent card
   keeps a minimum gap between the face and its words.
 
 - **Pixel faces.** An agent can have a pixel face (Jonathan's PixelLab

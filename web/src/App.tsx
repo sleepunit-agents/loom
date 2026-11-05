@@ -27,7 +27,7 @@ import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, 
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
-import { AppHeader, AppTile, oneLine } from './app-header';
+import { AppHeader, AppTile, HeaderLine, oneLine } from './app-header';
 import { PhoneBar } from './phone-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
@@ -384,7 +384,7 @@ export default function App() {
               <div className="mx-auto max-w-5xl px-4">
                 <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
-                <AppHeader bare where={url} title={shownTitle ?? ''} go={go} context={profileLeads ? undefined : context} more={intro} />
+                <HeaderLine where={url} context={profileLeads ? undefined : context} more={intro} />
               </div>
             </header>
           ) : (

@@ -99,10 +99,11 @@ $LOOM_HOME/                     (default ~/.config/loom)
   `"rest"` names the frame it rests on (default 0; error's, 4 from its end).
   Cells may differ by agent (Art's 56×84, Mark's 96×80): the page centres each
   in one common box, so every face lines up. A face that still reads bigger or
-  sits higher than the others is tuned in the same file: `"scale"` (0.5–1.5,
+  sits higher than the others is tuned in the same file: `"scale"` (0.5–1.2,
   default 1) draws it smaller or larger, and `"offset": [x, y]` moves it, in
   the sheet's own pixels (each −32 to 32; y down), e.g. `"scale": 0.85,
-  "offset": [0, 2]`. Both apply wherever the face is drawn, in every look.
+  "offset": [0, 2]`. Both apply under Neon Noir wherever the face is drawn;
+  000h draws every face as it always has.
   `loom household sprite <agent> <sheet.png> <pixellab.json>` seeds one from a
   PixelLab export (each state's rows, weight 1; `--weight idle=85` and
   `--variant "Crack Neck=idle:15:rare"` place the rest); `--manifest` replaces it.

@@ -762,7 +762,7 @@ export function faceOf(h: Household, agent: string): AgentFace {
  *   { "cell": [56, 84], "states": { "idle": { "south": [{ "row": 7, "frames": 17, "weight": 85 },
  *       { "sheet": "idle-rare.png", "row": 0, "frames": 12, "weight": 15, "rare": true }], "south-east": [...] }, "waiting": { "south": [...] } } }
  * A variant's sheet is "sheet.png" unless it names another; a rare one never plays twice running (after a rare beat the
- * next is never rare). "scale" (0.5-1.5) and "offset" ([x, y] in the sheet's pixels) tune where a face sits and how big
+ * next is never rare). "scale" (0.5-1.2) and "offset" ([x, y] in the sheet's pixels) tune where a face sits and how big
  * it reads beside the others (t-1849: Mark's fills more of his cell than Art's). An agent without a manifest keeps its drawn face.
  */
 export const SPRITE_FACINGS = ['south', 'south-east', 'south-west'] as const;
@@ -770,7 +770,7 @@ export const SPRITE_STATES = ['idle', 'working', 'thinking', 'waiting', 'done', 
 export type SpriteFacing = typeof SPRITE_FACINGS[number];
 export type SpriteVariant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; /** the frame it rests on (default: 0; error's, 4 from its end) */ rest?: number };
 export type SpriteManifest = { cell: [number, number]; states: Partial<Record<typeof SPRITE_STATES[number], Partial<Record<SpriteFacing, SpriteVariant[]>>>>;
-  /** Drawn smaller or larger than the others (0.5 to 1.5; default 1), so a sprite that fills more of its cell reads the same size. */
+  /** Drawn smaller or larger than the others (0.5 to 1.2; default 1: past 1.2 a 2x face overruns its card's room), so a sprite that fills more of its cell reads the same size. */
   scale?: number;
   /** Moved, in the sheet's own pixels (x right, y down; each -32 to 32), so it sits where the others do. */
   offset?: [number, number] };
@@ -788,8 +788,8 @@ export function checkSpriteManifest(raw: unknown): SpriteManifest {
   const cell = m.cell;
   if (!Array.isArray(cell) || cell.length !== 2 || !cell.every((n) => Number.isInteger(n) && n > 0 && n <= 512)) bad('needs "cell": [width, height]');
   if (!m.states || typeof m.states !== 'object') bad('needs "states"');
-  const { scale, offset } = raw as { scale?: unknown; offset?: unknown };
-  if (scale !== undefined && !(typeof scale === 'number' && scale >= 0.5 && scale <= 1.5)) bad('has a "scale" that isn\'t a number from 0.5 to 1.5');
+  const { scale, offset } = m as { scale?: unknown; offset?: unknown };
+  if (scale !== undefined && !(typeof scale === 'number' && scale >= 0.5 && scale <= 1.2)) bad('has a "scale" that isn\'t a number from 0.5 to 1.2');
   if (offset !== undefined && !(Array.isArray(offset) && offset.length === 2 && offset.every((n) => Number.isInteger(n) && n >= -32 && n <= 32))) bad('has an "offset" that isn\'t [x, y], whole pixels from -32 to 32');
   const out: SpriteManifest = { cell: cell as [number, number], states: {},
     ...(scale !== undefined && scale !== 1 ? { scale: scale as number } : {}),

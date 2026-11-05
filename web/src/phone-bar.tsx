@@ -10,8 +10,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Shell } from './loom';
 
 /** How fast the ticker moves, in CSS pixels a second (his "slow, ~20-30 px/s"). */
-export const TICK_PX_S = 24;
-/** The space between the end of the words and their start again, as it loops (CSS px; neon.css .loom-tick__line). */
+const TICK_PX_S = 24;
+/** The space between the end of the words and their start again, as it loops (CSS px; set on the ticker as --tick-gap, neon.css). */
 const TICK_GAP = 40;
 
 /** A tile's value that's only a time of day (the Clock piece's): the phone already shows the time. */
@@ -20,7 +20,7 @@ const TONE_FIRST: Record<string, number> = { bad: 0, warn: 1 };
 
 /** What the ticker says, from what the shell already has: how many agents, what each is up to, and each place's
  * tile (trouble first). Words, never colours alone. */
-export function tickerParts(shell: Shell): { text: string; tone?: string }[] {
+function tickerParts(shell: Shell): { text: string; tone?: string }[] {
   const n = shell.agents.length;
   const places = shell.pieces.filter((p) => p.stat && !isTime(p.stat))
     .map((p, i) => ({ p, i })).sort((a, b) => (TONE_FIRST[a.p.tone ?? ''] ?? 2) - (TONE_FIRST[b.p.tone ?? ''] ?? 2) || a.i - b.i);
@@ -39,12 +39,14 @@ function useReduced() {
 }
 
 /** The ticker: still when its words fit (or motion is reduced), else a slow loop; held while touched or hidden. */
-export function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: string }[] }) {
+function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: string }[] }) {
   const box = useRef<HTMLDivElement>(null);
   const line = useRef<HTMLSpanElement>(null);
   const reduced = useReduced();
   // The loop's length in seconds while it runs; 0 while its words fit (or it mustn't move).
   const [run, setRun] = useState(0);
+  const running = useRef(false);
+  running.current = run > 0;
   const [held, setHeld] = useState(false);
   const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
   const key = parts.map((p) => p.text).join('\0');
@@ -53,7 +55,7 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
     if (!b || !l) return;
     const measure = () => {
       // The words' own width: while it runs, a line carries the gap after it.
-      const words = l.scrollWidth - (l.dataset.gap !== undefined ? TICK_GAP : 0);
+      const words = l.scrollWidth - (running.current ? TICK_GAP : 0);
       setRun(!reduced && words > b.clientWidth + 1 ? Math.round(((words + TICK_GAP) / TICK_PX_S) * 10) / 10 : 0);
     };
     measure();
@@ -70,7 +72,7 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
     return () => document.removeEventListener('visibilitychange', f);
   }, []);
   const words = (copy: boolean) => (
-    <span ref={copy ? undefined : line} className="loom-tick__line" data-gap={run ? '' : undefined} aria-hidden={copy || undefined}>
+    <span ref={copy ? undefined : line} className="loom-tick__line" aria-hidden={copy || undefined}>
       <span className="loom-tick__live" data-off={live ? undefined : ''}>{live ? 'live' : 'offline'}</span>
       {parts.map((p, i) => <span key={i} className="loom-tick__part" data-tone={p.tone}>{p.text}</span>)}
     </span>
@@ -78,7 +80,7 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
   const release = () => setHeld(false);
   return (
     <div ref={box} className="loom-tick loom-data" data-run={run ? '' : undefined} data-paused={held || hidden ? '' : undefined}
-      style={run ? ({ '--tick-s': `${run}s` } as React.CSSProperties) : undefined}
+      style={run ? ({ '--tick-s': `${run}s`, '--tick-gap': `${TICK_GAP}px` } as React.CSSProperties) : undefined}
       onPointerDown={() => setHeld(true)} onPointerUp={release} onPointerCancel={release} onPointerLeave={release}>
       <span className="loom-tick__track">{words(false)}{run > 0 && words(true)}</span>
     </div>

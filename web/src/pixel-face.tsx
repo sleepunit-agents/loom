@@ -19,6 +19,7 @@
 // state's south (south-west: south-east's, mirrored, first).
 import { useEffect, useRef, useState } from 'react';
 import type { FaceState } from './face';
+import { useLook } from './look';
 
 /** The numbers, as settings: the preview (art-pixel-faces.html: MS, the gaps, ROLL_MS, P_LEAVE, P_BACK, MIN_AWAY). */
 export const PIXEL = {
@@ -187,6 +188,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   want.current = state;
   const player = useRef<ReturnType<typeof createPlayer> | null>(null);
   const scale = size >= 64 ? 2 : 1;
+  const look = useLook();
 
   useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) { setSheet(s); setFailed(!s); } }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -222,9 +224,11 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
   if (failed) return <>{fallback}</>;
   const [w, h] = PIXEL.box;
-  // The agent's own scale and offset (its manifest), on top of the whole-pixel 1x or 2x: none, and it's drawn as ever.
-  const k = scale * (sheet?.m.scale ?? 1);
-  const [ox, oy] = sheet?.m.offset ?? [0, 0];
+  // The agent's own scale and offset (its manifest), on top of the whole-pixel 1x or 2x, under Neon (t-1849: 000h draws
+  // every face as it always has). None, and it's drawn as ever.
+  const tuned = look === 'neon';
+  const k = scale * (tuned ? sheet?.m.scale ?? 1 : 1);
+  const [ox, oy] = tuned ? sheet?.m.offset ?? [0, 0] : [0, 0];
   return (
     <span className="loom-pixel-face" style={{ width: size, height: size }}>
       <canvas ref={canvas} role="img" aria-label={label ? `${label}, ${STATE_WORDS[state]}` : STATE_WORDS[state]} width={w} height={h}

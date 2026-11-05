@@ -24,29 +24,45 @@ export function oneLine(intro?: string): string | undefined {
   return first && first.length <= 80 ? first : undefined;
 }
 
-export function AppHeader({ title, lead, context, more, crumb, go, actions, where, bare }: {
-  title: string; lead?: ReactNode; context?: string; more?: string; crumb?: { label: string; href: string };
-  go: (href: string) => void; actions?: ReactNode; where: string;
-  /** Neon's phone bar has the title (phone-bar.tsx): only the one line and the ⓘ, and nothing at all without them. */
-  bare?: boolean;
-}) {
+/** The ⓘ that opens a page's longer intro, and the intro it opens. */
+function InfoButton({ open, toggle }: { open: boolean; toggle: () => void }) {
+  return (
+    <button type="button" onClick={toggle} aria-expanded={open} aria-label={open ? 'Hide what this is' : 'What this is'}
+      className="loom-head-action grid size-10 shrink-0 place-items-center rounded-full">
+      <AnimatedIcon name={iconFor(open ? 'x' : 'info')} size="sm" />
+    </button>
+  );
+}
+const InfoMore = ({ text }: { text: string }) => <p className="loom-head-more max-w-prose rounded-2xl px-4 py-3 text-sm leading-relaxed">{text}</p>;
+
+/** A page's intro beyond its one line, and whether it's open (closed again on another page). */
+function useMore(where: string, context?: string, more?: string) {
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [where]);
   const extra = more && more.trim() !== context ? more : undefined;
-  if (bare) return context || extra ? (
-    <div className="loom-top-line grid gap-2 pt-1">
-      <div className="flex min-h-10 items-center gap-3">
+  return { open, toggle: () => setOpen((o) => !o), extra };
+}
+
+/** Under Neon's phone bar, which has the title (phone-bar.tsx): only the page's one line and its ⓘ; nothing without them. */
+export function HeaderLine({ context, more, where }: { context?: string; more?: string; where: string }) {
+  const { open, toggle, extra } = useMore(where, context, more);
+  if (!context && !extra) return null;
+  return (
+    <div className="grid gap-2 pt-1">
+      <div className="flex items-center gap-3">
         <p className="line-clamp-2 min-w-0 flex-1 break-words text-sm opacity-70">{context}</p>
-        {extra && (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={open ? 'Hide what this is' : 'What this is'}
-            className="loom-head-action grid size-10 shrink-0 place-items-center rounded-full">
-            <AnimatedIcon name={iconFor(open ? 'x' : 'info')} size="sm" />
-          </button>
-        )}
+        {extra && <InfoButton open={open} toggle={toggle} />}
       </div>
-      {extra && open && <p className="loom-head-more max-w-prose rounded-2xl px-4 py-3 text-sm leading-relaxed">{extra}</p>}
+      {extra && open && <InfoMore text={extra} />}
     </div>
-  ) : null;
+  );
+}
+
+export function AppHeader({ title, lead, context, more, crumb, go, actions, where }: {
+  title: string; lead?: ReactNode; context?: string; more?: string; crumb?: { label: string; href: string };
+  go: (href: string) => void; actions?: ReactNode; where: string;
+}) {
+  const { open, toggle, extra } = useMore(where, context, more);
   return (
     <div className="grid gap-3">
       <div className="flex items-center gap-3">
@@ -63,15 +79,10 @@ export function AppHeader({ title, lead, context, more, crumb, go, actions, wher
           {title && <h1 className={`line-clamp-3 break-words text-balance font-[family-name:var(--font-display)] font-semibold leading-tight tracking-tight ${title.length > 28 ? 'text-2xl lg:text-3xl' : 'text-3xl lg:text-4xl'}`}>{title}</h1>}
           {context && <p className="line-clamp-2 break-words text-sm opacity-70">{context}</p>}
         </div>
-        {extra && (
-          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label={open ? 'Hide what this is' : 'What this is'}
-            className="loom-head-action grid size-10 shrink-0 place-items-center rounded-full">
-            <AnimatedIcon name={iconFor(open ? 'x' : 'info')} size="sm" />
-          </button>
-        )}
+        {extra && <InfoButton open={open} toggle={toggle} />}
         {actions}
       </div>
-      {extra && open && <p className="loom-head-more max-w-prose rounded-2xl px-4 py-3 text-sm leading-relaxed">{extra}</p>}
+      {extra && open && <InfoMore text={extra} />}
     </div>
   );
 }

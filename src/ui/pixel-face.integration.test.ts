@@ -93,7 +93,7 @@ describe('an agent\'s pixel face', () => {
     expect(checkSpriteManifest({ cell: [96, 80], states: idle, scale: 0.85, offset: [0, 3] })).toMatchObject({ scale: 0.85, offset: [0, 3] });
     const plain = checkSpriteManifest({ cell: [96, 80], states: idle, scale: 1, offset: [0, 0] });
     expect('scale' in plain || 'offset' in plain).toBe(false);
-    for (const bad of [{ scale: 0.2 }, { scale: '0.9' }, { offset: [0] }, { offset: [0, 40] }, { offset: [0.5, 0] }])
+    for (const bad of [{ scale: 0.2 }, { scale: 1.3 }, { scale: '0.9' }, { offset: [0] }, { offset: [0, 40] }, { offset: [0.5, 0] }])
       expect(() => checkSpriteManifest({ cell: [96, 80], states: idle, ...bad })).toThrow(HouseholdError);
   });
 
@@ -176,5 +176,38 @@ describe('an agent\'s pixel face', () => {
     await page.locator('.loom-identity [data-slot="agent-face"]').nth(1).waitFor({ timeout: 15_000 });
     expect(await page.locator('.loom-pixel-face').count()).toBe(0);
     await ctx.close();
+  }, 60_000);
+
+  it.runIf(built && chrome)('in a browser: a face\'s own scale and offset are worn under Neon, and 000h draws it as ever', async () => {
+    const file = join(h.home, 'faces', 'art', 'manifest.json');
+    const was = readFileSync(file, 'utf-8');
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(was), scale: 0.75, offset: [0, 4] }));
+    try {
+      const ctx = await browser!.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const page = await ctx.newPage();
+      // The person's choices, as loom keeps them (they win over this device's copy).
+      const choose = async (prefs: Record<string, unknown>) => {
+        await page.goto(`${base}/appearance`);
+        await page.locator('.loom-top h1').waitFor();
+        const csrf = await page.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
+        expect(await page.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...(b as object) }) })).status, [csrf, prefs] as const)).toBe(200);
+      };
+      const sized = async (look: 'neon' | '000h') => {
+        await choose({ look, pixel: true });
+        await page.goto(`${base}/`);
+        await page.waitForFunction((l) => document.documentElement.dataset.look === l, look);
+        const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
+        await face.waitFor({ timeout: 15_000 });
+        await page.waitForTimeout(300);
+        return face.evaluate((c) => [c.getBoundingClientRect().width, getComputedStyle(c).translate]);
+      };
+      const neon = await sized('neon');
+      expect(neon[0]).toBe(144);   // 96 × 2 × 0.75
+      expect(neon[1]).toContain('6px');   // 4 sheet pixels × 1.5
+      expect((await sized('000h'))[0]).toBe(192);
+      await choose({ look: 'neon' });
+      await ctx.close();
+    } finally { writeFileSync(file, was); }
   }, 60_000);
 });

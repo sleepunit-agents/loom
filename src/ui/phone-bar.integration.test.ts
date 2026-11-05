@@ -54,7 +54,7 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await handle?.close();
     await closeAllBackends();
     if (saved === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved;
-    rmSync(h.home, { recursive: true, force: true });
+    if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
   /** A device in a look, its arrival already had; at a phone's width with an iPhone's top inset, unless it's wide. */
@@ -64,7 +64,8 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await ctx.addInitScript((l) => { localStorage.setItem('loom-look', l); sessionStorage.setItem('loom-arrived', '1'); }, look);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
-    if (phone) await (await ctx.newCDPSession(p)).send('Emulation.setSafeAreaInsetsOverride' as never, { insets: { top: 47, topMax: 47, bottom: 34, bottomMax: 34 } } as never).catch(() => {});
+    // An iPhone's insets (Chrome's override; a Chrome without it fails here, not quietly later).
+    if (phone) await (await ctx.newCDPSession(p)).send('Emulation.setSafeAreaInsetsOverride' as never, { insets: { top: 47, topMax: 47, bottom: 34, bottomMax: 34 } } as never);
     // The look is the person's (loom keeps it): say it, so a page never lands on the other one.
     await p.goto(`${base}/appearance`);
     await p.locator('.loom-top h1').waitFor();
@@ -83,9 +84,16 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
       expect(await p.locator('.loom-pbar h1').count(), path).toBe(1);
     }
     await open(p, '/');
+    // The big header is gone: the only title is the bar's, small and bold, in Home's colour; no app tile.
+    expect(await p.locator('.loom-top h1').count()).toBe(1);
     expect(await p.locator('.loom-pbar h1').innerText()).toBe('Home');
-    // Right under the phone's own bar: its top is the inset, no more.
-    expect(Math.round((await p.locator('.loom-pbar').boundingBox())!.y)).toBe(await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.loom-top')!).paddingTop)));
+    expect(await p.locator('.loom-pbar h1').evaluate((e) => { const s = getComputedStyle(e); return { size: parseFloat(s.fontSize), weight: s.fontWeight }; }))
+      .toMatchObject({ size: 13, weight: '700' });
+    expect(await p.locator('.loom-pbar__name').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(255, 61, 168)');   // Neon's pink, Home's tint
+    expect(await p.locator('.loom-top .loom-app-tile').count()).toBe(0);
+    // Right under the phone's own bar: at the inset (47 px), no more.
+    expect(await p.evaluate(() => getComputedStyle(document.querySelector('.loom-top')!).paddingTop)).toBe('47px');
+    expect(Math.round((await p.locator('.loom-pbar').boundingBox())!.y)).toBe(47);
     const needs = p.locator('.loom-pbar__needs');
     expect(await needs.innerText()).toBe('1');
     expect(await needs.getAttribute('aria-label')).toBe('1 needs you');
@@ -105,14 +113,23 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await p.locator('.loom-tick[data-run]').waitFor({ state: 'attached' });
     const moving = () => tick.evaluate((e) => { const t = e.querySelector('.loom-tick__track')!; const s = getComputedStyle(t); return { run: e.hasAttribute('data-run'), name: s.animationName, state: s.animationPlayState, copies: e.querySelectorAll('.loom-tick__line').length }; });
     expect(await moving()).toMatchObject({ run: true, name: 'loom-tick', state: 'running', copies: 2 });
-    // ~20-30 px a second: the loop's length is the words' width (and the gap) at that speed.
-    const speed = await tick.evaluate((e) => (e.querySelector('.loom-tick__line') as HTMLElement).offsetWidth / parseFloat(getComputedStyle(e.querySelector('.loom-tick__track')!).animationDuration));
-    expect(speed).toBeGreaterThanOrEqual(20); expect(speed).toBeLessThanOrEqual(30);
+    // ~20-30 px a second, steadily: the distance the track travels in one loop (its keyframe), over the loop's length.
+    const a = await tick.evaluate((e) => {
+      const track = e.querySelector('.loom-tick__track') as HTMLElement;
+      const an = track.getAnimations()[0] as CSSAnimation;
+      const to = (an.effect as KeyframeEffect).getKeyframes().at(-1)!.transform as string;
+      const pct = Number(/translateX?\((-?[\d.]+)%\)/.exec(to)![1]);
+      return { px: Math.abs(pct / 100 * track.offsetWidth), s: Number(an.effect!.getTiming().duration) / 1000, easing: getComputedStyle(track).animationTimingFunction,
+        line: (e.querySelector('.loom-tick__line') as HTMLElement).offsetWidth };
+    });
+    expect(a.easing).toBe('linear');
+    expect(Math.abs(a.px - a.line)).toBeLessThanOrEqual(1);   // one loop moves exactly one copy of the words
+    expect(a.px / a.s).toBeGreaterThanOrEqual(20); expect(a.px / a.s).toBeLessThanOrEqual(30);
     // Held while touched.
     await tick.dispatchEvent('pointerdown');
-    expect((await moving()).state).toBe('paused');
+    await expect.poll(async () => (await moving()).state).toBe('paused');
     await tick.dispatchEvent('pointerup');
-    expect((await moving()).state).toBe('running');
+    await expect.poll(async () => (await moving()).state).toBe('running');
     // Held while the tab is hidden.
     await p.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }); document.dispatchEvent(new Event('visibilitychange')); });
     await expect.poll(async () => (await moving()).state).toBe('paused');
@@ -147,6 +164,28 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     expect(await p.locator('.loom-dock-bar [data-part="shelf-plane"]').evaluate((e) => getComputedStyle(e).display)).toBe('none');
     // The "me" key is round.
     expect(await p.locator('.loom-me-dock [data-part="lane"]:last-child [data-part="visual"]').evaluate((e) => getComputedStyle(e).borderTopLeftRadius)).toBe('999px');
+    // A thin magenta rule over the row.
+    const rule = await p.locator('.loom-dock-bar').evaluate((e) => { const s = getComputedStyle(e, '::before'); return { h: s.height, bg: s.backgroundColor }; });
+    expect(rule.h).toBe('1px');
+    expect(rule.bg).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+    // Keys: a dark fill with a tinted edge and a glow; the current one lit solid, its glow stronger.
+    const look = await p.locator('.loom-dock-bar [data-part="lane"][data-tint]').evaluateAll((ls) => ls.map((l) => { const v = getComputedStyle(l.querySelector('[data-part="visual"]')!);
+      return { on: l.hasAttribute('data-active'), bg: v.backgroundColor, shadow: v.boxShadow }; }));
+    const lit = look.find((k) => k.on)!, dark = look.filter((k) => !k.on);
+    expect(dark.length).toBeGreaterThan(0);
+    for (const k of dark) { expect(k.shadow).toContain('inset'); expect(k.bg).not.toBe(lit.bg); }
+    expect(lit.shadow).not.toContain('inset');
+    expect(lit.shadow).toMatch(/22px -3px/);
+    // A key held a moment shows its name; it and the rule stay clear of Find's pill.
+    const places = p.locator('.loom-dock-bar [data-part="item"]').nth(2);
+    const kb = (await places.boundingBox())!;
+    await p.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2); await p.mouse.down(); await p.waitForTimeout(700);
+    const label = places.locator('[data-part="label"]');
+    expect(await label.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+    const lb = (await label.boundingBox())!, pill = (await p.locator('.loom-find-pill').boundingBox())!;
+    await p.mouse.up();
+    expect(pill.y + pill.height).toBeLessThanOrEqual(lb.y);
+    expect(pill.y + pill.height).toBeLessThan(kb.y);
     await p.context().close();
 
     const q = await device('000h', 'reduce');
