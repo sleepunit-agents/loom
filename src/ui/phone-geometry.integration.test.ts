@@ -114,7 +114,7 @@ describe.runIf(built && chrome)('a phone: the dock and the toasts', () => {
     // The dock's bottom edge is the screen's, before and after a scroll; the home indicator's inset is counted once.
     expect(m.dock!.bottom).toBe(m.vh);
     expect(m.dockAfterScroll).toBe(m.vh);
-    expect(m.dockPad).toBe(INSETS.bottom + 8);
+    expect(m.dockPad).toBe(INSETS.bottom);   // Neon, the default: the bar pads by the inset alone, its keys 8 px over it (phone-bar test)
     // Under the status bar, centred.
     expect(m.viewport.top).toBe(INSETS.top + 12);
     expect(Math.abs(m.viewport.left - (m.vw - m.viewport.right))).toBeLessThanOrEqual(1);
@@ -125,7 +125,7 @@ describe.runIf(built && chrome)('a phone: the dock and the toasts', () => {
     const m = await measure('tab');
     expect(m.dock!.bottom).toBe(m.vh);
     expect(m.dockAfterScroll).toBe(m.vh);
-    expect(m.dockPad).toBe(INSETS.bottom + 8);
+    expect(m.dockPad).toBe(INSETS.bottom);   // Neon, the default: the bar pads by the inset alone, its keys 8 px over it (phone-bar test)
     expect(m.viewport.top).toBe(INSETS.top + 12);
     toastIsAStrip(m);
   }, 60_000);

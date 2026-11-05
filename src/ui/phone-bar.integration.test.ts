@@ -94,6 +94,11 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     // Right under the phone's own bar: at the inset (47 px), no more.
     expect(await p.evaluate(() => getComputedStyle(document.querySelector('.loom-top')!).paddingTop)).toBe('47px');
     expect(Math.round((await p.locator('.loom-pbar').boundingBox())!.y)).toBe(47);
+    // The dock's keys sit 8 px over the home-bar inset (34 px here), no more; Find's pill clears them.
+    const key = (await p.locator('.loom-dock-bar [data-part="item"]').first().boundingBox())!;
+    expect(Math.round(844 - (key.y + key.height))).toBe(34 + 8);
+    const pill = (await p.locator('.loom-find-pill').boundingBox())!;
+    expect(pill.y + pill.height).toBeLessThan(key.y - 20);
     // iOS's home-screen app: 8 px nearer the phone's own bar and 10 px narrower on each side than the page's gutter.
     const pageX = Math.round((await p.locator('.loom-pbar').boundingBox())!.x);
     await p.evaluate(() => document.documentElement.classList.add('loom-ios-app'));

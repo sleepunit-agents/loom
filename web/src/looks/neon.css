@@ -198,7 +198,11 @@ html.loom-ios-app:root[data-look="neon"] .loom-top--bar .loom-pbar{padding-inlin
   background:color-mix(in srgb,var(--v-pink) 35%,var(--v-border));box-shadow:var(--glow-bar) color-mix(in srgb,var(--v-pink) 30%,transparent);pointer-events:none}
 :root[data-look="neon"] .loom-dock-bar .v-dock :is([data-part="shelf-plane"],[data-part="shelf-edge"],[data-part="active-indicator"]){display:none}
 /* room above the keys for a held key's name (the rule sits 10px over them; a name shows over the rule) */
-:root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="stage"]{padding-block:32px 6px}
+:root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="stage"]{padding-block:32px 8px}
+/* the keys sit 8px over the phone's home-bar inset and no more (Jonathan, 2026-11-04: 34px of stacked padding under
+   them: the bar's own 8 on top of the inset, the dock scroller's 20, the stage's 6) */
+:root[data-look="neon"] .loom-dock-bar{padding-bottom:env(safe-area-inset-bottom)}
+:root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="viewport"]{padding-bottom:0}
 :root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="lane"]{block-size:var(--dock-item-size)}
 :root[data-look="neon"] .loom-dock-bar .v-dock:not([data-variant="rail"]) [data-part="item"]{display:grid;block-size:var(--dock-item-size);-webkit-touch-callout:none;user-select:none}
 :root[data-look="neon"] .loom-dock-bar .v-dock[data-variant] [data-part="visual"]{border-radius:12px}
@@ -218,4 +222,4 @@ html.loom-ios-app:root[data-look="neon"] .loom-top--bar .loom-pbar{padding-inlin
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent),var(--glow-key) var(--t)}
 :root[data-look="neon"] .loom-agent-dock.v-dock [data-part="lane"][data-active] [data-part="visual"]{background:var(--t);color:var(--v-on-accent);box-shadow:var(--glow-on) var(--t)}
 /* Find's pill sits over the rule, clear of a held key's name (the dock is shorter without its names and its tray) */
-:root[data-look="neon"] .loom-find-pill{bottom:calc(122px + env(safe-area-inset-bottom))}
+:root[data-look="neon"] .loom-find-pill{bottom:calc(96px + env(safe-area-inset-bottom))}
