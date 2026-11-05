@@ -74,7 +74,7 @@ describe('the app (web/)', () => {
     ];
     expect(was.filter(([now]) => !tones.includes(now)).map(([, w]) => w)).toEqual([]);
     const sites: Array<[string, string, string]> = [
-      ['views.tsx', "state === 'working' ? 'bg-[var(--loom-live)] loom-dot-live' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'", 'the agent dot: sky/red/amber/emerald-500'],
+      ['views.tsx', "state === 'working' ? 'bg-[var(--loom-live)]' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'", 'the agent dot: sky/red/amber/emerald-500'],
       ['views.tsx', "a.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : 'ring-1 ring-[var(--loom-ring-warn-soft)]'", 'an ask: ring-red-400 / ring-amber-300'],
       ['views.tsx', "p.tone === 'bad' ? 'bg-[color-mix(in_oklab,var(--loom-bad)_10%,transparent)]' : 'bg-[color-mix(in_oklab,var(--loom-warn)_10%,transparent)]'", 'a problem: bg-red-500/10 / bg-amber-500/10'],
       ['views.tsx', '<span className="size-2 rounded-full bg-[var(--loom-warn)]" />', 'Needs you: bg-amber-500'],
