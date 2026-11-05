@@ -12,7 +12,7 @@
     {
       "name": "secrets",
       "repo": "sleepunit-agents/loom-secrets",
-      "commit": "233913ff228d0275c3219d6b59a793681763e9ac",
+      "commit": "bc8d2117b8ac35a33ff54ab8fb33ab59b0d8ed39",
       "version": "0.1.0",
       "label": "Secrets",
       "description": "Secrets kept encrypted at rest (sops + age, which must be installed), handed to pieces and houses by name, never on argv."
