@@ -130,7 +130,10 @@ export interface Ask { text: string; meta?: string; page?: string; label?: strin
   /** The ask laid out (docs/extensions.md, "asks"): why, one line; what happens if the owner says yes (its first,
    * primary button) and if no (its danger one), drawn beside those buttons; longer details for its sheet; and the fine
    * print, exactly what the yes allows (the machine's kind and target), under the rest. */
-  why?: string; if_yes?: string; if_no?: string; details?: string; fine?: string }
+  why?: string; if_yes?: string; if_no?: string; details?: string; fine?: string;
+  /** The conversation it was asked from (a cv- id: the approvals piece's, docs/specs/comms.md "Asks inline"): a Comms
+   * thread shows it, when its agent is the thread's too. */
+  conversation?: string }
 /** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
 export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }
 /** One the owner already answered (or that expired): the Inbox's history. */
@@ -853,6 +856,7 @@ export function parseManifest(value: unknown): Manifest | string {
           ...(a.kind !== undefined ? { kind: askKind(a.kind, 'ask.kind') } : {}),
           ...(a.attention !== undefined ? attention(a.attention) : {}),
           ...(a.expires !== undefined ? { expires: when(a.expires, 'ask.expires') } : {}),
+          ...(typeof a.conversation === 'string' && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}),
           ...plainOf(a),
         };
       });

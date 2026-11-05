@@ -391,6 +391,10 @@ that ignores it keeps working. Outside a household there's no `caller`.
     button (Allow, Yes) and on its danger one (Deny), and loom draws each beside its button on Home and in the Inbox;
     `details` (≤ 2,000) is longer text for its sheet; `fine` (≤ 400) is the small print, exactly what the yes allows
     (the machine's kind and target), under "Exactly what this allows". An ask with buttons is never drawn cut.
+  - `conversation` (a `cv-` id) is the conversation the ask was made from: a Comms thread shows a permission ask
+    inline when its `conversation` is the thread's and its `agent` is the thread's agent ([specs/comms.md](specs/comms.md),
+    "Asks inline"). Its first action's `fields.id` names it. The id is the requesting body's claim: loom binds it by
+    the agent it authenticated, and draws it only for pieces the viewer may hear from (as the Inbox does).
 - **`notices`** (at most 20) are news the owner may want: a box joined, a bridge
   restarted. Each needs `text` and `at`, and may carry `meta`, `agent` and `page`.
   They're filed under FYI and are never unread. Breakage is a state, so a piece

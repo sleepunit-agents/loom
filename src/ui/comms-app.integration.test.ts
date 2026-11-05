@@ -147,4 +147,40 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       expect(errors).toEqual([]);
     } finally { await ctx.close(); }
   }, 30_000);
+
+  it('an ask asked from the thread: drawn with its words, the face waiting on you, Allow once posted to its piece', async () => {
+    const { ctx, page, errors } = await open(false);
+    try {
+      // A thread of its own, nothing failed in it (an error would rightly outrank the ask).
+      const thread = openThread(h, process.env, h.members[0], { agent: 'art', id: 'dddddddddddddddd', text: 'Ship it when it\'s green?' }).thread;
+      const ask = { id: 'a-00c0ffee', piece: 'approvals', text: 'OK to merge the comm screen PR?', why: 'CI is green.', if_yes: 'I merge it.', if_no: 'It waits.',
+        fine: 'merge · github:acme/app#3@abc', actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00c0ffee' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00c0ffee' } }] };
+      // The thread's answers carry the ask (as loom adds it from the approvals piece's manifest).
+      await page.route(`**/comms/${thread.id}**`, async (route) => {
+        const r = route.request();
+        if (r.method() !== 'GET' || !(r.headers().accept ?? '').includes('json')) return route.continue();
+        const res = await route.fetch();
+        const body = await res.json();
+        return route.fulfill({ response: res, json: { ...body, asks: [ask] } });
+      });
+      const posted: string[] = [];
+      await page.route('**/act/approvals', async (route) => {
+        posted.push(route.request().postData() ?? '');
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, message: 'Allowed once.' }) });
+      });
+      await page.goto(`${base}/comms/${thread.id}`);
+      await page.locator('.comms-ask').waitFor();
+      expect(await page.locator('.comms-ask__text').textContent()).toBe('OK to merge the comm screen PR?');
+      expect(await page.locator('.comms-ask__either').textContent()).toContain('If you allowI merge it.');
+      expect(await page.locator('.comms-ask__fine').textContent()).toBe('Exactly what this allows: merge · github:acme/app#3@abc');
+      expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('needs-input');
+      await page.getByRole('button', { name: 'Allow once' }).click();
+      await page.locator('.comms-ask__said').waitFor();
+      expect(posted).toHaveLength(1);
+      const sent = new URLSearchParams(posted[0]);
+      expect([sent.get('_action'), sent.get('id')]).toEqual(['allow', 'a-00c0ffee']);
+      expect(sent.get('_csrf')).toMatch(/^[0-9a-f]{64}$/);
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 30_000);
 });

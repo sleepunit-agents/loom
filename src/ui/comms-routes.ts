@@ -26,7 +26,7 @@ import type { Chrome } from './render.js';
 import { findPiece } from '../cli/pieces.js';
 import { managedPieces } from '../cli/pieces-managed.js';
 import { openThreadStream } from './comms-live.js';
-import { pieceApi } from './pieces.js';
+import { pieceApi, type PieceInfo } from './pieces.js';
 
 export interface CommsContext {
   household: Household;
@@ -43,6 +43,8 @@ export interface CommsContext {
   chrome?: () => Promise<Chrome>;
   /** The household's agents' marks (labels, colours, faces), as every view's ctx carries them. */
   agents?: Record<string, unknown>;
+  /** The pieces this member may hear from, as the Inbox and Home have them (handler.ts forOwner over the scoped manifests). */
+  pieces?: () => Promise<PieceInfo[]>;
 }
 
 const MAX_BODY = 200 * 1024;
@@ -111,6 +113,34 @@ async function asView(c: CommsContext, which: 'list' | 'thread', pathname: strin
     ...(c.household.github ? { github: c.household.github } : {}) };
 }
 
+export interface ThreadAsk { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
+  actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> }
+
+/**
+ * A thread's pending asks (comms.md, "Asks inline"): a piece's permission ask that names this thread's conversation AND
+ * whose agent (the caller the piece was told, which loom authenticated) is this thread's agent. A conversation id is
+ * the body's own claim; the agent is what binds it, so an ask never shows in another agent's thread. The viewer is
+ * already the thread's member and owns its agent (threadFor).
+ */
+async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
+  // Only pieces this member may hear from, exactly as the Inbox filters them (an agent owner: those that understand
+  // agent owners, cut to their agents). Without the filter given, none: never every piece's.
+  let pieces: PieceInfo[];
+  try { pieces = c.pieces ? await c.pieces() : []; } catch { return []; }
+  const out: ThreadAsk[] = [];
+  for (const p of pieces) {
+    for (const a of p.manifest.asks ?? []) {
+      // Only what needs the owner (an ask filed with attention: false waits on nothing, as the Inbox counts it).
+      if (a.conversation !== t.conversation || a.agent !== t.agent || !a.actions?.length || a.attention === false) continue;
+      const id = a.actions[0].fields?.id;
+      if (typeof id !== 'string') continue;
+      out.push({ id, piece: p.piece, text: a.text, ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
+        ...(a.fine ? { fine: a.fine } : {}), ...(a.at ? { at: a.at } : {}), actions: a.actions.map((b) => ({ action: b.action, label: b.label, ...(b.tone ? { tone: b.tone } : {}), ...(b.confirm ? { confirm: b.confirm } : {}), ...(b.fields ? { fields: b.fields } : {}) })) });
+    }
+  }
+  return out;
+}
+
 /** Whether a /comms page load names a thread the member may not see: the same 403 as its JSON form (rule 3). */
 export function pageRefused(pathname: string, household: Household, member: Member | undefined): string | null {
   const m = /^\/comms\/([^/]+)/.exec(pathname);
@@ -170,7 +200,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
       const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
       const swept = messages.some((x) => x.text === null && x.kind !== 'error');
-      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}), member: m!.person });
+      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, asks: dir === 'before' ? undefined : await threadAsks(c, t),
+        ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}), member: m!.person });
       return true;
     }
     if (req.method !== 'POST' || !verb) return send(405, { error: 'method not allowed' }), true;

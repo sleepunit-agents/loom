@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms: asks inline** (t-1876). A thread shows its agent's pending approvals that were asked from it (the approvals
+  piece's `--conversation`, kept beside the agent loom authenticated), with the ask, why, If you allow, If you deny
+  and the fine print, and Allow once and Deny right there; while one waits, the comm screen's face is waiting on you.
+  An ask naming a thread but from another agent never shows there.
+
 - **Comms: a push when your agent replies** (t-1876). A reply in a thread you haven't read, with no app of yours on that
   thread for 2 minutes, pushes to your own devices only: "Art replied" and the thread's title (or "Art replied in a new
   thread"), never the reply's words. A tap opens the thread.
