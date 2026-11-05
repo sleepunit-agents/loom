@@ -1238,7 +1238,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const ch = chrome(req, opts, forOwner(all, opts.ownerScope), skipped.map((x) => x.piece), 'comms', csrf);
       return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
     };
-    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome, agents: agentsOf(full) ?? {}, session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
+      // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
+      agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))), session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
     return;
   }
 

@@ -78,7 +78,22 @@ export function replyHtml(text: string): string {
     .replace(/(^|\s)note:([\w./-]+)/g, (_m, sp: string, p: string) => `${sp}\`note:${p}\``);
   return prose(linked)
     .replace(/<a [^>]*href="http:\/\/[^"]*"[^>]*>([\s\S]*?)<\/a>/g, '$1')
-    .replaceAll(`href="${INSIDE}`, 'data-inside="" href="/');
+    // Inside loom only for the pages a reply may link to, by exact shape; any other inside-looking link (one an agent
+    // wrote to reach //evil.com, /\\host or ..) is left as its words.
+    .replace(/<a ([^>]*)href="https:\/\/loom\.invalid\/([^"]*)"([^>]*)>([\s\S]*?)<\/a>/g, (_m, pre: string, path: string, post: string, words: string) =>
+      (insidePath(path) ? `<a ${pre}data-inside="" href="/${path}"${post}>${words}</a>` : words));
+}
+
+/** The loom pages a reply may link to: a task's, a conversation's. Nothing with a scheme, a leading slash, .. or //. */
+const INSIDE_PAGES = /^(?:p\/tasks\/t-\d{1,9}|conversation\/cv-[0-9a-f]{12})$/;
+export const insidePath = (path: string) => INSIDE_PAGES.test(path);
+
+/** Whether an inside link really stays inside: this origin, and one of the allowed pages. */
+export function staysInside(href: string, here: string = location.href): boolean {
+  try {
+    const u = new URL(href, here);
+    return u.origin === new URL(here).origin && insidePath(u.pathname.slice(1)) && !u.search && !u.hash;
+  } catch { return false; }
 }
 
 function Reply({ text }: { text: string }) {
@@ -89,7 +104,9 @@ function Reply({ text }: { text: string }) {
       onClick={(e) => {
         const a = (e.target as HTMLElement).closest('a[data-inside]');
         if (!a || e.metaKey || e.ctrlKey) return;
-        e.preventDefault(); go(a.getAttribute('href')!);
+        e.preventDefault();
+        const href = a.getAttribute('href') ?? '';
+        if (staysInside(href)) go(href);
       }} />
   );
 }

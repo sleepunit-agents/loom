@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createPlayer, PIXEL, stateFrom, type Frame, type PlayerEnv } from '../../web/src/pixel-face';
-import { faceOf, talkBeats, newId, replyHtml } from '../../web/src/comms';
+import { faceOf, talkBeats, newId, replyHtml, staysInside } from '../../web/src/comms';
 
 function fakeEnv(seed = 11): PlayerEnv & { run: (ms: number) => void; t: () => number } {
   let now = 0, id = 0, s = seed;
@@ -139,5 +139,22 @@ describe('the comm screen\'s rules', () => {
     expect(h).toContain('<code>note:pond/plan</code>');
     expect(h).not.toMatch(/href="http:/);
     expect(h).not.toMatch(/href="javascript/i);
+  });
+  it('an inside-looking link an agent writes is a link only to an allowed page, and never leaves loom', () => {
+    const evil = ['//evil.com', '/\\evil', '../x', 'p/tasks/../../x', 'javascript:alert(1)', 'p/notes/x', 'conversation/cv-zz', 'p/tasks/t-12?next=//evil.com'];
+    for (const path of evil) {
+      const h = replyHtml(`[go](https://loom.invalid/${path})`);
+      expect(h, path).not.toContain('data-inside');
+      expect(h, path).not.toMatch(/href="\/(?!\/p\/tasks\/t-\d+")/);
+    }
+    // A task named in the reply is the inside link loom makes; one an agent spells out as a URL is never trusted as one.
+    expect(replyHtml('See t-12.')).toContain('data-inside="" href="/p/tasks/t-12"');
+    expect(replyHtml('[t](https://loom.invalid/p/tasks/t-12)')).not.toContain('href="https://loom.invalid');
+    const here = 'https://loom.example/comms/th:aaaaaaaaaa';
+    expect(staysInside('/p/tasks/t-12', here)).toBe(true);
+    expect(staysInside('/conversation/cv-0123456789ab', here)).toBe(true);
+    for (const href of ['//evil.com/p/tasks/t-1', '/\\evil.com', 'https://evil.com/p/tasks/t-1', 'javascript:alert(1)', '/../x', '/p/tasks/t-1/../../admin', '/p/notes/x']) {
+      expect(staysInside(href, here), href).toBe(false);
+    }
   });
 });
