@@ -26,7 +26,7 @@ import type { Chrome } from './render.js';
 import { findPiece } from '../cli/pieces.js';
 import { managedPieces } from '../cli/pieces-managed.js';
 import { openThreadStream } from './comms-live.js';
-import { pieceApi, pieceManifests } from './pieces.js';
+import { pieceApi, type PieceInfo } from './pieces.js';
 
 export interface CommsContext {
   household: Household;
@@ -43,6 +43,8 @@ export interface CommsContext {
   chrome?: () => Promise<Chrome>;
   /** The household's agents' marks (labels, colours, faces), as every view's ctx carries them. */
   agents?: Record<string, unknown>;
+  /** The pieces this member may hear from, as the Inbox and Home have them (handler.ts forOwner over the scoped manifests). */
+  pieces?: () => Promise<PieceInfo[]>;
 }
 
 const MAX_BODY = 200 * 1024;
@@ -120,9 +122,11 @@ export interface ThreadAsk { id: string; piece: string; text: string; why?: stri
  * the body's own claim; the agent is what binds it, so an ask never shows in another agent's thread. The viewer is
  * already the thread's member and owns its agent (threadFor).
  */
-async function threadAsks(env: NodeJS.ProcessEnv, t: Thread): Promise<ThreadAsk[]> {
-  let pieces: Awaited<ReturnType<typeof pieceManifests>>['pieces'];
-  try { pieces = (await pieceManifests(env)).pieces; } catch { return []; }
+async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
+  // Only pieces this member may hear from, exactly as the Inbox filters them (an agent owner: those that understand
+  // agent owners, cut to their agents). Without the filter given, none: never every piece's.
+  let pieces: PieceInfo[];
+  try { pieces = c.pieces ? await c.pieces() : []; } catch { return []; }
   const out: ThreadAsk[] = [];
   for (const p of pieces) {
     for (const a of p.manifest.asks ?? []) {
@@ -195,7 +199,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
       const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
       const swept = messages.some((x) => x.text === null && x.kind !== 'error');
-      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, asks: dir === 'before' ? undefined : await threadAsks(c.env, t),
+      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, asks: dir === 'before' ? undefined : await threadAsks(c, t),
         ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}), member: m!.person });
       return true;
     }

@@ -140,6 +140,14 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
   console.log(JSON.stringify({ v: 2, owners: 2, asks: fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [] }));
 } else process.exit(2);
 `);
+    // A piece that doesn't understand agent owners (no owners: 2): the household owner's only, as the Inbox has it.
+    piece(h.home, 'deskonly', {}, `#!${process.execPath}
+const fs = require('node:fs');
+if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
+  const f = process.env.LOOM_HOME + '/household-asks.json';
+  console.log(JSON.stringify({ v: 2, asks: fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [] }));
+} else process.exit(2);
+`);
     piece(h.home, 'runtime', { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } }, RUNTIME_BIN);
     tok.jonathan = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
     tok.sam = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
@@ -650,6 +658,22 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       expect((await page(tok.sam, 'GET', `/comms/${t.id}`)).status).toBe(403);
       rmSync(join(h.home, 'approvals-asks.json'));
       clearPieceCache();
+    });
+  });
+
+  describe('criterion 12: asks inline, scoped as the Inbox is', () => {
+    it('an agent owner sees no ask from a household-only piece; the household owner does', async () => {
+      const mine = await open();
+      const lorens = await open(tok.loren, 'pond-bot', 'pond things');
+      const ask = (id: string, conversation: string, agent: string) => ({ text: `Can I ${id}?`, kind: 'permission', agent, conversation,
+        actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] });
+      writeFileSync(join(h.home, 'household-asks.json'), JSON.stringify([ask('a-0000000a', mine.conversation, 'art'), ask('a-0000000b', lorens.conversation, 'pond-bot')]));
+      clearPieceCache();
+      try {
+        expect(((await page(tok.jonathan, 'GET', `/comms/${mine.id}`)).body.asks as Array<{ id: string; piece: string }>).map((a) => [a.id, a.piece])).toEqual([['a-0000000a', 'deskonly']]);
+        expect((await page(tok.loren, 'GET', `/comms/${lorens.id}`)).body.asks).toEqual([]);
+        expect((await page(tok.loren, 'GET', `/comms/${lorens.id}/since/0`)).body.asks).toEqual([]);
+      } finally { rmSync(join(h.home, 'household-asks.json')); clearPieceCache(); }
     });
   });
 

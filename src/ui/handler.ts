@@ -1262,7 +1262,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     };
     await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
       // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
-      agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))), session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+      agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
+      // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
+      pieces: async () => forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope), session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
     return;
   }
 
