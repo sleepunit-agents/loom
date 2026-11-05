@@ -11,7 +11,7 @@ import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, LoomMark, Nothing, useEnv, type Mark } from './blocks';
 import { Arrive } from './arrive';
-import { ApprovalBox, As, useOpenItem, type InboxItem } from './views';
+import { AnswersWithLines, ApprovalBox, As, Fine, useOpenItem, type InboxItem } from './views';
 import { plain } from './plain';
 import { tidy } from './tidy';
 import { iconFor } from './safe';
@@ -69,6 +69,7 @@ function Need({ i }: { i: InboxItem }) {
     setBusy(false);
   };
   const acts = !approval && !yesNo ? (i.actions ?? []) : [];
+  const lined = acts.length > 0 && !!(i.needs?.if_yes || i.needs?.if_no);
   // Answered in words: its sheet has the box for them.
   const words = !approval && !yesNo && !!i.reply;
   return (
@@ -82,14 +83,17 @@ function Need({ i }: { i: InboxItem }) {
         </button>
         {(p.why ?? i.outcome) && <p className="loom-need__why">{tidy(p.why ?? i.outcome ?? '')}</p>}
         {approval && <ApprovalBox a={approval} />}
-        {(yesNo || words || acts.length > 0) && (
+        {(yesNo || words || (acts.length > 0 && !lined)) && (
           <div className="loom-need__acts" role="group" aria-label="Your answer">
             {yesNo && <><Button size="sm" disabled={busy} onClick={() => void say('yes')}>Yes</Button>
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void say('no')}>No</Button></>}
             {words && <Button size="sm" variant="outline" onClick={() => open(i)}>{i.reply!.label || 'Answer'}…</Button>}
-            {acts.length > 0 && <As source={i.source}>{acts.map((b) => <ActButton key={b.action + b.label} b={b} />)}</As>}
+            {acts.length > 0 && !lined && <As source={i.source}>{acts.map((b) => <ActButton key={b.action + b.label} b={b} />)}</As>}
           </div>
         )}
+        {/* Allow beside "If you allow", Deny beside "If you deny", under the ask read whole. */}
+        {lined && <As source={i.source}><AnswersWithLines actions={acts} lines={i.needs!} /></As>}
+        {acts.length > 0 && <Fine text={i.fine} className="loom-need__fine" />}
       </div>
     </Arrive>
   );

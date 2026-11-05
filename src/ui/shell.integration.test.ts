@@ -57,7 +57,7 @@ describe('the app shell', () => {
     expect(sh).toMatchObject({ tab: 'home', home: '/', household: false, scope: 'agent' });
     // The agent's mark: its initial on its color.
     expect(sh.agents).toEqual([expect.objectContaining({ label: 'Art E Fish', bg: '#B8A6FF', fg: '#1D1240', href: '/', current: true })]);
-    expect(sh.core.map((c: { label: string }) => c.label)).toEqual(['Mind', 'People']);
+    expect(sh.core.map((c: { label: string }) => c.label)).toEqual(['Mind', 'People', 'Projects']);
     // Sign out (the app's form posts it with the session's form token) needs that token on every page.
     expect(home.chrome.csrf).toMatch(/^[0-9a-f]{64}$/);
     expect((await view('/people', cookie)).chrome.shell).toMatchObject({ tab: '', home: '/' });

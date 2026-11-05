@@ -8,7 +8,7 @@
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -31,6 +31,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   let base: string;
   let token: string;
   const saved = process.env.LOOM_HOME;
+  const savedPath = process.env.PATH;
 
   beforeAll(async () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-desk-'));
@@ -50,6 +51,18 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     };
     ask('lane:making', 't-738: sonarr', { ask: 'OK to turn off the recycle bin on Sonarr for a quick rename?', why: 'Deleting a big show takes hours.', if_yes: 'I turn it off.', if_no: 'I plan a rework.', refs: ['t-738'] });
     ask('lane:field', 't-801: install', { ask: 'Gabe or Mark for the field box install on Friday?', why: 'Gabe knows the site.', answers: 'words', refs: ['t-801'] });
+    // A permission from a piece, laid out (an approval's plain ask): its whole question, why, and what each answer does.
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'permit.json'), JSON.stringify({ v: 2, tab: { label: 'Permit', kind: 'setting' }, asks: [{
+      text: 'A change to the script that copies lane prompts to loom landed today, through a reviewed pull request. OK to start updating lane prompts on loom again?',
+      meta: 'The script that copies them changed, so it stopped until you look.', why: 'The script that copies them changed, so it stopped until you look.',
+      if_yes: 'Lane prompt changes go live again.', if_no: 'Lane prompts stay as they are until you look.', fine: 'A GitHub write: sleepunit-agents/art, from loom\'s machine.',
+      kind: 'permission', tone: 'warn', at: new Date().toISOString(), page: '',
+      actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00000001' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00000001' } }] }] }));
+    writeFileSync(join(bin, 'loom-permit'), `#!/bin/sh\ncase "$1 $2" in "ui --json") cat "${join(bin, 'permit.json')}" ;; *) echo '{"title":"Permit","sections":[]}' ;; esac\n`);
+    chmodSync(join(bin, 'loom-permit'), 0o755);
+    process.env.PATH = `${bin}:${savedPath}`;
     handle = await startHttpServer({ contextDir: art, host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -59,6 +72,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     await handle?.close();
     await closeAllBackends();
     if (saved === undefined) delete process.env.LOOM_HOME; else process.env.LOOM_HOME = saved;
+    process.env.PATH = savedPath;
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
@@ -141,6 +155,35 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     expect(new URL(p.url()).pathname).toBe('/');
     const inbox = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: { text: string; attention: boolean }[] }).items);
     expect(inbox.find((i) => /Gabe or Mark/.test(i.text))?.attention ?? false).toBe(false);
+    await p.context().close();
+  }, 90_000);
+
+  it('a permission\'s Allow and Deny never show without its whole ask, each beside what it does', async () => {
+    const p = await screen('neon', 1280, 800);
+    await home(p);
+    const card = p.locator('.loom-need', { hasText: 'lane prompts on loom again' });
+    await card.waitFor();
+    const title = card.locator('.loom-need__title');
+    // Read whole: no clamp, and nothing of it hidden (its box holds all of its text).
+    expect(await title.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('none');
+    expect(await title.evaluate((e) => e.scrollHeight <= e.clientHeight + 1)).toBe(true);
+    expect(await title.textContent()).toContain('OK to start updating lane prompts on loom again?');
+    // Each button beside its line, in the same row.
+    for (const [name, line] of [['Allow once', 'If you allow: Lane prompt changes go live again.'], ['Deny', 'If you deny: Lane prompts stay as they are until you look.']] as const) {
+      const row = card.locator('.loom-answers > div', { has: p.getByRole('button', { name }) });
+      expect(await row.textContent()).toContain(line);
+    }
+    expect(await card.textContent()).toContain('Exactly what this allows: A GitHub write');
+    // The Inbox carries the same, laid out, for its sheet (and its row, which has no buttons, may be cut).
+    const items = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: Array<Record<string, any>> }).items);
+    const it = items.find((x) => /lane prompts on loom again/.test(x.text))!;
+    expect(it).toMatchObject({ kind: 'permission', fine: expect.stringContaining('A GitHub write'),
+      needs: { why: expect.any(String), if_yes: 'Lane prompt changes go live again.', if_no: 'Lane prompts stay as they are until you look.' } });
+    // In its sheet: the whole ask as its title, "If you allow" and "If you deny", the small print, then the buttons.
+    await card.locator('.loom-need__title').click();
+    const sheet = p.getByRole('dialog');
+    await sheet.waitFor();
+    for (const t of ['OK to start updating lane prompts on loom again?', 'If you allow', 'If you deny', 'Exactly what this allows']) expect(await sheet.textContent()).toContain(t);
     await p.context().close();
   }, 90_000);
 

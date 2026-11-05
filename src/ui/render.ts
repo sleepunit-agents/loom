@@ -125,7 +125,7 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
   waitsOnApproval?: string }
 
 export interface NeedsView { why?: string; if_yes?: string; if_no?: string; answers: 'yes-no' | 'words'; refs: string[]; details: string }
-export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source }
+export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source; if_yes?: string; if_no?: string; fine?: string; details?: string }
 
 // ─── Home, an agent's Today, and the sign-in pages ───
 
@@ -226,6 +226,8 @@ export interface InboxItem {
   reply?: HomeAsk['reply'];
   needs?: NeedsView;
   approval?: ApprovalView;
+  /** Exactly what its yes allows (a piece's machine fields: a kind and a target), as small print. */
+  fine?: string;
 }
 
 export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [

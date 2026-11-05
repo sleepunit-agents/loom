@@ -63,6 +63,7 @@ import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdSuggestPeople, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
+import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
@@ -185,7 +186,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
 /** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
 const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
 
-const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
+const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -699,7 +700,8 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
     const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
     if (!card) return a;
     taken.add(card);
-    return { ...a, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source } };
+    return { ...a, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source,
+      ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}), ...(card.fine ? { fine: card.fine } : {}), ...(card.details ? { details: card.details } : {}) } };
   });
   return out.filter((a) => !taken.has(a));
 }
@@ -713,7 +715,10 @@ function absorbedCount(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv
 /** Every piece's asks, labelled with its tab, then the Pieces page's own (setup). */
 function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
   return [
-    ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece }))),
+    ...pieces.flatMap((p) => p.manifest.asks.map((a) => ({ ...a, source: pieceSource(p.piece), sourceLabel: p.manifest.tab?.label ?? p.piece,
+      // An ask laid out (why, what happens either way, details): the Inbox and Home draw it as a Needs you's.
+      ...(a.why || a.if_yes || a.if_no ? { needs: { ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
+        answers: 'words' as const, refs: [], details: a.details ?? '' } } : {}) }))),
     ...piecesAsks(env).map((a) => ({ ...a, source: CORE, sourceLabel: 'Pieces', tone: 'warn' as const })),
   ];
 }
@@ -753,7 +758,8 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
-      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}) })),
+      ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}),
+      ...(a.fine ? { fine: a.fine } : {}) })),
     ...pieces.flatMap((p) => {
       const source = pieceSource(p.piece);
       const sourceLabel = p.manifest.tab?.label ?? p.piece;
@@ -802,6 +808,7 @@ function backFor(path: string, places: Array<{ label: string; href: string }>, h
   const seg = path.split('/').filter(Boolean);
   if (seg[0] === 'knowledge' && seg.length > 1) return { label: 'Knowledge', href: '/knowledge' };
   if (seg[0] === 'people' && seg.length > 1) return { label: 'People', href: '/people' };
+  if (seg[0] === 'projects' && seg.length > 1) return { label: 'Projects', href: '/projects' };
   if (seg[0] === 'memory') return { label: 'Mind', href: '/mind' };
   if (seg[0] === 'p' && seg.length > 2) {
     const top = places.find((x) => x.href === `/p/${seg[1]}`);
@@ -950,6 +957,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
           ...(opts.ownerScope ? [] : [
             { label: 'Knowledge', href: '/knowledge', current: current.startsWith('knowledge') },
             { label: 'People', href: '/people', current: current.startsWith('people') },
+            // The household's, like People (docs/specs/projects.md, "the Projects app").
+            { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
           ]),
         ],
         pieces: places,
@@ -977,6 +986,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       core: [
         { label: 'Mind', href: '/mind', current: current === 'mind' },
         { label: 'People', href: '/people', current: current.startsWith('people') },
+        { label: 'Projects', href: '/projects', current: current.startsWith('projects') },
       ],
       pieces: places,
     },
@@ -1612,6 +1622,18 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
     }
     if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
+    // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the
+    // not-found page here, never the single-agent route below.
+    if (opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) return send200(notFound, '', ctxOf(''));
+    if (pathname === '/projects' || pathname.startsWith('/projects/')) {
+      const owners = hh.agents.filter((x) => existsSync(agentDir(hh, x))).map((x) => ({ agent: x, dir: agentDir(hh, x) }));
+      if (pathname === '/projects') return send200(await projectsIndex(owners, { env: opts.env }), 'projects', ctxOf('projects'));
+      const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
+      const ok = seg.every((x) => /^[a-z0-9][a-z0-9-]*$/.test(x)) && seg.length <= 2;
+      const o = ok ? ownerOf(owners, seg[seg.length - 1], seg.length === 2 ? seg[0] : undefined) : null;
+      const page = o ? await projectHubPage(o, seg[seg.length - 1], { env: opts.env }) : null;
+      return send200(page ?? notFound, 'projects', ctxOf(pathname.slice(1)));
+    }
     if (pathname === '/pieces') return send200(piecesPage(opts.env, query), 'pieces', ctxOf('pieces'));
     if (pathname.startsWith('/people/')) {
       const slug = decode(pathname.slice('/people/'.length));
@@ -1721,6 +1743,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const page = piecesPage(opts.env, query);
     { const ctx = { source: CORE, path: 'pieces', query, csrf }; const ch = chrome(req, opts, pieces, skippedNames, 'pieces', csrf, flash);
       return view('page', { page, ctx, chrome: ch }); }
+  }
+
+  if (pathname === '/projects' || /^\/projects\/[a-z0-9][a-z0-9-]*$/.test(pathname)) {
+    const owner = { dir: opts.contextDir };
+    const page = pathname === '/projects' ? await projectsIndex([owner], { env: opts.env })
+      : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env });
+    const ctx = { source: CORE, path: pathname.slice(1), query, csrf };
+    const ch = chrome(req, opts, pieces, skippedNames, 'projects', csrf, flash);
+    return view('page', { page: page ?? notFound, ctx, chrome: ch }, page ? 200 : 404);
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';
