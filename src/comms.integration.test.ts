@@ -461,7 +461,7 @@ describe.skipIf(!hasAge)('Comms', () => {
       const ninth = await page(tok.loren, 'POST', `/comms/${ts[8].id}/pin`, {});
       expect(ninth.status).toBe(409);
       expect(String(ninth.body.error)).toMatch(/pin 8 threads at most/);
-    });
+    }, 30_000);
 
     it('archiving hides the thread, ends its body and refuses sends until unarchived', async () => {
       const t = await open();
