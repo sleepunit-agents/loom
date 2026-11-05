@@ -248,6 +248,19 @@ text once a sync through the tasks piece's own CLI, read-only (`CHANGES_TASKS ex
 search doesn't reach comments), and keeps only the citations in the snapshot; without it, only the change's own
 citations are listed.
 
+**Made in a conversation** ([comms.md](comms.md), "Made here"). A change was made in a conversation only when a task
+vouches for it and that task's `source` is `conversation:<that id>`. A task vouches for a change when its
+description cites it, or a comment on it does whose author is one of `CHANGES_AGENTS`' agents or the owner
+(`CHANGES_TASK_OWNER`, the tasks piece's name for them). The change's own text never counts, whoever wrote it: a
+title, body or branch can be typed into by anyone with access, and edited after an agent opened it. The sync keeps,
+beside the citations, `trusted` (`{change id: [task id]}`, those vouching citations only) and `sources` (`{task id:
+cv id}` for the tasks the export says came from a conversation), and nothing else of them. Such a change's page carries a `from` block in its side column,
+and the piece answers a Comms thread's feed (`sections.thread`, `loom-changes thread-feed --json --conversation <cv>
+[--ref github:owner/repo#n]…`): each change ref it was given, from the snapshot, with its Words (CI red, Conflicts,
+Changes asked for and Can't be merged `bad`; Waiting on you `warn`; Merged `ok`), a ref it doesn't hold as "Not
+tracked" opening on GitHub, and every change made in the conversation, `made: true`, those first. Its project feed
+accepts `--conversation <cv>` and adds nothing for it: only a project's own repos count.
+
 The tasks piece shows a task's changes on its own page when Changes is installed, by asking it `loom-changes
 cited-by <task id> --json` (`[{id, title, state words, page}]`, from the snapshot). That is the tasks piece's change,
 in its own repo.

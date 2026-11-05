@@ -73,6 +73,7 @@ import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } f
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
+import { resolveFrom } from '../comms-work.js';
 
 const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
@@ -1214,6 +1215,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   // The agent the owner is looking at (an agent's own pages, else the chosen scope); pieces get it as LOOM_SCOPE.
   const hhScope = opts.household?.();
+  // A piece's page may say where a task or change came from: drawn here, for this member only (comms.md, "From").
+  const drawFrom = <T,>(p: T): T => (typeof p === 'string' || !p || typeof p !== 'object' || !('sections' in p) ? p
+    : resolveFrom(p as unknown as Page, hhScope?.home, who?.member) as unknown as T);
   const scope = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/|$)/.exec(pathname)?.[1] ?? scopeOf(req, hhScope);
   const scopedEnv: NodeJS.ProcessEnv = hhScope && scope !== 'household' && hhScope.agents.includes(scope) ? { ...opts.env, LOOM_SCOPE: scope } : opts.env;
   const csrf = who?.kind === 'session' ? csrfFor(who.cookie, storeFor(opts).key) : '';
@@ -1699,7 +1703,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const info = shown && !shown.actions?.length && shown.kind !== 'answered' && shown.page ? pieces.find((p) => pieceSource(p.piece).id === shown.source.id && hasPages(p)) : undefined;
       const sp = info ? splitPage(shown!.page!) : null;
       if (info && sp && !sp.core && sp.path !== '') {
-        const pg = await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who));
+        const pg = drawFrom(await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who)));
         if (typeof pg !== 'string') inline = { key: shown!.key, sections: pg.sections };
       }
       const ch = chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash);
@@ -1780,7 +1784,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const path = pp[2] ?? '';
         const asrc = agentPieceSource(agent, pp[1]);
         if (!info || !validPath(path)) return send200(notFound, `a/${agent}`, ctxOf('', asrc), head(`p/${pp[1]}`));
-        const pg = await piecePage(info, path, query, scopedEnv, callerOf(who));
+        const pg = drawFrom(await piecePage(info, path, query, scopedEnv, callerOf(who)));
         if (typeof pg === 'string') {
           return send200({ title: agentTabOf(info)!.label, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${pp[1]} couldn't show this page (${pg}).` }] }] },
             `a/${agent}`, ctxOf(path, asrc), head(`p/${pp[1]}`));
@@ -1822,7 +1826,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
     if (!info || path === null || !validPath(path)) { const ctx = { source: pieceSource(piece), path: '', query: {}, csrf }; return view('page', { page: notFound, ctx, chrome: ch }, 404); }
-    const page = await piecePage(info, path, query, scopedEnv, callerOf(who));
+    const page = drawFrom(await piecePage(info, path, query, scopedEnv, callerOf(who)));
     const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
       { const err = { title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout' as const, tone: 'bad' as const, text: `${piece} couldn't show this page (${page}).` }] }] };

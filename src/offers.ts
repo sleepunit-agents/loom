@@ -27,8 +27,15 @@ export interface ProjectSection {
   unfiled: boolean;
 }
 
+/** A Comms thread's work (docs/specs/comms.md, "The thread feed"): run with `--conversation <cv> [--ref <ref>]…`. */
+export interface ThreadSection {
+  label: string;
+  argv: string[];
+}
+
 export interface SectionsOffer {
-  project: ProjectSection;
+  project?: ProjectSection;
+  thread?: ThreadSection;
 }
 
 export interface VenueOffer {
@@ -126,9 +133,20 @@ function argvError(v: unknown, bins: readonly string[], where: string): string |
 
 function parseSections(raw: unknown, bins: readonly string[]): SectionsOffer | undefined | string {
   if (!isObject(raw)) return 'loom.sections is not an object';
-  const bad = unknownKey(raw, ['project']);
-  if (bad !== undefined) return `loom.sections has one key, project: not ${JSON.stringify(bad)}`;
-  if (raw.project === undefined) return undefined;
+  const bad = unknownKey(raw, ['project', 'thread']);
+  if (bad !== undefined) return `loom.sections has two keys, project and thread: not ${JSON.stringify(bad)}`;
+  let thread: ThreadSection | undefined;
+  if (raw.thread !== undefined) {
+    const t = raw.thread;
+    if (!isObject(t)) return 'loom.sections.thread is not an object';
+    const badT = unknownKey(t, ['label', 'argv']);
+    if (badT !== undefined) return `loom.sections.thread has no key ${JSON.stringify(badT)} (it has label, argv)`;
+    if (!str(t.label, 40)) return 'loom.sections.thread.label is required: a string of at most 40 characters';
+    const ta = argvError(t.argv, bins, 'loom.sections.thread.argv');
+    if (ta) return ta;
+    thread = { label: t.label, argv: [...(t.argv as string[])] };
+  }
+  if (raw.project === undefined) return thread ? { thread } : undefined;
   const p = raw.project;
   if (!isObject(p)) return 'loom.sections.project is not an object';
   const badP = unknownKey(p, ['label', 'argv', 'unfiled']);
@@ -137,7 +155,7 @@ function parseSections(raw: unknown, bins: readonly string[]): SectionsOffer | u
   const a = argvError(p.argv, bins, 'loom.sections.project.argv');
   if (a) return a;
   if (p.unfiled !== undefined && typeof p.unfiled !== 'boolean') return 'loom.sections.project.unfiled is true or false';
-  return { project: { label: p.label, argv: [...(p.argv as string[])], unfiled: p.unfiled === true } };
+  return { project: { label: p.label, argv: [...(p.argv as string[])], unfiled: p.unfiled === true }, ...(thread ? { thread } : {}) };
 }
 
 /** Core's venue a piece may say it delivers on, with an empty entry (agent-runtime.md, "Delivery"). */

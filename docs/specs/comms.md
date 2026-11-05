@@ -103,6 +103,7 @@ in and out.
 | `POST /comms/<thread>/title` `{title}` | renames it: 1–60 characters, one line (`400` otherwise) |
 | `POST /comms/<thread>/project` `{project \| null}` | files or unfiles it |
 | `POST /comms/<thread>/pin`, `/unpin`, `/archive`, `/unarchive` | as named |
+| `GET /comms/<thread>/work` | the thread's work, live from the pieces ("Work in this thread") |
 | `POST /comms/<thread>/read` `{seq}` | sets `read_seq` (never backwards), and marks the member in front (below) |
 | `POST /comms/<thread>/stop` | asks the body to stop (below) |
 | `POST /comms/<thread>/delete` | deletes the thread's words and its row (below) |
@@ -609,6 +610,178 @@ Neon OS's own, not copied from any game.
   (`src/ui/push.ts`), to that member's subscriptions only, titled as "Push and privacy" says.
 - A tap opens the thread.
 
+## Work in this thread
+
+> "how hard… to link work related to a thread? … I just asked you in that thread to make visual changes… so that's
+> potentially tasks, potentially changes, etc. if that shit showed up under the list of people on the right, that
+> would be bonkers" — the owner, 2026-11-05, approving both layers below.
+
+A thread's right column lists the work the thread is about, with each item's live state. Two layers feed it:
+
+1. **What the thread mentions:** every task, change and note named in its messages, the member's and the agent's.
+2. **What the thread made:** tasks a body created or updated while working in the thread, and the changes linked to
+   them or citing the thread's conversation. These are marked **made here**.
+
+### The refs index (what it mentions)
+
+- **When it's written.** When core appends a `message` or a `reply`, it reads the text it's about to encrypt for
+  references. The patterns are the ones the app links (section 6, `web/src/plain.ts`), matched anywhere in the text,
+  code spans and URLs included, each kept once:
+  - a task: `t-` and 1–9 digits, between word boundaries (`\bt-\d{1,9}\b`: `t-12` and `(t-12)`, not `at-12`),
+    kept as `t-12`;
+  - a change: `owner/repo#N`, with owner and repo of letters, digits, `_`, `.` and `-`, not right after a letter,
+    digit, `.`, `/` or `-`, and N of 1–10 digits, kept as `github:owner/repo#N`. A bare `repo#N` is kept only under
+    household.json's `github`, as `github:<github>/repo#N`;
+  - a note: `note:` at the start of the text or after whitespace, then a path of letters, digits, `_`, `.`, `/` and
+    `-`, with any trailing `.` or `/` dropped and none with a `..` segment, kept as `note:<path>`
+    (`note:pond/plan.` keeps `note:pond/plan`).
+
+  A `cv-…` id and a URL itself are not work, and are not kept. Cards, asks and errors are never read.
+- **Where it's kept.** In household.db, `comms_refs (thread, ref, seq, at)`, with the thread rows: one row per thread
+  and ref, holding the `seq` and time of the newest message naming it. A thread keeps at most 200 refs. Past that,
+  the one named longest ago is dropped.
+- **No words.** A row holds a reference and nothing else: no message text, no title, no state. That's why it may
+  outlive the words. The 14-day sweep ("History") leaves `comms_refs` alone, so the panel still lists the work after
+  the words that named it are gone. Deleting a thread deletes its refs with it. Being in household.db, the refs are
+  in bundles, as thread rows are; the words still aren't.
+- **Older threads.** Threads from before the index get one backfill, at the first daemon start after the upgrade (with
+  the sweep that runs then). It reads every `message` and `reply` whose `text` isn't null yet, of every thread,
+  archived ones included, decrypting each once, and indexes it. Then it writes `refs_backfilled` (and when) into
+  household.db's `comms_meta`. A start that finds that row reads nothing. No view ever decrypts history to find refs.
+
+### Made here (provenance)
+
+- **A task's source.** A task can carry `source`, a string like `conversation:cv-0123456789ab` (taskstore-core's
+  `it-ts-source`). The tasks CLI sets it:
+  - from `--source <kind>:<value>` on `create` and `update`;
+  - otherwise from `LOOM_BODY_CONVERSATION` (the runtime sets it in a venue body's environment), as
+    `conversation:<cv>`: on `create`, and on an `update` of a task that has no source yet. So a task keeps the first
+    thread that made or changed it, unless `--source` names another. **Accepted as a trade-off:** the CLI reads the
+    task before its update, outside the write, so two bodies in different threads updating one source-less task at
+    the same moment can leave it the second thread's.
+
+  The `run` API carries no environment (extensions.md, "`run`"), so a body in a house passes `--source` itself. Nothing
+  in loom can make it: the agent's own guidance asks it to (Art's CLAUDE.md, outside loom). **Accepted as a
+  trade-off:** a house body that doesn't pass it makes tasks that show only when the thread names them, never as made
+  here.
+- **A change's source.** A change is made in a conversation only through a task that vouches for it: the task's
+  description cites the change, or a comment on the task by one of the household's agents or the owner does, and
+  that task's `source` is the conversation. A change's own title, body and branch never count, whoever opened it:
+  anyone with access can type into them, and edit them after an agent opened it. So a `cv-` id or a task id written
+  on a forge links (changes.md, "Linked tasks") but never makes a change "made here". A change the thread names still
+  shows, as mentioned, which claims nothing. The tasks piece's export carries each task's `source` (it-ts-source), and the Changes
+  piece already reads that export at each sync: it now keeps, beside the citations, the snapshot's `sources`, a map
+  of task id to conversation id for the tasks whose source is a conversation, and nothing else of them. So a change
+  made from a new task shows within one sync.
+
+### The thread feed (the seam)
+
+A managed piece offers a thread section the way it offers a project one: `sections.thread` in its `loom` block,
+beside `sections.project`.
+
+```jsonc
+"loom": { "sections": { "project": { … },
+                        "thread":  { "label": "Tasks", "argv": ["loom-tasks", "thread-feed", "--json"] } } }
+```
+
+- **The schema.** `thread` has `label` (required, ≤ 40 characters) and `argv` (required, the same rules as
+  `project.argv`: 1–16 strings of at most 200, the first one of the piece's own bins), and no other key. Either of
+  `project` and `thread` may be declared alone.
+- **What declaring it promises:** the piece's `sections.project` feed, if it has one, also accepts `--conversation
+  <cv>` (repeated), for "Project hubs" below.
+- **What a piece may keep:** nothing. It answers from the refs and the conversation id it's given, and writes neither
+  to its store, a log or a file. The refs are the member's pointers, and stay in household.db only.
+- **Who's asked.** For a member whose `agents` is `"*"`, every piece declaring `sections.thread`. For a member who owns
+  only some agents, only those that also declare `owners: 2` (extensions.md, "The manifest"): the gate every other
+  surface applies, so a piece that member can't see answers them nothing here either.
+- **The call.** Core runs `argv`, then `--conversation <cv>`, then `--ref <ref>` for each of the thread's refs, newest
+  first. On stdin it sends `{caller}`, the same caller a page load sends the piece (extensions.md, "Pages"), so the
+  piece scopes what it answers exactly as its own pages do. It goes through the offers runner: 3 s, the process group
+  killed afterwards, at most 6 pieces at once.
+- **The answer.** One JSON object, ≤ 64 KB:
+
+  ```jsonc
+  { "items": [
+      { "title": "Fix the comm screen's frame",   // required, ≤ 200
+        "ref": "t-1881",                          // required, ≤ 200: the ref, in the index's form
+        "status": "Blocked",                      // required, ≤ 24: the state, in words
+        "tone": "bad",                            // optional: bad (red CI, a blocked task), warn (waits on you), ok (done)
+        "when": "2026-11-05T21:10:00Z",           // optional, ISO-8601 UTC: when it last moved
+        "page": "task/t-1881",                    // optional, as a feed item's page; or "href", https only
+        "made": true } ] }                        // optional: made in this thread
+  ```
+
+  At most 50 items, every key known, at most one of `page` and `href`, each field within its cap and form. Any one of
+  these broken fails the whole answer, as that piece's failure alone.
+- **What each piece answers.**
+  - **Tasks:** each `t-N` ref the store holds, and each task whose `source` is `conversation:<cv>` (`made: true`).
+    `status` is Open, In progress, Blocked (it has an open blocker), Waiting on you (assigned to the owner: the tasks
+    page's "Your call"; to any other member it reads "Waiting on <Owner>", from the caller), Done or Cancelled.
+    Blocked is `bad`, Waiting `warn`, Done `ok`. A task whose id is over 200 characters is left out. `when` is the task's `closedAt`, else `startedAt`, else
+    `createdAt`. `page` is the task's page.
+  - **Changes:** each `github:…#N` ref, from the snapshot, with its Words (changes.md, "Who a change waits on"). CI
+    red, Conflicts and Changes asked for are `bad`, Waiting on you `warn`, Merged `ok`. A ref the snapshot doesn't
+    hold answers `status: "Not tracked"` and an `href` to GitHub. Every change made in the conversation is also
+    listed, `made: true`. `page` is the change's page.
+  - **Core** lists each `note:<path>` ref itself: `title` the path, `status` "Note", no link (loom has no note page
+    yet).
+
+### The panel
+
+- **The route.** `GET /comms/<thread>/work`, a thread route under rule 3, answers `{items, failed}`.
+  - `items` are every piece's items, the pieces in name order, then core's notes, merged. Two items with the same
+    `ref` are one: the first answer marked `made` survives whole, else the first answer. Fields are never mixed from
+    two. At most 100 are shown.
+  - Each item's `page` becomes the URL it opens (`/p/<piece>/<page>`, or loom's own for `loom:`), checked as a feed
+    item's page is.
+  - The order: `bad` first, then `warn`, then the rest. Within each, the newest `when` first, and items without one
+    last.
+  - `failed` lists the labels of the pieces that didn't answer.
+- **Desktop.** With the comm screen in its right column (a thread pane 760 px or wider), a panel, "Work in this
+  thread", in that column under the comm screen and YOU, in the same frame style. A narrower pane, with the comm
+  screen at its top, gets the phone's strip below it instead. Each row has its status as a badge in its tone (with words, never colour alone), the title, the ref in mono,
+  and "made here" when it was. A row opens the item's page.
+  - Empty, it says "Nothing yet. Tasks, changes and notes this thread names or makes show up here."
+  - A piece that failed adds one muted line: "Tasks didn't answer."
+- **Phone.** A strip under the comm strip, "Work (N)", N the number of items, folded by default and opened with a tap.
+  When any item is `bad`, it says so in words too: "Work (5 · 1 needs a look)". Open, it shows the same rows.
+- **When it's read.** When the thread opens, 5 s after each new reply, and every 60 s while the thread is on screen.
+  Never for the list, and never for a thread that isn't open.
+- **Its code** is part of the Comms chunk. Nothing is added to the first page.
+
+### From: the other direction
+
+A piece's page can say where a task or change came from with a new block, `{"type": "from", "conversation":
+"cv-…"}`. Core replaces it before the page is drawn, so no piece ever sees a thread's title or member:
+
+| The conversation | The viewer | Drawn as |
+|---|---|---|
+| a Comms thread | its member, who owns its agent | a link, "From: <title>" (or "From: New thread with <Agent>"), to the thread |
+| a Comms thread | another owner of its agent | text, "From a Comms thread": no title, no link |
+| a Comms thread | a member who doesn't own its agent | text, "From a conversation" |
+| anything else, or unknown | anyone | text, "From a conversation" |
+
+A member who doesn't own the agent can't see its conversation records (rule 2), so they aren't told a thread exists.
+
+- The thread's link is `loom:comms/<thread>`, which opens `/comms/<thread>`. It joins the `loom:` pages a link may
+  name. Comms' own routes still
+  refuse anyone but the thread's member (rule 3), so the link is only a look.
+- **The tasks piece** shows the block in a task's side column when its `source` is `conversation:<cv>`.
+- **The Changes piece** shows it on a change's page for the conversation the change was made in (above).
+
+### Project hubs
+
+A thread filed under a project already feeds its hub (section "Project" above). Its work does too:
+
+- the hub passes `--conversation <cv>` for each of the project's filed threads, archived ones included, newest `last`
+  first and at most 200, to the `sections.project`
+  feed of each piece that also declares `sections.thread`. Pieces that don't declare it get the same arguments as
+  before, since an older feed refuses a flag it doesn't know;
+- the tasks piece adds tasks made in those conversations to the project's section. The Changes piece accepts the flag
+  and adds nothing: a change counts as made in a thread only from a repo the project already names, and its section
+  already lists those.
+
+
 ## Edits this forces elsewhere
 
 - **agent-runtime.md**, section 5, "Outbound": the three adapter calls as built, and a venue core adapts (`adapter:
@@ -640,6 +813,14 @@ Neon OS's own, not copied from any game.
 - **src/bundle.ts:** `comms.db`, `comms.key` and `comms.salt` are left out, and an export refuses a staging that holds
   them, as for the audit log.
 - **CONTEXT.md:** Comms, Thread, Message (in Comms), Activity.
+- **Work in this thread** (in its PRs):
+  - extensions.md: `sections.thread` beside `sections.project`, the `from` block, and `loom:comms/<thread>` among the
+    `loom:` pages;
+  - projects.md: the hub's `--conversation` for pieces that declare `sections.thread`;
+  - changes.md: the thread feed, a change's conversation, and its `from` block;
+  - conversations.md, rule 4's exception: the refs index holds no words, so it may outlive them;
+  - taskstore-core: `it-ts-source`; the tasks piece's `thread-feed`, its `--source` flag and its `from` block;
+  - Art's CLAUDE.md (outside loom): pass `--source conversation:$LOOM_BODY_CONVERSATION` when working in a thread.
 
 ## Acceptance criteria
 
@@ -797,6 +978,66 @@ Neon OS's own, not copied from any game.
     none.
 19. The JS and CSS budgets still pass. Comms loads as its own chunk.
 
+**Work in this thread** (its own section; its numbers continue these)
+
+**loom (vitest)**
+
+20. **The index.**
+    - A member's message "see t-12, acme/app#3 and note:pond/plan" and a reply "made t-40" leave `comms_refs` holding
+      exactly `t-12`, `github:acme/app#3`, `note:pond/plan` and `t-40` for the thread. A bare `app#3` is kept as
+      `github:<github>/app#3` only with household.json's `github` set. A `cv-…` id and an `https://` URL aren't kept.
+    - A planted word from the message that is part of no ref is in no `comms_refs` column, and household.db's file
+      doesn't contain it.
+    - `at-12`, `x/acme/app#3` and `notes:x` aren't kept; `note:pond/plan.` is kept as `note:pond/plan`.
+    - After the sweep has nulled the words, the refs are still there. After a delete, none are.
+    - The 201st ref drops the one named longest ago.
+    - A daemon start with a thread whose messages predate the index indexes them and writes `refs_backfilled` to
+      `comms_meta`. A message added straight to `comms.db` after that, with no index row, is still unindexed after a
+      second start.
+21. **The feed.** With two fake pieces offering `sections.thread`:
+    - `GET /comms/<thread>/work` runs each with `--conversation <cv>` and one `--ref` per ref, newest first, and
+      `{caller}` on stdin;
+    - it answers their items merged, one per `ref` (`made` kept), `bad` before `warn` before the rest, newest first
+      within each, with core's note items;
+    - a piece answering an unknown key, 51 items, a 25-character `status` or a non-zero exit is in `failed` by its
+      label, and the other's items are still there;
+    - when both answer the same `ref`, one marked `made`, the panel has that one's whole item;
+    - for a member whose `agents` is `["art"]`, a piece without `owners: 2` isn't run, and one with it is;
+    - the route is a `403` for the `pond-bot` member and for a second owner of `art`, as every thread route is;
+    - a `sections` block with a `thread` lacking `label`, with an unknown key, or whose `argv[0]` isn't one of the
+      piece's bins, is refused at install; one with only `thread` is accepted.
+22. **From.** A piece page carrying `{type: "from", conversation}` for a thread's conversation shows the thread's
+    member "From: <title>" linking to `/comms/<thread>`. A second owner of the agent gets "From a Comms thread", and
+    the `pond-bot` member "From a conversation"; for both, the page's HTML and JSON hold neither the title nor the
+    thread id. Another venue's conversation shows "From a conversation".
+23. **The hub.** A thread filed under project `p` makes the hub pass `--conversation <cv>` to a piece declaring
+    `sections.thread`, and not to one that doesn't.
+
+**The tasks piece (taskstore, vitest)**
+
+24. `create --source conversation:cv-…` holds it, and `show` returns it. With `LOOM_BODY_CONVERSATION` set, a create
+    without `--source` holds `conversation:<it>`, an update of a task without a source sets it, and an update of a
+    task with one leaves it. `thread-feed --conversation <cv> --ref t-1` answers t-1 with its title and status, and
+    each task made in `<cv>` with `made: true`; a task blocked by an open one is `Blocked`, `bad`. A task page shows
+    the `from` block for a task with a `conversation:` source, and none for one without. Its project feed accepts `--conversation`
+    and lists a task made in that conversation. `thread-feed` leaves the store file unchanged.
+
+**The Changes piece (python unittest)**
+
+25. `thread-feed --conversation <cv> --ref github:acme/app#3` answers that change with its Words, CI red as `bad`;
+    an unknown ref as "Not tracked" with a GitHub `href`; and a change cited by the description of a task whose source
+    is `conversation:<cv>`, or by an agent's comment on it, with `made: true`. A change whose title, body or branch
+    carries `<cv>` isn't made, an agent's or anyone else's; nor is one only a non-agent's comment cites; nor one whose
+    own text cites a made task that never cites it back. A change page for such a change has
+    the `from` block.
+
+**The app (Playwright)**
+
+26. At 1280 px the panel sits in the right column under YOU, and lists a thread's fake items in the route's order with
+    their status words. At 390 px, "Work (N)" is folded with N the item count and "1 needs a look" for one `bad`
+    item, opens on a tap, and nothing on the page is wider than the viewport. The first-page JS and CSS budgets still
+    pass.
+
 ## Order
 
 Each step ships on its own.
@@ -808,6 +1049,8 @@ Each step ships on its own.
 3. **The app:** phone, then desktop, with the comm screen (17–19).
 4. **Asks inline,** with the approvals piece's `--conversation` (12).
 5. **Stretch, later:** several agents in one thread.
+6. **Work in this thread:** the pieces first (taskstore's `source` and `thread-feed`, Changes' `thread-feed`), then
+   core's index, route, `from` block and the panel (20–26).
 
 ## As built (the app, t-1876)
 
