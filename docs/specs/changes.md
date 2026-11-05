@@ -206,8 +206,9 @@ build", "CI running"), review ("approved", "needs review", "changes asked for"),
 
 ### Actions
 
-Each one requires the owner (loom's `caller` with `kind: "owner"` and `agents: "*"`, or no caller outside a household);
-any other caller gets `ok: false`. **The member** below is the caller's `who`, and `--by` is left out when there is no
+Each one requires the owner: loom's `caller` with `kind: "owner"` and unrestricted `agents` (absent or `"*"`, loom's own
+rule for an owner's grant). It fails closed: with no caller (a loom without a household, a run by hand) the buttons
+are absent and every action gets `ok: false`, as does any other caller. The piece offers no API. **The member** below is the caller's `who`, and `--by` is left out when there is no
 caller. Yes, Not yet and Always carry `fields.id` and `fields.head`: each reads the change again from the snapshot and
 refuses when its head is no longer that one, saying a new commit arrived.
 
