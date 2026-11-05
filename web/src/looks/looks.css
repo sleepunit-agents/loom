@@ -46,7 +46,9 @@ color-scheme:dark;
 /* the ground: brighter than 000h's dark, since neon is light given off against the dark */
 --loom-track:color-mix(in srgb,#fff 10%,transparent);--loom-ground-dim:.9;--loom-wash-dim:.5;
 /* elevation */
---shadow-float:0 12px 32px -12px rgba(0,0,0,.7);--wash-1:24%;--wash-2:20%;--wash-3:8%;
+--shadow-float:0 12px 32px -12px rgba(0,0,0,.7);
+/* the ground's three pools */
+--wash-1:24%;--wash-2:20%;--wash-3:8%;
 /* loom's six agent marks, lit (face.tsx rim, look.ts markColor) */
 --mark-lilac:#B49BFF;--mark-plum:#FF4FB0;--mark-pine:#2EF2C4;--mark-mustard:#FFC23D;--mark-denim:#4D9BFF;--mark-coral:#FF7A59;
 }
@@ -76,6 +78,11 @@ color-scheme:dark;
 /* ---- shape: radii step down (cards 20 to 12, tiles to 12px); pills and circles stay round ---- */
 --radius:.45rem;--r-xs:3px;--r-sm:6px;--r-md:10px;--r-card-sm:10px;--r-card:12px;--r-panel:14px;--r-sheet:16px;--r-frame:20px;
 --loom-r-launch:12px;--loom-r-tile:12px;--loom-r-state:12px;--loom-r-side:14px;--loom-r-soft:8px;--loom-r-icon:8px;
+/* ---- what every look has unless it says otherwise: no glow (a focused control a plain 1px ring in its colour, a sheet
+   a quiet shadow), the ground's three pools faint. Neon Noir's own come after and win. ---- */
+--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 1px;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;
+--glow-sheet:0 -8px 24px -14px;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0;
+--wash-1:16%;--wash-2:14%;--wash-3:8%;
 }
 :root[data-look="neon"][data-mode]{
 --font-display:"Oxanium",ui-sans-serif,system-ui,sans-serif;--ls-display:0em;--fw-display:600;
@@ -122,7 +129,7 @@ color-scheme:dark;
 
 /* More contrast asked for: every glow off (each is a --glow-* above). */
 @media (prefers-contrast:more){
-  :root[data-look][data-mode]{--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none}
+  :root[data-look][data-mode]{--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;--glow-faces:none}
 }
 
 /* Higher contrast (Accessibility: data-contrast="more", or the phone's own while followed): Neon's texts brighter, its
@@ -286,12 +293,10 @@ html.loom-ios-app:root[data-look] .loom-sys{display:none}
 
 /* ======== Low Light ========
    Neon's structure, calmer: 000h's soft dark colours (tokens.css :root[data-mode="dark"], which this sits on), no glow
-   on keys, buttons, sheets or the ground, Figtree for titles. For anyone Neon is too much for; 000h's dark became it. */
+   on keys, buttons or the ground (every look's default, above), Figtree for titles. For anyone Neon is too much for; 000h's dark became it. */
 :root[data-look="lowlight"][data-mode]{
 --font-display:"Figtree",ui-sans-serif,system-ui,sans-serif;--ls-display:-.01em;--fw-display:600;
---glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;
---glow-sheet:0 0 0 0;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0;
---wash-1:16%;--wash-2:14%;--wash-3:8%;--loom-ground-dim:.7;--loom-wash-dim:.45;
+--loom-ground-dim:.7;--loom-wash-dim:.45;
 /* the count: pink with dark ink (000h's white on red was 3.91:1) */
 --loom-count:#F0A4CC;--loom-count-ink:#14171B;--loom-unread:#95BAE8;--loom-live:#95BAE8;--loom-live-pulse:#95BAE8;
 /* loom's six agent marks, soft: each 3:1 or better on paper */
@@ -338,17 +343,15 @@ color-scheme:light;
 --loom-ok:#1E9E63;--loom-warn:#C98500;--loom-bad:#D9364A;--loom-muted:#75717C;--loom-live:#00838F;--loom-live-pulse:#00838F;
 --loom-ok-ink:#17663F;--loom-warn-ink:#7A4F00;--loom-bad-ink:#A8182A;--loom-muted-wash:#75717C;
 --loom-ring-bad:#D9364A;--loom-ring-warn:#C98500;--loom-ring-warn-soft:#E8B64A;--loom-count:#C2185B;--loom-count-ink:#FFFFFF;--loom-unread:#00727C;
---loom-track:color-mix(in srgb,#000 10%,transparent);--loom-ground-dim:1;--loom-wash-dim:1;--wash-1:12%;--wash-2:10%;--wash-3:10%;
+--loom-track:color-mix(in oklab,#000 10%,transparent);--loom-ground-dim:1;--loom-wash-dim:1;--wash-1:12%;--wash-2:10%;--wash-3:10%;
 /* a window's title strip (desk.css): a light one, where Neon's is its structure's near-black */
 --loom-bar:var(--v-beige);
 /* elevation */
 --shadow-float:0 12px 32px -12px rgba(31,29,39,.22);
 /* loom's six agent marks, deepened: each 3:1 or better on paper; a face's lit eyes go toward ink, not white (face.tsx) */
 --mark-lilac:#6F55D6;--mark-plum:#B0246E;--mark-pine:#0E7C66;--mark-mustard:#8A6400;--mark-denim:#2F5FB3;--mark-coral:#C2502E;--face-lit:#1F1D27;
-/* type and glow: Figtree for titles, and nothing glows (a face either) */
---font-display:"Figtree",ui-sans-serif,system-ui,sans-serif;--ls-display:-.01em;--fw-display:600;
---glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;
---glow-sheet:0 0 0 0;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0;--face-glow:none;
+/* type and glow: Figtree for titles, and nothing glows, a face either (the rest: every look's, above) */
+--font-display:"Figtree",ui-sans-serif,system-ui,sans-serif;--ls-display:-.01em;--fw-display:600;--glow-faces:none;
 }
 /* Higher contrast: the texts darker, hairlines at 3:1 and control edges at 4.5:1 */
 :root[data-look="daylight"][data-mode][data-contrast="more"]{

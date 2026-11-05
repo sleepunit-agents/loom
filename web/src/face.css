@@ -87,7 +87,7 @@
 
 /* The rim (face.tsx): a soft glow in the mark's colour around the lit edge. The same in every state: glow never says
    anything (the expression says the state). None when more contrast is asked for, or where the look says none
-   (looks.css --face-glow: Daylight). */
-.loom-face--rim { --glow-face: drop-shadow(0 0 5px color-mix(in srgb, var(--mk) 55%, transparent)); filter: var(--face-glow, var(--glow-face)); }
+   (looks.css --glow-faces: Daylight, and every look under more contrast). */
+.loom-face--rim { --glow-face: drop-shadow(0 0 5px color-mix(in srgb, var(--mk) 55%, transparent)); filter: var(--glow-faces, var(--glow-face)); }
 .loom-face--rim[data-tier="dock"] { --glow-face: drop-shadow(0 0 3px color-mix(in srgb, var(--mk) 55%, transparent)); }
 @media (prefers-contrast: more) { .loom-face--rim, .loom-face--rim[data-tier="dock"] { --glow-face: none; } }

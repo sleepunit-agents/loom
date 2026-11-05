@@ -7,7 +7,7 @@
  * data-contrast="more">): text at 7:1, the quieter texts and a control's edge at 4.5:1, a hairline at 3:1, and nothing
  * weaker than without it.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { MARKS as HOUSEHOLD_MARKS } from '../household.js';
 
@@ -91,12 +91,36 @@ describe('each look\'s contrast', () => {
     // Anywhere in the app's stylesheets, a rule for one look is a root block of tokens: colours, corners, glow, type,
     // and the few surfaces they paint. Never a selector past :root, never a property that lays anything out.
     const TOKEN = /^--(v-|loom-|mark-|status-|surface-|sel-|switch-|sidebar|structure-|on-structure$|card$|popover$|destructive$|accent-foreground$|alert-ink$|nav-group-ink$|unavail-ink$|btn-disabled-ink$|muted-foreground-|glide-|ink-fixed$|cream-fixed$|face-|wash-|glow-|font-|fw-display$|ls-display$|default-font-family$|radius$|r-|shadow-float$)/;
-    const sheets = ['looks/looks.css', 'index.css', 'desk.css', 'face.css', 'chart.css'].map((f) => [f, read(f)] as const);
-    const rules = sheets.flatMap(([f, css]) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /data-look="/.test(m[1])).map((m) => ({ f, sel: m[1].trim(), body: m[2] })));
-    expect(new Set(rules.map((r) => /data-look="(\w+)"/.exec(r.sel)![1]))).toEqual(new Set(['neon', 'lowlight', 'daylight']));
+    // Every stylesheet in the app, the 000h library's included.
+    const src = new URL('../../web/src/', import.meta.url).pathname;
+    const walk = (d: string): string[] => readdirSync(d).flatMap((f) => { const p = `${d}/${f}`; return statSync(p).isDirectory() ? walk(p) : p.endsWith('.css') ? [p.slice(src.length)] : []; });
+    const sheets = walk(src.replace(/\/$/, '')).map((f) => [f, read(f.replace(/^\//, ''))] as const);
+    expect(sheets.length).toBeGreaterThan(40);
+    const one = /data-look\s*=\s*["']?(\w+)/;
+    const rules = sheets.flatMap(([f, css]) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => one.test(m[1])).map((m) => ({ f, sel: m[1].trim(), body: m[2] })));
+    expect([...new Set(rules.map((r) => one.exec(r.sel)![1]))]).toEqual(expect.arrayContaining(['neon', 'lowlight', 'daylight']));
     expect(rules.filter((r) => !/^:root\[data-look="\w+"\]\[data-mode\](\[data-contrast="more"\])?$/.test(r.sel)).map((r) => `${r.f}: ${r.sel}`)).toEqual([]);
     const props = rules.flatMap((r) => r.body.split(';').map((d) => d.trim().split(':')[0].trim()).filter(Boolean).map((p) => ({ p, at: `${r.f}: ${r.sel}` })));
     expect(props.filter(({ p }) => p !== 'color-scheme' && !TOKEN.test(p)).map(({ p, at }) => `${at} { ${p} }`)).toEqual([]);
+  });
+  // The structure reads tokens with no fallback (a key's glow, the ground's pools): a set that left one out would drop the
+  // whole declaration. Each look has every one, from the base under it, every look's defaults, or its own.
+  it('every token the structure reads is set in every look', () => {
+    const shared = block(looks, ':root[data-look][data-mode]');
+    const structure = looks.replace(/:root\[data-look="\w+"\][^{]*\{[^}]*\}/g, '');
+    const read = [...new Set([...structure.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]))];
+    expect(read.length).toBeGreaterThan(20);
+    for (const [name, t] of Object.entries(LOOKS)) {
+      const has = { ...t, ...shared, ...(name === 'Neon Noir' ? block(looks, ':root[data-look="neon"][data-mode]') : {}) };
+      // Set on the element itself (the keys' --t, a face's --mk, a dock's sizes), not by a look: not a look's to set.
+      const local = /^--(t|acc|mk|tick-gap|tick-s|dock-|loom-accent|loom-tint-|cut|desk-)/;
+      expect(read.filter((v) => !(v in has) && !local.test(v)), name).toEqual([]);
+    }
+  });
+  // An agent's letter, while its face loads (blocks.tsx AgentAvatar): the look's ink on the look's colour for its mark.
+  it('every look: an agent\'s letter on its mark, 4.5:1', () => {
+    const short = Object.entries(LOOKS).flatMap(([name, t]) => MARKS.map((m) => ({ pair: `${name}: --v-on-accent on --mark-${m}`, ratio: +ratio(hex(t, '--v-on-accent'), hex(t, `--mark-${m}`)).toFixed(2) }))).filter((x) => x.ratio < 4.5);
+    expect(short).toEqual([]);
   });
   for (const [name, t] of Object.entries(LOOKS)) {
     it(`${name}: text 4.5:1, control edges 3:1, ink on the tints and the count 4.5:1, its status inks`, () => {

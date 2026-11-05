@@ -185,7 +185,7 @@
 [data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
 /* loom's own colours that were literals (Neon Noir's sweep, 2026-11-04): a status dot (ok, warn, bad, muted), a working
    agent's dot and its pulse, a section's warning ring, a count's badge, an unread dot, and how far the dark dims the
-   ground. Tailwind's own values, which Low Light keeps; Neon Noir and Daylight re-point them (src/looks/looks.css). */
+   ground. Tailwind's own values, the base under every look; each re-points some or all of them (src/looks/looks.css). */
 :root { --loom-ok: oklch(69.6% .17 162.48); --loom-warn: oklch(76.9% .188 70.08); --loom-bad: oklch(63.7% .237 25.331); --loom-muted: oklch(70.8% 0 none);
   --loom-live: oklch(68.5% .169 237.323); --loom-live-pulse: #0ea5e9; --loom-ring-bad: oklch(70.4% .191 22.216); --loom-ring-warn: oklch(82.8% .189 84.429);
   --loom-ring-warn-soft: oklch(87.9% .169 91.605); --loom-count: #e5484d;
@@ -196,6 +196,7 @@
   --loom-r-launch: 22%; --loom-r-tile: 28%; --loom-r-state: 30%; --loom-r-side: 24px; --loom-r-soft: 14px; --loom-r-icon: 12px; }
 :root[data-mode="dark"] { --loom-ok-ink: oklch(84.5% .143 164.978); --loom-warn-ink: oklch(87.9% .169 91.605); --loom-bad-ink: oklch(80.8% .114 19.571); }
 /* The page's ground: three soft pools on the canvas (looks/looks.css); quieter in the dark. */
+.loom-wash { background: var(--v-canvas); }
 [data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: var(--loom-wash-dim); }
 body { background: var(--v-canvas); }
 /* No top bar: the page's head sits on the ground and scrolls with it. */

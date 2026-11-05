@@ -1,5 +1,6 @@
-/* A big screen (desk.tsx, App.tsx): the desktop. Loaded with the desk's own chunk, so a phone never fetches it.
-   Everything is under .loom-desk, which App.tsx sets at 1024 px and wider, in a household. Every look's (looks.css).
+/* A big screen (desk.tsx, App.tsx): the desktop, in every look (each its own colours: looks/looks.css). Loaded with the
+   desk's own chunk, so a phone never fetches it. Everything is under .loom-desk, which App.tsx sets at 1024 px and wider,
+   in a household.
 
    The screen is the bars on top, the desktop between them and the dock, and the dock: one screen's height, never a
    scrolling page. A widget column that has more than fits scrolls inside itself. */
@@ -99,7 +100,6 @@
 @media (prefers-contrast:more){
   :root[data-look] .loom-w{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
 }
-:root[data-look][data-contrast="more"] .loom-w{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
 
 /* ---- the dock, at the bottom centre: its rule spans the keys and a little more, not the screen ---- */
 :root[data-look] .loom-desk .loom-dock-bar::before{display:none}

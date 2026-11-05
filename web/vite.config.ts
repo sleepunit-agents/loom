@@ -7,7 +7,8 @@ import tailwindcss from '@tailwindcss/vite';
 import { accessMedia } from './access-media.ts';
 
 /**
- * The look before first paint (src/looks/boot.js): a tiny script in the page's head sets <html data-look>, its light or
+ * The looks: every look's tokens must be in the app's stylesheet (checked here), and the look before first paint
+ * (src/looks/boot.js): a tiny script in the page's head sets <html data-look>, its light or
  * dark, and Accessibility's two before the app's stylesheet paints anything. loom's CSP allows no inline script, so
  * it's a file of its own, named by its content like the rest of assets/ (the service worker keeps it for offline).
  */
@@ -23,6 +24,9 @@ function looks(): Plugin {
         .replace(/^\s*\/\/.*$/gm, '').replace(/\s*\/\*.*?\*\//g, '').replace(/\n\s*/g, '');
       const fileName = `assets/look-${createHash('sha256').update(src).digest('base64url').slice(0, 8)}.js`;
       this.emitFile({ type: 'asset', fileName, source: src });
+      // Every look's tokens are in the app's stylesheet (index.css imports looks/looks.css): without them nothing paints.
+      const css = Object.values(bundle).filter((f) => f.type === 'asset' && /^assets\/index-[^/]+\.css$/.test(f.fileName)).map((f) => String((f as { source: unknown }).source)).join('');
+      for (const look of ['neon', 'lowlight', 'daylight']) if (!new RegExp(`\\[data-look="?${look}"?\\]`).test(css)) throw new Error(`loom-looks: the app's stylesheet has no ${look} tokens (looks/looks.css)`);
       const html = bundle['index.html'];
       if (!html || html.type !== 'asset') throw new Error('loom-looks: no index.html in the build');
       // First in the head, before the app's stylesheet: it decides which look paints.

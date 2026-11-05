@@ -14,7 +14,7 @@ export const LOOKS: ReadonlyArray<{ look: Look; name: string; mode: 'light' | 'd
   { look: 'neon', name: 'Neon Noir', mode: 'dark' }, { look: 'lowlight', name: 'Low Light', mode: 'dark' }, { look: 'daylight', name: 'Daylight', mode: 'light' },
 ];
 /** A look's light or dark. */
-export const modeOf = (l: Look): 'light' | 'dark' => (l === 'daylight' ? 'light' : 'dark');
+export const modeOf = (l: Look): 'light' | 'dark' => LOOKS.find((x) => x.look === l)?.mode ?? 'dark';
 /**
  * A saved look as loom wears it now. 000h was a look of its own until 2026-11-05; whoever chose it gets the look nearest
  * it: Daylight if they'd chosen light, else Low Light. Anything else unknown is Neon Noir. (boot.js does the same, before
@@ -68,7 +68,7 @@ export async function savePrefs(csrf: string, p: Prefs): Promise<number | undefi
 /** Whether an agent with a pixel sheet wears it (Appearance's "Pixel faces", the person's; on unless turned off). */
 export const PixelContext = createContext(true);
 
-/** loom's six agent marks (src/household.ts MARKS), by their colour: a look can re-point each (neon.css --mark-*). */
+/** loom's six agent marks (src/household.ts MARKS), by their colour: a look can re-point each (looks/looks.css --mark-*). */
 const MARKS: Record<string, string> = { '#b8a6ff': 'lilac', '#7a2e4f': 'plum', '#2f6b5a': 'pine', '#e3b341': 'mustard', '#3d5a99': 'denim', '#f09a7a': 'coral' };
 /** Which of loom's six marks a colour is, if it is one. */
 export const markName = (bg: string): string | undefined => MARKS[bg.toLowerCase()];

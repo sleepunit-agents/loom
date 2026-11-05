@@ -49,7 +49,7 @@ const lum = (h: string) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.s
  * state (src/ui/face-rim.test.ts).
  */
 export default function Face({ bg, shape = 'pebble', eyes = 'dot', state = 'idle', size = 40, label, dark = false }: {
-  bg: string; fg: string; shape?: FaceShape; eyes?: FaceEyes; state?: FaceState; size?: number; label?: string; dark?: boolean;
+  bg: string; /** the household's ink on its mark: unused by the rim-lit finish, kept for callers that pass a whole mark */ fg?: string; shape?: FaceShape; eyes?: FaceEyes; state?: FaceState; size?: number; label?: string; dark?: boolean;
 }) {
   const id = useId().replace(/:/g, '');
   const { quiet } = useChoreography();

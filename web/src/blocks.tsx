@@ -39,7 +39,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
 import { pageHref, type Block, type Button as Btn, type Ctx, type ListItem } from './loom';
-import { markColor, PixelContext } from './look';
+import { markColor, markName, PixelContext } from './look';
 import type { Sprite } from './pixel-face';
 
 /** What a block needs from the page around it: where links go, how an action is sent, whether it's a phone. */
@@ -188,7 +188,7 @@ export function AgentAvatar({ a, size = 40, shape = 'rounded', className, style,
   const sprite = useContext(PixelContext) ? a.face?.sprite : undefined;
   const initial = (
     <Avatar shape={shape} className={className} aria-label={a.label}
-      style={{ '--c': markColor(a.bg), color: a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
+      style={{ '--c': markColor(a.bg), color: markName(a.bg) ? 'var(--v-on-accent)' : a.fg, width: size, height: size, fontSize: Math.round(size * 0.42), boxShadow: 'none', ...style } as React.CSSProperties}>
       <AvatarFallback>{a.label[0]}</AvatarFallback>
     </Avatar>
   );

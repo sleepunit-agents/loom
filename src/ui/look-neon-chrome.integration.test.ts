@@ -92,6 +92,10 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
       expect((await bar.innerText()).replace(/\s+/g, ' '), look).toMatch(/ALERT|ASK|PERMISSION|DECISION/);
       expect(await bar.innerText()).toMatch(/t-738/i);
       expect(await bar.locator('.loom-data').getAttribute('aria-hidden')).toBeNull();
+      // The sheet stands off the page in every look: a lit edge in Neon, a quiet shadow in the others, never none.
+      const shadow = await p.locator('[data-slot="drawer-content"],[data-slot="dialog-content"]').first().evaluate((e) => getComputedStyle(e).boxShadow);
+      expect(shadow, look).toMatch(/\d+px \d+px$|px -?\d+px -?\d+px/);
+      expect(shadow, look).not.toMatch(/^none$|0px 0px 0px 0px$/);
       await p.context().close();
     }
   }, 60_000);
@@ -108,7 +112,7 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
   }, 60_000);
 
   it('the power-on: a tap ends it long before it would end by itself, in every look', async () => {
-    const run = async (look: 'neon' | 'lowlight', tap: boolean) => {
+    const run = async (look: Look, tap: boolean) => {
       const p = await device('no-preference', look);
       await p.goto(`${base}/`);
       await p.waitForFunction(() => (window as unknown as { arrive: { set?: number } }).arrive.set !== undefined, null, { timeout: 15_000 });
@@ -122,10 +126,12 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
     const natural = await run('neon', false), tapped = await run('neon', true);
     expect(natural).toBeGreaterThan(900);
     expect(tapped).toBeLessThan(natural / 2);
-    const p1 = await device('reduce', 'lowlight'); await choose(p1, { look: 'lowlight' }); await p1.context().close();
-    const calm = await run('lowlight', false), calmTapped = await run('lowlight', true);
-    expect(calm).toBeGreaterThan(900);
-    expect(calmTapped).toBeLessThan(calm / 2);
+    for (const look of ['lowlight', 'daylight'] as const) {
+      const p1 = await device('reduce', look); await choose(p1, { look }); await p1.context().close();
+      const left = await run(look, false), tapped = await run(look, true);
+      expect(left, look).toBeGreaterThan(900);
+      expect(tapped, look).toBeLessThan(left / 2);
+    }
   }, 90_000);
 
   it('sound: chimes at the opening only once the person turns it on, and never when the opening is skipped', async () => {

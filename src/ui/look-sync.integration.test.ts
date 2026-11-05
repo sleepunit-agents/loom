@@ -128,6 +128,11 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
       expect(await choice.getByRole('radio').allInnerTexts()).toEqual(LOOKS.map((x) => x.name));
       expect(await page.getByRole('radio', { name: /^(Light|Dark|Auto)$/ }).count()).toBe(0);
       await choice.getByRole('radio', { name }).click();
+      // A control focused from the keyboard shows it in every look: an outline, and a ring or a glow where the edge was.
+      await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowLeft');
+      const ring = await page.evaluate(() => { const e = document.activeElement as HTMLElement; const cs = getComputedStyle(e); return { visible: e.matches(':focus-visible'), shadow: cs.boxShadow, outline: cs.outlineStyle }; });
+      expect(ring.visible, l).toBe(true);
+      expect(ring.shadow, l).not.toBe('none');
       await page.waitForFunction((x) => document.documentElement.dataset.look === x, l);
       for (const path of ['/', '/places', '/setup', '/inbox', '/appearance']) {
         await page.goto(`${base}${path}`);
