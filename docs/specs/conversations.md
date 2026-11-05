@@ -420,7 +420,8 @@ details (the conversation, its venue, the refs). A plain string reads as before:
 
 **Projects.** A project's hub gets a core section, `conversations`, after `people`. It replaces the shuttle feed in
 projects.md and follows projects.md's core-section rule: `since` marks `new`, it doesn't filter.
-- **What's in it:** the 20 conversations with the newest `last` whose `projects` include the project.
+- **What's in it:** the 20 conversations with the newest `last` whose `projects` include the project, or whose Comms
+  thread is filed under it ([comms.md](comms.md)), digest or not.
 - **Each item:** id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new`
   (`last` after `since`).
 
@@ -603,7 +604,7 @@ These slices settled these points the doc left open:
 - **Model names inside text.** Redaction covers the names core knows. A model describing itself can still leak its
   family to a grader: blind as far as we can make it.
 - **Comms history.** A Comms thread's words, kept for its member to scroll back through, would be a new copy of raw
-  text outside the audit log. [comms.md](comms.md), "History", puts the choice to the owner: keep none, keep 14 days,
+  text outside the audit log. [comms.md](comms.md), "History", puts the choice to the owner: keep them an hour, keep 14 days,
   or keep them for the thread's life.
 - **Harness transcripts.** A harness's own local transcript files (outside loom) still hold raw text. The runtime spec
   decides whether they're deleted once their turns are in the audit log.
