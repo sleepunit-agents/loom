@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { buzz, HapticLabel, useHaptics } from './haptic';
 import type { Shell } from './loom';
+import { motionQuery, reducedMotion } from './access';
 
 /** How fast the ticker moves, in CSS pixels a second (his "slow, ~20-30 px/s"). */
 const TICK_PX_S = 24;
@@ -35,10 +36,9 @@ function tickerParts(shell: Shell): { text: string; tone?: string }[] {
   ];
 }
 
-const reducedQ = '(prefers-reduced-motion: reduce)';
 function useReduced() {
-  const [r, set] = useState(() => matchMedia(reducedQ).matches);
-  useEffect(() => { const m = matchMedia(reducedQ); const f = () => set(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
+  const [r, set] = useState(reducedMotion);
+  useEffect(() => { const m = motionQuery(); const f = () => set(m.matches); m.addEventListener('change', f); return () => m.removeEventListener('change', f); }, []);
   return r;
 }
 

@@ -54,7 +54,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
       groups.push({ items: [row({ label: 'Home', href: s.home, current: s.tab === 'home' }), row({ label: 'Inbox', href: '/inbox', current: location.pathname === '/inbox', count: s.asks })] });
       if (places.length) groups.push({ label: 'Places', items: places.map((p) => row(p)) });
       groups.push({ label: 'Agents', items: s.agents.map((a) => row({ label: a.label, href: a.href, current: false, count: a.asks }, mark(a))) });
-      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || settings.some((p) => p.current) })] });
+      groups.push({ items: [row({ label: 'Setup', href: '/setup', current: s.tab === 'setup' || s.tab === 'appearance' || s.tab === 'accessibility' || settings.some((p) => p.current) })] });
     }
   }
   return (

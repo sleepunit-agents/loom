@@ -4,6 +4,7 @@
 // you open draws still, and so does everything already on it. Reduced motion: it simply appears.
 import { createContext, createElement, useContext, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { decodeHeading } from '@/lib/cojeev/reference-additions-math';
+import { reducedMotion } from './access';
 
 /** What this page showed last time (null: a page just opened, so nothing is new), and what it shows now. */
 export type Arrivals = { before: Set<string> | null; now: Set<string> };
@@ -20,7 +21,7 @@ export function Arrive({ as = 'div', k, className, children, ...rest }: { as?: s
   const ref = useRef<HTMLElement>(null);
   // Decided when it appears (or its content changes): a later redraw of the same thing doesn't cut it short.
   useLayoutEffect(() => {
-    if (fresh && ref.current && !matchMedia('(prefers-reduced-motion: reduce)').matches) return arrive(ref.current);
+    if (fresh && ref.current && !reducedMotion()) return arrive(ref.current);
   }, [k]);   // eslint-disable-line react-hooks/exhaustive-deps
   return createElement(as, { ref, className, ...rest }, children);
 }
@@ -42,7 +43,7 @@ function arrive(el: HTMLElement): () => void {
 export function arriveOnce(title: HTMLElement | null): boolean {
   const KEY = 'loom-arrived';
   try { if (sessionStorage.getItem(KEY)) return false; sessionStorage.setItem(KEY, '1'); } catch { return false; }
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  if (reducedMotion()) return false;
   const root = document.documentElement;
   root.dataset.arrive = '';
   const stop = title ? decode(title) : () => {};

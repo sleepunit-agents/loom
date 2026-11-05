@@ -735,7 +735,7 @@ html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-m
    iOS home-screen fix above (301108), the dock and the page moves are as they were. */
 html, body { overscroll-behavior: none; }
 
-/* Zoom (immersion.ts allowZoom): pinch and double-tap zoom are off unless the person allows zoom (Appearance), and then
+/* Zoom (immersion.ts allowZoom): pinch and double-tap zoom are off unless the person allows zoom (Accessibility), and then
    left alone. A touch screen's only: a desktop keeps its zoom. The page pans; main's and the bar's pan-y (gestures, above) narrow it further. */
 @media (pointer: coarse) { html:not([data-zoom="on"]) { touch-action: pan-x pan-y; } }
 /* Allowed, zoom is the person's whole: the page and its bar take every touch the browser would (double-tap, and
@@ -783,3 +783,29 @@ img { -webkit-user-drag: none; }
   :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick), :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) * { scrollbar-width: none; }
   :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick)::-webkit-scrollbar, :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) *::-webkit-scrollbar { display: none; }
 }
+
+/* Higher contrast (Accessibility, access.ts: <html data-contrast="more">, the person's choice or the phone's own
+   prefers-contrast: more while they follow it). 000h's tokens, light and dark, raised: text at 7:1 or better on every
+   surface it sits on, the quieter texts brighter, hairlines at 3:1 and control edges at 4.5:1, the count readable;
+   src/ui/look-contrast.test.ts measures them. Neon's own are in looks/neon.css. Neon is dark too, so the dark set
+   leaves it alone. */
+:root[data-contrast="more"]:not([data-mode="dark"]){
+--v-text:#111214;--v-text-2:#26282d;--v-text-3:#33363c;--v-disabled-ink:#3f4248;--v-border:#75726e;--v-skel-edge:#75726e;--v-edge:#3f3e3d;--v-disabled-edge:#3f3e3d;
+--sel-edge:#8a3d68;--v-danger-ink:#8f2f28;--v-olive-ink:#404a2f;--v-accent-ink:#5a3c4f;--loom-count:#c8282f;--loom-muted-wash:oklch(42% 0 none);
+--status-ok-ink:#3f4730;--status-warn-ink:#4e4526;--status-danger-ink:#7a2a24;--status-info-ink:#37465a;--status-pending-ink:#26282d;--status-off:#33363c}
+:root[data-mode="dark"][data-contrast="more"]:not([data-look="neon"]){
+--v-text:#ffffff;--v-text-2:#e2e5e8;--v-text-3:#d0d4d8;--v-disabled-ink:#c4c8cd;--v-border:#8c9094;--v-skel-edge:#8c9094;--v-edge:#b5b9bd;--v-disabled-edge:#b5b9bd;
+--sel-edge:#f6c3de;--loom-count:#c8282f;--loom-muted-wash:oklch(82% 0 none);--sidebar-muted:#dde3eb;--status-pending-ink:#e2e5e8;--status-off:#d0d4d8}
+/* Every look: no faded words (Tailwind's opacity steps on text), stronger focus rings, solid ground behind words that
+   sat on a see-through surface (the wash, the side, Find's pill, the header's buttons, a state's card), and full
+   hairlines where they were mixed toward transparent. */
+:root[data-contrast="more"] :is(.opacity-40, .opacity-50, .opacity-60, .opacity-70, .opacity-75, .opacity-80, .opacity-90) { opacity: 1; }
+/* A press shows as a darker press, not faded words (the tap dimming, "A phone's app", below). */
+@media (hover: none) { :root[data-contrast="more"] :where(button, a[href], [role="button"], [role="option"], summary):active { opacity: 1; } }
+:root[data-contrast="more"] :focus-visible { outline: 3px solid var(--v-text); outline-offset: 2px; }
+:root[data-contrast="more"][data-look] .loom-wash { background: var(--v-canvas); opacity: 1; }
+:root[data-contrast="more"] .loom-ground { opacity: .45; }
+:root[data-contrast="more"] :is(.loom-state, .loom-skel, .loom-head-action, .loom-head-more, .loom-find-pill) { background: var(--v-canvas); backdrop-filter: none; }
+:root[data-contrast="more"] :is(.loom-side.v-sidebar, .loom-search) { background: var(--v-paper); backdrop-filter: none; }
+:root[data-contrast="more"] :is(.loom-side.v-sidebar, .loom-search, .loom-menu) { border-color: var(--v-border); }
+:root[data-contrast="more"] .loom-find-scrim { backdrop-filter: none; }

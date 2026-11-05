@@ -2,7 +2,8 @@
  * Each look's colours read (Jonathan, 2026-11-04, Neon Noir): text at 4.5:1 or better on every surface it sits on,
  * a control's edge at 3:1 or better, and the ink on each of the four tints at 4.5:1. Measured from the stylesheets
  * themselves, for every look and mode loom ships: 000h light and dark (web/src/styles/cojeev/tokens.css) and Neon Noir
- * (web/src/looks/neon.css, over 000h's dark).
+ * (web/src/looks/neon.css, over 000h's dark). And each one's Higher contrast (Accessibility, <html data-contrast="more">):
+ * text at 7:1, the quieter texts and a control's edge at 4.5:1, a hairline at 3:1, and nothing weaker than without it.
  */
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
@@ -26,6 +27,12 @@ const light = { ...block(tokens, ':root'), ...loomBlock(':root { --loom-ok:') };
 const dark = { ...light, ...block(tokens, ':root[data-mode="dark"]') };
 const neon = { ...dark, ...block(read('looks/neon.css'), ':root[data-look="neon"][data-mode]') };
 const LOOKS = { '000h light': light, '000h dark': dark, 'Neon Noir': neon } as const;
+// Higher contrast: each look's set raised (index.css for 000h's two, looks/neon.css for Neon's).
+const MORE = {
+  '000h light': { ...light, ...block(own, ':root[data-contrast="more"]:not([data-mode="dark"])') },
+  '000h dark': { ...dark, ...block(own, ':root[data-mode="dark"][data-contrast="more"]:not([data-look="neon"])') },
+  'Neon Noir': { ...neon, ...block(read('looks/neon.css'), ':root[data-look="neon"][data-mode][data-contrast="more"]') },
+} as const;
 
 function hex(t: Record<string, string>, name: string): string {
   let v = t[name];
@@ -71,6 +78,12 @@ const KNOWN: Record<string, Array<{ pair: string; ratio: number; min: number }>>
   '000h dark': [{ pair: '--loom-count-ink on --loom-count', ratio: 3.91, min: 4.5 }],
 };
 
+// Higher contrast's floors: body text 7:1; the quieter texts, a control's edge and a selection's 4.5:1; a hairline 3:1.
+const MORE_PAIRS: Array<[string, string, number]> = [
+  ...[...SURFACES, ...TINTED].flatMap((s) => [['--v-text', s, 7], ['--v-text-2', s, 4.5], ['--v-text-3', s, 4.5]] as Array<[string, string, number]>),
+  ...SURFACES.flatMap((s) => [['--v-edge', s, 4.5], ['--sel-edge', s, 4.5], ['--v-border', s, 3]] as Array<[string, string, number]>),
+];
+
 describe('each look\'s contrast', () => {
   for (const [name, t] of Object.entries(LOOKS)) {
     it(`${name}: text 4.5:1, control edges 3:1, ink on the tints and the count 4.5:1`, () => {
@@ -98,4 +111,19 @@ describe('each look\'s contrast', () => {
     const short = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'].map((m) => { const mk = hex(neon, `--mark-${m}`); return { mark: m, ratio: +ratio(mix(mk, '#ffffff', 0.72), mix(mk, canvas, 0.16)).toFixed(2) }; }).filter((x) => x.ratio < 3);
     expect(short).toEqual([]);
   });
+  for (const [name, t] of Object.entries(MORE)) {
+    const base = LOOKS[name as keyof typeof LOOKS];
+    it(`${name}, higher contrast: text 7:1, the quieter texts and control edges 4.5:1, hairlines 3:1, on every surface`, () => {
+      const short = MORE_PAIRS.map(([f, b, min]) => ({ pair: `${f} on ${b}`, ratio: +ratio(hex(t, f), hex(t, b)).toFixed(2), min })).filter((p) => p.ratio < p.min);
+      expect(short).toEqual([]);
+    });
+    it(`${name}, higher contrast: every pair the look is held to still passes, none weaker than without it (the count too)`, () => {
+      const pairs = name === 'Neon Noir' ? [...PAIRS, ...NEON_PAIRS] : PAIRS;
+      const rows = pairs.map(([f, b, min]) => ({ pair: `${f} on ${b}`, more: +ratio(hex(t, f), hex(t, b)).toFixed(2), was: +ratio(hex(base, f), hex(base, b)).toFixed(2), min }));
+      expect(rows.filter((r) => r.more < r.min)).toEqual([]);
+      expect(rows.filter((r) => r.more < r.was)).toEqual([]);
+      // The texts are brighter, not only as bright: each one moved further from every surface it sits on.
+      for (const f of ['--v-text-2', '--v-text-3']) expect(hex(t, f), `${name} ${f}`).not.toBe(hex(base, f));
+    });
+  }
 });

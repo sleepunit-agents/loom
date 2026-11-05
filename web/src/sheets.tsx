@@ -1,4 +1,4 @@
-// The shell's sheets as pages (Scope, Places, Setup, and Appearance, an app in Setup's grid; Find is find.tsx's overlay): their own
+// The shell's sheets as pages (Scope, Places, Setup, and Appearance and Accessibility, apps in Setup's grid; Find is find.tsx's overlay): their own
 // chunk, loaded when one opens (the first page doesn't carry them).
 import { useContext } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -13,10 +13,11 @@ import { DOT } from './tones';
 import { placesOf, settingsOf } from './nav';
 import { useTint } from './tint';
 import type { Look } from './look';
+import type { Follow } from './access';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void }) {
+export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -45,7 +46,9 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
+  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
+  // Accessibility: an app of its own beside Appearance (Jonathan, 2026-11-05), the person's too.
+  if (which === 'accessibility') return <AccessibilityApp zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} />;
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
@@ -69,14 +72,39 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
   );
 }
 
-/** The Appearance app: the look, light or dark (000h's), and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom, sprites }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; sprites: boolean }) {
-  const row = (label: string, hint: string, control: React.ReactNode) => (
-    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
-      <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
-      {control}
-    </div>
+/** A setting's row: its name and a line saying what it does, its control beside them (under them when there isn't room). */
+const row = (label: string, hint: string, control: React.ReactNode) => (
+  <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
+    <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
+    {control}
+  </div>
+);
+
+/** Follow the phone, On, Off: Reduce motion's and Higher contrast's control. */
+const follow = (label: string, value: Follow, set: (v: Follow) => void) => (
+  <ToggleGroup type="single" className="v-seg" aria-label={label} value={value} onValueChange={(v) => { if (v) set(v as Follow); }}>
+    <ToggleGroupItem value="follow">Follow the phone</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
+);
+
+/** The Accessibility app (Jonathan, 2026-11-05): zoom, motion and contrast. The person's, on every device (access.ts). */
+function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContrast }: { zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
+  return (
+    <Card id="accessibility">
+      <CardContent className="grid divide-y">
+        {row('Allow zoom', 'Pinch or double-tap to zoom in on a phone. Off, loom holds still like an app.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Allow zoom" value={zoom ? 'on' : 'off'} onValueChange={(v) => { if (v) setZoom(v === 'on'); }}>
+            <ToggleGroupItem value="off">Off</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem></ToggleGroup>
+        ))}
+        {row('Reduce motion', 'Pages fade instead of sliding, and nothing loops or animates. Follow the phone uses its own setting.', follow('Reduce motion', motion, setMotion))}
+        {row('Higher contrast', 'Brighter text, stronger edges and focus rings, solid backgrounds behind words, no glows.', follow('Higher contrast', contrast, setContrast))}
+        <p className="pt-3 text-sm opacity-60">Yours on every device you sign in on.</p>
+      </CardContent>
+    </Card>
   );
+}
+
+/** The Appearance app: the look, light or dark (000h's), and the ground behind every page. The person's, on every device. */
+function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, sprites }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
   return (
     <Card id="appearance">
       <CardContent className="grid divide-y">
@@ -100,10 +128,6 @@ function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound,
         {row('Haptics', 'A light tick on a phone when you press a dock key, answer Yes or No, or swipe.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Haptics" value={haptics ? 'on' : 'off'} onValueChange={(v) => { if (v) setHaptics(v === 'on'); }}>
             <ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
-        ))}
-        {row('Allow zoom', 'Pinch or double-tap to zoom in on a phone. Off, loom holds still like an app.', (
-          <ToggleGroup type="single" className="v-seg" aria-label="Allow zoom" value={zoom ? 'on' : 'off'} onValueChange={(v) => { if (v) setZoom(v === 'on'); }}>
-            <ToggleGroupItem value="off">Off</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem></ToggleGroup>
         ))}
         <p className="loom-gestures-hint pb-3 text-sm opacity-70 lg:hidden">On a phone, swipe sideways to move between Home, Inbox, Places and More, and swipe up from the dock to Find.</p>
         <p className="pt-3 text-sm opacity-60">Yours on every device you sign in on.</p>

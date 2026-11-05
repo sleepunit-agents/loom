@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT, APPEARANCE, placesOf, settingsOf } from '../../web/src/nav';
+import { ACCESSIBILITY, ACCOUNT, APPEARANCE, placesOf, settingsOf } from '../../web/src/nav';
 
 // The shell as loom answers it for a household (handler.ts chrome): loom's own places, and the pieces with their kinds.
 const shell = (over: Record<string, unknown> = {}) => ({
@@ -16,12 +16,14 @@ describe('each destination has one home (web/src/nav.ts)', () => {
     expect(placesOf(shell()).map((p) => p.label)).toEqual(['Activity', 'Knowledge', 'People', 'Tasks']);
   });
 
-  it('Setup holds the household\'s configuration, then Appearance as a tile of its own: no passkeys, no sign out', () => {
-    expect(settingsOf(shell()).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Members', 'Pieces', 'Appearance']);
-    expect(settingsOf(shell()).at(-1)).toMatchObject({ href: APPEARANCE.href, current: false });
-    expect(settingsOf(shell({ tab: 'appearance' })).at(-1)?.current).toBe(true);
-    // An agent owner (admin false) manages neither the members nor the pieces; their device's look is still theirs.
-    expect(settingsOf(shell({ admin: false })).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Appearance']);
+  it('Setup holds the household\'s configuration, then Appearance and Accessibility as tiles of their own: no passkeys, no sign out', () => {
+    expect(settingsOf(shell()).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Members', 'Pieces', 'Appearance', 'Accessibility']);
+    expect(settingsOf(shell()).at(-2)).toMatchObject({ href: APPEARANCE.href, current: false });
+    expect(settingsOf(shell()).at(-1)).toMatchObject({ href: ACCESSIBILITY.href, current: false });
+    expect(settingsOf(shell({ tab: 'appearance' })).map((p) => p.current).slice(-2)).toEqual([true, false]);
+    expect(settingsOf(shell({ tab: 'accessibility' })).map((p) => p.current).slice(-2)).toEqual([false, true]);
+    // An agent owner (admin false) manages neither the members nor the pieces; their look and access are still theirs.
+    expect(settingsOf(shell({ admin: false })).map((p) => p.label)).toEqual(['Boxes', 'Bridges', 'Appearance', 'Accessibility']);
   });
 
   it('no destination is in two of Places, Setup and the account', () => {

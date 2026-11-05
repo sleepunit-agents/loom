@@ -2,6 +2,7 @@ import * as React from "react"
 import { assignMotionRef } from "@/lib/cojeev-motion/refs"
 import { acquireFlowEnvironment, createFlowPresence, attachFlowGroup, isFlowQuiet, replaceFlow, type FlowGroupOptions, type FlowSlideMode } from "@/lib/cojeev-motion/flow"
 import { subscribeSettings } from "@/lib/cojeev-motion/settings"
+import {motionQuery} from '@/access'
 
 export function useFlowGroup<T extends HTMLElement>(externalRef?:React.Ref<T>,options?:FlowGroupOptions):React.RefCallback<T>{
  const kind=options?.kind,itemSelector=options?.itemSelector,activeSelector=options?.activeSelector
@@ -35,7 +36,7 @@ export function useFlowAppearance<T extends HTMLElement>(open:boolean,externalRe
   const quiet=()=>{if(isFlowQuiet(host)||document.hidden){presence.quiet();replaceFlow(host)}}
   const localQuiet=slide?new MutationObserver(quiet):null
   if(localQuiet)for(let element:HTMLElement|null=host;element;element=element.parentElement)localQuiet.observe(element,{attributes:true,attributeFilter:['data-flow','data-no-glide']})
-  const rm=matchMedia('(prefers-reduced-motion: reduce)');rm.addEventListener('change',quiet)
+  const rm=motionQuery();rm.addEventListener('change',quiet)
   document.addEventListener('visibilitychange',quiet)
   const unsubscribe=subscribeSettings(quiet)
   return ()=>{if(owner.current===presence)owner.current=null;presence.dispose();state.disconnect();localQuiet?.disconnect();unsubscribe();rm.removeEventListener('change',quiet);document.removeEventListener('visibilitychange',quiet);release()}

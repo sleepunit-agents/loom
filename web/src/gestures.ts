@@ -16,6 +16,7 @@
 // nothing follows the finger, and the pages still change (with the tap's crossfade).
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Move, Scrub } from './transitions';
+import { reducedMotion } from './access';
 
 export type GestureSetup = {
   /** The dock's own pages, in its order (hrefs); empty where sideways swipes don't apply. */
@@ -39,7 +40,6 @@ export const SIDE = 60, UP = 50, EDGE = 24;
 /** How much of the finger's travel the page follows, and at the end of the row (nowhere to go). */
 const FOLLOW = 0.35, END = 0.12;
 
-const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const standalone = () => document.documentElement.classList.contains('loom-ios-app') || matchMedia('(display-mode: standalone)').matches;
 
 let probe: HTMLElement | null = null;
@@ -86,7 +86,7 @@ export function attachGestures(get: () => GestureSetup): () => void {
     /** The page a sideways swipe goes to (-1, 1: the dock's next or last), and its move under the finger. */
     dir?: -1 | 1; to?: string; scrub?: Scrub | null };
   let g: G | null = null;
-  const moving = (k: G) => !reduced() && !!k.el;
+  const moving = (k: G) => !reducedMotion() && !!k.el;
   const reset = (k: G) => { if (k.el && k.el.style.transform) settle(k.el, ''); };
   /** Let a gesture go without it counting: a held move runs back, a leaning page settles. */
   const drop = (k: G) => { if (k.scrub) void k.scrub.end(false); else reset(k); };
@@ -125,7 +125,7 @@ export function attachGestures(get: () => GestureSetup): () => void {
           k.dir = dx < 0 ? 1 : -1;
           k.to = s.pages[s.here + k.dir];
           // The page's own move, held under the finger (none under reduced motion: the release changes the page).
-          if (k.to && !reduced()) k.scrub = s.begin(k.to, k.dir > 0 ? 'right' : 'left');
+          if (k.to && !reducedMotion()) k.scrub = s.begin(k.to, k.dir > 0 ? 'right' : 'left');
         }
       }
       if (!k.locked) return;

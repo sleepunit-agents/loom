@@ -1,7 +1,7 @@
 /**
  * A phone's app, not a web page (Jonathan, 2026-11-05: "We need to disable anything that lets me break the illusion"),
  * in a real browser at 390 px with touch, under Neon and 000h: the viewport doesn't zoom and iOS's pinch
- * (gesturestart) is turned down, unless the person allows zoom (Appearance), and then neither is; every field is at
+ * (gesturestart) is turned down, unless the person allows zoom (Accessibility), and then neither is; every field is at
  * least 16 px, so iOS doesn't zoom in on focus; the app's chrome (the bar, the dock, Find's pill, buttons, chips, a
  * card's head) doesn't select and has no long-press menu or tap flash, while a message's words still select; the page
  * has no rubber band or pull to refresh, and its canvas is the app's own colour, which the browser's bar wears too; the
@@ -125,7 +125,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
   // First, before any test has set this person's Appearance (they share one person, and run in order).
   it('Allow zoom is off by default: a person who has never chosen, on a device that has never been told', async () => {
     const p = await phone({ fresh: true });
-    await open(p, '/appearance');
+    await open(p, '/accessibility');
     expect(await p.evaluate(() => localStorage.getItem('loom-zoom'))).toBeNull();
     const prefs = await p.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { prefs: Record<string, unknown> } }).chrome.prefs);
     expect(prefs.zoom).toBeUndefined();
@@ -144,8 +144,8 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     expect(await p.evaluate(() => getComputedStyle(document.documentElement).touchAction)).toBe('pan-x pan-y');
     expect(await p.evaluate(() => document.documentElement.dataset.zoom)).toBeUndefined();
 
-    // Appearance: Allow zoom, off by default, turned on here.
-    await open(p, '/appearance');
+    // Accessibility: Allow zoom, off by default, turned on here.
+    await open(p, '/accessibility');
     const allow = p.getByRole('radiogroup', { name: 'Allow zoom' });
     await expect.poll(() => allow.getByRole('radio', { name: 'Off' }).getAttribute('aria-checked')).toBe('true');
     await allow.getByRole('radio', { name: 'On' }).click();
@@ -159,7 +159,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     expect(await viewport(p)).toBe('width=device-width, initial-scale=1.0, viewport-fit=cover');
     expect(await pinchStopped(p)).toEqual([false, false]);
     // And off again.
-    await open(p, '/appearance');
+    await open(p, '/accessibility');
     await allow.getByRole('radio', { name: 'Off' }).click();
     await expect.poll(() => viewport(p)).toContain('user-scalable=no');
     expect(await pinchStopped(p)).toEqual([true, true]);

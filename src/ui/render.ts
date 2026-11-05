@@ -87,7 +87,7 @@ export interface Shell {
   pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Accent; alerts?: number }>;
   /** The nightly backup (src/backup.ts backupRow): a household owner's only, never an agent owner's. */
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
-  /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance' or ''. */
+  /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance', 'accessibility' or ''. */
   tab: string;
 }
 

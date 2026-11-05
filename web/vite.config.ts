@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { accessMedia } from './access-media.ts';
 
 /**
  * The looks (src/looks/): Neon Noir's stylesheet is its own file, built beside the app's, and a tiny script in the
@@ -41,6 +42,7 @@ function looks(): Plugin {
 export default defineConfig({
   base: '/app/',
   plugins: [react(), tailwindcss(), looks()],
+  css: { postcss: { plugins: [accessMedia()] } },
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
   build: {
     outDir: '../dist/web', emptyOutDir: true,

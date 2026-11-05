@@ -4,10 +4,11 @@
 // This device keeps a copy (localStorage) only so its first paint is already right (src/looks/boot.js reads it).
 import { createContext, useContext } from 'react';
 import type { Ground, Mode } from './views';
+import type { Follow } from './access';
 
 export type Look = 'neon' | '000h';
 /** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. */
-export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (off unless turned on: immersion.ts) */ zoom?: boolean; /** loom's version of them: when they last changed */ at?: number };
+export type Prefs = { look?: Look; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (Accessibility; off unless turned on: immersion.ts) */ zoom?: boolean; /** Reduce motion and Higher contrast (Accessibility: access.ts) */ motion?: Follow; contrast?: Follow; /** loom's version of them: when they last changed */ at?: number };
 
 const root = () => document.documentElement;
 

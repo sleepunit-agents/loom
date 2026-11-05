@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FaceState } from './face';
 import { useLook } from './look';
+import { motionQuery, reducedMotion } from './access';
 
 /** The numbers, as settings: the preview (art-pixel-faces.html: MS, the gaps, ROLL_MS, P_LEAVE, P_BACK, MIN_AWAY). */
 export const PIXEL = {
@@ -177,7 +178,6 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
   };
 }
 
-const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const pageEnv: PlayerEnv = { now: () => performance.now(), setTimeout: (f, ms) => window.setTimeout(f, ms), clearTimeout: (t) => window.clearTimeout(t), random: Math.random };
 
 export default function PixelFace({ sprite, state = 'idle', size, label, fallback }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode }) {
@@ -212,11 +212,14 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
     player.current = p;
     // Only on screen, in a visible page, with motion allowed.
     let seen = false;
-    const go = () => p.live(seen && document.visibilityState === 'visible' && !reduced());
+    const go = () => p.live(seen && document.visibilityState === 'visible' && !reducedMotion());
     const io = new IntersectionObserver(([e]) => { seen = e.isIntersecting; go(); }, { rootMargin: '40px' });
     io.observe(cv);
     document.addEventListener('visibilitychange', go);
-    return () => { p.dispose(); io.disconnect(); document.removeEventListener('visibilitychange', go); player.current = null; };
+    // Reduce motion turned on (or off) while it's showing: it stops on its rest frame (or comes alive) at once.
+    const motion = motionQuery();
+    motion.addEventListener('change', go);
+    return () => { p.dispose(); io.disconnect(); document.removeEventListener('visibilitychange', go); motion.removeEventListener('change', go); player.current = null; };
   }, [sheet]);
 
   useEffect(() => { player.current?.want(state); }, [state]);

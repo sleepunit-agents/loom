@@ -1,6 +1,7 @@
 "use client";
 import { createMotionLane, resolveChoreography } from "@/lib/cojeev-motion/choreography";
 import { getSettingsSnapshot, subscribeSettings } from "@/lib/cojeev-motion/settings";
+import {motionQuery,reducedMotion} from "@/access";
 
 export type ThemeRevealOrigin = { x:number; y:number };
 export type ThemeChangeDetails = { origin:ThemeRevealOrigin };
@@ -56,7 +57,7 @@ let active:Reveal|undefined;
 export function applyTheme(mode:ThemeMode,quiet=false,root?:HTMLElement,options:ThemeRevealOptions={}) {
   if(typeof document==="undefined")return;
   const scope=root??document.documentElement,doc=scope.ownerDocument,canvas=doc.documentElement;
-  const reduced=()=>doc.defaultView?.matchMedia("(prefers-reduced-motion: reduce)").matches??false;
+  const reduced=reducedMotion;
   const isQuiet=()=>quiet||doc.hidden||resolveChoreography(getSettingsSnapshot(),reduced()).quiet;
   if(active?.scope===scope&&!active.done){
     const reveal=active,changed=reveal.requested!==mode;
@@ -132,7 +133,7 @@ export function applyTheme(mode:ThemeMode,quiet=false,root?:HTMLElement,options:
     tile.append(back,copy);canvas.style.setProperty("--v-theme-glyph",image(tile.outerHTML));
   };
   let unsubscribe=()=>{};
-  const media=doc.defaultView!.matchMedia("(prefers-reduced-motion: reduce)");
+  const media=motionQuery();
   const interrupt=()=>reveal.finish();
   const quietChanged=()=>{if(isQuiet())reveal.finish();};
   const lane=createMotionLane(0,value=>{
