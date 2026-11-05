@@ -41,7 +41,10 @@ it('is never cut off, nor is its name, on the desktop, on a phone\'s width, or t
     const b = (await item.boundingBox())!;
     await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
     if (touch) await p.mouse.down();
-    await p.waitForTimeout(900);
+    const grown = () => item.evaluate((el) => el.querySelector('[data-part="visual"]')!.getBoundingClientRect().height / el.getBoundingClientRect().height);
+    // A mouse grows it (1.65x) as it moves over it; a finger, held, shows its name after .45 s.
+    if (!touch) await expect.poll(grown, { timeout: 4000 }).toBeGreaterThan(1.5);
+    await p.waitForTimeout(700);
     const r = await item.evaluate((el) => {
       const v = el.querySelector('[data-part="visual"]')!.getBoundingClientRect();
       const lab = el.querySelector('[data-part="label"]'); const l = lab?.getBoundingClientRect();
