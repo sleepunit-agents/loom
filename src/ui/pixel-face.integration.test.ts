@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, checkSpriteManifest, createToken, HouseholdError, loadHousehold, manifestFromPixelLab, setSprite, spriteOf, type Household } from '../household.js';
 import { runHousehold } from '../cli/household.js';
@@ -160,7 +161,7 @@ describe('an agent\'s pixel face', () => {
     await ctx.close();
   }, 60_000);
 
-  it.runIf(built && chrome)('in a browser: a face\'s own scale and offset are worn under Neon, and 000h draws it as ever', async () => {
+  it.runIf(built && chrome)('in a browser: a face\'s own scale and offset are worn, in every look', async () => {
     const file = join(h.home, 'faces', 'art', 'manifest.json');
     const was = readFileSync(file, 'utf-8');
     writeFileSync(file, JSON.stringify({ ...JSON.parse(was), scale: 0.75, offset: [0, 4] }));
@@ -175,7 +176,7 @@ describe('an agent\'s pixel face', () => {
         const csrf = await page.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
         expect(await page.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...(b as object) }) })).status, [csrf, prefs] as const)).toBe(200);
       };
-      const sized = async (look: 'neon' | '000h') => {
+      const sized = async (look: Look) => {
         await choose({ look, pixel: true });
         await page.goto(`${base}/`);
         await page.waitForFunction((l) => document.documentElement.dataset.look === l, look);
@@ -187,7 +188,7 @@ describe('an agent\'s pixel face', () => {
       const neon = await sized('neon');
       expect(neon[0]).toBe(144);   // 96 × 2 × 0.75
       expect(neon[1]).toContain('6px');   // 4 sheet pixels × 1.5
-      expect((await sized('000h'))[0]).toBe(192);
+      for (const look of ['lowlight', 'daylight'] as const) expect(await sized(look), look).toEqual(neon);
       await choose({ look: 'neon' });
       await ctx.close();
     } finally { writeFileSync(file, was); }

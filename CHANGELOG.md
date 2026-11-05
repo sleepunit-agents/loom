@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **One structure, three looks: Neon Noir, Low Light, Daylight** (t-1875).
+  000h is no longer a look of its own: Neon Noir's structure (the phone bar
+  and system bar, the dock's keys, cut-corner cards, the desktop at 1024 px
+  and wider, Find as a command bar, the sheet's title bar, the power-on) is
+  every look's, and a look is only tokens (colours, a few corners, glow,
+  type) in `web/src/looks/looks.css`, part of the app's own stylesheet. Low
+  Light is dark and calm (000h's soft dark colours, no glow but a face's,
+  Figtree titles); Daylight is light (ink on warm paper, the tints deepened).
+  A saved `look: '000h'` is worn as Daylight if its light or dark was light,
+  else as Low Light; it stays on disk as it was until the person chooses, and
+  an app from before may still save it. Appearance's Light/Dark/Auto row is
+  gone. Every look meets the contrast floors with and without Higher
+  contrast; no exception is named any more.
 - **Pixel faces wherever an agent's face shows.** Under 36 px (Inbox rows, the
   desktop's widgets, a window's title, the side panel), an agent with a sprite
   sheet now wears a still pixel avatar: a crop of its rest frame, 24 sheet
@@ -162,7 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   Look: Neon Noir (dark only: a night-city control room, light from edges and
   states) or 000h (light or dark, as before). Neon is what a person who hasn't
   chosen sees, so everyone's page changes on update; 000h is one tap away and
-  draws exactly as it did. Its stylesheet is its own file, put on before first
+  draws exactly as it did (until the same week's one structure, above). Its stylesheet is its own file, put on before first
   paint by a 0.5 KB script in the page's head (loom's CSP allows no inline
   script), so a page never flashes the other look. A person's Appearance (the
   look, light or dark, the background) is theirs on every device: kept by loom

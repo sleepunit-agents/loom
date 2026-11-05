@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type CDPSession, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -65,7 +66,7 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
   /** A phone (390 × 844, touch, an iPhone's insets) in a look, its Appearance said to loom; what it does is watched:
    * each View Transition (the move asked for, and its animations once ready), each vibration, and the widest the
    * document has been. */
-  async function phone(o: { look?: 'neon' | '000h'; motion?: 'reduce' | 'no-preference'; haptics?: boolean; ua?: string } = {}): Promise<Phone> {
+  async function phone(o: { look?: Look; motion?: 'reduce' | 'no-preference'; haptics?: boolean; ua?: string } = {}): Promise<Phone> {
     const look = o.look ?? 'neon';
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: o.motion ?? 'no-preference', isMobile: true, hasTouch: true, serviceWorkers: 'block', ...(o.ua ? { userAgent: o.ua } : {}) });
     await ctx.addInitScript(([l, hp]) => {

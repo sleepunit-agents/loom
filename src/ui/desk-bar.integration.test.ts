@@ -3,8 +3,7 @@
  * system bar (system-bar.tsx) where a phone's status bar would be: loom's clock (loom's time, in loom's zone, never the
  * browser's) on the left, a few monochrome glyphs on the right, each with its words; the big icon-and-title header is
  * gone. In a real browser at 1280 and 800 px, over a household with a Boxes piece that has an alert and reports an agent
- * at work, a backup not set up, and something waiting. 000h keeps its big
- * header and has no system bar.
+ * at work, a backup not set up, and something waiting. Every look has them (Low Light and Daylight are token sets).
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -14,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -96,7 +96,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
   });
 
   const errors: string[] = [];
-  async function device(look: 'neon' | '000h', motion: 'reduce' | 'no-preference', width: number, o: { skewMs?: number } = {}): Promise<Page> {
+  async function device(look: Look, motion: 'reduce' | 'no-preference', width: number, o: { skewMs?: number } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height: 800 }, reducedMotion: motion, serviceWorkers: 'block', timezoneId: 'America/Los_Angeles' });
     // A device whose clock is wrong: its Date runs this far from the real one (loom's).
     if (o.skewMs) await ctx.addInitScript((d) => { const N = Date.now; Date.now = () => N() + d; const D = Date;
@@ -229,13 +229,15 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await p.context().close();
   }, 60_000);
 
-  it('000h at 1280 px: the big header, no system bar, no phone bar', async () => {
-    const p = await device('000h', 'reduce', 1280);
-    await open(p, '/');
-    expect(await p.locator('.loom-sys').count()).toBe(0);
-    expect(await p.locator('.loom-pbar').count()).toBe(0);
-    expect(await p.locator('.loom-top h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(28);
-    await p.context().close();
+  it('Low Light and Daylight at 1280 px: the same system bar and phone bar, no big header', async () => {
+    for (const look of ['lowlight', 'daylight'] as const) {
+      const p = await device(look, 'reduce', 1280);
+      await open(p, '/');
+      expect(await p.evaluate(() => document.documentElement.dataset.look), look).toBe(look);
+      expect([await p.locator('.loom-sys').count(), await p.locator('.loom-pbar').count(), await p.locator('.loom-top h1').count()], look).toEqual([1, 1, 1]);
+      expect(await p.locator('.loom-pbar h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize)), look).toBe(13);
+      await p.context().close();
+    }
   }, 60_000);
 
   it('no console errors on the way', () => { expect(errors).toEqual([]); });

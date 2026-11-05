@@ -54,6 +54,8 @@
 @import "@/styles/cojeev/toggle-group.css";
 @import "@/styles/cojeev/alert.css";
 @import "@/styles/cojeev/dropdown-menu.css";
+/* The looks (Neon Noir, Low Light, Daylight): Neon's structure and each look's tokens. */
+@import "@/looks/looks.css";
 
 @theme inline {
     --font-heading: var(--font-sans);
@@ -183,7 +185,7 @@
 [data-accent="yellow"] { --v-pink: var(--v-yellow); --v-pink-soft: var(--v-yellow-soft); --v-pink-deep: var(--v-yellow-deep); }
 /* loom's own colours that were literals (Neon Noir's sweep, 2026-11-04): a status dot (ok, warn, bad, muted), a working
    agent's dot and its pulse, a section's warning ring, a count's badge, an unread dot, and how far the dark dims the
-   ground. Tailwind's own values, so 000h draws as it did; a look (src/looks/) re-points them. */
+   ground. Tailwind's own values, the base under every look; each re-points some or all of them (src/looks/looks.css). */
 :root { --loom-ok: oklch(69.6% .17 162.48); --loom-warn: oklch(76.9% .188 70.08); --loom-bad: oklch(63.7% .237 25.331); --loom-muted: oklch(70.8% 0 none);
   --loom-live: oklch(68.5% .169 237.323); --loom-live-pulse: #0ea5e9; --loom-ring-bad: oklch(70.4% .191 22.216); --loom-ring-warn: oklch(82.8% .189 84.429);
   --loom-ring-warn-soft: oklch(87.9% .169 91.605); --loom-count: #e5484d;
@@ -193,12 +195,9 @@
   /* An app's tile's corners (a phone's launcher, a header's tile, a state's mark): a look can square them. */
   --loom-r-launch: 22%; --loom-r-tile: 28%; --loom-r-state: 30%; --loom-r-side: 24px; --loom-r-soft: 14px; --loom-r-icon: 12px; }
 :root[data-mode="dark"] { --loom-ok-ink: oklch(84.5% .143 164.978); --loom-warn-ink: oklch(87.9% .169 91.605); --loom-bad-ink: oklch(80.8% .114 19.571); }
-/* The page's ground: 000h's docs wash (three soft pools on the canvas); quieter in the dark. */
-.loom-wash { background: radial-gradient(at 18% 35%, color-mix(in srgb, var(--v-pink) 65%, transparent), transparent 62%),
-  radial-gradient(at 82% 72%, color-mix(in srgb, var(--v-blue) 60%, transparent), transparent 62%),
-  radial-gradient(at 56% 8%, color-mix(in srgb, var(--v-yellow) 40%, transparent), transparent 56%), var(--v-canvas); }
+/* The page's ground: three soft pools on the canvas (looks/looks.css); quieter in the dark. */
+.loom-wash { background: var(--v-canvas); }
 [data-mode="dark"] .loom-wash, [data-mode="dark"].loom-wash { opacity: var(--loom-wash-dim); }
-[data-mode="dark"] .loom-wash { background-color: var(--v-canvas); }
 body { background: var(--v-canvas); }
 /* No top bar: the page's head sits on the ground and scrolls with it. */
 .loom-top { background: none; }
@@ -280,8 +279,6 @@ body { background: var(--v-canvas); }
 .loom-pixel-face canvas { position: absolute; left: 50%; top: 50%; translate: -50% -50%; image-rendering: pixelated; max-width: none; pointer-events: none; }
 /* A small one (PixelAvatar, under 36 px): its crop at a whole-pixel scale, cut to its box where the scale overshoots it. */
 .loom-pixel-avatar { overflow: hidden; }
-/* Neon Noir's sheet title bar (inbox.tsx): only a look that draws it shows it (looks/neon.css). */
-.loom-sheet-bar { display: none; }
 /* An app's tile (app-header.tsx AppTile): its header, Find's rows. */
 .loom-app-tile { color: var(--v-on-accent); box-shadow: 0 6px 12px -8px rgb(17 17 17 / .45), inset 0 1px rgb(255 255 255 / .4); }
 .loom-head-action { background: color-mix(in oklab, var(--v-canvas) 70%, transparent); box-shadow: inset 0 0 0 1px var(--v-border); }
@@ -384,7 +381,7 @@ html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top)
 html[data-gestures] :is(main, .loom-top) { touch-action: pan-y pinch-zoom; }
 /* Every part of them: the dock's keys sit in a scroll area of its own, where a touch's own rules start again. */
 html[data-gestures] :is(.loom-dock-bar, .loom-dock-bar *, .loom-find-pill, .loom-find-pill *) { touch-action: none; }
-html[data-gestures][data-look="neon"] .loom-dock-bar { pointer-events: auto; }
+html[data-gestures][data-look] .loom-dock-bar { pointer-events: auto; }
 .loom-haptic { position: absolute; inset: 0; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
 /* The fallback lean (gestures.ts, where pages don't move) never widens the page. */
 html[data-gestures] .loom-page-clip { overflow-x: clip; }
@@ -420,8 +417,8 @@ html[data-move="pop"]::view-transition-new(loom-page) { animation-name: loom-mov
 @keyframes loom-move-in-left { from { transform: translateX(-100%); } }
 @keyframes loom-move-off-right { to { transform: translateX(100%); } }
 @keyframes loom-move-under-left { from { transform: translateX(-25%); filter: brightness(.72); } }
-/* Neon: the incoming name catches once, a single frame, as a tube does. */
-html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-move-name-in, loom-move-flick; animation-timing-function: cubic-bezier(.2, .8, .2, 1), steps(1); }
+/* The incoming name catches once, a single frame, as a tube does. */
+html[data-look]::view-transition-new(loom-title) { animation-name: loom-move-name-in, loom-move-flick; animation-timing-function: cubic-bezier(.2, .8, .2, 1), steps(1); }
 @keyframes loom-move-name-in { from { opacity: 0; } }
 @keyframes loom-move-flick { 0%, 40%, 100% { filter: none; } 34% { filter: brightness(1.7); } }
 /* Reduced motion: a short crossfade, nothing slides. */
@@ -517,17 +514,8 @@ img { -webkit-user-drag: none; }
 }
 
 /* Higher contrast (Accessibility, access.ts: <html data-contrast="more">, the person's choice or the phone's own
-   prefers-contrast: more while they follow it). 000h's tokens, light and dark, raised: text at 7:1 or better on every
-   surface it sits on, the quieter texts brighter, hairlines at 3:1 and control edges at 4.5:1, the count readable;
-   src/ui/look-contrast.test.ts measures them. Neon's own are in looks/neon.css. Neon is dark too, so the dark set
-   leaves it alone. */
-:root[data-contrast="more"]:not([data-mode="dark"]){
---v-text:#111214;--v-text-2:#26282d;--v-text-3:#33363c;--v-disabled-ink:#3f4248;--v-border:#75726e;--v-skel-edge:#75726e;--v-edge:#3f3e3d;--v-disabled-edge:#3f3e3d;
---sel-edge:#8a3d68;--v-danger-ink:#8f2f28;--v-olive-ink:#404a2f;--v-accent-ink:#5a3c4f;--loom-count:#c8282f;--loom-muted-wash:oklch(42% 0 none);
---status-ok-ink:#3f4730;--status-warn-ink:#4e4526;--status-danger-ink:#7a2a24;--status-info-ink:#37465a;--status-pending-ink:#26282d;--status-off:#33363c}
-:root[data-mode="dark"][data-contrast="more"]:not([data-look="neon"]){
---v-text:#ffffff;--v-text-2:#e2e5e8;--v-text-3:#d0d4d8;--v-disabled-ink:#c4c8cd;--v-border:#8c9094;--v-skel-edge:#8c9094;--v-edge:#b5b9bd;--v-disabled-edge:#b5b9bd;
---sel-edge:#f6c3de;--loom-count:#c8282f;--loom-muted-wash:oklch(82% 0 none);--sidebar-muted:#dde3eb;--status-pending-ink:#e2e5e8;--status-off:#d0d4d8}
+   prefers-contrast: more while they follow it): each look's tokens raised (looks/looks.css), measured by
+   src/ui/look-contrast.test.ts. */
 /* Every look: no faded words (Tailwind's opacity steps on text), stronger focus rings, solid ground behind words that
    sat on a see-through surface (the wash, the side, Find's pill, the header's buttons, a state's card), and full
    hairlines where they were mixed toward transparent. */

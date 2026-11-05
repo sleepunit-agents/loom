@@ -6,7 +6,7 @@
 // in loom's zone (uiTimeZone, the one every page says a time in), not the device's. On the right a few monochrome
 // glyphs, each meaning something real from what the shell already has: whether loom is reached, how many agents are at
 // work, the boxes, the nightly backup. Each says itself in words: an aria-label, and the same words as a tooltip on
-// hover or keyboard focus (neon.css .loom-sys__tip). Dimmed means "look at this", and the words say why.
+// hover or keyboard focus (looks/looks.css .loom-sys__tip). Dimmed means "look at this", and the words say why.
 // Up to four; fewer when loom has nothing to say: no Boxes glyph without the Boxes piece, and the backup only to a
 // household owner (an agent owner never sees its target or errors). Not on iOS's home-screen app (an iPad draws its own
 // status bar there, clock and all).
