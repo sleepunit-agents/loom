@@ -2,8 +2,8 @@
  * Neon's phone bar, its ticker and its dock (t-1849), in a real browser at a phone's width, over a household with two
  * agents and something waiting: the bar sits at the safe-area inset with the page's name in it; the ticker moves only
  * when its words don't fit, and never under reduced motion, and stops while touched or hidden; the needs-you count is
- * never part of what moves; the dock's keys have names but show none; nothing is wider than 390 px. 000h and a wide
- * screen keep the big header (and 000h its dock's names).
+ * never part of what moves; the dock's keys have names but show none; nothing is wider than 390 px. 000h keeps the big
+ * header (and its dock's names); a wide screen wears the same bar under loom's system bar (desk-bar.integration.test.ts).
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -75,12 +75,12 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
   }
   const open = async (p: Page, path: string) => { await p.goto(`${base}${path}`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(300); };
 
-  it('the bar: at the inset, the page\'s name in it, no clock, the count pinned and visible; nothing wider than 390 px', async () => {
+  it('the bar: at the inset, the page\'s name in it, no clock or system bar, the count pinned and visible; nothing wider than 390 px', async () => {
     const p = await device('neon', 'no-preference');
     for (const path of ['/', '/inbox', '/setup', '/places', '/a/art', '/appearance']) {
       await open(p, path);
       expect(await p.evaluate(() => document.documentElement.scrollWidth), path).toBeLessThanOrEqual(390);
-      expect(await p.locator('.loom-status').count(), path).toBe(0);
+      expect(await p.locator('.loom-sys').count(), path).toBe(0);
       expect(await p.locator('.loom-pbar h1').count(), path).toBe(1);
     }
     await open(p, '/');
@@ -209,12 +209,16 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await q.context().close();
   }, 90_000);
 
-  it('a wide screen under Neon keeps the status bar and the big header', async () => {
+  it('a wide screen under Neon wears the same bar, under loom\'s system bar (desk-bar.integration.test.ts); a phone has none of that', async () => {
     const p = await device('neon', 'reduce', 1280);
     await open(p, '/');
-    expect(await p.locator('.loom-pbar').count()).toBe(0);
-    expect(await p.locator('.loom-status').count()).toBe(1);
-    expect(await p.locator('.loom-top h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(28);
+    expect(await p.locator('.loom-pbar').count()).toBe(1);
+    expect(await p.locator('.loom-sys').count()).toBe(1);
+    expect(await p.locator('.loom-top h1').count()).toBe(1);
     await p.context().close();
+    const q = await device('neon', 'reduce');
+    await open(q, '/');
+    expect(await q.locator('.loom-sys').count()).toBe(0);
+    await q.context().close();
   }, 60_000);
 });

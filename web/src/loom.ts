@@ -49,11 +49,13 @@ export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };
   core: { label: string; href: string; current: boolean; count?: number }[];
-  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint }[];
+  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint; alerts?: number }[];
+  /** The nightly backup, a household owner's (src/backup.ts backupRow). */
+  backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
-export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell;
+export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; tz?: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell;
   /** The signed-in person's Appearance (look.ts), as loom keeps it. */
   prefs?: Prefs }
 export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];

@@ -34,7 +34,7 @@
  * message is kept in memory under a random id for a minute.
  */
 import { changed, openStream, type Sees } from './live.js';
-import { backupFyi, backupProblem } from '../backup.js';
+import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -858,6 +858,20 @@ function scopeOf(_req: IncomingMessage, _h: Household | undefined): string {
   return 'household';
 }
 
+/** A piece's asks that say something's wrong (an alert, counted), for the system bar (web/src/system-bar.tsx). */
+function alertsOf(p: PieceInfo): { alerts?: number } {
+  const n = p.manifest.asks.filter((a) => a.kind === 'alert' && a.attention !== false).length;
+  return n ? { alerts: n } : {};
+}
+
+/** The nightly backup as the system bar says it: its last good one, or what's wrong (backupRow, Setup's row). */
+function backupOf(h: Household): { backup?: NonNullable<Chrome['shell']>['backup'] } {
+  try {
+    const r = backupRow(h, Date.now(), (iso) => agoText(iso) || 'a while ago');
+    return { backup: { tone: r.tone, text: r.text, href: `/a/${h.default}/setup` } };
+  } catch { return {}; }
+}
+
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
@@ -866,7 +880,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const places = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value,
       kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place', ...(p.manifest.tab?.icon ? { icon: p.manifest.tab.icon } : {}),
-      ...(p.manifest.tab?.accent ? { accent: p.manifest.tab.accent } : {}) }))
+      ...(p.manifest.tab?.accent ? { accent: p.manifest.tab.accent } : {}),
+      ...alertsOf(p) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
   // same number its Needs you shows, so the badge is never a 1 for something already answered.
@@ -893,11 +908,13 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         ...tabs,
       ],
       clock: clock(),
+      tz: uiTimeZone(),
       csrf,
       flash,
       skipped,
       shell: {
         owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
+        ...(opts.ownerScope ? {} : backupOf(h)),
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
@@ -926,6 +943,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       ...tabs,
     ],
     clock: clock(),
+    tz: uiTimeZone(),
     csrf,
     flash,
     skipped,

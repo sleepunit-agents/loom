@@ -30,6 +30,7 @@ import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
 import { AppHeader, AppTile, oneLine } from './app-header';
 import { PhoneBar } from './phone-bar';
+import { SystemBar } from './system-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
@@ -391,8 +392,10 @@ export default function App() {
 
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
-  // Neon on a phone's width: the bar merges with the phone's own (phone-bar.tsx); wider keeps the status bar and the big header.
-  const phoneBar = look === 'neon' && vw < 640 && !!chrome?.shell;
+  // Neon: the phone's bar at every width (phone-bar.tsx). On a phone it merges with the phone's own status bar; wider,
+  // there's none, so loom draws one over it (system-bar.tsx; Jonathan, 2026-11-05). 000h keeps its big header.
+  const phoneBar = look === 'neon' && !!chrome?.shell;
+  const deskBar = phoneBar && vw >= 640;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
   // A phone's gestures (gestures.ts): sideways between the dock's own pages, in its order; up from the dock for Find.
   const dockPages = !agentDock ? nav.tabs.map((t) => t.href).filter((h) => !h.startsWith('#')) : [];
@@ -436,11 +439,14 @@ export default function App() {
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
           {phoneBar && chrome?.shell ? (
-            // Neon on a phone: one small bar right under the phone's own (phone-bar.tsx), the page's name in it, and
-            // nothing under it: the page's line and its intro are behind the name (Jonathan, 2026-11-05). The Inbox's
-            // "N need you" is the bar's own count already, so it isn't info there.
-            <header className="loom-top loom-top--bar" data-accent={appAccent}>
+            // Neon: one small bar right under the phone's own (phone-bar.tsx), the page's name in it, and nothing under
+            // it: the page's line and its intro are behind the name (Jonathan, 2026-11-05). The Inbox's "N need you" is
+            // the bar's own count already, so it isn't info there. Wider than a phone, loom's system bar over it.
+            <header className={`loom-top loom-top--bar${deskBar ? ' loom-top--desk' : ''}`} data-accent={appAccent}>
               <div className="mx-auto max-w-5xl px-4">
+                {/* Wider than a phone: loom's own status bar over it, across the page's column, so its clock sits over
+                    the page's name and its glyphs over LOOM//OS, as a phone's do (system-bar.tsx). */}
+                {deskBar && <SystemBar shell={chrome.shell} tz={chrome.tz} clock={chrome.clock} offline={!!savedAt} go={go} />}
                 <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt} where={url}
                   info={{ line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
@@ -449,7 +455,6 @@ export default function App() {
           ) : (
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
             <div className="mx-auto max-w-5xl px-4 py-3">
-              {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} clock={chrome.clock} offline={!!savedAt} />}
               <AppHeader where={url} title={shownTitle ?? ""} go={go} crumb={chrome?.shell?.back} context={profileLeads ? undefined : context} more={intro}
                 lead={profileLeads && !(accent && chrome?.shell?.household) ? undefined : headLead}
                 actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
@@ -517,23 +522,6 @@ export default function App() {
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
     </TintContext.Provider></HapticsContext.Provider></PixelContext.Provider></LookContext.Provider>
-  );
-}
-
-/**
- * Neon Noir's status bar (Terminal HUD's borrow): LOOM//OS, whether loom is reached, how many agents and how many things
- * need you, and the clock. Words, not colours: the dot's glow is the same either way and the word says which.
- */
-function StatusBar({ shell, clock, offline }: { shell: NonNullable<Chrome['shell']>; clock: string; offline: boolean }) {
-  const n = shell.agents.length;
-  return (
-    <div className="loom-status">
-      <span className="loom-status__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
-      <span className="loom-status__live" data-off={offline || undefined}>{offline ? 'offline' : 'live'}</span>
-      <span className="loom-status__what loom-data">{n} agent{n === 1 ? '' : 's'}{shell.asks ? ` · ${shell.asks} need${shell.asks === 1 ? 's' : ''} you` : ''}</span>
-      {/* loom's clock (the household's time zone, as every page says it), from the page's last answer: the time alone. */}
-      <span className="loom-data ml-auto">{/\d{1,2}:\d{2}(\s?[AP]M)?/.exec(clock)?.[0] ?? clock}</span>
-    </div>
   );
 }
 

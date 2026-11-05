@@ -115,15 +115,12 @@ color-scheme:dark;
   :root[data-look="neon"][data-mode]{--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 0;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none}
 }
 
-/* ---- the status bar (App.tsx StatusBar, drawn only under Neon): LOOM//OS, live or offline in words, agents and asks,
-   loom's clock ---- */
-:root[data-look="neon"] .loom-status{display:flex;align-items:center;gap:10px;min-width:0;height:22px;margin:-6px 0 8px;font-family:var(--loom-font-data);font-size:11px;letter-spacing:.02em;color:var(--v-text-2);white-space:nowrap;overflow:hidden}
-:root[data-look="neon"] .loom-status>*{flex:none} :root[data-look="neon"] .loom-status>.loom-status__what{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-:root[data-look="neon"] :is(.loom-status__brand,.loom-pbar__brand){font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
-:root[data-look="neon"] :is(.loom-status__brand,.loom-pbar__brand) i{font-style:normal;color:var(--v-pink)}
-:root[data-look="neon"] :is(.loom-status__live,.loom-tick__live){display:inline-flex;align-items:center;gap:6px}
-:root[data-look="neon"] :is(.loom-status__live,.loom-tick__live)::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--loom-ok)}
-:root[data-look="neon"] :is(.loom-status__live,.loom-tick__live)[data-off]::before{background:var(--loom-warn)}
+/* ---- LOOM//OS and live-or-offline, in words (the phone bar's, phone-bar.tsx) ---- */
+:root[data-look="neon"] .loom-pbar__brand{font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
+:root[data-look="neon"] .loom-pbar__brand i{font-style:normal;color:var(--v-pink)}
+:root[data-look="neon"] .loom-tick__live{display:inline-flex;align-items:center;gap:6px}
+:root[data-look="neon"] .loom-tick__live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--loom-ok)}
+:root[data-look="neon"] .loom-tick__live[data-off]::before{background:var(--loom-warn)}
 
 /* ---- the Inbox's sheet (inbox.tsx): a lit top edge, and a title bar (ALERT · who · its task) ---- */
 :root[data-look="neon"][data-mode]{--glow-sheet:0 -10px 40px -12px;--glow-find:0 10px 40px -10px;--glow-field:0 0 16px -6px;--glow-line:0 0 18px}
@@ -170,13 +167,31 @@ html.loom-ios-app:root[data-look="neon"] .loom-top--bar .loom-pbar{padding-inlin
 :root[data-look="neon"] .loom-pbar{display:flex;align-items:center;gap:8px;min-width:0;height:24px;font-size:11px;color:var(--v-text-2);white-space:nowrap}
 :root[data-look="neon"] .loom-pbar__name{display:flex;align-items:center;gap:2px;flex:0 1 auto;min-width:0;max-width:38%}
 :root[data-look="neon"] .loom-pbar__name h1{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-display);font-weight:700;font-size:13px;line-height:24px;letter-spacing:.02em}
-:root[data-look="neon"] .loom-pbar__info{display:flex;align-items:flex-start;max-width:100%;min-width:0;padding:10px 8px 10px 0;margin:-10px -8px -10px 0;color:inherit;font:inherit;letter-spacing:inherit;text-align:left}
+/* its max-width counts the 8px its margin gives back (a plain 100% cut "Boxes" to "Bo…" next to its ⓘ) */
+:root[data-look="neon"] .loom-pbar__info{display:flex;align-items:flex-start;max-width:calc(100% + 8px);min-width:0;padding:10px 8px 10px 0;margin:-10px -8px -10px 0;color:inherit;font:inherit;letter-spacing:inherit;text-align:left}
 :root[data-look="neon"] .loom-pbar__title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 :root[data-look="neon"] .loom-pbar__info::after{content:"ⓘ";content:"ⓘ"/"";flex:none;margin:1px 0 0 2px;font-family:var(--font-text);font-size:9.5px;font-weight:600;line-height:1;opacity:.9}
 :root[data-look="neon"] .loom-pbar__back{display:grid;place-items:center;width:24px;height:24px;margin-left:-6px;flex:none;color:inherit}
 :root[data-look="neon"] .loom-pbar__brand{flex:none}
 :root[data-look="neon"] .loom-pbar__needs{flex:none;display:grid;place-items:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;
   background:var(--loom-count);color:var(--loom-count-ink);text-decoration:none;font-size:10.5px;font-weight:600;box-shadow:var(--glow-tick) var(--loom-count)}
+/* ---- wider than a phone (system-bar.tsx): loom's own status bar where a phone's would be, over the phone's bar and
+   across the page's column (so the clock is over the page's name and the glyphs over LOOM//OS, as on a phone); it
+   scrolls away with the page's header. Its clock small and bold on the left, a few monochrome glyphs on the right, each
+   with its words on hover or keyboard focus; dimmed is "look at this". Not on iOS's home-screen app (an iPad draws its
+   own there, and the bar sits at its inset, as on a phone). ---- */
+:root[data-look="neon"] .loom-top--desk{padding-top:8px}
+:root[data-look="neon"] .loom-sys{display:flex;align-items:center;justify-content:space-between;gap:12px;height:26px;color:var(--v-text);white-space:nowrap}
+:root[data-look="neon"] .loom-sys__clock{font-family:var(--font-text);font-size:13px;font-weight:700;letter-spacing:.01em;font-variant-numeric:tabular-nums}
+:root[data-look="neon"] .loom-sys__icons{display:flex;align-items:center;gap:6px;margin-right:-3px}
+:root[data-look="neon"] .loom-sys__icon{position:relative;display:inline-flex;align-items:center;gap:3px;height:26px;padding-inline:3px;color:inherit;text-decoration:none;outline-offset:-2px}
+:root[data-look="neon"] .loom-sys__icon[data-dim]{color:var(--v-text-3)}
+:root[data-look="neon"] .loom-sys__n{font-size:11px;font-weight:600;line-height:1}
+:root[data-look="neon"] .loom-sys__tip{position:absolute;top:calc(100% + 2px);right:0;z-index:40;width:max-content;max-width:min(320px,80vw);padding:3px 8px;border-radius:6px;
+  background:var(--v-paper);color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-edge);font-family:var(--loom-font-data);font-size:11px;line-height:1.3;white-space:normal;
+  opacity:0;transition:opacity .12s ease-out;pointer-events:none}
+:root[data-look="neon"] .loom-sys__icon:is(:hover,:focus-visible) .loom-sys__tip{opacity:1}
+html.loom-ios-app:root[data-look="neon"] .loom-sys{display:none}
 /* the ticker: its words fit, they stand still (cut with an ellipsis if they must be); they don't, they loop, slowly */
 :root[data-look="neon"] .loom-tick{position:relative;flex:1 1 0;min-width:24px;overflow:hidden;letter-spacing:.02em}
 :root[data-look="neon"] .loom-tick__track{display:block;width:100%}
