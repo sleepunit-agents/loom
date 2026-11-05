@@ -52,6 +52,7 @@
 :root[data-look="neon"] .loom-need__acts{display:flex;flex-wrap:wrap;gap:8px}
 /* its own buttons under it: its words whole */
 :root[data-look="neon"] .loom-need[data-whole] :is(.loom-need__title,.loom-need__why){display:block;-webkit-line-clamp:none;overflow:visible}
+:root[data-look="neon"] .loom-need__fine{font-size:12px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere}
 
 /* ---- an agent: its face big on the left, how it is and its name beside it, the one thing it's on under them ---- */
 :root[data-look="neon"] a.loom-w--agent{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "line line" "foot foot";

@@ -119,7 +119,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
         )}
         {(n?.if_yes || n?.if_no) && (
           <dl className="grid gap-3 sm:grid-cols-2">
-            {([['If yes', n.if_yes], ['If no', n.if_no]] as const).filter(([, v]) => v).map(([k, v]) => (
+            {([[i.kind === 'permission' ? 'If you allow' : 'If yes', n.if_yes], [i.kind === 'permission' ? 'If you deny' : 'If no', n.if_no]] as const).filter(([, v]) => v).map(([k, v]) => (
               <div key={k} className="grid gap-1"><dt className="text-xs font-semibold uppercase tracking-wide opacity-60">{k}</dt><dd className="break-words">{words(v!)}</dd></div>))}
           </dl>
         )}
@@ -139,7 +139,13 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
           </section>
         )}
         {ans && <AnswerBox a={ans} yesNo={yesNo} />}
-        {n && (
+        {i.fine && (
+          <section className="grid gap-1.5">
+            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Exactly what this allows</h3>
+            <p className="break-words text-sm opacity-70">{i.fine}</p>
+          </section>
+        )}
+        {n && (n.details || n.refs.length > 0) && (
           <section className="grid gap-1.5">
             <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Details</h3>
             <p className="break-words text-sm leading-relaxed opacity-80">{words([n.details, ...n.refs].join(' · '))}</p>

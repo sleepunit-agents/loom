@@ -38,6 +38,12 @@ describe('meter, code and status blocks', () => {
     const m = parseManifest({ v: 2, asks: [{ text: 'Renew the login', page: '', actions: [{ action: 'renew', label: 'Renew', tone: 'primary' }, { action: 'later', label: 'Later' }] }] });
     expect(typeof m === 'string' ? m : m.asks[0].actions?.map((b) => b.label)).toEqual(['Renew', 'Later']);
     expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', actions: [1, 2, 3, 4].map((n) => ({ action: `a${n}`, label: 'x' })) }] })).toBe('string');
+    // Laid out: why, what each answer does, details and the small print, each within its cap.
+    const laid = parseManifest({ v: 2, asks: [{ text: 'OK to start updating lane prompts on loom again?', why: 'The script changed.', if_yes: 'They go live.', if_no: 'They wait.', details: 'In PR 61.', fine: 'A GitHub write: acme/app' }] });
+    expect(typeof laid === 'string' ? laid : laid.asks[0]).toMatchObject({ why: 'The script changed.', if_yes: 'They go live.', if_no: 'They wait.', details: 'In PR 61.', fine: 'A GitHub write: acme/app' });
+    for (const [k, n] of [['why', 301], ['if_yes', 301], ['if_no', 301], ['details', 2001], ['fine', 401]] as const) {
+      expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', [k]: 'w'.repeat(n) }] }), k).toBe('string');
+    }
   });
 
   it('a where reads the way a person says it', () => {

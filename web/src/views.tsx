@@ -133,9 +133,29 @@ function AgentIdentity({ c }: { c: AgentCard }) {
   );
 }
 type Tile = { label: string; value: string; detail?: string; tone?: Tone; page?: string; source: Source };
-type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string; approval?: Approval };
+type Ask = { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; actions?: Btn[]; kind?: string; source: Source; sourceLabel?: string; approval?: Approval;
+  if_yes?: string; if_no?: string; fine?: string };
 /** The approval a Needs you waits on, absorbed into it: that card's words and its Allow and Deny, posted to its piece. */
-export type Approval = { text: string; meta?: string; actions: Btn[]; source: Source };
+export type Approval = { text: string; meta?: string; actions: Btn[]; source: Source; if_yes?: string; if_no?: string; fine?: string };
+
+/** What a button does, said beside it: the primary (Allow, Yes) with "If you allow", the danger one (Deny) with "If you
+ * deny" (Jonathan, 2026-11-05: "I don't know what this is even asking yet"). A button with no line is drawn alone. */
+export function lineFor(b: Btn, lines: { if_yes?: string; if_no?: string }): string | undefined {
+  return b.tone === 'danger' ? lines.if_no : b.tone === 'primary' || !b.tone ? lines.if_yes : undefined;
+}
+export function AnswersWithLines({ actions, lines, size = 'sm', onDone }: { actions: Btn[]; lines: { if_yes?: string; if_no?: string }; size?: 'sm' | 'default'; onDone?: () => void }) {
+  if (!lines.if_yes && !lines.if_no) return <div className="flex flex-wrap gap-2 pt-1">{actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div>;
+  return (
+    <div className="loom-answers grid gap-2 pt-1">{actions.map((b) => {
+      const line = lineFor(b, lines);
+      return (
+        <div key={b.action + b.label} className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+          <ActButton b={b} size={size} onDone={onDone} />
+          {line && <p className="break-words text-sm opacity-80">{b.tone === 'danger' ? 'If you deny' : 'If you allow'}: {line}</p>}
+        </div>);
+    })}</div>
+  );
+}
 type ThreadRow = { agent?: string; text: string; meta?: string; where?: string; at?: string; page?: string };
 export type Mode = 'auto' | 'light' | 'dark';
 /** The page's ground (ground.tsx): the contour field, the depth background's contours, or the plain wash. */
@@ -203,7 +223,7 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
 
 // ---- an Inbox item's row (the Inbox's, and Home's banner) ---------------------------------------
 
-export type InboxItem = { key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
+export type InboxItem = { fine?: string; key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
   /** The exact thing it's about, outside loom (a pull request's URL); and a box to answer its agent in words (core's Needs you). */
   href?: string; reply?: { action: string; label: string; fields: Record<string, string> };
   /** A Needs you laid out (its text is the ask), and the approval it waits on. */
@@ -261,7 +281,8 @@ function Asks({ asks }: { asks: Ask[] }) {
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
             {a.meta && <p className="text-sm opacity-70">{a.meta}</p>}
             {a.approval && <ApprovalBox a={a.approval} />}
-            {a.actions && <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>}
+            {a.actions && <AnswersWithLines actions={a.actions} lines={a} />}
+            {a.fine && <p className="break-words text-xs opacity-60">Exactly what this allows: {a.fine}</p>}
           </CardContent>
         </Card>
       </Arrive></As>))}
@@ -283,7 +304,8 @@ export function ApprovalBox({ a, size = 'sm', onDone }: { a: Approval; size?: 's
       <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">You're allowing</h3>
       <p className="whitespace-pre-wrap break-words font-medium">{text}</p>
       {a.meta && <p className="whitespace-pre-wrap break-words text-sm opacity-70">{a.meta}</p>}
-      <As source={a.source}><div className="flex flex-wrap gap-2 pt-1">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div></As>
+      <As source={a.source}><AnswersWithLines actions={a.actions} lines={a} size={size} onDone={onDone} /></As>
+      {a.fine && <p className="break-words text-xs opacity-60">Exactly what this allows: {a.fine}</p>}
     </section>
   );
 }

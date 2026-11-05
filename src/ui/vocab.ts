@@ -126,7 +126,11 @@ export const ASK_KINDS: ReadonlySet<string> = new Set(['permission', 'decision',
  * waits on); otherwise it needs the owner: it counts, and may push. `expires` (ISO) is when it stops mattering.
  */
 export interface Ask { text: string; meta?: string; page?: string; label?: string; tone?: Tone; at?: string; agent?: string; /** Up to two buttons on its card (Ratify and Reject): posted to the piece, like a buttons block's. */ actions?: Button[];
-  kind?: AskKind; attention?: false; expires?: string }
+  kind?: AskKind; attention?: false; expires?: string;
+  /** The ask laid out (docs/extensions.md, "asks"): why, one line; what happens if the owner says yes (its first,
+   * primary button) and if no (its danger one), drawn beside those buttons; longer details for its sheet; and the fine
+   * print, exactly what the yes allows (the machine's kind and target), under the rest. */
+  why?: string; if_yes?: string; if_no?: string; details?: string; fine?: string }
 /** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
 export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }
 /** One the owner already answered (or that expired): the Inbox's history. */
@@ -246,6 +250,18 @@ function str(v: unknown, what: string): string {
   if (typeof v !== 'string') throw new Invalid(`${what} must be a string`);
   if (v.length > LIMITS.string) throw new Invalid(`${what} is longer than ${LIMITS.string}`);
   return v;
+}
+
+/** An ask's laid-out words (Ask.why, if_yes, if_no, details, fine), each a string within its cap. */
+function plainOf(a: Record<string, unknown>): Pick<Ask, 'why' | 'if_yes' | 'if_no' | 'details' | 'fine'> {
+  const out: Pick<Ask, 'why' | 'if_yes' | 'if_no' | 'details' | 'fine'> = {};
+  for (const [k, cap] of [['why', 300], ['if_yes', 300], ['if_no', 300], ['details', 2000], ['fine', 400]] as const) {
+    const v = a[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.length > cap) throw new Invalid(`ask.${k} is text, at most ${cap} characters`);
+    if (v.trim()) out[k] = v;
+  }
+  return out;
 }
 
 function optStr(v: unknown, what: string): string | undefined {
@@ -837,6 +853,7 @@ export function parseManifest(value: unknown): Manifest | string {
           ...(a.kind !== undefined ? { kind: askKind(a.kind, 'ask.kind') } : {}),
           ...(a.attention !== undefined ? attention(a.attention) : {}),
           ...(a.expires !== undefined ? { expires: when(a.expires, 'ask.expires') } : {}),
+          ...plainOf(a),
         };
       });
     }
