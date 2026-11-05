@@ -36,10 +36,18 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "24080301897bf7e30b6eac50c871028f0f50e5ce",
+      "commit": "ebf98f59913d44131fa849bde9d584cd98b1c5c0",
       "version": "0.1.0",
       "label": "Approvals",
-      "description": "Single-use approvals: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
+      "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
+    },
+    {
+      "name": "changes",
+      "repo": "sleepunit-agents/loom-changes",
+      "commit": "1311dfe34f1fede34f3f7aa721e4e9c71639ce6d",
+      "version": "0.1.0",
+      "label": "Changes",
+      "description": "What's waiting to go up: every open change in your projects' repos, by project, read-only, with Yes, merge it where a rule asks you."
     },
     {
       "name": "clock",
