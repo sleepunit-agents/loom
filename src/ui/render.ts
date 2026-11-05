@@ -269,6 +269,8 @@ export interface HouseHome {
   needs: number;
   /** The first of them, whole: Home draws it as its Inbox row, and it opens as it does there (to the item). */
   need?: InboxItem;
+  /** The first few of them, whole, for a desktop's Home (web/src/desk.tsx): each answered where it stands. */
+  stack?: InboxItem[];
   cards: AgentCard[];
   moving: Array<{ agent?: string; text: string; meta?: string }>;
   /** No pieces yet: a line, and a couple of catalog pieces to install. */

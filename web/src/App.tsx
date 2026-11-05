@@ -34,6 +34,11 @@ import { SystemBar } from './system-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
+// Neon on a big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide under Neon (so it's
+// here by the time the first page is), and never on a phone.
+const deskChunk = () => import('./desk');
+if (matchMedia('(min-width: 1024px)').matches && document.documentElement.dataset.look === 'neon') void deskChunk();
+const DeskHome = lazy(() => deskChunk().then((m) => ({ default: m.DeskHome })));
 // The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
 // Find, over whatever you're in (find.tsx): loads the first time it opens.
@@ -404,11 +409,19 @@ export default function App() {
     if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
   }, [data, waiting]);
 
+  // A desktop's page scrolls inside its own space (desk.css): a new page opens at its top.
+  const mainRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [url]);
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
   // Neon: the phone's bar at every width (phone-bar.tsx). On a phone it merges with the phone's own status bar; wider,
   // there's none, so loom draws one over it (system-bar.tsx; Jonathan, 2026-11-05). 000h keeps its big header.
   const phoneBar = look === 'neon' && !!chrome?.shell;
+  // Neon at 1024 px and wider, in a household (desk.tsx): a desktop. Home is widgets on the ground, the dock sits at the
+  // bottom centre (no rail), and every other page fills the space between the bars and the dock. 1024 is where the rail
+  // took over from the phone's dock before: below it the phone's layout (its dock, its gestures) is unchanged.
+  const desk = look === 'neon' && wide && !!chrome?.shell?.household;
+  const deskHome = desk && !waiting && !error && data?.view === 'house-home';
   const deskBar = phoneBar && vw >= 640;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
   // A phone's gestures (gestures.ts): sideways between the dock's own pages, in its order; up from the dock for Find.
@@ -442,13 +455,13 @@ export default function App() {
 
   return (
     <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
-      <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
+      <div className={`relative isolate min-h-dvh ${desk ? 'loom-desk' : chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
         {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
         {ground === 'depth' && <Suspense fallback={null}><Depth /></Suspense>}
-        {wide && chrome && <Suspense fallback={null}><LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} /></Suspense>}
+        {wide && !desk && chrome && <Suspense fallback={null}><LoomSidebar chrome={chrome} head={head} agent={accent} go={go} icon={icon} /></Suspense>}
         <div className="loom-page-clip min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
@@ -476,7 +489,8 @@ export default function App() {
           </header>
           )}
 
-          <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10" data-accent={appAccent}>
+          <main ref={mainRef} aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}
+            data-app={desk && !deskHome ? '' : undefined}>
             {waiting && <Skeleton />}
             {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
               This is how it looked at <span className="loom-data">{new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>. Actions wait for a connection.</Callout>}
@@ -492,6 +506,7 @@ export default function App() {
             {!waiting && !error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
+                  : data.view === 'house-home' && desk && chrome?.shell ? <Suspense fallback={<Skeleton />}><DeskHome home={data.home as never} shell={chrome.shell} /></Suspense>
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
@@ -515,7 +530,7 @@ export default function App() {
             <button type="button" onClick={() => setFinding(true)} className="loom-find-pill fixed inset-x-0 z-40 mx-auto flex h-9 w-fit items-center gap-2 rounded-full px-4 text-sm font-medium [bottom:calc(var(--dock-h)_+_28px_+_env(safe-area-inset-bottom))]">
               <AnimatedIcon name={iconFor('search')} size="sm" />Find</button>
           )}
-          {!wide && chrome && (
+          {(!wide || desk) && chrome && (
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}

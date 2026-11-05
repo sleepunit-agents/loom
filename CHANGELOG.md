@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon on a big screen: Home is a desktop** (t-1868). Under Neon at 1024 px
+  and wider, Home is widgets on the ground instead of a scrolling page: what
+  needs you (the first four, each answered where it stands: Yes and No for a
+  yes/no ask, Allow and Deny under the approval's own words, else its own
+  buttons; one asked in words opens its sheet), a card per agent with its face
+  big and the one thing it's on, box vitals (the Boxes place's count and open
+  alerts, and any place in trouble, from the shell every page has) and the
+  nightly backup. One screen's height: a column with more than fits scrolls
+  inside itself. The dock moves to the bottom centre (the phone's keys, the
+  rail gone), and every other page scrolls in the space between the bars and
+  the dock. Home's answer carries the first few waiting items whole
+  (`stack`). Its own chunk, fetched only
+  at that width under Neon. Phones, 000h and screens under 1024 px are
+  unchanged.
 - **A phone's Home with many agents is a row each** (t-1869). Up to four
   agents keep their big cards. Past four, a phone's Home lists them one row
   each (face, name, how it is in words, its last line), something wrong

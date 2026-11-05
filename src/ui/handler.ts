@@ -493,6 +493,8 @@ function agentsOf(h: Household | undefined): Record<string, { label: string; bg:
 }
 
 const HOME_THREAD = 30;
+/** How many of what needs you a desktop's Home shows whole, to answer where it stands (web/src/desk.tsx). */
+const HOME_STACK = 4;
 
 function agentTabs(agent: string, current: string, pieces: PieceInfo[] = []): AgentHead['tabs'] {
   // People are the household's (the nav has them), so an agent's own pages are its day, its mind and how it runs,
@@ -1525,7 +1527,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const agents = agentsOf(hh)!;
       const waiting = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).filter((it) => it.attention);
       // Unread as the Inbox says it: Home's banner is the first one's row there.
-      if (waiting[0]) waiting[0].unread = !storeFor(opts).openedKeys(readerFor(opts, who)).has(waiting[0].key);
+      { const opened = storeFor(opts).openedKeys(readerFor(opts, who)); for (const w of waiting.slice(0, HOME_STACK)) w.unread = !opened.has(w.key); }
       const cards = agentCards(hh, pieces, agents, nowMs);
       const down = (st: AgentState) => cards.filter((c) => c.state === st).map((c) => c.label);
       const say = (names: string[], what: string) => `${names.join(' and ')} ${names.length === 1 ? 'is' : 'are'} ${what}`;
@@ -1536,6 +1538,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         .map(([a, r]) => ({ agent: a, text: r.reason ?? `${agents[a].label} is working`, meta: p.manifest.tab?.label ?? p.piece })));
       const d: HouseHome = {
         headline, needs: waiting.length, need: waiting[0], cards, moving,
+        // A desktop's Home answers the first few in place (web/src/desk.tsx); a phone's shows the first as its row.
+        stack: waiting.slice(0, HOME_STACK),
         // Home is the agents and what's moving (Jonathan, 2026-10-27): the pieces' tiles live on their own pages.
         firstRun: pieces.length ? undefined : firstRun(hh.agents.map((a) => agents[a].label)),
       };
