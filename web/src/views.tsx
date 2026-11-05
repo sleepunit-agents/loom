@@ -42,13 +42,18 @@ const ago = (iso?: string) => {
 function statusWords(c: AgentCard): string {
   const doing = c.doing ?? [];
   const state = c.state ?? 'available';
-  return (c.problems ?? []).length ? (state === 'broken' ? 'Something’s broken' : 'Needs a look')
+  return state === 'broken' ? 'Something’s broken' : (c.problems ?? []).length ? 'Needs a look'
     : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
     : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
 }
 
-/** Past this many agents a phone's Home is a row each, not a card each (Jonathan, 2026-11-05, t-1869). */
-export const HOME_CARDS = 4;
+/** A face's state: wrong (broken, or a problem), working, or idle. The card's and the row's. */
+const faceState = (c: AgentCard): 'error' | 'working' | 'idle' => (c.state === 'broken' || (c.problems ?? []).length ? 'error' : c.state === 'working' || (c.doing ?? []).length ? 'working' : 'idle');
+/** The dot on a face: its state's colour. */
+const dotColor = (state: string) => (state === 'working' ? 'bg-[var(--loom-live)]' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]');
+
+/** Up to this many agents a phone's Home is a card each; past it, a row each (Jonathan, 2026-11-05, t-1869). */
+const CARDS_UP_TO = 4;
 
 /** Worst first: something wrong, then unavailable, then working, then quiet; else as the household lists them. */
 function rowRank(c: AgentCard): number {
@@ -62,16 +67,16 @@ function AgentRow({ c }: { c: AgentCard }) {
   const doing = c.doing ?? [];
   const problems = c.problems ?? [];
   const state = c.state ?? 'available';
-  const wrong = problems.length > 0 || state === 'broken';
+  const wrong = faceState(c) === 'error';
   const line = problems[0]?.text ?? doing[0]?.text ?? c.reason;
   const href = `/a/${c.id}`;
   return (
     <Arrive as="li" k={`row:${c.id}`} className="min-w-0">
-      <a href={href} data-agent={c.id} className="flex min-w-0 items-center gap-3 px-4 py-3 text-left no-underline"
+      <a href={href} className="flex min-w-0 items-center gap-3 px-4 py-3 text-left no-underline"
         onClick={(e) => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); go(href); }}>
         <span className="relative shrink-0">
-          <AgentAvatar a={c} size={40} shape="circle" state={wrong ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} />
-          <span aria-hidden className={`absolute bottom-0 right-0 size-3 rounded-full border-2 border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)]' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' || wrong ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
+          <AgentAvatar a={c} size={40} shape="circle" state={faceState(c)} />
+          <span aria-hidden className={`absolute bottom-0 right-0 size-3 rounded-full border-2 border-[var(--v-paper)] ${dotColor(state)}`} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-baseline gap-2">
@@ -96,8 +101,8 @@ function AgentIdentity({ c }: { c: AgentCard }) {
     <Card className="loom-identity cursor-pointer gap-0 p-0" style={{ '--acc': markColor(c.bg) } as React.CSSProperties} onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
         <span className="loom-identity__face relative shrink-0">
-          <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${markColor(c.bg)} 55%, transparent)` }} />
-          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)] loom-dot-live' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
+          <AgentAvatar a={c} size={72} shape="circle" state={faceState(c)} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${markColor(c.bg)} 55%, transparent)` }} />
+          <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${dotColor(state)}${state === 'working' ? ' loom-dot-live' : ''}`} />
         </span>
         <div className="min-w-0 flex-1">
           <Arrive as="p" k={`eb:${c.id}\0${eyebrow}`} className={`text-[11px] font-semibold uppercase tracking-[.08em] ${problems.length ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{eyebrow}</Arrive>
@@ -161,7 +166,7 @@ export function PressCard({ onPress, className, children }: { onPress: () => voi
 export function HouseHomeView({ home }: { home: { headline: string; needs: number; need?: InboxItem; cards: AgentCard[]; moving: { agent?: string; text: string; meta?: string }[] } }) {
   const { go } = useEnv();
   const open = useOpenItem();
-  const many = home.cards.length > HOME_CARDS;
+  const rows = home.cards.length > CARDS_UP_TO;
   return (
     <div className="grid gap-4">
       <h2 className="text-2xl font-semibold">{home.headline}</h2>
@@ -182,14 +187,14 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
       {/* Up to four agents, a card each. Past that, a phone's Home is a row each, worst first, a tap to the agent's own
           page (Jonathan, 2026-11-05, t-1869: "fine if you've got 1 of something and a nightmare if you exceed that").
           Wider screens keep their cards. */}
-      {many && (
+      {rows && (
         <Card className="gap-0 p-0 md:hidden">
-          <ul aria-label="Agents" className="loom-agent-rows divide-y">
-            {home.cards.map((c, i) => ({ c, i })).sort((x, y) => rowRank(x.c) - rowRank(y.c) || x.i - y.i).map(({ c }) => <AgentRow key={c.id} c={c} />)}
+          <ul aria-label="Agents" className="divide-y">
+            {[...home.cards].sort((x, y) => rowRank(x) - rowRank(y)).map((c) => <AgentRow key={c.id} c={c} />)}
           </ul>
         </Card>
       )}
-      <div className={`${many ? 'hidden md:grid' : 'grid'} items-start gap-4 md:grid-cols-2`}>
+      <div className={`${rows ? 'hidden md:grid' : 'grid'} items-start gap-4 md:grid-cols-2`}>
         {home.cards.map((c) => <AgentIdentity key={c.id} c={c} />)}
       </div>
     </div>
