@@ -64,7 +64,7 @@ interface File {
 
 /**
  * A person's Appearance (web/src/look.ts; Jonathan, 2026-11-04: "if every device I login I have to go and change the
- * theme, that sucks"): the look (Neon Noir, Low Light or Daylight), the ground, sound, pixel faces and haptics, and their
+ * theme, that sucks"): the look (Neon Noir, Low Light or Daylight), the ground, sound, pixel faces, pixel icons and haptics, and their
  * Accessibility (Allow zoom, Reduce motion, Higher contrast). Only what they chose; kept per member
  * like `seen`, so it follows them to every device they sign in on.
  *
@@ -73,6 +73,8 @@ interface File {
  * (lookOf: Daylight if its mode was light, else Low Light). Nothing else reads `mode`.
  */
 export interface Prefs { look?: Look | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
+  /** Pixel icons (Appearance, web/src/app-icon.tsx): the household's icon set in place of the line icons; off unless turned on. */
+  icons?: boolean;
   /** Allow zoom (Accessibility): pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
   zoom?: boolean;
   /** Reduce motion (Accessibility, web/src/access.ts): follow the phone's own setting (the default), or on, or off. */
@@ -90,7 +92,7 @@ export function lookOf(look: unknown, mode: unknown): Look | undefined {
   return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : 'neon';
 }
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
-  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false], zoom: [true, false],
+  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], icons: [true, false], haptics: [true, false], zoom: [true, false],
   motion: ['follow', 'on', 'off'], contrast: ['follow', 'on', 'off'],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */

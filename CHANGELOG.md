@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and the fine print, and Allow once and Deny right there; while one waits, the comm screen's face is waiting on you.
   An ask naming a thread but from another agent never shows there.
 
+- **Pixel icons** (t-1880). A household can install its own pixel icon set (`loom household icons install <dir>`, kept
+  at `icons/<set>/`, served only to someone signed in), and a member can wear it with Appearance's "Pixel icons" (off
+  unless turned on; not offered without a set). Each icon keeps its light and shade, recoloured to its key's ramp in
+  each look, normal and lit, stronger with Higher contrast, by an SVG filter the page builds once from the look's own
+  colours. The dock, the launcher's tiles, an app's tile in its header and in Find, and a window's title strip wear
+  them; a 16 px row keeps its line icon, as does an app the set has none for.
 - **Comms: a push when your agent replies** (t-1876). A reply in a thread you haven't read, with no app of yours on that
   thread for 2 minutes, pushes to your own devices only: "Art replied" and the thread's title (or "Art replied in a new
   thread"), never the reply's words. A tap opens the thread.

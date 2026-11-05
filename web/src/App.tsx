@@ -49,6 +49,7 @@ const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPane
 import { noteRecent } from './recent';
 import * as trail from './trail';
 import { InSide } from './side';
+import { AppIcon, PixelIconsContext } from './app-icon';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
 import { useGestures } from './gestures';
@@ -156,6 +157,10 @@ export default function App() {
   // Pixel faces (pixel-face.tsx), where an agent has a sheet: on unless the person turns them off.
   const [pixel, setPixelState] = useState(() => { try { return localStorage.getItem('loom-pixel') !== 'off'; } catch { return true; } });
   const setPixel = (on: boolean) => { setPixelState(on); keep('loom-pixel', on ? 'on' : 'off'); save({ pixel: on }); };
+  // Pixel icons (app-icon.tsx), where the household has a set: off unless the person turns them on (Jonathan, 2026-11-05:
+  // he wants to live with them first).
+  const [pixIcons, setPixIconsState] = useState(() => { try { return localStorage.getItem('loom-icons') === 'on'; } catch { return false; } });
+  const setPixIcons = (on: boolean) => { setPixIconsState(on); keep('loom-icons', on ? 'on' : 'off'); save({ icons: on }); };
   const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
   // Haptics (haptic.tsx): on unless the person turns them off; their chunk loads once the first page is up, while on.
   const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
@@ -332,6 +337,7 @@ export default function App() {
     if (p.ground) { setGroundState(p.ground); keep('loom-ground', p.ground); }
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
+    if (p.icons !== undefined) { setPixIconsState(p.icons); keep('loom-icons', p.icons ? 'on' : 'off'); }
     if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
     if (p.zoom !== undefined) { setZoomState(p.zoom); keep('loom-zoom', p.zoom ? 'on' : 'off'); }
     if (p.motion) { setMotionState(p.motion); keep('loom-motion', p.motion); wearMotion(p.motion); }
@@ -365,6 +371,8 @@ export default function App() {
   const env: Env | null = baseCtx ? envFor(baseCtx) : null;
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
   const icon = useMemo(() => iconsOf(chrome), [chrome]);
+  // The household's pixel icons, while the person wears them (app-icon.tsx): none, and every app keeps its line icon.
+  const pixIconSet = useMemo(() => (pixIcons && chrome?.shell?.icons ? chrome.shell.icons : null), [pixIcons, chrome]);
   // Each app's one colour (tint.ts): its tile, its dock tile, its header and its page's accents.
   const tint = useMemo(() => tintsOf(chrome?.shell?.pieces), [chrome]);
   // A phone's dock: the first tab, the one you're on, and the next ones in order, four in all; the rest in More.
@@ -386,7 +394,7 @@ export default function App() {
   const phoneTabs = onPhone.length < nav.tabs.length || nav.more.length ? [...onPhone, { label: 'More', href: '#more', current: false }] : nav.tabs;
   const moreTabs = [...nav.tabs.filter((t) => !onPhone.includes(t)), ...nav.more];
   const dockItems = (list: Tab[]): DockItem[] => list.map((t) => ({
-    value: t.href, label: t.label, icon: <><AnimatedIcon name={iconFor(icon(t.label))} active={t.current} /><HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
+    value: t.href, label: t.label, icon: <><AppIcon label={t.href === '/setup' ? 'Setup' : t.label} name={iconFor(icon(t.label))} active={t.current} lit={t.current && !agentDock} /><HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
     ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
@@ -568,7 +576,7 @@ export default function App() {
   });
 
   return (
-    <PixelContext.Provider value={pixel}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
+    <PixelContext.Provider value={pixel}><PixelIconsContext.Provider value={pixIconSet}><HapticsContext.Provider value={haptics}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${desk ? 'loom-desk' : chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
         style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
@@ -608,7 +616,7 @@ export default function App() {
               crumbs={crumbs} back={trail.step(appKey, -1)} forward={trail.step(appKey, 1)} move={move}
               side={sideWide ? { has: pageSide, el: setSideEl, app: appKey, under: top?.href } : undefined}
               tint={accent ? markColor(accent.bg) : `var(--loom-tint-${appTint ?? 'pink'})`}
-              lead={accent ? <AgentAvatar a={accent} size={22} /> : <AnimatedIcon name={iconFor(icon(tileLabel || ''))} size="sm" />}>{page}</D.DeskWindow>
+              lead={accent ? <AgentAvatar a={accent} size={22} /> : <AppIcon label={tileLabel || ''} name={iconFor(icon(tileLabel || ''))} size="sm" lit />}>{page}</D.DeskWindow>
           )}>
           <main ref={mainRef} aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
             {waiting && <Skeleton />}
@@ -637,7 +645,7 @@ export default function App() {
                       add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
                   : <NotYet kind={data.view} url={url} />}
               </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -678,7 +686,7 @@ export default function App() {
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}
-    </TintContext.Provider></HapticsContext.Provider></PixelContext.Provider>
+    </TintContext.Provider></HapticsContext.Provider></PixelIconsContext.Provider></PixelContext.Provider>
   );
 }
 

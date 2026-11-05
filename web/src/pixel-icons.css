@@ -1,0 +1,18 @@
+/* A pixel icon (pixel-icons.tsx): 32 px at 1x, whole pixels, never smoothed; its ramp is its tint's filter. A lit key's
+   rule comes after a line-only one's, so a line-only icon on the lit key isn't inverted. */
+/* the dock's icon slot is 58% of its key (30 px of 52): a pixel icon's is its own 32 px, so no pixel is resampled */
+.v-dock [data-part="icon"]:has(>.loom-pix){inline-size:32px;block-size:32px}
+.v-dock [data-part="icon"] .loom-pix{inline-size:32px;block-size:32px;max-inline-size:none;max-block-size:none}
+.loom-pix{display:block;flex:none;width:32px;height:32px;image-rendering:crisp-edges;image-rendering:pixelated;-webkit-user-drag:none;user-select:none;pointer-events:none}
+.loom-pix[data-tint="pink"]{filter:url(#loom-pix-pink-n)}
+.loom-pix[data-tint="pink"][data-line]{filter:url(#loom-pix-pink-ni)}
+.loom-pix[data-tint="pink"][data-lit]{filter:url(#loom-pix-pink-l)}
+.loom-pix[data-tint="blue"]{filter:url(#loom-pix-blue-n)}
+.loom-pix[data-tint="blue"][data-line]{filter:url(#loom-pix-blue-ni)}
+.loom-pix[data-tint="blue"][data-lit]{filter:url(#loom-pix-blue-l)}
+.loom-pix[data-tint="yellow"]{filter:url(#loom-pix-yellow-n)}
+.loom-pix[data-tint="yellow"][data-line]{filter:url(#loom-pix-yellow-ni)}
+.loom-pix[data-tint="yellow"][data-lit]{filter:url(#loom-pix-yellow-l)}
+.loom-pix[data-tint="olive"]{filter:url(#loom-pix-olive-n)}
+.loom-pix[data-tint="olive"][data-line]{filter:url(#loom-pix-olive-ni)}
+.loom-pix[data-tint="olive"][data-lit]{filter:url(#loom-pix-olive-l)}
