@@ -21,9 +21,14 @@ const built = existsSync(`${root}dist/web/index.html`);
 const TOKEN = 'panel-pages-token';
 
 const rows = (n: number, what: string) => Array.from({ length: n }, (_, i) => ({ label: `${what} ${i + 1}`, value: `the ${what} numbered ${i + 1}`, page: `x/${i + 1}` }));
+// Switches that all share one label: rows 1 to 15 on, 16 to 20 off. A row's state must stay its own across a page flip.
+const switches = Array.from({ length: 20 }, (_, i) => ({ label: 'Same', value: `switch ${i + 1}`, toggle: { action: 'flip', on: i < 15, fields: { n: String(i + 1) } } }));
 const PAGE = { title: 'Lots', sections: [
   { id: 'long', title: 'Long', blocks: [{ type: 'panel', rows: rows(40, 'Secret'), action: { action: 'add', label: 'Add one' } }] },
   { id: 'short', title: 'Short', blocks: [{ type: 'panel', rows: rows(3, 'Rule') }] },
+  { id: 'fifteen', title: 'Fifteen', blocks: [{ type: 'panel', rows: rows(15, 'Fifteen') }] },
+  { id: 'sixteen', title: 'Sixteen', blocks: [{ type: 'panel', rows: rows(16, 'Sixteen') }] },
+  { id: 'switches', title: 'Switches', blocks: [{ type: 'panel', rows: switches }] },
 ] };
 
 describe.runIf(built && chrome)('a long panel', () => {
@@ -69,14 +74,30 @@ describe.runIf(built && chrome)('a long panel', () => {
     await page.goto(`${base}/p/lots`);
     await page.waitForSelector('[data-slot="panel"]', { timeout: 20_000 });
     const panels = page.locator('[data-slot="panel"]');
-    const labels = (i: number) => panels.nth(i).locator('ul').first().locator(':scope > li').evaluateAll((ls) => ls.map((l) => (l.textContent ?? '').match(/^(Secret|Rule) \d+/)?.[0]));
+    const labels = (i: number) => panels.nth(i).locator('ul').first().locator(':scope > li').evaluateAll((ls) => ls.map((l) => (l.textContent ?? '').match(/^(Secret|Rule|Fifteen|Sixteen) \d+/)?.[0]));
     // Before (panels drew every row): 40 rows. After: the first 15, then the pager, then the panel's action.
     expect(await labels(0)).toEqual(Array.from({ length: 15 }, (_, i) => `Secret ${i + 1}`));
     const pager = panels.nth(0).getByRole('navigation', { name: 'Pages of this list' });
     await expect.poll(() => pager.count()).toBe(1);
     expect(await panels.nth(0).getByRole('button', { name: 'Add one' }).count()).toBe(1);
+    // Three pages for 40 rows (15, 15, 10): none dropped, and the action under every page.
+    expect(await pager.getByText('3', { exact: true }).count()).toBe(1);
+    expect(await pager.getByText('4', { exact: true }).count()).toBe(0);
     await pager.getByText('2', { exact: true }).click();
     await expect.poll(() => labels(0)).toEqual(Array.from({ length: 15 }, (_, i) => `Secret ${i + 16}`));
+    expect(await panels.nth(0).getByRole('button', { name: 'Add one' }).count()).toBe(1);
+    await pager.getByText('3', { exact: true }).click();
+    await expect.poll(() => labels(0)).toEqual(Array.from({ length: 10 }, (_, i) => `Secret ${i + 31}`));
+    // The edge: 15 rows whole, 16 paged.
+    expect((await labels(2)).length).toBe(15);
+    expect(await panels.nth(2).getByRole('navigation').count()).toBe(0);
+    expect((await labels(3)).length).toBe(15);
+    expect(await panels.nth(3).getByRole('navigation').count()).toBe(1);
+    // Switches sharing a label: page 1 all on; page 2 (rows 16 to 20) all off, never page 1's state carried over.
+    const states = () => panels.nth(4).getByRole('switch').evaluateAll((ss) => ss.map((x) => x.getAttribute('aria-checked')));
+    expect(await states()).toEqual(Array(15).fill('true'));
+    await panels.nth(4).getByRole('navigation').getByText('2', { exact: true }).click();
+    await expect.poll(states).toEqual(Array(5).fill('false'));
     // A short panel: whole, no pager.
     expect(await labels(1)).toEqual(['Rule 1', 'Rule 2', 'Rule 3']);
     expect(await panels.nth(1).getByRole('navigation').count()).toBe(0);
