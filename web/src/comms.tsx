@@ -32,7 +32,7 @@ export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' 
   card: Record<string, unknown> | null; run: string | null; delivered: boolean | null };
 /** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
 export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
-  actions: Array<{ action: string; label: string; tone?: string; fields?: Record<string, string> }> };
+  actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> };
 export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string; asks?: ThreadAsk[];
   threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
   /** household.json's github: a bare repo#N in a reply links under it. */
@@ -407,12 +407,13 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   // Read: while the thread is on screen and the page visible, now and every 30 s (that's also "in front" for push).
   useEffect(() => {
-    const read = () => { if (document.visibilityState === 'visible') void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }); };
+    // And a look for asks every 30 s: an approval reaches loom's manifests on its own clock, not the thread's stream.
+    const read = () => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }); void pull(); } };
     read();
     const t = setInterval(read, 30_000);
     document.addEventListener('visibilitychange', read);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', read); };
-  }, [thread.id, csrf, messages.length]);
+  }, [thread.id, csrf, messages.length, pull]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
   // The phone's strip collapses to the small avatar once the messages scroll under it.
@@ -510,6 +511,8 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<string | null>(null);
   const answer = async (b: ThreadAsk['actions'][number]) => {
+    // A danger button (Deny) or one that says so asks first, as the Inbox's does (blocks.tsx ActButton).
+    if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return;
     setBusy(true);
     const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
     setSaid(r.message || (r.ok ? 'Answered.' : 'That didn\'t go through.'));
@@ -529,7 +532,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
           {a.if_no && <><dt>If you deny</dt><dd>{a.if_no}</dd></>}
         </dl>
       )}
-      {a.fine && <p className="comms-ask__fine loom-data">{a.fine}</p>}
+      {a.fine && <p className="comms-ask__fine loom-data">Exactly what this allows: {a.fine}</p>}
       {said ? <p className="comms-ask__said">{said}</p> : (
         <div className="comms-ask__buttons">
           <button type="button" disabled={busy} className="comms-ask__yes" onClick={() => void answer(yes)}>{yes.label}</button>

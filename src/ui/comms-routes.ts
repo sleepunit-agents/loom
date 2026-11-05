@@ -114,7 +114,7 @@ async function asView(c: CommsContext, which: 'list' | 'thread', pathname: strin
 }
 
 export interface ThreadAsk { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
-  actions: Array<{ action: string; label: string; tone?: string; fields?: Record<string, string> }> }
+  actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> }
 
 /**
  * A thread's pending asks (comms.md, "Asks inline"): a piece's permission ask that names this thread's conversation AND
@@ -130,11 +130,12 @@ async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
   const out: ThreadAsk[] = [];
   for (const p of pieces) {
     for (const a of p.manifest.asks ?? []) {
-      if (a.conversation !== t.conversation || a.agent !== t.agent || !a.actions?.length) continue;
+      // Only what needs the owner (an ask filed with attention: false waits on nothing, as the Inbox counts it).
+      if (a.conversation !== t.conversation || a.agent !== t.agent || !a.actions?.length || a.attention === false) continue;
       const id = a.actions[0].fields?.id;
       if (typeof id !== 'string') continue;
       out.push({ id, piece: p.piece, text: a.text, ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
-        ...(a.fine ? { fine: a.fine } : {}), ...(a.at ? { at: a.at } : {}), actions: a.actions.map((b) => ({ action: b.action, label: b.label, ...(b.tone ? { tone: b.tone } : {}), ...(b.fields ? { fields: b.fields } : {}) })) });
+        ...(a.fine ? { fine: a.fine } : {}), ...(a.at ? { at: a.at } : {}), actions: a.actions.map((b) => ({ action: b.action, label: b.label, ...(b.tone ? { tone: b.tone } : {}), ...(b.confirm ? { confirm: b.confirm } : {}), ...(b.fields ? { fields: b.fields } : {}) })) });
     }
   }
   return out;

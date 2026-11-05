@@ -801,6 +801,14 @@ Points the first version settled or left for later:
 - **The comm screen's** compact strip shows the agent's small static avatar (`AgentAvatar`), never the portrait scaled
   down; its `data-face` follows the player's own beats (talking, then done, then the thread's state).
 
+## As built (asks inline, t-1876)
+
+- **Read live, not stored:** a thread's asks are read from the pieces' manifests on each thread read (and every 30 s
+  while it's open), matched by conversation **and** agent, from the pieces the viewer may hear from (the Inbox's own
+  filter), and only those that need the owner (`attention` not false). They aren't written as `ask` messages.
+- **Later:** a digest's `needs_owner` inline with Yes and No (it's answered in the Inbox for now); an answered ask
+  leaving a line in the thread ("Allowed by Jonathan").
+
 ## Open questions
 
 - **Token-by-token streaming:** not in this design (see section 4). Revisit once he's used it.
