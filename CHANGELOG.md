@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A phone's Home with many agents is a row each** (t-1869). Up to four
+  agents keep their big cards. Past four, a phone's Home lists them one row
+  each (face, name, how it is in words, its last line), something wrong
+  first, each a tap to that agent's page. Wider screens keep their cards.
 - **Neon on a desktop wears the phone's bar** (t-1865). Wider than a phone,
   Neon's top is the phone's bar (the page's name and its ⓘ, the ticker,
   LOOM//OS and the count) in place of the old status line and big header,
