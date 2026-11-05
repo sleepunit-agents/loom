@@ -25,7 +25,12 @@ export const chartColors: ChartColor[] = [
  */
 export function distinctColors<T extends { color?: ChartColor }>(series: T[]): (T & { color: ChartColor })[] {
   const taken = new Set<ChartColor>();
-  const named = series.map((s) => (s.color && !taken.has(s.color) ? (taken.add(s.color), s.color) : undefined));
+  const named: (ChartColor | undefined)[] = [];
+  for (const s of series) {
+    const keep = s.color && !taken.has(s.color) ? s.color : undefined;
+    if (keep) taken.add(keep);
+    named.push(keep);
+  }
   return series.map((s, i) => {
     let color = named[i];
     if (!color) {
@@ -35,8 +40,12 @@ export function distinctColors<T extends { color?: ChartColor }>(series: T[]): (
     return { ...s, color };
   });
 }
-export const chartColor = (color: ChartColor | undefined, index = 0) =>
-  `var(--v-${color ?? chartColors[index % chartColors.length]})`;
+/** loom: the palette as the root has it (index.css --loom-tint-*), where no app's tint reaches: an app's accent
+ * re-points --v-pink at its own colour (index.css [data-accent]), and Tasks' pink series drew as olive as its olive one. */
+export const chartColor = (color: ChartColor | undefined, index = 0) => {
+  const c = color ?? chartColors[index % chartColors.length];
+  return `var(--loom-tint-${c}, var(--v-${c}))`;
+};
 export const finiteValue = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 export const clamp = (value: number, low: number, high: number) =>

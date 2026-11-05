@@ -22,8 +22,10 @@ describe('a chart\'s series colours', () => {
   });
 
   it('keeps every colour different up to the palette\'s five, and only then comes round again', () => {
-    const five = colors(['a', 'b', 'c', 'd', 'e'].map((key) => ({ key })));
-    expect(new Set(five).size).toBe(5);
-    expect(colors(['a', 'b', 'c', 'd', 'e', 'f'].map((key) => ({ key, color: 'olive' as const })))).toHaveLength(6);
+    // Five that all ask for olive: the old rule drew all five olive.
+    const five = colors(['a', 'b', 'c', 'd', 'e'].map((key) => ({ key, color: 'olive' as const })));
+    expect(five).toEqual(['olive', 'pink', 'blue', 'yellow', 'ink']);
+    // A sixth has nothing left: it takes the palette by its position, the sixth's being the first again.
+    expect(colors(['a', 'b', 'c', 'd', 'e', 'f'].map((key) => ({ key, color: 'olive' as const })))[5]).toBe('pink');
   });
 });

@@ -279,7 +279,7 @@ export default function App() {
   // is being reached, and where to scroll it to once it's drawn (Back, Forward, or a minimized window opened again).
   const appKeyRef = useRef<string | undefined>(undefined);
   const intent = useRef<{ how: trail.How; url: string } | null>(null);
-  const restoreTo = useRef<trail.Place | null>(null);
+  const restoreTo = useRef<trail.Visit | null>(null);
   const scrolled = () => (deskNow.current && mainRef.current ? mainRef.current.scrollTop : scrollY);
   useEffect(() => {
     void load(url, false);
@@ -399,7 +399,7 @@ export default function App() {
   const deskKey = () => deskNow.current && !agentDock && location.pathname !== '/' && lit && new URL(lit, location.href).pathname !== '/' ? lit : undefined;
   const minimize = () => {
     const key = deskKey();
-    if (key) trail.minimize(key, { url: location.pathname + location.search, top: mainRef.current?.scrollTop ?? 0 });
+    if (key) trail.minimize(key, { url: location.pathname + location.search, top: scrolled() });
     go('/');
   };
   const closeWindow = () => { trail.forget(deskKey()); go('/'); };
@@ -606,7 +606,7 @@ export default function App() {
           <Wrap on={inWindow && !!D} wrap={(page) => D && (
             <D.DeskWindow url={url} waiting={waiting} go={go} close={closeWindow} minimize={minimize} title={shownTitle || place?.label || ''}
               crumbs={crumbs} back={trail.step(appKey, -1)} forward={trail.step(appKey, 1)} move={move}
-              side={sideWide ? { has: pageSide, el: setSideEl, app: place?.href ?? (accent ? `/a/${accent.id}` : undefined) } : undefined}
+              side={sideWide ? { has: pageSide, el: setSideEl, app: appKey, under: top?.href } : undefined}
               tint={accent ? markColor(accent.bg) : `var(--loom-tint-${appTint ?? 'pink'})`}
               lead={accent ? <AgentAvatar a={accent} size={22} /> : <AnimatedIcon name={iconFor(icon(tileLabel || ''))} size="sm" />}>{page}</D.DeskWindow>
           )}>
@@ -727,7 +727,7 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const column = at === 'column' && side.length > 0;
   return (
     // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
-    <div className={`grid grid-cols-[minmax(0,1fr)] gap-4 ${column ? 'grid-cols-[minmax(0,1fr)_17.5rem]' : ''}`}>
+    <div className={`grid gap-4 ${column ? 'grid-cols-[minmax(0,1fr)_17.5rem]' : 'grid-cols-[minmax(0,1fr)]'}`}>
       <div className="grid min-w-0 content-start gap-4">
         {side.length > 0 && at === 'fold' && <SideFold side={side}>{sideCards}</SideFold>}
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}

@@ -93,13 +93,13 @@ const SERIES_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 /** Where a section stands on its page (docs/extensions.md, "Pages"): the main column, the default, or the side column.
  * On a desktop window 1280 px and wider the side column is the window's right-hand column; narrower, and on a phone,
  * the side sections fold together into one block at the top of the page, closed. */
-export type Place = 'main' | 'side';
+export type SectionPlace = 'main' | 'side';
 
 export interface Section {
   id: string;
   title?: string;
   /** `side` puts it in the side column; absent is the main one. (A piece may still send the older `"side": true`.) */
-  place?: 'side';
+  place?: Exclude<SectionPlace, 'main'>;
   tone?: Tone;
   /** Folds under its title: `open` starts open, `closed` folded. The viewer's choice then sticks. */
   fold?: 'open' | 'closed';
@@ -798,11 +798,11 @@ function section(v: unknown): Section {
 
 /** A section's place: `place` ("main" or "side"), or the older `side` (true or false). Both, saying different things, is
  * a mistake in the page, not a guess. */
-function placeOf(o: Record<string, unknown>): Place {
+function placeOf(o: Record<string, unknown>): SectionPlace {
   if (o.place !== undefined && o.place !== 'main' && o.place !== 'side') throw new Invalid('section.place must be main or side');
   const old = bool(o.side) ? 'side' : 'main';
   if (o.place !== undefined && o.side !== undefined && o.place !== old) throw new Invalid('section.place and section.side disagree: send place alone');
-  return (o.place as Place | undefined) ?? old;
+  return (o.place as SectionPlace | undefined) ?? old;
 }
 
 function fold(v: unknown, title: unknown): 'open' | 'closed' {

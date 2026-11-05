@@ -9,10 +9,10 @@
 // No React here: App.tsx tells it each page that lands, and how it was reached.
 
 /** A page in an app's history: its address (path and query), its title, and how far down it was scrolled. */
-export type Place = { url: string; top: number; label?: string };
+export type Visit = { url: string; top: number; label?: string };
 /** How a page was reached: a link or a key (go), the window's own Back or Forward, or the browser's (pop). */
 export type How = 'go' | 'back' | 'forward' | 'pop';
-type Stack = { pages: Place[]; at: number; min?: boolean };
+type Stack = { pages: Visit[]; at: number; min?: boolean };
 
 const KEY = 'loom-trail';
 /** Pages kept per app: the oldest go first. */
@@ -52,21 +52,29 @@ export function keepTop(app: string | undefined, url: string, top: number): void
 }
 
 /** The page Back (-1) or Forward (+1) goes to in `app`, if there is one. */
-export function step(app: string | undefined, by: -1 | 1): Place | undefined {
+export function step(app: string | undefined, by: -1 | 1): Visit | undefined {
   const s = app ? stacks[app] : undefined;
   return s ? s.pages[s.at + by] : undefined;
 }
 
 /** The latest page in `app`'s history, up to where it stands, whose path is `path`: its query and scroll are kept (a
  * crumb back to the list goes to the list as you left it). */
-export function lastAt(app: string | undefined, path: string): Place | undefined {
+export function lastAt(app: string | undefined, path: string): Visit | undefined {
   const s = app ? stacks[app] : undefined;
   for (let i = s ? s.at : -1; i >= 0; i--) if (s!.pages[i].url.split('?')[0] === path) return s!.pages[i];
   return undefined;
 }
 
+/** Every page in `app`'s history, the latest first, each once: Recent here's (desk.tsx), keyed as Back's is. */
+export function visited(app: string | undefined): Visit[] {
+  const s = app ? stacks[app] : undefined;
+  if (!s) return [];
+  const seen = new Set<string>();
+  return [...s.pages].reverse().filter((p) => !seen.has(p.url) && (seen.add(p.url), true));
+}
+
 /** Minimize: `app` is kept where it stands (its page and how far down). */
-export function minimize(app: string, at: Place): void {
+export function minimize(app: string, at: Visit): void {
   const s = stacks[app] ??= { pages: [], at: -1 };
   if (s.pages[s.at]?.url !== at.url) note(app, at.url, 'go');
   s.pages[s.at].top = Math.max(0, Math.round(at.top));
@@ -75,7 +83,7 @@ export function minimize(app: string, at: Place): void {
 }
 
 /** Where `app` was minimized, if it was: taken, so opening it again is open, not kept. */
-export function restore(app: string): Place | undefined {
+export function restore(app: string): Visit | undefined {
   const s = stacks[app];
   if (!s?.min) return undefined;
   delete s.min;

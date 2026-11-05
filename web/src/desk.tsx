@@ -6,6 +6,7 @@
 // Its own chunk, loaded only on a screen this wide under Neon (App.tsx): a phone never fetches it.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { readRecent } from './recent';
+import { visited } from './trail';
 import './desk.css';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
@@ -368,8 +369,8 @@ export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimiz
   go: (href: string) => void; close: () => void; minimize: () => void;
   crumbs: Crumb[]; back: Step; forward: Step; move: (by: -1 | 1) => void;
   /** The side column, when the screen has room for it: whether the page has sections for it, where they're drawn, and
-   * the app (its path) Recent here is about. */
-  side?: { has: boolean; el: (e: HTMLElement | null) => void; app?: string };
+   * for Recent here the app (its key, as its history has it) and the path its pages are under. */
+  side?: { has: boolean; el: (e: HTMLElement | null) => void; app?: string; under?: string };
   children: React.ReactNode }) {
   const head = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef('');
@@ -393,8 +394,14 @@ export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimiz
     };
     addEventListener('keydown', f); return () => removeEventListener('keydown', f);
   }, []);
-  const app = side?.app;
-  const recent = useMemo(() => (app ? readRecent().filter((r) => r.href !== url && inApp(r.href, app)).slice(0, 8) : []), [url, app]);
+  // Recent here: this app's pages, as its own history has them (one Setup window holds Appearance and Accessibility
+  // alike), then the ones this device opened under its path in earlier visits. Never another app's.
+  const app = side?.app, under = side?.under;
+  const recent = useMemo(() => {
+    const seen = new Set([url]);
+    return [...visited(app).filter((v) => v.label).map((v) => ({ href: v.url, label: v.label! })), ...readRecent().filter((r) => inApp(r.href, under))]
+      .filter((r) => !seen.has(r.href) && (seen.add(r.href), true)).slice(0, 8);
+  }, [url, app, under]);
   const path = url.split('?')[0];
   const arrow = (by: -1 | 1, to: Step) => {
     const word = by < 0 ? 'Back' : 'Forward';

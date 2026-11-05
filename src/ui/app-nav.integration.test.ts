@@ -60,6 +60,14 @@ process.stdin.on('end', () => {
         { text: 'Task 3', meta: 'just now', page: 'task/t-3' },
         { text: ${JSON.stringify(UNBROKEN)}, meta: ${JSON.stringify(UNBROKEN)}, page: 'task/t-4' }] },
         { type: 'kv', items: [{ label: 'Ref', value: ${JSON.stringify(UNBROKEN)} }] }] },
+      { id: 'raw', title: 'Raw', place: 'side', blocks: [{ type: 'code', text: ${JSON.stringify(UNBROKEN + ' ' + UNBROKEN)} },
+        { type: 'prose', text: ${JSON.stringify(`| a | b |
+|---|---|
+| ${UNBROKEN} | ${UNBROKEN} |
+
+\`\`\`
+${UNBROKEN}
+\`\`\``)} }] },
     ] };
   } else if (task) {
     const n = Number(task[1]);
@@ -130,6 +138,7 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
   const titled = (p: Page, title: string) => expect.poll(() => p.locator('#loom-window-title').textContent(), { timeout: 8000 }).toBe(title);
   const mainOf = (p: Page) => p.locator('.loom-window main');
   const step = (p: Page, which: 'Back' | 'Forward') => p.locator(`.loom-window__step[aria-label^="${which}"]`);
+  const key = (p: Page, label: string) => p.locator(`.loom-dock-bar [data-part="item"][aria-label="${label}"]`);
 
   it('1280: Back from a task is the list it came from, at its query and its scroll; Forward goes again; the browser\'s Back agrees', async () => {
     const p = await screen(1280, '/p/work?sort=new');
@@ -165,6 +174,48 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.context().close();
   });
 
+  it('1280: each app has its own history: another app\'s window starts with nowhere to go back to, and Tasks\' Back still finds its task', async () => {
+    const p = await screen(1280, '/p/work');
+    await titled(p, 'Tasks');
+    await p.locator('.loom-window main a[href$="/task/t-12"]').click();
+    await titled(p, 'Task 12');
+    await key(p, 'Setup').click();
+    await titled(p, 'Setup');
+    expect(await step(p, 'Back').isDisabled()).toBe(true);   // never back into Tasks from Setup's window
+    await key(p, 'Tasks').click();
+    await titled(p, 'Tasks');
+    expect(await step(p, 'Back').getAttribute('aria-label')).toBe('Back to Task 12');
+    await step(p, 'Back').click();
+    await titled(p, 'Task 12');
+    await p.context().close();
+  });
+
+  it('1280: a minimized window opens again where its history stands, with its Back and Forward as they were', async () => {
+    const p = await screen(1280, '/p/work?sort=new');
+    await titled(p, 'Tasks');
+    await p.locator('.loom-window main a[href$="/task/t-12"]').click();
+    await titled(p, 'Task 12');
+    await step(p, 'Back').click();
+    await titled(p, 'Tasks');
+    await key(p, 'Tasks').click();   // the open app's key: minimize
+    await p.locator('.loom-desk-home').waitFor();
+    await expect.poll(() => p.locator('.loom-window').count()).toBe(0);
+    await key(p, 'Tasks').click();   // and open it again
+    await titled(p, 'Tasks');
+    expect(where(p)).toBe('/p/work?sort=new');
+    expect(await step(p, 'Forward').getAttribute('aria-label')).toBe('Forward to Task 12');
+    expect(await step(p, 'Back').isDisabled()).toBe(true);
+    // Close forgets it: the app opens at its start, with nothing behind or ahead.
+    await p.locator('.loom-window__close').click();
+    await p.locator('.loom-desk-home').waitFor();
+    await expect.poll(() => p.locator('.loom-window').count()).toBe(0);
+    await key(p, 'Tasks').click();
+    await expect.poll(() => where(p)).toBe('/p/work');   // (the strip names the app while its page is on its way)
+    await titled(p, 'Tasks');
+    expect(await step(p, 'Forward').isDisabled()).toBe(true);
+    await p.context().close();
+  });
+
   it('1280: Alt+← and Alt+→ are the window\'s Back and Forward while it has the keys, and nothing in a field', async () => {
     const p = await screen(1280, '/p/work?sort=updated');
     await titled(p, 'Tasks');
@@ -184,6 +235,17 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await find.press('Alt+ArrowRight');
     await p.waitForTimeout(400);
     expect(where(p)).toBe('/p/work?sort=updated');
+    // With Find open over the window, the keys are Find's.
+    await p.locator('.loom-window main a[href$="/task/t-2"]').click();
+    await titled(p, 'Task 2');
+    await p.keyboard.press('Control+k');
+    await p.locator('[role="dialog"]').first().waitFor();
+    await p.keyboard.press('Alt+ArrowLeft');
+    await p.waitForTimeout(400);
+    expect(where(p)).toBe('/p/work/task/t-2');
+    await p.keyboard.press('Escape');
+    await step(p, 'Back').click();
+    await titled(p, 'Tasks');
     // With nowhere to go that way, the window leaves the key to the browser: it doesn't swallow it.
     const swallowed = await p.evaluate(() => {
       (document.activeElement as HTMLElement | null)?.blur();
@@ -219,6 +281,14 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await expect.poll(async () => (await measure()).out, { timeout: 10_000 }).toEqual([]);
     const m = await measure();
     expect(m.sw).toBeLessThanOrEqual(m.cw);
+    // Nor anything in it that scrolls sideways itself (a code block, a table, a fenced block in prose).
+    const scrollers = await side.evaluate((s) => [...s.querySelectorAll('*')].filter((e) => {
+      const o = getComputedStyle(e).overflowX;
+      return (o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth + 1;
+    }).map((e) => `${e.tagName}.${e.getAttribute('class') ?? ''}`));
+    expect(scrollers).toEqual([]);
+    // The column holds the page's sections as they are: their titles aren't Recent here's small capitals.
+    expect(await side.getByText('Recently updated', { exact: true }).evaluate((t) => getComputedStyle(t).textTransform)).not.toBe('uppercase');
     expect(await side.getByText(UNBROKEN).count()).toBeGreaterThan(0);
     // The filters work from the side, keeping the page's own query.
     await side.getByRole('radio', { name: 'Newest' }).click();
@@ -257,7 +327,20 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.context().close();
   });
 
-  it('a long trail folds into "…" and the strip never scrolls', async () => {
+  it('1280: Recent here is the app\'s as its window has it: Setup\'s pages are each other\'s', async () => {
+    const p = await screen(1280, '/appearance');
+    await titled(p, 'Appearance');
+    await key(p, 'Setup').click();   // minimize, so the next page opens in the same Setup window's history
+    await p.locator('.loom-desk-home').waitFor();
+    await expect.poll(() => p.locator('.loom-window').count()).toBe(0);
+    await p.goto(`${base}/accessibility`);
+    await titled(p, 'Accessibility');
+    const names = await p.locator('nav.loom-window__side[aria-label="Recent here"] a').allTextContents();
+    expect(names).toContain('Appearance');
+    await p.context().close();
+  });
+
+  it('a long title is cut short and the strip never scrolls', async () => {
     for (const w of [1024, 1280]) {
       const p = await screen(w, '/p/work');
       await p.locator('.loom-window main a[href$="/task/t-7"]').click();
