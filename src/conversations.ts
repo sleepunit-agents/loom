@@ -9,7 +9,7 @@ import {
   ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
   type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
-import { COMMS_VENUE, noteLoopPause } from './comms.js';
+import { COMMS_VENUE, filedThreads, noteLoopPause } from './comms.js';
 import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf, withHouseholdDb } from './household-store.js';
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
@@ -243,5 +243,8 @@ export function conversationsSection(contextDir: string, slug: string, since: st
   if (!db) return null;
   db.close();
   const home = homeFor(contextDir, env);
-  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v)) };
+  // Comms threads filed under the project count from their first message, digest or not (comms.md, "Project").
+  const agent = householdOf(contextDir)?.agent;
+  const filed = home && agent ? filedThreads(home, agent, slug) : [];
+  return { key: 'conversations', items: hubConversations(contextDir, slug, since, (v) => venueLabel(home, v), filed) };
 }

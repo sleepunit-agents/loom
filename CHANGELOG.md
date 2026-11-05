@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms: `comms_title`, and threads in their project's hub** (t-1876). A body names its Comms thread with
+  `comms_title` (60 characters, one line, never over the owner's own name for it), and a thread's title is its
+  conversation's label. A thread filed under a project is its digests' project when they name none, ahead of
+  `links.venues`, and the hub's `conversations` section lists it from its first message.
 - **Comms, core: talk with your own agents in loom, in threads** (t-1876, docs/specs/comms.md). A new core venue,
   `loom`, which core adapts itself (`adapter: "core"` in `GET /api/loom/venues`). Its threads live in
   `household.db`, and their words in `comms.db`, each age-encrypted to `comms.key`, kept `comms_days` (household.json,

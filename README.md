@@ -134,6 +134,9 @@ an agent's persistent state:
 - **`conversation`** — one conversation: its record, digests, findings and render
   (the venue's own, else core's generic one).
 - **`conversation_findings`** — graders' findings on the agent's own turns.
+- **`comms_title`** — name a Comms thread (a conversation in loom's own app), at
+  most 60 characters, for the conversation given to `identity`; never over the
+  owner's own name for it (docs/specs/comms.md).
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.
