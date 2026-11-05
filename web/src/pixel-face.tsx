@@ -19,6 +19,7 @@
 // state's south (south-west: south-east's, mirrored, first).
 import { useEffect, useRef, useState } from 'react';
 import type { FaceState } from './face';
+import { useLook } from './look';
 
 /** The numbers, as settings: the preview (art-pixel-faces.html: MS, the gaps, ROLL_MS, P_LEAVE, P_BACK, MIN_AWAY). */
 export const PIXEL = {
@@ -37,7 +38,9 @@ type Facing = typeof FACINGS[number];
 /** One animation: a row of a sheet, its frame count, its weight among its state's animations in that facing. */
 type Variant = { sheet?: string; row: number; frames: number; weight: number; rare?: boolean; rest?: number };
 /** The agent's manifest (src/household.ts SpriteManifest): its states by PixelLab's names. */
-type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>> };
+type Manifest = { cell: [number, number]; states: Partial<Record<string, Partial<Record<Facing, Variant[]>>>>;
+  /** drawn smaller or larger (src/household.ts: 0.5 to 1.5), and moved, in the sheet's pixels: tuned per agent in the file */
+  scale?: number; offset?: [number, number] };
 type Sheet = { m: Manifest; imgs: Record<string, HTMLImageElement> };
 export type Sprite = { facings: string[]; v: string; base: string };
 
@@ -185,6 +188,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   want.current = state;
   const player = useRef<ReturnType<typeof createPlayer> | null>(null);
   const scale = size >= 64 ? 2 : 1;
+  const look = useLook();
 
   useEffect(() => { let on = true; void sheetOf(sprite).then((s) => { if (on) { setSheet(s); setFailed(!s); } }); return () => { on = false; }; }, [sprite.base, sprite.v]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -220,10 +224,15 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
   // A sheet that can't be had (gone, refused): the agent's drawn face, not an empty square.
   if (failed) return <>{fallback}</>;
   const [w, h] = PIXEL.box;
+  // The agent's own scale and offset (its manifest), on top of the whole-pixel 1x or 2x, under Neon (t-1849: 000h draws
+  // every face as it always has). None, and it's drawn as ever.
+  const tuned = look === 'neon';
+  const k = scale * (tuned ? sheet?.m.scale ?? 1 : 1);
+  const [ox, oy] = tuned ? sheet?.m.offset ?? [0, 0] : [0, 0];
   return (
     <span className="loom-pixel-face" style={{ width: size, height: size }}>
       <canvas ref={canvas} role="img" aria-label={label ? `${label}, ${STATE_WORDS[state]}` : STATE_WORDS[state]} width={w} height={h}
-        style={{ width: w * scale, height: h * scale }} data-state={state} />
+        style={{ width: w * k, height: h * k, ...(ox || oy ? { translate: `calc(-50% + ${ox * k}px) calc(-50% + ${oy * k}px)` } : {}) }} data-state={state} />
     </span>
   );
 }

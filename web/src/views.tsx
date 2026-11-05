@@ -49,7 +49,7 @@ function AgentIdentity({ c }: { c: AgentCard }) {
   return (
     <Card className="loom-identity cursor-pointer gap-0 p-0" style={{ '--acc': markColor(c.bg) } as React.CSSProperties} onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
-        <span className="relative shrink-0">
+        <span className="loom-identity__face relative shrink-0">
           <AgentAvatar a={c} size={72} shape="circle" state={state === 'broken' || problems.length ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} style={{ boxShadow: `0 0 0 3px var(--v-paper), 0 0 0 5px color-mix(in oklab, ${markColor(c.bg)} 55%, transparent)` }} />
           <span role="img" aria-label={STATE[state].word} className={`loom-dot absolute bottom-0.5 right-0.5 size-4 rounded-full border-[3px] border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)] loom-dot-live' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
         </span>

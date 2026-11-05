@@ -27,7 +27,8 @@ import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, 
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
 import { type Ground, DashboardView, HouseHomeView, type Mode } from './views';
 import { placesOf, settingsOf } from './nav';
-import { AppHeader, AppTile, oneLine } from './app-header';
+import { AppHeader, AppTile, HeaderLine, oneLine } from './app-header';
+import { PhoneBar } from './phone-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
@@ -39,7 +40,7 @@ const FindPanel = lazy(() => import('./find').then((m) => ({ default: m.FindPane
 import { noteRecent } from './recent';
 import { TintContext, tintsOf } from './tint';
 import { sectionRing } from './tones';
-import { keep, LookContext, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, LookContext, markColor, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -360,12 +361,14 @@ export default function App() {
 
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
+  // Neon on a phone's width: the bar merges with the phone's own (phone-bar.tsx); wider keeps the status bar and the big header.
+  const phoneBar = look === 'neon' && vw < 640 && !!chrome?.shell;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
 
   return (
     <LookContext.Provider value={look}><PixelContext.Provider value={pixel}><TintContext.Provider value={tint}>
       <div className={`relative isolate min-h-dvh ${chrome ? 'lg:grid lg:grid-cols-[17.25rem_minmax(0,1fr)]' : ''}`} data-mode={effective} data-accent={accent ? accentOf(accent.bg) : undefined}
-        style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg } as React.CSSProperties) : undefined}>
+        style={accent ? ({ '--loom-accent': accent.bg, '--loom-on-accent': accent.fg, '--loom-accent-lit': markColor(accent.bg) } as React.CSSProperties) : undefined}>
         {/* 000h's wash (its docs' page): soft pools of pink, blue and yellow behind everything, fixed as the page scrolls. */}
         <span aria-hidden className="loom-wash pointer-events-none fixed inset-0 -z-10" />
         {ground === 'contours' && <Suspense fallback={null}><Contours /></Suspense>}
@@ -374,6 +377,17 @@ export default function App() {
         <div className="min-w-0">
           {/* No top bar (as 000h's own pages), a phone too: the trail and the page's title head the page and scroll away
               with it (Jonathan, 2026-10-29: "do the same thing we have on desktop there. it can scroll no problem"). */}
+          {phoneBar && chrome?.shell ? (
+            // Neon on a phone: one small bar right under the phone's own (phone-bar.tsx), the page's name in it; under
+            // it, only the page's one line and its ⓘ, when it has them.
+            <header className="loom-top loom-top--bar" data-accent={appAccent}>
+              <div className="mx-auto max-w-5xl px-4">
+                <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt}
+                  color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
+                <HeaderLine where={url} context={profileLeads ? undefined : context} more={intro} />
+              </div>
+            </header>
+          ) : (
           <header className="loom-top [padding-top:calc(env(safe-area-inset-top)_+_1rem)] lg:pt-8" data-accent={appAccent}>
             <div className="mx-auto max-w-5xl px-4 py-3">
               {look === 'neon' && chrome?.shell && <StatusBar shell={chrome.shell} clock={chrome.clock} offline={!!savedAt} />}
@@ -382,6 +396,7 @@ export default function App() {
                 actions={accent && wide && !profileLeads && accent.asks ? <span className="text-sm opacity-70">{accent.asks} waiting on you</span> : undefined} />
             </div>
           </header>
+          )}
 
           <main aria-busy={waiting || undefined} className="mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10" data-accent={appAccent}>
             {waiting && <Skeleton />}
