@@ -62,10 +62,13 @@ const geometryCache=new Map<string,IconNode[]>();
 // bundle that renders an Icon and loads on first use of a name the authored set lacks.
 // Until it arrives such an icon keeps its fixed footprint with no strokes. Its names stay
 // out too (they were 7 KB gzipped on loom's first page): a name the pack doesn't have is
-// known only once the pack is here, and then draws as the plain fallback below.
+// known only once the pack is here, and then draws as the plain fallback below; so does
+// every non-authored name while the pack can't be had (a dropped chunk), until a retry lands.
+// The cost: a name nothing has (a typo in a piece's manifest) fetches the pack to find out.
 type LucidePack=typeof import("@/lib/cojeev/lucide-icon-data");
 let lucidePack:LucidePack|null=null;
 let lucideLoad:Promise<LucidePack>|null=null;
+let lucideFailed=false;
 const lucideListeners=new Set<()=>void>();
 /**
  * Resolves once every Lucide name renders synchronously. In a browser, call it any time to fetch the pack
@@ -75,42 +78,46 @@ const lucideListeners=new Set<()=>void>();
  */
 export function loadLucideIcons():Promise<LucidePack> {
   return lucideLoad??=import("@/lib/cojeev/lucide-icon-data").then(pack=>{
-    lucidePack=pack;
+    lucidePack=pack;lucideFailed=false;
     for(const listener of lucideListeners)listener();
     return pack;
   },error=>{
-    // A dropped chunk must not blank these icons for the session: the next request tries again.
-    lucideLoad=null;
+    // A dropped chunk must not blank these icons for the session: they draw the fallback, and the next
+    // icon that mounts tries again.
+    lucideLoad=null;lucideFailed=true;
+    for(const listener of lucideListeners)listener();
     throw error;
   });
 }
-const isAuthored=(name:string)=>name in iconData||name in additionalIcons;
-function isKnownIcon(name:string){name=canonicalIcon(name);return isAuthored(name)||!!lucidePack?.getLucideIcon(name)}
-/** What a name neither the authored set nor the Lucide pack has draws as. */
-const FALLBACK_ICON="circle";
+const authoredGeometry=(name:string):IconNode[]|undefined=>iconData[name]??additionalIcons[name];
+function isKnownIcon(name:string){name=canonicalIcon(name);return !!authoredGeometry(name)||!!lucidePack?.getLucideIcon(name)}
+/** What a name neither the authored set nor the Lucide pack has draws as: the first of these the authored set has. */
+const fallbackGeometry=():IconNode[]=>iconData.circle??iconData.dot??Object.values(iconData)[0]??[];
 function iconGeometry(name:string):IconNode[]|undefined {
   name=canonicalIcon(name);
-  const known=iconData[name]??additionalIcons[name]??geometryCache.get(name);
+  const known=authoredGeometry(name)??geometryCache.get(name);
   if(known||!lucidePack)return known;
   const nodes=lucidePack.getLucideIcon(name);
   if(nodes)geometryCache.set(name,nodes);
   return nodes;
 }
 const subscribeLucide=(listener:()=>void)=>{lucideListeners.add(listener);return()=>{lucideListeners.delete(listener)}};
-const lucideReady=()=>lucidePack!==null;
+type LucideState="waiting"|"ready"|"failed";
+const lucideState=():LucideState=>lucidePack!==null?"ready":lucideFailed?"failed":"waiting";
 // Hydration must reproduce the server HTML, which a static render produced without the pack. A lazily
 // hydrated boundary can start after another icon has already fetched it, so in the browser the server
-// snapshot is always "not loaded"; outside a browser (server renders, tests) it reports the real state.
-const lucideReadyOnServer=()=>typeof window==="undefined"&&lucidePack!==null;
+// snapshot is always "waiting"; outside a browser (server renders, tests) it reports the real state.
+const lucideStateOnServer=():LucideState=>typeof window==="undefined"&&lucidePack!==null?"ready":"waiting";
 function useIconGeometry(name:string):IconNode[]|undefined {
-  const canonical=canonicalIcon(name);
-  const authored=iconData[canonical]??additionalIcons[canonical];
-  const fromPack=!authored;
-  const ready=React.useSyncExternalStore(subscribeLucide,lucideReady,lucideReadyOnServer);
-  // A failed load keeps the footprint; the next icon that asks retries it.
-  React.useEffect(()=>{if(fromPack&&!ready)loadLucideIcons().catch(()=>{})},[fromPack,ready]);
+  const authored=authoredGeometry(canonicalIcon(name));
+  const state=React.useSyncExternalStore(subscribeLucide,lucideState,lucideStateOnServer);
+  // A name the authored set lacks needs the pack, to draw it or to learn nothing has it. A failed load draws the
+  // fallback; an icon that mounts after it tries again.
+  const needsPack=!authored;
+  React.useEffect(()=>{if(needsPack&&state==="waiting")loadLucideIcons().catch(()=>{})},[needsPack,state]);
   if(authored)return authored;
-  return ready?iconGeometry(name)??iconData[FALLBACK_ICON]:undefined;
+  if(state==="waiting")return undefined;
+  return (state==="ready"?iconGeometry(name):undefined)??fallbackGeometry();
 }
 
 /** Direction is geometric, independent of document reading direction. */
@@ -516,7 +523,6 @@ export function Icon({name,size="default",className,draw,feedback=true,treatment
 /** Semantic action inventory for accessible pickers and documentation. */
 export const iconActionDescriptions:Record<string,string>={"check":"The check stroke traces into its complete mark.","check-circle":"The check traces inside a stationary ring.","close":"The cross presses inward and returns.","activity":"The activity line traces across its pulse.","alert":"The warning mark lifts inside its fixed outline.","info":"The information dot lifts inside its fixed circle.","loader":"The loading arc revolves while active.","refresh":"The refresh arrows complete one turn.","search":"The search lens expands inside its handle.","bell":"The bell dome swings against its clapper.","download":"The download arrow moves down into its fixed tray.","upload":"The upload arrow rises out of its fixed tray.","copy":"The front sheet lifts away from the back.","settings":"The gear turns around its fixed hub.","trash":"The lid lifts above its stationary bin.","plus":"The plus makes a quarter turn.","send":"The paper plane travels upward-right.","heart":"The heart gives two restrained beats.","star":"The star expands and returns.","thumbs-up":"The hand lifts above its fixed cuff.",...Object.fromEntries(Object.entries(iconRecipes).map(([name,recipe])=>[name,recipe.description]))};
 export const iconActionNames=Object.keys(iconActionDescriptions);
-export const iconNames=/*#__PURE__*/Array.from(new Set([...Object.keys(iconData),...Object.keys(additionalIcons),...Object.keys(iconAliases)])).sort();
 export function getIconMotionDescription(name:string):string {
   const canonical=canonicalIcon(name);
   return iconActionDescriptions[name]??iconActionDescriptions[canonical]??familyRecipe(canonical).description;

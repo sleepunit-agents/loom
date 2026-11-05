@@ -6,8 +6,8 @@ import { Component, type ReactNode } from 'react';
 import { Icon } from '@/components/ui/icon';
 import { Spinner } from '@/components/ui/spinner';
 
-/** A name to draw: the one asked for, else a plain one. A name nothing has draws plain too (icon.tsx FALLBACK_ICON),
- * once the Lucide pack is here to say so: its 1,700 names aren't on the first page. */
+/** A name to draw: the one asked for, or "circle" when there's none. Icon itself draws a plain one for a name nothing
+ * has (icon.tsx fallbackGeometry), once the Lucide pack is here to say so: its 1,700 names aren't on the first page. */
 export const iconFor = (name: string | undefined) => name || 'circle';
 
 type Tone = 'info' | 'ok' | 'warn' | 'danger';
