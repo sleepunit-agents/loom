@@ -82,9 +82,12 @@ export interface Prefs { look?: Look | '000h'; mode?: 'auto' | 'light' | 'dark';
   /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
   at?: number }
 export type Look = 'neon' | 'lowlight' | 'daylight';
-/** A kept look as loom serves it now: 000h as the look nearest it (web/src/look.ts lookOf, the same rule). */
-export function lookOf(look: Prefs['look'], mode: Prefs['mode']): Look | undefined {
-  return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : look;
+/** A kept look as loom serves it now: 000h as the look nearest it, anything else unknown as Neon Noir, none as none
+ * (web/src/look.ts lookOf, the same rule; look-migration.test.ts holds the two to each other). */
+export function lookOf(look: unknown, mode: unknown): Look | undefined {
+  if (look === undefined) return undefined;
+  if (look === 'neon' || look === 'lowlight' || look === 'daylight') return look;
+  return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : 'neon';
 }
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
   look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false], zoom: [true, false],

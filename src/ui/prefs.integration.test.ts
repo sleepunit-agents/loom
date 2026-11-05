@@ -147,6 +147,6 @@ describe('Appearance, kept per member of a household', () => {
     expect(j).toMatchObject({ look: 'daylight' });
     expect(j.sound).toBeUndefined();
     expect(s).toMatchObject({ look: 'neon', sound: true });
-    expect(s.look).not.toBe(j.look);
+    expect(s.mode).toBeUndefined();
   });
 });

@@ -9,16 +9,24 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
+import { MARKS as HOUSEHOLD_MARKS } from '../household.js';
 
 const root = new URL('../../web/src/', import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
 
-/** The custom properties of the first block whose selector is exactly `sel`. */
+/** The custom properties of every block whose selector is exactly `sel` (a look may split its set over several), later
+ * ones winning, as the cascade has it. */
 function block(css: string, sel: string): Record<string, string> {
-  const at = css.indexOf(`${sel}{`);
+  const out: Record<string, string> = {};
+  let at = css.indexOf(`${sel}{`);
   if (at < 0) throw new Error(`no ${sel} block`);
-  const body = css.slice(at + sel.length + 1, css.indexOf('}', at));
-  return Object.fromEntries([...body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  for (; at >= 0; at = css.indexOf(`${sel}{`, at + 1)) {
+    // Only a selector that starts there (not the tail of a longer one).
+    if (at > 0 && !/[\s}]/.test(css[at - 1])) continue;
+    const body = css.slice(at + sel.length + 1, css.indexOf('}', at));
+    for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;}]+)/g)) out[m[1]] = m[2].trim();
+  }
+  return out;
 }
 
 const tokens = read('styles/cojeev/tokens.css');
@@ -75,15 +83,20 @@ const MORE_PAIRS: Array<[string, string, number]> = [
 ];
 
 const mix = (a: string, b: string, t: number) => `#${[1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * t + parseInt(b.slice(i, i + 2), 16) * (1 - t)).toString(16).padStart(2, '0')).join('')}`;
-const MARKS = ['lilac', 'plum', 'pine', 'mustard', 'denim', 'coral'];
+const MARKS = HOUSEHOLD_MARKS.map((m) => m.name.toLowerCase());
 
 describe('each look\'s contrast', () => {
-  it('ships three looks, each a token set and nothing else', () => {
-    expect(Object.keys(LOOKS)).toEqual(['Neon Noir', 'Low Light', 'Daylight']);
-    // A look's own blocks hold custom properties only: what differs between looks is tokens, never layout.
-    const own = [...looks.matchAll(/:root\[data-look="(\w+)"\][^{]*\{([^}]*)\}/g)];
-    expect(new Set(own.map((m) => m[1]))).toEqual(new Set(['neon', 'lowlight', 'daylight']));
-    for (const m of own) expect(m[2].replace(/\/\*[\s\S]*?\*\//g, '').split(';').map((d) => d.trim()).filter((d) => d && !d.startsWith('--') && !d.startsWith('color-scheme')), m[0].slice(0, 60)).toEqual([]);
+  it('ships at least Neon Noir, Low Light and Daylight, each a token set and nothing else', () => {
+    expect(Object.keys(LOOKS)).toEqual(expect.arrayContaining(['Neon Noir', 'Low Light', 'Daylight']));
+    // Anywhere in the app's stylesheets, a rule for one look is a root block of tokens: colours, corners, glow, type,
+    // and the few surfaces they paint. Never a selector past :root, never a property that lays anything out.
+    const TOKEN = /^--(v-|loom-|mark-|status-|surface-|sel-|switch-|sidebar|structure-|on-structure$|card$|popover$|destructive$|accent-foreground$|alert-ink$|nav-group-ink$|unavail-ink$|btn-disabled-ink$|muted-foreground-|glide-|ink-fixed$|cream-fixed$|face-|wash-|glow-|font-|fw-display$|ls-display$|default-font-family$|radius$|r-|shadow-float$)/;
+    const sheets = ['looks/looks.css', 'index.css', 'desk.css', 'face.css', 'chart.css'].map((f) => [f, read(f)] as const);
+    const rules = sheets.flatMap(([f, css]) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /data-look="/.test(m[1])).map((m) => ({ f, sel: m[1].trim(), body: m[2] })));
+    expect(new Set(rules.map((r) => /data-look="(\w+)"/.exec(r.sel)![1]))).toEqual(new Set(['neon', 'lowlight', 'daylight']));
+    expect(rules.filter((r) => !/^:root\[data-look="\w+"\]\[data-mode\](\[data-contrast="more"\])?$/.test(r.sel)).map((r) => `${r.f}: ${r.sel}`)).toEqual([]);
+    const props = rules.flatMap((r) => r.body.split(';').map((d) => d.trim().split(':')[0].trim()).filter(Boolean).map((p) => ({ p, at: `${r.f}: ${r.sel}` })));
+    expect(props.filter(({ p }) => p !== 'color-scheme' && !TOKEN.test(p)).map(({ p, at }) => `${at} { ${p} }`)).toEqual([]);
   });
   for (const [name, t] of Object.entries(LOOKS)) {
     it(`${name}: text 4.5:1, control edges 3:1, ink on the tints and the count 4.5:1, its status inks`, () => {

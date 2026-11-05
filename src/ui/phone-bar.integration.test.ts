@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -58,7 +59,7 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
   });
 
   /** A device in a look, its arrival already had; at a phone's width with an iPhone's top inset, unless it's wide. */
-  async function device(look: 'neon' | 'lowlight' | 'daylight', motion: 'reduce' | 'no-preference', width = 390): Promise<Page> {
+  async function device(look: Look, motion: 'reduce' | 'no-preference', width = 390): Promise<Page> {
     const phone = width < 640;
     const ctx = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, reducedMotion: motion, isMobile: phone, hasTouch: phone, serviceWorkers: 'block' });
     await ctx.addInitScript((l) => { localStorage.setItem('loom-look', l); sessionStorage.setItem('loom-arrived', '1'); }, look);

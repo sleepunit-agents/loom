@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -95,7 +96,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
   });
 
   const errors: string[] = [];
-  async function device(look: 'neon' | 'lowlight' | 'daylight', motion: 'reduce' | 'no-preference', width: number, o: { skewMs?: number } = {}): Promise<Page> {
+  async function device(look: Look, motion: 'reduce' | 'no-preference', width: number, o: { skewMs?: number } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height: 800 }, reducedMotion: motion, serviceWorkers: 'block', timezoneId: 'America/Los_Angeles' });
     // A device whose clock is wrong: its Date runs this far from the real one (loom's).
     if (o.skewMs) await ctx.addInitScript((d) => { const N = Date.now; Date.now = () => N() + d; const D = Date;

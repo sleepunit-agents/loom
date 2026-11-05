@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { deflateSync, crc32 } from 'node:zlib';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, manifestFromPixelLab, setSprite, type Household } from '../household.js';
 import { createConversationTables } from '../backends/conversations.js';
@@ -25,7 +26,6 @@ const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
 
-type Look = 'neon' | 'lowlight' | 'daylight';
 type Follow = 'follow' | 'on' | 'off';
 type Prefs = { look?: Look; mode?: 'auto' | 'light' | 'dark'; zoom?: boolean; motion?: Follow; contrast?: Follow };
 

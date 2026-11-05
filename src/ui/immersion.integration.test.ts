@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -29,7 +30,6 @@ const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
 
-type Look = 'neon' | 'lowlight' | 'daylight';
 
 describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
   let h: Household;
@@ -173,7 +173,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     await q.context().close();
   }, 90_000);
 
-  for (const look of ['neon', 'daylight'] as const) {
+  for (const look of ['neon', 'lowlight', 'daylight'] as const) {
     it(`${look}: every field is at least 16 px, so iOS doesn't zoom in on focus (Find, an ask's reply, a form)`, async () => {
       const p = await phone({ look });
       const seen: { what: string; px: number }[] = [];

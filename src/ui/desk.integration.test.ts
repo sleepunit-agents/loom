@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -77,7 +78,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   });
 
   /** A screen in a look, signed in, its arrival already had unless `boot`. */
-  async function screen(look: 'neon' | 'lowlight' | 'daylight', width: number, height: number, o: { motion?: 'reduce' | 'no-preference'; boot?: boolean } = {}): Promise<Page> {
+  async function screen(look: Look, width: number, height: number, o: { motion?: 'reduce' | 'no-preference'; boot?: boolean } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: o.motion ?? 'reduce', serviceWorkers: 'block' });
     await ctx.addInitScript(([l, boot]) => { localStorage.setItem('loom-look', l as string); if (!boot) sessionStorage.setItem('loom-arrived', '1'); }, [look, !!o.boot] as const);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
@@ -283,7 +284,8 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   }, 60_000);
 
   it('under 1024 px, apps open as pages: no window', async () => {
-    for (const [look, w] of [['neon', 1000]] as const) {
+    {
+      const [look, w] = ['neon', 1000] as const;
       const p = await screen(look, w, 800);
       for (const path of ['/inbox', '/setup']) {
         await p.goto(`${base}${path}`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(300);
@@ -395,7 +397,8 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   }, 60_000);
 
   it('no boot under reduced motion, or under 1024 px', async () => {
-    for (const [look, w, motion] of [['neon', 1280, 'reduce'], ['neon', 1000, 'no-preference']] as const) {
+    for (const [w, motion] of [[1280, 'reduce'], [1000, 'no-preference']] as const) {
+      const look = 'neon';
       const p = await screen(look, w, 800, { motion, boot: true });
       await fresh(p);
       await p.locator('.loom-top h1').waitFor();

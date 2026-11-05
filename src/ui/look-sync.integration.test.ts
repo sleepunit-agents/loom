@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
+import { LOOKS } from '../../web/src/look';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
@@ -116,12 +117,17 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
   // The phone bar (phone-bar.tsx, t-1849) at every width, in every look; wider than a phone, loom's system bar over it.
   it('every look\'s chrome: the phone bar, no sideways scroll at 390 px, none with reduced motion, no sound unless on', async () => {
     const sounds: string[] = [];
-    for (const l of ['neon', 'lowlight', 'daylight']) {
+    for (const { look: l, name } of LOOKS) {
       const page = await device('reduce', { 'loom-look': l });
       page.on('request', (r) => { if (/\/assets\/sound-/.test(r.url())) sounds.push(r.url()); });
       // Chosen, not only kept: loom's copy of the person's choice wins over a device's.
       await page.goto(`${base}/appearance`);
-      await page.getByRole('radio', { name: { neon: 'Neon Noir', lowlight: 'Low Light', daylight: 'Daylight' }[l]! }).click();
+      // Appearance's one choice: the looks, and no light or dark beside them.
+      const choice = page.getByRole('radiogroup', { name: 'Look' });
+      await choice.getByRole('radio').first().waitFor();
+      expect(await choice.getByRole('radio').allInnerTexts()).toEqual(LOOKS.map((x) => x.name));
+      expect(await page.getByRole('radio', { name: /^(Light|Dark|Auto)$/ }).count()).toBe(0);
+      await choice.getByRole('radio', { name }).click();
       await page.waitForFunction((x) => document.documentElement.dataset.look === x, l);
       for (const path of ['/', '/places', '/setup', '/inbox', '/appearance']) {
         await page.goto(`${base}${path}`);

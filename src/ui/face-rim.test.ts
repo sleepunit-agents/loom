@@ -29,7 +29,7 @@ describe('rim-lit faces', () => {
     expect(new Set(STATES.map((s) => face(draw(s)))).size).toBe(STATES.length);
   });
   it('its lit eyes go toward the look\'s --face-lit (white unless the look says: ink on Daylight)', () => {
-    expect(draw('idle')).toContain('var(--face-lit, #fff)');
+    expect(draw('idle')).toContain('72%, var(--face-lit, #fff))');
   });
   it('a mark that isn\'t one of loom\'s six keeps its own colour', () => {
     expect(rimOf(draw('idle', '#123456'))).not.toContain('--mark-');

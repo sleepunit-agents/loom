@@ -26,6 +26,8 @@ describe('the app (web/)', () => {
     const named = (re: RegExp) => [...index.matchAll(re)].map((m) => gzipSync(readFileSync(`${root}dist/web/${m[1]}`)).length).reduce((a, b) => a + b, 0);
     const js = named(/<script[^>]+src="\/app\/([^"]+\.js)"/g) + named(/<link rel="modulepreload"[^>]+href="\/app\/([^"]+\.js)"/g);
     // The looks (Neon Noir's structure and every look's tokens) are in the app's own stylesheet (index.css imports them).
+    const sheets = [...index.matchAll(/<link rel="stylesheet"[^>]+href="\/app\/([^"]+\.css)"/g)].map((m) => readFileSync(`${root}dist/web/${m[1]}`, 'utf-8')).join('\n');
+    for (const look of ['neon', 'lowlight', 'daylight']) expect(sheets, `${look}'s tokens on the first page`).toMatch(new RegExp(`:root\\[data-look="?${look}"?\\]\\[data-mode\\]\\{`));
     const css = named(/<link rel="stylesheet"[^>]+href="\/app\/([^"]+\.css)"/g);
     expect(js).toBeGreaterThan(0);
     expect(css).toBeGreaterThan(0);

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { Look } from '../../web/src/look';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
@@ -56,7 +57,7 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
   });
 
   /** A device: its own sign-in, this device's copy of the look, and a record of the arrival and of every tone played. */
-  async function device(motion: 'reduce' | 'no-preference', look: 'neon' | 'lowlight' | 'daylight'): Promise<Page> {
+  async function device(motion: 'reduce' | 'no-preference', look: Look): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: motion, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
     await ctx.addInitScript((l) => {
       localStorage.setItem('loom-look', l);
@@ -80,7 +81,7 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
   }
 
   it('the Inbox\'s sheet: a title bar (what, who, its task), in every look', async () => {
-    for (const look of ['neon', 'daylight'] as const) {
+    for (const look of ['neon', 'lowlight', 'daylight'] as const) {
       const p = await device('reduce', look);
       await choose(p, { look });
       await p.goto(`${base}/inbox`);
