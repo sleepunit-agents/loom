@@ -657,7 +657,7 @@ Neon OS's own, not copied from any game.
      another agent's thread, empty text, and text over 40,000 characters.
    - `describe` answers `readers: [<member>]`, and carries the project line only when the thread has a project, and
      the title line only while it has no title.
-   - `status: working` shows the working line and `done` clears it.
+   - `status: working` shows the working line (`<NAME> · working · m:ss`) and `done` clears it.
    - After Stop, exactly the next `status` call answers `stop: true`.
    - Only a `runtime` token reaches the route.
 5. **Activity.**
@@ -743,8 +743,16 @@ Neon OS's own, not copied from any game.
 
 17. The comm screen draws the agent's sprite at a whole-number scale ≥ 2, or its drawn face without one. Its face
     state follows the table: a fake thread stepped through started, a card, a reply, done, a pending ask and a
-    failure shows `thinking`, `working`, `talking`, `complete`, `needs-input` and `error` in turn. A manifest without
-    `talking` plays `done`'s animation for it. With reduced motion, no transition plays.
+    failure shows `thinking`, `working`, `talking`, `complete`, `needs-input` and `error` in turn (by `data-face`).
+    - With a card arriving while an ask is pending, it shows `needs-input`. With a failure while an ask is pending, it
+      shows `error`.
+    - A reply sets `data-signal="on"` for 250 ms (±50) before `data-face` becomes `talking`. With reduced motion it's
+      never set.
+    - A manifest without `talking` shows `data-anim="done"` for it, and one with neither shows `working`.
+    - The frame's label reads `<NAME> · CH <nn> · LINK OK` with the stream open, `LINK LOST` with it closed, and
+      `NO CARRIER` after a failed delivery. A member's third thread with an agent is `CH 03`, and stays `CH 03` after
+      the first is deleted.
+    - The desktop shows the YOU panel and a phone doesn't.
 18. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
     the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes.
     The dock has a Comms key for a member who owns an agent, with the unread count, and none for a member who owns
@@ -756,8 +764,9 @@ Neon OS's own, not copied from any game.
 Each step ships on its own.
 
 1. **Core:** the venue, threads and messages, the routes and their owner checks, the adapter route, sending, the title
-   tool, the history store as decided, live events, push, errors and links. Criteria 1–4, 6–11, 13 and 14.
-2. **The runtime:** the core-adapted venue and tier (15), then activity capture (5 and 16).
+   tool, the history store as decided, live events, push, errors and links. Criteria 1–11, 13 and 14.
+2. **The runtime:** the core-adapted venue and tier (15), then activity capture (16). Core's side of activity (5)
+   ships in step 1.
 3. **The app:** phone, then desktop, with the comm screen (17–19).
 4. **Asks inline,** with the approvals piece's `--conversation` (12).
 5. **Stretch, later:** several agents in one thread.
