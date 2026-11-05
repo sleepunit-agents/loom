@@ -336,18 +336,28 @@ describe.runIf(built && chrome)('the Accessibility app', () => {
         for (const f of ['--v-text-2', '--v-text-3', '--v-edge']) expect(ratio(t[f], t[s]), `${f} on ${s}`).toBeGreaterThanOrEqual(4.5);
         expect(ratio(t['--v-border'], t[s]), `border on ${s}`).toBeGreaterThanOrEqual(3);
       }
-      // No words drawn faded, on the pages that use faded hints most.
-      for (const path of ['/accessibility', '/appearance', '/setup', '/']) {
+      // No words drawn faded, on the pages that use faded hints most: the page and its chrome (the bar, the dock, Find's
+      // pill), and a drawn glyph (the bar's ⓘ, a ::before or ::after with content) as well as text.
+      for (const path of ['/accessibility', '/appearance', '/setup', '/', '/inbox']) {
         await open(p, path);
         const faded = await p.evaluate(() => {
           const out: string[] = [];
-          const walker = document.createTreeWalker(document.querySelector('main')!, NodeFilter.SHOW_TEXT);
+          const chain = (el: Element, pseudo?: string) => { let o = pseudo ? Number(getComputedStyle(el, pseudo).opacity) : 1; for (let e: Element | null = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity); return o; };
+          for (const el of document.body.querySelectorAll('*')) {
+            if (!el.checkVisibility()) continue;
+            for (const ps of ['::before', '::after']) {
+              const c = getComputedStyle(el, ps).content;
+              if (c && c !== 'none' && c !== 'normal' && c.replace(/["']/g, '').trim() && chain(el, ps) > 0 && chain(el, ps) < 1) out.push(`${el.className} ${ps} ${c} (${chain(el, ps).toFixed(2)})`);
+            }
+          }
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
           for (let n = walker.nextNode(); n; n = walker.nextNode()) {
             const el = n.parentElement;
             if (!el || !n.textContent?.trim() || !el.checkVisibility()) continue;
             let o = 1;
             for (let e: Element | null = el; e; e = e.parentElement) o *= Number(getComputedStyle(e).opacity);
-            if (o < 1) out.push(`${n.textContent.trim().slice(0, 30)} (${o.toFixed(2)})`);
+            // 0 is hidden, not faded (Neon's dock names show on a hold; each key has its aria-label).
+            if (o > 0 && o < 1) out.push(`${n.textContent.trim().slice(0, 30)} (${o.toFixed(2)})`);
           }
           return out;
         });

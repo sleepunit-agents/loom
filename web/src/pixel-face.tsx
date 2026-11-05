@@ -178,7 +178,6 @@ export function createPlayer(m: Manifest, first: FaceState, draw: (f: Frame) => 
   };
 }
 
-const reduced = reducedMotion;
 const pageEnv: PlayerEnv = { now: () => performance.now(), setTimeout: (f, ms) => window.setTimeout(f, ms), clearTimeout: (t) => window.clearTimeout(t), random: Math.random };
 
 export default function PixelFace({ sprite, state = 'idle', size, label, fallback }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode }) {
@@ -213,7 +212,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
     player.current = p;
     // Only on screen, in a visible page, with motion allowed.
     let seen = false;
-    const go = () => p.live(seen && document.visibilityState === 'visible' && !reduced());
+    const go = () => p.live(seen && document.visibilityState === 'visible' && !reducedMotion());
     const io = new IntersectionObserver(([e]) => { seen = e.isIntersecting; go(); }, { rootMargin: '40px' });
     io.observe(cv);
     document.addEventListener('visibilitychange', go);

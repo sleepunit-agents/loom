@@ -64,7 +64,8 @@ interface File {
 
 /**
  * A person's Appearance (web/src/look.ts; Jonathan, 2026-11-04: "if every device I login I have to go and change the
- * theme, that sucks"): the look, 000h's light or dark, the ground, and sound. Only what they chose; kept per member
+ * theme, that sucks"): the look, 000h's light or dark, the ground, sound, pixel faces and haptics, and their
+ * Accessibility (Allow zoom, Reduce motion, Higher contrast). Only what they chose; kept per member
  * like `seen`, so it follows them to every device they sign in on.
  */
 export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;

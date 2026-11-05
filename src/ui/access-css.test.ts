@@ -30,9 +30,33 @@ describe('one source of truth for motion and contrast', () => {
     expect(all).toMatch(/:root:where\(\[data-contrast=["']?more["']?\]\)\[data-look=["']?neon["']?\]\[data-mode\]\{--glow-key:0 0 0 0/);
   });
 
-  it('no script of the app asks the phone for reduced motion or more contrast except access.ts', () => {
-    const src = files(`${root}web/src`, /\.(ts|tsx)$/).filter((f) => !f.endsWith('/access.ts'));
-    const asks = src.filter((f) => /matchMedia\([^)]*prefers-(reduced-motion|contrast)/.test(readFileSync(f, 'utf-8')));
+  it('no script of the app names either query except access.ts and the boot script, however it\'s written', () => {
+    // Any script at all (.ts, .tsx, .js, .mjs), and the query as a string anywhere in it: a query kept in a constant
+    // and handed to matchMedia later (as phone-bar.tsx's was) is caught as surely as one written inside the call.
+    const src = files(`${root}web/src`, /\.(ts|tsx|js|mjs)$/).filter((f) => !f.endsWith('/web/src/access.ts') && !f.endsWith('/web/src/looks/boot.js'));
+    const asks = src.filter((f) => /['"`]\s*\(?\s*prefers-(reduced-motion|contrast)/.test(readFileSync(f, 'utf-8')));
     expect(asks.map((f) => f.slice(root.length))).toEqual([]);
+    // And nothing reads the attribute itself but access.ts: one helper answers.
+    const reads = src.filter((f) => /dataset\.motion\b|data-motion["']\s*\)|getAttribute\(\s*['"]data-motion/.test(readFileSync(f, 'utf-8')));
+    expect(reads.map((f) => f.slice(root.length))).toEqual([]);
+  });
+
+  it('the rewrite: each form of the query lands on its attribute, specificity kept; nested and layered rules too; another form fails', async () => {
+    const { default: postcss } = await import('../../web/node_modules/postcss/lib/postcss.js');
+    const { accessMedia } = await import('../../web/access-media');
+    const run = (css: string) => postcss([accessMedia()]).process(css, { from: undefined }).css.replace(/\s+/g, ' ').trim();
+    expect(run('@media (prefers-reduced-motion: reduce) { .x { a: 1 } }')).toBe(':where(:root[data-motion="reduce"]) .x { a: 1 }');
+    expect(run('@media (prefers-reduced-motion) { .x { a: 1 } }')).toBe(':where(:root[data-motion="reduce"]) .x { a: 1 }');
+    expect(run('@media (prefers-reduced-motion:no-preference){:root[data-look="neon"] .t{a:1}}')).toBe(':root:where([data-motion="full"])[data-look="neon"] .t{a:1}');
+    expect(run('@media not (prefers-reduced-motion: reduce) { html[data-move] .x { a: 1 } }')).toBe('html:where([data-motion="full"])[data-move] .x { a: 1 }');
+    expect(run('@media (prefers-contrast: more) { ::view-transition-old(p), .a, .b { a: 1 } }')).toBe(':where(:root[data-contrast="more"])::view-transition-old(p), :where(:root[data-contrast="more"]) .a, :where(:root[data-contrast="more"]) .b { a: 1 }');
+    expect(run('@layer l { @media (prefers-reduced-motion: reduce) { @supports (x: y) { .x { a: 1 } } } }')).toBe('@layer l { @supports (x: y) { :where(:root[data-motion="reduce"]) .x { a: 1 } } }');
+    expect(run('.p { color: red; @media (prefers-reduced-motion: reduce) { a: 1 } }')).toBe('.p { color: red; :where(:root[data-motion="reduce"]) & { a: 1 } }');
+    // Anything else naming either feature: the build stops, rather than a query that asks the phone slipping through.
+    for (const q of ['(prefers-contrast: less)', '(prefers-reduced-motion: reduce) and (min-width: 1px)', '(prefers-contrast: more), print']) {
+      expect(() => run(`@media ${q} { .x { a: 1 } }`), q).toThrow(/loom-access-media/);
+    }
+    // Other media queries are left alone.
+    expect(run('@media (min-width: 1px) { .x { a: 1 } }')).toBe('@media (min-width: 1px) { .x { a: 1 } }');
   });
 });

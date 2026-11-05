@@ -800,6 +800,8 @@ img { -webkit-user-drag: none; }
    sat on a see-through surface (the wash, the side, Find's pill, the header's buttons, a state's card), and full
    hairlines where they were mixed toward transparent. */
 :root[data-contrast="more"] :is(.opacity-40, .opacity-50, .opacity-60, .opacity-70, .opacity-75, .opacity-80, .opacity-90) { opacity: 1; }
+/* A press shows as a darker press, not faded words (the tap dimming, "A phone's app", below). */
+@media (hover: none) { :root[data-contrast="more"] :where(button, a[href], [role="button"], [role="option"], summary):active { opacity: 1; } }
 :root[data-contrast="more"] :focus-visible { outline: 3px solid var(--v-text); outline-offset: 2px; }
 :root[data-contrast="more"][data-look] .loom-wash { background: var(--v-canvas); opacity: 1; }
 :root[data-contrast="more"] .loom-ground { opacity: .45; }

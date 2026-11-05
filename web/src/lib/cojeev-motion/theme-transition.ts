@@ -1,7 +1,7 @@
 "use client";
 import { createMotionLane, resolveChoreography } from "@/lib/cojeev-motion/choreography";
 import { getSettingsSnapshot, subscribeSettings } from "@/lib/cojeev-motion/settings";
-import {motionQuery} from "@/access";
+import {motionQuery,reducedMotion} from "@/access";
 
 export type ThemeRevealOrigin = { x:number; y:number };
 export type ThemeChangeDetails = { origin:ThemeRevealOrigin };
@@ -57,7 +57,7 @@ let active:Reveal|undefined;
 export function applyTheme(mode:ThemeMode,quiet=false,root?:HTMLElement,options:ThemeRevealOptions={}) {
   if(typeof document==="undefined")return;
   const scope=root??document.documentElement,doc=scope.ownerDocument,canvas=doc.documentElement;
-  const reduced=()=>doc.documentElement.dataset.motion==="reduce";
+  const reduced=reducedMotion;
   const isQuiet=()=>quiet||doc.hidden||resolveChoreography(getSettingsSnapshot(),reduced()).quiet;
   if(active?.scope===scope&&!active.done){
     const reveal=active,changed=reveal.requested!==mode;

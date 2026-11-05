@@ -121,6 +121,7 @@ color-scheme:dark;
 --v-text:#FFFFFF;--v-ink:#FFFFFF;--v-text-2:#E4E1F5;--v-ink-soft:#E4E1F5;--v-text-3:#CFCBE6;--alert-ink:#E4E1F5;--nav-group-ink:#CFCBE6;--unavail-ink:#CFCBE6;--btn-disabled-ink:#CFCBE6;
 --v-disabled-ink:#CFCBE6;--muted-foreground-ink:#E4E1F5;--muted-foreground-tinted:#E4E1F5;--sidebar-muted:#D6D2EA;--structure-text:#FFFFFF;--status-pending-ink:#E4E1F5;
 --v-border:#7A74A6;--v-skel-edge:#7A74A6;--structure-line:#7A74A6;--v-edge:#A9A3D4;--v-disabled-edge:#A9A3D4;--loom-muted:#CFCBE6;--loom-muted-wash:#CFCBE6}
+:root[data-look="neon"][data-contrast="more"] .loom-pbar__info::after{opacity:1}
 
 /* ---- LOOM//OS and live-or-offline, in words (the phone bar's, phone-bar.tsx) ---- */
 :root[data-look="neon"] .loom-pbar__brand{font-family:var(--font-display);font-weight:700;letter-spacing:.08em;color:var(--v-text)}
