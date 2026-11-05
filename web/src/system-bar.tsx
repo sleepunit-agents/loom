@@ -1,12 +1,17 @@
 // Neon Noir's system bar on a screen that has none of its own (Jonathan, 2026-11-05: "since we don't have the built in
 // top bar from the phone, let's add one here where we put clock and some kind of status icons"): a thin bar over the
-// phone's bar (phone-bar.tsx), where a phone's own status bar would be, across the page's column (App.tsx). loom's clock on the left, small and bold, in
-// loom's time zone (the household's, as every page says a time); on the right a few monochrome glyphs, each meaning
-// something real from what the shell already has: whether loom is reached, the boxes, the nightly backup. Each says
-// itself in words: an aria-label, and the same words as a tooltip on hover or keyboard focus (neon.css .loom-sys__tip).
-// Not on iOS's home-screen app: the device draws its own there.
+// phone's bar (phone-bar.tsx), where a phone's own status bar would be, across the page's column (App.tsx).
+//
+// loom's clock on the left, small and bold: loom's time (its latest answer's Date, carried forward a minute at a time)
+// in loom's zone (uiTimeZone, the one every page says a time in), not the device's. On the right a few monochrome
+// glyphs, each meaning something real from what the shell already has: whether loom is reached, how many agents are at
+// work, the boxes, the nightly backup. Each says itself in words: an aria-label, and the same words as a tooltip on
+// hover or keyboard focus (neon.css .loom-sys__tip). Dimmed means "look at this", and the words say why.
+// Up to four; fewer when loom has nothing to say: no Boxes glyph without the Boxes piece, and the backup only to a
+// household owner (an agent owner never sees its target or errors). Not on iOS's home-screen app (an iPad draws its own
+// status bar there, clock and all).
 import { useEffect, useState } from 'react';
-import type { Shell } from './loom';
+import { loomNow, type Shell } from './loom';
 
 /** The time in loom's zone, as a phone's status bar has it: "9:41", no AM or PM. */
 export function clockText(ms: number, tz?: string, fallback = ''): string {
@@ -19,15 +24,15 @@ export function clockText(ms: number, tz?: string, fallback = ''): string {
   return /\d{1,2}:\d{2}/.exec(fallback)?.[0] ?? '';
 }
 
-/** loom's clock: the minute, turned over on the minute. */
-function useMinute(): number {
-  const [now, set] = useState(() => Date.now());
+/** loom's clock (loom.ts loomNow: the device's, set by loom's latest answer), turned over on the minute. */
+function useLoomMinute(): number {
+  const [now, set] = useState(loomNow);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout>;
-    const next = () => { t = setTimeout(() => { set(Date.now()); next(); }, 60_000 - (Date.now() % 60_000) + 50); };
+    const next = () => { t = setTimeout(() => { set(loomNow()); next(); }, 60_000 - (loomNow() % 60_000) + 50); };
     next();
     // A tab woken from sleep has a stale minute: catch up at once.
-    const wake = () => { if (document.visibilityState === 'visible') set(Date.now()); };
+    const wake = () => { if (document.visibilityState === 'visible') set(loomNow()); };
     document.addEventListener('visibilitychange', wake);
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', wake); };
   }, []);
@@ -54,6 +59,12 @@ const Boxes = () => (
     <circle cx={4.75} cy={4.75} r={0.6} fill="currentColor" stroke="none" /><circle cx={4.75} cy={11.25} r={0.6} fill="currentColor" stroke="none" />
   </svg>
 );
+/** Two heads: agents. */
+const Agents = () => (
+  <svg {...G} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round">
+    <circle cx={6} cy={5.5} r={2.5} /><path d="M1.75 13.5a4.25 4.25 0 0 1 8.5 0" /><path d="M10.5 3.2a2.5 2.5 0 0 1 0 4.6M12 9.6a4.25 4.25 0 0 1 2.25 3.9" />
+  </svg>
+);
 /** A copy going up: the nightly backup. */
 const Backup = () => (
   <svg {...G} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
@@ -63,11 +74,18 @@ const Backup = () => (
 
 type Item = { key: string; label: string; glyph: React.ReactNode; count?: string; dim?: boolean; href?: string };
 
-/** What each glyph says: only what the shell knows. Boxes when its piece is installed; the backup to a household owner. */
+/** The Boxes piece: the runtime (its id, /p/runtime; /p/box before the catalog renamed it). */
+const BOXES = ['/p/runtime', '/p/box'];
+
+/** What each glyph says: only what the shell knows. Agents always; Boxes when its piece is installed; the backup to a household owner. */
 export function statusItems(shell: Shell, offline: boolean): Item[] {
   const items: Item[] = [{ key: 'signal', glyph: <Signal live={!offline} />, dim: offline,
     label: offline ? 'Offline: can’t reach loom, showing a saved copy' : 'Live: connected to loom' }];
-  const boxes = shell.pieces.find((p) => p.label === 'Boxes');
+  const n = shell.agents.length, working = shell.agents.filter((a) => a.working).length;
+  items.push({ key: 'agents', glyph: <Agents />, count: String(working), href: shell.home,
+    label: working === 0 ? `No agent at work right now (${n} in all)` : working === n ? `${n === 1 ? 'The agent is' : `All ${n} agents are`} at work`
+      : `${working} of ${n} agents at work` });
+  const boxes = shell.pieces.find((p) => BOXES.includes(p.href));
   if (boxes) {
     const n = /\d+/.exec(boxes.stat ?? '')?.[0];
     const alerts = boxes.alerts ?? 0;
@@ -84,12 +102,13 @@ export function statusItems(shell: Shell, offline: boolean): Item[] {
   return items;
 }
 
-export function SystemBar({ shell, tz, clock, offline, go }: { shell: Shell; tz?: string; clock: string; offline: boolean; go: (href: string) => void }) {
-  const now = useMinute();
-  const time = clockText(now, tz, clock);
+export function SystemBar({ shell, clock, offline, go }: { shell: Shell; clock: { text: string; tz?: string }; offline: boolean; go: (href: string) => void }) {
+  // Turned over each minute; and each answer from loom re-renders the bar, so the time is read again with its latest Date.
+  useLoomMinute();
+  const time = clockText(loomNow(), clock.tz, clock.text);
   return (
     <div className="loom-sys">
-      <span className="loom-sys__clock loom-data">{time}</span>
+      <span className="loom-sys__clock">{time}</span>
       <span className="loom-sys__icons" role="group" aria-label="Status">
         {statusItems(shell, offline).map((it) => {
           const inner = <>{it.glyph}{it.count && <span className="loom-sys__n loom-data" aria-hidden>{it.count}</span>}<span className="loom-sys__tip" aria-hidden>{it.label}</span></>;

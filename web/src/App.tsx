@@ -445,8 +445,8 @@ export default function App() {
             <header className={`loom-top loom-top--bar${deskBar ? ' loom-top--desk' : ''}`} data-accent={appAccent}>
               <div className="mx-auto max-w-5xl px-4">
                 {/* Wider than a phone: loom's own status bar over it, across the page's column, so its clock sits over
-                    the page's name and its glyphs over LOOM//OS, as a phone's do (system-bar.tsx). */}
-                {deskBar && <SystemBar shell={chrome.shell} tz={chrome.tz} clock={chrome.clock} offline={!!savedAt} go={go} />}
+                    the page's name and its glyphs over LOOM//OS and the count, as a phone's do (system-bar.tsx). */}
+                {deskBar && <SystemBar shell={chrome.shell} clock={{ text: chrome.clock, tz: chrome.tz }} offline={!!savedAt} go={go} />}
                 <PhoneBar title={shownTitle ?? ''} go={go} crumb={chrome.shell.back} shell={chrome.shell} offline={!!savedAt} where={url}
                   info={{ line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />

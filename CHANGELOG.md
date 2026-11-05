@@ -17,13 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Neon on a desktop wears the phone's bar** (t-1865). Wider than a phone,
   Neon's top is the phone's bar (the page's name and its ⓘ, the ticker,
   LOOM//OS and the count) in place of the old status line and big header,
-  under a thin system bar where a phone's own would be: loom's clock (in
-  loom's time zone) on the left, and on the right a signal (live or offline),
-  the boxes (how many, dimmed while one has an alert) and the nightly backup
-  (its last good one, or what's wrong: a household owner's only), each with
-  its words on hover and as its accessible name. Both span the page's column.
-  The shell now carries loom's time zone, each piece's open alerts and the
-  backup's state. A name with its ⓘ is no longer cut short on a phone
+  under a thin system bar where a phone's own would be: loom's clock (loom's
+  time, from its answers' Date, in loom's time zone) on the left, and on the
+  right a signal (live or offline), the agents at work, the boxes (how many,
+  dimmed while one has an alert) and the nightly backup (its last good one, or
+  what's wrong: a household owner's only), each with its words on hover and as
+  its accessible name. Both span the page's column. The shell now carries
+  loom's time zone, each piece's open alerts, which agents a piece reports at
+  work, and the backup's state. A name with its ⓘ is no longer cut short on a phone
   ("Boxes", not "Bo…"). 000h is unchanged.
 - **A long panel pages like a list.** A piece's panel of more than 15 rows
   shows 15 at a time, with numbered pages and its action under them. The

@@ -1,8 +1,9 @@
 /**
  * Neon wider than a phone (Jonathan, 2026-11-05): the phone's bar (phone-bar.tsx) at every width, under loom's own
- * system bar (system-bar.tsx) where a phone's status bar would be: loom's clock on the left, a few monochrome glyphs
- * on the right, each with its words; the big icon-and-title header is gone. In a real browser at 1280 and 800 px, over
- * a household with a Boxes piece that has an alert, a backup not set up, and something waiting. 000h keeps its big
+ * system bar (system-bar.tsx) where a phone's status bar would be: loom's clock (loom's time, in loom's zone, never the
+ * browser's) on the left, a few monochrome glyphs on the right, each with its words; the big icon-and-title header is
+ * gone. In a real browser at 1280 and 800 px, over a household with a Boxes piece that has an alert and reports an agent
+ * at work, a backup not set up, and something waiting. 000h keeps its big
  * header and has no system bar.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
@@ -23,12 +24,13 @@ const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
 
-/** A stand-in Boxes piece: its tile says how many, and one of its asks is an alert. */
+/** A stand-in Boxes piece (the runtime): its tile says how many, one of its asks is an alert, and it reports art at work. */
 function boxes(dir: string) {
   writeFileSync(join(dir, 'boxes.manifest.json'), JSON.stringify({ v: 2, tab: { label: 'Boxes' }, tile: { label: 'Boxes', value: '3 boxes', page: '' },
-    asks: [{ text: 'loom-http failed on mini', page: '', label: 'Look', kind: 'alert' }] }));
+    asks: [{ text: 'loom-http failed on mini', page: '', label: 'Look', kind: 'alert' }],
+    agents: { art: { state: 'working', readings: [] } } }));
   writeFileSync(join(dir, 'boxes.page.json'), JSON.stringify({ title: 'Boxes', sections: [{ id: 's', blocks: [{ type: 'text', text: 'Three boxes.' }] }] }));
-  writeFileSync(join(dir, 'loom-boxes'), `#!/bin/sh
+  writeFileSync(join(dir, 'loom-runtime'), `#!/bin/sh
 d=$(dirname "$0")
 case "$1 $2" in
 "ui --json") cat "$d/boxes.manifest.json" ;;
@@ -36,7 +38,7 @@ case "$1 $2" in
 *) exit 2 ;;
 esac
 `);
-  chmodSync(join(dir, 'loom-boxes'), 0o755);
+  chmodSync(join(dir, 'loom-runtime'), 0o755);
 }
 
 describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under loom\'s own system bar', () => {
@@ -59,10 +61,12 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const bin = join(home, 'bin');
     mkdirSync(bin);
     boxes(bin);
-    for (const k of ['PATH', 'LOOM_HOME', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
+    for (const k of ['PATH', 'LOOM_HOME', 'XDG_CONFIG_HOME', 'LOOM_TIMEZONE']) saved[k] = process.env[k];
     process.env.PATH = [bin, process.env.PATH].join(delimiter);
     process.env.LOOM_HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
+    // loom's zone, 45 minutes off any whole-hour zone, and never the browser's (device() puts it in Los Angeles).
+    process.env.LOOM_TIMEZONE = 'Asia/Kathmandu';
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
     const art = agentDir(h, 'art');
@@ -81,11 +85,18 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
-  async function device(look: 'neon' | '000h', motion: 'reduce' | 'no-preference', width: number): Promise<Page> {
-    const ctx = await browser.newContext({ viewport: { width, height: 800 }, reducedMotion: motion, serviceWorkers: 'block' });
+  const errors: string[] = [];
+  async function device(look: 'neon' | '000h', motion: 'reduce' | 'no-preference', width: number, o: { skewMs?: number } = {}): Promise<Page> {
+    const ctx = await browser.newContext({ viewport: { width, height: 800 }, reducedMotion: motion, serviceWorkers: 'block', timezoneId: 'America/Los_Angeles' });
+    // A device whose clock is wrong: its Date runs this far from the real one (loom's).
+    if (o.skewMs) await ctx.addInitScript((d) => { const N = Date.now; Date.now = () => N() + d; const D = Date;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).Date = class extends D { constructor(...a: unknown[]) { if (a.length) super(...(a as [])); else super(N() + d); } static now() { return N() + d; } }; }, o.skewMs);
     await ctx.addInitScript((l) => { localStorage.setItem('loom-look', l); sessionStorage.setItem('loom-arrived', '1'); }, look);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(`${width}: ${m.text()}`); });
+    p.on('pageerror', (e) => errors.push(`${width}: ${e.message}`));
     await p.goto(`${base}/appearance`);
     await p.locator('.loom-top h1').waitFor();
     const csrf = await p.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
@@ -106,19 +117,25 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const sys = p.locator('.loom-sys');
     expect(await sys.count()).toBe(1);
     const clock = p.locator('.loom-sys__clock');
-    expect(await clock.innerText()).toMatch(/^\d{1,2}:\d{2}$/);
+    // loom's time in loom's zone (Kathmandu here), not the browser's (Los Angeles): "9:41", no AM or PM.
+    const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
+    const shown = await clock.innerText();
+    expect(shown).toMatch(/^\d{1,2}:\d{2}$/);
+    expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(shown);
     expect(await clock.evaluate((e) => ({ size: parseFloat(getComputedStyle(e).fontSize), weight: getComputedStyle(e).fontWeight }))).toEqual({ size: 13, weight: '700' });
     const [sb, bar, name, brand] = await Promise.all(['.loom-sys', '.loom-pbar', '.loom-pbar__name', '.loom-pbar__brand'].map(async (s) => (await p.locator(s).boundingBox())!));
     expect(sb.y + sb.height).toBeLessThanOrEqual(bar.y + 1);
     // As on a phone: the clock over the page's name, the glyphs over LOOM//OS (the bar spans the page's column).
-    const cb = (await clock.boundingBox())!, ib = (await p.locator('.loom-sys__icons').boundingBox())!;
+    const cb = (await clock.boundingBox())!, last = (await p.locator('.loom-sys__icon svg').last().boundingBox())!;
     expect(Math.abs(cb.x - name.x)).toBeLessThanOrEqual(2);
-    expect(ib.x + ib.width).toBeGreaterThanOrEqual(brand.x + brand.width);
-    // The glyphs: each named in words (aria-label), the same words shown on hover. Live; Boxes dimmed by its alert;
+    expect(Math.abs(last.x + last.width - (bar.x + bar.width))).toBeLessThanOrEqual(4);
+    expect(last.x).toBeGreaterThan(brand.x);
+    // The glyphs: each named in words (aria-label), the same words shown on hover. Live; one agent at work; Boxes dimmed by its alert;
     // the backup, not set up here.
     const icons = await p.locator('.loom-sys__icon').evaluateAll((es) => es.map((e) => ({ k: (e as HTMLElement).dataset.k, name: e.getAttribute('aria-label'), dim: e.hasAttribute('data-dim') })));
     expect(icons).toEqual([
       { k: 'signal', name: 'Live: connected to loom', dim: false },
+      { k: 'agents', name: '1 of 2 agents at work', dim: false },
       { k: 'boxes', name: '3 boxes: 1 alert', dim: true },
       { k: 'backup', name: 'Backup: not set up', dim: true },
     ]);
@@ -129,7 +146,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await expect.poll(() => tip.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
     expect(await tip.innerText()).toBe('3 boxes: 1 alert');
     // A glyph that's a place goes there.
-    expect(await p.locator('.loom-sys__icon[data-k="boxes"]').getAttribute('href')).toBe('/p/boxes');
+    expect(await p.locator('.loom-sys__icon[data-k="boxes"]').getAttribute('href')).toBe('/p/runtime');
     // The count: visible, never part of what moves.
     const needs = p.locator('.loom-pbar__needs');
     expect(await needs.isVisible()).toBe(true);
@@ -143,13 +160,6 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
     await p.context().close();
   }, 90_000);
-
-  it('a name with its ⓘ isn\'t cut short ("Boxes", not "Bo…")', async () => {
-    const p = await device('neon', 'reduce', 390);
-    await open(p, '/p/boxes');
-    expect(await p.locator('.loom-pbar__title').evaluate((e) => ({ text: (e as HTMLElement).innerText, cut: e.scrollWidth > e.clientWidth }))).toEqual({ text: 'Boxes', cut: false });
-    await p.context().close();
-  }, 60_000);
 
   it('at 800 px (between a phone and the side panel): the same bars, the dock still below, nothing wider than the screen', async () => {
     const p = await device('neon', 'reduce', 800);
@@ -185,6 +195,14 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await q.context().close();
   }, 90_000);
 
+  it('its clock is loom\'s, not the device\'s: a device three hours and seven minutes fast still shows loom\'s time (its answers\' Date)', async () => {
+    const p = await device('neon', 'reduce', 1280, { skewMs: (3 * 60 + 7) * 60_000 });
+    await open(p, '/');
+    const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
+    expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(await p.locator('.loom-sys__clock').innerText());
+    await p.context().close();
+  }, 60_000);
+
   it('000h at 1280 px: the big header, no system bar, no phone bar', async () => {
     const p = await device('000h', 'reduce', 1280);
     await open(p, '/');
@@ -193,4 +211,6 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     expect(await p.locator('.loom-top h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThanOrEqual(28);
     await p.context().close();
   }, 60_000);
+
+  it('no console errors on the way', () => { expect(errors).toEqual([]); });
 });

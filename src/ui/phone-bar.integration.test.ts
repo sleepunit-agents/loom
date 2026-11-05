@@ -209,6 +209,13 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await q.context().close();
   }, 90_000);
 
+  it('a name with its ⓘ isn\'t cut short ("Members", not "Memb…")', async () => {
+    const p = await device('neon', 'reduce');
+    await open(p, '/members');
+    expect(await p.locator('.loom-pbar__title').evaluate((e) => ({ text: (e as HTMLElement).innerText, cut: e.scrollWidth > e.clientWidth }))).toEqual({ text: 'Members', cut: false });
+    await p.context().close();
+  }, 60_000);
+
   it('a wide screen under Neon wears the same bar, under loom\'s system bar (desk-bar.integration.test.ts); a phone has none of that', async () => {
     const p = await device('neon', 'reduce', 1280);
     await open(p, '/');

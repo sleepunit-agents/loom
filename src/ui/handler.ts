@@ -67,7 +67,7 @@ import { agentBio, agentSetup, householdAct, householdHome, householdMembers, ho
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
-import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
 
 const COOKIE = 'loom_ui';
@@ -864,12 +864,18 @@ function alertsOf(p: PieceInfo): { alerts?: number } {
   return n ? { alerts: n } : {};
 }
 
-/** The nightly backup as the system bar says it: its last good one, or what's wrong (backupRow, Setup's row). */
-function backupOf(h: Household): { backup?: NonNullable<Chrome['shell']>['backup'] } {
+/** The nightly backup as the system bar says it: its last good one, or what's wrong (backupRow, Setup's row). Its
+ * settings or state unreadable (a hand-edited household.json, a half-written state.json): no glyph, not a broken page. */
+export function backupOf(h: Household, nowMs = Date.now()): { backup?: Shell['backup'] } {
   try {
-    const r = backupRow(h, Date.now(), (iso) => agoText(iso) || 'a while ago');
+    const r = backupRow(h, nowMs, (iso) => agoText(iso, nowMs) || 'a while ago');
     return { backup: { tone: r.tone, text: r.text, href: `/a/${h.default}/setup` } };
   } catch { return {}; }
+}
+
+/** An agent at work, as the pieces report it (the same as its Home card's WORKING): a state of working, or something it has going. */
+function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
+  return pieces.some((p) => { const r = p.manifest.agents?.[agent]; return r && (r.state === 'working' || (r.doing?.length ?? 0) > 0); }) ? { working: true } : {};
 }
 
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
@@ -918,7 +924,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
-          sub: lastActive(agentDir(h, a)) })),
+          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },

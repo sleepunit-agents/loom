@@ -51,7 +51,8 @@ export interface Chrome {
   agent: string;
   nav: Array<{ label: string; href: string; current: boolean; piece: boolean }>;
   clock: string;
-  /** loom's time zone (the household's, as every page says a time), for the app's own clock (web/src/system-bar.tsx). */
+  /** loom's time zone (uiTimeZone: LOOM_TIMEZONE, else TZ), the one every page says a time in, for the app's own clock
+   * (web/src/system-bar.tsx; loom's time itself is each answer's Date header, so the page's ETag holds). */
   tz?: string;
   csrf: string;
   /** The one-time result of an action; `from` names the piece that sent it. */
@@ -62,7 +63,7 @@ export interface Chrome {
 }
 
 /** An agent as the shell draws it: its mark is its initial on its color. */
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string }
+export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string; /** A piece reports it at work (the system bar's count). */ working?: true }
 
 export interface Shell {
   owner: string;
