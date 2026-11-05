@@ -498,6 +498,10 @@ what the setting is now, in words people use, and holds **at most one** way to c
 | `page` or `href` | a tap goes there |
 | `act` | one button at the row's end (a danger one asks first) |
 
+A panel longer than 15 rows is drawn a page at a time, like a list (below): its first 15 rows, then numbered pages,
+with its `action` under the pager. Put what needs attention first; a panel that's really a long list of things (a
+store's secrets) is better as a summary that links to them, and paging is the floor under it, not the design.
+
 A row with two of these is refused, and so is the page it's on. Raw ids, hashes and JSON never go in a
 `label` or `value`: name things the way people do, and put the id in a `sheet` for whoever asks for it.
 

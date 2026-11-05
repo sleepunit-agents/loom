@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { ActButton, BlockView, Link, Who, useEnv } from './blocks';
+import { ActButton, BlockView, Link, Who, useEnv, usePaged } from './blocks';
 import Form from './form';
 import { tidy } from './tidy';
 import type { Block, PanelRow, Tone } from './loom';
@@ -126,10 +126,14 @@ function Row({ r }: { r: PanelRow }) {
 
 export default function Panel({ b }: { b: Extract<Block, { type: 'panel' }> }) {
   const { wide } = useEnv();
+  // A panel that's a long list of things (a store's 61 secrets) pages like a list: never a wall of rows (Jonathan,
+  // 2026-11-05: "fine if you've got 1 of something and a nightmare if you exceed that").
+  const { rows, pager } = usePaged(b.rows);
   return (
     <div className="grid gap-2" data-slot="panel">
       {b.title && <h4 className="text-sm font-medium opacity-70">{b.title}</h4>}
-      <ul className="min-w-0 divide-y rounded-[var(--r-card-sm)] bg-[var(--card-2)] px-4">{b.rows.map((r, n) => <Row key={`${r.label}\0${n}`} r={r} />)}</ul>
+      <ul className="min-w-0 divide-y rounded-[var(--r-card-sm)] bg-[var(--card-2)] px-4">{rows.map((r, n) => <Row key={`${r.label}\0${n}`} r={r} />)}</ul>
+      {pager}
       {b.action && <div className="pt-1"><ActButton b={b.action} size="default" full={!wide} /></div>}
     </div>
   );
