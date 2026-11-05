@@ -25,7 +25,7 @@ const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bi
 const built = existsSync(`${root}dist/web/index.html`);
 
 type Phone = { p: Page; cdp: CDPSession };
-type Seen = { moves: (string | undefined)[]; anims: { pe: string; name: string }[][]; buzz: unknown[]; wide: number };
+type Seen = { moves: (string | undefined)[]; anims: { pe: string; name: string; ms: number }[][]; buzz: unknown[]; wide: number };
 
 describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', () => {
   let h: Household;
@@ -79,14 +79,12 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
         w.__seen.moves.push(document.documentElement.dataset.move);
         const vt = orig.call(this, cb);
         vt.ready.then(() => {
-          w.__seen.anims.push(document.getAnimations().map((a) => ({ pe: (a.effect as KeyframeEffect).pseudoElement ?? '', name: (a as CSSAnimation).animationName ?? '' })).filter((a) => a.pe.startsWith('::view-transition')));
+          w.__seen.anims.push(document.getAnimations().map((a) => ({ pe: (a.effect as KeyframeEffect).pseudoElement ?? '', name: (a as CSSAnimation).animationName ?? '', ms: Number(a.effect!.getTiming().duration) })).filter((a) => a.pe.startsWith('::view-transition')));
         }).catch(() => {});
         return vt;
       };
       const watch = () => { w.__seen.wide = Math.max(w.__seen.wide, document.documentElement.scrollWidth); requestAnimationFrame(watch); };
       requestAnimationFrame(watch);
-      // Chrome's emulated touch has no :active for a held finger otherwise: nothing to do with what's tested.
-      void (undefined as unknown);
     }, [look, o.haptics ?? true] as const);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
@@ -146,6 +144,8 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     let s = await seen(f);
     expect(s.moves).toContain('right');
     expect(s.anims.flat().some((a) => a.pe === '::view-transition-new(loom-page)' && a.name === 'loom-move-in-right')).toBe(true);
+    // 280 ms, both halves: transitions.ts MOVE_MS, which the swipe scrubs against.
+    expect(s.anims.flat().filter((a) => a.pe.endsWith('(loom-page)')).map((a) => a.ms)).toEqual([280, 280]);
     expect(s.buzz.length).toBeGreaterThanOrEqual(1);
     expect(mid).toBeLessThanOrEqual(390);
     expect(held).toHaveLength(1);
@@ -195,6 +195,47 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await f.p.context().close();
   }, 90_000);
 
+  it('a second finger mid-swipe lets it go: the move runs back and nothing is left held', async () => {
+    const f = await phone();
+    await open(f, '/');
+    await f.cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 300, y: 420, id: 1 }] });
+    for (const x of [280, 250, 220, 190]) { await f.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: 422, id: 1 }] }); await f.p.waitForTimeout(16); }
+    await f.cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 190, y: 422, id: 1 }, { x: 200, y: 600, id: 2 }] });
+    await f.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 120, y: 424, id: 1 }, { x: 200, y: 640, id: 2 }] });
+    await f.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await f.p.waitForTimeout(900);
+    expect(await where(f)).toBe('/');
+    expect(await f.p.locator('.loom-pbar h1').innerText()).toBe('Home');
+    expect(await f.p.evaluate(() => ({ move: document.documentElement.dataset.move ?? null,
+      held: document.getAnimations().filter((a) => ((a.effect as KeyframeEffect).pseudoElement ?? '').startsWith('::view-transition')).length }))).toEqual({ move: null, held: 0 });
+    await f.p.context().close();
+  }, 60_000);
+
+  it('nothing sideways from something that scrolls sideways, a field, a selection, or while Find is open', async () => {
+    const f = await phone();
+    await open(f, '/');
+    await f.p.evaluate(() => {
+      const m = document.querySelector('main')!;
+      m.insertAdjacentHTML('afterbegin', '<div id="t-wide" style="overflow-x:auto;height:60px"><div style="width:900px;height:60px">wide</div></div><input id="t-field" style="width:100%;height:40px"><p id="t-words">Some words to select here.</p>');
+      scrollTo(0, 0);
+    });
+    for (const id of ['t-wide', 't-field']) {
+      const b = (await f.p.locator(`#${id}`).boundingBox())!;
+      await drag(f, [320, b.y + b.height / 2], [60, b.y + b.height / 2 + 2]);
+      expect(await where(f), id).toBe('/');
+    }
+    const w = (await f.p.locator('#t-words').boundingBox())!;
+    await f.p.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.getElementById('t-words')!); getSelection()!.removeAllRanges(); getSelection()!.addRange(r); });
+    await drag(f, [320, w.y + w.height + 40], [60, w.y + w.height + 42]);
+    expect(await where(f), 'selection').toBe('/');
+    await f.p.evaluate(() => getSelection()!.removeAllRanges());
+    await f.p.keyboard.press('Control+k');
+    await f.p.locator('.loom-find[role="dialog"]').waitFor();
+    await drag(f, [320, 700], [60, 702]);
+    expect(await where(f), 'Find open').toBe('/');
+    await f.p.context().close();
+  }, 60_000);
+
   it('Safari\'s edges are iOS\'s; in the home-screen app they\'re the page\'s', async () => {
     const f = await phone();
     await open(f, '/');
@@ -219,6 +260,21 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     expect((await seen(f)).buzz.length).toBeGreaterThanOrEqual(1);
     await f.p.keyboard.press('Escape');
     await f.p.locator('.loom-find[role="dialog"]').waitFor({ state: 'detached' });
+    // From the strip just over the keys, too.
+    const top = (await f.p.locator('.loom-dock-now [data-part="item"][aria-label="Places"]').boundingBox())!.y;
+    await drag(f, [kx, top - 20], [kx, top - 140]);
+    await f.p.locator('.loom-find[role="dialog"]').waitFor();
+    expect(await where(f)).toBe('/');
+    await f.p.keyboard.press('Escape');
+    await f.p.locator('.loom-find[role="dialog"]').waitFor({ state: 'detached' });
+    // A key held a moment still shows its name, with the dock now taking touches whole. (Held by a mouse: Chrome's
+    // emulated touch never sets :active, on any element, so a held finger can't be checked here.)
+    await f.p.mouse.move(kx, ky); await f.p.mouse.down(); await f.p.waitForTimeout(800);
+    const named = await f.p.locator('.loom-dock-now [data-part="item"][aria-label="Places"] [data-part="label"]').evaluate((e) => getComputedStyle(e).opacity);
+    await f.p.mouse.up();
+    await f.p.waitForTimeout(600);
+    expect(named).toBe('1');
+    await f.p.goto(`${base}/`); await f.p.locator('.loom-top h1').waitFor(); await f.p.waitForTimeout(1800);
     await forget(f);
     const [ix, iy] = await keyAt(f, 'Inbox');
     await tap(f, ix, iy);
@@ -228,6 +284,16 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     expect(s.buzz.length).toBeGreaterThanOrEqual(1);
     await f.p.context().close();
   }, 90_000);
+
+  it('haptics stay out of the first page: their chunk is its own, and the first page\'s scripts don\'t vibrate', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const index = readFileSync(`${root}dist/web/index.html`, 'utf8');
+    expect(index).not.toMatch(/haptics-/);
+    const first = [...index.matchAll(/(?:src|href)="\/app\/(assets\/[^"]+\.js)"/g)].map((m) => m[1]);
+    expect(first.length).toBeGreaterThan(0);
+    for (const f of first) expect(readFileSync(`${root}dist/web/${f}`, 'utf8'), f).not.toMatch(/vibrate\(/);
+    expect(readdirSync(`${root}dist/web/assets`).some((f) => /^haptics-.*\.js$/.test(f))).toBe(true);
+  });
 
   it('Haptics off: the pages still change, nothing ticks', async () => {
     const f = await phone({ haptics: false });
@@ -317,6 +383,10 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await open(f, '/');
     await toAgent(f);
     await f.p.locator('.loom-dock-swap[data-swap="go"] .loom-dock-gone').waitFor({ state: 'attached' });
+    // Nothing between the keys and the screen's edge clips them while they swap: they leave the screen, not a box.
+    const clips = await f.p.evaluate(() => { const out: string[] = []; const l = document.querySelector('.loom-dock-gone [data-part="lane"]')!;
+      for (let e = l.parentElement; e && !e.classList.contains('loom-dock-bar'); e = e.parentElement) { const s = getComputedStyle(e); if (s.overflowY !== 'visible' || s.overflowX !== 'visible') out.push(e.className || e.tagName); } return out; });
+    expect(clips).toEqual([]);
     const ends = await f.p.evaluate(() => {
       const lanes = (sel: string) => [...document.querySelectorAll<HTMLElement>(`${sel} [data-part="lane"]`)];
       for (const l of [...lanes('.loom-dock-gone'), ...lanes('.loom-dock-now')]) for (const a of l.getAnimations()) a.finish();

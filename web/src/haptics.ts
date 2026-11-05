@@ -13,10 +13,12 @@
 //   older than 26.5 a script's click still does, so a swipe tries that.
 // - Anywhere else: nothing.
 
+import { ios as onIos } from './haptic';
+
 /** The id the labels point at: one hidden switch for the whole page. */
 export const SWITCH_ID = 'loom-haptic';
 
-const ios = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const ios = () => onIos;
 
 /** The one switch the labels toggle: in the page, never seen, never focused, out of the accessibility tree. */
 export function install(): void {

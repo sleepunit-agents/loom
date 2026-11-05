@@ -701,7 +701,7 @@ html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-m
 @keyframes loom-move-fade-out { to { opacity: 0; } }
 
 /* Dock swap (dock-swap.tsx): the old keys slide down off the screen and the new ones rise in, 25 ms apart, about 250 ms
-   in all; going back, from the other end. The two sets share one place; while they swap nothing clips them. */
+   in all for four keys (six: 325 ms, inside dock-swap.tsx's LEAVE_MS); going back, from the other end. The two sets share one place; while they swap nothing clips them. */
 .loom-dock-swap { display: grid; justify-items: center; }
 .loom-dock-swap > * { grid-area: 1 / 1; min-width: 0; }
 .loom-dock-gone { pointer-events: none; }
@@ -713,7 +713,7 @@ html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-m
 .loom-dock-swap [data-part="lane"]:nth-last-child(3) { --j: 2; } .loom-dock-swap [data-part="lane"]:nth-last-child(4) { --j: 3; }
 .loom-dock-swap [data-part="lane"]:nth-last-child(5) { --j: 4; } .loom-dock-swap [data-part="lane"]:nth-last-child(n+6) { --j: 5; }
 .loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-dock-out 150ms cubic-bezier(.4, 0, 1, 1) calc(var(--i, 0) * 25ms) both; }
-.loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-dock-in 170ms cubic-bezier(.2, .8, .2, 1) calc(var(--i, 0) * 25ms + 50ms) both; }
+.loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-dock-in 150ms cubic-bezier(.2, .8, .2, 1) calc(var(--i, 0) * 25ms + 50ms) both; }
 .loom-dock-swap[data-swap="back"] .loom-dock-gone [data-part="lane"] { animation-delay: calc(var(--j, 0) * 25ms); }
 .loom-dock-swap[data-swap="back"] .loom-dock-now [data-part="lane"] { animation-delay: calc(var(--j, 0) * 25ms + 50ms); }
 @keyframes loom-dock-out { to { transform: translateY(calc(var(--dock-item-size, 52px) + 120px)); } }

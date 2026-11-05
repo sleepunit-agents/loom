@@ -4,7 +4,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 /** How long the old keys stay to leave (ms): the slide's length and its stagger, with room. */
-const LEAVE_MS = 320;
+const LEAVE_MS = 360;
 
 export function DockSwap({ id, children }: { id: string; children: ReactNode }) {
   const last = useRef<{ id: string; node: ReactNode }>({ id, node: children });

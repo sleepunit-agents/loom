@@ -12,7 +12,8 @@
 // finger, then let run to its end or run back, on the same curve as a tap's.
 export type Move = 'right' | 'left' | 'push' | 'pop';
 
-/** The moves' length and curve (index.css keeps the same two: --loom-move-t, --loom-move-ease). */
+/** The moves' length and curve: index.css's own literals for ::view-transition-*(loom-page), which can't read a token
+ * from here; gestures.integration.test.ts checks the page's move runs exactly MOVE_MS, so the two can't drift apart. */
 export const MOVE_MS = 280;
 const EASE: [number, number, number, number] = [0.2, 0.8, 0.2, 1];
 
@@ -49,7 +50,7 @@ export function timeAt(p: number, [x1, y1, x2, y2] = EASE): number {
   return bez((lo + hi) / 2, x1, x2);
 }
 
-export type Scrub = { to: (p: number) => void; end: (commit: boolean, back?: () => void) => Promise<boolean> };
+export type Scrub = { at: (p: number) => void; end: (commit: boolean, back?: () => void) => Promise<boolean> };
 
 /** Hold a move under the finger: `to(p)` places it `p` of the way; `end` lets it finish or run back (true: it finished). */
 export function scrub(vt: VT): Scrub {
@@ -58,7 +59,7 @@ export function scrub(vt: VT): Scrub {
   const place = () => { for (const a of anims ?? []) a.currentTime = timeAt(at) * MOVE_MS; };
   const ready = vt.ready.then(() => { anims = animsOf(); for (const a of anims) a.pause(); place(); }).catch(() => { anims = []; });
   return {
-    to: (p) => { at = p; if (anims) place(); },
+    at: (p) => { at = p; if (anims) place(); },
     end: async (commit, back) => {
       await ready;
       for (const a of anims ?? []) { if (!commit) a.playbackRate = -1; a.play(); }

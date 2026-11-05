@@ -23,7 +23,8 @@ export function buzz(on: boolean, tap = false): void {
 export const HapticsContext = createContext(true);
 export const useHaptics = () => useContext(HapticsContext);
 
-const ios = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+/** iOS's Safari (an iPad says it's a Mac, with touch). */
+export const ios = typeof navigator !== 'undefined' && (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
 /**
  * Over a key or a button, for iOS only: a transparent label for haptics.ts's switch, so the tap that presses the key

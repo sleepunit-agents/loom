@@ -390,7 +390,7 @@ export default function App() {
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
   // A phone's gestures (gestures.ts): sideways between the dock's own pages, in its order; up from the dock for Find.
   const dockPages = !agentDock ? nav.tabs.map((t) => t.href).filter((h) => !h.startsWith('#')) : [];
-  const homeIndex = dockPages.indexOf(path);
+  const hereIndex = dockPages.indexOf(path);
   const activeTab = dockPages.indexOf(current(phoneTabs)), crumbHref = chrome?.shell?.back?.href;
   useLayoutEffect(() => { moveFrom.current = { pages: dockPages, path, active: activeTab, crumb: crumbHref }; });
   // A swipe's page, shown under the finger (gestures.ts begin): its address only once the swipe commits; run back,
@@ -401,19 +401,19 @@ export default function App() {
     const vt = showWith(how, href, false);
     if (!vt) return null;
     const held = scrub(vt);
-    return { to: held.to, end: async (commit: boolean) => {
+    return { at: held.at, end: async (commit: boolean) => {
       if (commit && location.pathname + location.search !== href) history.pushState(null, '', href);
       return held.end(commit, () => flushSync(() => { void load(from, false); }));
     } };
   };
   // The dock's next and last pages are fetched a moment after one lands, so a swipe opens on the page, not its shape.
   useEffect(() => {
-    if (wide || homeIndex < 0) return;
-    const t = setTimeout(() => { for (const n of [dockPages[homeIndex - 1], dockPages[homeIndex + 1]]) if (n && !kept.current.has(n)) void load(n, false, true); }, 1200);
+    if (wide || hereIndex < 0) return;
+    const t = setTimeout(() => { for (const n of [dockPages[hereIndex - 1], dockPages[hereIndex + 1]]) if (n && !kept.current.has(n)) void load(n, false, true); }, 1200);
     return () => clearTimeout(t);
-  }, [wide, homeIndex, dockPages.join(' ')]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wide, hereIndex, dockPages.join(' ')]);   // eslint-disable-line react-hooks/exhaustive-deps
   useGestures(!wide && !!chrome?.shell, {
-    pages: dockPages, here: error ? -1 : homeIndex, sub: !!chrome?.shell?.back, go, find: () => setFinding(true),
+    pages: dockPages, here: error ? -1 : hereIndex, sub: !!chrome?.shell?.back, go, find: () => setFinding(true),
     busy: () => finding || more || !!document.querySelector('[role="dialog"],[role="alertdialog"]'), buzz: () => buzz(haptics), begin,
   });
 

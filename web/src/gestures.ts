@@ -10,7 +10,7 @@
 // - Up, from the dock (its keys and the strip over them) or Find's pill: past 50 px opens Find. Never from the phone's
 //   home-bar inset, iOS's own. A tap on a key is still a tap, and a held key still shows its name.
 //
-// Pointer events, passive, on the document; the page is `touch-action: pan-y` (index.css html[data-gestures]) so its
+// A second finger lets go of a swipe (it runs back). Pointer events, passive, on the document; the page is `touch-action: pan-y` (index.css html[data-gestures]) so its
 // own scrolling never waits on them. The sideways swipe drives the page's own move (transitions.ts), so a swipe and a
 // tap on the dock look the same; where pages don't move, the page just leans with the finger. Under reduced motion
 // nothing follows the finger, and the pages still change (with the tap's crossfade).
@@ -55,7 +55,7 @@ function homeBar(): number {
 }
 
 /** What a sideways swipe never starts in: what takes a sideways touch itself, or a choice, or what you're typing in. */
-const OWN = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),pre,code,table,.loom-tick,[role="group"],[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="slider"],[data-no-swipe],.loom-dock-bar,.loom-find-pill,[role="dialog"],[role="alertdialog"]';
+const OWN = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),pre,table,.loom-tick,[role="group"],[role="toolbar"],[role="tablist"],[role="radiogroup"],[role="slider"],[data-no-swipe],.loom-dock-bar,.loom-find-pill,[role="dialog"],[role="alertdialog"]';
 function sideways(t: Element): boolean {
   if (t.closest(OWN)) return false;
   for (let e: Element | null = t; e && e !== document.body; e = e.parentElement) {
@@ -88,9 +88,12 @@ export function attachGestures(get: () => GestureSetup): () => void {
   let g: G | null = null;
   const moving = (k: G) => !reduced() && !!k.el;
   const reset = (k: G) => { if (k.el && k.el.style.transform) settle(k.el, ''); };
+  /** Let a gesture go without it counting: a held move runs back, a leaning page settles. */
+  const drop = (k: G) => { if (k.scrub) void k.scrub.end(false); else reset(k); };
 
   const down = (e: PointerEvent) => {
-    g = null;
+    // A second finger is a pinch, not a swipe: whatever the first was doing is let go, run back.
+    if (g) { drop(g); g = null; return; }
     if (e.pointerType === 'mouse' || !e.isPrimary || !(e.target instanceof Element)) return;
     const s = get();
     if (s.sub || s.busy()) return;
@@ -126,7 +129,7 @@ export function attachGestures(get: () => GestureSetup): () => void {
         }
       }
       if (!k.locked) return;
-      if (k.scrub) { k.scrub.to(Math.max(0, -dx * k.dir!) / innerWidth); return; }
+      if (k.scrub) { k.scrub.at(Math.max(0, -dx * k.dir!) / innerWidth); return; }
       if (moving(k)) {
         k.el!.style.transition = 'none';
         k.el!.style.transform = `translateX(${(dx * (k.to ? FOLLOW : END)).toFixed(1)}px)`;
@@ -168,7 +171,7 @@ export function attachGestures(get: () => GestureSetup): () => void {
     }
   };
 
-  const cancel = (e: PointerEvent) => { const k = g; if (k && e.pointerId === k.id) { if (k.scrub) void k.scrub.end(false); else reset(k); g = null; } };
+  const cancel = (e: PointerEvent) => { const k = g; if (k && e.pointerId === k.id) { drop(k); g = null; } };
 
   const o = { capture: true, passive: true } as const;
   addEventListener('pointerdown', down, o);
