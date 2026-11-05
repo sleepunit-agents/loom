@@ -386,6 +386,11 @@ that ignores it keeps working. Outside a household there's no `caller`.
   - `expires` (an ISO date-time) is when it stops mattering.
   - `attention: false` files the ask without counting it as unread. Use it for a memory proposal
     that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
+  - **Laid out** (Jonathan, 2026-11-05: "explain the whole thing in human friendly text"): `text` is the one plain
+    question, read whole; `why` (≤ 300) is one line; `if_yes` and `if_no` (≤ 300 each) say what happens on its primary
+    button (Allow, Yes) and on its danger one (Deny), and loom draws each beside its button on Home and in the Inbox;
+    `details` (≤ 2,000) is longer text for its sheet; `fine` (≤ 400) is the small print, exactly what the yes allows
+    (the machine's kind and target), under "Exactly what this allows". An ask with buttons is never drawn cut.
 - **`notices`** (at most 20) are news the owner may want: a box joined, a bridge
   restarted. Each needs `text` and `at`, and may carry `meta`, `agent` and `page`.
   They're filed under FYI and are never unread. Breakage is a state, so a piece
