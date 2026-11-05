@@ -50,7 +50,8 @@ without touching a piece.
   at the bottom**, above the home indicator (safe-area insets). On an agent's
   pages the dock holds Today and three of its tabs, and **More** (a drawer with
   the rest and the switch to another agent). On the household's: Home, Inbox
-  (with its count), Places, Find, and More.
+  (with its count), Places, Find, and More. A member who owns an agent also has
+  **Comms** ([comms.md](comms.md)), with its count of unread threads.
 - **Desktop:** the same dock as its labelled **rail** down the left side,
   every tab in it.
 - **Installable:** loom's existing manifest and service worker (`src/ui/pwa.ts`)
@@ -111,6 +112,11 @@ information as it updates, limited page refresh based on what needs to change, a
   agent's memory, knowledge or people, or the household file, is written; when a piece's manifest answers
   differently (asked every 15s while an app is open); and after any action. The app asks again for the page it
   shows. While the stream is open, the old timer is a 60s fallback.
+  - A Comms thread has its own stream while it's on screen (`GET /comms/<thread>/events`, [comms.md](comms.md)),
+    owner-checked like its other routes. The shared stream's `change` for a thread goes only to that thread's member.
+  - Comms is its own chunk, loaded only when it opens, so it adds nothing to the first page's budget.
+  - The face states gain `talking`, for a reply landing. A manifest without it plays `done`'s animation, then
+    `working`'s.
 - **What's new arrives** (`web/src/arrive.tsx`): a row, a thread line, an Inbox item, an ask, a tile or a
   reading that wasn't there at this page's last answer resolves out of glyph noise (000h's decode), comes into
   focus out of a blur, and glows once. A page you open draws still. Reduced motion: it simply appears.

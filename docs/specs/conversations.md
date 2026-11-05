@@ -46,6 +46,14 @@ The owner's other rulings shape everything below:
    processed, and gone after 7 days regardless. Its only reader is grading: bare models with no identity, no memory and
    no tools, whose output is capped so it cannot carry the text out in bulk: a score, and at most one line of ≤ 200
    characters per conversation per day.
+   - **The one exception: Comms threads** ([comms.md](comms.md), "History"; the owner, 2026-11-05: "14 days is great.
+     you've got the full context, I don't need to look back at everything"). A `loom` conversation's words are also
+     kept for its thread, so its member can scroll back:
+     - encrypted at rest to a key of their own;
+     - for at most 14 days (household.json's `comms_days`), the continuity slot's window, then swept;
+     - read only by the thread's member, who must own its agent, and by no identity, token or tool;
+     - never in a bundle or export;
+     - wiped at once when the thread is deleted.
 5. **Review has two halves.**
    - *Grading:* bare models, blind to which model, agent and person is involved, score samples household-wide, and
      their scores feed model choice.

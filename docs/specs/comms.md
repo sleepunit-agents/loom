@@ -3,8 +3,8 @@
 *2026-11-05. Status: **proposed**. This is a design doc in the `docs/specs/` sense: what loom will build, and the
 acceptance criteria its suites must pin. It adds one venue, `loom`, delivered through the runtime the way Discord and
 Slack are ([agent-runtime.md](agent-runtime.md) section 5, [bridges.md](bridges.md), [conversations.md](conversations.md)).
-It also adds the app that shows that venue's threads. **One decision is the owner's to make before this is built:**
-how long a thread's words are kept (see "History: what a thread keeps"). Until he rules, nothing here is built.*
+It also adds the app that shows that venue's threads. The owner decided how long a thread's words are kept (14 days,
+2026-11-05: see "History").*
 
 ## Why
 
@@ -139,10 +139,9 @@ choice, and the body's brief. The new parts follow.
     the two namespaces are separate, and both mean "loom itself".
 - **Continuity: 14 days.** The runtime gives `live` venues 14 days by default (loom-box's `CONTINUITY_DAYS` in
   `src/delivery.mjs`; 14 is also agent-runtime.md's ceiling). For `loom`, 14 days is the window this doc assumes, and
-  "History" option B is tied to it. A household that shortens the runtime's window for `loom` (its
-  `LOOM_RUNTIME_CONTINUITY` setting) should shorten Comms' too: B's window is household.json's `comms_days` (1–14,
-  default 14), set to match by the owner. Under B, Comms never keeps words longer than `comms_days`. A's window is
-  fixed at 1 hour, and C has none.
+  Comms' history is tied to it. A household that shortens the runtime's window for `loom` (its
+  `LOOM_RUNTIME_CONTINUITY` setting) should shorten Comms' too: the window is household.json's `comms_days` (1–14,
+  default 14), set to match by the owner. Comms never keeps words longer than `comms_days`.
 - **Delivering a member's message.** Core delivers it as its own delivery, through `deliverAsOwner` (source `loom`).
   That's how the Inbox's Reply already delivers the owner's words (conversations.md, "Needs you").
   - Core's own delivery skips the checks that are for pieces: a declared venue, and `from: person` only from an
@@ -417,59 +416,53 @@ anywhere holds a Comms message's text.
 - Every agent in a thread must be owned by its member.
 - The first version already stores `agents` as a list, so this needs no migration.
 
-## History: what a thread keeps (the owner's decision)
+## History: what a thread keeps (decided: 14 days)
 
-**This is a real conflict.** A chat wants history: you scroll up. But loom deliberately keeps no transcripts
+**Decided by the owner, 2026-11-05:** "14 days is great. you've got the full context, I don't need to look back at
+everything."
+
+**The conflict this settles.** A chat wants history: you scroll up. But loom deliberately keeps no transcripts
 (conversations.md, rules 3 and 4):
 
-- raw text lives only in the encrypted audit log, for 7 days at most, and only grading reads it ("no identity ever
-  reads it");
+- raw text lives only in the encrypted audit log, for 7 days at most, and only grading reads it;
 - continuity slots, which hold the harness's raw session, last 14 days at most;
 - the durable record is metadata and the agent's own digests.
 
-A thread's words have to come from somewhere when the owner reopens it tomorrow. The audit log can't serve them: no
-identity may read it, and a page session is one. So Comms either keeps the words itself, which is a new copy that a
-person reads, or doesn't show them. Three honest answers:
+The audit log can't serve a thread: no identity may read it, and a page session is one. So Comms keeps its threads'
+words itself. That's a new copy that a person reads, and conversations.md's rule 4 names it as the one exception.
 
-| | **A. Only until seen** | **B. 14 days (recommended)** | **C. The thread's life** |
-|---|---|---|---|
-| What reopening shows | the words of the last hour; before that, who said something when, with the digests between | every message from the last 14 days; earlier parts as their digests, under "Earlier, as Art summed it up" | every message, until the thread is deleted |
-| How long loom keeps a message's words | 1 hour, so a reconnecting app can fetch them | 14 days from when it was sent | until the member deletes the thread |
-| Against conversations.md's rules | a new copy, but short-lived: rule 4 gains a narrow exception | a new copy a person reads, within the window the slot already holds the same words for: rule 4 gains an exception | a new long-lived copy: rule 3's "no transcripts" gains an exception for this venue, and rule 4 too |
-| Feels like chat | only while you're in it | yes, for working threads; old threads read as summaries | fully |
+**What reopening a thread shows:** every message from the last 14 days, and before that the digests, under "Earlier,
+as Art summed it up". After 14 days the agent itself resumes from its digests, so the thread shows what the agent
+remembers.
 
-**Why B.** The same words already sit on loom's machine for 14 days, in the thread's continuity slot, because the body
-needs them to resume. Showing them to the owner for that window keeps no word longer than the slot does. After 14
-days the agent itself resumes from the digests, so the thread shows exactly what the agent remembers. It also fits
-"owners only": the only reader is the member who said half of it. It is still an exception to rule 4, and the owner
-should know that he's making one.
+**Why 14 days.** The same words already sit on loom's machine for 14 days, in the thread's continuity slot, because the
+body needs them to resume. Showing them to the owner for that window keeps no word longer than the slot does. The only
+reader is the member who said half of it.
 
-**The rules for the kept words, under every option:**
-- They're encrypted at rest with age, one blob per message as audit.db does it, to a key of their own
+**Considered and not chosen:**
+- keeping words only until seen (an hour), after which a thread is a list of digests;
+- keeping them for the thread's life, which would break rule 3's "no transcripts" for this venue.
+
+**The rules for the kept words:**
+- **Encryption.** They're encrypted at rest with age, one blob per message as audit.db does it, to a key of their own
   (`$LOOM_HOME/comms.key`, made at first use, mode 0600). That protects copies and backups, not the owner from himself:
   conversations.md rule 3 already says the owner of a loom instance can read what it stores.
-- **A sweep** runs hourly and at daemon start, like the audit log's. It sets `text` to null on every message past the
-  window (A: 1 hour, B: 14 days, C: none), in `secure_delete` mode, so the deleted pages are zeroed. Rows stay, with
-  their `seq`, `at`, `from` and `kind`.
-- `comms.db` and `comms.key` are left out of bundles and `loom export`, as audit.db is. A restored loom has its threads
-  and digests, but not their words.
-- Only the thread's member reads them, through the thread's routes. No agent token, piece token, `runtime` token or
-  `review` token can, and no MCP tool returns them.
-- Deleting a thread deletes its words at once, whatever the option.
-- Archiving doesn't change the window.
-- Activity cards' summaries are kept for the same window as the words.
+- **The window** is household.json's `comms_days` (1–14, default 14), tied to the slot's window (section 1).
+- **A sweep** runs hourly and at daemon start, like the audit log's. It sets `text` to null on every message older
+  than `comms_days`, in `secure_delete` mode, so the deleted pages are zeroed. Rows stay, with their `seq`, `at`,
+  `from` and `kind`.
+- **Not in bundles.** `comms.db`, `comms.key` and `comms.salt` are left out of bundles and `loom export`, as audit.db
+  is. A restored loom has its threads and digests, but not their words.
+- **One reader.** Only the thread's member reads them, through the thread's routes. No agent token, piece token,
+  `runtime` token or `review` token can, and no MCP tool returns them.
+- **Deleting** a thread deletes its words at once. Archiving doesn't change the window.
+- **Activity cards'** summaries are kept the same way, for the same window.
 
-**Push and privacy, under every option.**
+**Push and privacy.**
 - A push for a reply says "Art replied" and the thread's title, and **never any message text**. The payload is
   encrypted to the browser (RFC 8291), but it's shown on a lock screen, and a title the agent wrote to be read is a
   safer thing to show there than its words.
 - A thread with no title yet pushes "Art replied in a new thread".
-
-**The owner's question:** "Should a Comms thread keep its messages for 14 days, for good, or only until you've seen
-them?"
-- If 14 days, I build B, and conversations.md's rule 4 gains the exception.
-- If for good, I build C, and rules 3 and 4 gain it.
-- If only until seen, I build A, with a 1-hour window, and threads show the digests after that.
 
 ## The app
 
@@ -509,6 +502,49 @@ A real chat, with a terminal's flavour:
   appear.
 - **Nothing new in the vocabulary.** Comms is loom's own app, not a piece page, so it adds no block type to `vocab.ts`.
 
+### The comm screen
+
+> "We should absolutely show the avatar for the agent like it's a fuckin Wing Commander chat cut scene or whatever."
+> — the owner, 2026-11-05
+
+Each thread gets a framed panel with the agent's animated pixel portrait: the classic space-sim comms screen, drawn as
+Neon OS's own, not copied from any game.
+
+- **The portrait** is the agent's pixel face (`web/src/pixel-face.tsx`), at 2× or larger, at whole-pixel scales only.
+  An agent with no sprite gets its drawn face (`face.tsx`) in the same frame.
+- **The frame** has chassis edges in the agent's tint, a scanline overlay, a small signal meter, and a mono label with
+  the agent's name and the channel: `ART E FISH · CH 03 · LINK OK`.
+  - The channel number is the thread's position in the member's list of that agent's threads, by `opened`, two
+    digits.
+  - The link word is `LINK OK` while the thread's stream is open, `LINK LOST` while it reconnects, and `NO CARRIER`
+    when the last delivery failed. The signal meter goes with it: full, flickering low, empty.
+- **Where it sits:**
+  - **Desktop:** a column at the right of the thread pane, about 240 px, beside the messages. A thread pane narrower
+    than 760 px puts it at the top of the pane instead.
+  - **Phone:** a compact strip at the top of the thread, which collapses to the small avatar in the header once you
+    scroll.
+- **The face follows the thread's real state**, through the existing states and the beat-and-hold player:
+
+  | The thread | Face state |
+  |---|---|
+  | a delivery answered `started`, `resumed` or `queued`, and no card or `working` status yet | `thinking` |
+  | `status: working`, or a card arriving | `working` |
+  | a reply lands | `talking`, one beat |
+  | after the talking beat, with `status: done` or no `working` for 30 s | `complete` (done), then `idle` |
+  | an ask pending in the thread | `needs-input` (waiting, always facing south) |
+  | the last delivery or post failed, or a loop pause | `error` |
+
+  A pending ask wins over everything except `error`.
+- **Talking is a manifest state the player falls back from.** There's no talking animation yet. `talking` joins the
+  face states, and the player uses a manifest's `talking` animations when it has them. Without them, it uses `done`'s,
+  then `working`'s. So when the owner makes a talking sheet in PixelLab, adding it to the agent's manifest is the
+  whole change.
+- **The signal transition.** When a reply arrives, the screen plays a short burst of static and a scanline roll, about
+  250 ms, before the talking beat. With reduced motion there's no transition, and the face shows its rest frames only,
+  as the player already does.
+- **YOU, the other side.** A small panel in the same frame style shows the member's avatar or initial, labelled `YOU`.
+  It's on the desktop column only; a phone leaves it out.
+
 ### Live
 
 - **The event.** The thread's stream (`GET /comms/<thread>/events`) sends one event, `message`, with data
@@ -537,17 +573,17 @@ A real chat, with a terminal's flavour:
 - **bridges.md:** a note that `loom` is the venue core carries itself, under the adapters' rules. (In this PR.)
 - **conversations.md:** `loom` joins core's venues, the digest-project fallback gains the thread's project, the
   hub's `conversations` section also takes a thread's project, and open questions gain the history decision. (In
-  this PR.) Rule 4 (and under C rule 3) gains the exception the owner rules
-  for. That edit waits for his answer.
+  this PR.) Rule 4 gains the exception the owner ruled for. (In this PR.)
 - **projects.md:** the `conversations` section includes a thread's project. (In this PR.) The item shape is unchanged.
-- **extensions.md:**
+- **extensions.md** (in this PR):
   - "Who may deliver what" gains: "Core's own delivery (source `loom`: the owner's words from loom's page, and Comms)
     isn't a piece's, and skips the piece checks."
   - `GET /api/loom/venues` lists core's `loom` with piece `loom` and `adapter: "core"` in place of `send`.
-- **ui-app.md:**
+- **ui-app.md** (in this PR):
   - the dock gains Comms, for a member who owns an agent;
   - "Live" says a Comms thread has its own stream, and that the shared stream's `change` can be scoped to one member;
-  - Comms is its own chunk, outside the first page's budget.
+  - Comms is its own chunk, outside the first page's budget;
+  - the face states gain `talking`, which falls back to `done`'s animation, then `working`'s.
 - **The runtime (loom-box):**
   - `VENUE_KIND.loom`;
   - core-adapted venues in its adapter calls (`adapterCall`, `sendOnce`, `announce`, `presencePass`);
@@ -634,10 +670,10 @@ A real chat, with a terminal's flavour:
    - Delete removes the row and every message of it. After it, the thread's routes answer `404` to its member.
    - `comms.db` has `secure_delete` on (`PRAGMA secure_delete` answers 1), and after a delete the file holds none of a
      planted message's bytes.
-9. **History** (the option the owner picks):
-   - After the sweep, a message or card older than the window (A: 1 hour, B: `comms_days`) has `text` null, and its
-     row stays. Under C, text stays until delete. Under B, `comms_days: 3` sweeps at 3 days.
-   - Under B, `GET /comms/<thread>` shows the thread's digests in place of the swept words.
+9. **History.**
+   - After the sweep, a message or card older than `comms_days` (14 by default) has `text` null, and its row stays.
+     With `comms_days: 3`, it sweeps at 3 days.
+   - `GET /comms/<thread>` shows the thread's digests in place of the swept words.
    - Text decrypts with `comms.key`, and not with another age identity.
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
@@ -679,26 +715,29 @@ A real chat, with a terminal's flavour:
 
 **The app (Playwright, phone and desktop viewports)**
 
-17. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
+17. The comm screen draws the agent's sprite at a whole-number scale ≥ 2, or its drawn face without one. Its face
+    state follows the table: a fake thread stepped through started, a card, a reply, done, a pending ask and a
+    failure shows `thinking`, `working`, `talking`, `complete`, `needs-input` and `error` in turn. A manifest without
+    `talking` plays `done`'s animation for it. With reduced motion, no transition plays.
+18. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
     the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes.
     The dock has a Comms key for a member who owns an agent, with the unread count, and none for a member who owns
     none.
-18. The JS and CSS budgets still pass. Comms loads as its own chunk.
+19. The JS and CSS budgets still pass. Comms loads as its own chunk.
 
 ## Order
 
-Each step ships on its own, after the owner's answer on history.
+Each step ships on its own.
 
 1. **Core:** the venue, threads and messages, the routes and their owner checks, the adapter route, sending, the title
    tool, the history store as decided, live events, push, errors and links. Criteria 1–4, 6–11, 13 and 14.
 2. **The runtime:** the core-adapted venue and tier (15), then activity capture (5 and 16).
-3. **The app:** phone, then desktop (17 and 18).
+3. **The app:** phone, then desktop, with the comm screen (17–19).
 4. **Asks inline,** with the approvals piece's `--conversation` (12).
 5. **Stretch, later:** several agents in one thread.
 
 ## Open questions
 
-- **History:** the owner's decision, above.
 - **Token-by-token streaming:** not in this design (see section 4). Revisit once he's used it.
 - **The name.** "Comms" it is, unless he prefers another. Others considered: "Wire" (terse, but reads as a news feed)
   and "Channels" (Slack's word, and conversations.md avoids it).
