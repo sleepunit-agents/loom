@@ -213,6 +213,7 @@ export function AvatarImage({ className, ...props }: AvatarImageProps) {
   return (
     <AvatarPrimitive.Image
       data-slot="avatar-image"
+      draggable={false}
       className={cn("h-full w-full rounded-[inherit] object-cover", className)}
       {...props}
     />

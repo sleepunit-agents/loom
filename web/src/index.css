@@ -722,3 +722,64 @@ html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-m
   .loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-move-fade-out 120ms ease both; }
   .loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-move-name-in 120ms ease both; }
 }
+
+/* A phone's app, not a web page (immersion.ts; Jonathan, 2026-11-05: "We need to disable anything that lets me break the
+   illusion"). What a page does that an app doesn't: zoom, a long-press menu or a selection on the app's own chrome, the
+   grey flash on a tap, a rubber band past the page's ends and pull to refresh. Content (a message, a note, a task's
+   words, code) stays selectable, for copying. A desktop keeps its browser's ways, except chrome's words not selecting. */
+
+/* The page: no rubber band past its ends and no pull to refresh; inner scrollers keep their own momentum. Where iOS
+   bounces anyway, what shows past the edge is the app's canvas: body's (above), which the browser paints past the page
+   because <html> has none of its own. Keep it that way: a background on <html> would make body paint its own, over the
+   ground and wash under it (-z-10). The page doesn't move into an inner scroller: the document still scrolls, so the
+   iOS home-screen fix above (301108), the dock and the page moves are as they were. */
+html, body { overscroll-behavior: none; }
+
+/* Zoom (immersion.ts allowZoom): pinch and double-tap zoom are off unless the person allows zoom (Appearance), and then
+   left alone. A touch screen's only: a desktop keeps its zoom. The page pans; main's and the bar's pan-y (gestures, above) narrow it further. */
+@media (pointer: coarse) { html:not([data-zoom="on"]) { touch-action: pan-x pan-y; } }
+/* Allowed, zoom is the person's whole: the page and its bar take every touch the browser would (double-tap, and
+   panning a zoomed page sideways), over a phone's sideways swipe between pages. The dock keeps its own (a swipe up). */
+html[data-zoom="on"][data-gestures] :is(main, .loom-top) { touch-action: auto; }
+
+/* No grey flash on a tap (base.css keeps the browser's on its components; this is unlayered, so it wins): a press shows
+   as the control's own. A plain button or link with no pressed state of its own dims while it's held. */
+:where(html, html *) { -webkit-tap-highlight-color: transparent; }
+@media (hover: none) {
+  :where(button, a[href], [role="button"], [role="option"], summary):not(.v-btn, .v-ibtn, .v-toggle, [data-part="item"], [data-slot="toggle-group-item"], :disabled, [aria-disabled="true"]):active { opacity: .72; }
+}
+
+/* Chrome doesn't select, and a long press on it opens no menu: the bars, the dock, Find's pill, the side panel, buttons,
+   tabs and chips, badges, labels, and a card's head. -webkit-touch-callout inherits, so it covers what's inside.
+   immersion.ts NO_MENU is the same list, for Android's Chrome: change both. */
+:is(.loom-top, .loom-dock-bar, .loom-find-pill, .loom-fade, .loom-side, .loom-sheet-bar, .loom-app-tile, .loom-launch-tile, .loom-r-tile,
+  button, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="switch"], [role="checkbox"], [role^="menuitem"],
+  [data-slot="badge"], [data-slot="card-header"], [data-slot="toggle-group"], [data-slot="dock"], label, summary) {
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Links, images and icons, wherever they are: no preview or "Open in new tab" on a long press (Android's Chrome:
+   immersion.ts noTouchMenus), and an image doesn't drag away. */
+:is(a[href], img, svg) { -webkit-touch-callout: none; }
+img { -webkit-user-drag: none; }
+/* What's typed and what's read stays selectable, even inside chrome, with iOS's own long-press menu (Paste, Copy, Look
+   Up): a field (iOS won't type into one under user-select: none; Find's sits in a label), prose and code. A link in
+   prose still has none: its own rule above is its own, over what it inherits. */
+:is(input, textarea, [contenteditable]:not([contenteditable="false"]), .loom-prose, pre, code, [data-slot="code-block"]) {
+  -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+
+/* A field's words are at least 16 px on a touch screen, or iOS zooms in when it takes focus. A component's own size wins
+   (its layer comes later), so its small sizes are 16 px on a field; a field that only inherits its size gets 16 px. */
+@layer base {
+  @media (pointer: coarse) {
+    :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select) { font-size: 16px; }
+  }
+}
+@media (pointer: coarse) {
+  :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select) {
+    --fs-caps: 16px; --fs-meta: 16px; --fs-small: 16px; --fs-control: 16px; --fs-body: 16px; --text-xs: 16px; --text-sm: 16px; --text-base: 16px; }
+}
+
+/* A phone's chrome scrolls without a bar (the dock's own already has none); a desktop keeps its scrollbars. */
+@media (pointer: coarse) {
+  :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick), :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) * { scrollbar-width: none; }
+  :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick)::-webkit-scrollbar, :is(.loom-top, .loom-dock-bar, [data-slot="toggle-group"], .loom-tick) *::-webkit-scrollbar { display: none; }
+}

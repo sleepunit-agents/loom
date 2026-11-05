@@ -68,10 +68,12 @@ interface File {
  * like `seen`, so it follows them to every device they sign in on.
  */
 export interface Prefs { look?: 'neon' | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
+  /** Allow zoom: pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
+  zoom?: boolean;
   /** When it last changed (ms, loom's clock): a device applies only a newer one, so an answer already on its way when a choice was made doesn't undo it. */
   at?: number }
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
-  look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false],
+  look: ['neon', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], haptics: [true, false], zoom: [true, false],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
 export function prefsOf(body: Record<string, unknown>): Prefs | null {

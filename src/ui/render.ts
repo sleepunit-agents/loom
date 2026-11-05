@@ -89,7 +89,7 @@ const HEAD_APP = '<link rel="manifest" href="/manifest.webmanifest"><link rel="i
   '<meta name="theme-color" content="#F4F3EE" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0E0E0D" media="(prefers-color-scheme: dark)"><meta name="apple-mobile-web-app-capable" content="yes">';
 
 function document(title: string, body: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>${HEAD_APP}<style>${STYLE}</style><script src="/app.js" defer></script></head><body>${body}</body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>${esc(title)}</title>${HEAD_APP}<style>${STYLE}</style><script src="/app.js" defer></script></head><body>${body}</body></html>`;
 }
 
 // ─── The sheets: Scope, Places, Find ───

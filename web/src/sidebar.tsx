@@ -61,7 +61,7 @@ export function LoomSidebar({ chrome, head, agent, go, icon }: {
     <Sidebar aria-label="loom" className="loom-side sticky top-3 m-3 mr-0 h-[calc(100dvh-24px)] w-[16.5rem] overflow-hidden">
       <SidebarHeader className="mb-4 justify-start gap-3 px-1">
         <a href="/" onClick={(e) => { e.preventDefault(); go('/'); }} className="flex min-w-0 items-center gap-3 no-underline">
-          <img src="/icons/loom-192.png" alt="" width={40} height={40} className="size-10 shrink-0 rounded-[var(--loom-r-icon)]" />
+          <img src="/icons/loom-192.png" alt="" draggable={false} width={40} height={40} className="size-10 shrink-0 rounded-[var(--loom-r-icon)]" />
           <span className="grid min-w-0 leading-tight">
             <span className="text-lg font-semibold">loom</span>
             <span className="truncate text-xs opacity-70">{s?.household ? `${s.owner}'s household` : (s?.owner ?? chrome.agent)}</span>

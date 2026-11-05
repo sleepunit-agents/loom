@@ -16,7 +16,7 @@ import type { Look } from './look';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void }) {
+export function SheetView({ which, chrome, icon, mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom }: { which: string; chrome: Chrome; icon: (label: string) => string; mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -45,7 +45,7 @@ export function SheetView({ which, chrome, icon, mode, setMode, ground, setGroun
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
+  if (which === 'appearance') return <AppearanceApp mode={mode} setMode={setMode} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
@@ -70,7 +70,7 @@ export function Appearance({ mode, setMode }: { mode: Mode; setMode: (m: Mode) =
 }
 
 /** The Appearance app: the look, light or dark (000h's), and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, sprites }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
+function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom, sprites }: { mode: Mode; setMode: (m: Mode) => void; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; sprites: boolean }) {
   const row = (label: string, hint: string, control: React.ReactNode) => (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3 first:pt-0 last:pb-0">
       <span className="grid min-w-0 leading-tight"><span className="font-medium">{label}</span><span className="text-sm opacity-70">{hint}</span></span>
@@ -100,6 +100,10 @@ function AppearanceApp({ mode, setMode, ground, setGround, look, setLook, sound,
         {row('Haptics', 'A light tick on a phone when you press a dock key, answer Yes or No, or swipe.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Haptics" value={haptics ? 'on' : 'off'} onValueChange={(v) => { if (v) setHaptics(v === 'on'); }}>
             <ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
+        ))}
+        {row('Allow zoom', 'Pinch or double-tap to zoom in on a phone. Off, loom holds still like an app.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Allow zoom" value={zoom ? 'on' : 'off'} onValueChange={(v) => { if (v) setZoom(v === 'on'); }}>
+            <ToggleGroupItem value="off">Off</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem></ToggleGroup>
         ))}
         <p className="loom-gestures-hint pb-3 text-sm opacity-70 lg:hidden">On a phone, swipe sideways to move between Home, Inbox, Places and More, and swipe up from the dock to Find.</p>
         <p className="pt-3 text-sm opacity-60">Yours on every device you sign in on.</p>
