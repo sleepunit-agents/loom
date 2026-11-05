@@ -582,7 +582,7 @@ export function projectLookup(db: Database): ProjectLookup {
  * another run adds one. Projects resolve to slugs; with none named, the one live project whose
  * links.venues holds `<venue>:<place>` (none when several do).
  */
-export function writeDigest(contextDir: string, at: { conversation: string; run: string }, raw: unknown, now: Date = new Date()): Digest {
+export function writeDigest(contextDir: string, at: { conversation: string; run: string }, raw: unknown, now: Date = new Date(), threadProject: string | null = null): Digest {
   if (!isConversationId(at.conversation) || !isRunId(at.run)) fail('a digest is written for the conversation and run given at identity: pass conversation and run to identity first');
   const input = parseDigest(raw);
   return withDb(contextDir, (db) => db.transaction(() => {
@@ -596,6 +596,9 @@ export function writeDigest(contextDir: string, at: { conversation: string; run:
       const s = slug ?? name;
       if (!projects.includes(s)) projects.push(s);
     }
+    // Named none: a Comms thread's own project first (comms.md, "Project"), then the one live project whose
+    // links.venues names the place.
+    if (!projects.length && threadProject && look.resolve(threadProject) === threadProject) projects.push(threadProject);
     if (!projects.length) {
       const matches = look.byVenue(`${c!.venue}:${c!.place}`);
       if (matches.length === 1) projects.push(matches[0]);
@@ -626,6 +629,12 @@ function digestOf(r: DigestRow): Digest {
     projects: JSON.parse(r.projects_json) as string[], needs_owner: r.needs_owner, needs_owner_href: r.needs_owner_href ?? null,
     needs: needsOfRow(r),
   };
+}
+
+/** Set a conversation's label (a Comms thread's title, comms.md): its own store's row, when it has one. */
+export function setConversationLabel(contextDir: string, conversation: string, label: string): boolean {
+  if (!isConversationId(conversation)) return false;
+  return withDb(contextDir, (db) => db.prepare('UPDATE conversations SET label = ? WHERE id = ?').run(label.slice(0, MAX_LABEL), conversation).changes > 0);
 }
 
 /** A conversation's digests, newest first. */
@@ -662,6 +671,8 @@ export interface ListFilter {
   people?: string;
   /** A project slug its digests must name (the caller resolves an alias first). */
   project?: string;
+  /** With `project`: these conversations count as the project's too (Comms threads filed under it, comms.md). */
+  orIds?: readonly string[];
   venue?: string;
   /** ISO time: only conversations whose `last` is after it. */
   since?: string;
@@ -695,8 +706,9 @@ export function listConversations(contextDir: string, f: ListFilter = {}): Conve
     if (f.since) { where.push('c.last > ?'); args.push(new Date(f.since).toISOString()); }
     if (f.people) { where.push('EXISTS (SELECT 1 FROM json_each(c.people_json) p WHERE p.value = ?)'); args.push(f.people); }
     if (f.project) {
-      where.push('EXISTS (SELECT 1 FROM conversation_digests d, json_each(d.projects_json) j WHERE d.conversation = c.id AND j.value = ?)');
-      args.push(f.project);
+      const ids = (f.orIds ?? []).filter((x) => isConversationId(x)).slice(0, 200);
+      where.push(`(EXISTS (SELECT 1 FROM conversation_digests d, json_each(d.projects_json) j WHERE d.conversation = c.id AND j.value = ?)${ids.length ? ` OR c.id IN (${ids.map(() => '?').join(', ')})` : ''})`);
+      args.push(f.project, ...ids);
     }
     const rows = db.prepare(`SELECT c.* FROM conversations c ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.last DESC, c.id LIMIT ?`).all(...args, limit) as ConvRow[];
     const newest = newestDigests(db, rows.map((r) => r.id));
@@ -842,9 +854,9 @@ export interface HubConversation {
  * conversations with the newest `last` whose projects include `slug`. `since` marks `new`
  * (last after since); it doesn't filter. `venueLabel` names a venue for the page.
  */
-export function hubConversations(contextDir: string, slug: string, since: string, venueLabel: (venue: string) => string = (v) => v): HubConversation[] {
+export function hubConversations(contextDir: string, slug: string, since: string, venueLabel: (venue: string) => string = (v) => v, filed: readonly string[] = []): HubConversation[] {
   const sinceMs = Date.parse(since);
-  return listConversations(contextDir, { project: slug, limit: HUB_MAX }).map((c) => ({
+  return listConversations(contextDir, { project: slug, limit: HUB_MAX, orIds: filed }).map((c) => ({
     id: c.id, venue: venueLabel(c.venue), label: c.label, people: c.people, last: c.last,
     summary: c.summary, needs_owner: c.needs_owner, new: Date.parse(c.last) > sinceMs,
   }));

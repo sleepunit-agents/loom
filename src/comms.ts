@@ -22,9 +22,9 @@ import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readF
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { findProgram } from './programs.js';
-import { agentDir, type Household, type Member } from './household.js';
+import { agentDir, loadHousehold, type Household, type Member } from './household.js';
 import { withHouseholdDb } from './household-store.js';
-import { conversationId, digestsOf, openConversationsReadonly, projectLookup } from './backends/conversations.js';
+import { conversationId, digestsOf, openConversationsReadonly, projectLookup, setConversationLabel } from './backends/conversations.js';
 
 export const COMMS_VENUE = 'loom';
 export const COMMS_DB = 'comms.db';
@@ -358,6 +358,12 @@ export function errorWords(code: string, agentName: string, reason: string | und
 
 const label = (agent: string) => agent[0].toUpperCase() + agent.slice(1);
 
+function householdAt(home: string): Household {
+  const h = loadHousehold(home);
+  if (!h) return fail('no household here', 503);
+  return h;
+}
+
 async function messageOf(home: string, env: NodeJS.ProcessEnv, agent: string, r: MsgRow): Promise<Message> {
   const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
   let text: string | null = null;
@@ -546,7 +552,11 @@ export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { 
 export function setTitle(h: Household, t: Thread, raw: unknown, by: 'member' | 'agent', now: Date = new Date()): Thread {
   if (typeof raw !== 'string' || raw.trim().length < 1 || raw.length > MAX_TITLE || /[\r\n\u2028\u2029]/.test(raw) || /[\x00-\x1f\x7f]/.test(raw)) return fail(`bad-input: a title is 1-${MAX_TITLE} characters on one line`);
   if (by === 'agent' && t.titled_by === 'member') return fail('conflict: the owner named this thread; the agent doesn\'t rename it', 409);
-  return withThreadsAt(h.home, (db) => { touch(h.home, db, t.id, { title: raw.trim(), titled_by: by }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
+  const title = raw.trim();
+  const out = withThreadsAt(h.home, (db) => { touch(h.home, db, t.id, { title, titled_by: by }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
+  // The title is the conversation's label too, so its page and the project hub show it (comms.md, "Title").
+  try { setConversationLabel(agentDir(h, t.agent), t.conversation, title); } catch { /* no store yet: the next delivery carries it */ }
+  return out;
 }
 
 export function setProject(h: Household, t: Thread, raw: unknown, now: Date = new Date()): Thread {
@@ -727,6 +737,35 @@ export function threadOfConversation(home: string, conversation: string): Thread
   if (!existsSync(join(home, 'household.db'))) return undefined;
   const r = withThreadsAt(home, (db) => db.prepare('SELECT * FROM comms_threads WHERE conversation = ?').get(conversation) as ThreadRow | undefined);
   return r ? threadOf(r) : undefined;
+}
+
+/**
+ * The thread of `agent`'s own loom conversation `conversation`: only when the thread is that agent's and the id is
+ * exactly its conversation over agent · loom · place. The agent comes from the caller's own context (the MCP server's
+ * agent dir), never from what it sends; a conversation id named at identity is just a claim. Within one agent, that
+ * claim is trusted as conversation_digest trusts it: the MCP session can't see the runtime's body key, so a body that
+ * names another of its own agent's threads at identity reaches that one. No agent ever reaches another agent's.
+ */
+export function threadOfAgentConversation(home: string, agent: string, conversation: string): Thread | undefined {
+  const t = threadOfConversation(home, conversation);
+  return t && t.agent === agent && conversationId(agent, COMMS_VENUE, t.id) === conversation ? t : undefined;
+}
+
+/** The conversations of `agent`'s threads filed under project `slug` (the hub counts them, comms.md "Project"). */
+export function filedThreads(home: string, agent: string, slug: string): string[] {
+  if (!existsSync(join(home, 'household.db'))) return [];
+  return withThreads(home, (db) => (db.prepare('SELECT conversation FROM comms_threads WHERE agent = ? AND project = ? ORDER BY last DESC LIMIT 200').all(agent, slug) as Array<{ conversation: string }>).map((r) => r.conversation));
+}
+
+/**
+ * comms_title (an MCP tool, comms.md "Title"): a body names its own thread, once it knows what it's about. Only in a
+ * `loom` conversation; never over the member's own name for it.
+ */
+export function titleFromAgent(home: string, agent: string, conversation: string, title: unknown, now: Date = new Date()): Thread {
+  const t = threadOfAgentConversation(home, agent, conversation);
+  if (!t) return fail('comms_title names a Comms thread, and this conversation isn\'t one');
+  const h = householdAt(home);
+  return setTitle(h, t, title, 'agent', now);
 }
 
 /** Threads whose rows moved since `ms` (the live streams' cross-process read). */
