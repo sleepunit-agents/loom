@@ -108,7 +108,8 @@ _Avoid_: transcript (that's the session), summary (that's a card field), episode
 - `links.repos`: ≤ 16 **repo selectors** ([changes.md](changes.md), "Ids"). An entry is split at its first `:` when
   that comes before any `/`: the part before is the `forge`, `[a-z][a-z0-9-]{0,23}`, and the rest the locator. An entry
   with no such `:` is the **bare form**, `<owner>/<repo>` (written before selectors existed), and means
-  `github:<owner>/<repo>`. A locator (or the bare form) is 1–120 chars of printable ASCII with no space, `#` or `@`.
+  `github:<owner>/<repo>`. A locator (or the bare form) is **literal**, as changes.md's "Ids": two to four
+  `/`-separated segments of `[A-Za-z0-9._-]`, ≤ 120 chars, so nothing in it reads as a pattern.
   Reads return what was written; feeds get the bare form as `github:…`. Two entries equal after that are rejected.
   Core checks the syntax only: which forges exist, and whether a locator's case matters, is the reading piece's
   business.
@@ -312,12 +313,14 @@ working in a project's repo or conversation passes it, the way a bridge passes `
   number and sorts with the errors. The hub page never reads or writes that cache.
 - **A project's hub** is `/projects/<agent>/<slug>` in a household (the index always links this form) and
   `/projects/<slug>` without one. In a household, `/projects/<slug>` resolves when exactly one agent has a live project
-  of that name, and is not found otherwise. The card's name is the title and its summary the intro. Then, in this order, each only when its section is present:
+  whose slug or alias that is, and is not found otherwise. The card's name is the title and its summary the intro.
+  Both pages only read: no actions, no buttons (the card is written by agents, with `project_write`). Then, in this order, each only when its section is present:
   1. **Goal and where it stands**: `kv` of the goal and each `where` field with its marker in words ("checked 2 days
      ago", "not checked", "stale for 9 days").
   2. **Waiting on you**: every `waiting` feed item and every open `needs_owner` ask, one list, tone `warn`.
   3. **Each piece section**, under its `label` (Changes, Tasks…), its groups as lists, items linking by their `page`
-     or `href`. Groups marked `waiting` are left out here, since they're shown above. A `{key, error}` section is a
+     or `href`, with `when` (as an age), `who` and `ref` in the row's meta, `status` as its badge, the first `person`'s
+     avatar, and `body` folded under the row. Groups marked `waiting` are left out here, since they're shown above. A `{key, error}` section is a
      muted line, "<label> couldn't answer: <why>".
   4. **People**: each person (avatar), the field and its value.
   5. **Conversations**: each with its digest's summary, linking to `loom:conversation/<id>`.

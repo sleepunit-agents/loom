@@ -111,7 +111,8 @@ people(changeId)    -> [Person]       who's involved (also on Change; split so a
   "base": { "ref": "dev" },
   "body": "…",                                     // ≤ 4,000, cut at a line, plain text
   "checks": { "state": "passing", "failing": ["build"], "running": [], "total": 6 },
-                                                   // passing | failing | running | none (no checks configured)
+                                                   // passing | failing | running | none (no checks configured);
+                                                   // any failed check makes it failing, even with others running
   "review": { "state": "approved", "by": ["…"] },  // approved | changes_requested | required | not_required
   "mergeable": "yes",                              // yes | no | unknown (the forge hasn't computed it yet)
   "conflicts": false,                              // true when the forge says the head conflicts with the base
@@ -144,7 +145,7 @@ people(changeId)    -> [Person]       who's involved (also on Change; split so a
 | `CHANGES_DIR` | `${LOOM_PIECE_HOME}/data` | Where the snapshot lives (`snapshot.json`, 0600) |
 | `CHANGES_INTERVAL` | `180` | Seconds between syncs, clamped to 60 to 3600 |
 | `CHANGES_IDENTITIES` | none | JSON: which forge identity reads which owner key, `{"github:sleepunit-agents": "art-e-fish", "github:onterris": "jbarket"}`. A repo whose owner key has no entry is read with the forge CLI's default identity |
-| `CHANGES_AGENTS` | none | JSON: which changes are an agent's, `{"art": {"logins": ["art-e-fish"], "branches": ["art/"]}}`. A change is the agent's when its author's login is listed, or its head ref starts with a listed prefix |
+| `CHANGES_AGENTS` | none | JSON: which changes are an agent's, `{"art": {"logins": ["art-e-fish"], "branches": ["art/"]}}`. A change is the agent's when its author's login is listed, or when its head ref starts with a listed prefix **and** its author is one of `CHANGES_OWNER_LOGINS` (an agent that opens changes under the owner's account). A branch name alone never makes anyone's change an agent's, so nobody outside can name a branch to get a Yes button |
 | `CHANGES_OWNER_LOGINS` | none | JSON list: the owner's own forge logins, so their own changes read "yours" |
 | `CHANGES_PROJECTS` | `loom project list --json` | The command that lists project cards. The default lists loom's default agent's; another agent's projects' repos are read only if this command lists them |
 | `CHANGES_APPROVALS` | the approvals piece's bin | The approvals command, found as loom finds pieces (`$LOOM_HOME/pieces/bin`, then `PATH`) |
@@ -167,15 +168,16 @@ returns at once.
 
 ### Who a change waits on
 
-Computed when a page or feed is drawn, from the Change and the approvals piece: one call per draw,
-`approvals rule merge <target>… --for <agent> --json` (below), for every agent's open change. First match wins:
+Computed when a page or feed is drawn (the hub feed too), from the Change and the approvals piece: one call per agent
+with open changes, `approvals rule merge <target>… --for <agent> --json` (below), 2.5 s at most; when it doesn't answer,
+rows 7–8 read as row 7 without buttons. First match wins:
 
 | # | When | Waits on | Words |
 |---|---|---|---|
 | 1 | `state` is `merged` or `closed` | nobody | "Merged" / "Closed" |
 | 2 | `draft` | its author | "Draft" |
-| 3 | `conflicts`, or `checks.state` is `failing`, or `review.state` is `changes_requested` | its author | "Conflicts" / "CI red" / "Changes asked for" |
-| 4 | `checks.state` is `running`, or `mergeable` is `unknown` | CI | "CI running" |
+| 3 | `conflicts`, or `mergeable` is `no`, or `checks.state` is `failing`, or `review.state` is `changes_requested` | its author | "Conflicts" / "Can't be merged" / "CI red" / "Changes asked for" |
+| 4 | `checks.state` is `running`, or `mergeable` is `unknown` | CI | "CI running" / "Checking for conflicts" |
 | 5 | `review.state` is `required` | a reviewer (the requested people, by name, when there are any) | "Needs review" |
 | 6 | not an agent's change | its author | "Ready", or "Yours" when its author is one of `CHANGES_OWNER_LOGINS` |
 | 7 | an agent's change, its rule `ask`, and no allowed merge approval for its exact merge target | **you** | "Waiting on you" |
@@ -224,10 +226,12 @@ pieces). With the approvals piece not installed, the buttons are absent and the 
 ### Its hub section
 
 The piece declares `sections.project` (projects.md). For a project it answers from the snapshot, for the changes in the
-repos it was passed with `--repo`: one group per "waits on" class that has any, in the order above, "Waiting on you"
+repos it was passed with `--repo` (with none, the repos the snapshot read for that project's slug or names): one group
+per "waits on" class that has any, in the index's order (you, the agent, CI, a reviewer, an author, then "Lately"), "Waiting on you"
 marked `"waiting": true`; each item is the change (`title` `<repo name>#<n> <title>`, cut to 200 at a word with "…";
 `when` updated; `who` the author; `status` the table's Words, cut to 24; `ref` the change id; `page` the change's
-page). A project with no `--repo` gets
+page). Within a group, newest `updated` first; over 50 items in all, the later groups' oldest are left out, so the
+answer always fits projects.md's caps. A project with no `--repo` gets
 `{"groups": []}`. `unfiled` is false: a change is only read through a project.
 
 ### Linked tasks
@@ -271,8 +275,9 @@ matches:
 
 - a repo pattern matches when its forge is the repo's and its pattern matches the locator, case-insensitively;
 - `project:<slug>` matches when that live project's `links.repos` (read with `APPROVALS_PROJECTS`, default `loom
-  project list --json`) contains the repo id. A project list that can't be read matches no project rule, and the
-  answer says so.
+  project list --json`, loom's default agent's projects) contains the repo id.
+- **Failing closed.** When a project rule exists and the project list can't be read, the answer is `ask`, whatever a
+  pattern says, and it says why on stderr: a missing project list never loosens a tier.
 
 The most specific wins: an exact repo (no `*`) over a project over a pattern with fewer `*` over one with more. Two rules
 at the same rank: the stricter wins (`ask` over `tell` over `do`). No rule: `ask`.
@@ -340,10 +345,13 @@ That replaces "may I merge" asks in words. It widens no write access.
 
 **Changes piece** (its own test suite):
 
-1. The GitHub adapter maps a recorded GraphQL answer (a fixture with passing, failing, running and absent checks; an
-   approved, changes-requested and required review; a conflicting and an unknown-mergeability change; a draft) to the
-   Change shape exactly, and no forge field name appears in its output.
-2. Every call the adapter can make is a GET or a `graphql` query; a document with `mutation`, a method other than GET,
+1. The GitHub adapter maps a recorded GraphQL answer (a fixture with passing, failing, running, mixed failed-and-running
+   and absent checks; an approved, changes-requested and required review; a conflicting and an unknown-mergeability
+   change; a draft) to the Change shape exactly, and none of GitHub's own names (`statusCheckRollup`, `reviewDecision`,
+   `mergeStateStatus`, `headRefOid`, `isDraft`, `bodyText`, `MERGEABLE`, `CONFLICTING`, `REVIEW_REQUIRED`) appears in
+   its output.
+2. Every call the adapter can make is a GET or a `graphql` query, checked at the gate and at the process boundary (a
+   sync against a fake `gh` that records its argv sees only `auth token` and those reads); a document with `mutation`, a method other than GET,
    or any other subcommand is refused before it runs. The credential is in the child's environment only, and a planted
    token is absent from every file under `CHANGES_DIR` after a sync, the snapshot, every page, every feed answer, and
    the piece's stdout and stderr.
@@ -352,7 +360,8 @@ That replaces "may I merge" asks in words. It widens no write access.
 3. Sync reads only the repos the project cards name (selectors normalized, a bare `owner/repo` as `github:`), keeps
    going past a repo that fails, records that repo's error, and replaces the snapshot atomically.
 4. "Waits on" follows the table, each row tested, first match winning, including a change that is an agent's by its
-   branch prefix alone, one that's the owner's own ("Yours"), a denied approval, and checks `none` counting as ready.
+   branch prefix under the owner's login, one with that prefix by anyone else (not the agent's: no buttons), one
+   that's the owner's own ("Yours"), `mergeable: no`, a denied approval, and checks `none` counting as ready.
 5. The index groups by project, waiting-on-you first, then the documented order; merged and closed changes are under
    "Lately"; the project filter narrows. A page older than three intervals says how old.
 6. A change's page shows Yes, Not yet and Always only when it waits on you, a do/tell line for an agent's change that
@@ -369,7 +378,8 @@ That replaces "may I merge" asks in words. It widens no write access.
 **Approvals piece** (its suite):
 
 10. Rule resolution: exact repo over project over fewer `*` over more; strictest at a tie; `ask` with no rule; a project
-    rule from the project list, and none when the list can't be read.
+    rule from the project list; and `ask` when a project rule exists and the list can't be read, even under a `do`
+    pattern.
 11. The seed is written once, only when `rules.json` doesn't exist.
 12. `rule merge` prints each documented answer, including the newest approval's state for that exact target and agent;
     `--for` and `--json` answer many targets for another agent, and `--for` is refused over the API.
@@ -378,7 +388,7 @@ That replaces "may I merge" asks in words. It widens no write access.
 14. A push (a different head) makes `use` refuse the old approval. A deny (Deny on the card, or Not yet) for a kind,
     target and agent denies every earlier unspent pending or allowed approval for the same three, and `use` refuses
     one the owner has said no to since; a later yes counts again.
-14a. A merge target that isn't literal (`github:acme/*#1@…`, `?`, `[`, a space, one segment) is refused at `request`
+14a. A merge target, or a repo selector the Changes piece reads, that isn't literal (`github:acme/*#1@…`, `?`, `[`, a space, one segment) is refused at `request`
     and `grant`, and Always never makes a rule with a pattern in it from a target.
 15. Rule edits through `ui act` require the owner, and `api` has no path that changes a rule.
 16. Always on a pending merge approval sets the scope's rule to `do` and allows that approval, as one write.
