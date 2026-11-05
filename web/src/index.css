@@ -151,7 +151,6 @@
     --sidebar-primary: var(--v-pink);
 }
 
-  @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
 /* loom: an icon in a dock tile is the tile's size, not the SVG default (300px). */
 /* A phone's dock labels sit under their tiles (dock.css's touch block), but the hover popup's own rules still applied
    over it: an engaged middle label kept translate(-50%) and slid half its width left until the tap went stale, and the
