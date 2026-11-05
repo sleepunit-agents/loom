@@ -38,14 +38,60 @@ const ago = (iso?: string) => {
  * each thing it has going (a conversation, a lane, a task, a session), simply. Trouble shows only when there is some.
  * The details are a tap away.
  */
+/** How an agent is, in words: its card's eyebrow, and its row's status. */
+function statusWords(c: AgentCard): string {
+  const doing = c.doing ?? [];
+  const state = c.state ?? 'available';
+  return (c.problems ?? []).length ? (state === 'broken' ? 'Something’s broken' : 'Needs a look')
+    : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
+    : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
+}
+
+/** Past this many agents a phone's Home is a row each, not a card each (Jonathan, 2026-11-05, t-1869). */
+export const HOME_CARDS = 4;
+
+/** Worst first: something wrong, then unavailable, then working, then quiet; else as the household lists them. */
+function rowRank(c: AgentCard): number {
+  const state = c.state ?? 'available';
+  return (c.problems ?? []).length || state === 'broken' ? 0 : state === 'unavailable' ? 1 : state === 'working' || (c.doing ?? []).length ? 2 : 3;
+}
+
+/** An agent in a line, for a phone's Home with many of them: its face, its name, how it is, and its last line. */
+function AgentRow({ c }: { c: AgentCard }) {
+  const { go } = useEnv();
+  const doing = c.doing ?? [];
+  const problems = c.problems ?? [];
+  const state = c.state ?? 'available';
+  const wrong = problems.length > 0 || state === 'broken';
+  const line = problems[0]?.text ?? doing[0]?.text ?? c.reason;
+  const href = `/a/${c.id}`;
+  return (
+    <Arrive as="li" k={`row:${c.id}`} className="min-w-0">
+      <a href={href} data-agent={c.id} className="flex min-w-0 items-center gap-3 px-4 py-3 text-left no-underline"
+        onClick={(e) => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); go(href); }}>
+        <span className="relative shrink-0">
+          <AgentAvatar a={c} size={40} shape="circle" state={wrong ? 'error' : state === 'working' || doing.length ? 'working' : 'idle'} />
+          <span aria-hidden className={`absolute bottom-0 right-0 size-3 rounded-full border-2 border-[var(--v-paper)] ${state === 'working' ? 'bg-[var(--loom-live)]' : state === 'broken' ? 'bg-[var(--loom-bad)]' : state === 'unavailable' || wrong ? 'bg-[var(--loom-warn)]' : 'bg-[var(--loom-ok)]'}`} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate font-semibold">{c.label}</span>
+            <span className={`shrink-0 truncate text-xs font-medium ${wrong ? 'text-[color:var(--v-danger-fill)]' : 'opacity-60'}`}>{statusWords(c)}</span>
+          </span>
+          {line && <span className="block truncate text-sm opacity-70">{line}</span>}
+        </span>
+        <span className="shrink-0 opacity-50"><AnimatedIcon name={iconFor('chevron-right')} size="sm" /></span>
+      </a>
+    </Arrive>
+  );
+}
+
 function AgentIdentity({ c }: { c: AgentCard }) {
   const { go } = useEnv();
   const doing = c.doing ?? [];
   const problems = c.problems ?? [];
   const state = c.state ?? 'available';
-  const eyebrow = problems.length ? (state === 'broken' ? 'Something’s broken' : 'Needs a look')
-    : state === 'working' || doing.length ? `Working${doing.length > 1 ? ` · ${doing.length} things` : ''}`
-    : state === 'unavailable' ? 'Unavailable' : 'Up · quiet';
+  const eyebrow = statusWords(c);
   return (
     <Card className="loom-identity cursor-pointer gap-0 p-0" style={{ '--acc': markColor(c.bg) } as React.CSSProperties} onClick={() => go(`/a/${c.id}`)}>
       <div className="flex items-center gap-4 p-5">
@@ -115,6 +161,7 @@ export function PressCard({ onPress, className, children }: { onPress: () => voi
 export function HouseHomeView({ home }: { home: { headline: string; needs: number; need?: InboxItem; cards: AgentCard[]; moving: { agent?: string; text: string; meta?: string }[] } }) {
   const { go } = useEnv();
   const open = useOpenItem();
+  const many = home.cards.length > HOME_CARDS;
   return (
     <div className="grid gap-4">
       <h2 className="text-2xl font-semibold">{home.headline}</h2>
@@ -132,7 +179,17 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
       )}
       {home.cards.length === 0 && <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one.">
         <Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>}
-      <div className="grid items-start gap-4 md:grid-cols-2">
+      {/* Up to four agents, a card each. Past that, a phone's Home is a row each, worst first, a tap to the agent's own
+          page (Jonathan, 2026-11-05, t-1869: "fine if you've got 1 of something and a nightmare if you exceed that").
+          Wider screens keep their cards. */}
+      {many && (
+        <Card className="gap-0 p-0 md:hidden">
+          <ul aria-label="Agents" className="loom-agent-rows divide-y">
+            {home.cards.map((c, i) => ({ c, i })).sort((x, y) => rowRank(x.c) - rowRank(y.c) || x.i - y.i).map(({ c }) => <AgentRow key={c.id} c={c} />)}
+          </ul>
+        </Card>
+      )}
+      <div className={`${many ? 'hidden md:grid' : 'grid'} items-start gap-4 md:grid-cols-2`}>
         {home.cards.map((c) => <AgentIdentity key={c.id} c={c} />)}
       </div>
     </div>
