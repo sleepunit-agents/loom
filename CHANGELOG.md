@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon on a big screen: apps open in a window** (t-1868). Every page but
+  Home opens in one big framed window over the ground: a title strip in the
+  app's colour with its key, its name and where it is, cut corners, a ruled
+  edge, and Close. Close or Esc goes back to the desktop (not while a sheet,
+  a dialog or a field has Esc), the window grows out of its dock key and
+  shrinks back into it (View Transitions; never under reduced motion), focus
+  lands on the window's title and goes back to the key it came from. The page
+  inside reads at up to 72rem and scrolls inside the window; sheets and
+  dialogs stay above it. From 1600 px, where you've been lately beside it.
 - **Neon on a big screen: Home is a desktop** (t-1868). Under Neon at 1024 px
   and wider, Home is widgets on the ground instead of a scrolling page: what
   needs you (the first four, each answered where it stands: Yes and No for a
