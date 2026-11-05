@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, relative } from 'node:path';
 import { createToken, loadHousehold, TokenResolver, type Household } from './household.js';
 import { BundleError, drillBundle, exportBundle, restoreBundle } from './bundle.js';
 import { personWrite, readPerson } from './tools/person.js';
@@ -122,9 +122,11 @@ esac
 
     const to = join(work, 'restored');
     const r = await restoreBundle({ file, identity: owner.identity, home: to, env });
-    expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
-    expect(readFileSync(join(work, 'vault-imported'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
-    expect(readFileSync(join(work, 'vault-identity'), 'utf-8')).toBe(owner.identity);
+    // loom-vault is on PATH but not one the restored household installed: where it writes is its
+    // own business, so it isn't handed the part (t-1846). The part waits, byte for byte.
+    expect(r.pieces).toEqual([{ name: 'vault', restored: false, reason: expect.stringMatching(/isn't one this restore installed/) }]);
+    expect(existsSync(join(work, 'vault-imported'))).toBe(false);
+    expect(readFileSync(join(to, 'pieces-pending', 'vault.part'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
 
     const h2 = loadHousehold(to)!;
     expect(h2.agents).toEqual(['art', 'mark']);
@@ -171,7 +173,7 @@ esac
       mkdirSync(join(root, 'bin'), { recursive: true });
       mkdirSync(join(root, name), { recursive: true });
       writeFileSync(join(root, name, 'piece.json'), JSON.stringify({ v: 1, name, source, package: name, version: '1.0.0', installed: 'x', bins: [`loom-${name}`], loom: { settings: [{ name: 'VAULT_DIR', label: 'v', kind: 'text' }] } }));
-      writeFileSync(join(root, 'bin', `loom-${name}`), `#!/bin/sh\n[ "$1 $2" = "bundle import" ] && cat > "${work}/fresh-imported"\n`);
+      writeFileSync(join(root, 'bin', `loom-${name}`), `#!/bin/sh\n[ "$1 $2" = "bundle import" ] && cat > "${work}/fresh-imported" && printf '%s' "$LOOM_IMPORT_IDENTITY" > "${work}/fresh-identity"\n`);
       chmodSync(join(root, 'bin', `loom-${name}`), 0o755);
     };
     // The restoring machine has no pieces at all: only what restore installs. A bundle
@@ -181,14 +183,107 @@ esac
     // A piece's services start only after every part is in (the rebuild drill, t-1607: the box
     // piece's service wrote an empty state first, and its part was refused).
     const order: string[] = [];
-    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog,
+    const r = await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), LOOM_HOME: to }, install, catalog,
       startServices: (_e, name) => { order.push(`services ${name} (part in: ${existsSync(join(work, 'fresh-imported'))})`); } });
     expect(installs).toEqual([{ name: 'vault', commit: 'b'.repeat(40) }]);
     expect(order).toEqual(['services vault (part in: true)']);
     expect(JSON.parse(readFileSync(join(to, 'pieces', 'vault', 'settings.json'), 'utf-8'))).toEqual({ VAULT_DIR: '/srv/vault' });
     expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
     expect(readFileSync(join(work, 'fresh-imported'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
+    expect(readFileSync(join(work, 'fresh-identity'), 'utf-8')).toBe(owner.identity);
     expect(JSON.parse(readFileSync(join(to, 'household.json'), 'utf-8')).relay).toEqual({ art: ['mark'] });
+  });
+
+  // The backup drill (loom#488, t-1846): a restore into a throwaway home on the live machine
+  // handed taskstore its part with the caller's environment, which named the live store. It
+  // only didn't write there by luck. A restore's pieces write inside the home it restores to.
+  describe('a restore hands a part only to a piece it installed, and only inside its home', () => {
+    let live: string;
+    let to: string;
+    let file: string;
+    // The machine's live store, with something in it a restore must never touch.
+    beforeEach(async () => {
+      live = join(work, 'live-store');
+      mkdirSync(live);
+      writeFileSync(join(live, 'store.db'), 'LIVE');
+      to = join(work, 'restored');
+      file = join(work, 'household.bundle');
+    });
+    const exportWith = async (settings: Record<string, string>) => {
+      const piece = join(h.home, 'pieces', 'vault');
+      mkdirSync(piece, { recursive: true });
+      writeFileSync(join(piece, 'piece.json'), JSON.stringify({ v: 1, name: 'vault', source: { repo: 'sleepunit-agents/vault', commit: 'a'.repeat(40) }, package: 'vault', version: '1.0.0', installed: 'x', bins: ['loom-vault'], loom: { settings: [{ name: 'VAULT_DIR', label: 'v', default: '${LOOM_PIECE_HOME}/data' }] } }));
+      writeFileSync(join(piece, 'settings.json'), JSON.stringify(settings));
+      await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env });
+    };
+    // Installs vault the way installPiece would; its import writes into $VAULT_DIR, like taskstore's into TASKSTORE_DB.
+    const install = async (e: NodeJS.ProcessEnv, source: { repo: string; commit: string }, name: string) => {
+      const root = join(e.LOOM_HOME!, 'pieces');
+      mkdirSync(join(root, 'bin'), { recursive: true });
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, 'piece.json'), JSON.stringify({ v: 1, name, source, package: name, version: '1.0.0', installed: 'x', bins: [`loom-${name}`], loom: { settings: [{ name: 'VAULT_DIR', label: 'v', default: '${LOOM_PIECE_HOME}/data' }] } }));
+      writeFileSync(join(root, 'bin', `loom-${name}`), `#!/bin/sh\n[ "$1 $2" = "bundle import" ] || exit 2\nmkdir -p "$VAULT_DIR" && cat > "$VAULT_DIR/store.db"\n`);
+      chmodSync(join(root, 'bin', `loom-${name}`), 0o755);
+    };
+    const catalog = [{ name: 'vault', repo: 'sleepunit-agents/vault', commit: 'b'.repeat(40) }];
+
+    it('the caller\'s environment naming the live store is scrubbed: the piece writes under the restored home', async () => {
+      await exportWith({});
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), VAULT_DIR: live }, install, catalog, startServices: () => {} });
+      expect(readFileSync(join(live, 'store.db'), 'utf-8')).toBe('LIVE');
+      expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
+      expect(readFileSync(join(to, 'pieces', 'vault', 'data', 'store.db'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
+    });
+
+    // A piece's units live in the caller's ~/.config/systemd/user under its name, the live
+    // household's too: a drill that started them would point the live units at its throwaway.
+    it('a restore into a home that isn\'t this machine\'s household (a drill\'s --to) starts no services', async () => {
+      await exportWith({});
+      const started: string[] = [];
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog, startServices: (_e, name) => { started.push(name); } });
+      expect(r.pieces).toEqual([{ name: 'vault', restored: true }]);
+      expect(started).toEqual([]);
+      expect(r.notes).toEqual([expect.stringMatching(/^services not started: .* isn't this machine's household/)]);
+    });
+
+    it('services start with the restored settings, never the caller\'s environment', async () => {
+      await exportWith({});
+      const seen: Array<string | undefined> = [];
+      await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), LOOM_HOME: to, VAULT_DIR: live }, install, catalog, startServices: (e) => { seen.push(e.VAULT_DIR); } });
+      expect(seen).toEqual([undefined]);
+    });
+
+    it('a relative setting is its piece home\'s (where it runs), never loom\'s working directory: one that climbs out to a live store is refused', async () => {
+      await exportWith({ VAULT_DIR: relative(join(to, 'pieces', 'vault'), live) });
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: sealed(), install, catalog, startServices: () => {} });
+      expect(readFileSync(join(live, 'store.db'), 'utf-8')).toBe('LIVE');
+      expect(r.pieces).toEqual([{ name: 'vault', restored: false, reason: expect.stringMatching(/outside .* and already there/) }]);
+    });
+
+    it('a piece that brought no part still gets its settings checked before its services start', async () => {
+      // Exported where no piece answers `bundle export`: vault is a managed piece with settings, and no part.
+      const piece = join(h.home, 'pieces', 'vault');
+      mkdirSync(piece, { recursive: true });
+      writeFileSync(join(piece, 'piece.json'), JSON.stringify({ v: 1, name: 'vault', source: { repo: 'sleepunit-agents/vault', commit: 'a'.repeat(40) }, package: 'vault', version: '1.0.0', installed: 'x', bins: ['loom-vault'], loom: { settings: [{ name: 'VAULT_DIR', label: 'v', default: '${LOOM_PIECE_HOME}/data' }] } }));
+      writeFileSync(join(piece, 'settings.json'), JSON.stringify({ VAULT_DIR: live }));
+      await exportBundle({ contextDir: join(h.home, 'agents', 'art'), to: file, recipients: [owner.recipient], env: sealed() });
+      const started: string[] = [];
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), LOOM_HOME: to }, install, catalog, startServices: (_e, name) => { started.push(name); } });
+      expect(r.pieces).toEqual([]);
+      expect(started).toEqual([]);
+      expect(r.notes).toEqual([expect.stringMatching(/^vault's services not started: its setting VAULT_DIR is /)]);
+    });
+
+    it('a restored setting that points at a store already on this machine, outside the home, is refused', async () => {
+      await exportWith({ VAULT_DIR: live });
+      const started: string[] = [];
+      const r = await restoreBundle({ file, identity: owner.identity, home: to, env: { ...sealed(), LOOM_HOME: to }, install, catalog, startServices: (_e, name) => { started.push(name); } });
+      // Its services would write there too, so they don't start.
+      expect(started).toEqual([]);
+      expect(readFileSync(join(live, 'store.db'), 'utf-8')).toBe('LIVE');
+      expect(r.pieces).toEqual([{ name: 'vault', restored: false, reason: expect.stringMatching(new RegExp(`VAULT_DIR is ${live}, which is outside ${to} and already there`)) }]);
+      expect(readFileSync(join(to, 'pieces-pending', 'vault.part'), 'utf-8')).toBe(`VAULT-PART for ${owner.recipient}`);
+    });
   });
 
   it('a piece the catalog doesn\'t have (or names another repo) isn\'t installed from a bundle; it\'s reported', async () => {

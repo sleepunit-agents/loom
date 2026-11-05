@@ -82,6 +82,7 @@ export async function runRestore(rawArgv: string[], io: IOStreams): Promise<numb
     io.stdout(`Restored the household (${r.manifest.household.agents.join(', ')}, bundle from ${r.manifest.created}) to ${r.home}.\n`);
     for (const p of r.installs) io.stdout(`  installed ${p.name} at ${p.commit.slice(0, 7)}: ${p.installed ? 'yes' : `no (${p.reason})`}\n`);
     for (const p of r.pieces) io.stdout(`  piece ${p.name}: ${p.restored ? 'restored' : `not restored (${p.reason})`}\n`);
+    for (const n of r.notes) io.stdout(`  ${n}\n`);
     return 0;
   } catch (err) {
     if (err instanceof BundleError) { io.stderr(`${err.message}\n`); return 1; }
