@@ -381,18 +381,35 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
   it('the dock\'s keys swap by sliding: the old ones end below the screen, the new ones in their place; back runs the other way', async () => {
     const f = await phone();
     await open(f, '/');
-    await toAgent(f);
-    await f.p.locator('.loom-dock-swap[data-swap="go"] .loom-dock-gone').waitFor({ state: 'attached' });
-    // Nothing between the keys and the screen's edge clips them while they swap: they leave the screen, not a box.
-    const clips = await f.p.evaluate(() => { const out: string[] = []; const l = document.querySelector('.loom-dock-gone [data-part="lane"]')!;
-      for (let e = l.parentElement; e && !e.classList.contains('loom-dock-bar'); e = e.parentElement) { const s = getComputedStyle(e); if (s.overflowY !== 'visible' || s.overflowX !== 'visible') out.push(e.className || e.tagName); } return out; });
-    expect(clips).toEqual([]);
-    const ends = await f.p.evaluate(() => {
-      const lanes = (sel: string) => [...document.querySelectorAll<HTMLElement>(`${sel} [data-part="lane"]`)];
-      for (const l of [...lanes('.loom-dock-gone'), ...lanes('.loom-dock-now')]) for (const a of l.getAnimations()) a.finish();
-      return { gone: lanes('.loom-dock-gone').map((l) => l.getBoundingClientRect().top), now: lanes('.loom-dock-now').map((l) => Math.round(l.getBoundingClientRect().top)),
-        delays: lanes('.loom-dock-now').map((l) => getComputedStyle(l).animationDelay), h: innerHeight };
+    // Read the moment the old keys are put in to leave (a slow machine can't miss it): what clips them, then each
+    // set's animations run to their end and where that leaves them.
+    const watch = () => f.p.evaluate(() => {
+      const w = window as unknown as { __swap?: unknown };
+      w.__swap = undefined;
+      const o = new MutationObserver(() => {
+        const gone = document.querySelector('.loom-dock-gone');
+        if (!gone || w.__swap) return;
+        o.disconnect();
+        const lanes = (sel: string) => [...document.querySelectorAll<HTMLElement>(`${sel} [data-part="lane"]`)];
+        const clips: string[] = [];
+        for (let e = lanes('.loom-dock-gone')[0]?.parentElement ?? null; e && !e.classList.contains('loom-dock-bar'); e = e.parentElement) {
+          const c = getComputedStyle(e); if (c.overflowY !== 'visible' || c.overflowX !== 'visible') clips.push(String(e.className || e.tagName)); }
+        const delays = lanes('.loom-dock-now').map((l) => getComputedStyle(l).animationDelay);
+        for (const l of [...lanes('.loom-dock-gone'), ...lanes('.loom-dock-now')]) for (const a of l.getAnimations()) a.finish();
+        w.__swap = { swap: gone.parentElement!.getAttribute('data-swap'), clips, delays, h: innerHeight,
+          gone: lanes('.loom-dock-gone').map((l) => l.getBoundingClientRect().top), now: lanes('.loom-dock-now').map((l) => Math.round(l.getBoundingClientRect().top)) };
+      });
+      o.observe(document.body, { childList: true, subtree: true });
     });
+    type Swap = { swap: string; clips: string[]; delays: string[]; h: number; gone: number[]; now: number[] };
+    const swapped = async () => { await expect.poll(() => f.p.evaluate(() => !!(window as unknown as { __swap?: unknown }).__swap)).toBe(true);
+      return f.p.evaluate(() => (window as unknown as { __swap: Swap }).__swap); };
+    await watch();
+    await toAgent(f);
+    const ends = await swapped();
+    expect(ends.swap).toBe('go');
+    // Nothing between the keys and the screen's edge clips them while they swap: they leave the screen, not a box.
+    expect(ends.clips).toEqual([]);
     expect(ends.gone.length).toBeGreaterThan(0);
     expect(Math.min(...ends.gone)).toBeGreaterThanOrEqual(ends.h);
     expect(ends.delays.slice(0, 3)).toEqual(['0.05s', '0.075s', '0.1s']);
@@ -400,10 +417,12 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     const settled = await f.p.evaluate(() => [...document.querySelectorAll<HTMLElement>('.loom-dock-now [data-part="lane"]')].map((l) => Math.round(l.getBoundingClientRect().top)));
     expect(ends.now).toEqual(settled);
     await f.p.waitForTimeout(600);
+    await watch();
     await f.p.goBack();
-    await f.p.locator('.loom-dock-swap[data-swap="back"]').waitFor({ state: 'attached' });
-    const back = await f.p.evaluate(() => [...document.querySelectorAll<HTMLElement>('.loom-dock-now [data-part="lane"]')].map((l) => getComputedStyle(l).animationDelay));
-    expect(back.at(-1)).toBe('0.05s');   // from the other end
+    const back = await swapped();
+    expect(back.swap).toBe('back');
+    expect(back.delays.at(-1)).toBe('0.05s');   // from the other end
+    expect(Math.min(...back.gone)).toBeGreaterThanOrEqual(back.h);
     expect((await seen(f)).wide).toBeLessThanOrEqual(390);
     await f.p.context().close();
   }, 60_000);
