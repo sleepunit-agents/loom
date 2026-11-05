@@ -235,7 +235,7 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|projects|projects\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
