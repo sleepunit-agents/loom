@@ -185,7 +185,7 @@ to 30 items, returned newest first. Each item: `ref`, category, snippet (≤ 200
 created, updated, `new`. Plus a count per category over all matches |
 | `notes` | notes under any `links.notes` prefix (or the slug), excluding expired ones (`expires` before now, even if not swept yet): path, lifespan, updated, `new`. The 20 most recently `updated`, newest first, plus the total count |
 | `people` | active person cards with a `where` field named by any of the project's **field names**, where a name's field name is the name with `-` replaced by `_`. Each item: the person's slug and name, which field, its value and its marker, ordered by the person's name. Slugs are ≤ 32 chars for this reason: a field name is ≤ 32 |
-| `conversations` | the 20 conversations with the newest `last` whose digests name the project ([conversations.md](conversations.md), "Projects"). Each item: id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new` (`last` after `since`). `conversationsSection` in `src/conversations.ts` |
+| `conversations` | the 20 conversations with the newest `last` whose digests name the project ([conversations.md](conversations.md), "Projects"). A Comms thread filed under the project counts from its first message, before any digest ([comms.md](comms.md)). Each item: id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new` (`last` after `since`). `conversationsSection` in `src/conversations.ts` |
 
 **Recall resolves names, both ways.** A recall scoped to any name of a project (its slug or an alias) treats a memory
 as in that project when the memory's tag is any name of the same project. The recall reads the project's name set

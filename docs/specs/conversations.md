@@ -187,7 +187,8 @@ What a turn is (one delivered message or action, never merged) is the venue adap
 - **One per run.** A second write in the same run replaces that run's digest. A digest is never written for another
   run, or for another agent's conversation.
 - **Projects.** `projects` are names (projects.md's slugs or aliases), stored resolved to slugs. When a digest names
-  none, the one live project whose `links.venues` contains `<venue>:<place>` is used. If none or several match, none is.
+  none, a `loom` conversation's thread project is used ([comms.md](comms.md)); else the one live project whose
+  `links.venues` contains `<venue>:<place>`. If none or several match, none is.
 
 **Retention.** A sweep runs daily and at daemon start. It folds each UTC day whose every turn is older than 90 days into
 one `conversation_days` row per conversation and day: turn counts by `kind`, median `latency_ms`, and
@@ -241,7 +242,8 @@ in `venues`.
 - `label` is required, ≤ 40. `kind` is required: `live`, `scheduled` or `agent`.
 - `render` is optional: 1–16 strings of ≤ 200, and `argv[0]` must be one of the piece's own `bin` names.
 - Unknown keys are rejected.
-- `session` (`live`) and `wake` (`scheduled`) are core's own and may not be declared. A piece that delivers on `wake`
+- `session` (`live`), `wake` (`scheduled`) and `loom` (`live`: Comms threads, [comms.md](comms.md)) are core's own
+  and may not be declared. A piece that delivers on `wake`
   (the clock) says so with an empty entry, `"wake": {}`, which defines nothing (agent-runtime.md, "Delivery").
 - `relay` (`agent`) may be declared only by a piece whose `loom` block has `"role": "runtime"`.
 - A name another installed piece already declares is rejected.
@@ -600,6 +602,9 @@ These slices settled these points the doc left open:
   process them (Review, step 2).
 - **Model names inside text.** Redaction covers the names core knows. A model describing itself can still leak its
   family to a grader: blind as far as we can make it.
+- **Comms history.** A Comms thread's words, kept for its member to scroll back through, would be a new copy of raw
+  text outside the audit log. [comms.md](comms.md), "History", puts the choice to the owner: keep none, keep 14 days,
+  or keep them for the thread's life.
 - **Harness transcripts.** A harness's own local transcript files (outside loom) still hold raw text. The runtime spec
   decides whether they're deleted once their turns are in the audit log.
 
