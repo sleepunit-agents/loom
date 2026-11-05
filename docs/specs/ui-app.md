@@ -54,6 +54,31 @@ without touching a piece.
   **Comms** ([comms.md](comms.md)), with its count of unread threads.
 - **Desktop:** the same dock as its labelled **rail** down the left side,
   every tab in it.
+- **Inside an app** (Jonathan, 2026-11-05: "back/breadcrumbs/etc first … menus is
+  something we can do but I don't know if we need to"; no menu bar): each app keeps
+  its own history in the tab (`web/src/trail.ts`). A desktop window's title strip
+  has **Back ‹** and **Forward ›** through it, and a **trail** (the app, the page
+  this one is under, this one) whose crumbs go up, each to that page as it was last
+  left (the list with its query). Back from a task is the list you came from, at
+  its query and its scroll. **Alt+←** and **Alt+→** are the window's Back and
+  Forward while the window has the keys and has somewhere to go that way; in a
+  field, a sheet or a menu, from the dock or Find, or at the start of the app's
+  history, the keys stay the browser's own. The window's Back is a new page in the
+  browser's history, so the browser's Back undoes it, and the browser's Back and
+  Forward that land on the app's page before or after this one move its history
+  too. A long trail folds its middle into "…" before the page's own name is cut
+  short, and the strip never scrolls. A minimized window opens again where its
+  history stands; Close forgets it. On a phone, a page under another has the bar's
+  **back chevron**: it goes to the page before this one in the same app, as it was
+  left, and to the page it's under only when there's none (a page opened from a
+  link, Find or the Inbox).
+- **The side column**: a page's `"place": "side"` sections
+  ([extensions.md](../extensions.md), "Pages"). From 1280 px wide (the common laptop
+  widths get it; narrower, the page itself would drop under about 700 px), a desktop
+  window's own right-hand column, 300 px, scrolling down by itself; a page with none
+  gets **Recent here** (this app's pages opened lately on the device), never the
+  whole household's. Narrower, and on a phone, they fold together at the top of the
+  page, closed. Nothing in it scrolls sideways.
 - **Installable:** loom's existing manifest and service worker (`src/ui/pwa.ts`)
   get the app's icons and `display: standalone`; added to a home screen it opens
   without the browser's chrome. Push stays as it is.

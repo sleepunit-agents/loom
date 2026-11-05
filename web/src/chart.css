@@ -6,3 +6,10 @@
 .loom-chart .v-chart-summary__scope { display: none; }
 /* A finger doesn't hover: on a touchscreen the hint goes (a tap inspects a point all the same). */
 @media (pointer: coarse) { .loom-chart .v-chart-frame__footer > span:first-child { display: none; } }
+/* The series keep the palette's own colours. An app's tint (index.css [data-accent]) re-points --v-pink at the app's
+   colour for its buttons and accents: on Tasks (olive) that made the pink "Opened" bars as olive as "Done" (Jonathan,
+   2026-11-05). The palette is read at the root, where no tint reaches, and the chart wears that. */
+:root { --loom-chart-pink: var(--v-pink); --loom-chart-blue: var(--v-blue); --loom-chart-olive: var(--v-olive); --loom-chart-yellow: var(--v-yellow); --loom-chart-ink: var(--v-ink); }
+.loom-chart { --v-pink: var(--loom-chart-pink); --v-blue: var(--loom-chart-blue); --v-olive: var(--loom-chart-olive); --v-yellow: var(--loom-chart-yellow); --v-ink: var(--loom-chart-ink); }
+/* In a side column: its legend keys wrap rather than push the column wider. */
+.loom-side-col .loom-chart .v-chart-legend { flex-wrap: wrap; }

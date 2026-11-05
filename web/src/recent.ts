@@ -3,7 +3,7 @@
 
 export type Recent = { label: string; href: string };
 const KEY = 'loom-recent';
-const KEEP = 8;
+const KEEP = 40;
 /** Pages not worth going back to from Find: Home (the dock has it), Find itself, signing in and out. */
 const SKIP = /^\/(find|login|logout)?(\?|$)/;
 

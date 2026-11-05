@@ -18,6 +18,23 @@ export const chartColors: ChartColor[] = [
   "yellow",
   "ink",
 ];
+/**
+ * loom: each series its own colour (Jonathan, 2026-11-05: Tasks' "opened and done are the same color"). A series keeps
+ * the colour it names unless an earlier one already has it; one that names none, or a taken one, gets the first of the
+ * palette nobody has. Only past five series does a colour come round again.
+ */
+export function distinctColors<T extends { color?: ChartColor }>(series: T[]): (T & { color: ChartColor })[] {
+  const taken = new Set<ChartColor>();
+  const named = series.map((s) => (s.color && !taken.has(s.color) ? (taken.add(s.color), s.color) : undefined));
+  return series.map((s, i) => {
+    let color = named[i];
+    if (!color) {
+      color = chartColors.find((c) => !taken.has(c)) ?? chartColors[i % chartColors.length];
+      taken.add(color);
+    }
+    return { ...s, color };
+  });
+}
 export const chartColor = (color: ChartColor | undefined, index = 0) =>
   `var(--v-${color ?? chartColors[index % chartColors.length]})`;
 export const finiteValue = (value: unknown): number | null =>

@@ -412,7 +412,7 @@ describe('loom UI over HTTP', () => {
     expect(section(pat, 'summary')).toBeUndefined();
     expect(section(pat, 'facts')!.blocks[0].items).toEqual([{ label: 'Pond', value: 'field et-livonia' }]);
     expect(section(pat, 'where')).toBeUndefined();
-    expect((pat.page.sections as Array<{ side?: boolean }>).filter((x) => x.side)).toEqual([]);
+    expect((pat.page.sections as Array<{ side?: boolean; place?: string }>).filter((x) => x.side || x.place === 'side')).toEqual([]);
     // A piece may link to someone with no card: a page that says so, not an error.
     const nobody = await getJson('/people/no-such-person', cookie);
     expect(nobody.status).toBe(200);
