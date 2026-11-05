@@ -66,7 +66,9 @@ _Avoid_: log, trace, transcript
    `agents` from `members` (owners.md), never from what the caller sends. Then:
    - a thread route answers `403` unless the member owns the thread's agent **and** is the thread's `member`;
    - the list route returns only the member's own threads with agents they own;
-   - opening a thread with an agent the member doesn't own is a `403`.
+   - opening a thread with an agent the member doesn't own is a `403`;
+   - a thread id that doesn't exist is a `403` too, the same answer as another member's thread, so a route never says
+     whether a thread exists. Only the member of a thread they deleted gets `404` for it.
    This holds whether the request is the app's JSON view or a page load. The UI also hides those agents, but hiding
    isn't the protection.
 4. **The live streams.** A thread's live updates come on its own stream, `GET /comms/<thread>/events`, which the app
@@ -91,12 +93,13 @@ in and out.
 | Route | What it does |
 |---|---|
 | `GET /comms` | the member's threads (rule 3), with each one's unread state |
-| `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member and `id` again answer the same thread |
+| `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member, agent, `id` and text again answer the same thread; the same `id` with another agent or other text is a `409` |
 | `GET /comms/<thread>` | the thread and its newest 100 messages |
 | `GET /comms/<thread>/since/<seq>` | the messages after `seq`, and the thread's state |
+| `GET /comms/<thread>/before/<seq>` | the 100 messages before `seq`, newest last: scrolling up |
 | `GET /comms/<thread>/events` | the thread's live stream (server-sent events) |
 | `POST /comms/<thread>/send` `{id, text}` | the member's message |
-| `POST /comms/<thread>/title` `{title}` | renames it |
+| `POST /comms/<thread>/title` `{title}` | renames it: 1–60 characters, one line (`400` otherwise) |
 | `POST /comms/<thread>/project` `{project \| null}` | files or unfiles it |
 | `POST /comms/<thread>/pin`, `/unpin`, `/archive`, `/unarchive` | as named |
 | `POST /comms/<thread>/read` `{seq}` | sets `read_seq` (never backwards), and marks the member in front (below) |
@@ -138,7 +141,8 @@ choice, and the body's brief. The new parts follow.
   `src/delivery.mjs`; 14 is also agent-runtime.md's ceiling). For `loom`, 14 days is the window this doc assumes, and
   "History" option B is tied to it. A household that shortens the runtime's window for `loom` (its
   `LOOM_RUNTIME_CONTINUITY` setting) should shorten Comms' too: B's window is household.json's `comms_days` (1–14,
-  default 14), set to match by the owner. Comms never keeps words longer than `comms_days`.
+  default 14), set to match by the owner. Under B, Comms never keeps words longer than `comms_days`. A's window is
+  fixed at 1 hour, and C has none.
 - **Delivering a member's message.** Core delivers it as its own delivery, through `deliverAsOwner` (source `loom`).
   That's how the Inbox's Reply already delivers the owner's words (conversations.md, "Needs you").
   - Core's own delivery skips the checks that are for pieces: a declared venue, and `from: person` only from an
@@ -185,8 +189,8 @@ choice, and the body's brief. The new parts follow.
   gates. Core delivers there only from a member who owns the agent (rule 3), so the gates have nothing to add. A
   delivery on `loom` from any other source is refused by core, since no piece may declare the venue.
 - **Places.** A thread's place, and its id, is `th:` and the first 10 characters of the lowercased RFC 4648 base32 of
-  an HMAC-SHA-256, keyed by a secret core keeps in `comms.key`'s directory (`comms.salt`, 32 random bytes), over the
-  member's slug and the first message's id. So a replayed `new` lands in the same thread, and the place carries no
+  an HMAC-SHA-256 over `member\0agent\0id` (the member's slug, the agent and the first message's id). Its key is
+  `$LOOM_HOME/comms.salt`: 32 random bytes, made at first use, mode 0600. So a replayed `new` lands in the same thread, and the place carries no
   meaning: it can't leak a title or a person, and nobody without the salt can predict it. The runtime treats it as
   opaque, as every place is.
 - **The runtime's hard-coded lists.** `VENUE_KIND` in loom-box's `src/models.mjs` gains `loom: 'live'`. The relay
@@ -219,6 +223,8 @@ So the activity cards need a new capture:
     slots (`sessionFiles`). An `assistant` line's `message.content[]` entry of `type: "tool_use"` (`id`, `name`,
     `input`) makes a card when it appears, with `state: running`. A later `user` line's `tool_result` entry with that
     `tool_use_id` marks it `done`, or `failed` when `is_error` is true.
+  - **The fixtures** for both are recorded from real runs when this is built, and kept in the runtime's `test/`. This
+    doc fixes the fields they're read by, above and below, not their bytes.
   - **Codex:** `events.jsonl`, items of `type` `command_execution`, `mcp_tool_call`, `file_change` and `web_search`.
     `item.started` makes the card (`status: "in_progress"`), and `item.completed` finishes it, keyed by the item's
     `id`: `status: "completed"` is `done`, and `status: "failed"` is `failed` (measured 2026-11-05 with `codex exec
@@ -247,6 +253,8 @@ So the activity cards need a new capture:
     answers `409`.
   - A post of more than 50 cards, or with any card breaking the shape above, is refused whole (`400`).
   - A card whose `id` the thread already has updates that card's `state`. It doesn't add a second one.
+- **Only `tool_use` entries and tool items become cards.** A Claude `text` or `thinking` entry, a Codex
+  `agent_message` or `reasoning` item, and every result are skipped whole.
 - **The agent's own text between tools** isn't shown. In a venue body, that text is the body thinking aloud, and
   nobody was ever meant to read it: the reply is what it sends.
 
@@ -278,6 +286,12 @@ nothing like Claude Code's own "allow this tool?" ever reaches a venue. The asks
     first answer wins, as owners.md has it.
   - The card stays in the Inbox too. Answering either one answers both, and the thread's card then says who answered
     and how.
+- **How an ask becomes a message.** Core writes an `ask` message into the thread, with the next `seq`, when it first
+  sees the ask: an approval when the approvals piece's manifest (which core already reads each minute for the Inbox)
+  first lists it with the thread's conversation; a `needs_owner` when the digest carrying it is written. The message
+  stores only the reference (`{approval: id}` or `{digest: id}`). Its words, its state and who answered are read live
+  each time the thread is drawn, from the approvals piece's manifest and `state` and from the digest's answers. So the
+  card says "Allowed by Jonathan" without the row changing.
 - **The conversation's open `needs_owner`.** A digest's ask (conversations.md, "Needs you") shows in its thread as the
   same card the Inbox draws, with Yes, No, or a reply. A Yes or No from the thread is a message in that thread, as it
   is today.
@@ -372,7 +386,9 @@ Messages (`comms_messages`):
   the thread is on screen and the app is in front.
 - **Archive and unarchive.**
   - Archiving hides a thread from the default list (an "Archived" filter shows it). It ends its body, so the runtime
-    saves its slot.
+    saves its slot: core calls the runtime's piece API as the household owner, `run {argv: ["deliver", "end",
+    "<conversation>"]}`, a runtime verb that ends that conversation's body if it has one (a no-op if not). A runtime
+    that doesn't answer leaves the body to its warm-idle timeout, and the archive still stands.
   - Its conversation, digests and record stay, as for every conversation.
   - Unarchiving brings it back. Sending to an archived thread is a `409`: unarchive first.
 - **Pinning** puts a thread at the top of the list. A member has at most 8 pinned threads, and a ninth pin is a `409`.
@@ -506,10 +522,11 @@ A real chat, with a terminal's flavour:
 ### Notifications
 
 - A reply in a thread you aren't viewing raises the dock key's count.
-- **In front** means an app of that member has the thread's stream open and the page visible
+- **In front** is per thread: an app of that member has that thread's stream open and the page visible
   (`document.visibilityState` is `visible`). The app tells core with `POST /comms/<thread>/read`, sent when the
   thread is shown and every 30 s while it stays visible. Core takes "in front in the last 2 minutes" from those calls.
-- A push goes out when no app of that member has been in front in the last 2 minutes. It uses the existing push path
+- A push for a reply goes out when no app of that member has had that thread in front in the last 2 minutes. Being in
+  another thread doesn't hold it back. It uses the existing push path
   (`src/ui/push.ts`), to that member's subscriptions only, titled as "Push and privacy" says.
 - A tap opens the thread.
 
@@ -535,8 +552,11 @@ A real chat, with a terminal's flavour:
   - `VENUE_KIND.loom`;
   - core-adapted venues in its adapter calls (`adapterCall`, `sendOnce`, `announce`, `presencePass`);
   - tier 3 for `loom` from source `loom`;
+  - the `deliver end <conversation>` verb, owner calls only;
   - activity capture in the Claude and Codex runners and the body host.
 - **The approvals piece:** `--conversation` on request, and in its manifest's ask.
+- **extensions.md, MCP:** `comms_title` is a core tool name, so a piece offering one by that name is refused at
+  install.
 - **src/household.ts:** household.json's `comms_days` (1–14, default 14), checked when the household loads.
 - **src/bundle.ts:** `comms.db`, `comms.key` and `comms.salt` are left out, and an export refuses a staging that holds
   them, as for the audit log.
@@ -572,7 +592,11 @@ A real chat, with a terminal's flavour:
    - `POST /comms/new` twice with the same member and id answers one thread, with one message and one delivery.
    - An id of 15 or 17 characters, or with `0`, `1`, `8` or an uppercase letter, is a `400`.
    - Empty text, and text of 40,001 characters, are a `400`.
-   - Two threads' places differ, match `^th:[a-z2-7]{10}$`, and don't change when the salt is kept.
+   - Two threads' places differ, match `^th:[a-z2-7]{10}$`, and are the same when made again with the same salt. With
+     another salt the same member, agent and id give another place, and no place equals the unkeyed SHA-256's.
+   - `new` with the same id and another agent, or other text, is a `409`.
+   - A thread id that never existed, and another member's thread, both answer `403`, with the same body.
+   - A member's title over 60 characters, or with a line break, is a `400`.
    - With the runtime answering `503`, the message is kept with `delivered: false`, and Send again with the same id
      delivers it once.
 4. **The adapter route.**
@@ -591,6 +615,7 @@ A real chat, with a terminal's flavour:
    - A card with a `summary` over 120 characters, or with a line break, makes the post `400`.
    - A second card with the same `id` updates the first's `state`, and adds no message.
    - Cards appear in `since/<seq>`.
+   - `before/<seq>` returns the 100 messages before `seq`, in order.
 6. **Title.**
    - `comms_title` works only in a `loom` conversation. It refuses over 60 characters, a line break, and any title
      after a member's rename.
@@ -603,7 +628,8 @@ A real chat, with a terminal's flavour:
 8. **Unread, pin, archive, delete.**
    - Unread counts threads whose newest `reply` is past `read_seq`. `read` never lowers `read_seq`.
    - A member's ninth pin is a `409`.
-   - Archiving hides the thread from the default list, ends its body (the fake runtime sees the end), and refuses sends
+   - Archiving hides the thread from the default list, calls the runtime's `deliver end <conversation>` (the fake
+     runtime sees it), and refuses sends
      (`409`) until it's unarchived.
    - Delete removes the row and every message of it. After it, the thread's routes answer `404` to its member.
    - `comms.db` has `secure_delete` on (`PRAGMA secure_delete` answers 1), and after a delete the file holds none of a
@@ -613,7 +639,7 @@ A real chat, with a terminal's flavour:
      row stays. Under C, text stays until delete. Under B, `comms_days: 3` sweeps at 3 days.
    - Under B, `GET /comms/<thread>` shows the thread's digests in place of the swept words.
    - Text decrypts with `comms.key`, and not with another age identity.
-   - A planted message's words appear in no file under `$LOOM_HOME` except `comms.db` (and the audit log, encrypted).
+   - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**
     - A reply sends `message {seq}` on the thread's stream within 250 ms.
@@ -622,7 +648,8 @@ A real chat, with a terminal's flavour:
 11. **Push.**
     - A reply, while the member has had no app in front for 2 minutes, pushes to that member's subscriptions only.
     - The payload's title and body hold no message text.
-    - With a `read` call from that member in the last 2 minutes, no push is sent.
+    - With a `read` call on that thread in the last 2 minutes, no push is sent. With `read` calls only on another
+      thread, the push is sent.
 12. **Asks.**
     - A pending approval whose conversation is the thread's shows in it with Allow once and Deny.
     - Answering it in the thread answers it in the Inbox, and the other way round.
@@ -645,6 +672,8 @@ A real chat, with a terminal's flavour:
 16. Activity is captured from a Claude transcript fixture (real lines from a `claude --bg` session, kept in the
     runtime's `test/`) and a Codex `events.jsonl` fixture (from a real `codex exec --json` run).
     - A Bash call shows its `description` and never its command.
+    - A `text` or `thinking` entry, and a Codex `agent_message`, make no card, and none of their words reach one.
+    - A file read shows a path relative to the repo, never one starting with `/`.
     - No result or output text reaches any card.
     - Nothing is captured for a `slack` conversation.
 
