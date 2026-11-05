@@ -15,7 +15,7 @@ import { markColor } from './look';
 import { reducedMotion } from './access';
 import { bits, githubUrl } from './plain';
 import { prose } from '../../src/ui/prose';
-import type { Chrome } from './loom';
+import { act, type Chrome } from './loom';
 import type { FaceState } from './face';
 
 const PixelFace = lazy(() => import('./pixel-face'));
@@ -30,7 +30,10 @@ export type Thread = {
 };
 export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' | 'ask' | 'error'; from: string; id: string; text: string | null;
   card: Record<string, unknown> | null; run: string | null; delivered: boolean | null };
-export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string;
+/** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
+export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
+  actions: Array<{ action: string; label: string; tone?: string; fields?: Record<string, string> }> };
+export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string; asks?: ThreadAsk[];
   threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
   /** household.json's github: a bare repo#N in a reply links under it. */
   github?: string };
@@ -344,11 +347,12 @@ function grouped(messages: Msg[]): Array<{ key: string; msg?: Msg; cards?: Msg[]
 }
 
 function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, github }: {
-  initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
+  initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[]; asks?: ThreadAsk[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
   onBack: () => void; onChanged: () => void;
 }) {
   const [thread, setThread] = useState(initial.thread);
   const [messages, setMessages] = useState(initial.messages);
+  const [asks, setAsks] = useState<ThreadAsk[]>(initial.asks ?? []);
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
@@ -363,9 +367,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   // New messages: fetched after the last seq we have, once the stream says the thread moved.
   const pull = useCallback(async () => {
-    const r = await getJson<{ thread: Thread; messages: Msg[] }>(`/comms/${thread.id}/since/${last.current}`);
+    const r = await getJson<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${last.current}`);
     if (!r) return;
     setThread(r.thread);
+    setAsks(r.asks ?? []);
     if (r.thread.state.failed) setLink('none');
     if (!r.messages.length) return;
     last.current = r.messages.at(-1)!.seq;
@@ -452,7 +457,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
   const lastMine = messages.filter((m) => m.kind === 'message').at(-1);
   const lastReply = messages.filter((m) => m.kind === 'reply').at(-1);
   const waitingOnAgent = !!lastMine && lastMine.delivered !== false && (!lastReply || lastReply.seq < lastMine.seq);
-  const face = faceOf({ failed: thread.state.failed, asking: false, talking: false, working: thread.state.working, waitingOnAgent });
+  // An ask waiting on you wins over everything but an error (comms.md's precedence).
+  const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
   const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} you={member} compact={!wide && compact} wide={wide} />;
@@ -486,6 +492,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
           {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
             <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} />
           ))}
+          {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
           {lastMine?.delivered === false && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
           {thread.state.working && <li className="comms-working loom-data">{mark.label.toUpperCase()} · working · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</li>}
           {link === 'lost' && <li className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></li>}
@@ -495,6 +502,41 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
       </div>
       <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} />
     </article>
+  );
+}
+
+/** An ask, answered here as the Inbox would answer it: its piece's own action, with this page's form token. */
+function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: string; agentName: string; onAnswered: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const answer = async (b: ThreadAsk['actions'][number]) => {
+    setBusy(true);
+    const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
+    setSaid(r.message || (r.ok ? 'Answered.' : 'That didn\'t go through.'));
+    setBusy(false);
+    if (r.ok) onAnswered();
+  };
+  const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
+  const no = a.actions.find((b) => b.tone === 'danger');
+  return (
+    <li className="comms-ask" role="group" aria-label={`${who} asks`}>
+      <span className="loom-data comms-ask__who">{who.toUpperCase()} ASKS</span>
+      <p className="comms-ask__text">{a.text}</p>
+      {a.why && <p className="comms-ask__why">{a.why}</p>}
+      {(a.if_yes || a.if_no) && (
+        <dl className="comms-ask__either">
+          {a.if_yes && <><dt>If you allow</dt><dd>{a.if_yes}</dd></>}
+          {a.if_no && <><dt>If you deny</dt><dd>{a.if_no}</dd></>}
+        </dl>
+      )}
+      {a.fine && <p className="comms-ask__fine loom-data">{a.fine}</p>}
+      {said ? <p className="comms-ask__said">{said}</p> : (
+        <div className="comms-ask__buttons">
+          <button type="button" disabled={busy} className="comms-ask__yes" onClick={() => void answer(yes)}>{yes.label}</button>
+          {no && <button type="button" disabled={busy} className="comms-ask__no" onClick={() => void answer(no)}>{no.label}</button>}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -547,7 +589,7 @@ export function CommsView({ data }: { data: CommsData }) {
   const open = (id: string) => go(`/comms/${id}`);
   const back = () => { setMaking(false); go('/comms'); };
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} />
-    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} github={data.github} />
+    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} github={data.github} />
       : null;
   const list = <ThreadList threads={threads} marks={marks} current={data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;

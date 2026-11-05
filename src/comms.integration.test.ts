@@ -132,6 +132,14 @@ describe.skipIf(!hasAge)('Comms', () => {
     clearPieceCache();
     h = household('loom-comms-');
     process.env.LOOM_HOME = h.home;
+    // A stand-in approvals piece: its manifest's asks are a file the test writes (approvals-asks.json).
+    piece(h.home, 'approvals', { role: 'approvals' }, `#!${process.execPath}
+const fs = require('node:fs');
+if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
+  const f = process.env.LOOM_HOME + '/approvals-asks.json';
+  console.log(JSON.stringify({ v: 2, owners: 2, asks: fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [] }));
+} else process.exit(2);
+`);
     piece(h.home, 'runtime', { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } }, RUNTIME_BIN);
     tok.jonathan = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
     tok.sam = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
@@ -614,6 +622,34 @@ describe.skipIf(!hasAge)('Comms', () => {
       ac.abort();
       const since = await page(tok.jonathan, 'GET', `/comms/${t.id}/since/${first.body.id}`);
       expect((since.body.messages as Array<{ text: string }>).map((m) => m.text)).toEqual(['two']);
+    });
+  });
+
+  describe('criterion 12: asks inline', () => {
+    it('shows a pending approval only in its own thread: its conversation and its agent both', async () => {
+      const t = await open();
+      const other = await open();
+      const ask = (id: string, conversation: string | undefined, agent: string) => ({
+        text: `Can I ${id}?`, why: 'Because.', if_yes: 'I do it.', if_no: 'I don\'t.', fine: `relay · ${id}`, kind: 'permission', tone: 'warn', agent,
+        ...(conversation ? { conversation } : {}),
+        actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] });
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([
+        ask('a-00000001', t.conversation, 'art'),          // this thread's own
+        ask('a-00000002', other.conversation, 'art'),      // another thread's
+        ask('a-00000003', undefined, 'art'),               // asked from no thread
+        ask('a-00000004', t.conversation, 'mark'),         // naming this thread, but mark's: never here
+      ]));
+      clearPieceCache();
+      const r = await page(tok.jonathan, 'GET', `/comms/${t.id}`);
+      const asks = r.body.asks as Array<{ id: string; piece: string; text: string; if_yes: string; actions: Array<{ action: string }> }>;
+      expect(asks.map((a) => a.id)).toEqual(['a-00000001']);
+      expect(asks[0]).toMatchObject({ piece: 'approvals', text: 'Can I a-00000001?', if_yes: 'I do it.' });
+      expect(asks[0].actions.map((a) => a.action)).toEqual(['allow', 'deny']);
+      expect(((await page(tok.jonathan, 'GET', `/comms/${other.id}/since/0`)).body.asks as Array<{ id: string }>).map((a) => a.id)).toEqual(['a-00000002']);
+      // Another owner of art never sees it: the thread itself is refused.
+      expect((await page(tok.sam, 'GET', `/comms/${t.id}`)).status).toBe(403);
+      rmSync(join(h.home, 'approvals-asks.json'));
+      clearPieceCache();
     });
   });
 
