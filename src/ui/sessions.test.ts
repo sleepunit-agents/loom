@@ -81,5 +81,8 @@ describe('a look kept from before Low Light and Daylight', () => {
     const store = new SessionStore(dir);
     expect(store.prefs()).toMatchObject({ look: 'daylight' });
     expect(store.prefs('sam')).toMatchObject({ look: 'lowlight' });
+    // Another choice saved leaves the 000h on disk as it was (an app that knew 000h still finds it), read back mapped.
+    expect(store.setPrefs({ sound: true })).toMatchObject({ look: 'daylight', sound: true });
+    expect(JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).prefs).toMatchObject({ look: '000h', mode: 'light', sound: true });
   });
 });

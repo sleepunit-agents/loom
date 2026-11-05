@@ -78,10 +78,13 @@ describe('Appearance, kept per person', () => {
       expect((await save(old, { _csrf: csrf, look: '000h', mode })).status).toBe(200);
       expect((await view(old)).chrome.prefs, mode).toMatchObject({ look: 'lowlight' });
     }
-    // Its light or dark alone, later, doesn't move a look already chosen.
+    // The old app's light, later, is Daylight: 000h is kept as sent, and read as the look nearest it.
+    expect((await save(old, { _csrf: csrf, mode: 'light' })).status).toBe(200);
+    expect((await view(old)).chrome.prefs).toMatchObject({ look: 'daylight' });
+    // A look chosen now holds whatever an old light or dark says.
+    expect((await save(old, { _csrf: csrf, look: 'lowlight' })).status).toBe(200);
     expect((await save(old, { _csrf: csrf, mode: 'light' })).status).toBe(200);
     expect((await view(old)).chrome.prefs).toMatchObject({ look: 'lowlight' });
-    expect((await save(old, { _csrf: csrf, look: 'lowlight' })).status).toBe(200);
   });
 
   it('keeps only Appearance\'s own choices, with the form token, from loom\'s own page', async () => {

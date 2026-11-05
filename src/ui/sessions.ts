@@ -69,7 +69,7 @@ interface File {
  * like `seen`, so it follows them to every device they sign in on.
  *
  * `look: '000h'` and `mode` are from before 2026-11-05, when 000h was a look with a light and a dark: a device still
- * running that app may send them, so both are still taken, and 000h is kept and read back as the look nearest it
+ * running that app may send them, so both are still taken, kept as sent, and 000h is read back as the look nearest it
  * (lookOf: Daylight if its mode was light, else Low Light). Nothing else reads `mode`.
  */
 export interface Prefs { look?: Look | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
@@ -384,10 +384,12 @@ export class SessionStore {
     return this.withLock((f) => {
       const r = readerOf(f, reader);
       // Strictly later than the last change, even within a millisecond: the version a device compares.
-      const next = { ...(r.prefs ?? {}), ...p };
-      if (next.look) next.look = lookOf(next.look, next.mode);
-      r.prefs = { ...next, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
-      return { ...r.prefs };
+      // Kept as given, 000h too (read back as the look nearest it, prefs()): what's on disk changes only when the person
+      // chooses, so going back to an app that knew 000h finds their choice as they made it.
+      r.prefs = { ...(r.prefs ?? {}), ...p, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
+      const out = { ...r.prefs };
+      if (out.look) out.look = lookOf(out.look, out.mode);
+      return out;
     });
   }
 
