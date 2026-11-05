@@ -9,11 +9,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
-import { loadHousehold, type Household } from './household.js';
+import { agentDir, loadHousehold, type Household } from './household.js';
 import { createConversationTables } from './backends/conversations.js';
 import { adapterCall, markRead, openThread, setTitle, threadFor } from './comms.js';
-import { commsAnnouncements } from './ui/handler.js';
-import { SessionStore } from './ui/sessions.js';
+import { commsAnnouncements, pushWatch } from './ui/handler.js';
+import { SessionStore, sessionStore } from './ui/sessions.js';
 import { watch } from './ui/push.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
@@ -60,25 +60,55 @@ describe.skipIf(!hasAge)('Comms push', () => {
     expect(commsAnnouncements(h, Date.now() + 3 * 60_000)).toEqual([]);
   });
 
-  it('the watch sends it only to its member\'s devices, never another member\'s', async () => {
+  /** The real wiring: pushWatch (Your call and Comms in one minute's watch), its own hears, the store loom keeps. */
+  const minute = async (sent: Array<{ to: string; payload: Record<string, unknown> }>) => {
+    const f = join(h.home, 'ui-sessions.json');
+    try { const j = JSON.parse(readFileSync(f, 'utf8')); if (j.push) { delete j.push.tickAt; writeFileSync(f, JSON.stringify(j)); } } catch { /* first */ }
+    const send = async (sub: { endpoint: string }, payload: string) => { sent.push({ to: sub.endpoint, payload: JSON.parse(payload) }); return {} as never; };
+    return pushWatch({ contextDir: agentDir(h, 'art'), auth: { enabled: true, check: () => null, live: () => false }, env: process.env, household: () => h } as never, send as never);
+  };
+  const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
+
+  it("through pushWatch: the first owner's device (no member, as loom stores it) and an agent owner's, each only its own", async () => {
+    const store = sessionStore(h.home);
+    store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('jon'));                       // the first owner's: no member
+    store.addPushSub(store.create(Buffer.alloc(32, 2)), sub('loren'), undefined, 'loren');
+    const sent: Array<{ to: string; payload: Record<string, unknown> }> = [];
+    await minute(sent);                                                                     // the first watch records only
+    const t = thread();
+    adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'art', text: 'words that never go' });
+    const lt = openThread(h, process.env, h.members[1], { agent: 'pond-bot', id: 'bbbbbbbbbbbbbbbb', text: 'hi pond' }).thread;
+    adapterCall(h, process.env, { op: 'post', place: lt.id, agent: 'pond-bot', text: 'pond words' });
+    await minute(sent);
+    const to = (who: string) => sent.filter((x) => x.to.endsWith(who)).map((x) => x.payload.url);
+    expect(to('jon')).toEqual([`/comms/${t.id}`]);
+    expect(to('loren')).toEqual([`/comms/${lt.id}`]);
+    expect(JSON.stringify(sent)).not.toMatch(/never go|pond words/);
+  });
+
+  it('a read on another thread doesn\'t hold a thread\'s push back', () => {
+    const a = thread('one');
+    const b = openThread(h, process.env, h.members[0], { agent: 'art', id: 'cccccccccccccccc', text: 'two' }).thread;
+    adapterCall(h, process.env, { op: 'post', place: a.id, agent: 'art', text: 'x' });
+    adapterCall(h, process.env, { op: 'post', place: b.id, agent: 'art', text: 'y' });
+    markRead(h, threadFor(h, h.members[0], a.id), 0);
+    expect(commsAnnouncements(h).map((x) => x.url)).toEqual([`/comms/${b.id}`]);
+  });
+
+  it('past five in a minute, the rest wait for the next minute: none is dropped', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'loom-comms-push-store-'));
     try {
       const store = new SessionStore(dir);
-      const sub = (path: string) => ({ endpoint: `https://fcm.googleapis.com/fcm/send/${path}`, keys: { p256dh: 'p'.repeat(40), auth: 'a'.repeat(16) } });
-      store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('jon'), undefined, 'jonathan');
-      store.addPushSub(store.create(Buffer.alloc(32, 2)), sub('loren'), undefined, 'loren');
-      const sent: Array<{ to: string; payload: Record<string, unknown> }> = [];
-      const send = async (s: { endpoint: string }, payload: string) => { sent.push({ to: s.endpoint, payload: JSON.parse(payload) }); return {} as never; };
+      store.addPushSub(store.create(Buffer.alloc(32, 1)), sub('one'));
+      const sent: string[] = [];
+      const send = async (_s: unknown, payload: string) => { sent.push(JSON.parse(payload).tag); return {} as never; };
       const fresh = () => { const f = JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf8')); if (f.push) { delete f.push.tickAt; writeFileSync(join(dir, 'ui-sessions.json'), JSON.stringify(f)); } };
-      // The first watch only records what's there.
-      await watch(store, async () => commsAnnouncements(h), 'mailto:x', send, () => true, () => 'jonathan');
-      const t = thread();
-      adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'art', text: 'words that never go' });
-      fresh();
-      await watch(store, async () => commsAnnouncements(h), 'mailto:x', send, () => true, () => 'jonathan');
-      expect(sent.map((x) => x.to)).toEqual(['https://fcm.googleapis.com/fcm/send/jon']);
-      expect(sent[0].payload).toMatchObject({ title: 'Art E Fish replied in a new thread', url: `/comms/${t.id}` });
-      expect(JSON.stringify(sent)).not.toMatch(/never go/);
+      const asks = (n: number) => async () => Array.from({ length: n }, (_, i) => ({ key: `k${i}`, title: 't', body: '' }));
+      await watch(store, asks(0), 'mailto:x', send);
+      fresh(); await watch(store, asks(6), 'mailto:x', send);
+      expect(sent).toHaveLength(5);
+      fresh(); await watch(store, asks(6), 'mailto:x', send);
+      expect(sent).toEqual(['ask-k0', 'ask-k1', 'ask-k2', 'ask-k3', 'ask-k4', 'ask-k5']);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

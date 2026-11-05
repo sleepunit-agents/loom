@@ -533,7 +533,7 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
 }
 
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
-export async function pushWatch(opts: UiOptions): Promise<number> {
+export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>[3]): Promise<number> {
   const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
   const hh = opts.household?.();
   // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
@@ -548,7 +548,7 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
   return watch(storeFor(opts), async () => [...(await yourCall(opts)).map((a) => ({
     key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-  })), ...(hh ? commsAnnouncements(hh) : [])], subject, undefined, hears, () => (hh ? firstOwner(hh).person : undefined));
+  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined));
 }
 
 /**

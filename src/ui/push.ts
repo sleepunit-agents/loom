@@ -79,7 +79,9 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   const now = await asks();
   // The first watch only records what's there (SEEDED marks that it has run).
   const fresh = SEEDED in w.pushed ? now.filter((a) => !(a.key in w.pushed)) : [];
-  store.markPushed([...now.map((a) => a.key), SEEDED]);
+  // Five a minute at most; the rest wait for the next minute, unmarked, so none is dropped (a reply behind five asks).
+  const later = new Set(fresh.slice(5).map((a) => a.key));
+  store.markPushed([...now.map((a) => a.key).filter((k) => !later.has(k)), SEEDED]);
   if (!fresh.length || !w.subs.length) return 0;
   const vapid = store.pushKeys(() => webpush.generateVAPIDKeys());
   let sent = 0;
