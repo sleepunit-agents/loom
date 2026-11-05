@@ -56,6 +56,11 @@ export interface Household {
    */
   review?: ReviewSetting;
   /**
+   * household.json's `comms_days` (docs/specs/comms.md, "History"): how long a Comms thread keeps its words, 1-14
+   * whole days (the continuity slot's window); loadHousehold defaults it to 14.
+   */
+  commsDays?: number;
+  /**
    * household.json's `github`: the GitHub owner (a user or an organization) the household's repos are under, so a bare
    * `repo#12` in what an agent says links to github.com/<github>/repo/issues/12. Absent: only `owner/repo#12` links.
    */
@@ -193,6 +198,7 @@ export function loadHousehold(home: string): Household | null {
     ...(raw.families !== undefined ? { families: parseFamilies(raw.families, path) } : {}),
     tz: parseTz(raw.tz, path),
     review: parseReview(raw.review, path),
+    commsDays: parseCommsDays(raw.comms_days, path),
     ...(raw.github !== undefined ? { github: parseGithub(raw.github, path) } : {}),
   };
 }
@@ -208,6 +214,12 @@ function parseTz(v: unknown, path: string): string {
   const bad = new HouseholdError(`${path}: tz is an IANA time zone name (e.g. America/Chicago)`);
   if (typeof v !== 'string' || !v.length || v.length > 64) throw bad;
   try { new Intl.DateTimeFormat('en-US', { timeZone: v }); } catch { throw bad; }
+  return v;
+}
+
+function parseCommsDays(v: unknown, path: string): number {
+  if (v === undefined) return 14;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 14) throw new HouseholdError(`${path}: comms_days is a whole number of days from 1 to 14 (how long a Comms thread keeps its words)`);
   return v;
 }
 

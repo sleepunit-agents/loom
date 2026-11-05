@@ -514,6 +514,7 @@ describe('POST /api/loom/deliver', () => {
       expect(r.body).toEqual({ venues: [
         { name: 'session', label: 'Session', kind: 'live', piece: 'loom' },
         { name: 'wake', label: 'Wake', kind: 'scheduled', piece: 'loom' },
+        { name: 'loom', label: 'loom', kind: 'live', piece: 'loom', adapter: 'core' },
         { name: 'relay', label: 'Relay', kind: 'agent', piece: 'runtime', send: ['loom-runtime', 'relay-send'] },
         { name: 'slack', label: 'Slack', kind: 'live', piece: 'slack', send: ['loom-slack', 'send'] },
         { name: 'slack-huddle', label: 'Huddle', kind: 'live', piece: 'slack' },

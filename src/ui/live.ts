@@ -35,7 +35,7 @@ const DATA = /(^|\/)(memories|knowledge|people)\.db(-wal)?$|(^|\/)household\.jso
 
 /** What an app's owner may see: every agent (`*`, a household owner), or theirs. */
 export type Sees = '*' | readonly string[];
-interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string }
+interface Client { res: ServerResponse; env: NodeJS.ProcessEnv; sees: Sees; session: string; member?: string }
 const clients = new Set<Client>();
 let watcher: FSWatcher | undefined;
 let ticking: NodeJS.Timeout | undefined;
@@ -53,6 +53,14 @@ const hears = (sees: Sees, about: Sees) => sees === '*' || (about !== '*' && abo
 /** Tell the open apps that may see it that something changed (soon, and once for a burst). */
 export function changed(about: Sees = '*'): void {
   for (const c of clients) if (hears(c.sees, about)) nudge(c);
+}
+
+/**
+ * Tell only `member`'s open apps that something of theirs changed: a Comms thread is its member's alone
+ * (docs/specs/comms.md, rule 4), so another owner of the same agent never hears of it, not even as a bare change.
+ */
+export function changedFor(member: string): void {
+  for (const c of clients) if (c.member === member) nudge(c);
 }
 
 function nudge(c: Client): void {
@@ -105,12 +113,12 @@ function tick(): Promise<void> {
  * signed-in browser, so one can't open streams without end.
  */
 export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: string, headers: Record<string, string>,
-  opts: { sees: Sees; session: string; place: (file: string) => Sees }): void {
+  opts: { sees: Sees; session: string; place: (file: string) => Sees; member?: string }): void {
   const mine = [...clients].filter((x) => x.session === opts.session);
   if (mine.length >= STREAMS_PER_SESSION) { mine[0].res.end(); drop(mine[0]); }   // the oldest goes
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 5000\n\n');
-  const c: Client = { res, env, sees: opts.sees, session: opts.session };
+  const c: Client = { res, env, sees: opts.sees, session: opts.session, ...(opts.member ? { member: opts.member } : {}) };
   whose = opts.place;
   clients.add(c);
   res.on('close', () => drop(c));

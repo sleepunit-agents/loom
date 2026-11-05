@@ -261,7 +261,7 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
   describe('criterion 7: reading the audit log', () => {
     it('the routes: review takes, finishes, scores and finds; runtime writes audit and reads scorecards', () => {
       expect(ROLE_ROUTES.review).toEqual(['audit/take', 'audit/done', 'scores', 'findings']);
-      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config', 'people/ensure', 'people/merge']);
+      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config', 'people/ensure', 'people/merge', 'comms/adapter', 'comms/activity']);
       expect(AGENT_ROUTES).toEqual(['conversations/turn', 'audit']);
       expect(GET_ROUTES).toEqual(['scorecards', 'review/config']);
     });
@@ -755,11 +755,13 @@ describe('criterion 9: one decrypt path', () => {
     // The key's name, as a constant or a string, is the audit module's alone.
     const keyed = all.filter((f) => /\bREVIEW_KEY\b|review\.key/.test(code(f))).map((f) => relative(srcDir, f)).sort();
     expect(keyed).toEqual(['audit.ts']);
-    // An age decrypt (-d / --decrypt) runs in two places: the bundle's, of a bundle with the owner's
-    // key, which never names the review key; and the audit module's, inside decryptAuditText only.
+    // An age decrypt (-d / --decrypt) runs in three places: the bundle's, of a bundle with the owner's
+    // key; Comms', of a thread's words with comms.key (docs/specs/comms.md); neither names the review
+    // key; and the audit module's, inside decryptAuditText only.
     const decrypting = all.filter((f) => /['"](?:-d|--decrypt)['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    expect(decrypting).toEqual(['audit.ts', 'bundle.ts']);
+    expect(decrypting).toEqual(['audit.ts', 'bundle.ts', 'comms.ts']);
     expect(code(join(srcDir, 'bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|AUDIT_FILES\s*\[/);
+    expect(code(join(srcDir, 'comms.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
     const audit = code(join(srcDir, 'audit.ts'));
     const spawns = [...audit.matchAll(/['"](?:-d|--decrypt)['"]/g)].map((m) => m.index!);
     expect(spawns).toHaveLength(1);

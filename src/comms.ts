@@ -1,0 +1,741 @@
+/**
+ * Comms (docs/specs/comms.md): an agent's owners talking with it inside loom, in threads. Each thread is a place in
+ * core's own venue `loom`, delivered through the runtime like any venue, and core is that venue's adapter.
+ *
+ * Where it lives:
+ *  - household.db: `comms_threads` (a thread joins a member and an agent) and `comms_deleted` (a deleted thread's
+ *    tombstone: its id, member, agent, channel and when, no words);
+ *  - comms.db: `comms_messages`, and every word of them, each an age file to comms.key. `secure_delete` is on, so a
+ *    deleted or swept message's pages are zeroed. Never in a bundle or an export (COMMS_FILES).
+ *  - comms.key (age identity) and comms.salt (32 random bytes: the HMAC key a thread's place is made with), mode 0600.
+ *
+ * The words are kept for household.json's `comms_days` (1-14, default 14: the continuity slot's window, the owner's
+ * ruling of 2026-11-05) and then swept: the row stays, its text goes. Only the thread's member reads them, through the
+ * page's thread routes (src/ui/comms-routes.ts). No token, piece or MCP tool can.
+ *
+ * Who may: a member who owns the thread's agent (owners.md: `agents` is `*` or lists it) and opened the thread. Every
+ * other caller, and a thread that doesn't exist, gets the same 403, so a route never says whether a thread exists.
+ */
+import { spawn, spawnSync } from 'node:child_process';
+import { createHmac, randomBytes } from 'node:crypto';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, linkSync, writeFileSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import BetterSqlite3, { type Database } from 'better-sqlite3';
+import { findProgram } from './programs.js';
+import { agentDir, type Household, type Member } from './household.js';
+import { withHouseholdDb } from './household-store.js';
+import { conversationId, digestsOf, openConversationsReadonly, projectLookup } from './backends/conversations.js';
+
+export const COMMS_VENUE = 'loom';
+export const COMMS_DB = 'comms.db';
+export const COMMS_KEY = 'comms.key';
+export const COMMS_SALT = 'comms.salt';
+/** Every file of the thread store and its keys: what a bundle and an export must never carry. */
+export const COMMS_FILES: readonly string[] = [COMMS_DB, `${COMMS_DB}-wal`, `${COMMS_DB}-shm`, `${COMMS_DB}-journal`, COMMS_KEY, COMMS_SALT];
+export const COMMS_DAYS_DEFAULT = 14;
+export const MAX_TEXT = 40_000;
+export const MAX_TITLE = 60;
+export const MAX_PINS = 8;
+export const PAGE = 100;
+/** A `since` read answers at most this many (a reconnect after a long gap reads on with since again). */
+export const SINCE_MAX = 500;
+/** How many messages are decrypted at once (each is one age process): a thread's page never blocks the daemon. */
+const DECRYPT_AT_ONCE = 8;
+export const MAX_CARDS = 50;
+export const MAX_SUMMARY = 120;
+/** A queued message with no `working` from the runtime for this long is "busy" (comms.md, section 7). */
+export const BUSY_MS = 2 * 60_000;
+const DAY_MS = 86_400_000;
+
+/** A message's id from the app: 16 characters of RFC 4648 base32, lowercased. */
+export const CLIENT_ID = /^[a-z2-7]{16}$/;
+/** A thread's id, which is its place. */
+export const THREAD_ID = /^th:[a-z2-7]{10}$/;
+const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
+
+export type MessageKind = 'message' | 'reply' | 'card' | 'ask' | 'error';
+export type CardState = 'running' | 'done' | 'failed';
+
+/** A refusal: the message says what's wrong in words; `status` is the HTTP answer. */
+export class CommsError extends Error {
+  constructor(message: string, readonly status = 400) { super(message); this.name = 'CommsError'; }
+}
+const fail = (m: string, status = 400): never => { throw new CommsError(m, status); };
+/** The one answer for a thread a caller may not see, or that doesn't exist: never says which. */
+export const NOT_YOURS = 'forbidden: that thread isn\'t one of yours';
+
+export interface Thread {
+  id: string;
+  agent: string;
+  member: string;
+  conversation: string;
+  title: string | null;
+  titled_by: 'agent' | 'member' | null;
+  project: string | null;
+  pinned: boolean;
+  archived: string | null;
+  opened: string;
+  last: string;
+  read_seq: number;
+  channel: number;
+  working_since: string | null;
+  queued_since: string | null;
+  last_failed: boolean;
+}
+
+export interface Message {
+  seq: number;
+  at: string;
+  kind: MessageKind;
+  from: string;
+  id: string;
+  /** The words (null once swept); for an error, its words from the fixed table. */
+  text: string | null;
+  card: Record<string, unknown> | null;
+  run: string | null;
+  delivered: boolean | null;
+}
+
+// ─── Keys ──────────────────────────────────────────────────────────────────────
+
+function regularFile(path: string): boolean {
+  try { return lstatSync(path).isFile(); } catch { return false; }
+}
+
+/** A secret file made at first use, mode 0600, by link so two first uses can't both win. */
+function firstUse(home: string, name: string, make: (tmp: string) => void): string {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const path = join(home, name);
+  if (!existsSync(path)) {
+    const tmp = join(home, `.${name}.${process.pid}.${randomBytes(4).toString('hex')}`);
+    try {
+      make(tmp);
+      chmodSync(tmp, 0o600);
+      try { linkSync(tmp, path); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    } finally { rmSync(tmp, { force: true }); }
+  }
+  if (!regularFile(path)) fail(`${name} isn't a plain file; refusing to use it`, 503);
+  chmodSync(path, 0o600);
+  return path;
+}
+
+const salts = new Map<string, Buffer>();
+/** comms.salt: the key a thread's place and a message's keyed hash are made with. */
+export function commsSalt(home: string): Buffer {
+  const kept = salts.get(home);
+  if (kept) return kept;
+  const path = firstUse(home, COMMS_SALT, (tmp) => {
+    const fd = openSync(tmp, 'wx', 0o600);
+    try { writeSync(fd, randomBytes(32)); } finally { closeSync(fd); }
+  });
+  const salt = readFileSync(path);
+  if (salt.length !== 32) fail(`${COMMS_SALT} isn't 32 bytes; refusing to use it`, 503);
+  salts.set(home, salt);
+  return salt;
+}
+
+const base32 = (buf: Buffer): string => {
+  let bits = 0, value = 0, out = '';
+  for (const b of buf) {
+    value = (value << 8) | b; bits += 8;
+    while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+};
+
+/** A thread's place: `th:` and 10 base32 characters of an HMAC over the member, the agent and the first message's id. */
+export function placeFor(home: string, member: string, agent: string, id: string): string {
+  return `th:${base32(createHmac('sha256', commsSalt(home)).update(`${member}\0${agent}\0${id}`).digest()).slice(0, 10)}`;
+}
+
+/** A keyed hash of a message's words: how a repeat is known without keeping a plain hash of them. */
+export function wordsHash(home: string, text: string): string {
+  return createHmac('sha256', commsSalt(home)).update(`words\0${text}`).digest('hex');
+}
+
+/** The age programs and the comms identity's recipient, made at first use; a 503 without age. */
+const recipients = new Map<string, string>();
+function ageKeys(home: string, env: NodeJS.ProcessEnv): { age: string; key: string; recipient: string } {
+  let age: string;
+  let keygen: string;
+  try {
+    age = findProgram('age', env);
+    try { keygen = findProgram('age-keygen', env); } catch {
+      keygen = join(dirname(age), 'age-keygen');
+      if (!existsSync(keygen)) throw new Error('no age-keygen');
+    }
+  } catch { return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503); }
+  const key = firstUse(home, COMMS_KEY, (tmp) => {
+    const r = spawnSync(keygen, ['-o', tmp], { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf-8' });
+    if (r.status !== 0) fail(`age-keygen failed: ${(r.stderr || r.error?.message || `exit ${r.status}`).trim()}`, 503);
+  });
+  let recipient = recipients.get(key);
+  if (!recipient) {
+    const r = spawnSync(keygen, ['-y', key], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+    recipient = (r.stdout ?? '').trim();
+    if (r.status !== 0 || !/^age1[0-9a-z]{20,}$/.test(recipient)) fail('age-keygen couldn\'t read the comms key\'s recipient', 503);
+    recipients.set(key, recipient);
+  }
+  return { age, key, recipient };
+}
+
+/** Whether the age programs are here: a send is refused without them, before anything is stored. */
+export function ageReady(home: string, env: NodeJS.ProcessEnv): boolean {
+  try { ageKeys(home, env); return true; } catch { return false; }
+}
+
+function encrypt(home: string, env: NodeJS.ProcessEnv, text: string): Buffer {
+  const k = ageKeys(home, env);
+  const r = spawnSync(k.age, ['-e', '-r', k.recipient], { input: Buffer.from(text, 'utf-8'), stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 4 * MAX_TEXT + 65_536 });
+  if (r.status !== 0 || !r.stdout?.length) fail('age couldn\'t encrypt the message', 503);
+  return r.stdout as Buffer;
+}
+
+/** One message's words, decrypted by its own age process, without blocking the daemon; null when age can't. */
+function decrypt(home: string, env: NodeJS.ProcessEnv, blob: Buffer): Promise<string | null> {
+  const k = ageKeys(home, env);
+  return new Promise((resolve) => {
+    const out: Buffer[] = [];
+    let size = 0;
+    const child = spawn(k.age, ['-d', '-i', k.key], { stdio: ['pipe', 'pipe', 'ignore'] });
+    child.stdout.on('data', (c: Buffer) => { size += c.length; if (size <= 4 * MAX_TEXT + 65_536) out.push(c); });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => resolve(code === 0 ? Buffer.concat(out).toString('utf-8') : null));
+    child.stdin.on('error', () => {});
+    child.stdin.end(blob);
+  });
+}
+
+/** Each of `items` through `f`, at most `n` at once, in order. */
+async function pool<T, U>(items: T[], n: number, f: (x: T) => Promise<U>): Promise<U[]> {
+  const out: U[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await f(items[i]); }
+  }));
+  return out;
+}
+
+// ─── The stores ────────────────────────────────────────────────────────────────
+
+const THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_threads (
+    id            TEXT PRIMARY KEY,
+    agent         TEXT NOT NULL,
+    member        TEXT NOT NULL,
+    conversation  TEXT NOT NULL,
+    title         TEXT,
+    titled_by     TEXT,
+    project       TEXT,
+    pinned        INTEGER NOT NULL DEFAULT 0,
+    archived      TEXT,
+    opened        TEXT NOT NULL,
+    last          TEXT NOT NULL,
+    read_seq      INTEGER NOT NULL DEFAULT 0,
+    channel       INTEGER NOT NULL,
+    first_id      TEXT NOT NULL,
+    first_hash    TEXT NOT NULL,
+    working_since TEXT,
+    queued_since  TEXT,
+    last_failed   INTEGER NOT NULL DEFAULT 0,
+    stop          INTEGER NOT NULL DEFAULT 0,
+    in_front      INTEGER,
+    updated       INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS comms_threads_member ON comms_threads (member, agent);
+  CREATE INDEX IF NOT EXISTS comms_threads_conversation ON comms_threads (conversation);
+  CREATE INDEX IF NOT EXISTS comms_threads_updated ON comms_threads (updated);
+  CREATE TABLE IF NOT EXISTS comms_deleted (
+    id      TEXT PRIMARY KEY,
+    member  TEXT NOT NULL,
+    agent   TEXT NOT NULL,
+    channel INTEGER NOT NULL,
+    at      TEXT NOT NULL
+  );`;
+
+const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
+    thread    TEXT NOT NULL,
+    seq       INTEGER NOT NULL,
+    at        TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    sender    TEXT NOT NULL,
+    id        TEXT NOT NULL,
+    hash      TEXT,
+    text      BLOB,
+    card_json TEXT,
+    run       TEXT,
+    delivered INTEGER,
+    PRIMARY KEY (thread, seq)
+  );
+  CREATE INDEX IF NOT EXISTS comms_messages_id ON comms_messages (thread, kind, id);
+  CREATE INDEX IF NOT EXISTS comms_messages_at ON comms_messages (at);`;
+
+const threadsReady = new Set<string>();
+function withThreads<T>(home: string, f: (db: Database) => T): T {
+  return withHouseholdDb(home, (db) => {
+    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); threadsReady.add(home); }
+    return f(db);
+  });
+}
+
+function openMessages(home: string): Database {
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const path = join(home, COMMS_DB);
+  const fresh = !existsSync(path);
+  const db = new BetterSqlite3(path);
+  if (fresh) chmodSync(path, 0o600);
+  db.pragma('busy_timeout = 5000');
+  // Rollback journal with secure_delete, as audit.db: a swept or deleted message's pages are zeroed.
+  db.pragma('journal_mode = DELETE');
+  db.pragma('secure_delete = ON');
+  db.exec(MESSAGES_SCHEMA);
+  return db;
+}
+function withMessages<T>(home: string, f: (db: Database) => T): T {
+  const db = openMessages(home);
+  try { return f(db); } finally { db.close(); }
+}
+
+interface ThreadRow {
+  id: string; agent: string; member: string; conversation: string; title: string | null; titled_by: string | null; project: string | null;
+  pinned: number; archived: string | null; opened: string; last: string; read_seq: number; channel: number; first_id: string; first_hash: string;
+  working_since: string | null; queued_since: string | null; last_failed: number; stop: number; in_front: number | null; updated: number;
+}
+const threadOf = (r: ThreadRow): Thread => ({
+  id: r.id, agent: r.agent, member: r.member, conversation: r.conversation, title: r.title,
+  titled_by: r.titled_by === 'agent' || r.titled_by === 'member' ? r.titled_by : null, project: r.project, pinned: r.pinned === 1,
+  archived: r.archived, opened: r.opened, last: r.last, read_seq: r.read_seq, channel: r.channel,
+  working_since: r.working_since, queued_since: r.queued_since, last_failed: r.last_failed === 1,
+});
+
+// ─── Who may ───────────────────────────────────────────────────────────────────
+
+/** Whether a member owns an agent (owners.md). */
+export const owns = (m: Member | undefined, agent: string): boolean =>
+  !!m && (m.agents === '*' || m.agents.includes(agent));
+
+/**
+ * The thread `id`, for `member`: only when it's theirs and they own its agent. Anything else (another member's, an
+ * agent they don't own, one that never existed) is the same 403; their own deleted thread is a 404.
+ */
+export function threadFor(h: Household, member: Member | undefined, id: string): Thread {
+  if (!member || !THREAD_ID.test(id)) return fail(NOT_YOURS, 403);
+  return withThreads(h.home, (db) => {
+    const r = db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(id) as ThreadRow | undefined;
+    if (r && r.member === member.person && owns(member, r.agent) && h.agents.includes(r.agent)) return threadOf(r);
+    if (!r) {
+      const d = db.prepare('SELECT member, agent FROM comms_deleted WHERE id = ?').get(id) as { member: string; agent: string } | undefined;
+      if (d && d.member === member.person && owns(member, d.agent)) return fail('not-found: you deleted that thread', 404);
+    }
+    return fail(NOT_YOURS, 403);
+  });
+}
+
+/** Whether `person` may still see thread `id` (a live stream asks before each event). */
+export function stillSees(h: Household, person: string, id: string): boolean {
+  const m = h.members.find((x) => x.person === person);
+  try { threadFor(h, m, id); return true; } catch { return false; }
+}
+
+// ─── Reading ───────────────────────────────────────────────────────────────────
+
+interface MsgRow { seq: number; at: string; kind: string; sender: string; id: string; text: Buffer | null; card_json: string | null; run: string | null; delivered: number | null }
+
+/** An error message's words: a fixed table, never stored (comms.md, section 7). */
+export function errorWords(code: string, agentName: string, reason: string | undefined): string {
+  const r = reason ? reason.replace(/^[a-z-]+: /, '') : '';
+  switch (code) {
+    case 'no-runtime': return 'loom can\'t reach any agent: the runtime isn\'t installed.';
+    case 'refused': return `${agentName} didn't get that: ${r || 'the runtime refused it'}.`;
+    case 'start-failed': return `${agentName} couldn't start: ${r || 'no reason given'}.`;
+    case 'busy': return `${agentName} is busy with other work; this is waiting its turn.`;
+    case 'loop': return `Paused: ${agentName} was repeating itself.`;
+    case 'post-failed': return `${agentName}'s reply couldn't be shown: ${r || 'no reason given'}.`;
+    case 'no-age': return 'loom can\'t keep messages safely right now: the age program is missing.';
+    default: return `${agentName} couldn't be reached: ${r || 'something went wrong'}.`;
+  }
+}
+
+const label = (agent: string) => agent[0].toUpperCase() + agent.slice(1);
+
+async function messageOf(home: string, env: NodeJS.ProcessEnv, agent: string, r: MsgRow): Promise<Message> {
+  const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
+  let text: string | null = null;
+  if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined);
+  else if (r.text) text = await decrypt(home, env, r.text);
+  return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1 };
+}
+
+/** A thread's messages: the newest PAGE, or those after `after`, or the PAGE before `before`; oldest first. */
+export async function messagesOf(h: Household, env: NodeJS.ProcessEnv, t: Thread, at: { after?: number; before?: number } = {}): Promise<Message[]> {
+  const rows = withMessages(h.home, (db) => {
+    if (at.after !== undefined) return db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq > ? ORDER BY seq LIMIT ?').all(t.id, at.after, SINCE_MAX) as MsgRow[];
+    if (at.before !== undefined) return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(t.id, at.before, PAGE) as MsgRow[]).reverse();
+    return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? ORDER BY seq DESC LIMIT ?').all(t.id, PAGE) as MsgRow[]).reverse();
+  });
+  return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(h.home, env, t.agent, r));
+}
+
+/** The thread's newest message seq (0 with none), and its newest reply's. */
+export function seqsOf(home: string, thread: string): { last: number; reply: number } {
+  if (!existsSync(join(home, COMMS_DB))) return { last: 0, reply: 0 };
+  return withMessages(home, (db) => {
+    const last = (db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0;
+    const reply = (db.prepare("SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ? AND kind = 'reply'").get(thread) as { n: number | null }).n ?? 0;
+    return { last, reply };
+  });
+}
+
+/** The digests of a thread's conversation, newest first: what stands in for swept words. */
+export function digestsFor(h: Household, t: Thread): Array<{ at: string; summary: string }> {
+  try { return digestsOf(agentDir(h, t.agent), t.conversation).map((d) => ({ at: d.at, summary: d.summary })).reverse(); } catch { return []; }
+}
+
+export interface ListedThread extends Thread { unread: boolean; working: boolean; last_seq: number }
+
+/** A member's threads with agents they own: pinned first, then by last; archived ones only when asked. */
+export function threadsOf(h: Household, member: Member, opts: { archived?: boolean } = {}): ListedThread[] {
+  const rows = withThreads(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE member = ? ORDER BY pinned DESC, last DESC').all(member.person) as ThreadRow[]);
+  const listed = rows.filter((r) => owns(member, r.agent) && h.agents.includes(r.agent) && (opts.archived ? r.archived !== null : r.archived === null))
+    .map((r) => {
+      const t = threadOf(r);
+      const s = seqsOf(h.home, t.id);
+      return { ...t, unread: s.reply > t.read_seq, working: t.working_since !== null, last_seq: s.last };
+    });
+  // Pinned, then unread, then the rest, each by last (comms.md, "Phone").
+  const rank = (t: ListedThread) => (t.pinned ? 0 : t.unread ? 1 : 2);
+  return listed.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+}
+
+// ─── Writing ───────────────────────────────────────────────────────────────────
+
+const nowIso = (now: Date) => now.toISOString();
+
+/** Change a thread's row, and tell the live streams (bump). */
+function touch(home: string, db: Database, id: string, sets: Record<string, unknown>, now: Date): void {
+  const keys = Object.keys(sets);
+  db.prepare(`UPDATE comms_threads SET ${[...keys.map((k) => `${k} = ?`), 'updated = ?'].join(', ')} WHERE id = ?`).run(...keys.map((k) => sets[k] as never), now.getTime(), id);
+  bump(home);
+}
+const withThreadsAt = withThreads;
+
+/**
+ * Tell this process's and the other listeners' live streams that a thread moved (src/ui/comms-live.ts watches the
+ * tick file and reads comms_threads.updated). The tick holds a time, never a thread or a word.
+ */
+export function bump(home: string): void {
+  if (!home) return;
+  try { writeFileSync(join(home, 'comms.tick'), String(Date.now())); } catch { /* the streams' fallback poll still finds it */ }
+  for (const f of listeners) f();
+}
+const listeners = new Set<() => void>();
+/** A same-process listener for thread moves (the live streams). */
+export function onBump(f: () => void): () => void { listeners.add(f); return () => listeners.delete(f); }
+
+function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean }, now: Date): number {
+  const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
+  return withMessages(home, (db) => db.transaction(() => {
+    const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
+    db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+      thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
+      m.delivered === undefined ? null : m.delivered ? 1 : 0);
+    return seq;
+  }).immediate());
+}
+
+/** Whether `slug` is one of `agent`'s live projects. */
+export function liveProject(h: Household, agent: string, slug: string): boolean {
+  const db = openConversationsReadonly(agentDir(h, agent));
+  if (!db) return false;
+  try { return projectLookup(db).resolve(slug) === slug; } finally { db.close(); }
+}
+
+const PROJECT = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function checkText(text: unknown): string {
+  if (typeof text !== 'string' || text.length < 1 || text.length > MAX_TEXT) return fail(`bad-input: text is 1-${MAX_TEXT} characters`);
+  return text;
+}
+function checkId(id: unknown): string {
+  if (typeof id !== 'string' || !CLIENT_ID.test(id)) return fail('bad-input: id is 16 characters of base32 (a-z, 2-7)');
+  return id;
+}
+
+/**
+ * Open a thread with its first message (POST /comms/new). The same member, agent, id and text answer the same thread;
+ * the same id with another agent or other text is a 409. Answers the thread, its first message's seq, and whether it's new.
+ */
+export function openThread(h: Household, env: NodeJS.ProcessEnv, member: Member, raw: Record<string, unknown>, now: Date = new Date()): { thread: Thread; seq: number; created: boolean } {
+  const agent = raw.agent;
+  if (typeof agent !== 'string' || !h.agents.includes(agent) || !owns(member, agent)) return fail('forbidden: you can open threads only with an agent you own', 403);
+  const id = checkId(raw.id);
+  const text = checkText(raw.text);
+  let project: string | null = null;
+  if (raw.project !== undefined && raw.project !== null) {
+    if (typeof raw.project !== 'string' || !PROJECT.test(raw.project) || !liveProject(h, agent, raw.project)) return fail(`bad-input: ${String(raw.project)} isn't one of ${agent}'s live projects`);
+    project = raw.project;
+  }
+  const hash = wordsHash(h.home, text);
+  const place = placeFor(h.home, member.person, agent, id);
+  const existing = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE member = ? AND first_id = ?').all(member.person, id) as ThreadRow[]);
+  if (existing.length) {
+    const r = existing[0];
+    if (r.agent !== agent || r.first_hash !== hash) return fail('conflict: that message id already opened another thread', 409);
+    const first = withMessages(h.home, (db) => db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'message' AND id = ?").get(r.id, id) as { seq: number } | undefined);
+    return { thread: threadOf(r), seq: first?.seq ?? 1, created: false };
+  }
+  if (withThreadsAt(h.home, (db) => db.prepare('SELECT 1 FROM comms_deleted WHERE id = ?').get(place))) return fail('conflict: that message id opened a thread you deleted', 409);
+  if (!ageReady(h.home, env)) return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503);
+  const at = nowIso(now);
+  const thread = withThreadsAt(h.home, (db) => db.transaction(() => {
+    const channel = 1 + Math.max(
+      (db.prepare('SELECT MAX(channel) AS n FROM comms_threads WHERE member = ? AND agent = ?').get(member.person, agent) as { n: number | null }).n ?? 0,
+      (db.prepare('SELECT MAX(channel) AS n FROM comms_deleted WHERE member = ? AND agent = ?').get(member.person, agent) as { n: number | null }).n ?? 0);
+    db.prepare(`INSERT INTO comms_threads (id, agent, member, conversation, project, opened, last, channel, first_id, first_hash, updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(place, agent, member.person, conversationId(agent, COMMS_VENUE, place), project, at, at, channel, id, hash, now.getTime());
+    return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(place) as ThreadRow);
+  }).immediate());
+  const seq = append(h.home, env, thread.id, { kind: 'message', from: member.person, id, text, hash, delivered: false }, now);
+  bump(h.home);
+  return { thread, seq, created: true };
+}
+
+/**
+ * A member's message into their thread (POST /comms/<thread>/send). The same id with the same words answers the first
+ * message's seq (`repeat`), and whether it was delivered; with other words, a 409.
+ */
+export function addMemberMessage(h: Household, env: NodeJS.ProcessEnv, t: Thread, raw: Record<string, unknown>, now: Date = new Date()): { seq: number; repeat: boolean; delivered: boolean } {
+  if (t.archived) return fail('conflict: that thread is archived: unarchive it first', 409);
+  const id = checkId(raw.id);
+  const text = checkText(raw.text);
+  const hash = wordsHash(h.home, text);
+  const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, hash, delivered FROM comms_messages WHERE thread = ? AND kind = 'message' AND id = ?").get(t.id, id) as { seq: number; hash: string | null; delivered: number | null } | undefined);
+  if (prior) {
+    if (prior.hash !== hash) return fail('conflict: that message id was already sent with other words', 409);
+    return { seq: prior.seq, repeat: true, delivered: prior.delivered === 1 };
+  }
+  if (!ageReady(h.home, env)) {
+    append(h.home, env, t.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'no-age' } }, now);
+    bump(h.home);
+    return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503);
+  }
+  const seq = append(h.home, env, t.id, { kind: 'message', from: t.member, id, text, hash, delivered: false }, now);
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { last: nowIso(now) }, now));
+  return { seq, repeat: false, delivered: false };
+}
+
+/** A member message's words, to deliver again (Send again); null once swept. */
+export async function memberWords(h: Household, env: NodeJS.ProcessEnv, t: Thread, seq: number): Promise<string | null> {
+  const r = withMessages(h.home, (db) => db.prepare("SELECT text FROM comms_messages WHERE thread = ? AND seq = ? AND kind = 'message'").get(t.id, seq) as { text: Buffer | null } | undefined);
+  return r?.text ? decrypt(h.home, env, r.text) : null;
+}
+
+/** What delivering a member's message came to: delivered or not, and an error message when it failed. */
+export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { delivered: boolean; body?: string; error?: { code: string; reason?: string } }, now: Date = new Date()): void {
+  withMessages(h.home, (db) => db.prepare("UPDATE comms_messages SET delivered = ? WHERE thread = ? AND seq = ? AND kind = 'message'").run(outcome.delivered ? 1 : 0, t.id, seq));
+  if (outcome.error) {
+    append(h.home, process.env, t.id, { kind: 'error', from: 'loom', id: `e${seq}`, card: { error: outcome.error.code, ...(outcome.error.reason ? { reason: outcome.error.reason.slice(0, 300) } : {}) } }, now);
+  }
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, {
+    last_failed: outcome.error ? 1 : 0,
+    queued_since: outcome.delivered && outcome.body === 'queued' ? nowIso(now) : null,
+  }, now));
+}
+
+/** Title (POST /comms/<thread>/title): the member's, 1-60 characters on one line. Answers the thread. */
+export function setTitle(h: Household, t: Thread, raw: unknown, by: 'member' | 'agent', now: Date = new Date()): Thread {
+  if (typeof raw !== 'string' || raw.trim().length < 1 || raw.length > MAX_TITLE || /[\r\n\u2028\u2029]/.test(raw) || /[\x00-\x1f\x7f]/.test(raw)) return fail(`bad-input: a title is 1-${MAX_TITLE} characters on one line`);
+  if (by === 'agent' && t.titled_by === 'member') return fail('conflict: the owner named this thread; the agent doesn\'t rename it', 409);
+  return withThreadsAt(h.home, (db) => { touch(h.home, db, t.id, { title: raw.trim(), titled_by: by }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
+}
+
+export function setProject(h: Household, t: Thread, raw: unknown, now: Date = new Date()): Thread {
+  let project: string | null = null;
+  if (raw !== null) {
+    if (typeof raw !== 'string' || !PROJECT.test(raw) || !liveProject(h, t.agent, raw)) return fail(`bad-input: ${String(raw)} isn't one of ${t.agent}'s live projects`);
+    project = raw;
+  }
+  return withThreadsAt(h.home, (db) => { touch(h.home, db, t.id, { project }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
+}
+
+export function setPinned(h: Household, t: Thread, pinned: boolean, now: Date = new Date()): void {
+  withThreadsAt(h.home, (db) => db.transaction(() => {
+    if (pinned && !t.pinned) {
+      const n = (db.prepare('SELECT COUNT(*) AS n FROM comms_threads WHERE member = ? AND pinned = 1').get(t.member) as { n: number }).n;
+      if (n >= MAX_PINS) fail(`conflict: you can pin ${MAX_PINS} threads at most; unpin one first`, 409);
+    }
+    touch(h.home, db, t.id, { pinned: pinned ? 1 : 0 }, now);
+  }).immediate());
+}
+
+export function setArchived(h: Household, t: Thread, archived: boolean, now: Date = new Date()): void {
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { archived: archived ? nowIso(now) : null, working_since: archived ? null : t.working_since }, now));
+}
+
+/** The member read up to `seq` (never backwards), with the thread in front now. */
+export function markRead(h: Household, t: Thread, seq: unknown, now: Date = new Date()): void {
+  if (!Number.isSafeInteger(seq) || (seq as number) < 0) fail('bad-input: seq is a whole number');
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: Math.max(t.read_seq, seq as number), in_front: now.getTime() }, now));
+}
+
+export function askStop(h: Household, t: Thread, now: Date = new Date()): void {
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { stop: 1 }, now));
+}
+
+/** Delete a thread: its row and every message, words included, at once; a tombstone stays. */
+export function deleteThread(h: Household, t: Thread, now: Date = new Date()): void {
+  withMessages(h.home, (db) => db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(t.id));
+  withThreadsAt(h.home, (db) => db.transaction(() => {
+    db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at) VALUES (?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now));
+    db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
+  }).immediate());
+  bump(h.home);
+}
+
+// ─── The runtime's side: the core venue adapter and activity ───────────────────
+
+/** The live thread a runtime call names: the agent's, by place; undefined when there's none (or it's archived). */
+function liveThreadAt(home: string, agent: string, place: string): ThreadRow | undefined {
+  if (!THREAD_ID.test(place)) return undefined;
+  const r = withThreadsAt(home, (db) => db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(place) as ThreadRow | undefined);
+  return r && r.agent === agent && r.archived === null ? r : undefined;
+}
+
+export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true } | { ok: false; reason: string; permanent?: true };
+
+/**
+ * POST /api/loom/comms/adapter (comms.md, section 1): the runtime's post, describe and status for venue `loom`, the
+ * same three calls a piece adapter answers on its send argv, with the same answers.
+ */
+export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): AdapterAnswer {
+  const { op, place, agent } = raw;
+  if (op !== 'post' && op !== 'describe' && op !== 'status') return fail('bad-input: op is post, describe or status');
+  if (typeof agent !== 'string' || !h.agents.includes(agent)) return fail('bad-input: agent names one of this household\'s agents');
+  if (typeof place !== 'string') return fail('bad-input: place is a thread');
+  const r = liveThreadAt(h.home, agent, place);
+  if (op === 'post') {
+    const text = raw.text;
+    if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s (archived, deleted, or never one)`, permanent: true };
+    if (typeof text !== 'string' || text.length < 1) return { ok: false, reason: 'the reply is empty', permanent: true };
+    if (text.length > MAX_TEXT) return { ok: false, reason: `the reply is over ${MAX_TEXT} characters`, permanent: true };
+    if (!ageReady(h.home, env)) {
+      append(h.home, env, r.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'post-failed', reason: 'the age program is missing, so loom couldn\'t keep it' } }, now);
+      bump(h.home);
+      return { ok: false, reason: 'the age programs aren\'t installed, so loom can\'t keep the reply' };
+    }
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}) }, now);
+    withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
+    return { ok: true, id: String(seq) };
+  }
+  if (op === 'describe') {
+    if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s`, permanent: true };
+    const name = r.member[0].toUpperCase() + r.member.slice(1);
+    const lines = [`A private thread in loom's app with your owner, ${name}. Only they read it. They can see your tool use as you work.`];
+    if (r.project) lines.push(`The thread is filed under the project ${r.project}.`);
+    if (!r.title) lines.push('Give the thread a short title once you know what it\'s about: call comms_title.');
+    return { ok: true, brief: lines, readers: [r.member] };
+  }
+  // status
+  const status = raw.status;
+  if (status !== 'working' && status !== 'done') return fail('bad-input: status is working or done');
+  if (!r) return { ok: true };
+  const stop = r.stop === 1;
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, {
+    working_since: status === 'working' ? (r.working_since ?? nowIso(now)) : null,
+    ...(status === 'working' ? { queued_since: null } : {}),
+    ...(stop ? { stop: 0 } : {}),
+  }, now));
+  return stop ? { ok: true, stop: true } : { ok: true };
+}
+
+const TOOL = /^[A-Za-z0-9_.:\-]{1,64}$/;
+const PRINTABLE_LINE = /^[^\x00-\x1f\x7f\u2028\u2029]*$/;
+
+/**
+ * POST /api/loom/comms/activity {conversation, run, cards}: the runtime's tool cards for a `loom` conversation's live
+ * thread. A card's id the thread already has updates its state; a new one is a message. Refused whole on any bad card.
+ */
+export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): { ok: true; added: number; updated: number } {
+  const { conversation, run, cards } = raw;
+  if (typeof conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(conversation)) return fail('bad-input: conversation is a cv- id');
+  if (typeof run !== 'string' || !run || run.length > 128) return fail('bad-input: run is the body run');
+  if (!Array.isArray(cards) || cards.length < 1 || cards.length > MAX_CARDS) return fail(`bad-input: cards is a list of 1-${MAX_CARDS}`);
+  const checked = cards.map((c, i) => {
+    const o = c as Record<string, unknown>;
+    if (!o || typeof o !== 'object') return fail(`bad-input: card ${i} isn't an object`);
+    const keys = Object.keys(o).filter((k) => !['id', 'at', 'tool', 'summary', 'state'].includes(k));
+    if (keys.length) return fail(`bad-input: card ${i} has unknown keys: ${keys.join(', ')}`);
+    if (typeof o.id !== 'string' || !/^[A-Za-z0-9_.:\-]{1,80}$/.test(o.id)) return fail(`bad-input: card ${i}'s id`);
+    if (typeof o.tool !== 'string' || !TOOL.test(o.tool)) return fail(`bad-input: card ${i}'s tool`);
+    if (typeof o.summary !== 'string' || o.summary.length < 1 || o.summary.length > MAX_SUMMARY || !PRINTABLE_LINE.test(o.summary)) return fail(`bad-input: card ${i}'s summary is 1-${MAX_SUMMARY} printable characters on one line`);
+    if (o.state !== 'running' && o.state !== 'done' && o.state !== 'failed') return fail(`bad-input: card ${i}'s state is running, done or failed`);
+    return { id: o.id, tool: o.tool, summary: o.summary, state: o.state as CardState };
+  });
+  const r = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE conversation = ?').get(conversation) as ThreadRow | undefined);
+  if (!r || r.archived !== null) return fail('conflict: that conversation has no live thread', 409);
+  let added = 0, updated = 0;
+  for (const c of checked) {
+    const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, card_json FROM comms_messages WHERE thread = ? AND kind = 'card' AND id = ?").get(r.id, c.id) as { seq: number; card_json: string } | undefined);
+    if (prior) {
+      const card = { ...JSON.parse(prior.card_json) as Record<string, unknown>, state: c.state };
+      withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET card_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify(card), r.id, prior.seq));
+      updated++;
+    } else {
+      append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state }, run }, now);
+      added++;
+    }
+  }
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), queued_since: null }, now));
+  return { ok: true, added, updated };
+}
+
+// ─── The sweep ─────────────────────────────────────────────────────────────────
+
+/**
+ * Every message's words older than `days` go (the row stays), hourly and at daemon start; a queued message with no
+ * working for BUSY_MS gains its busy line once. Answers how many messages lost their words.
+ */
+export function sweepComms(h: Household, now: Date = new Date()): number {
+  const days = h.commsDays ?? COMMS_DAYS_DEFAULT;
+  let swept = 0;
+  if (existsSync(join(h.home, COMMS_DB))) {
+    swept = withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET text = NULL WHERE text IS NOT NULL AND at < ?').run(new Date(now.getTime() - days * DAY_MS).toISOString()).changes);
+  }
+  if (existsSync(join(h.home, 'household.db'))) {
+    const late = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE queued_since IS NOT NULL AND queued_since < ?').all(new Date(now.getTime() - BUSY_MS).toISOString()) as ThreadRow[]);
+    for (const r of late) {
+      append(h.home, process.env, r.id, { kind: 'error', from: 'loom', id: `busy${now.getTime()}`, card: { error: 'busy' } }, now);
+      withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { queued_since: null }, now));
+    }
+  }
+  return swept;
+}
+
+/**
+ * The runtime paused a `loom` conversation as a loop (its `deferred` note turn, delivery.mjs loopNote): the thread
+ * says so in words (comms.md, section 7). Called by core's turn write.
+ */
+export function noteLoopPause(home: string, conversation: string, now: Date = new Date()): void {
+  const t = threadOfConversation(home, conversation);
+  if (!t) return;
+  append(home, process.env, t.id, { kind: 'error', from: 'loom', id: `loop${now.getTime()}`, card: { error: 'loop' } }, now);
+  withThreads(home, (db) => touch(home, db, t.id, { last_failed: 1, working_since: null }, now));
+}
+
+/** The thread for a conversation (the title tool, the hub): undefined when it has none. */
+export function threadOfConversation(home: string, conversation: string): Thread | undefined {
+  if (!existsSync(join(home, 'household.db'))) return undefined;
+  const r = withThreadsAt(home, (db) => db.prepare('SELECT * FROM comms_threads WHERE conversation = ?').get(conversation) as ThreadRow | undefined);
+  return r ? threadOf(r) : undefined;
+}
+
+/** Threads whose rows moved since `ms` (the live streams' cross-process read). */
+export function movedSince(home: string, ms: number): Array<{ id: string; member: string; updated: number }> {
+  if (!existsSync(join(home, 'household.db'))) return [];
+  return withThreadsAt(home, (db) => db.prepare('SELECT id, member, updated FROM comms_threads WHERE updated > ?').all(ms) as Array<{ id: string; member: string; updated: number }>);
+}
+
+/** A thread's state for the app: is the body working, did the last delivery fail, is it queued. */
+export function stateOf(t: Thread): { working: boolean; working_since: string | null; queued: boolean; failed: boolean } {
+  return { working: t.working_since !== null, working_since: t.working_since, queued: t.queued_since !== null, failed: t.last_failed };
+}

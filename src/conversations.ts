@@ -9,6 +9,7 @@ import {
   ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
   type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
+import { COMMS_VENUE, noteLoopPause } from './comms.js';
 import { coreVenue, markStrangers, noteModels, storeHome, venueLabel, venueOf, withHouseholdDb } from './household-store.js';
 import { isStranger } from './review.js';
 import { parseFeed, type Feed, type FeedItem } from './offers.js';
@@ -74,6 +75,10 @@ export function writeTurn(h: Household, role: Role, raw: unknown, nowMs: number 
   // Its model and harness, kept household-wide for good: redaction and grader families outlive the fold.
   noteModels(h.home, { model: turn.model, harness: turn.harness });
   const out = recordTurn(agentDir(h, agent), agent, turn, roleString(role));
+  // The runtime paused a Comms thread as a loop (its deferred note): the thread says so in words (comms.md, section 7).
+  if (role.kind === 'runtime' && turn.venue === COMMS_VENUE && turn.kind === 'note' && turn.outcome === 'deferred') {
+    try { noteLoopPause(h.home, out.conversation); } catch (e) { process.stderr.write(`loom: couldn't tell a Comms thread of its pause: ${(e as Error).name}\n`); }
+  }
   if (key !== undefined) {
     // writeTurn is synchronous, so nothing in this process writes between the lookup above and here.
     withHouseholdDb(h.home, (db) => db.transaction(() => {
