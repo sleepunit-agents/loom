@@ -645,3 +645,80 @@ html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top)
 @media (width < 64rem) {
   .v-toaster[data-slot="toast-viewport"] { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; left: 0; right: 0; margin-inline: auto; }
 }
+
+/* A phone's gestures (gestures.ts): the page pans only up and down, so a sideways swipe is the page's to take, never a
+   wait on its scroll; the dock (its keys and the strip over them) and Find's pill take a touch whole, for a swipe up.
+   A label for haptics (haptic.tsx HapticLabel, iOS only) lies over its key or button, unseen. */
+html[data-gestures] :is(main, .loom-top) { touch-action: pan-y pinch-zoom; }
+/* Every part of them: the dock's keys sit in a scroll area of its own, where a touch's own rules start again. */
+html[data-gestures] :is(.loom-dock-bar, .loom-dock-bar *, .loom-find-pill, .loom-find-pill *) { touch-action: none; }
+html[data-gestures][data-look="neon"] .loom-dock-bar { pointer-events: auto; }
+.loom-haptic { position: absolute; inset: 0; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
+/* The fallback lean (gestures.ts, where pages don't move) never widens the page. */
+html[data-gestures] .loom-page-clip { overflow-x: clip; }
+
+/* Page moves (transitions.ts): only the page (main) moves, and the page's name crossfades; the bar, the dock, the fade
+   over it and Find's pill stay where they are. Named only while a move runs (html[data-move]). Restrained and quick:
+   280 ms on the app's --enter curve; the old page gives way a quarter of the distance, a little dimmed, never faded out. */
+html[data-move] main { view-transition-name: loom-page; }
+html[data-move] .loom-top { view-transition-name: loom-bar; }
+html[data-move] .loom-top h1 { view-transition-name: loom-title; }
+html[data-move] .loom-dock-bar { view-transition-name: loom-dock; }
+html[data-move] .loom-fade { view-transition-name: loom-fade; }
+html[data-move] .loom-find-pill { view-transition-name: loom-pill; }
+::view-transition-old(root) { display: none; }
+::view-transition-new(root) { animation: none; }
+::view-transition-group(loom-page), ::view-transition-group(loom-bar), ::view-transition-group(loom-dock), ::view-transition-group(loom-fade), ::view-transition-group(loom-title) { animation: none; }
+::view-transition-old(loom-bar), ::view-transition-old(loom-dock), ::view-transition-old(loom-fade) { display: none; }
+::view-transition-new(loom-bar), ::view-transition-new(loom-dock), ::view-transition-new(loom-fade) { animation: none; }
+::view-transition-old(loom-page), ::view-transition-new(loom-page) {
+  mix-blend-mode: normal; animation-duration: 280ms; animation-timing-function: cubic-bezier(.2, .8, .2, 1); animation-fill-mode: both; }
+::view-transition-old(loom-title), ::view-transition-new(loom-title), ::view-transition-old(loom-pill), ::view-transition-new(loom-pill) {
+  animation-duration: 280ms; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+html:is([data-move="right"], [data-move="push"])::view-transition-old(loom-page) { animation-name: loom-move-give-left; }
+html:is([data-move="right"], [data-move="push"])::view-transition-new(loom-page) { animation-name: loom-move-in-right; }
+html[data-move="left"]::view-transition-old(loom-page) { animation-name: loom-move-give-right; }
+html[data-move="left"]::view-transition-new(loom-page) { animation-name: loom-move-in-left; }
+/* A pop: the page you were on slides off to the right, over the one it came from. */
+html[data-move="pop"]::view-transition-old(loom-page) { animation-name: loom-move-off-right; z-index: 1; }
+html[data-move="pop"]::view-transition-new(loom-page) { animation-name: loom-move-under-left; }
+@keyframes loom-move-give-left { to { transform: translateX(-25%); filter: brightness(.72); } }
+@keyframes loom-move-give-right { to { transform: translateX(25%); filter: brightness(.72); } }
+@keyframes loom-move-in-right { from { transform: translateX(100%); } }
+@keyframes loom-move-in-left { from { transform: translateX(-100%); } }
+@keyframes loom-move-off-right { to { transform: translateX(100%); } }
+@keyframes loom-move-under-left { from { transform: translateX(-25%); filter: brightness(.72); } }
+/* Neon: the incoming name catches once, a single frame, as a tube does. */
+html[data-look="neon"]::view-transition-new(loom-title) { animation-name: loom-move-name-in, loom-move-flick; animation-timing-function: cubic-bezier(.2, .8, .2, 1), steps(1); }
+@keyframes loom-move-name-in { from { opacity: 0; } }
+@keyframes loom-move-flick { 0%, 40%, 100% { filter: none; } 34% { filter: brightness(1.7); } }
+/* Reduced motion: a short crossfade, nothing slides. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-move]::view-transition-old(loom-page) { animation: loom-move-fade-out 140ms ease both; z-index: auto; }
+  html[data-move]::view-transition-new(loom-page) { animation: loom-move-name-in 140ms ease both; }
+  html[data-move]::view-transition-new(loom-title) { animation: loom-move-name-in 140ms ease both; }
+}
+@keyframes loom-move-fade-out { to { opacity: 0; } }
+
+/* Dock swap (dock-swap.tsx): the old keys slide down off the screen and the new ones rise in, 25 ms apart, about 250 ms
+   in all for four keys (six: 325 ms, inside dock-swap.tsx's LEAVE_MS); going back, from the other end. The two sets share one place; while they swap nothing clips them. */
+.loom-dock-swap { display: grid; justify-items: center; }
+.loom-dock-swap > * { grid-area: 1 / 1; min-width: 0; }
+.loom-dock-gone { pointer-events: none; }
+.loom-dock-swap[data-swap] :is(.v-dock__scroll, [data-part="viewport"], [data-radix-scroll-area-viewport]) { overflow: visible !important; }
+.loom-dock-swap [data-part="lane"]:nth-child(1) { --i: 0; } .loom-dock-swap [data-part="lane"]:nth-child(2) { --i: 1; }
+.loom-dock-swap [data-part="lane"]:nth-child(3) { --i: 2; } .loom-dock-swap [data-part="lane"]:nth-child(4) { --i: 3; }
+.loom-dock-swap [data-part="lane"]:nth-child(5) { --i: 4; } .loom-dock-swap [data-part="lane"]:nth-child(n+6) { --i: 5; }
+.loom-dock-swap [data-part="lane"]:nth-last-child(1) { --j: 0; } .loom-dock-swap [data-part="lane"]:nth-last-child(2) { --j: 1; }
+.loom-dock-swap [data-part="lane"]:nth-last-child(3) { --j: 2; } .loom-dock-swap [data-part="lane"]:nth-last-child(4) { --j: 3; }
+.loom-dock-swap [data-part="lane"]:nth-last-child(5) { --j: 4; } .loom-dock-swap [data-part="lane"]:nth-last-child(n+6) { --j: 5; }
+.loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-dock-out 150ms cubic-bezier(.4, 0, 1, 1) calc(var(--i, 0) * 25ms) both; }
+.loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-dock-in 150ms cubic-bezier(.2, .8, .2, 1) calc(var(--i, 0) * 25ms + 50ms) both; }
+.loom-dock-swap[data-swap="back"] .loom-dock-gone [data-part="lane"] { animation-delay: calc(var(--j, 0) * 25ms); }
+.loom-dock-swap[data-swap="back"] .loom-dock-now [data-part="lane"] { animation-delay: calc(var(--j, 0) * 25ms + 50ms); }
+@keyframes loom-dock-out { to { transform: translateY(calc(var(--dock-item-size, 52px) + 120px)); } }
+@keyframes loom-dock-in { from { transform: translateY(calc(var(--dock-item-size, 52px) + 120px)); } }
+@media (prefers-reduced-motion: reduce) {
+  .loom-dock-swap[data-swap] .loom-dock-gone [data-part="lane"] { animation: loom-move-fade-out 120ms ease both; }
+  .loom-dock-swap[data-swap] .loom-dock-now [data-part="lane"] { animation: loom-move-name-in 120ms ease both; }
+}
