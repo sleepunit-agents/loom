@@ -111,7 +111,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     }
   }, 60_000);
 
-  // At 390 px Neon's status bar is the phone bar (phone-bar.tsx, t-1849); wider, .loom-status.
+  // Neon's bar is the phone bar (phone-bar.tsx, t-1849) at every width; wider than a phone, loom's system bar over it.
   it('Neon\'s chrome: a status bar only under Neon, no sideways scroll at 390 px, none with reduced motion, no sound unless on', async () => {
     const sounds: string[] = [];
     const neon = await device('reduce', { 'loom-look': 'neon' });
@@ -119,7 +119,7 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     for (const path of ['/', '/places', '/setup', '/inbox', '/appearance']) {
       await neon.goto(`${base}${path}`);
       await neon.locator('.loom-top h1').waitFor();
-      const m = await neon.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, bar: !!document.querySelector('.loom-status, .loom-pbar'), arrive: 'arrive' in document.documentElement.dataset }));
+      const m = await neon.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth, bar: !!document.querySelector('.loom-pbar'), arrive: 'arrive' in document.documentElement.dataset }));
       expect(m.sw, path).toBeLessThanOrEqual(m.cw);
       expect(m.bar, path).toBe(true);
       expect(m.arrive, `${path}: no power-on with reduced motion`).toBe(false);
@@ -136,6 +136,6 @@ describe.runIf(built && chrome)('a look chosen on one device is the look on anot
     await plain.goto(`${base}/`);
     await plain.locator('.loom-top h1').waitFor();
     expect((await plain.evaluate(() => document.documentElement.dataset.look))).toBe('000h');
-    expect(await plain.evaluate(() => !!document.querySelector('.loom-status, .loom-pbar'))).toBe(false);
+    expect(await plain.evaluate(() => !!document.querySelector('.loom-pbar'))).toBe(false);
   }, 90_000);
 });

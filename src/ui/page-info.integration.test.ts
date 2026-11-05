@@ -3,7 +3,7 @@
  * but right now it's also wasting vertical space"), in a real browser at 390 px with touch: no line under the bar; the
  * page's name is a button ("About <page>") exactly when the page has a line or an intro, and opens a sheet with the
  * line first, then the intro; a page without either has a plain name; a sub-page keeps its way back beside the name;
- * nothing is wider than 390 px; and 000h and a wide screen keep their header, its line and its ⓘ.
+ * nothing is wider than 390 px; a wide screen under Neon does the same; 000h keeps its header, its line and its ⓘ.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -178,7 +178,19 @@ describe.runIf(built && chrome)('a page\'s info behind its name in Neon\'s phone
     await p.context().close();
   }, 60_000);
 
-  for (const [look, width] of [['000h', 390], ['neon', 1280]] as const) {
+  it('neon at 1280 px: the same as a phone, the name is the way to the page\'s line and intro (desk-bar.integration.test.ts)', async () => {
+    const p = await device({ look: 'neon', width: 1280 });
+    await open(p, '/members');
+    expect(await p.locator('.loom-top h1').count()).toBe(1);
+    expect(await p.locator('.loom-top p', { hasText: 'The people who own this household' }).count()).toBe(0);
+    await p.getByRole('button', { name: 'About Members' }).click();
+    const sheet = p.getByRole('dialog');
+    await sheet.waitFor();
+    expect(await sheet.innerText()).toContain('The people who own this household');
+    await p.context().close();
+  }, 60_000);
+
+  for (const [look, width] of [['000h', 390], ['000h', 1280]] as const) {
     it(`${look} at ${width} px: the header as it was, its line under the title and its ⓘ`, async () => {
       const p = await device({ look, width });
       await open(p, '/members');

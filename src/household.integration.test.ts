@@ -1637,6 +1637,9 @@ esac
     expect(has(await data(jonC, '/inbox'))).toBe(true);
     for (const path of ['/inbox', '/', '/find?q=backup', '/find?q=nightly', '/a/mark/setup']) expect(has(await data(lorenC, path)), path).toBe(false);
     expect(has(await data(jonC, '/a/art/setup'))).toBe(true);
+    // The system bar's backup glyph (web/src/system-bar.tsx) is the household owner's too: never in an agent owner's shell.
+    expect((await data(jonC, '/')).chrome.shell.backup).toMatchObject({ tone: 'bad', text: 'failed', href: '/a/art/setup' });
+    expect((await data(lorenC, '/')).chrome.shell.backup).toBeUndefined();
   });
 
   it('an agent owner\'s live stream hears of their agents only: art\'s memory moving is no news to Loren', async () => {

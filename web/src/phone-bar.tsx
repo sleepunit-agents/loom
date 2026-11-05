@@ -1,7 +1,8 @@
 // Neon Noir's bar on a phone (Jonathan, 2026-11-04, t-1849): the phone's own status bar is right above it, so it reads
 // as part of it. The page's name, small, under the phone's clock on the left (it replaces the big icon-and-title header
 // there); LOOM//OS and the needs-you count under the status icons on the right; between them a slow ticker of what's
-// going on. No clock of its own: the phone shows one. Wider screens keep the status bar and the big header (App.tsx).
+// going on. No clock of its own: the phone shows one. Wider screens wear the same bar, under loom's own system bar
+// (system-bar.tsx, Jonathan 2026-11-05), where the ticker has more room.
 //
 // The ticker (his rules): only its middle moves, the needs-you count never scrolls away; it moves only when its words
 // don't fit, slowly (TICK_PX_S); it stops while it's touched and while the tab is hidden; under reduced motion it stands

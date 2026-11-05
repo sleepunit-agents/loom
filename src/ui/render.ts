@@ -51,6 +51,9 @@ export interface Chrome {
   agent: string;
   nav: Array<{ label: string; href: string; current: boolean; piece: boolean }>;
   clock: string;
+  /** loom's time zone (uiTimeZone: LOOM_TIMEZONE, else TZ), the one every page says a time in, for the app's own clock
+   * (web/src/system-bar.tsx; loom's time itself is each answer's Date header, so the page's ETag holds). */
+  tz?: string;
   csrf: string;
   /** The one-time result of an action; `from` names the piece that sent it. */
   flash?: { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } };
@@ -60,7 +63,7 @@ export interface Chrome {
 }
 
 /** An agent as the shell draws it: its mark is its initial on its color. */
-export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string }
+export interface AgentView { id: string; label: string; bg: string; fg: string; href: string; current: boolean; /** What waits on this agent: its proposals, and asks that name it. */ asks?: number; /** Its status line on the Scope sheet, e.g. "active 42m ago". */ sub?: string; /** A piece reports it at work (the system bar's count). */ working?: true }
 
 export interface Shell {
   owner: string;
@@ -80,7 +83,10 @@ export interface Shell {
   core: Array<{ label: string; href: string; current: boolean; count?: number }>;
   /** Installed pieces with a tab, each with its tile's value or tone. */
   /** kind: a place (Places) or a setting (Setup), from the piece's tab.kind or the catalog. */
-  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Accent }>;
+  /** alerts: how many of its asks say something's wrong (kind 'alert'), for the system bar's icons (Boxes). */
+  pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Accent; alerts?: number }>;
+  /** The nightly backup (src/backup.ts backupRow): a household owner's only, never an agent owner's. */
+  backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
   /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance' or ''. */
   tab: string;
 }

@@ -44,16 +44,18 @@ export interface PanelRow {
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
 export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
-export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string }
+export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string; working?: true }
 export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };
   core: { label: string; href: string; current: boolean; count?: number }[];
-  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint }[];
+  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint; alerts?: number }[];
+  /** The nightly backup, a household owner's (src/backup.ts backupRow). */
+  backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
-export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell;
+export interface Chrome { agent: string; nav: { label: string; href: string; current: boolean; piece: boolean }[]; clock: string; tz?: string; csrf: string; flash?: Flash; skipped: string[]; shell?: Shell;
   /** The signed-in person's Appearance (look.ts), as loom keeps it. */
   prefs?: Prefs }
 export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];
@@ -84,10 +86,21 @@ export function pageHref(link: string, source: Source): string {
 
 // ---- reaching loom --------------------------------------------------------------------------------
 
+/** How far loom's clock is from this device's (ms), from the Date header of loom's latest answer (a kept copy, answered
+ * by the service worker, says nothing about now). The system bar's clock is loom's (system-bar.tsx). */
+let loomSkew = 0;
+export const loomNow = () => Date.now() + loomSkew;
+function noteLoomTime(r: Response) {
+  const at = Date.parse(r.headers.get('date') ?? '');
+  // The header is to the second: its middle is the best guess.
+  if (!r.headers.has('x-loom-saved-at') && Number.isFinite(at)) loomSkew = at + 500 - Date.now();
+}
+
 /** A view; `savedAt` when loom couldn't be reached and the service worker answered with its kept copy (src/ui/pwa.ts). */
 /** A view; `redirect` when loom sent it elsewhere (the address to show, or the sign-in page to load whole). */
 export async function fetchView(url: string, etag?: string): Promise<{ status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }> {
   const r = await fetch(url, { headers: { accept: 'application/json', ...(etag ? { 'if-none-match': etag } : {}) }, credentials: 'same-origin' });
+  noteLoomTime(r);
   if (r.status === 304) return { status: 304, etag };
   const landed = r.redirected ? new URL(r.url) : null;
   const redirect = landed && landed.origin === location.origin ? landed.pathname + landed.search : undefined;

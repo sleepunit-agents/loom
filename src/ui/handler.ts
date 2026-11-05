@@ -34,7 +34,7 @@
  * message is kept in memory under a random id for a minute.
  */
 import { changed, openStream, type Sees } from './live.js';
-import { backupFyi, backupProblem } from '../backup.js';
+import { backupFyi, backupProblem, backupRow } from '../backup.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -67,8 +67,8 @@ import { agentBio, agentSetup, householdAct, householdHome, householdMembers, ho
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
-import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type HomeAsk, type HomeTile, type Source } from './render.js';
-import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type Page, type Section } from './vocab.js';
+import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 
 const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
@@ -718,10 +718,9 @@ function pieceAsks(pieces: PieceInfo[], env: NodeJS.ProcessEnv): HomeAsk[] {
  * and what loom itself knows: when it was last on the tape, and where.
  */
 function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { label: string; bg: string; fg: string }>, nowMs: number): AgentCard[] {
-  const rank: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
   return h.agents.map((a) => {
     const reports = pieces.flatMap((p) => (p.manifest.agents?.[a] ? [{ p, r: p.manifest.agents[a] }] : []));
-    const worst = reports.filter((x) => x.r.state).sort((x, y) => rank[y.r.state!] - rank[x.r.state!])[0];
+    const worst = reports.filter((x) => x.r.state).sort((x, y) => STATE_RANK[y.r.state!] - STATE_RANK[x.r.state!])[0];
     const last = tapeRows(agentDir(h, a), 72, nowMs)[0];
     const lastLine = last ? `Last: ${last.title}` : 'Quiet for three days';
     const readings = reports.flatMap((x) => x.r.readings.map((r) => ({ ...r, source: pieceSource(x.p.piece) })));
@@ -734,6 +733,7 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
     if (worst && (worst.r.state === 'broken' || worst.r.state === 'unavailable') && worst.r.reason && !problems.some((p) => p.text.includes(worst.r.reason!))) {
       problems.unshift({ text: worst.r.reason, tone: worst.r.state === 'broken' ? 'bad' : 'warn', source: pieceSource(worst.p.piece) });
     }
+    // The same as agentStateOf (the system bar's agents at work): doing is never empty when a report has some.
     const state: AgentState = worst?.r.state ?? (doing.length ? 'working' : 'available');
     const reason = worst?.r.reason ?? (doing.length ? doing[0].text : lastLine);
     return { id: a, ...marks[a], state, reason, doing, problems: problems.slice(0, 3), ...(last ? { seen: { at: last.created, where: whereLabel(last.where) } } : {}), readings: readings.slice(0, 6) };
@@ -746,7 +746,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   const asks = absorbApprovals([...coreAsks(h, { householdOwner }), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
-    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: a.kind ?? (a.actions?.length ? 'decision' : 'alert'), attention: a.attention !== false, unread: false,
+    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
       ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}) })),
     ...pieces.flatMap((p) => {
@@ -858,6 +858,39 @@ function scopeOf(_req: IncomingMessage, _h: Household | undefined): string {
   return 'household';
 }
 
+/** An ask's kind: its own, else a decision only if it has something to choose with (its buttons), else an alert
+ * (docs/extensions.md; the Inbox's folders). */
+const askKind = (a: { kind?: AskKind; actions?: unknown[] }): AskKind => a.kind ?? (a.actions?.length ? 'decision' : 'alert');
+
+/** A piece's asks that say something's wrong (an alert, counted), for the system bar (web/src/system-bar.tsx). */
+function alertsOf(p: PieceInfo): { alerts?: number } {
+  const n = p.manifest.asks.filter((a) => askKind(a) === 'alert' && a.attention !== false).length;
+  return n ? { alerts: n } : {};
+}
+
+/** The nightly backup as the system bar says it: its last good one, or what's wrong (backupRow, Setup's row). Its
+ * settings or state unreadable (a hand-edited household.json, a half-written state.json): no glyph, not a broken page. */
+function backupOf(h: Household, nowMs = Date.now()): { backup?: Shell['backup'] } {
+  try {
+    const r = backupRow(h, nowMs, (iso) => agoText(iso, nowMs) || 'a while ago');
+    return { backup: { tone: r.tone, text: r.text, href: `/a/${h.default}/setup` } };
+  } catch { return {}; }
+}
+
+/** An agent's state as its Home card says it (agentCards): the worst any piece reports, else working if a piece has
+ * something it's doing, else available. */
+const STATE_RANK: Record<AgentState, number> = { broken: 3, unavailable: 2, working: 1, available: 0 };
+function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
+  const reports = pieces.flatMap((p) => (p.manifest.agents?.[agent] ? [p.manifest.agents[agent]] : []));
+  const worst = reports.filter((r) => r.state).sort((x, y) => STATE_RANK[y.state!] - STATE_RANK[x.state!])[0];
+  return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0) ? 'working' : 'available');
+}
+
+/** An agent at work, as its Home card would say it (agentStateOf). */
+function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
+  return agentStateOf(pieces, agent) === 'working' ? { working: true } : {};
+}
+
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
@@ -866,7 +899,8 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
   const places = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, tone: p.manifest.tile?.tone, stat: p.manifest.tile?.value,
       kind: p.manifest.tab?.kind ?? kinds[p.piece] ?? 'place', ...(p.manifest.tab?.icon ? { icon: p.manifest.tab.icon } : {}),
-      ...(p.manifest.tab?.accent ? { accent: p.manifest.tab.accent } : {}) }))
+      ...(p.manifest.tab?.accent ? { accent: p.manifest.tab.accent } : {}),
+      ...alertsOf(p) }))
     .sort((a, b) => a.label.localeCompare(b.label));
   // The Inbox's count: what needs the owner (an ask that says nothing waits on it is filed, not counted), the
   // same number its Needs you shows, so the badge is never a 1 for something already answered.
@@ -893,15 +927,17 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
         ...tabs,
       ],
       clock: clock(),
+      tz: uiTimeZone(),
       csrf,
       flash,
       skipped,
       shell: {
         owner: opts.viewer ?? h.owner ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
+        ...(opts.ownerScope ? {} : backupOf(h)),
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
-          sub: lastActive(agentDir(h, a)) })),
+          sub: lastActive(agentDir(h, a)), ...workingOf(pieces, a) })),
         core: [
           // Memory proposals are one ask an agent (proposalAsks), like the Inbox shows them.
           { label: 'Activity', href: '/activity', current: current === 'activity' },
@@ -926,6 +962,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       ...tabs,
     ],
     clock: clock(),
+    tz: uiTimeZone(),
     csrf,
     flash,
     skipped,
