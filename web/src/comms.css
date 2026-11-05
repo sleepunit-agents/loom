@@ -81,8 +81,7 @@
 .comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 25; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px));
   /* Its surface runs down behind the dock, so no message shows through between them. */
   box-shadow: 0 var(--dock-h) 0 0 var(--v-paper); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
-.comms-composer__prompt { color: var(--c, var(--v-pink)); font-size: 16px; line-height: 40px; text-shadow: 0 0 8px var(--c, var(--v-pink)); }
-.comms-composer textarea { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 16px; line-height: 1.4; padding: 9px 0; background: transparent; border: 0; outline: none; color: var(--v-text); max-height: 180px; }
+.comms-composer textarea { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 16px; line-height: 1.4; padding: 9px 12px; border-radius: 10px; background: transparent; border: 0; outline: none; color: var(--v-text); max-height: 180px; }
 .comms-composer__send { font-size: 14px; padding: 0 14px; height: 40px; border-radius: 10px; color: var(--v-on-accent); background: var(--c, var(--v-pink)); }
 .comms-composer__send:disabled { opacity: .4; }
 .comms-pick { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 14px; }
