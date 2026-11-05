@@ -10,6 +10,25 @@
    structure is under :root[data-look] (every look), at the weight it had when it was Neon's alone.
    src/ui/look-contrast.test.ts measures each set's pairs, with and without Higher contrast. */
 
+/* ======== every look ======== (each look's own blocks come after, so they win) */
+:root[data-look][data-mode]{
+--font-text:"Figtree",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+--font-sans:var(--font-text);--default-font-family:var(--font-text);
+/* mono for numbers, ids and times only (.loom-data); --font-mono (code, breadcrumbs) stays 000h's system stack */
+--loom-font-data:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+/* Oxanium is wider and squarer than Bricolage: titles drop the tight tracking. Rechecked at 390 px (2026-11-04): app-header's
+   size step (text-3xl, text-2xl past 28 characters) still holds; the longest built-in titles (Appearance, Knowledge,
+   Subscriptions) fit one line at text-3xl, and a 28-character title wraps to two lines. */
+/* ---- shape: radii step down (cards 20 to 12, tiles to 12px); pills and circles stay round ---- */
+--radius:.45rem;--r-xs:3px;--r-sm:6px;--r-md:10px;--r-card-sm:10px;--r-card:12px;--r-panel:14px;--r-sheet:16px;--r-frame:20px;
+--loom-r-launch:12px;--loom-r-tile:12px;--loom-r-state:12px;--loom-r-side:14px;--loom-r-soft:8px;--loom-r-icon:8px;
+/* ---- what every look has unless it says otherwise: no glow (a focused control a plain 1px ring in its colour, a sheet
+   a quiet shadow), the ground's three pools faint. Neon Noir's own come after and win. ---- */
+--glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 1px;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;
+--glow-sheet:0 -8px 24px -14px;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0;
+--wash-1:16%;--wash-2:14%;--wash-3:8%;
+}
+
 /* ======== Neon Noir ======== */
 :root[data-look="neon"][data-mode]{
 color-scheme:dark;
@@ -67,23 +86,6 @@ color-scheme:dark;
   unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 @font-face{font-family:"IBM Plex Mono";src:url('./fonts/ibm-plex-mono-latin-600-normal.woff2') format("woff2");font-weight:500 700;font-style:normal;font-display:swap;
   unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
-:root[data-look][data-mode]{
---font-text:"Figtree",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
---font-sans:var(--font-text);--default-font-family:var(--font-text);
-/* mono for numbers, ids and times only (.loom-data); --font-mono (code, breadcrumbs) stays 000h's system stack */
---loom-font-data:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
-/* Oxanium is wider and squarer than Bricolage: titles drop the tight tracking. Rechecked at 390 px (2026-11-04): app-header's
-   size step (text-3xl, text-2xl past 28 characters) still holds; the longest built-in titles (Appearance, Knowledge,
-   Subscriptions) fit one line at text-3xl, and a 28-character title wraps to two lines. */
-/* ---- shape: radii step down (cards 20 to 12, tiles to 12px); pills and circles stay round ---- */
---radius:.45rem;--r-xs:3px;--r-sm:6px;--r-md:10px;--r-card-sm:10px;--r-card:12px;--r-panel:14px;--r-sheet:16px;--r-frame:20px;
---loom-r-launch:12px;--loom-r-tile:12px;--loom-r-state:12px;--loom-r-side:14px;--loom-r-soft:8px;--loom-r-icon:8px;
-/* ---- what every look has unless it says otherwise: no glow (a focused control a plain 1px ring in its colour, a sheet
-   a quiet shadow), the ground's three pools faint. Neon Noir's own come after and win. ---- */
---glow-key:0 0 0 0;--glow-on:0 0 0 0;--glow-btn:0 0 0 0;--glow-focus:0 0 0 1px;--glow-tick:0 0 0 0;--glow-bar:0 0 0 0;--glow-ground:none;
---glow-sheet:0 -8px 24px -14px;--glow-find:0 0 0 0;--glow-field:0 0 0 0;--glow-line:0 0 0 0;
---wash-1:16%;--wash-2:14%;--wash-3:8%;
-}
 :root[data-look="neon"][data-mode]{
 --font-display:"Oxanium",ui-sans-serif,system-ui,sans-serif;--ls-display:0em;--fw-display:600;
 /* ---- glow: on edges and on what's current or chosen, the same whatever anything's state; never behind text, never the
