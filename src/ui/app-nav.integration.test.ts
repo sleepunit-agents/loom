@@ -313,6 +313,9 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     expect(new Set(keys).size).toBe(2);
     const m = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: innerWidth }));
     expect(m.sw).toBeLessThanOrEqual(m.iw);
+    // The block itself, and everything in it, inside the screen (the page clips what overflows, so the page's own
+    // width alone wouldn't tell).
+    await expect.poll(() => fold.evaluate((d) => [d, ...d.querySelectorAll('*')].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > innerWidth + 0.5; }).length), { timeout: 10_000 }).toBe(0);
     // A task, from the list at its query: the chevron is the way back to that list, not to the list's start.
     await p.locator('main a[href$="/task/t-9"]').click();
     await expect.poll(() => where(p)).toBe('/p/work/task/t-9');
