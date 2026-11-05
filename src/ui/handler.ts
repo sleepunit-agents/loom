@@ -47,7 +47,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
 import { APP_JS } from './app.js';
-import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
+import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
@@ -532,7 +532,7 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
 }
 
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
-export async function pushWatch(opts: UiOptions): Promise<number> {
+export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>[3]): Promise<number> {
   const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
   const hh = opts.household?.();
   // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
@@ -544,11 +544,33 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
     if (!m) return false;
     return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
-  return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
+  return watch(storeFor(opts), async () => [...(await yourCall(opts)).map((a) => ({
     key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-  })), subject, undefined, hears);
+  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined));
 }
+
+/**
+ * Comms replies to push (docs/specs/comms.md, "Notifications"): each thread's newest reply its member hasn't read,
+ * when no app of theirs has had that thread in front in the last 2 minutes. Its words never go: the title says who
+ * replied, the body is the thread's title (or "in a new thread"). Only its member's devices hear it.
+ */
+export function commsAnnouncements(h: Household, now = Date.now()): Announce[] {
+  const out: Announce[] = [];
+  for (const m of h.members) {
+    let threads: ReturnType<typeof threadsOf>;
+    try { threads = threadsOf(h, m); } catch { continue; }
+    for (const t of threads) {
+      if (!t.unread || (t.in_front !== null && now - t.in_front < COMMS_IN_FRONT_MS)) continue;
+      const name = agentName(agentDir(h, t.agent));
+      out.push({ key: `comms-${t.id}-${t.last_reply}`, title: t.title ? `${name} replied` : `${name} replied in a new thread`, body: t.title ?? '',
+        agent: t.agent, open: true, member: m.person, url: `/comms/${t.id}` });
+    }
+  }
+  return out;
+}
+/** A thread that's been in front this recently (its app's read calls) needs no push. */
+const COMMS_IN_FRONT_MS = 2 * 60_000;
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
 /** The longest drafted memory Home's card quotes whole, and so lets you ratify there. */
