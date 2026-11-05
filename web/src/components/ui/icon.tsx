@@ -2,7 +2,6 @@ import * as React from "react"
 import {cva,type VariantProps} from "class-variance-authority"
 import {cn} from "@/lib/utils"
 import {iconData,type IconNode} from "@/lib/cojeev/icon-data"
-import {lucideIconNames} from "@/lib/cojeev/lucide-icon-names"
 import {useMorph} from "@/lib/cojeev-motion/use-morph"
 import {useFlowPress} from "@/lib/cojeev-motion/flow-press"
 import {assignMotionRef} from "@/lib/cojeev-motion/refs"
@@ -61,9 +60,10 @@ const canonicalIcon = (name:string) => iconAliases[name] ?? name;
 const geometryCache=new Map<string,IconNode[]>();
 // The full Lucide geometry is several hundred kilobytes, so it stays out of every
 // bundle that renders an Icon and loads on first use of a name the authored set lacks.
-// Until it arrives such an icon keeps its fixed footprint with no strokes.
+// Until it arrives such an icon keeps its fixed footprint with no strokes. Its names stay
+// out too (they were 7 KB gzipped on loom's first page): a name the pack doesn't have is
+// known only once the pack is here, and then draws as the plain fallback below.
 type LucidePack=typeof import("@/lib/cojeev/lucide-icon-data");
-const lucideNameSet=new Set(lucideIconNames);
 let lucidePack:LucidePack|null=null;
 let lucideLoad:Promise<LucidePack>|null=null;
 const lucideListeners=new Set<()=>void>();
@@ -84,7 +84,10 @@ export function loadLucideIcons():Promise<LucidePack> {
     throw error;
   });
 }
-function isKnownIcon(name:string){name=canonicalIcon(name);return name in iconData||name in additionalIcons||lucideNameSet.has(name)}
+const isAuthored=(name:string)=>name in iconData||name in additionalIcons;
+function isKnownIcon(name:string){name=canonicalIcon(name);return isAuthored(name)||!!lucidePack?.getLucideIcon(name)}
+/** What a name neither the authored set nor the Lucide pack has draws as. */
+const FALLBACK_ICON="circle";
 function iconGeometry(name:string):IconNode[]|undefined {
   name=canonicalIcon(name);
   const known=iconData[name]??additionalIcons[name]??geometryCache.get(name);
@@ -102,12 +105,12 @@ const lucideReadyOnServer=()=>typeof window==="undefined"&&lucidePack!==null;
 function useIconGeometry(name:string):IconNode[]|undefined {
   const canonical=canonicalIcon(name);
   const authored=iconData[canonical]??additionalIcons[canonical];
-  const fromPack=!authored&&lucideNameSet.has(canonical);
+  const fromPack=!authored;
   const ready=React.useSyncExternalStore(subscribeLucide,lucideReady,lucideReadyOnServer);
   // A failed load keeps the footprint; the next icon that asks retries it.
   React.useEffect(()=>{if(fromPack&&!ready)loadLucideIcons().catch(()=>{})},[fromPack,ready]);
   if(authored)return authored;
-  return fromPack&&ready?iconGeometry(name):undefined;
+  return ready?iconGeometry(name)??iconData[FALLBACK_ICON]:undefined;
 }
 
 /** Direction is geometric, independent of document reading direction. */
@@ -499,7 +502,6 @@ export function Icon({name,size="default",className,draw,feedback=true,treatment
     return()=>{lane.dispose();painter.restore()};
   },[draw,quiet,name,drawn]);
   const resolved=canonicalIcon(name);
-  if(!geometry&&!isKnownIcon(name))throw new Error(`Unknown Cojeev icon: ${name}`);
   const nodes=geometry??[];
   const accent=tone==="current"?"currentColor":`var(--v-${tone})`;
   return <svg ref={attach} data-slot="icon" data-icon-name={name} data-icon-treatment={treatment} viewBox="0 0 24 24" aria-hidden="true" className={iconClassName(size,className)} style={{...(strokeWidth!==undefined?{strokeWidth}:{}),...style}} {...props}>
@@ -514,7 +516,7 @@ export function Icon({name,size="default",className,draw,feedback=true,treatment
 /** Semantic action inventory for accessible pickers and documentation. */
 export const iconActionDescriptions:Record<string,string>={"check":"The check stroke traces into its complete mark.","check-circle":"The check traces inside a stationary ring.","close":"The cross presses inward and returns.","activity":"The activity line traces across its pulse.","alert":"The warning mark lifts inside its fixed outline.","info":"The information dot lifts inside its fixed circle.","loader":"The loading arc revolves while active.","refresh":"The refresh arrows complete one turn.","search":"The search lens expands inside its handle.","bell":"The bell dome swings against its clapper.","download":"The download arrow moves down into its fixed tray.","upload":"The upload arrow rises out of its fixed tray.","copy":"The front sheet lifts away from the back.","settings":"The gear turns around its fixed hub.","trash":"The lid lifts above its stationary bin.","plus":"The plus makes a quarter turn.","send":"The paper plane travels upward-right.","heart":"The heart gives two restrained beats.","star":"The star expands and returns.","thumbs-up":"The hand lifts above its fixed cuff.",...Object.fromEntries(Object.entries(iconRecipes).map(([name,recipe])=>[name,recipe.description]))};
 export const iconActionNames=Object.keys(iconActionDescriptions);
-export const iconNames=/*#__PURE__*/Array.from(new Set([...Object.keys(iconData),...Object.keys(additionalIcons),...Object.keys(iconAliases),...lucideIconNames])).sort();
+export const iconNames=/*#__PURE__*/Array.from(new Set([...Object.keys(iconData),...Object.keys(additionalIcons),...Object.keys(iconAliases)])).sort();
 export function getIconMotionDescription(name:string):string {
   const canonical=canonicalIcon(name);
   return iconActionDescriptions[name]??iconActionDescriptions[canonical]??familyRecipe(canonical).description;
