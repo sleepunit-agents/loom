@@ -36,9 +36,9 @@ import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
 // Neon on a big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide under Neon (so it's
 // here by the time the first page is), and never on a phone.
-const deskChunk = () => import('./desk');
+let desk$: typeof import('./desk') | null = null;
+const deskChunk = () => import('./desk').then((m) => (desk$ = m));
 if (matchMedia('(min-width: 1024px)').matches && document.documentElement.dataset.look === 'neon') void deskChunk();
-const DeskHome = lazy(() => deskChunk().then((m) => ({ default: m.DeskHome })));
 // The sheets (Scope, Places, Find, Setup, Appearance) load when one opens.
 const SheetView = lazy(() => import('./sheets').then((m) => ({ default: m.SheetView })));
 // Find, over whatever you're in (find.tsx): loads the first time it opens.
@@ -269,6 +269,8 @@ export default function App() {
   const showWith = (how: Move | undefined, to: string, push: boolean) => moveTo(how, () => flushSync(() => { void load(to, push); }));
   useEffect(() => { void load(url, false); const f = () => void showWith(moveFor(location.pathname, true), location.pathname + location.search, false); addEventListener('popstate', f); return () => removeEventListener('popstate', f); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Whether this is a desktop, for go (worked out below): read when it runs.
+  const deskNow = useRef(false);
   // ⌘K / Ctrl-K: Find, from anywhere.
   useEffect(() => {
     const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); } };
@@ -279,6 +281,8 @@ export default function App() {
     // Find is an overlay over the page you're in, not a page of its own (find.tsx).
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
+    // A desktop (desk.css): the window grows out of its dock key on the way into an app, and back into it on the way home.
+    if (deskNow.current && desk$?.deskGo(location.pathname, u.pathname, () => flushSync(() => { void load(u.pathname + u.search, true); }))) return;
     showWith(moveFor(u.pathname), u.pathname + u.search, true);
   }, [load]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -421,7 +425,12 @@ export default function App() {
   // bottom centre (no rail), and every other page fills the space between the bars and the dock. 1024 is where the rail
   // took over from the phone's dock before: below it the phone's layout (its dock, its gestures) is unchanged.
   const desk = look === 'neon' && wide && !!chrome?.shell?.household;
-  const deskHome = desk && !waiting && !error && data?.view === 'house-home';
+  useLayoutEffect(() => { deskNow.current = desk; });
+  // Every page but Home is in the window; Home never is, even one that didn't load (it says so on the desktop).
+  const inWindow = desk && path !== '/';
+  // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
+  const [D, setD] = useState(desk$);
+  useEffect(() => { if (desk && !D) void deskChunk().then(setD); }, [desk, D]);
   const deskBar = phoneBar && vw >= 640;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
   // A phone's gestures (gestures.ts): sideways between the dock's own pages, in its order; up from the dock for Find.
@@ -489,8 +498,12 @@ export default function App() {
           </header>
           )}
 
-          <main ref={mainRef} aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}
-            data-app={desk && !deskHome ? '' : undefined}>
+          <Wrap on={inWindow && !!D} wrap={(page) => D && (
+            <D.DeskWindow url={url} waiting={waiting} go={go} title={shownTitle || place?.label || ''}
+              tint={accent ? markColor(accent.bg) : `var(--loom-tint-${appTint ?? 'pink'})`}
+              lead={accent ? <AgentAvatar a={accent} size={22} /> : <AnimatedIcon name={iconFor(icon(tileLabel || ''))} size="sm" />}>{page}</D.DeskWindow>
+          )}>
+          <main ref={mainRef} aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
             {waiting && <Skeleton />}
             {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
               This is how it looked at <span className="loom-data">{new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>. Actions wait for a connection.</Callout>}
@@ -506,7 +519,7 @@ export default function App() {
             {!waiting && !error && data && env && (
               <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><Boundary where={url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
-                  : data.view === 'house-home' && desk && chrome?.shell ? <Suspense fallback={<Skeleton />}><DeskHome home={data.home as never} shell={chrome.shell} /></Suspense>
+                  : data.view === 'house-home' && desk && chrome?.shell ? (D ? <D.DeskHome home={data.home as never} shell={chrome.shell} /> : <Skeleton />)
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
@@ -522,6 +535,7 @@ export default function App() {
             )}
             {!waiting && !error && data && !env && <NotYet kind={data.view} url={url} />}
           </main>
+          </Wrap>
 
           {!wide && chrome && <div aria-hidden className="loom-fade pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
           {pill && (
@@ -542,6 +556,8 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {desk && D && <D.DeskKeys go={go} places={[...nav.tabs, ...nav.more]} />}
 
       {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
         go={(href) => { setMore(false); go(href); }} /></Suspense>}
@@ -592,4 +608,9 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
 function NotYet({ kind, url }: { kind: string; url: string }) {
   void kind; void url;
   return <StateCard icon="refresh-cw" tint="olive" title="This page needs a newer app" text="loom has been updated. Reload to get the new version." action={{ label: 'Reload', onClick: () => location.reload() }} />;
+}
+
+/** Its children, or its children wrapped (a desktop's window around the page). */
+function Wrap({ on, wrap, children }: { on: boolean; wrap: (c: React.ReactNode) => React.ReactNode; children: React.ReactNode }) {
+  return <>{on ? wrap(children) : children}</>;
 }

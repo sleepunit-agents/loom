@@ -4,7 +4,8 @@
 // what it's on; the pieces' own tiles; the nightly backup. Never a number loom doesn't have.
 //
 // Its own chunk, loaded only on a screen this wide under Neon (App.tsx): a phone never fetches it.
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { readRecent } from './recent';
 import './desk.css';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import { iconFor } from './safe';
 import { markColor } from './look';
 import { DOT } from './tones';
 import type { Shell } from './loom';
+import { reducedMotion } from './access';
 
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
@@ -208,6 +210,13 @@ function NoAgents() {
 // ---- the desktop --------------------------------------------------------------------------------
 
 export function DeskHome({ home, shell }: { home: DeskHomeData; shell: Shell }) {
+  // Back from a window: focus on the dock key it came from, or Home's.
+  useEffect(() => {
+    if (!closing) return;
+    const k = keyFor(closing) ?? keyFor('/');
+    closing = null;
+    k?.focus({ preventScroll: true });
+  }, []);
   const backup = shell.backup;
   return (
     <div className="loom-desk-home">
@@ -225,5 +234,105 @@ export function DeskHome({ home, shell }: { home: DeskHomeData; shell: Shell }) 
         {backup && <BackupW b={backup} />}
       </div>
     </div>
+  );
+}
+
+// ---- an app's window -----------------------------------------------------------------------------
+
+type Tab = { label: string; href: string };
+/** The household dock's places, as App.tsx last drew them (DeskKeys), for the key a window grows out of. */
+let tabs: Tab[] = [];
+/** The page a window was closed from, for focus to go back to its key. */
+let closing: string | null = null;
+
+/** The dock key for the place a page is in. */
+function keyFor(href: string): HTMLElement | null {
+  const t = tabs.filter((x) => !x.href.startsWith('#')).find((x) => href === x.href || (x.href !== '/' && href.startsWith(`${x.href}/`)));
+  return t ? document.querySelector<HTMLElement>(`.loom-dock-bar [data-part="item"][aria-label="${CSS.escape(t.label)}"]`) : null;
+}
+
+type VT = { finished: Promise<void> };
+type Doc = Document & { startViewTransition?: (update: () => void) => VT };
+
+/**
+ * Going into an app from the desktop, or home from one: the window grows out of its dock key and shrinks back into it,
+ * the desktop crossfading behind (View Transitions, desk.css). Its own attribute (data-desk-move), so none of a phone's
+ * page moves apply. A window opened from Find or a link has no key: it simply grows in. Reduced motion (access.ts), or
+ * no API: the page simply changes. Returns false for any other change (App.tsx moves it as it would).
+ */
+export function deskGo(from: string, to: string, update: () => void): boolean {
+  const how = from === '/' && to !== '/' ? 'open' : from !== '/' && to === '/' ? 'close' : undefined;
+  if (!how) return false;
+  if (how === 'close') closing = from;
+  const d = document as Doc;
+  const root = document.documentElement;
+  if (typeof d.startViewTransition !== 'function' || reducedMotion()) { update(); return true; }
+  root.dataset.deskMove = how;
+  let named: HTMLElement | null = how === 'open' ? keyFor(to) : null;
+  if (named) named.style.viewTransitionName = 'loom-win';
+  const vt = d.startViewTransition(() => {
+    // One element per name in each state: the key gives its name to the window, or takes it back.
+    if (named) named.style.viewTransitionName = '';
+    update();
+    if (how === 'close') { named = keyFor(from); if (named) named.style.viewTransitionName = 'loom-win'; }
+  });
+  const done = () => { if (root.dataset.deskMove === how) delete root.dataset.deskMove; if (named) named.style.viewTransitionName = ''; };
+  vt.finished.then(done, done);
+  return true;
+}
+
+/** Something open that Esc must leave alone: a sheet, a dialog, a list or a menu (Radix's, in a portal). */
+const popUpOpen = () => !!document.querySelector(':is([role="dialog"],[role="alertdialog"],[role="listbox"],[role="menu"]):not([data-state="closed"])');
+/** A field has the keys. */
+const typing = () => { const a = document.activeElement as HTMLElement | null; return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable); };
+
+/** The desktop's keys: Esc closes the window back to the desktop, not while a sheet, a dialog, a list or a menu is open
+ * (Esc closes that), nor while a field has the keys (Esc there is the field's). And the dock's places, for keyFor. */
+export function DeskKeys({ go, places }: { go: (href: string) => void; places: Tab[] }) {
+  tabs = places;
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || location.pathname === '/' || popUpOpen() || typing()) return;
+      e.preventDefault();
+      go('/');
+    };
+    addEventListener('keydown', f); return () => removeEventListener('keydown', f);
+  }, [go]);
+  return null;
+}
+
+/** One big window over the ground (desk.css): its title strip in the app's colour (its key, its name, where it is),
+ * Close (and Esc) back to the desktop; on a wide enough screen, where you've been lately beside it. Focus goes to its
+ * title as each page opens in it, once per page (a page drawn again, Try again or a refresh, leaves focus be). */
+export function DeskWindow({ tint, lead, title, url, waiting, go, children }: { tint: string; lead: React.ReactNode; title: string; url: string; waiting: boolean;
+  go: (href: string) => void; children: React.ReactNode }) {
+  const head = useRef<HTMLHeadingElement>(null);
+  const focusedFor = useRef('');
+  useEffect(() => {
+    if (waiting || focusedFor.current === url) return;
+    focusedFor.current = url;
+    head.current?.focus({ preventScroll: true });
+  }, [url, waiting]);
+  const recents = useMemo(() => readRecent().filter((r) => r.href !== url).slice(0, 6), [url]);
+  const path = url.split('?')[0];
+  return (
+    <section className="loom-window" aria-labelledby="loom-window-title" style={{ '--t': tint } as React.CSSProperties}>
+      <div className="loom-window__bar">
+        <span className="loom-window__key" aria-hidden>{lead}</span>
+        <h2 id="loom-window-title" tabIndex={-1} ref={head}>{title || ' '}</h2>
+        <span className="loom-window__path loom-data" aria-hidden>loom{path}</span>
+        <button type="button" className="loom-window__close" aria-label="Close, back to the desktop" title="Close (Esc)" onClick={() => go('/')}>
+          <AnimatedIcon name={iconFor('x')} size="sm" /></button>
+      </div>
+      <div className="loom-window__body">
+        {children}
+        {recents.length > 0 && (
+          <nav className="loom-window__side" aria-label="Recently opened">
+            <h3>Lately</h3>
+            <ul>{recents.map((r) => <li key={r.href}><a href={r.href} onClick={(e) => { e.preventDefault(); go(r.href); }}>{r.label}</a></li>)}</ul>
+          </nav>
+        )}
+      </div>
+    </section>
   );
 }
