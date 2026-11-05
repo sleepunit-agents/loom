@@ -81,7 +81,9 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
       expect((await call(slack.conversation, 'A title')).body.error).toMatch(/isn't one/);
       expect((await call(null, 'A title')).body.error).toMatch(/identity/);
       const t = thread(1);
-      expect((await call(t.conversation, 'x'.repeat(61))).error).toBe(true);
+      const long = await call(t.conversation, 'x'.repeat(61));
+      expect(long.error).toBe(true);
+      expect(String(long.body.error)).toMatch(/60/);
       expect((await call(t.conversation, 'two\nlines')).body.error).toMatch(/one line/);
       setTitle(h, threadFor(h, jonathan(), t.id), 'Mine', 'member');
       expect((await call(t.conversation, 'The agent\'s')).body.error).toMatch(/owner named this thread/);
@@ -122,6 +124,22 @@ describe.skipIf(!hasAge)('Comms: the title and the project', () => {
       expect(d.projects).toEqual(['hocket']);
       const named = writeDigest(agentDir(h, 'art'), { conversation: t.conversation, run: 'run-2' }, { summary: 'About pond, really.', projects: ['pond'] }, new Date(), 'hocket');
       expect(named.projects).toEqual(['pond']);
+    });
+
+    it('conversation_digest itself takes the thread\'s project, through MCP', async () => {
+      const t = thread(8, 'hocket');
+      const db = new BetterSqlite3(join(agentDir(h, 'art'), 'memories.db'));
+      db.prepare('UPDATE projects SET card_json = ? WHERE slug = ?').run(JSON.stringify({ slug: 'pond', name: 'pond', links: { aliases: [], venues: [`loom:${t.id}`] } }), 'pond');
+      db.close();
+      const { server } = createLoomServer({ contextDir: agentDir(h, 'art') });
+      const client = new Client({ name: 'comms-digest-test', version: '1' });
+      const [c, s] = InMemoryTransport.createLinkedPair();
+      await Promise.all([server.connect(s), client.connect(c)]);
+      try {
+        await client.callTool({ name: 'identity', arguments: { conversation: t.conversation, run: 'run-1' } });
+        const r = await client.callTool({ name: 'conversation_digest', arguments: { summary: 'Planned it.' } }) as { content: Array<{ text: string }> };
+        expect((JSON.parse(r.content[0].text) as { projects: string[] }).projects).toEqual(['hocket']);
+      } finally { await client.close(); }
     });
 
     it('the hub lists a thread filed under the project before its first digest', () => {
