@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Neon on a big screen boots** (t-1868). With the app's arrival, once a
+  session and never under reduced motion, a desktop shows a second or two of
+  LOOM//OS™ coming up, licensed to the household owner by name, with chatter
+  that is what loom has (the link, the agents and how each is, the pieces,
+  what needs you) and the one joke: "validating LOOM//OS™ license …
+  compliant". Any key or tap skips it; it never takes focus, and a screen
+  reader doesn't hear it.
 - **Neon on a big screen: apps open in a window** (t-1868). Every page but
   Home opens in one big framed window over the ground: a title strip in the
   app's colour with its key, its name and where it is, cut corners, a ruled

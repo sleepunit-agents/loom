@@ -177,3 +177,33 @@ html[data-desk-move="close"]::view-transition-old(loom-win):only-child{animation
 @keyframes loom-win-shrink{from{opacity:1;transform:none}to{opacity:0;transform:scale(.96)}}
 /* the title takes focus when a window opens (for a screen reader), not a ring: it isn't a control */
 :root[data-look="neon"] .loom-window__bar h2:focus{outline:none;box-shadow:none}
+
+/* ---- the boot (desk.tsx DeskBoot): once a session, never under reduced motion, any key or tap skips it. It takes the
+   taps while it stands (so one that skips it presses nothing under it), none while it leaves. ---- */
+.loom-boot{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--v-canvas);color:var(--v-text);
+  transition:opacity .25s ease-out}
+.loom-boot[data-leaving]{opacity:0;pointer-events:none}
+.loom-boot::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.35;
+  background:repeating-linear-gradient(180deg,transparent 0 2px,color-mix(in srgb,#000 55%,transparent) 2px 3px)}
+.loom-boot__panel{width:min(560px,calc(100vw - 48px));font-family:var(--loom-font-data);font-size:13px;line-height:1.7}
+.loom-boot__brand{font-family:var(--font-display);font-weight:700;font-size:40px;letter-spacing:.12em;line-height:1}
+.loom-boot__brand i{font-style:normal;color:var(--v-pink);text-shadow:var(--glow-line,0 0 18px) var(--v-pink)}
+.loom-boot__brand sup{font-size:14px;letter-spacing:0;vertical-align:top;margin-left:2px;color:var(--v-text-2)}
+.loom-boot__lic{margin:8px 0 22px;color:var(--v-text-2);letter-spacing:.04em}
+.loom-boot__log{display:grid;gap:2px;padding-top:14px;border-top:1px solid color-mix(in srgb,var(--v-pink) 40%,var(--v-border))}
+.loom-boot__log li{display:flex;align-items:baseline;gap:8px;color:var(--v-text-2)}
+.loom-boot__log li::before{content:"›";color:var(--v-blue)}
+.loom-boot__k{flex:none;white-space:nowrap}
+.loom-boot__dots{flex:1;min-width:16px;border-bottom:1px dotted var(--v-border);transform:translateY(-4px)}
+.loom-boot__v{flex:none;color:var(--v-text);white-space:nowrap}
+.loom-boot__v[data-tone="ok"]{color:var(--loom-ok)} .loom-boot__v[data-tone="warn"]{color:var(--loom-warn)}
+.loom-boot__skip{margin-top:22px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
+/* its lines come up one by one; only with motion allowed (it never runs otherwise, but the rule says so itself) */
+@media (prefers-reduced-motion:no-preference){
+  .loom-boot__brand{animation:loom-boot-flick .5s steps(1) both}
+  .loom-boot__lic{animation:loom-boot-line .01s steps(1) .25s both}
+  .loom-boot__log li{animation:loom-boot-line .01s steps(1) var(--at,0s) both}
+  .loom-boot__skip{animation:loom-boot-line .01s steps(1) .5s both}
+}
+@keyframes loom-boot-line{from{visibility:hidden}to{visibility:visible}}
+@keyframes loom-boot-flick{0%{opacity:0}30%{opacity:.7}45%{opacity:.15}60%,100%{opacity:1}}
