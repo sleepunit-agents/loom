@@ -56,6 +56,10 @@ export function publicKey(store: SessionStore): string {
 /** agent: whose it is, so only that agent's owners hear of it (docs/specs/owners.md); none is the household's. */
 export interface Announce {
   key: string; title: string; body: string; agent?: string;
+  /** Only this member's devices hear it (a Comms reply: comms.md, "Notifications"). */
+  member?: string;
+  /** Where a tap opens (else the ask in the Inbox). */
+  url?: string;
   /** Whether an agent owner may hear of it: loom's own, or from a piece that understands agent owners. */
   open?: boolean;
 }
@@ -67,7 +71,9 @@ export interface Announce {
  */
 export async function watch(store: SessionStore, asks: () => Promise<Announce[]>, subject: string, send = webpush.sendNotification.bind(webpush),
   /** Whether a device's member may hear of an ask for this agent (none: the household's). Everyone, without it. */
-  hears: (member: string | undefined, a: Announce) => boolean = () => true): Promise<number> {
+  hears: (member: string | undefined, a: Announce) => boolean = () => true,
+  /** Whose a device with no member is (the first household owner), for an announcement meant for one member. */
+  firstMember?: () => string | undefined): Promise<number> {
   const w = store.takePushWatch(WATCH_S);
   if (!w) return 0;
   const now = await asks();
@@ -78,8 +84,9 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   const vapid = store.pushKeys(() => webpush.generateVAPIDKeys());
   let sent = 0;
   for (const a of fresh.slice(0, 5)) {
-    const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: `/inbox?i=${a.key}` });
+    const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: a.url ?? `/inbox?i=${a.key}` });
     for (const { member, ...sub } of w.subs) {
+      if (a.member !== undefined && (member ?? firstMember?.()) !== a.member) continue;
       if (!hears(member, a)) continue;
       try {
         await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 6 * 3600, urgency: 'high' });

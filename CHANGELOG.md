@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms: a push when your agent replies** (t-1876). A reply in a thread you haven't read, with no app of yours on that
+  thread for 2 minutes, pushes to your own devices only: "Art replied" and the thread's title (or "Art replied in a new
+  thread"), never the reply's words. A tap opens the thread.
+
 - **Comms, the app** (t-1876). A Comms key in the dock (for a member who owns an agent, with their unread threads),
   the thread list leading to a thread on a phone and the two side by side on a desktop, and each thread's comm screen:
   the agent's pixel portrait at 2x in a Neon OS frame (`NAME · CH nn · LINK OK`, a signal meter, a YOU panel on a

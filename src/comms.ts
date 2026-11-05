@@ -81,6 +81,8 @@ export interface Thread {
   working_since: string | null;
   queued_since: string | null;
   last_failed: boolean;
+  /** When an app of its member last had it in front (its read calls), ms; null for never. */
+  in_front: number | null;
 }
 
 export interface Message {
@@ -305,7 +307,7 @@ const threadOf = (r: ThreadRow): Thread => ({
   id: r.id, agent: r.agent, member: r.member, conversation: r.conversation, title: r.title,
   titled_by: r.titled_by === 'agent' || r.titled_by === 'member' ? r.titled_by : null, project: r.project, pinned: r.pinned === 1,
   archived: r.archived, opened: r.opened, last: r.last, read_seq: r.read_seq, channel: r.channel,
-  working_since: r.working_since, queued_since: r.queued_since, last_failed: r.last_failed === 1,
+  working_since: r.working_since, queued_since: r.queued_since, last_failed: r.last_failed === 1, in_front: r.in_front,
 });
 
 // ─── Who may ───────────────────────────────────────────────────────────────────
@@ -397,7 +399,7 @@ export function digestsFor(h: Household, t: Thread): Array<{ at: string; summary
   try { return digestsOf(agentDir(h, t.agent), t.conversation).map((d) => ({ at: d.at, summary: d.summary })).reverse(); } catch { return []; }
 }
 
-export interface ListedThread extends Thread { unread: boolean; working: boolean; last_seq: number }
+export interface ListedThread extends Thread { unread: boolean; working: boolean; last_seq: number; last_reply: number }
 
 /** A member's threads with agents they own: pinned first, then by last; archived ones only when asked. */
 export function threadsOf(h: Household, member: Member, opts: { archived?: boolean } = {}): ListedThread[] {
@@ -406,7 +408,7 @@ export function threadsOf(h: Household, member: Member, opts: { archived?: boole
     .map((r) => {
       const t = threadOf(r);
       const s = seqsOf(h.home, t.id);
-      return { ...t, unread: s.reply > t.read_seq, working: t.working_since !== null, last_seq: s.last };
+      return { ...t, unread: s.reply > t.read_seq, working: t.working_since !== null, last_seq: s.last, last_reply: s.reply };
     });
   // Pinned, then unread, then the rest, each by last (comms.md, "Phone").
   const rank = (t: ListedThread) => (t.pinned ? 0 : t.unread ? 1 : 2);
