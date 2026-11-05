@@ -27,13 +27,15 @@ const built = existsSync(`${root}dist/web/index.html`);
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
 const shots = process.env.LOOM_SHOT_DIR;
 
+// Times before the fixture thread's messages (a note's when is its message's time), so the order holds whenever it runs.
+const ago = (h: number) => new Date(Date.now() - h * 3600_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 const ITEMS = [
-  { title: 'Make the comm screen frame thinner', ref: 't-1881', status: 'Blocked', tone: 'bad', when: '2026-11-05T21:00:00Z', page: 'task/t-1881', made: true },
-  { title: 'Move the YOU panel under the portrait', ref: 't-1882', status: 'In progress', when: '2026-11-05T22:00:00Z', page: 'task/t-1882', made: true },
-  { title: 'Old dock tidy', ref: 't-12', status: 'Done', tone: 'ok', when: '2026-11-01T10:00:00Z', page: 'task/t-12' },
+  { title: 'Make the comm screen frame thinner', ref: 't-1881', status: 'Blocked', tone: 'bad', when: ago(3), page: 'task/t-1881', made: true },
+  { title: 'Move the YOU panel under the portrait', ref: 't-1882', status: 'In progress', when: ago(2), page: 'task/t-1882', made: true },
+  { title: 'Old dock tidy', ref: 't-12', status: 'Done', tone: 'ok', when: ago(96), page: 'task/t-12' },
 ];
 const CHANGES = [
-  { title: 'loom#545 Comms: a thinner frame', ref: 'github:sleepunit-agents/loom#545', status: 'Waiting on you', tone: 'warn', when: '2026-11-05T22:30:00Z', page: 'c/github/sleepunit-agents/loom/545', made: true },
+  { title: 'loom#545 Comms: a thinner frame', ref: 'github:sleepunit-agents/loom#545', status: 'Waiting on you', tone: 'warn', when: ago(1), page: 'c/github/sleepunit-agents/loom/545', made: true },
 ];
 
 function piece(home: string, name: string, label: string, items: unknown[]): void {

@@ -15,7 +15,7 @@ import { loadHousehold, type Household, type Member } from './household.js';
 import { COMMS_DB, SINCE_MAX, messagesOf, owns, threadOfConversation, threadsOf, type Thread } from './comms.js';
 import { piecesOffering, runOffer } from './offers-registry.js';
 import { splitPage, type Block, type Page } from './ui/vocab.js';
-import { pieceManifests, type ApiCaller } from './ui/pieces.js';
+import { ownersAwarePieces, type ApiCaller } from './ui/pieces.js';
 
 /** A thread keeps at most this many refs; past it, the one named longest ago goes. */
 export const MAX_REFS = 200;
@@ -51,10 +51,11 @@ const REFS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_refs (
     thread TEXT NOT NULL,
     ref    TEXT NOT NULL,
     seq    INTEGER NOT NULL,
+    pos    INTEGER NOT NULL,
     at     TEXT NOT NULL,
     PRIMARY KEY (thread, ref)
   );
-  CREATE INDEX IF NOT EXISTS comms_refs_newest ON comms_refs (thread, seq);
+  CREATE INDEX IF NOT EXISTS comms_refs_newest ON comms_refs (thread, seq, pos);
   CREATE TABLE IF NOT EXISTS comms_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`;
 
 const ready = new Set<string>();
@@ -65,15 +66,21 @@ function withRefs<T>(home: string, f: (db: Database) => T): T {
   });
 }
 
-/** Note the refs one message names: each row takes the newest seq and time; the oldest past MAX_REFS go. */
+/**
+ * Note the refs one message names, in the order named: each row takes the newest message (seq) and place in it (pos)
+ * naming it. Past MAX_REFS, the one named longest ago goes: the oldest message's, and within one message the earliest
+ * named. A ref over 200 characters isn't kept (a feed's ref is at most 200).
+ */
 export function indexRefs(home: string, thread: string, seq: number, at: string, refs: string[]): void {
-  if (!refs.length) return;
+  const kept = refs.filter((r) => r.length <= 200);
+  if (!kept.length) return;
   withRefs(home, (db) => db.transaction(() => {
-    const up = db.prepare(`INSERT INTO comms_refs (thread, ref, seq, at) VALUES (?, ?, ?, ?)
-      ON CONFLICT (thread, ref) DO UPDATE SET seq = MAX(seq, excluded.seq), at = CASE WHEN excluded.seq >= seq THEN excluded.at ELSE at END`);
-    for (const r of refs) up.run(thread, r.slice(0, 220), seq, at);
+    const up = db.prepare(`INSERT INTO comms_refs (thread, ref, seq, pos, at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (thread, ref) DO UPDATE SET pos = CASE WHEN excluded.seq >= seq THEN excluded.pos ELSE pos END,
+        at = CASE WHEN excluded.seq >= seq THEN excluded.at ELSE at END, seq = MAX(seq, excluded.seq)`);
+    kept.forEach((r, i) => up.run(thread, r, seq, i, at));
     db.prepare(`DELETE FROM comms_refs WHERE thread = ? AND ref NOT IN
-      (SELECT ref FROM comms_refs WHERE thread = ? ORDER BY seq DESC, ref LIMIT ?)`).run(thread, thread, MAX_REFS);
+      (SELECT ref FROM comms_refs WHERE thread = ? ORDER BY seq DESC, pos DESC LIMIT ?)`).run(thread, thread, MAX_REFS);
   }).immediate());
 }
 
@@ -124,7 +131,7 @@ export async function backfillRefs(h: Household, env: NodeJS.ProcessEnv, now: Da
 
 /** A thread's refs, newest first. */
 export function refsOf(home: string, thread: string): Array<{ ref: string; seq: number; at: string }> {
-  return withRefs(home, (db) => db.prepare('SELECT ref, seq, at FROM comms_refs WHERE thread = ? ORDER BY seq DESC, ref').all(thread) as Array<{ ref: string; seq: number; at: string }>);
+  return withRefs(home, (db) => db.prepare('SELECT ref, seq, at FROM comms_refs WHERE thread = ? ORDER BY seq DESC, pos DESC').all(thread) as Array<{ ref: string; seq: number; at: string }>);
 }
 
 /** A deleted thread's refs go with it. */
@@ -173,8 +180,9 @@ export function parseThreadFeed(v: unknown): { items: ThreadItem[] } | string {
     if (it.page !== undefined && !(str(it.page, 200) && splitPage(it.page))) return `${at}.page is a page path (or loom:<page>)`;
     if (it.href !== undefined && !(str(it.href, 500) && HTTPS.test(it.href))) return `${at}.href is an https URL`;
     if (it.page !== undefined && it.href !== undefined) return `${at} has a page or an href, not both`;
-    if (it.made !== undefined && it.made !== true) return `${at}.made is true or absent`;
-    out.push(it as unknown as ThreadItem);
+    if (it.made !== undefined && typeof it.made !== 'boolean') return `${at}.made is true or false`;
+    const { made, ...rest } = it;
+    out.push({ ...(rest as unknown as ThreadItem), ...(made === true ? { made: true as const } : {}) });
   }
   return { items: out };
 }
@@ -234,7 +242,7 @@ export async function threadWork(h: Household, env: NodeJS.ProcessEnv, t: Thread
   // extensions.md's owners gate, as every other surface applies it (src/ui/handler.ts forOwner): a member who owns
   // only some agents sees only the pieces that understand agent owners (owners: 2), so only those are asked.
   if (member.agents !== '*' && pieces.length) {
-    const ok = new Set((await pieceManifests(env)).pieces.filter((p) => p.manifest.owners === 2).map((p) => p.piece));
+    const ok = await ownersAwarePieces(env);
     pieces = pieces.filter((p) => ok.has(p.piece));
   }
   const failed: string[] = [];
@@ -274,13 +282,21 @@ export function fromBlock(home: string | undefined, member: Member | undefined, 
   return { type: 'text', text: 'From a Comms thread', tone: 'muted' };
 }
 
-/** A page with every `from` block drawn for `member`: no piece ever learns a thread's title or member. */
-export function resolveFrom<P extends Pick<Page, 'sections'>>(page: P, home: string | undefined, member: Member | undefined): P {
-  const draw = (bs: Block[]): Block[] => bs.map((b) => b.type === 'from' ? fromBlock(home, member, b.conversation)
-    : b.type === 'details' ? { ...b, blocks: draw(b.blocks) } : b);
-  if (!page.sections.some((s) => JSON.stringify(s.blocks).includes('"type":"from"'))) return page;
-  return { ...page, sections: page.sections.map((s) => ({ ...s, blocks: draw(s.blocks) })) };
-}
+const isFrom = (v: unknown): v is { type: 'from'; conversation: string } =>
+  typeof v === 'object' && v !== null && (v as { type?: unknown }).type === 'from' && typeof (v as { conversation?: unknown }).conversation === 'string';
 
-/** For tests and the backfill: the household's home, as comms.ts keeps it. */
-export const refsDbPath = (home: string) => join(home, 'household.db');
+/**
+ * A page with every `from` block drawn for `member`, wherever it sits (a section, a details, a panel row's sheet): no
+ * piece ever learns a thread's title or member, and none reaches the app undrawn.
+ */
+export function resolveFrom<P extends Pick<Page, 'sections'>>(page: P, home: string | undefined, member: Member | undefined): P {
+  let found = false;
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (isFrom(v)) { found = true; return fromBlock(home, member, v.conversation); }
+    if (typeof v === 'object' && v !== null) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]));
+    return v;
+  };
+  const sections = walk(page.sections) as P['sections'];
+  return found ? { ...page, sections } : page;
+}

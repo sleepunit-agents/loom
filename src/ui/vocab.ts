@@ -246,14 +246,12 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|inbox|activity|mind|people|projects|projects\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|comms|comms\/th:[a-z2-7]{10}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|projects|projects\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|comms\/th:[a-z2-7]{10}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
 
 const COMMS_THREAD_PAGE = /^comms\/th:[a-z2-7]{10}$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
-  // A Comms thread's page (comms.md, "From"): its id carries a colon, which no other path may.
-  if (COMMS_THREAD_PAGE.test(p)) return true;
   if (p.length > LIMITS.path || !PATH_CHARS.test(p)) return false;
   if (p === '') return true;
   if (p.startsWith('/') || p.endsWith('/')) return false;
@@ -363,7 +361,8 @@ export function splitPage(s: string): { core: boolean; path: string; query: Reco
   const rest = core ? s.slice(5) : s;
   const q = rest.indexOf('?');
   const path = q === -1 ? rest : rest.slice(0, q);
-  if (!validPath(path)) return null;
+  // A Comms thread's page (comms.md, "From"): loom's own, and its id carries a colon no other path may.
+  if (!(core && COMMS_THREAD_PAGE.test(path)) && !validPath(path)) return null;
   // Into loom, only pages: loom's own and, as loom:p/<piece>/<path>, another piece's (a conversation's page
   // naming the task it closed, 2026-10-29: a page is only a look, and that piece still says who may see it);
   // never login, logout, actions or the JSON endpoints.

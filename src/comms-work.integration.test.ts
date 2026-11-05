@@ -170,12 +170,17 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
     });
 
     it('keeps at most 200 per thread, dropping the one named longest ago', async () => {
-      const t = await open(Array.from({ length: 200 }, (_, i) => `t-${1000 + i}`).join(' '));
-      await reply(t.id, 't-5000');
-      const refs = refsOf(h.home, t.id).map((r) => r.ref);
+      const t = await open('first, t-1');
+      await reply(t.id, Array.from({ length: 200 }, (_, i) => `t-${1000 + i}`).join(' '));
+      let refs = refsOf(h.home, t.id).map((r) => r.ref);
       expect(refs).toHaveLength(200);
-      expect(refs).toContain('t-5000');
-      expect(refs[0]).toBe('t-5000');
+      expect(refs).not.toContain('t-1');
+      const u = await open(Array.from({ length: 201 }, (_, i) => `t-${2000 + i}`).join(' '));
+      refs = refsOf(h.home, u.id).map((r) => r.ref);
+      expect(refs).toHaveLength(200);
+      expect(refs).not.toContain('t-2000');
+      expect(refs).toContain('t-2200');
+      expect(refs[0]).toBe('t-2200');
     });
 
     it('backfills older threads once, and a second start reads nothing', async () => {
@@ -192,6 +197,19 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       again.close();
       expect(await backfillRefs(h, process.env)).toBe(0);
       expect(refsOf(h.home, t.id)).toEqual([]);
+    });
+
+    it('runs at daemon start', async () => {
+      const t = await open('started fresh, t-902');
+      const hh = new BetterSqlite3(join(h.home, 'household.db'));
+      hh.prepare('DELETE FROM comms_refs WHERE thread = ?').run(t.id);
+      hh.prepare("DELETE FROM comms_meta WHERE key = 'refs_backfilled'").run();
+      hh.close();
+      const second = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
+      try {
+        for (let i = 0; i < 100 && !refsOf(h.home, t.id).length; i++) await new Promise((r) => setTimeout(r, 50));
+        expect(refsOf(h.home, t.id).map((r) => r.ref)).toEqual(['t-902']);
+      } finally { await second.close(); }
     });
   });
 
@@ -236,12 +254,19 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       const t = await open('mine, t-1');
       expect((await req(tok.loren, 'GET', `/comms/${t.id}/work`)).status).toBe(403);
       expect((await req(tok.sam, 'GET', `/comms/${t.id}/work`)).status).toBe(403);
+      // A piece with owners: 2 and nothing else to show (no tab, no asks) is still asked.
+      piece(h.home, 'quiet', { sections: { thread: { label: 'Quiet', argv: ['loom-quiet', 'thread-feed'] } } }, feedPiece('quiet', true).replace("tab: { label: 'quiet' }, ", ''));
+      clearPieceCache();
       const ts = await open('sam\'s own, t-1', tok.sam);
       const before = calls('changes').length;
       const r = await req(tok.sam, 'GET', `/comms/${ts.id}/work`);
       expect(r.status).toBe(200);
       expect(calls('changes').length).toBe(before); // changes has no owners: 2: never asked for sam
       expect(JSON.parse(calls('tasks').at(-1)!.stdin).caller).toEqual({ kind: 'owner', who: 'sam', agents: ['art'] });
+      expect(calls('quiet').length).toBe(1);
+      rmSync(join(h.home, 'pieces', 'bin', 'loom-quiet'));
+      rmSync(join(h.home, 'pieces', 'quiet'), { recursive: true });
+      clearPieceCache();
     });
   });
 
@@ -251,7 +276,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       const r = await fetch(`${base}/api/loom/comms/adapter`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok.runtime}` },
         body: JSON.stringify({ op: 'describe', place: t.id, agent: 'art' }) });
       const brief = ((await r.json()) as { brief: string[] }).brief;
-      expect(brief[0]).toContain(`--source conversation:${t.conversation}`);
+      expect(brief[0]).toContain(`its source: conversation:${t.conversation}`);
       expect(brief[0].length).toBeLessThanOrEqual(300);
     });
   });
@@ -263,6 +288,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       writeFileSync(join(h.home, 'tasks-page.json'), JSON.stringify({ title: 'A task', sections: [
         { id: 'from', place: 'side', blocks: [{ type: 'from', conversation: t.conversation }] },
         { id: 'other', blocks: [{ type: 'from', conversation: 'cv-ffffffffffff' }] },
+        { id: 'sheet', blocks: [{ type: 'panel', rows: [{ label: 'Where', value: 'see', sheet: { blocks: [{ type: 'from', conversation: t.conversation }] } }] }] },
       ] }));
       clearPieceCache();
       const blocks = async (who: string) => {
@@ -277,6 +303,8 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       expect(s.blocks[0]).toMatchObject({ type: 'text', text: 'From a Comms thread' });
       const l = await blocks('loren');
       expect(l.blocks[0]).toMatchObject({ type: 'text', text: 'From a conversation' });
+      expect(JSON.stringify(j.blocks[2])).toContain('From: Comm screen frame');
+      expect(JSON.stringify(s.blocks[2])).toContain('From a Comms thread');
       for (const x of [s, l]) {
         expect(x.json).not.toContain('Comm screen frame');
         expect(x.json).not.toContain(t.id);

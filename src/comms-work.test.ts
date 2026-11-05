@@ -32,6 +32,10 @@ describe('parseThreadFeed: a piece\'s answer (criterion 21)', () => {
     expect(parseThreadFeed({ items: [ok] })).toEqual({ items: [ok] });
   });
 
+  it('reads made: false as absent', () => {
+    expect(parseThreadFeed({ items: [{ ...ok, made: false }] })).toEqual({ items: [{ ...ok, made: undefined }].map(({ made: _m, ...r }) => r) });
+  });
+
   it('refuses the whole answer for any one broken field', () => {
     for (const bad of [
       { items: [{ ...ok, extra: 1 }] },
@@ -41,7 +45,7 @@ describe('parseThreadFeed: a piece\'s answer (criterion 21)', () => {
       { items: [{ ...ok, when: 'yesterday' }] },
       { items: [{ ...ok, href: 'https://x.test' }] },
       { items: [{ ...ok, page: undefined, href: 'http://x.test' }] },
-      { items: [{ ...ok, made: false }] },
+      { items: [{ ...ok, made: 'yes' }] },
       { items: [ok], more: 1 },
     ]) expect(typeof parseThreadFeed(bad)).toBe('string');
   });

@@ -196,8 +196,8 @@ choice, and the body's brief. The new parts follow.
   - `post` is `{ok: false, permanent: true}`, with the reason in words, for: a place that isn't a thread of that
     agent, an archived or deleted thread, empty text, or text over 40,000 characters.
   - `describe` answers `brief`, whose first line is "A private thread in loom's app with your owner, <their name>. Only
-    they read it. They can see your tool use as you work. A task you create or change here: add --source
-    conversation:<cv>." (the thread's conversation, "Work in this thread"), and `readers: [<member>]`.
+    they read it. They can see your tool use as you work. Work you record here can name this conversation as its source:
+    conversation:<cv>." (the thread's conversation, so a house body can pass it: "Made here"), and `readers: [<member>]`.
   - `status: working` shows the thread's working line, and `done` clears it. After the member presses Stop, the next
     `status` call answers `stop: true` once.
 - **The sender's trust.** For a delivery on `loom` from source `loom`, the runtime takes the sender as **tier 3**,
@@ -638,9 +638,10 @@ A thread's right column lists the work the thread is about, with each item's liv
     (`note:pond/plan.` keeps `note:pond/plan`).
 
   A `cv-…` id and a URL itself are not work, and are not kept. Cards, asks and errors are never read.
-- **Where it's kept.** In household.db, `comms_refs (thread, ref, seq, at)`, with the thread rows: one row per thread
-  and ref, holding the `seq` and time of the newest message naming it. A thread keeps at most 200 refs. Past that,
-  the one named longest ago is dropped.
+- **Where it's kept.** In household.db, `comms_refs (thread, ref, seq, pos, at)`, with the thread rows: one row per
+  thread and ref, holding the newest message naming it (`seq`, its time) and where in it (`pos`, 0 for the first ref
+  named). A thread keeps at most 200 refs. Past that, the one named longest ago is dropped: the oldest message's, and
+  within one message the earliest named. A ref over 200 characters isn't kept.
 - **No words.** A row holds a reference and nothing else: no message text, no title, no state. That's why it may
   outlive the words. The 14-day sweep ("History") leaves `comms_refs` alone, so the panel still lists the work after
   the words that named it are gone. Deleting a thread deletes its refs with it. Being in household.db, the refs are
@@ -649,6 +650,7 @@ A thread's right column lists the work the thread is about, with each item's liv
   the sweep that runs then). It reads every `message` and `reply` whose `text` isn't null yet, of every thread,
   archived ones included, decrypting each once, and indexes it. Then it writes `refs_backfilled` (and when) into
   household.db's `comms_meta`. A start that finds that row reads nothing. No view ever decrypts history to find refs.
+  Threads whose member no longer owns their agent are skipped: nobody can open their panel.
 
 ### Made here (provenance)
 
@@ -661,10 +663,10 @@ A thread's right column lists the work the thread is about, with each item's liv
     task before its update, outside the write, so two bodies in different threads updating one source-less task at
     the same moment can leave it the second thread's.
 
-  The `run` API carries no environment (extensions.md, "`run`"), so a body in a house passes `--source` itself. Nothing
-  in loom can make it: the agent's own guidance asks it to (Art's CLAUDE.md, outside loom). **Accepted as a
-  trade-off:** a house body that doesn't pass it makes tasks that show only when the thread names them, never as made
-  here.
+  The `run` API carries no environment (extensions.md, "`run`"), so a body in a house passes `--source` itself. loom
+  can't make it: the thread's brief gives the conversation as a source to name (section 1, `describe`, without naming
+  any piece), and the agent's own guidance (Art's CLAUDE.md, outside loom) asks it to. **Accepted as a trade-off:** a
+  house body that doesn't pass it makes tasks that show only when the thread names them, never as made here.
 - **A change's source.** A change is made in a conversation only through a task that vouches for it: the task's
   description cites the change, or a comment on the task by one of the household's agents or the owner does, and
   that task's `source` is the conversation. A change's own title, body and branch never count, whoever opened it:
@@ -712,7 +714,8 @@ beside `sections.project`.
         "made": true } ] }                        // optional: made in this thread
   ```
 
-  At most 50 items, every key known, at most one of `page` and `href`, each field within its cap and form. Any one of
+  At most 50 items, every key known, at most one of `page` and `href`, each field within its cap and form (`made` may
+  also be `false`, read as absent). Any one of
   these broken fails the whole answer, as that piece's failure alone.
 - **What each piece answers.**
   - **Tasks:** each `t-N` ref the store holds, and each task whose `source` is `conversation:<cv>` (`made: true`).
@@ -753,7 +756,8 @@ beside `sections.project`.
 ### From: the other direction
 
 A piece's page can say where a task or change came from with a new block, `{"type": "from", "conversation":
-"cv-…"}`. Core replaces it before the page is drawn, so no piece ever sees a thread's title or member:
+"cv-…"}`. Core replaces it before the page is drawn, wherever it sits (a section, a `details`, a panel row's sheet), so
+no piece ever sees a thread's title or member:
 
 | The conversation | The viewer | Drawn as |
 |---|---|---|
@@ -991,7 +995,8 @@ A thread filed under a project already feeds its hub (section "Project" above). 
       doesn't contain it.
     - `at-12`, `x/acme/app#3` and `notes:x` aren't kept; `note:pond/plan.` is kept as `note:pond/plan`.
     - After the sweep has nulled the words, the refs are still there. After a delete, none are.
-    - The 201st ref drops the one named longest ago.
+    - With a message naming t-1 then a later one naming 200 others, t-1 is dropped; within one message of 201 refs,
+      the first named is.
     - A daemon start with a thread whose messages predate the index indexes them and writes `refs_backfilled` to
       `comms_meta`. A message added straight to `comms.db` after that, with no index row, is still unindexed after a
       second start.
@@ -1003,7 +1008,8 @@ A thread filed under a project already feeds its hub (section "Project" above). 
     - a piece answering an unknown key, 51 items, a 25-character `status` or a non-zero exit is in `failed` by its
       label, and the other's items are still there;
     - when both answer the same `ref`, one marked `made`, the panel has that one's whole item;
-    - for a member whose `agents` is `["art"]`, a piece without `owners: 2` isn't run, and one with it is;
+    - for a member whose `agents` is `["art"]`, a piece without `owners: 2` isn't run, and one with it is, even when
+      its manifest shows nothing else;
     - the route is a `403` for the `pond-bot` member and for a second owner of `art`, as every thread route is;
     - a `sections` block with a `thread` lacking `label`, with an unknown key, or whose `argv[0]` isn't one of the
       piece's bins, is refused at install; one with only `thread` is accepted.

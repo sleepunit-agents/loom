@@ -80,7 +80,7 @@ export function WorkPanel({ thread, wide, replySeq }: { thread: string; wide: bo
     </div>
   );
   return (
-    <section className="comms-work" data-wide={wide || undefined} data-open={open || undefined} aria-label="Work in this thread">
+    <section className="comms-work" data-open={open || undefined} aria-label="Work in this thread">
       <h2 className="comms-work__head loom-data">WORK IN THIS THREAD</h2>
       <button type="button" className="comms-work__toggle" aria-expanded={open} aria-controls={`work-${thread}`} onClick={() => setOpen(!open)}>
         <span>{workLabel(items)}</span><span aria-hidden>{open ? '▴' : '▾'}</span>
