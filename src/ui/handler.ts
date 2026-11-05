@@ -866,7 +866,7 @@ function alertsOf(p: PieceInfo): { alerts?: number } {
 
 /** The nightly backup as the system bar says it: its last good one, or what's wrong (backupRow, Setup's row). Its
  * settings or state unreadable (a hand-edited household.json, a half-written state.json): no glyph, not a broken page. */
-export function backupOf(h: Household, nowMs = Date.now()): { backup?: Shell['backup'] } {
+function backupOf(h: Household, nowMs = Date.now()): { backup?: Shell['backup'] } {
   try {
     const r = backupRow(h, nowMs, (iso) => agoText(iso, nowMs) || 'a while ago');
     return { backup: { tone: r.tone, text: r.text, href: `/a/${h.default}/setup` } };

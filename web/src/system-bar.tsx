@@ -10,22 +10,31 @@
 // Up to four; fewer when loom has nothing to say: no Boxes glyph without the Boxes piece, and the backup only to a
 // household owner (an agent owner never sees its target or errors). Not on iOS's home-screen app (an iPad draws its own
 // status bar there, clock and all).
+// Trade-offs, chosen: a glyph's words are in its tooltip and its name, not printed beside it (a phone's status icons
+// carry none, and printed words would make it the old status line again); what's wrong is said in words elsewhere too:
+// offline in the ticker, a box's alert and a failed backup as asks in the Inbox, counted by the bar's own count. And
+// "Live" is whether this page came from loom or from the copy kept for offline (App.tsx savedAt), not the live stream.
 import { useEffect, useState } from 'react';
 import { loomNow, type Shell } from './loom';
 
 /** The time in loom's zone, as a phone's status bar has it: "9:41", no AM or PM. */
 export function clockText(ms: number, tz?: string, fallback = ''): string {
-  try {
+  if (tz) try {
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).formatToParts(new Date(ms));
-    const t = parts.filter((p) => p.type === 'hour' || p.type === 'minute' || p.type === 'literal').map((p) => p.value).join('').trim();
-    if (tz) return t;
+    return parts.filter((p) => p.type === 'hour' || p.type === 'minute' || p.type === 'literal').map((p) => p.value).join('').trim();
   } catch { /* a zone this browser doesn't know: the page's own time, below */ }
   // An older loom (no zone): its clock as the page said it, the time alone.
   return /\d{1,2}:\d{2}/.exec(fallback)?.[0] ?? '';
 }
 
-/** loom's clock (loom.ts loomNow: the device's, set by loom's latest answer), turned over on the minute. */
-function useLoomMinute(): number {
+/** The clock said whole, for a screen reader and on hover: "8:35 AM, America/Chicago time". */
+export function clockWords(ms: number, tz?: string, fallback = ''): string {
+  if (tz) try { return `${new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(new Date(ms))}, ${tz} time`; } catch { /* below */ }
+  return fallback;
+}
+
+/** Re-renders on loom's minute (loom.ts loomNow: the device's clock, set by loom's latest answer). */
+function useLoomMinute(): void {
   const [now, set] = useState(loomNow);
   useEffect(() => {
     let t: ReturnType<typeof setTimeout>;
@@ -36,7 +45,7 @@ function useLoomMinute(): number {
     document.addEventListener('visibilitychange', wake);
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', wake); };
   }, []);
-  return now;
+  void now;
 }
 
 const G = { width: 15, height: 15, viewBox: '0 0 16 16', 'aria-hidden': true } as const;
@@ -81,17 +90,17 @@ const BOXES = ['/p/runtime', '/p/box'];
 export function statusItems(shell: Shell, offline: boolean): Item[] {
   const items: Item[] = [{ key: 'signal', glyph: <Signal live={!offline} />, dim: offline,
     label: offline ? 'Offline: can’t reach loom, showing a saved copy' : 'Live: connected to loom' }];
-  const n = shell.agents.length, working = shell.agents.filter((a) => a.working).length;
+  const all = shell.agents.length, working = shell.agents.filter((a) => a.working).length;
   items.push({ key: 'agents', glyph: <Agents />, count: String(working), href: shell.home,
-    label: working === 0 ? `No agent at work right now (${n} in all)` : working === n ? `${n === 1 ? 'The agent is' : `All ${n} agents are`} at work`
-      : `${working} of ${n} agents at work` });
+    label: working === 0 ? `No agent at work right now (${all} in all)` : working === all ? `${all === 1 ? 'The agent is' : `All ${all} agents are`} at work`
+      : `${working} of ${all} agents at work` });
   const boxes = shell.pieces.find((p) => BOXES.includes(p.href));
   if (boxes) {
-    const n = /\d+/.exec(boxes.stat ?? '')?.[0];
+    const many = /\d+/.exec(boxes.stat ?? '')?.[0];
     const alerts = boxes.alerts ?? 0;
     const trouble = alerts > 0 || boxes.tone === 'bad' || boxes.tone === 'warn';
     const what = boxes.stat?.trim() || 'Boxes';
-    items.push({ key: 'boxes', glyph: <Boxes />, count: n, dim: trouble, href: boxes.href,
+    items.push({ key: 'boxes', glyph: <Boxes />, count: many, dim: trouble, href: boxes.href,
       label: alerts ? `${what}: ${alerts} alert${alerts === 1 ? '' : 's'}` : trouble ? `${what}: something needs a look` : `${what}, all quiet` });
   }
   const b = shell.backup;
@@ -105,10 +114,10 @@ export function statusItems(shell: Shell, offline: boolean): Item[] {
 export function SystemBar({ shell, clock, offline, go }: { shell: Shell; clock: { text: string; tz?: string }; offline: boolean; go: (href: string) => void }) {
   // Turned over each minute; and each answer from loom re-renders the bar, so the time is read again with its latest Date.
   useLoomMinute();
-  const time = clockText(loomNow(), clock.tz, clock.text);
+  const at = loomNow(), time = clockText(at, clock.tz, clock.text), said = clockWords(at, clock.tz, clock.text);
   return (
     <div className="loom-sys">
-      <span className="loom-sys__clock">{time}</span>
+      <span className="loom-sys__clock" title={said}><span aria-hidden>{time}</span><span className="sr-only">{said}</span></span>
       <span className="loom-sys__icons" role="group" aria-label="Status">
         {statusItems(shell, offline).map((it) => {
           const inner = <>{it.glyph}{it.count && <span className="loom-sys__n loom-data" aria-hidden>{it.count}</span>}<span className="loom-sys__tip" aria-hidden>{it.label}</span></>;

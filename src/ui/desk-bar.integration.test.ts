@@ -90,6 +90,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const ctx = await browser.newContext({ viewport: { width, height: 800 }, reducedMotion: motion, serviceWorkers: 'block', timezoneId: 'America/Los_Angeles' });
     // A device whose clock is wrong: its Date runs this far from the real one (loom's).
     if (o.skewMs) await ctx.addInitScript((d) => { const N = Date.now; Date.now = () => N() + d; const D = Date;
+      // any: replacing the global Date constructor itself, which TypeScript types as read-only.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (globalThis as any).Date = class extends D { constructor(...a: unknown[]) { if (a.length) super(...(a as [])); else super(N() + d); } static now() { return N() + d; } }; }, o.skewMs);
     await ctx.addInitScript((l) => { localStorage.setItem('loom-look', l); sessionStorage.setItem('loom-arrived', '1'); }, look);
@@ -119,7 +120,10 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const clock = p.locator('.loom-sys__clock');
     // loom's time in loom's zone (Kathmandu here), not the browser's (Los Angeles): "9:41", no AM or PM.
     const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
-    const shown = await clock.innerText();
+    const shown = await clock.locator('[aria-hidden]').innerText();
+    // Whole for a screen reader and on hover: the half of the day and the zone.
+    expect(await clock.getAttribute('title')).toMatch(/^\d{1,2}:\d{2}\s[AP]M, Asia\/Kathmandu time$/);
+    expect(await clock.locator('.sr-only').innerText()).toBe(await clock.getAttribute('title'));
     expect(shown).toMatch(/^\d{1,2}:\d{2}$/);
     expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(shown);
     expect(await clock.evaluate((e) => ({ size: parseFloat(getComputedStyle(e).fontSize), weight: getComputedStyle(e).fontWeight }))).toEqual({ size: 13, weight: '700' });
@@ -173,6 +177,17 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await p.context().close();
   }, 90_000);
 
+  it('the system bar starts at 640 px: none at 639, there at 640', async () => {
+    for (const [w, n] of [[639, 0], [640, 1]] as const) {
+      const p = await device('neon', 'reduce', w);
+      await open(p, '/');
+      expect(await p.locator('.loom-sys').count(), `${w}`).toBe(n);
+      expect(await p.locator('.loom-pbar').count(), `${w}`).toBe(1);
+      expect(await p.evaluate(() => document.documentElement.scrollWidth), `${w}`).toBeLessThanOrEqual(w);
+      await p.context().close();
+    }
+  }, 60_000);
+
   it('the ticker has more room and still moves only when its words overflow; reduced motion keeps it still', async () => {
     const p = await device('neon', 'no-preference', 1280);
     await open(p, '/');
@@ -199,7 +214,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const p = await device('neon', 'reduce', 1280, { skewMs: (3 * 60 + 7) * 60_000 });
     await open(p, '/');
     const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
-    expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(await p.locator('.loom-sys__clock').innerText());
+    expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(await p.locator('.loom-sys__clock [aria-hidden]').innerText());
     await p.context().close();
   }, 60_000);
 

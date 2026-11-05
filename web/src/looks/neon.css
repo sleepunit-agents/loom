@@ -181,7 +181,7 @@ html.loom-ios-app:root[data-look="neon"] .loom-top--bar .loom-pbar{padding-inlin
    scrolls away with the page's header. Its clock small and bold on the left, a few monochrome glyphs on the right, each
    with its words on hover or keyboard focus; dimmed is "look at this". Not on iOS's home-screen app (an iPad draws its
    own there, and the bar sits at its inset, as on a phone). ---- */
-:root[data-look="neon"] .loom-top--desk{padding-top:8px}
+:root[data-look="neon"] .loom-top--desk{padding-top:calc(env(safe-area-inset-top) + 8px)}
 :root[data-look="neon"] .loom-sys{display:flex;align-items:center;justify-content:space-between;gap:12px;height:26px;color:var(--v-text);white-space:nowrap}
 :root[data-look="neon"] .loom-sys__clock{font-family:var(--font-text);font-size:13px;font-weight:700;letter-spacing:.01em;font-variant-numeric:tabular-nums}
 :root[data-look="neon"] .loom-sys__icons{display:flex;align-items:center;gap:6px;margin-right:-3px}
@@ -194,7 +194,8 @@ html.loom-ios-app:root[data-look="neon"] .loom-top--bar .loom-pbar{padding-inlin
 :root[data-look="neon"] .loom-sys__icon:focus-visible .loom-sys__tip{opacity:1}
 @media (hover:hover) and (pointer:fine){:root[data-look="neon"] .loom-sys__icon:hover .loom-sys__tip{opacity:1}}
 /* to a finger (a tablet's width, a touch laptop): each glyph 44px wide, and its hit area reaching 9px over the bar's
-   top and 4px under it (39px tall; any lower and it would take taps meant for the count under it) */
+   top and 4px under it. A trade-off, chosen: 39px tall, not 44, since any lower it takes taps meant for the count right
+   under it, and a taller bar is no longer a thin one; each glyph's place is also a row in the side panel or the dock. */
 @media (pointer:coarse){
 :root[data-look="neon"] .loom-sys__icons{gap:0;margin-right:-12px}
 :root[data-look="neon"] .loom-sys__icon{min-width:44px;justify-content:center}

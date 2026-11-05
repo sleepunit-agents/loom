@@ -3,7 +3,7 @@
  * says, only from what the shell has. Its place on the page: desk-bar.integration.test.ts.
  */
 import { describe, it, expect } from 'vitest';
-import { clockText, statusItems } from '../../web/src/system-bar';
+import { clockText, clockWords, statusItems } from '../../web/src/system-bar';
 import type { Shell } from '../../web/src/loom';
 
 const shell = (o: Partial<Shell> = {}): Shell => ({ owner: 'jonathan', scope: 'household', household: true, agents: [], asks: 0, home: '/', core: [], pieces: [], tab: 'home', ...o });
@@ -19,6 +19,9 @@ describe('the system bar', () => {
     // An older loom says no zone: its own clock's time.
     expect(clockText(at, undefined, 'Thu 8:02 AM CST')).toBe('8:02');
     expect(clockText(at, 'Not/AZone', 'Thu 8:02 AM CST')).toBe('8:02');
+    // Said whole: the half of the day and the zone.
+    expect(clockWords(at, 'America/Chicago')).toBe('8:02 AM, America/Chicago time');
+    expect(clockWords(at, undefined, 'Thu 8:02 AM CST')).toBe('Thu 8:02 AM CST');
   });
 
   it('live or offline, in words', () => {
