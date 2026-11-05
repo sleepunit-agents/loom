@@ -404,12 +404,16 @@ export default function App() {
 
   // The app's arrival, once a session: the first time a page with its header has landed (arrive.tsx arriveOnce).
   const arrived = useRef(false);
+  // A desktop's boot (desk.tsx DeskBoot): with the arrival, once a session, never under reduced motion.
+  const [booting, setBooting] = useState(false);
   useLayoutEffect(() => {
     if (arrived.current || !data || waiting) return;
     arrived.current = true;
     // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
     // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
     const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
+    // A desktop boots first, once a session and only with motion allowed; the arrival (its power-on) runs as it ends.
+    if (desk && desk$?.bootsNow()) { setBooting(true); return; }
     if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
   }, [data, waiting]);
 
@@ -558,6 +562,10 @@ export default function App() {
       </div>
 
       {desk && D && <D.DeskKeys go={go} places={[...nav.tabs, ...nav.more]} />}
+      {booting && D && chrome?.shell && <D.DeskBoot shell={chrome.shell} offline={!!savedAt} onDone={() => {
+        setBooting(false);
+        if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundOn.current) void import('./sound').then((m) => m.chime('boot'));
+      }} />}
 
       {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
         go={(href) => { setMore(false); go(href); }} /></Suspense>}

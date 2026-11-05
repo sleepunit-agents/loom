@@ -39,7 +39,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       writeFileSync(join(home, 'agents', a, 'IDENTITY.md'), a === 'art' ? '# Art E Fish\n' : '# Visual Mark\n');
       const db = new BetterSqlite3(join(home, 'agents', a, 'memories.db')); createConversationTables(db); db.close();
     }
-    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
+    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', owner: 'jonathan', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
     process.env.LOOM_HOME = home;
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
@@ -288,6 +288,79 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       await p.context().close();
     }, 90_000);
   }
+
+  /** A fresh session's first page: neither the boot nor the arrival had yet. */
+  const fresh = async (p: Page, path = '/') => { await p.evaluate(() => { sessionStorage.removeItem('loom-arrived'); sessionStorage.removeItem('loom-booted'); }); await p.goto(`${base}${path}`); };
+  /** Whether an element of the boot is shown now (its lines come up one by one: hidden ones are in the DOM already). */
+  const shown = (p: Page, sel: string) => p.locator(sel).evaluate((e) => getComputedStyle(e).visibility === 'visible' && Number(getComputedStyle(e.closest('.loom-boot')!).opacity) > 0.5);
+
+  it('the boot: what loom has, licensed to the owner by name, the licence line up before it leaves; a key skips it at once', async () => {
+    const p = await screen('neon', 1280, 800, { motion: 'no-preference', boot: true });
+    // The owner's name as People has it (Find's answer): "Jonathan Barket" is licensed as "Jonathan B.".
+    await p.route('**/find', (r) => r.fulfill({ json: { suggest: { people: [{ label: 'Jonathan Barket', href: '/people/jonathan' }] } } }));
+    await fresh(p);
+    const boot = p.locator('.loom-boot');
+    await boot.waitFor({ timeout: 5000 });
+    const t0 = Date.now();
+    const words = (await boot.textContent()) ?? '';
+    expect(words).toMatch(/LOOM\/\/OS/);
+    expect(words).toMatch(/2 agents/);
+    await expect.poll(async () => (await p.locator('.loom-boot__lic').textContent()) ?? '', { timeout: 1500 }).toBe('licensed to Jonathan B.');
+    expect(await boot.getAttribute('aria-hidden')).toBe('true');
+    // The licence line is up, and still up, before the boot leaves by itself.
+    const last = '.loom-boot__log li:last-child';
+    expect(await p.locator(last).textContent()).toMatch(/validating LOOM\/\/OS™ license.*compliant/);
+    await expect.poll(() => shown(p, last), { timeout: 1600, interval: 50 }).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(1900);
+    // It never has focus.
+    expect(await p.evaluate(() => !!document.activeElement?.closest('.loom-boot'))).toBe(false);
+    // A key skips it at once: long before it would have left by itself (2.2 s).
+    const t1 = Date.now();
+    await p.keyboard.press('Space');
+    await expect.poll(() => boot.count(), { timeout: 1000, interval: 25 }).toBe(0);
+    expect(Date.now() - t1).toBeLessThan(600);
+    // Then the app's own arrival (its power-on) runs, and the desktop is there.
+    await p.locator('.loom-desk-home').waitFor();
+    // Once a session: not again on the next page, nor coming back.
+    await p.goto(`${base}/`); await p.locator('.loom-desk-home').waitFor(); await p.waitForTimeout(600);
+    expect(await boot.count()).toBe(0);
+    await p.context().close();
+  }, 90_000);
+
+  it('a tap skips the boot and presses nothing under it', async () => {
+    const p = await screen('neon', 1280, 800, { motion: 'no-preference', boot: true });
+    await fresh(p);
+    await p.locator('.loom-boot').waitFor({ timeout: 5000 });
+    // Where the Inbox's dock key is, under the boot.
+    const key = (await p.locator('.loom-dock-bar [data-part="item"][aria-label="Inbox"]').boundingBox())!;
+    await p.mouse.click(key.x + key.width / 2, key.y + key.height / 2);
+    await expect.poll(() => p.locator('.loom-boot').count(), { timeout: 1000, interval: 25 }).toBe(0);
+    await p.waitForTimeout(400);
+    expect(new URL(p.url()).pathname).toBe('/');
+    await p.context().close();
+  }, 60_000);
+
+  it('the boot leaves by itself after about two seconds', async () => {
+    const p = await screen('neon', 1920, 1080, { motion: 'no-preference', boot: true });
+    await fresh(p);
+    await p.locator('.loom-boot').waitFor({ timeout: 5000 });
+    const t0 = Date.now();
+    await expect.poll(() => p.locator('.loom-boot').count(), { timeout: 4000, interval: 50 }).toBe(0);
+    expect(Date.now() - t0).toBeGreaterThan(1700);
+    expect(Date.now() - t0).toBeLessThan(3200);
+    await p.context().close();
+  }, 60_000);
+
+  it('no boot under reduced motion, in 000h, or under 1024 px', async () => {
+    for (const [look, w, motion] of [['neon', 1280, 'reduce'], ['000h', 1280, 'no-preference'], ['neon', 1000, 'no-preference']] as const) {
+      const p = await screen(look, w, 800, { motion, boot: true });
+      await fresh(p);
+      await p.locator('.loom-top h1').waitFor();
+      await p.waitForTimeout(800);
+      expect(await p.locator('.loom-boot').count(), `${look} ${w} ${motion}`).toBe(0);
+      await p.context().close();
+    }
+  }, 90_000);
 
   it('000h at the same width keeps its rail and its page; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
     const o = await screen('000h', 1280, 800);
