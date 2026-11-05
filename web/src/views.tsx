@@ -141,7 +141,11 @@ export type Approval = { text: string; meta?: string; actions: Btn[]; source: So
 /** What a button does, said beside it: the primary (Allow, Yes) with "If you allow", the danger one (Deny) with "If you
  * deny" (Jonathan, 2026-11-05: "I don't know what this is even asking yet"). A button with no line is drawn alone. */
 export function lineFor(b: Btn, lines: { if_yes?: string; if_no?: string }): string | undefined {
-  return b.tone === 'danger' ? lines.if_no : b.tone === 'primary' || !b.tone ? lines.if_yes : undefined;
+  return b.tone === 'danger' ? lines.if_no : b.tone === 'primary' ? lines.if_yes : undefined;
+}
+/** The small print: exactly what a yes allows (a piece's machine fields), the same words wherever it's drawn. */
+export function Fine({ text, className = 'break-words text-xs opacity-60' }: { text?: string; className?: string }) {
+  return text ? <p className={className}>Exactly what this allows: {text}</p> : null;
 }
 export function AnswersWithLines({ actions, lines, size = 'sm', onDone }: { actions: Btn[]; lines: { if_yes?: string; if_no?: string }; size?: 'sm' | 'default'; onDone?: () => void }) {
   if (!lines.if_yes && !lines.if_no) return <div className="flex flex-wrap gap-2 pt-1">{actions.map((b) => <ActButton key={b.action + b.label} b={b} size={size} onDone={onDone} />)}</div>;
@@ -281,8 +285,9 @@ function Asks({ asks }: { asks: Ask[] }) {
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
             {a.meta && <p className="text-sm opacity-70">{a.meta}</p>}
             {a.approval && <ApprovalBox a={a.approval} />}
-            {a.actions && <AnswersWithLines actions={a.actions} lines={a} />}
-            {a.fine && <p className="break-words text-xs opacity-60">Exactly what this allows: {a.fine}</p>}
+            {a.actions && (a.if_yes || a.if_no ? <AnswersWithLines actions={a.actions} lines={a} />
+              : <div className="flex flex-wrap gap-2">{a.actions.map((b) => <ActButton key={b.action + b.label} b={b} />)}</div>)}
+            <Fine text={a.fine} />
           </CardContent>
         </Card>
       </Arrive></As>))}
@@ -305,7 +310,7 @@ export function ApprovalBox({ a, size = 'sm', onDone }: { a: Approval; size?: 's
       <p className="whitespace-pre-wrap break-words font-medium">{text}</p>
       {a.meta && <p className="whitespace-pre-wrap break-words text-sm opacity-70">{a.meta}</p>}
       <As source={a.source}><AnswersWithLines actions={a.actions} lines={a} size={size} onDone={onDone} /></As>
-      {a.fine && <p className="break-words text-xs opacity-60">Exactly what this allows: {a.fine}</p>}
+      <Fine text={a.fine} />
     </section>
   );
 }

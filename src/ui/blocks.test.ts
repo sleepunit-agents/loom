@@ -41,8 +41,9 @@ describe('meter, code and status blocks', () => {
     // Laid out: why, what each answer does, details and the small print, each within its cap.
     const laid = parseManifest({ v: 2, asks: [{ text: 'OK to start updating lane prompts on loom again?', why: 'The script changed.', if_yes: 'They go live.', if_no: 'They wait.', details: 'In PR 61.', fine: 'A GitHub write: acme/app' }] });
     expect(typeof laid === 'string' ? laid : laid.asks[0]).toMatchObject({ why: 'The script changed.', if_yes: 'They go live.', if_no: 'They wait.', details: 'In PR 61.', fine: 'A GitHub write: acme/app' });
-    for (const [k, n] of [['why', 301], ['if_yes', 301], ['if_no', 301], ['details', 2001], ['fine', 401]] as const) {
-      expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', [k]: 'w'.repeat(n) }] }), k).toBe('string');
+    for (const [k, n] of [['why', 300], ['if_yes', 300], ['if_no', 300], ['details', 2000], ['fine', 400]] as const) {
+      expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', [k]: 'w'.repeat(n) }] }), `${k} at its cap`).not.toBe('string');
+      expect(typeof parseManifest({ v: 2, asks: [{ text: 'x', [k]: 'w'.repeat(n + 1) }] }), `${k} over it`).toBe('string');
     }
   });
 

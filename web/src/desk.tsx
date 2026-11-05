@@ -11,7 +11,7 @@ import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, LoomMark, Nothing, useEnv, type Mark } from './blocks';
 import { Arrive } from './arrive';
-import { AnswersWithLines, ApprovalBox, As, useOpenItem, type InboxItem } from './views';
+import { AnswersWithLines, ApprovalBox, As, Fine, useOpenItem, type InboxItem } from './views';
 import { plain } from './plain';
 import { tidy } from './tidy';
 import { iconFor } from './safe';
@@ -93,7 +93,7 @@ function Need({ i }: { i: InboxItem }) {
         )}
         {/* Allow beside "If you allow", Deny beside "If you deny", under the ask read whole. */}
         {lined && <As source={i.source}><AnswersWithLines actions={acts} lines={i.needs!} /></As>}
-        {lined && i.fine && <p className="loom-need__fine">Exactly what this allows: {i.fine}</p>}
+        {acts.length > 0 && <Fine text={i.fine} className="loom-need__fine" />}
       </div>
     </Arrive>
   );

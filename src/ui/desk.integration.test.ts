@@ -174,6 +174,16 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       expect(await row.textContent()).toContain(line);
     }
     expect(await card.textContent()).toContain('Exactly what this allows: A GitHub write');
+    // The Inbox carries the same, laid out, for its sheet (and its row, which has no buttons, may be cut).
+    const items = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: Array<Record<string, any>> }).items);
+    const it = items.find((x) => /lane prompts on loom again/.test(x.text))!;
+    expect(it).toMatchObject({ kind: 'permission', fine: expect.stringContaining('A GitHub write'),
+      needs: { why: expect.any(String), if_yes: 'Lane prompt changes go live again.', if_no: 'Lane prompts stay as they are until you look.' } });
+    // In its sheet: the whole ask as its title, "If you allow" and "If you deny", the small print, then the buttons.
+    await card.locator('.loom-need__title').click();
+    const sheet = p.getByRole('dialog');
+    await sheet.waitFor();
+    for (const t of ['OK to start updating lane prompts on loom again?', 'If you allow', 'If you deny', 'Exactly what this allows']) expect(await sheet.textContent()).toContain(t);
     await p.context().close();
   }, 90_000);
 

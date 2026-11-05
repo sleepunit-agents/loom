@@ -9,7 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Textarea } from '@/components/ui/textarea';
 import { ActButton, EnvContext, Link, LoomMark, Nothing } from './blocks';
 import type { Chrome, Source } from './loom';
-import { ApprovalBox, As, InboxRow, KIND, Mark, useOpenItem, type InboxItem } from './views';
+import { ApprovalBox, As, InboxRow, KIND, Mark, useOpenItem, type InboxItem, Fine } from './views';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, keepDraft } from './drafts';
@@ -139,12 +139,7 @@ export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxIte
           </section>
         )}
         {ans && <AnswerBox a={ans} yesNo={yesNo} />}
-        {i.fine && (
-          <section className="grid gap-1.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Exactly what this allows</h3>
-            <p className="break-words text-sm opacity-70">{i.fine}</p>
-          </section>
-        )}
+        <Fine text={i.fine} className="break-words text-sm opacity-70" />
         {n && (n.details || n.refs.length > 0) && (
           <section className="grid gap-1.5">
             <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Details</h3>
