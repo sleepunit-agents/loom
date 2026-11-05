@@ -161,6 +161,24 @@ place in one venue: who, where, when, and what came of it. Keyed by agent ·
 venue · place. A core record: it outlives the piece that carried it.
 _Avoid_: chat, session (that's a body's run), thread (that's a venue's word), transcript
 
+**Comms**:
+loom's app for talking with your own agents (docs/specs/comms.md): a list of threads, and one thread at a time. Only
+an agent's owners use it; everyone else reaches agents through the bridges.
+_Avoid_: chat app, messenger, console
+
+**Thread** (in Comms):
+One Comms conversation: a place in core's venue `loom`, with an agent, a title and the member who opened it.
+_Avoid_: chat, channel, session (that's a body's run)
+
+**Message** (in Comms):
+One entry in a thread, numbered by `seq`: the member's words, the agent's reply, an activity card, an ask or an error
+line.
+_Avoid_: turn (that's the conversation record's metadata entry), post
+
+**Activity**:
+What a body is doing in a thread's turn, as plain one-line cards ("Ran the tests"): a summary, never a tool's output.
+_Avoid_: log, trace, transcript
+
 **Venue**:
 Where conversations happen, and the adapter that carries them: `discord`,
 `slack`, `session` (an interactive harness), `wake`, `relay`. A venue has a

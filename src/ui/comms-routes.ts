@@ -18,7 +18,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   addMemberMessage, askStop, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
-  recordDelivery, setArchived, setPinned, setProject, setTitle, stateOf, stillSees, threadFor, threadsOf, unreadCount, type Thread,
+  recordDelivery, setArchived, setPinned, setProject, setTitle, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { deliverAsOwner } from '../delivery.js';
 import type { Household, Member } from '../household.js';
@@ -29,6 +29,8 @@ import { pieceApi } from './pieces.js';
 
 export interface CommsContext {
   household: Household;
+  /** The household read fresh: a live stream asks it before each event, so a member who stops owning the agent is cut off. */
+  live: () => Household | undefined;
   member: Member | undefined;
   env: NodeJS.ProcessEnv;
   /** The stream owner (a session or a bearer): how many streams one browser may hold. */
@@ -88,11 +90,17 @@ async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: strin
   return { delivered: false, error: err };
 }
 
-const view = (c: CommsContext, t: Thread) => ({
+const view = (t: Thread) => ({
   id: t.id, agent: t.agent, title: t.title, titled_by: t.titled_by, project: t.project, pinned: t.pinned, archived: t.archived,
   opened: t.opened, last: t.last, read_seq: t.read_seq, channel: t.channel, conversation: t.conversation, state: stateOf(t),
-  ...(c ? {} : {}),
 });
+
+/** Whether a /comms page load names a thread the member may not see: the same 403 as its JSON form (rule 3). */
+export function pageRefused(pathname: string, household: Household, member: Member | undefined): string | null {
+  const m = /^\/comms\/([^/]+)/.exec(pathname);
+  if (!m || m[1] === 'new') return null;
+  try { threadFor(household, member, decodeURIComponent(m[1])); return null; } catch (e) { return e instanceof CommsError ? e.message : 'forbidden'; }
+}
 
 /** Answer a /comms route, or false when the path isn't one. */
 export async function commsRoute(req: IncomingMessage, res: ServerResponse, pathname: string, c: CommsContext): Promise<boolean> {
@@ -110,7 +118,9 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       const archived = new URL(req.url ?? '/', 'http://x').searchParams.get('archived') === '1';
-      send(200, { threads: threadsOf(h, m, { archived }).map((t) => ({ ...view(c, t), unread: t.unread, last_seq: t.last_seq })), unread: unreadCount(h, m),
+      const threads = threadsOf(h, m, { archived });
+      const unread = archived ? threadsOf(h, m).filter((t) => t.unread).length : threads.filter((t) => t.unread).length;
+      send(200, { threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
         agents: h.agents.filter((a) => m.agents === '*' || m.agents.includes(a)) });
       return true;
     }
@@ -125,8 +135,8 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const o = openThread(h, c.env, m, body);
       if (o.created) {
         const d = await deliverMessage(c, o.thread, o.seq, String(body.id), String(body.text));
-        send(200, { thread: view(c, o.thread), seq: o.seq, delivered: d.delivered, ...(d.error ? { error: d.error } : {}) });
-      } else send(200, { thread: view(c, o.thread), seq: o.seq, repeat: true });
+        send(200, { thread: view(o.thread), seq: o.seq, delivered: d.delivered, ...(d.error ? { error: d.error } : {}) });
+      } else send(200, { thread: view(o.thread), seq: o.seq, repeat: true });
       return true;
     }
     const mm = /^\/comms\/(th:[a-z2-7]{10}|[^/]+)(?:\/(since|before)\/(\d{1,12})|\/([a-z]+))?$/.exec(pathname);
@@ -137,14 +147,14 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (verb === 'events') {
         const from = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('from') ?? '0') || 0;
         const person = m!.person;
-        openThreadStream(res, c.headers, h.home, { thread: t.id, session: c.session, from, may: () => stillSees(c.household, person, t.id) });
+        openThreadStream(res, c.headers, h.home, { thread: t.id, session: c.session, from, may: () => { const now = c.live(); return !!now && stillSees(now, person, t.id); } });
         return true;
       }
       if (verb) return send(404, { error: 'not-found' }), true;
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
-      const messages = messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
+      const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
       const swept = messages.some((x) => x.text === null && x.kind !== 'error');
-      send(200, { thread: view(c, t), messages, ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}) });
+      send(200, { thread: view(t), messages, ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}) });
       return true;
     }
     if (req.method !== 'POST' || !verb) return send(405, { error: 'method not allowed' }), true;
@@ -157,14 +167,14 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       case 'send': {
         const a = addMemberMessage(h, c.env, t, body);
         if (a.repeat && a.delivered) return send(200, { seq: a.seq, delivered: true, repeat: true }), true;
-        const words = a.repeat ? memberWords(h, c.env, t, a.seq) : String(body.text);
+        const words = a.repeat ? await memberWords(h, c.env, t, a.seq) : String(body.text);
         if (words === null) return send(409, { error: 'conflict: that message\'s words are gone; send it again as a new message' }), true;
         const d = await deliverMessage(c, t, a.seq, String(body.id), words);
         send(200, { seq: a.seq, delivered: d.delivered, ...(a.repeat ? { repeat: true } : {}), ...(d.error ? { error: d.error } : {}) });
         return true;
       }
-      case 'title': send(200, { thread: view(c, setTitle(h, t, body.title, 'member')) }); return true;
-      case 'project': send(200, { thread: view(c, setProject(h, t, body.project ?? null)) }); return true;
+      case 'title': send(200, { thread: view(setTitle(h, t, body.title, 'member')) }); return true;
+      case 'project': send(200, { thread: view(setProject(h, t, body.project ?? null)) }); return true;
       case 'pin': setPinned(h, t, true); send(200, { ok: true }); return true;
       case 'unpin': setPinned(h, t, false); send(200, { ok: true }); return true;
       case 'archive': setArchived(h, t, true); endBody(c.env, t); send(200, { ok: true }); return true;

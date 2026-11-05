@@ -16,8 +16,8 @@
  * Who may: a member who owns the thread's agent (owners.md: `agents` is `*` or lists it) and opened the thread. Every
  * other caller, and a thread that doesn't exist, gets the same 403, so a route never says whether a thread exists.
  */
-import { spawnSync } from 'node:child_process';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
+import { createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, linkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -37,6 +37,10 @@ export const MAX_TEXT = 40_000;
 export const MAX_TITLE = 60;
 export const MAX_PINS = 8;
 export const PAGE = 100;
+/** A `since` read answers at most this many (a reconnect after a long gap reads on with since again). */
+export const SINCE_MAX = 500;
+/** How many messages are decrypted at once (each is one age process): a thread's page never blocks the daemon. */
+const DECRYPT_AT_ONCE = 8;
 export const MAX_CARDS = 50;
 export const MAX_SUMMARY = 120;
 /** A queued message with no `working` from the runtime for this long is "busy" (comms.md, section 7). */
@@ -188,10 +192,29 @@ function encrypt(home: string, env: NodeJS.ProcessEnv, text: string): Buffer {
   return r.stdout as Buffer;
 }
 
-function decrypt(home: string, env: NodeJS.ProcessEnv, blob: Buffer): string | null {
+/** One message's words, decrypted by its own age process, without blocking the daemon; null when age can't. */
+function decrypt(home: string, env: NodeJS.ProcessEnv, blob: Buffer): Promise<string | null> {
   const k = ageKeys(home, env);
-  const r = spawnSync(k.age, ['-d', '-i', k.key], { input: blob, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 4 * MAX_TEXT + 65_536 });
-  return r.status === 0 ? (r.stdout as Buffer).toString('utf-8') : null;
+  return new Promise((resolve) => {
+    const out: Buffer[] = [];
+    let size = 0;
+    const child = spawn(k.age, ['-d', '-i', k.key], { stdio: ['pipe', 'pipe', 'ignore'] });
+    child.stdout.on('data', (c: Buffer) => { size += c.length; if (size <= 4 * MAX_TEXT + 65_536) out.push(c); });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => resolve(code === 0 ? Buffer.concat(out).toString('utf-8') : null));
+    child.stdin.on('error', () => {});
+    child.stdin.end(blob);
+  });
+}
+
+/** Each of `items` through `f`, at most `n` at once, in order. */
+async function pool<T, U>(items: T[], n: number, f: (x: T) => Promise<U>): Promise<U[]> {
+  const out: U[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (next < items.length) { const i = next++; out[i] = await f(items[i]); }
+  }));
+  return out;
 }
 
 // ─── The stores ────────────────────────────────────────────────────────────────
@@ -335,23 +358,22 @@ export function errorWords(code: string, agentName: string, reason: string | und
 
 const label = (agent: string) => agent[0].toUpperCase() + agent.slice(1);
 
-function messageOf(home: string, env: NodeJS.ProcessEnv, agent: string, r: MsgRow): Message {
+async function messageOf(home: string, env: NodeJS.ProcessEnv, agent: string, r: MsgRow): Promise<Message> {
   const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
   let text: string | null = null;
   if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined);
-  else if (r.text) text = decrypt(home, env, r.text);
+  else if (r.text) text = await decrypt(home, env, r.text);
   return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1 };
 }
 
 /** A thread's messages: the newest PAGE, or those after `after`, or the PAGE before `before`; oldest first. */
-export function messagesOf(h: Household, env: NodeJS.ProcessEnv, t: Thread, at: { after?: number; before?: number } = {}): Message[] {
-  return withMessages(h.home, (db) => {
-    let rows: MsgRow[];
-    if (at.after !== undefined) rows = db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq > ? ORDER BY seq LIMIT ?').all(t.id, at.after, 500) as MsgRow[];
-    else if (at.before !== undefined) rows = (db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(t.id, at.before, PAGE) as MsgRow[]).reverse();
-    else rows = (db.prepare('SELECT * FROM comms_messages WHERE thread = ? ORDER BY seq DESC LIMIT ?').all(t.id, PAGE) as MsgRow[]).reverse();
-    return rows.map((r) => messageOf(h.home, env, t.agent, r));
+export async function messagesOf(h: Household, env: NodeJS.ProcessEnv, t: Thread, at: { after?: number; before?: number } = {}): Promise<Message[]> {
+  const rows = withMessages(h.home, (db) => {
+    if (at.after !== undefined) return db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq > ? ORDER BY seq LIMIT ?').all(t.id, at.after, SINCE_MAX) as MsgRow[];
+    if (at.before !== undefined) return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(t.id, at.before, PAGE) as MsgRow[]).reverse();
+    return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? ORDER BY seq DESC LIMIT ?').all(t.id, PAGE) as MsgRow[]).reverse();
   });
+  return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(h.home, env, t.agent, r));
 }
 
 /** The thread's newest message seq (0 with none), and its newest reply's. */
@@ -374,34 +396,28 @@ export interface ListedThread extends Thread { unread: boolean; working: boolean
 /** A member's threads with agents they own: pinned first, then by last; archived ones only when asked. */
 export function threadsOf(h: Household, member: Member, opts: { archived?: boolean } = {}): ListedThread[] {
   const rows = withThreads(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE member = ? ORDER BY pinned DESC, last DESC').all(member.person) as ThreadRow[]);
-  return rows.filter((r) => owns(member, r.agent) && h.agents.includes(r.agent) && (opts.archived ? r.archived !== null : r.archived === null))
+  const listed = rows.filter((r) => owns(member, r.agent) && h.agents.includes(r.agent) && (opts.archived ? r.archived !== null : r.archived === null))
     .map((r) => {
       const t = threadOf(r);
       const s = seqsOf(h.home, t.id);
       return { ...t, unread: s.reply > t.read_seq, working: t.working_since !== null, last_seq: s.last };
     });
-}
-
-/** How many threads with an unread reply a member has (the dock key's count). */
-export function unreadCount(h: Household, member: Member): number {
-  return threadsOf(h, member).filter((t) => t.unread).length;
+  // Pinned, then unread, then the rest, each by last (comms.md, "Phone").
+  const rank = (t: ListedThread) => (t.pinned ? 0 : t.unread ? 1 : 2);
+  return listed.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
 }
 
 // ─── Writing ───────────────────────────────────────────────────────────────────
 
 const nowIso = (now: Date) => now.toISOString();
 
-function touch(db: Database, id: string, sets: Record<string, unknown>, now: Date): void {
+/** Change a thread's row, and tell the live streams (bump). */
+function touch(home: string, db: Database, id: string, sets: Record<string, unknown>, now: Date): void {
   const keys = Object.keys(sets);
   db.prepare(`UPDATE comms_threads SET ${[...keys.map((k) => `${k} = ?`), 'updated = ?'].join(', ')} WHERE id = ?`).run(...keys.map((k) => sets[k] as never), now.getTime(), id);
-  bump(dbHome.get(db) ?? '');
+  bump(home);
 }
-
-/** Each household.db handle's home, so touch can tell the other listeners (see bump). */
-const dbHome = new WeakMap<Database, string>();
-function withThreadsAt<T>(home: string, f: (db: Database) => T): T {
-  return withThreads(home, (db) => { dbHome.set(db, home); return f(db); });
-}
+const withThreadsAt = withThreads;
 
 /**
  * Tell this process's and the other listeners' live streams that a thread moved (src/ui/comms-live.ts watches the
@@ -498,14 +514,18 @@ export function addMemberMessage(h: Household, env: NodeJS.ProcessEnv, t: Thread
     if (prior.hash !== hash) return fail('conflict: that message id was already sent with other words', 409);
     return { seq: prior.seq, repeat: true, delivered: prior.delivered === 1 };
   }
-  if (!ageReady(h.home, env)) return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503);
+  if (!ageReady(h.home, env)) {
+    append(h.home, env, t.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'no-age' } }, now);
+    bump(h.home);
+    return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503);
+  }
   const seq = append(h.home, env, t.id, { kind: 'message', from: t.member, id, text, hash, delivered: false }, now);
-  withThreadsAt(h.home, (db) => touch(db, t.id, { last: nowIso(now) }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { last: nowIso(now) }, now));
   return { seq, repeat: false, delivered: false };
 }
 
 /** A member message's words, to deliver again (Send again); null once swept. */
-export function memberWords(h: Household, env: NodeJS.ProcessEnv, t: Thread, seq: number): string | null {
+export async function memberWords(h: Household, env: NodeJS.ProcessEnv, t: Thread, seq: number): Promise<string | null> {
   const r = withMessages(h.home, (db) => db.prepare("SELECT text FROM comms_messages WHERE thread = ? AND seq = ? AND kind = 'message'").get(t.id, seq) as { text: Buffer | null } | undefined);
   return r?.text ? decrypt(h.home, env, r.text) : null;
 }
@@ -516,7 +536,7 @@ export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { 
   if (outcome.error) {
     append(h.home, process.env, t.id, { kind: 'error', from: 'loom', id: `e${seq}`, card: { error: outcome.error.code, ...(outcome.error.reason ? { reason: outcome.error.reason.slice(0, 300) } : {}) } }, now);
   }
-  withThreadsAt(h.home, (db) => touch(db, t.id, {
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, {
     last_failed: outcome.error ? 1 : 0,
     queued_since: outcome.delivered && outcome.body === 'queued' ? nowIso(now) : null,
   }, now));
@@ -526,7 +546,7 @@ export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { 
 export function setTitle(h: Household, t: Thread, raw: unknown, by: 'member' | 'agent', now: Date = new Date()): Thread {
   if (typeof raw !== 'string' || raw.trim().length < 1 || raw.length > MAX_TITLE || /[\r\n\u2028\u2029]/.test(raw) || /[\x00-\x1f\x7f]/.test(raw)) return fail(`bad-input: a title is 1-${MAX_TITLE} characters on one line`);
   if (by === 'agent' && t.titled_by === 'member') return fail('conflict: the owner named this thread; the agent doesn\'t rename it', 409);
-  return withThreadsAt(h.home, (db) => { touch(db, t.id, { title: raw.trim(), titled_by: by }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
+  return withThreadsAt(h.home, (db) => { touch(h.home, db, t.id, { title: raw.trim(), titled_by: by }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
 }
 
 export function setProject(h: Household, t: Thread, raw: unknown, now: Date = new Date()): Thread {
@@ -535,7 +555,7 @@ export function setProject(h: Household, t: Thread, raw: unknown, now: Date = ne
     if (typeof raw !== 'string' || !PROJECT.test(raw) || !liveProject(h, t.agent, raw)) return fail(`bad-input: ${String(raw)} isn't one of ${t.agent}'s live projects`);
     project = raw;
   }
-  return withThreadsAt(h.home, (db) => { touch(db, t.id, { project }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
+  return withThreadsAt(h.home, (db) => { touch(h.home, db, t.id, { project }, now); return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as ThreadRow); });
 }
 
 export function setPinned(h: Household, t: Thread, pinned: boolean, now: Date = new Date()): void {
@@ -544,22 +564,22 @@ export function setPinned(h: Household, t: Thread, pinned: boolean, now: Date = 
       const n = (db.prepare('SELECT COUNT(*) AS n FROM comms_threads WHERE member = ? AND pinned = 1').get(t.member) as { n: number }).n;
       if (n >= MAX_PINS) fail(`conflict: you can pin ${MAX_PINS} threads at most; unpin one first`, 409);
     }
-    touch(db, t.id, { pinned: pinned ? 1 : 0 }, now);
+    touch(h.home, db, t.id, { pinned: pinned ? 1 : 0 }, now);
   }).immediate());
 }
 
 export function setArchived(h: Household, t: Thread, archived: boolean, now: Date = new Date()): void {
-  withThreadsAt(h.home, (db) => touch(db, t.id, { archived: archived ? nowIso(now) : null, working_since: archived ? null : t.working_since }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { archived: archived ? nowIso(now) : null, working_since: archived ? null : t.working_since }, now));
 }
 
 /** The member read up to `seq` (never backwards), with the thread in front now. */
 export function markRead(h: Household, t: Thread, seq: unknown, now: Date = new Date()): void {
   if (!Number.isSafeInteger(seq) || (seq as number) < 0) fail('bad-input: seq is a whole number');
-  withThreadsAt(h.home, (db) => touch(db, t.id, { read_seq: Math.max(t.read_seq, seq as number), in_front: now.getTime() }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { read_seq: Math.max(t.read_seq, seq as number), in_front: now.getTime() }, now));
 }
 
 export function askStop(h: Household, t: Thread, now: Date = new Date()): void {
-  withThreadsAt(h.home, (db) => touch(db, t.id, { stop: 1 }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { stop: 1 }, now));
 }
 
 /** Delete a thread: its row and every message, words included, at once; a tombstone stays. */
@@ -581,7 +601,7 @@ function liveThreadAt(home: string, agent: string, place: string): ThreadRow | u
   return r && r.agent === agent && r.archived === null ? r : undefined;
 }
 
-export type AdapterAnswer = { ok: true; id?: string; venue?: string; readers?: string[]; stop?: true } | { ok: false; reason: string; permanent?: true };
+export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true } | { ok: false; reason: string; permanent?: true };
 
 /**
  * POST /api/loom/comms/adapter (comms.md, section 1): the runtime's post, describe and status for venue `loom`, the
@@ -598,25 +618,29 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s (archived, deleted, or never one)`, permanent: true };
     if (typeof text !== 'string' || text.length < 1) return { ok: false, reason: 'the reply is empty', permanent: true };
     if (text.length > MAX_TEXT) return { ok: false, reason: `the reply is over ${MAX_TEXT} characters`, permanent: true };
-    if (!ageReady(h.home, env)) return { ok: false, reason: 'the age programs aren\'t installed, so loom can\'t keep the reply' };
-    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${now.getTime()}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}) }, now);
-    withThreadsAt(h.home, (db) => touch(db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
+    if (!ageReady(h.home, env)) {
+      append(h.home, env, r.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'post-failed', reason: 'the age program is missing, so loom couldn\'t keep it' } }, now);
+      bump(h.home);
+      return { ok: false, reason: 'the age programs aren\'t installed, so loom can\'t keep the reply' };
+    }
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}) }, now);
+    withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };
   }
   if (op === 'describe') {
     if (!r) return { ok: false, reason: `${place} isn't a live thread of ${agent}'s`, permanent: true };
-    const name = h.members.find((m) => m.person === r.member)?.person ?? r.member;
+    const name = r.member[0].toUpperCase() + r.member.slice(1);
     const lines = [`A private thread in loom's app with your owner, ${name}. Only they read it. They can see your tool use as you work.`];
     if (r.project) lines.push(`The thread is filed under the project ${r.project}.`);
     if (!r.title) lines.push('Give the thread a short title once you know what it\'s about: call comms_title.');
-    return { ok: true, venue: lines.join(' '), readers: [r.member] };
+    return { ok: true, brief: lines, readers: [r.member] };
   }
   // status
   const status = raw.status;
   if (status !== 'working' && status !== 'done') return fail('bad-input: status is working or done');
   if (!r) return { ok: true };
   const stop = r.stop === 1;
-  withThreadsAt(h.home, (db) => touch(db, r.id, {
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, {
     working_since: status === 'working' ? (r.working_since ?? nowIso(now)) : null,
     ...(status === 'working' ? { queued_since: null } : {}),
     ...(stop ? { stop: 0 } : {}),
@@ -661,7 +685,7 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       added++;
     }
   }
-  withThreadsAt(h.home, (db) => touch(db, r.id, { working_since: r.working_since ?? nowIso(now), queued_since: null }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), queued_since: null }, now));
   return { ok: true, added, updated };
 }
 
@@ -681,10 +705,21 @@ export function sweepComms(h: Household, now: Date = new Date()): number {
     const late = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE queued_since IS NOT NULL AND queued_since < ?').all(new Date(now.getTime() - BUSY_MS).toISOString()) as ThreadRow[]);
     for (const r of late) {
       append(h.home, process.env, r.id, { kind: 'error', from: 'loom', id: `busy${now.getTime()}`, card: { error: 'busy' } }, now);
-      withThreadsAt(h.home, (db) => touch(db, r.id, { queued_since: null }, now));
+      withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { queued_since: null }, now));
     }
   }
   return swept;
+}
+
+/**
+ * The runtime paused a `loom` conversation as a loop (its `deferred` note turn, delivery.mjs loopNote): the thread
+ * says so in words (comms.md, section 7). Called by core's turn write.
+ */
+export function noteLoopPause(home: string, conversation: string, now: Date = new Date()): void {
+  const t = threadOfConversation(home, conversation);
+  if (!t) return;
+  append(home, process.env, t.id, { kind: 'error', from: 'loom', id: `loop${now.getTime()}`, card: { error: 'loop' } }, now);
+  withThreads(home, (db) => touch(home, db, t.id, { last_failed: 1, working_since: null }, now));
 }
 
 /** The thread for a conversation (the title tool, the hub): undefined when it has none. */
@@ -704,5 +739,3 @@ export function movedSince(home: string, ms: number): Array<{ id: string; member
 export function stateOf(t: Thread): { working: boolean; working_since: string | null; queued: boolean; failed: boolean } {
   return { working: t.working_since !== null, working_since: t.working_since, queued: t.queued_since !== null, failed: t.last_failed };
 }
-
-export const sha = (s: string) => createHash('sha256').update(s).digest('hex');

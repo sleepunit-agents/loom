@@ -55,7 +55,7 @@ import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } 
 import { answeredNeeds, answerNeeds, ConversationError, getConversation as conversationOf, isConversationId, openNeeds, type NeedsVerdict } from '../backends/conversations.js';
 import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
-import { commsRoute } from './comms-routes.js';
+import { commsRoute, pageRefused } from './comms-routes.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
@@ -298,17 +298,17 @@ function callerOf(who: Who): ApiCaller | undefined {
   return who?.member ? { kind: 'owner', who: who.member.person, agents: who.member.agents } : undefined;
 }
 
+/** A GET for the app's page rather than its JSON or a stream (Comms' routes answer JSON; a page load gets the app). */
+function wantsPage(req: IncomingMessage): boolean {
+  return !/application\/json|text\/event-stream/i.test(String(req.headers.accept ?? ''));
+}
+
 /**
  * A GET from somewhere else is fine as a top-level navigation (a link in a
  * chat) and refused otherwise: an <img> or fetch from another site, or from
  * another port on this host (same-site, so the cookie rides along), must not
  * make loom run a piece.
  */
-/** A GET for the app's page rather than its JSON or a stream (Comms' routes answer JSON; a page load gets the app). */
-function wantsPage(req: IncomingMessage): boolean {
-  return !/application\/json|text\/event-stream/i.test(String(req.headers.accept ?? ''));
-}
-
 function allowedGet(req: IncomingMessage): boolean {
   const site = req.headers['sec-fetch-site'];
   if (site === undefined || site === 'same-origin' || site === 'none') return true;
@@ -1207,13 +1207,22 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
 
   // Comms (docs/specs/comms.md): JSON routes, each checking the member owns the thread's agent and opened it.
+  if (full && (pathname === '/comms' || pathname.startsWith('/comms/'))) {
+    // Another site may link to Comms, never fetch it (allowedGet), as every page.
+    if ((req.method === 'GET' || req.method === 'HEAD') && !allowedGet(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
+    // A page load of a thread is the app, but only for its member: anyone else gets the same 403 as the JSON (comms.md, rule 3).
+    if (req.method === 'GET' && wantsPage(req)) {
+      const no = pageRefused(pathname, full, who.member);
+      if (no) return send(res, no.startsWith('not-found') ? 404 : 403, 'text/plain', no);
+    }
+  }
   if (full && (pathname === '/comms' || pathname.startsWith('/comms/')) && !(req.method === 'GET' && wantsPage(req))) {
     const guard = (r: IncomingMessage, body: Record<string, unknown>): string | null => {
       if (!sameOrigin(r)) return 'forbidden: cross-site request';
       if (who.kind === 'session' && !safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return 'forbidden: this page is stale; reload and try again';
       return null;
     };
-    await commsRoute(req, res, pathname, { household: full, member: who.member, env: opts.env, session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+    await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
     return;
   }
 

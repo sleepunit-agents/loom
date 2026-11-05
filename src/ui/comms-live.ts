@@ -23,11 +23,10 @@ interface Stream { res: ServerResponse; thread: string; session: string; sent: n
 const streams = new Set<Stream>();
 const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; off: () => void }>();
 
-function drop(s: Stream, home: string): void {
+/** A stream closed or cut off. The home's watch stays: the shared stream's members still hear of their threads. */
+function drop(s: Stream): void {
   streams.delete(s);
   try { s.res.end(); } catch { /* gone */ }
-  // The home's watch stays: the shared stream's members still hear of their threads (watchComms).
-  void home;
 }
 
 /** Stop watching every home (tests). */
@@ -37,8 +36,8 @@ export function stopCommsWatch(): void {
   homes.clear();
 }
 
-function write(s: Stream, home: string, text: string): void {
-  try { s.res.write(text); } catch { drop(s, home); }
+function write(s: Stream, text: string): void {
+  try { s.res.write(text); } catch { drop(s); }
 }
 
 /** Send each open stream its thread's newest seq, if it moved and the member may still see it. */
@@ -46,9 +45,9 @@ function pass(home: string): void {
   for (const s of [...streams]) {
     const { last } = seqsOf(home, s.thread);
     if (last <= s.sent) continue;
-    if (!s.may()) { drop(s, home); continue; }
+    if (!s.may()) { drop(s); continue; }
     s.sent = last;
-    write(s, home, `event: message\ndata: ${JSON.stringify({ seq: last })}\n\n`);
+    write(s, `event: message\ndata: ${JSON.stringify({ seq: last })}\n\n`);
   }
 }
 
@@ -75,7 +74,7 @@ function ensure(home: string): void {
   let watcher: FSWatcher | undefined;
   try { watcher = watch(home, (_e, file) => { if (String(file) === 'comms.tick') tick(); }); watcher.unref?.(); } catch { /* the poll still runs */ }
   const poll = setInterval(tick, POLL_MS); poll.unref();
-  const beat = setInterval(() => { for (const s of streams) write(s, home, ': beat\n\n'); }, BEAT_MS); beat.unref();
+  const beat = setInterval(() => { for (const s of streams) write(s, ': beat\n\n'); }, BEAT_MS); beat.unref();
   homes.set(home, { watcher, poll, beat, seen: Date.now(), off: onBump(tick) });
 }
 
@@ -85,15 +84,13 @@ function ensure(home: string): void {
  */
 export function openThreadStream(res: ServerResponse, headers: Record<string, string>, home: string, opts: { thread: string; session: string; from: number; may: () => boolean }): void {
   const mine = [...streams].filter((x) => x.session === opts.session && x.thread === opts.thread);
-  if (mine.length >= PER_SESSION) drop(mine[0], home);
+  if (mine.length >= PER_SESSION) drop(mine[0]);
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 3000\n\n');
   const s: Stream = { res, thread: opts.thread, session: opts.session, sent: opts.from, may: opts.may };
   streams.add(s);
-  res.on('close', () => drop(s, home));
+  res.on('close', () => drop(s));
   ensure(home);
   pass(home);
 }
 
-/** How many thread streams are open (for tests). */
-export const threadStreams = () => streams.size;

@@ -69,7 +69,7 @@ _Avoid_: log, trace, transcript
    - opening a thread with an agent the member doesn't own is a `403`;
    - a thread id that doesn't exist is a `403` too, the same answer as another member's thread, so a route never says
      whether a thread exists. Only the member of a thread they deleted gets `404` for it: a delete leaves a tombstone,
-     `comms_deleted` (the thread id, its member and when), holding no words and nothing else.
+     `comms_deleted` (the thread id, its member, its agent, its channel number and when), holding no words.
    This holds whether the request is the app's JSON view or a page load. The UI also hides those agents, but hiding
    isn't the protection.
 4. **The live streams.** A thread's live updates come on its own stream, `GET /comms/<thread>/events`, which the app
@@ -94,7 +94,7 @@ in and out.
 | Route | What it does |
 |---|---|
 | `GET /comms` | the member's threads (rule 3), with each one's unread state |
-| `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member, agent, `id` and text again answer the same thread; the same `id` with another agent or other text is a `409`. The thread row keeps its first message's id and a SHA-256 of its text (`first_id`, `first_sha`) for the thread's life, which is how a repeat is known |
+| `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member, agent, `id` and text again answer the same thread; the same `id` with another agent or other text is a `409`. The thread row keeps its first message's id and an HMAC of its text keyed by `comms.salt` (`first_id`, `first_hash`) for the thread's life, which is how a repeat is known |
 | `GET /comms/<thread>` | the thread and its newest 100 messages |
 | `GET /comms/<thread>/since/<seq>` | the messages after `seq`, and the thread's state |
 | `GET /comms/<thread>/before/<seq>` | the 100 messages before `seq`, newest last: scrolling up |
@@ -160,9 +160,11 @@ choice, and the body's brief. The new parts follow.
   and `src/policy.mjs`). For a piece's venue, all three run on its declared `send` argv:
   - **post:** `send --place P --agent A`, with the text on stdin. It answers `{ok: true, id?}` or `{ok: false,
     reason, permanent?}`. The runtime makes it for each `loom runtime send` a body makes.
-  - **describe:** `send --describe`. It answers `{ok: true, guest?, peer?, venue?, readers?, notes?}`. The runtime
-    asks it before starting a body, and starts none if it fails. `venue` and `notes` are lines of words for the
-    body's brief. `readers` is the person slugs who will read the place.
+  - **describe:** `send --describe`. It answers `{ok: true, guest?, peer?, venue?, readers?, notes?, brief?}`. The
+    runtime asks it before starting a body, and starts none if it fails. `venue` is a key the gates' guest lists
+    name, `notes` are names of the policy's brief files, and `readers` is the person slugs who will read the place.
+    `brief` (added for Comms, as built in the runtime's `src/policy.mjs`) is up to 3 printable lines of at most 300
+    characters, put into the body's brief as written.
   - **status:** `send --status working|done [--message <delivery id>]…`. The runtime sends `working` with the
     delivery ids when messages reach a body, `working` again every 15 s while it's busy, and `done` when the turn
     ends. It answers `{ok: true, stop?: true}`, and `stop: true` makes the runtime end that body.
@@ -173,15 +175,15 @@ choice, and the body's brief. The new parts follow.
   | `op` | Body | Answer |
   |---|---|---|
   | `post` | `{op, place, agent, text}` | `{ok: true, id}` (the new message's `seq`, as a string) or `{ok: false, reason, permanent?}` |
-  | `describe` | `{op, place, agent}` | `{ok: true, venue, readers}` |
+  | `describe` | `{op, place, agent}` | `{ok: true, brief, readers}` |
   | `status` | `{op, place, agent, status: "working"\|"done", messages?: [delivery id]}` | `{ok: true, stop?: true}` |
 
   - These run under the runtime's existing limits for an adapter call: 15 s, one retry for an answered `ok: false`
     without `permanent`, and never a retry after a timeout.
   - `post` is `{ok: false, permanent: true}`, with the reason in words, for: a place that isn't a thread of that
     agent, an archived or deleted thread, empty text, or text over 40,000 characters.
-  - `describe` answers `venue`: "A private thread in loom's app with your owner, <their name>. Only they read it.",
-    and `readers: [<member>]`.
+  - `describe` answers `brief`, whose first line is "A private thread in loom's app with your owner, <their name>. Only
+    they read it. They can see your tool use as you work.", and `readers: [<member>]`.
   - `status: working` shows the thread's working line, and `done` clears it. After the member presses Stop, the next
     `status` call answers `stop: true` once.
 - **The sender's trust.** For a delivery on `loom` from source `loom`, the runtime takes the sender as **tier 3**,
@@ -199,9 +201,9 @@ choice, and the body's brief. The new parts follow.
 
 ### 2. The brief, for a body in a thread
 
-The runtime's brief already names the venue, the conversation and the run, and carries `describe`'s `venue` line. For
-`loom`, core's `describe` answer adds up to two more lines to `venue`, so the runtime needs no Comms-specific code for
-them:
+The runtime's brief already names the venue, the conversation and the run, and carries `describe`'s `brief` lines. For
+`loom`, core's `describe` answer adds up to two more lines after its first, so the runtime needs no Comms-specific code
+for them:
 
 - "The thread is filed under the project <slug>." (only when the thread has a project);
 - "Give the thread a short title once you know what it's about: call `comms_title`." (only while it has none).
@@ -693,7 +695,7 @@ Neon OS's own, not copied from any game.
      runtime sees it), and refuses sends
      (`409`) until it's unarchived.
    - Delete removes the row and every message of it. After it, the thread's routes answer `404` to its member.
-   - A deleted thread leaves exactly a `comms_deleted` row (id, member, at), and another member asking for it gets
+   - A deleted thread leaves exactly a `comms_deleted` row (id, member, agent, channel, at), and another member asking for it gets
      the same `403` as for one that never existed.
    - `comms.db` has `secure_delete` on (`PRAGMA secure_delete` answers 1), and after a delete the file holds none of a
      planted message's bytes.

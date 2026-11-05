@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms, core: talk with your own agents in loom, in threads** (t-1876, docs/specs/comms.md). A new core venue,
+  `loom`, which core adapts itself (`adapter: "core"` in `GET /api/loom/venues`). Its threads live in
+  `household.db`, and their words in `comms.db`, each age-encrypted to `comms.key`, kept `comms_days` (household.json,
+  1-14, default 14) and never in a bundle. The page's `/comms` routes reach only a member's own threads with agents
+  they own: anyone else, and a thread that never existed, gets the same 403. There's a live stream per thread
+  (`/comms/<thread>/events`, `{seq}` only), and the runtime's `POST /api/loom/comms/adapter` and `/comms/activity`.
+  The app comes in a later change.
+
 - **One structure, three looks: Neon Noir, Low Light, Daylight** (t-1875).
   000h is no longer a look of its own: Neon Noir's structure (the phone bar
   and system bar, the dock's keys, cut-corner cards, the desktop at 1024 px

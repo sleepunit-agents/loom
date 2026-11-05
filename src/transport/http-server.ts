@@ -60,7 +60,7 @@ import { ConversationError, foldConversations } from '../backends/conversations.
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
-import { watchComms } from '../ui/comms-live.js';
+import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
 import { takeAudit } from '../audit-take.js';
 import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
@@ -378,7 +378,6 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     if (!live) return;
     const h = live();
     try { sweepAudit(h.home); } catch (e) { process.stderr.write(`loom: the audit sweep failed: ${(e as Error).message}\n`); }
-    try { sweepComms(h); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
     for (const day of recentDays()) {
       try { computeMeasures(h, day); } catch (e) { process.stderr.write(`loom: the scorecard measures for ${day} failed: ${(e as Error).message}\n`); }
     }
@@ -390,7 +389,10 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // listener watches for thread moves, so a member's own shared stream hears of their threads.
   const commsTimer = live && !opts.createServer ? setInterval(() => { try { sweepComms(live!()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); } }, 60_000) : undefined;
   commsTimer?.unref();
-  if (live && !opts.createServer) watchComms(live().home);
+  if (live && !opts.createServer) {
+    try { sweepComms(live()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
+    watchComms(live().home);
+  }
 
   // The page is the owner's: in a household, only owner tokens log in to it.
   const uiAuth: UiAuth = household
@@ -1075,7 +1077,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
       if (needsFirst) clearTimeout(needsFirst);
       clearInterval(foldTimer);
       clearInterval(sweepTimer);
-      if (commsTimer) clearInterval(commsTimer);
+      if (commsTimer) { clearInterval(commsTimer); stopCommsWatch(); }
       for (const s of sessions.values()) await s.transport.close().catch(() => undefined);
       sessions.clear();
       await new Promise<void>((resolve) => {

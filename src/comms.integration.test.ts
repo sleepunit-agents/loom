@@ -7,13 +7,15 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
-import { createConversationTables } from './backends/conversations.js';
-import { COMMS_DB, COMMS_KEY, COMMS_SALT, placeFor, sweepComms } from './comms.js';
+import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
+import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, sweepComms } from './comms.js';
+import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 
@@ -75,6 +77,20 @@ function household(prefix: string): Household {
 /** 16 base32 characters, made from a number: a test's message id. */
 const mid = (n: number) => `a${String(n).padStart(15, '0').replace(/[0189]/g, (d) => ({ '0': 'a', '1': 'b', '8': 'c', '9': 'd' } as Record<string, string>)[d])}`;
 
+/** Read a stream until `until` matches or `ms` pass: what came. */
+async function readFor(res: Response, until: RegExp, ms: number): Promise<string> {
+  const reader = res.body!.getReader();
+  let got = '';
+  const end = Date.now() + ms;
+  while (Date.now() < end && !until.test(got)) {
+    const chunk = await Promise.race([reader.read(), new Promise<{ done: true; value: undefined }>((r) => setTimeout(() => r({ done: true, value: undefined }), Math.max(1, end - Date.now())))]);
+    if (chunk.done) break;
+    got += new TextDecoder().decode(chunk.value);
+  }
+  reader.releaseLock();
+  return got;
+}
+
 describe.skipIf(!hasAge)('Comms', () => {
   let h: Household;
   let handle: HttpServeHandle;
@@ -98,7 +114,7 @@ describe.skipIf(!hasAge)('Comms', () => {
   };
   const deliveries = (): Array<Record<string, unknown>> => {
     const f = join(h.home, 'runtime-calls.jsonl');
-    return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+    return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').filter((l) => l.trim() !== '').map((l) => JSON.parse(l)) : []; // the page's manifest asks run it with nothing on stdin
   };
   const apiCalls = (): Array<Record<string, unknown>> => {
     const f = join(h.home, 'runtime-api.jsonl');
@@ -193,6 +209,64 @@ describe.skipIf(!hasAge)('Comms', () => {
       expect(r.status).toBe(403);
     });
 
+    it('refuses a page load of another member\'s thread as its JSON is refused', async () => {
+      const t = await open();
+      for (const who of [tok.loren, tok.sam]) {
+        const r = await fetch(`${base}/comms/${t.id}`, { headers: { accept: 'text/html', authorization: `Bearer ${who}` } });
+        expect(r.status).toBe(403);
+      }
+      const mine = await fetch(`${base}/comms/${t.id}`, { headers: { accept: 'text/html', authorization: `Bearer ${tok.jonathan}` } });
+      expect(mine.status).not.toBe(403);
+      // A fetch from another site is refused, a page or not.
+      const cross = await fetch(`${base}/comms`, { headers: { accept: 'application/json', authorization: `Bearer ${tok.jonathan}`, 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'cors' } });
+      expect(cross.status).toBe(403);
+    });
+
+    it('refuses a signed-in browser\'s write without its form token', async () => {
+      const login = await fetch(`${base}/login`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(tok.jonathan)}`, redirect: 'manual' });
+      const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
+      expect(cookie).toMatch(/=/);
+      const home = await (await fetch(`${base}/`, { headers: { cookie, accept: 'application/json' } })).json() as { chrome: { csrf: string } };
+      const post = (body: Record<string, unknown>) => fetch(`${base}/comms/new`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body) });
+      expect((await post({ agent: 'art', id: mid(n++), text: 'no token' })).status).toBe(403);
+      expect((await post({ agent: 'art', id: mid(n++), text: 'wrong token', _csrf: 'f'.repeat(64) })).status).toBe(403);
+      expect((await post({ agent: 'art', id: mid(n++), text: 'with its token', _csrf: home.chrome.csrf })).status).toBe(200);
+    });
+
+    it('refuses a piece token on the page', async () => {
+      const piece = createToken(h, { role: { kind: 'piece', piece: 'runtime', subject: 'x' }, label: 'p' }).token;
+      const g = await fetch(`${base}/comms`, { headers: { accept: 'application/json', authorization: `Bearer ${piece}` }, redirect: 'manual' });
+      expect(g.status).toBe(303);
+    });
+
+    it('cuts off an open stream when its member stops owning the agent, at the next event', async () => {
+      const t = await open(tok.sam);
+      const ac = new AbortController();
+      const lastSeq = ((await page(tok.sam, 'GET', `/comms/${t.id}`)).body.messages as Array<{ seq: number }>).at(-1)!.seq;
+      const r = await fetch(`${base}/comms/${t.id}/events?from=${lastSeq}`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.sam}` }, signal: ac.signal });
+      expect(r.status).toBe(200);
+      const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
+      raw.members[1].agents = ['mark'];
+      writeFileSync(join(h.home, 'household.json'), JSON.stringify(raw));
+      try {
+        await new Promise((res2) => setTimeout(res2, 150));
+        await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'after the change' });
+        const got = await readFor(r, /event: message/, 1500);
+        expect(got).not.toMatch(/event: message/);
+      } finally {
+        ac.abort();
+        raw.members[1].agents = ['art'];
+        writeFileSync(join(h.home, 'household.json'), JSON.stringify(raw));
+      }
+    });
+
+    it('shows another owner the conversation, never its words', async () => {
+      const t = await open(tok.jonathan, 'art', 'words-only-jonathan-reads-ibex');
+      recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');
+      const r = await fetch(`${base}/conversation/${t.conversation}`, { headers: { accept: 'application/json', authorization: `Bearer ${tok.sam}` } });
+      expect(await r.text()).not.toMatch(/ibex/);
+    });
+
     it('cuts off a member who stops owning the agent', async () => {
       const t = await open(tok.sam);
       const raw = JSON.parse(readFileSync(join(h.home, 'household.json'), 'utf-8'));
@@ -261,6 +335,9 @@ describe.skipIf(!hasAge)('Comms', () => {
       expect(p1).toMatch(/^th:[a-z2-7]{10}$/);
       expect(placeFor(h.home, 'jonathan', 'art', 'aaaaaaaaaaaaaaaa')).toBe(p1);
       expect(placeFor(h.home, 'jonathan', 'mark', 'aaaaaaaaaaaaaaaa')).not.toBe(p1);
+      const unkeyed = createHash('sha256').update('jonathan\0art\0aaaaaaaaaaaaaaaa').digest('hex');
+      expect(p1.slice(3)).not.toBe(unkeyed.slice(0, 10));
+      expect(createHmac('sha256', readFileSync(join(h.home, COMMS_SALT))).update('jonathan\0art\0aaaaaaaaaaaaaaaa').digest().length).toBe(32);
       const other = mkdtempSync(join(tmpdir(), 'loom-comms-salt-'));
       try { expect(placeFor(other, 'jonathan', 'art', 'aaaaaaaaaaaaaaaa')).not.toBe(p1); } finally { rmSync(other, { recursive: true, force: true }); }
     });
@@ -306,11 +383,11 @@ describe.skipIf(!hasAge)('Comms', () => {
       const t = await open();
       const d = await api(tok.runtime, 'comms/adapter', { op: 'describe', place: t.id, agent: 'art' });
       expect(d.body).toMatchObject({ ok: true, readers: ['jonathan'] });
-      expect(String(d.body.venue)).toMatch(/comms_title/);
-      expect(String(d.body.venue)).not.toMatch(/project/);
+      expect(d.body.brief).toEqual(expect.arrayContaining([expect.stringMatching(/comms_title/)]));
+      expect(JSON.stringify(d.body.brief)).not.toMatch(/project/);
       await page(tok.jonathan, 'POST', `/comms/${t.id}/title`, { title: 'A name' });
       const d2 = await api(tok.runtime, 'comms/adapter', { op: 'describe', place: t.id, agent: 'art' });
-      expect(String(d2.body.venue)).not.toMatch(/comms_title/);
+      expect(JSON.stringify(d2.body.brief)).not.toMatch(/comms_title/);
     });
 
     it('shows working, clears it on done, and answers stop once after Stop', async () => {
@@ -343,6 +420,11 @@ describe.skipIf(!hasAge)('Comms', () => {
       const cards = msgs.filter((m) => m.kind === 'card');
       expect(cards).toHaveLength(1);
       expect(cards[0]).toMatchObject({ text: 'Ran the tests', card: { tool: 'Bash', state: 'done' }, run: 'r1' });
+      for (let i = 0; i < 3; i++) await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: `r${i}` });
+      const all = (await page(tok.jonathan, 'GET', `/comms/${t.id}/since/0`)).body.messages as Array<{ seq: number }>;
+      const last = all.at(-1)!.seq;
+      const before = (await page(tok.jonathan, 'GET', `/comms/${t.id}/before/${last}`)).body.messages as Array<{ seq: number }>;
+      expect(before.map((m) => m.seq)).toEqual(all.slice(0, -1).map((m) => m.seq));
       const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true });
       try {
         const blob = db.prepare("SELECT text FROM comms_messages WHERE thread = ? AND kind = 'card'").get(t.id) as { text: Buffer };
@@ -391,7 +473,16 @@ describe.skipIf(!hasAge)('Comms', () => {
 
     it('deleting leaves only a tombstone: 404 to its member, the same 403 to anyone else', async () => {
       const t = await open(tok.jonathan, 'art', 'a planted secret phrase zebra-quokka');
+      const blob = (() => { const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true }); try { return (db.prepare("SELECT text FROM comms_messages WHERE thread = ? AND kind = 'message'").get(t.id) as { text: Buffer }).text; } finally { db.close(); } })();
+      // It decrypts with comms.key, and with no other identity.
+      expect(spawnSync('age', ['-d', '-i', join(h.home, COMMS_KEY)], { input: blob }).stdout.toString()).toBe('a planted secret phrase zebra-quokka');
+      const otherKey = join(h.home, 'other.key');
+      spawnSync('age-keygen', ['-o', otherKey]);
+      expect(spawnSync('age', ['-d', '-i', otherKey], { input: blob }).status).not.toBe(0);
+      rmSync(otherKey);
       await page(tok.jonathan, 'POST', `/comms/${t.id}/delete`, {});
+      // secure_delete: the freed pages are zeroed, so not even the encrypted bytes stay in the file.
+      expect(readFileSync(join(h.home, COMMS_DB)).includes(blob.subarray(40, 104))).toBe(false);
       expect((await page(tok.jonathan, 'GET', `/comms/${t.id}`)).status).toBe(404);
       const other = await page(tok.sam, 'GET', `/comms/${t.id}`);
       const none = await page(tok.sam, 'GET', '/comms/th:aaaaaaaaaa');
@@ -424,10 +515,12 @@ describe.skipIf(!hasAge)('Comms', () => {
       const db = new BetterSqlite3(join(h.home, COMMS_DB));
       try { db.prepare('UPDATE comms_messages SET at = ? WHERE thread = ?').run(new Date(Date.now() - 15 * 86_400_000).toISOString(), t.id); } finally { db.close(); }
       sweepComms(loadHousehold(h.home)!);
+      recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');
+      writeDigest(agentDir(h, 'art'), { conversation: t.conversation, run: 'run-old' }, { summary: 'Talked through the old plan.' });
       const r = await page(tok.jonathan, 'GET', `/comms/${t.id}`);
       const msgs = r.body.messages as Array<{ kind: string; text: string | null }>;
       expect(msgs.find((m) => m.kind === 'message')?.text).toBeNull();
-      expect(Array.isArray(r.body.earlier)).toBe(true);
+      expect(r.body.earlier).toEqual([expect.objectContaining({ summary: 'Talked through the old plan.' })]);
     });
 
     it('takes comms_days 1-14 and refuses anything else', () => {
@@ -450,6 +543,11 @@ describe.skipIf(!hasAge)('Comms', () => {
       expect(((await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string | null }>).find((m) => m.kind === 'message')?.text).toBe('four days old');
       sweepComms({ ...loadHousehold(h.home)!, commsDays: 3 });
       expect(((await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string | null }>).find((m) => m.kind === 'message')?.text).toBeNull();
+    });
+
+    it('names every Comms file the bundle refuses', () => {
+      expect(COMMS_FILES).toEqual(expect.arrayContaining([COMMS_DB, COMMS_KEY, COMMS_SALT, `${COMMS_DB}-journal`]));
+      expect(readFileSync(fileURLToPath(new URL('./bundle.ts', import.meta.url)), 'utf-8')).toMatch(/COMMS_FILES\.includes\(name\)/);
     });
 
     it('keeps its keys 0600 and its words in no file as plain bytes', async () => {
@@ -489,7 +587,7 @@ describe.skipIf(!hasAge)('Comms', () => {
       await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'live one' });
       const got = await read(r, /event: message\ndata: \{"seq":\d+\}/, 3000);
       expect(got).toMatch(/event: message\ndata: \{"seq":\d+\}\n/);
-      expect(Date.now() - posted).toBeLessThan(2000);
+      expect(Date.now() - posted).toBeLessThan(400);
       expect(got).not.toMatch(/live one/);
       expect(await read(mine, /event: change/, 3500)).toMatch(/event: change/);
       expect(await read(sams, /event: change/, 2500)).not.toMatch(/event: change/);
@@ -497,7 +595,42 @@ describe.skipIf(!hasAge)('Comms', () => {
     });
   });
 
+  describe('criterion 10: reconnecting', () => {
+    it('a stream opened with the last seq it had sends the newest at once when it moved', async () => {
+      const t = await open();
+      const first = await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'one' });
+      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'two' });
+      const ac = new AbortController();
+      const r = await fetch(`${base}/comms/${t.id}/events?from=${first.body.id}`, { headers: { accept: 'text/event-stream', authorization: `Bearer ${tok.jonathan}` }, signal: ac.signal });
+      expect(await readFor(r, /event: message/, 1500)).toMatch(new RegExp(`data: \\{"seq":${Number(first.body.id) + 1}\\}`));
+      ac.abort();
+      const since = await page(tok.jonathan, 'GET', `/comms/${t.id}/since/${first.body.id}`);
+      expect((since.body.messages as Array<{ text: string }>).map((m) => m.text)).toEqual(['two']);
+    });
+  });
+
   describe('criterion 13: errors, in words', () => {
+    it('a send without age is refused, nothing delivered, and the thread says why', async () => {
+      const t = await open();
+      const before = deliveries().length;
+      const saved2 = process.env.LOOM_AGE;
+      process.env.LOOM_AGE = join(h.home, 'no-such-age');
+      try {
+        const r = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id: mid(n++), text: 'no age here' });
+        expect(r.status).toBe(503);
+      } finally { if (saved2 === undefined) delete process.env.LOOM_AGE; else process.env.LOOM_AGE = saved2; }
+      expect(deliveries().length).toBe(before);
+      const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string }>;
+      expect(msgs.at(-1)).toMatchObject({ kind: 'error', text: 'loom can\'t keep messages safely right now: the age program is missing.' });
+      expect(msgs.some((m) => m.text === 'no age here')).toBe(false);
+    });
+    it('a loop pause is stated in words', async () => {
+      const t = await open();
+      const r = await api(tok.runtime, 'conversations/turn', { agent: 'art', venue: 'loom', place: t.id, at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'run-1', outcome: 'deferred' });
+      expect(r.status).toBe(200);
+      const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string }>;
+      expect(msgs.at(-1)).toMatchObject({ kind: 'error', text: 'Paused: Art was repeating itself.' });
+    });
     it('says a start that failed in words', async () => {
       mode('failed');
       const t = await open();
