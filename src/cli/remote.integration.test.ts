@@ -119,9 +119,21 @@ describe('loom CLI remote mode', () => {
   });
 
   it('local-only verbs ignore LOOM_URL, and refuse an explicit --url', async () => {
-    const r = await runCliCaptured(['doctor', '--url', url], { env: remoteEnv() });
+    const r = await runCliCaptured(['bootstrap', '--url', url], { env: remoteEnv() });
     expect(r.code).toBe(2);
     expect(r.stderr).toMatch(/runs locally/);
+  });
+
+  it('doctor accepts --url and checks identity without exposing the creed', async () => {
+    const r = await runCliCaptured(['doctor', '--url', url, '--json'], { env: remoteEnv() });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).remote).toEqual({ identityOk: true });
+    expect(r.stdout).not.toContain('# Creed');
+    await writeFile(tokenFile, 'wrong');
+    const denied = await remote(['doctor']);
+    expect(denied.code).toBe(0);
+    expect(denied.stdout).toContain('identity probe failed');
+    expect(denied.stdout).not.toContain('bootstrap');
   });
 
   it('update --confirm reads no body: no stdin, no $EDITOR, even on a TTY', async () => {

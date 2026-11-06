@@ -2,7 +2,8 @@
  * loom doctor — read-only environment probe. Reports node version
  * compatibility, stack version, existing agents under
  * ~/.config/loom/*, and forward-looking git fields per agent. Never
- * writes. Exit 0 regardless of findings; health is the output, not
+ * writes to the local stack. In remote mode, also probes identity access through
+ * the authenticated CLI endpoint. Exit 0 regardless of findings; health is the output, not
  * the exit code.
  */
 import { parseArgs } from 'node:util';
@@ -10,12 +11,14 @@ import { readdir, readFile, stat, lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { extractGlobalFlags } from './args.js';
 import type { IOStreams } from './io.js';
+import { runRemote } from './remote.js';
 import { renderJson } from './io.js';
 import { CURRENT_STACK_VERSION, resolveDefaultContextPath } from '../config.js';
 
 const USAGE = `Usage: loom doctor [options]
 
-Probes the loom environment. Read-only; exits 0 regardless of findings.
+Probes the local environment and, when LOOM_URL or --url is set, checks
+remote identity access. Read-only; exits 0 regardless of findings.
 
 Options:
   --json    Machine-readable output
@@ -46,6 +49,7 @@ interface DefaultStatus {
 }
 
 interface DoctorReport {
+  remote?: { identityOk: boolean };
   nodeOk: boolean;
   nodeVersion: string;
   stackVersionOk: boolean;
@@ -170,7 +174,15 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
   const contextDir = global.contextDir ?? io.env.LOOM_CONTEXT_DIR ?? resolveDefaultContextPath(home);
   const { root, agents, defaultStatus } = await probeAgents(home);
 
+  const url = global.url ?? io.env.LOOM_URL;
+  // Reuse the authenticated CLI transport; never print identity text or credentials.
+  // A missing local stack is expected in a house connected to the household.
+  const remote = url ? { identityOk: (await runRemote('wake', [], url, {
+    ...io, stdout: () => {}, stderr: () => {},
+  }, 10_000)) === 0 } : undefined;
+
   const report: DoctorReport = {
+    ...(remote ? { remote } : {}),
     nodeOk: nodeOk(process.version),
     nodeVersion: process.version,
     stackVersionOk: await probeStackVersion(contextDir),
@@ -189,12 +201,18 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
 
   const lines: string[] = [];
   lines.push(`node:        ${report.nodeVersion}${report.nodeOk ? '' : '  (unsupported — need ≥ 20)'}`);
+  if (remote) {
+    lines.push(`remote:      ${remote.identityOk ? 'identity accessible  [ok]' : 'identity probe failed  [FAIL — check LOOM_URL, LOOM_TOKEN_FILE and server access]'}`);
+    lines.push('local stack: optional when using remote loom; local findings follow');
+  }
   lines.push(`stack:       ${report.stackVersionOk ? 'compatible' : 'incompatible'}`);
   lines.push(`context dir: ${report.contextDirResolved}`);
   lines.push(`agents root: ${report.agentsRoot}`);
 
   const ds = report.defaultStatus;
-  if (!ds.exists) {
+  if (remote) {
+    lines.push(`default:     ${report.defaultOk ? 'available locally' : 'unavailable locally'} (optional in remote mode)`);
+  } else if (!ds.exists) {
     lines.push('default:     missing  [FAIL — run `loom bootstrap` to create an agent and set up the default pointer]');
   } else if (!ds.isSymlink) {
     lines.push('default:     real directory (should be a symlink)  [FAIL]');

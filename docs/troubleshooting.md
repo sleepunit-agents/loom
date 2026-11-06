@@ -88,6 +88,17 @@ agents:      1
 | `agents root` | The parent of all agent directories — `~/.config/loom/` by default. |
 | `agents` | Every subdirectory found there, with `identity` and `memories.db` presence flagged. |
 
+With `LOOM_URL` or `--url` set, doctor also probes remote identity access through
+`/cli`, using `LOOM_TOKEN_FILE` when present, with a ten-second timeout. It prints
+only the result, never the identity or token. `remote: identity accessible` means
+that this CLI can load identity; it does not establish that other MCP tools or
+pieces are available. A failed probe points to the URL, token file, or server
+access. A server without `/cli` also fails this probe even if its MCP works.
+
+The remaining fields describe the local machine. In remote mode, a missing local
+default is optional and does not call for bootstrap. JSON retains the local
+fields and adds `remote.identityOk`; doctor still exits zero regardless of findings.
+
 If `stack` shows `incompatible`, it usually means loom is at v0.4.x but the
 `LOOM_STACK_VERSION` file in the context dir predates v2. The fix:
 

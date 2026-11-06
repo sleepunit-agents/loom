@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +21,56 @@ function mkIo(env: Record<string, string>): { io: IOStreams; out: string[]; err:
 describe('loom doctor', () => {
   let work: string;
   beforeEach(async () => { work = await mkdtemp(join(tmpdir(), 'loom-doctor-')); });
-  afterEach(async () => { await rm(work, { recursive: true, force: true }); });
+  afterEach(async () => { vi.unstubAllGlobals(); await rm(work, { recursive: true, force: true }); });
+
+  it('checks remote identity with the house token and does not recommend bootstrap', async () => {
+    const tokenFile = join(work, 'token');
+    await writeFile(tokenFile, 'test-house-token\n');
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      exitCode: 0, stdout: 'PRIVATE IDENTITY', stderr: '',
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { io, out } = mkIo({ HOME: work, LOOM_URL: 'https://example.test/mcp', LOOM_TOKEN_FILE: tokenFile });
+    expect(await run([], io)).toBe(0);
+    expect(fetchMock).toHaveBeenCalledWith(new URL('https://example.test/cli'), expect.objectContaining({
+      headers: expect.objectContaining({ authorization: 'Bearer test-house-token' }),
+      body: JSON.stringify({ argv: ['wake'] }),
+    }));
+    expect(out.join('')).toContain('identity accessible  [ok]');
+    expect(out.join('')).toContain('optional in remote mode');
+    expect(out.join('')).not.toMatch(/bootstrap|PRIVATE IDENTITY|test-house-token/);
+  });
+
+  it.each([
+    ['denied', () => Promise.resolve(new Response('private server detail', { status: 403 }))],
+    ['unreachable', () => Promise.reject(new Error('private connection detail'))],
+    ['malformed', () => Promise.resolve(new Response('{}'))],
+  ])('reports a failed remote probe when %s, separately from local setup', async (_label, response) => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(response));
+    const { io, out } = mkIo({ HOME: work, LOOM_URL: 'https://example.test/mcp' });
+    expect(await run([], io)).toBe(0);
+    expect(out.join('')).toContain('identity probe failed  [FAIL');
+    expect(out.join('')).not.toMatch(/bootstrap|private/);
+  });
+
+  it('honors --url over LOOM_URL and reports the probe in JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ exitCode: 0, stdout: '', stderr: '' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { io, out } = mkIo({ HOME: work, LOOM_URL: 'https://unused.test/mcp' });
+    expect(await run(['--url', 'https://chosen.test/mcp', '--json'], io)).toBe(0);
+    expect(fetchMock.mock.calls[0][0]).toEqual(new URL('https://chosen.test/cli'));
+    expect(JSON.parse(out.join('')).remote).toEqual({ identityOk: true });
+    expect(JSON.parse(out.join('')).defaultOk).toBe(false);
+  });
+
+  it('does not contact the server when the token file is unreadable', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { io, out } = mkIo({ HOME: work, LOOM_URL: 'https://example.test/mcp', LOOM_TOKEN_FILE: join(work, 'missing') });
+    expect(await run(['--json'], io)).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(JSON.parse(out.join('')).remote.identityOk).toBe(false);
+  });
 
   it('reports empty existingAgents in a fresh HOME', async () => {
     const { io, out } = mkIo({ HOME: work });

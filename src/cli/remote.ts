@@ -16,7 +16,7 @@
  * nothing /mcp doesn't. Two `memory` subcommands have no MCP tool and stay
  * local too (LOCAL_MEMORY_SUBCOMMANDS). Verbs about the local machine (inject, install,
  * doctor, serve, bootstrap, migrate, harness, update-identity) always run
- * locally.
+ * locally (doctor also uses this transport for a bounded remote identity probe).
  *
  * The bearer token comes from a file (LOOM_TOKEN_FILE), never argv, so it
  * stays out of `ps` and shell history.
@@ -141,6 +141,7 @@ export async function runRemote(
   rest: string[],
   url: string,
   io: IOStreams,
+  timeoutMs = REMOTE_TIMEOUT_MS,
 ): Promise<number> {
   const args = withoutUrl(rest);
   if (args.some((a) => a === '--context-dir' || a.startsWith('--context-dir='))) {
@@ -175,7 +176,7 @@ export async function runRemote(
       method: 'POST',
       headers,
       body: JSON.stringify(request),
-      signal: AbortSignal.timeout(REMOTE_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     const cause = (err as { cause?: { message?: string } }).cause?.message;

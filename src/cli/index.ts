@@ -100,7 +100,7 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   if (REMOTE_VERBS.has(sub)) {
     const target = url ?? io.env.LOOM_URL;
     if (target) return runRemote(sub, rest, target, io);
-  } else if (url !== undefined) {
+  } else if (url !== undefined && sub !== 'doctor') {
     io.stderr(`--url only applies to ${[...REMOTE_VERBS].join(', ')}; ${sub} runs locally.\n`);
     return 2;
   }
