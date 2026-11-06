@@ -318,6 +318,12 @@ tech. In a tile:
   that check becomes per tile.
 - `Sheet` here is `web/src/panel.tsx`'s (a `components/ui/dialog` when wide); it takes the same container.
 - Find, toasts and the boot stay screen-wide.
+- As built (phase 5, 2026-11-06): Radix's `Select` and `AlertDialog` are always modal to the whole screen (neither has
+  a `modal` choice), so in a tile a choice of many is the browser's own list (`choice-select.tsx`), and a danger
+  button's confirm is a `Dialog` with the alert's role (`block-extras.tsx` `Confirm`). Anything else that reaches for
+  `AlertDialog` in a tile gets the screen's modality. Radix keeps one stack of open layers for the page, so with sheets
+  open in two tiles at once, Esc closes the one opened last, wherever focus is; the other closes with its own Close or
+  a press on its tile's scrim.
 
 ### Transitions
 

@@ -245,4 +245,47 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.context().close();
   }, 60_000);
 
+
+  it('Comms in a tile under 620 px is one pane (loom#565 measures its own box): the list, then the thread with its way back', async () => {
+    const p = await screen(1280, 800, '/comms?t=setup,*comms&w=needs');
+    const comms = p.locator('.loom-tile[data-tile="/comms"]');
+    await comms.locator('.comms-list').waitFor();
+    expect(await comms.evaluate((t) => t.getBoundingClientRect().width)).toBeLessThan(620);
+    // shown: there, and drawn (one pane at a time may leave the other out, or hide it)
+    const shown = (sel: string) => comms.evaluate((t, sel) => { const e = t.querySelector(sel); return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0; }, sel);
+    expect(await shown('.comms-list')).toBe(true);
+    expect(await shown('.comms-blank')).toBe(false);
+    // a thread: only the thread, filling the tile, with Back to the list
+    await comms.locator('.comms-row__btn').first().click();
+    await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/comms\/th/);
+    await comms.locator('.comms-thread').waitFor();
+    expect(await shown('.comms-list')).toBe(false);
+    const [tw, th] = await Promise.all([comms.locator('.comms-thread').evaluate((e) => e.getBoundingClientRect().width), comms.locator('.comms').evaluate((e) => e.getBoundingClientRect().width)]);
+    expect(tw).toBeGreaterThan(th - 4);
+    await comms.locator('button[aria-label="Back to threads"]').click();
+    await expect.poll(() => new URL(p.url()).pathname).toBe('/comms');
+    expect(await shown('.comms-list')).toBe(true);
+    // wide again (Comms alone): two panes, the list beside the thread, and no Back
+    await p.locator('.loom-tile[data-tile="/setup"] button[aria-label="Close Setup"]').click();
+    await expect.poll(() => comms.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThan(620);
+    await expect.poll(() => shown('.comms-blank')).toBe(true);
+    await comms.locator('.comms-row__btn').first().click();
+    await comms.locator('.comms-thread').waitFor();
+    const two = async (page: Page, sel: string) => page.locator(sel).evaluate((c) => {
+      const l = c.querySelector('.comms-list')!.getBoundingClientRect(), t = c.querySelector('.comms-thread')!.getBoundingClientRect();
+      const back = c.querySelector<HTMLElement>('button[aria-label="Back to threads"]');
+      return { list: Math.round(l.width), beside: t.left >= l.right - 1, back: !!back && getComputedStyle(back).display !== 'none' };
+    });
+    expect(await two(p, '.loom-tile[data-tile="/comms"] .comms')).toEqual({ list: 320, beside: true, back: false });
+    await p.context().close();
+    // and One window at a time, untouched: two panes in the window
+    const w = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    await w.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await w.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+    const q = await w.newPage();
+    await q.goto(`${base}/comms/${artLatest}`);
+    await q.locator('.loom-window .comms-thread').waitFor();
+    expect(await two(q, '.loom-window .comms')).toEqual({ list: 320, beside: true, back: false });
+    await w.close();
+  }, 60_000);
 });
