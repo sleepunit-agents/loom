@@ -34,14 +34,15 @@ its own frame.
 _Avoid_: window (today's single big frame), pane, panel
 
 **Widget**:
-a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup, the ticker). It is
+a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup), or the ticker (the bar's feed as a card). It is
 live, it never gets a split of its own, and it opens its app beside it.
 _Avoid_: gadget, applet
 
 **Fit**:
 what an app declares about the room it can use: a minimum, an ideal and a maximum width, a minimum height, and whether
-it wants the big slot. The maximum is the width past which the app gains nothing: the rule gives the room past it to a
-side that can use it, or to widget columns, and only when nothing else can use it does the app get it anyway.
+it wants the big slot. The maximum is the width past which the app gains nothing. It decides who gets room only when
+one side of a split can use more and the other can't (rule 2, step 2), and how much the widgets get beside the apps
+(rule 1); otherwise a split's ratio stands, even past a max.
 _Avoid_: size hint, constraints
 
 **The big slot**:
@@ -90,7 +91,8 @@ The rule lives in `web/src/tiling/layout.ts`, its tests in `src/ui/desk-tiling-l
   - Else the rail folds to the **strip**: one 64 px key per widget, with a face or an icon and a count. A key opens the
     widget's app. The strip always takes its 64 px and a gutter; an app that then falls under its minimum is rule 4's
     (it goes to the dock), never drawn over.
-  - "Combined" is the width the apps need when split as rule 2 splits them, alternating, starting side by side:
+  - "Combined" is the width the apps would need if each split alternated, starting side by side (an estimate: rule 2
+    really splits each region by its shape):
     `need(run, side) = side ? w(first) + 10 + need(rest, stacked) : max(w(first), need(rest, side by side))`, and
     `need` of one app is its own `w` (its min or its max). An app without a max makes any combined max it's in
     unlimited.
@@ -118,13 +120,15 @@ Split ratios come from fit, in this order:
 - **Side by side,** where `W` is the region's width less one gutter:
   1. The first's width is `round(W × ideal(first) / (ideal(first) + ideal(widest of the rest)))`, the share clamped to
      34 to 66 percent first. "Widest of the rest" is the largest ideal among the rest.
-  2. Then the maxes: if the first has a max and none of the rest can use more (any of the rest has no max), the first
-     stops at its max. If the first has no max and the rest all have one, the first takes at least what the rest can't
+  2. Then the maxes: if the first has a max and at least one of the rest has none (so the rest can use any room), the
+     first stops at its max. If the first has no max and the rest all have one, the first takes at least what the rest can't
      use (`W − their combined max`). When both sides have a max, or neither does, step 1's width stands: a max only
      decides who takes the room when one side can use it and the other can't. (Room past every max goes to widget
      columns when rule 1 gives them more; otherwise the apps keep it.) A max applied here can take the first under 34
      percent.
-  3. Then the minimums: the rest keep their combined minimum, and the first keeps its own as far as that allows.
+  3. Then the minimums: the rest keep their combined minimum, taken starting stacked (`need(rest, stacked)`: the
+     widest minimum among a stack, which is the least the rest's region can be), and the first keeps its own as far as
+     that allows.
 - **Stacked:** half each (`round((h − gutter) / 2)`), then clamped so the rest keep the largest minimum height among
   them, and the first keeps its own as far as that allows.
 
@@ -209,7 +213,8 @@ you's first ask and "N more"; it's `min(height, compact height)`.
   { "tab": { "label": "Garden", "fit": { "min": [420, 300], "ideal": 760, "max": 1000, "big": false } } }
   ```
 
-  Every key is optional and falls back to the default row. A `min` under 320×240, an `ideal` under the `min`'s width,
+  Every key is optional and falls back to the default row. A `min` narrower than 320 or shorter than 240, an `ideal`
+  under the `min`'s width,
   or a `max` under `ideal` makes the manifest refuse with a message, the way a bad `accent` does.
 - **Widgets from pieces (designed, not built):** a manifest's `widgets: [{ "id", "label", "page", "fit", "opens" }]`.
   `page` is a piece page drawn small, with the same blocks. `opens` is the page its "Open" goes to. The `tile` Home
@@ -333,11 +338,13 @@ tech. In a tile:
   - For example, `/comms/th/7f3a?t=tasks!,*comms,inbox&m=boxes&w=art,mark,needs`. Each app's page is its own history's
     (`trail.ts`, this tab's), and the path is the focused one's.
 - **On reload**, the address restores the set, minimized apps in the dock.
-- **A bare `/`** restores this device's last set from `localStorage` (`loom-tiles`, wrapped in try/catch), and else the
-  fresh-device set.
+- **An address with no set** (a bare `/`, a link, a bookmark) restores this device's last set from `localStorage`
+  (`loom-tiles`, wrapped in try/catch), else the fresh-device set, and the address's own page opens focused in its
+  app's tile.
 - **Under 1024 px, or with One window at a time,** `t`, `m` and `w` are ignored, and the saved set is neither read nor
   written: the path's page draws as it does today. A window narrowed under 1024 px with tiles open shows the focused
-  tile's page as today's phone page; widened again, the set comes back from the address.
+  tile's page as today's phone page, and the address drops its set; widened again, the set comes back from this
+  device's saved one.
 - **Inside a tile, a page change** is a `pushState` of the new address, with `{tile}` in its state. So the browser's
   Back and Forward walk the focused tile's history, the way `trail.ts` takes a `pop`.
 - **Opening, closing, swapping and promoting** use `replaceState`, so the browser's Back never closes a tile.
@@ -379,19 +386,21 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
    - Inbox, Comms: side by side, one 10 px gutter between, together the area's width;
    - Tasks, Inbox, Comms: Tasks on the left at full height, Inbox over Comms on the right, one gutter between each,
      each at least its minimum.
+   - Tasks, Comms, Inbox: Tasks is 1,104 px, `round(1910 × 1040/(1040+760))`: the widest ideal of the rest (Inbox's
+     760), not the first of them (Comms's 680, which would give 1,155).
 2. **Dwindle, and every split the same step.** Tasks, Inbox, Comms, Knowledge in 2560×1300: Knowledge sits beside
    Comms, under Inbox; Comms's width is `round(W × 680/(680+760))` of its own region's `W` (the region less a gutter).
    The threshold: Inbox and Comms in 1200×1000 sit side by side, in 1100×1000 they're stacked.
 3. **Fit sets the ratio, then the maxes, then the minimums.**
    - In 1538 wide, Tasks then Comms gives Tasks `round(1528 × 1040/1720)` = 924 px and Comms the remaining 604 px.
    - In 3200 wide, Boxes (max 1200) then Tasks (no max) gives Boxes 1,200 px, its max, not the ratio's 1,406.
-   - In 3000 wide, Setup (max 680) then Tasks gives Setup 680 px: the max wins over the 34 percent floor.
+   - In 3000 wide, Setup (max 680) then Tasks gives Setup 680 px, its max, not its 35 percent share (1,047).
    - In 1810 wide, Comms (max 820) then Inbox (max 980) gives Comms 850 px and Inbox 950: with both capped, the ratio
      stands.
    - In 1810 wide, Setup then Changes gives Setup 612 px: its raw share (560/1660, 33.7 percent, 607 px) is clamped up
      to 34 percent.
    - In 3000 wide, Tasks (no max) then Comms (max 820) gives Tasks 2,170 px and Comms 820: Tasks takes what Comms can't
-     use, past its ratio's 1,809.
+     use, past its ratio's 1,808.
 4. **Where a new app goes.**
    - From the dock: Tasks with Comms open goes first; Comms with Tasks open goes last; with Comms made the big one,
      Tasks goes last.
@@ -405,6 +414,8 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
    - With no apps, Vitals, Art, Needs you, Mark and Backup group into [Needs you] | [Art, Mark] | [Vitals, Backup].
 6. **Rail, columns, strip, compact.** The widgets are Needs you, Art and Mark unless named.
    - Comms alone in 1872×890 on 1920 gives the widgets 2 columns (2 groups).
+   - Comms alone in 1552×800 on 1600 with Needs you, Art and Vitals (3 groups) gives 2 columns, by room: Needs you in
+     the left one, Art over Vitals in the right one.
    - Tasks and Comms there give a rail of 340 px; in 1552×800 on 1600, 300 px; in 1232×800 on 1280, 280 px.
    - Tasks and Changes in 1232×600 on 1280 give the strip (64 px).
    - Tasks and Comms in 1872×600 on 1920 with Needs you and three agents' cards draw the cards and Needs you compact,
@@ -415,8 +426,8 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
      Changes: …minimum…", and every remaining app is at or above its minimum.
    - The same, opened from the Comms tile: Tasks goes instead, its words "Tasks went to the dock to make room for
      Changes: Comms would have been under its 360 px minimum height". The same with Comms made the big one: Tasks goes.
-   - In 1104×700 on 1152, with Tasks open and the three widgets, opening Changes sends Tasks to the dock, and the strip
-     keeps its 64 px.
+   - In 1104×700 on 1152, with Tasks open and the three widgets, Tasks and Changes would leave only the strip, and
+     Tasks under its minimum beside it: opening Changes sends Tasks to the dock, and Changes alone then has a rail.
 8. **The cap.** Areas are 48 px narrower than the screen; no app has had focus.
    - With Inbox and Comms open (760 tall), opening Knowledge on 1279 sends Inbox to the dock ("2 apps is the most this
      screen holds"); on 1280 it doesn't.
@@ -427,9 +438,9 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
 9. **Deterministic.** Tasks, Comms, Inbox and Knowledge and the three widgets in 1872×890 on 1920 give identical
    rectangles before and after laying out a different set in between.
 
-**The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`, Tiling chosen).** Criteria 10 and 11 run at
-1024×768, 1280×800 and 1920×1080; the rest, which need three or more apps, at 1280×800 and 1920×1080 (and 17's four
-apps at 1920×1080 only).
+**The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`, Tiling chosen).** Criteria 10, 11, 16, 18 and
+19 run at 1024×768, 1280×800 and 1920×1080; 12, 13, 14 and 17 at 1280×800 and 1920×1080 (17's four apps at 1920×1080
+only); 15 at 1920×1080; 20 at 390×844 and across 1024.
 
 10. **Open, focus, minimize.**
     - The Inbox key, then the Comms key, gives two tiles and an address whose query has `t=inbox,*comms`.
@@ -449,7 +460,7 @@ apps at 1920×1080 only).
 14. **Reload.** A reload of `/comms?t=tasks!,*comms&m=inbox&w=art,needs` draws Tasks (pinned, first), then Comms,
     focused, the Inbox in the dock, and the two widgets, in that order.
 15. **Keys.**
-    - With three tiles and the big one focused, Alt+Shift+→ moves focus to position 1 (the upper of the two on the
+    - With Tasks, Inbox and Comms open and Tasks focused, Alt+Shift+→ moves focus to position 1 (the upper of the two on the
       right), and the live region says "tile 2 of 3, …"; Alt+Shift+↓ from there moves to position 2.
     - Alt+Shift+Enter makes it first. Alt+Shift+, swaps it with the tile before, Alt+Shift+. with the one after.
     - Alt+Shift+M minimizes it, Alt+Shift+W closes it.
@@ -472,7 +483,9 @@ apps at 1920×1080 only).
 19. **Reduced motion.** With reduced motion, opening a second app starts no View Transition.
 20. **Budget, and phones untouched.** First-page JS stays under 250 KB gzipped (`src/ui/web-app.test.ts`; it needs the
     built app, which CI builds before it tests, `.github/workflows/ci.yml`; locally, `npm run build` first). A 390 px
-    screen fetches no `desk-*` asset, and `/comms?t=tasks,*comms` there draws Comms as today's phone page.
+    screen fetches no `desk-*` asset, and `/comms?t=tasks,*comms` there draws Comms as today's phone page. A desktop
+    window with the Inbox and Comms tiled, narrowed from 1280 to 900 px, draws Comms as today's phone page; widened back
+    to 1280, the two tiles return.
 
 **Pieces (vitest):**
 
@@ -502,8 +515,8 @@ shipped and been checked, and then the owner decides.
 1. **Rail side:** the widget rail goes on the **right**.
 2. **Two tiles of the same app** (two Comms threads side by side): **later**, not in this build.
 3. **Tiling is opt-in** at first, a per-person Appearance setting: "Tiling" / "One window at a time". It becomes the
-   default once phase 5 (tile-scoped dialogs, transitions, keys, plain mode) has shipped and been checked: the build
-   says when it's ready, and the owner flips it, not the build.
+   default once phase 5 (tile-scoped dialogs, transitions, keys, plain mode) has shipped and been checked, when the
+   owner says so: the build says when it's ready and doesn't flip it itself.
 4. **No drag-to-resize gutters** for now.
 5. **Day-one widgets:** agent cards, Needs you, Vitals, Backup and the ticker. A box's own vitals as a widget is
    allowed: the owner's rule of 2026-10-27 is that Home shows no box's own state (a box's state lives on its page),
