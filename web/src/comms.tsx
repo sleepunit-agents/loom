@@ -10,12 +10,13 @@
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './comms.css';
+import { WorkPanel } from './comms-work';
 import { AgentAvatar, useEnv, type Mark } from './blocks';
 import { markColor } from './look';
 import { reducedMotion } from './access';
 import { bits, githubUrl } from './plain';
 import { prose } from '../../src/ui/prose';
-import type { Chrome } from './loom';
+import { act, type Chrome } from './loom';
 import type { FaceState } from './face';
 
 const PixelFace = lazy(() => import('./pixel-face'));
@@ -29,8 +30,20 @@ export type Thread = {
   opened: string; last: string; read_seq: number; channel: number; conversation: string; state: ThreadState; unread?: boolean; last_seq?: number;
 };
 export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' | 'ask' | 'error'; from: string; id: string; text: string | null;
-  card: Record<string, unknown> | null; run: string | null; delivered: boolean | null };
-export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string;
+  card: Record<string, unknown> | null; run: string | null; delivered: boolean | null; delivery?: Delivery };
+/** Where a message of yours is, as the server recorded it (comms.md, "Sending"): never a guess the app makes. */
+type Delivery = 'sending' | 'delivered' | 'failed';
+const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? 'delivered' : m.delivered === false ? 'failed' : 'sending');
+/**
+ * Whether a message can still change where it is on its own: one of yours on its way, or a step still running. The
+ * app reads the thread again from the oldest of these, so their state is the server's, not what it was when first
+ * read. (Your last message, not delivered, is read again too: Send again from another tab puts it back on its way.)
+ */
+const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) === 'sending') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
+/** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
+export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
+  actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> };
+export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string; asks?: ThreadAsk[];
   threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
   /** household.json's github: a bare repo#N in a reply links under it. */
   github?: string };
@@ -292,9 +305,14 @@ function Composer({ onSend, disabled, accent, placeholder }: { onSend: (text: st
   };
   return (
     <form className="comms-composer" style={{ '--c': accent } as React.CSSProperties} onSubmit={(e) => { e.preventDefault(); void send(); }}>
-      <span className="comms-composer__prompt loom-data" aria-hidden>&gt;</span>
       <textarea ref={area} rows={1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
-        onChange={(e) => setText(e.target.value)} />
+        onChange={(e) => setText(e.target.value)}
+        // Enter sends and Shift+Enter is a new line, where there's a hardware keyboard. A phone's keyboard has no Shift
+        // to reach for, so its Enter stays a new line and the Send button sends. Never mid-composition (an IME's Enter).
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || matchMedia('(pointer: coarse)').matches) return;
+          e.preventDefault(); void send();
+        }} />
       <button type="submit" disabled={disabled || busy || !text.trim()} className="comms-composer__send">Send</button>
     </form>
   );
@@ -308,8 +326,8 @@ function Message({ m, marks, agent, owner }: { m: Msg; marks: Record<string, Mar
   if (m.kind === 'ask') return <li className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {who}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></li>;
   const mine = m.kind === 'message';
   return (
-    <li className={`comms-msg ${mine ? 'comms-msg--mine' : 'comms-msg--agent'}`} data-undelivered={mine && m.delivered === false ? '' : undefined}>
-      <span className="comms-msg__meta loom-data">{!mine && marks[m.from] && <AgentAvatar a={marks[m.from]} size={22} className="comms-msg__face" />}{hhmm(m.at)} · {who}</span>
+    <li className={`comms-msg ${mine ? 'comms-msg--mine' : 'comms-msg--agent'}`} data-undelivered={mine && deliveryOf(m) === 'failed' ? '' : undefined} data-delivery={mine ? deliveryOf(m) : undefined}>
+      <span className="comms-msg__meta loom-data">{!mine && marks[m.from] && <AgentAvatar a={marks[m.from]} size={22} className="comms-msg__face" />}{hhmm(m.at)} · {who}{mine && deliveryOf(m) === 'sending' && <span className="comms-msg__sending"> · sending…</span>}</span>
       {m.text === null ? <p className="comms-msg__gone">(older than this thread keeps)</p> : mine ? <p className="comms-msg__text">{m.text}</p> : <Reply text={m.text} owner={owner} />}
     </li>
   );
@@ -344,17 +362,21 @@ function grouped(messages: Msg[]): Array<{ key: string; msg?: Msg; cards?: Msg[]
 }
 
 function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, github }: {
-  initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
+  initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[]; asks?: ThreadAsk[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
   onBack: () => void; onChanged: () => void;
 }) {
   const [thread, setThread] = useState(initial.thread);
   const [messages, setMessages] = useState(initial.messages);
+  const [asks, setAsks] = useState<ThreadAsk[]>(initial.asks ?? []);
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
   const [compact, setCompact] = useState(false);
   const [now, setNow] = useState(Date.now());
   const last = useRef(initial.messages.at(-1)?.seq ?? 0);
+  // The oldest message that can still change (unsettled): each read starts there, so it's read again until it settles.
+  const shown = useRef(initial.messages);
+  useEffect(() => { shown.current = messages; }, [messages]);
   const seenReply = useRef(initial.messages.filter((m) => m.kind === 'reply').at(-1)?.seq ?? 0);
   const bottom = useRef<HTMLDivElement>(null);
   const top = useRef<HTMLDivElement>(null);
@@ -363,22 +385,31 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   // New messages: fetched after the last seq we have, once the stream says the thread moved.
   const pull = useCallback(async () => {
-    const r = await getJson<{ thread: Thread; messages: Msg[] }>(`/comms/${thread.id}/since/${last.current}`);
+    const lastMine = shown.current.filter((m) => m.kind === 'message').at(-1);
+    const oldest = shown.current.slice(-100).find((m) => unsettled(m) || (m === lastMine && deliveryOf(m) === 'failed'));
+    const from = oldest ? Math.min(last.current, oldest.seq - 1) : last.current;
+    const r = await getJson<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${from}`);
     if (!r) return;
-    setThread(r.thread);
+    // Only when it moved: a read that changed nothing redraws nothing.
+    setThread((t) => (JSON.stringify(t) === JSON.stringify(r.thread) ? t : r.thread));
+    setAsks(r.asks ?? []);
     if (r.thread.state.failed) setLink('none');
-    if (!r.messages.length) return;
-    last.current = r.messages.at(-1)!.seq;
+    // What's new or moved (a read from an unsettled message brings back some the app already has, unchanged).
+    const had = new Map(shown.current.map((m) => [m.seq, m]));
+    const moved = r.messages.filter((m) => { const o = had.get(m.seq); return !o || o.delivered !== m.delivered || o.delivery !== m.delivery || o.text !== m.text || JSON.stringify(o.card) !== JSON.stringify(m.card); });
+    if (!moved.length) return;
+    last.current = Math.max(last.current, r.messages.at(-1)!.seq);
+    shown.current = [...new Map([...shown.current, ...moved].map((m) => [m.seq, m])).values()].sort((a, b) => a.seq - b.seq);
     setMessages((ms) => {
       const kept = new Map(ms.map((m) => [m.seq, m]));
-      for (const m of r.messages) kept.set(m.seq, m);
+      for (const m of moved) kept.set(m.seq, m);
       return [...kept.values()].sort((a, b) => a.seq - b.seq);
     });
-    const reply = r.messages.filter((m) => m.kind === 'reply' && m.seq > seenReply.current).at(-1);
+    const reply = moved.filter((m) => m.kind === 'reply' && m.seq > seenReply.current).at(-1);
     if (reply) {
       seenReply.current = reply.seq;
       // The beats for what landed now; the player adds them to a run already going and stops at 4 (PIXEL.talkMax).
-      const n = r.messages.filter((m) => m.kind === 'reply').reduce((k, m) => k + talkBeats((m.text ?? '').length), 0);
+      const n = moved.filter((m) => m.kind === 'reply').reduce((k, m) => k + talkBeats((m.text ?? '').length), 0);
       setTalk({ n, key: reply.seq });
       setLink('ok');
     }
@@ -402,12 +433,13 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   // Read: while the thread is on screen and the page visible, now and every 30 s (that's also "in front" for push).
   useEffect(() => {
-    const read = () => { if (document.visibilityState === 'visible') void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }); };
+    // And a look for asks every 30 s: an approval reaches loom's manifests on its own clock, not the thread's stream.
+    const read = () => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }); void pull(); } };
     read();
     const t = setInterval(read, 30_000);
     document.addEventListener('visibilitychange', read);
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', read); };
-  }, [thread.id, csrf, messages.length]);
+  }, [thread.id, csrf, messages.length, pull]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
   // The phone's strip collapses to the small avatar once the messages scroll under it.
@@ -426,7 +458,17 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
     await pull();
     return true;
   };
-  const resend = async (m: Msg) => { if (m.text) { await post(`/comms/${thread.id}/send`, csrf, { id: m.id, text: m.text }); await pull(); } };
+  // Send again: where it is as the server answers at once (sent again, or already on its way, or delivered), drawn
+  // from that answer, never assumed; a refused one stays Not delivered and says why.
+  const resend = async (m: Msg) => {
+    if (!m.text) return;
+    const r = await post(`/comms/${thread.id}/send`, csrf, { id: m.id, text: m.text });
+    const d = r.body.delivery;
+    if (r.ok && (d === 'sending' || d === 'delivered' || d === 'failed')) {
+      setMessages((ms) => ms.map((x) => (x.seq === m.seq ? { ...x, delivered: d === 'sending' ? null : d === 'delivered', delivery: d } : x)));
+    } else alert(String(r.body.error ?? 'That didn\'t send.').replace(/^[a-z-]+: /, ''));
+    await pull();
+  };
   const rename = async () => {
     const title = prompt('Name this thread', thread.title ?? '');
     if (title === null || !title.trim()) return;
@@ -451,8 +493,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   const lastMine = messages.filter((m) => m.kind === 'message').at(-1);
   const lastReply = messages.filter((m) => m.kind === 'reply').at(-1);
-  const waitingOnAgent = !!lastMine && lastMine.delivered !== false && (!lastReply || lastReply.seq < lastMine.seq);
-  const face = faceOf({ failed: thread.state.failed, asking: false, talking: false, working: thread.state.working, waitingOnAgent });
+  const waitingOnAgent = !!lastMine && deliveryOf(lastMine) !== 'failed' && (!lastReply || lastReply.seq < lastMine.seq);
+  // An ask waiting on you wins over everything but an error (comms.md's precedence).
+  const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
   const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} you={member} compact={!wide && compact} wide={wide} />;
@@ -476,6 +519,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
       </header>
       <div className="comms-thread__body">
         {!wide && <div ref={top} className="comms-thread__strip">{screen}</div>}
+        {!wide && <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />}
         <ol className="comms-msgs" aria-live="polite">
           {swept && initial.earlier?.length ? (
             <li className="comms-earlier">
@@ -486,15 +530,53 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
           {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
             <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} />
           ))}
-          {lastMine?.delivered === false && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
+          {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
+          {lastMine && deliveryOf(lastMine) === 'failed' && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
           {thread.state.working && <li className="comms-working loom-data">{mark.label.toUpperCase()} · working · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</li>}
           {link === 'lost' && <li className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></li>}
           <div ref={bottom} />
         </ol>
-        {wide && <aside className="comms-thread__side">{screen}</aside>}
+        {wide && <aside className="comms-thread__side">{screen}<WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} /></aside>}
       </div>
       <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} />
     </article>
+  );
+}
+
+/** An ask, answered here as the Inbox would answer it: its piece's own action, with this page's form token. */
+function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: string; agentName: string; onAnswered: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<string | null>(null);
+  const answer = async (b: ThreadAsk['actions'][number]) => {
+    // A danger button (Deny) or one that says so asks first, as the Inbox's does (blocks.tsx ActButton).
+    if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return;
+    setBusy(true);
+    const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
+    setSaid(r.message || (r.ok ? 'Answered.' : 'That didn\'t go through.'));
+    setBusy(false);
+    if (r.ok) onAnswered();
+  };
+  const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
+  const no = a.actions.find((b) => b.tone === 'danger');
+  return (
+    <li className="comms-ask" role="group" aria-label={`${who} asks`}>
+      <span className="loom-data comms-ask__who">{who.toUpperCase()} ASKS</span>
+      <p className="comms-ask__text">{a.text}</p>
+      {a.why && <p className="comms-ask__why">{a.why}</p>}
+      {(a.if_yes || a.if_no) && (
+        <dl className="comms-ask__either">
+          {a.if_yes && <><dt>If you allow</dt><dd>{a.if_yes}</dd></>}
+          {a.if_no && <><dt>If you deny</dt><dd>{a.if_no}</dd></>}
+        </dl>
+      )}
+      {a.fine && <p className="comms-ask__fine loom-data">Exactly what this allows: {a.fine}</p>}
+      {said ? <p className="comms-ask__said">{said}</p> : (
+        <div className="comms-ask__buttons">
+          <button type="button" disabled={busy} className="comms-ask__yes" onClick={() => void answer(yes)}>{yes.label}</button>
+          {no && <button type="button" disabled={busy} className="comms-ask__no" onClick={() => void answer(no)}>{no.label}</button>}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -547,7 +629,7 @@ export function CommsView({ data }: { data: CommsData }) {
   const open = (id: string) => go(`/comms/${id}`);
   const back = () => { setMaking(false); go('/comms'); };
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} />
-    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} github={data.github} />
+    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} github={data.github} />
       : null;
   const list = <ThreadList threads={threads} marks={marks} current={data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;

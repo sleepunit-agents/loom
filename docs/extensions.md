@@ -181,7 +181,7 @@ own schema:
 
 | Key | What core does with it | Its schema |
 |---|---|---|
-| `sections` | runs `sections.project` as a project's section feed | [specs/projects.md](specs/projects.md), "Section feeds (the seam)" |
+| `sections` | runs `sections.project` as a project's section feed, and `sections.thread` as a Comms thread's work | [specs/projects.md](specs/projects.md), "Section feeds (the seam)"; [specs/comms.md](specs/comms.md), "The thread feed" |
 | `venues` | keeps the piece's venues, and runs each one's `render` and `send` | [specs/conversations.md](specs/conversations.md), "Venues" (`send` from [specs/agent-runtime.md](specs/agent-runtime.md)) |
 | `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
 | `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
@@ -281,6 +281,10 @@ own data. Core only runs the feed and shows what it answers, keyed
   returns.
 - **`unfiled: true`** says the feed can also be asked `--unfiled --since <iso>`
   (7 days ago) for items that belong to no project: Home's "Unfiled" list.
+- **`sections.thread`** (`label`, `argv`) is a Comms thread's work: run with `--conversation <cv>` and a `--ref`
+  per ref the thread named, `{caller}` on stdin, answering `{"items": [{"title", "ref", "status", "tone", "when",
+  "page", "href", "made"}]}` ([specs/comms.md](specs/comms.md), "The thread feed"). A piece declaring it also
+  accepts `--conversation <cv>` on its project feed, for the project's filed threads.
 - The feeds run through the one runner above, each time a hub is asked for
   (`project_hub`, `loom project hub`), never for the project list, and are
   not cached (`src/project-feeds.ts`).
@@ -391,6 +395,10 @@ that ignores it keeps working. Outside a household there's no `caller`.
     button (Allow, Yes) and on its danger one (Deny), and loom draws each beside its button on Home and in the Inbox;
     `details` (≤ 2,000) is longer text for its sheet; `fine` (≤ 400) is the small print, exactly what the yes allows
     (the machine's kind and target), under "Exactly what this allows". An ask with buttons is never drawn cut.
+  - `conversation` (a `cv-` id) is the conversation the ask was made from: a Comms thread shows a permission ask
+    inline when its `conversation` is the thread's and its `agent` is the thread's agent ([specs/comms.md](specs/comms.md),
+    "Asks inline"). Its first action's `fields.id` names it. The id is the requesting body's claim: loom binds it by
+    the agent it authenticated, and draws it only for pieces the viewer may hear from (as the Inbox does).
 - **`notices`** (at most 20) are news the owner may want: a box joined, a bridge
   restarted. Each needs `text` and `at`, and may carry `meta`, `agent` and `page`.
   They're filed under FYI and are never unread. Breakage is a state, so a piece
@@ -434,7 +442,7 @@ a fetch from another site, but a link can still open one.) It answers:
 { "title": "Work", "intro": "One line under the title.",
   "sections": [
     { "id": "yours", "title": "Your call", "tone": "warn", "blocks": [ ... ] },
-    { "id": "facts", "side": true, "blocks": [ ... ] }
+    { "id": "facts", "place": "side", "blocks": [ ... ] }
   ] }
 ```
 
@@ -446,7 +454,22 @@ something is changing (an install running, a sign-in being checked), and drop
 it once it's settled. A `callout` with `"busy": true` says what's under way,
 with a spinner in its icon's place.
 
-A section with `"side": true` goes in the side column. One with `"fold": "open"` or
+A section with `"place": "side"` goes in the side column (`"main"`, the
+default, is the page itself; the older `"side": true` still means the side, and
+the two disagreeing refuses the page). Put there what helps with the page rather
+than what the page is: its filters and sort, a small chart, what changed lately.
+On a desktop window 1280 px wide or more, the side column is the window's own
+right-hand column, a fixed width, scrolling down on its own beside the page.
+Narrower, and on a phone, the side sections fold together into one block at the
+top of the page, closed until it's opened ("Filters & more" when one of them
+holds a `filters` block, else "Details & more"). A chart there is drawn shorter.
+Nothing in the side column scrolls sideways: words wrap and long ones break. A
+side section is only a placement: it's checked, gated and drawn block by block
+exactly as a main one is. A page that puts nothing in its side column gets
+Recent here in a desktop window instead: the pages of the same app opened lately
+on that device.
+
+One with `"fold": "open"` or
 `"closed"` folds under its title (it needs one), starting that way; the viewer's
 last open or close on that page sticks, on that device. `tone` gives the whole
 section that tone's look, such as amber for "needs you".
@@ -461,7 +484,7 @@ characters. A path the piece doesn't know should answer with
 
 Every section is a list of blocks. A link inside a block is either `page`
 (a page of the same piece, or `loom:<path>` for one of loom's own pages:
-Home, `mind`, `people`, `people/<slug>` or `memory/<ref>`; either with an
+Home, `mind`, `people`, `people/<slug>`, `memory/<ref>` or a Comms thread, `comms/<thread>`; either with an
 optional `?key=value` query, such as `?replace=sentry-dsn`) or `href` (an absolute `http(s)` URL that opens
 outside the page).
 
@@ -480,6 +503,7 @@ outside the page).
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
+| `from` | `conversation` (a `cv-` id). Where a task or change came from: loom draws it for each viewer, as a link "From: <thread title>" for the Comms thread's own member, "From a Comms thread" for another owner of its agent, and "From a conversation" for everyone else ([specs/comms.md](specs/comms.md), "From"). The piece never sees which |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value), `submits` (up to 3 more ways to send it, beside `submit`: `label`, optional `fields` (name → value, sent with the form's) and `tone`; a task's Yes and No over a box of words). Words typed in a `textarea` are kept on the device until the form is sent, and the form says "Not sent yet" meanwhile, so leaving the page or pressing another button loses nothing |
 | `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `confirm` (what happens, one sentence: a `danger` button asks first in a sheet that says it), `fields` (name → value) |
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |

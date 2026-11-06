@@ -912,7 +912,7 @@ export function setFace(h: Household, agent: string, face: AgentFace): void {
 }
 
 /** Set (or, undefined, remove) one top-level key of household.json, under the household's lock. Core's own keys only. */
-export function writeHouseholdKey(h: Household, key: 'backup', value: unknown): void {
+export function writeHouseholdKey(h: Household, key: 'backup' | 'icons', value: unknown): void {
   withLock(h.home, () => {
     const raw = { ...rawHousehold(h.home) };
     if (value === undefined) delete raw[key]; else raw[key] = value;

@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms: asks inline** (t-1876). A thread shows its agent's pending approvals that were asked from it (the approvals
+  piece's `--conversation`, kept beside the agent loom authenticated), with the ask, why, If you allow, If you deny
+  and the fine print, and Allow once and Deny right there; while one waits, the comm screen's face is waiting on you.
+  An ask naming a thread but from another agent never shows there.
+
+- **Pixel icons** (t-1880). A household can install its own pixel icon set (`loom household icons install <dir>`, kept
+  at `icons/<set>/`, served only to someone signed in), and a member can wear it with Appearance's "Pixel icons" (off
+  unless turned on; not offered without a set). Each icon keeps its light and shade, recoloured to its key's ramp in
+  each look, normal and lit, stronger with Higher contrast, by an SVG filter the page builds once from the look's own
+  colours. The dock, the launcher's tiles, an app's tile in its header and in Find, and a window's title strip wear
+  them; a 16 px row keeps its line icon, as does an app the set has none for.
+- **Comms: a push when your agent replies** (t-1876). A reply in a thread you haven't read, with no app of yours on that
+  thread for 2 minutes, pushes to your own devices only: "Art replied" and the thread's title (or "Art replied in a new
+  thread"), never the reply's words. A tap opens the thread.
+
 - **Comms, the app** (t-1876). A Comms key in the dock (for a member who owns an agent, with their unread threads),
   the thread list leading to a thread on a phone and the two side by side on a desktop, and each thread's comm screen:
   the agent's pixel portrait at 2x in a Neon OS frame (`NAME · CH nn · LINK OK`, a signal meter, a YOU panel on a
@@ -331,6 +346,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   remotely" (t-1544). `recall-stats` stays local.
 
 ### Changed
+
+- **Desktop Home: the three columns line up, and no Moving strip** (t-1884). How everyone is ("Everyone's fine")
+  reads across the top, above all three columns, so Needs you, the first agent card and Vitals share a top edge; it
+  used to sit in the middle column and push the agents down. The Moving strip under the agent cards is gone: each
+  card already says what its agent is on.
 
 - **Catalog: shuttle at bb5e92b.** A relay's words are quoted under a one-line
   header that says it carries none of the person's authority.

@@ -87,6 +87,9 @@ export interface Shell {
   pieces: Array<{ label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Accent; alerts?: number }>;
   /** The nightly backup (src/backup.ts backupRow): a household owner's only, never an agent owner's. */
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
+  /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for (line: line-only, inverted
+   * on a dark key), and its version. Each is /pixel-icons/<app>.png?v=<v>, for someone signed in. */
+  icons?: { v: string; apps: Record<string, { line?: true }> };
   /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance', 'accessibility' or ''. */
   tab: string;
 }

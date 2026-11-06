@@ -22,6 +22,8 @@ export type Block =
   | { type: 'health'; tone: Tone; text: string; detail?: string }
   | { type: 'panel'; title?: string; rows: PanelRow[]; action?: Button }
   | { type: 'link'; text: string; page?: string; href?: string }
+  /** Drawn by loom before a page is sent (src/comms-work.ts resolveFrom); one that reaches the app says only this much. */
+  | { type: 'from'; conversation: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
       submits?: { label: string; fields?: Record<string, string>; tone?: 'primary' | 'danger' }[] }
@@ -42,7 +44,7 @@ export interface PanelRow {
   act?: Button;
 }
 export interface ListItem { text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; page?: string; href?: string; act?: Button }
-export interface Section { id: string; title?: string; side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
+export interface Section { id: string; title?: string; place?: 'side'; /** The older spelling, in a copy kept from before. */ side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
 export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
 export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string; working?: true }
 export interface Shell {
@@ -52,6 +54,8 @@ export interface Shell {
   pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint; alerts?: number }[];
   /** The nightly backup, a household owner's (src/backup.ts backupRow). */
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
+  /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for. */
+  icons?: { v: string; apps: Record<string, { line?: true }> };
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
@@ -68,7 +72,7 @@ export type View =
 // ---- links: loom's own rule (src/ui/vocab.ts splitPage, render.ts pageHref) ----------------------
 
 // loom's own pages, as src/ui/vocab.ts has them (a conversation's too: a Needs you links to it).
-const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|comms\/th:[a-z2-7]{10}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
 
 export function pageHref(link: string, source: Source): string {
   const ag = /^agent:([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(link);

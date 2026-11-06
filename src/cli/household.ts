@@ -9,6 +9,7 @@ import {
   addAgent, agentDir, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
   expired, parseRole, revokeToken, checkSpriteManifest, manifestFromPixelLab, setSprite, spriteOf, type Household,
 } from '../household.js';
+import { iconSetName, iconSetOf, installedIconSets, installIconSet, setIcon, useIconSet } from '../icon-set.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
@@ -29,6 +30,14 @@ const HOUSEHOLD_USAGE = `Usage: loom household <command>
   sprite <agent> --manifest <manifest.json> [<name.png>...]
                            Replace its manifest (states, facings, animations and their weights;
                            see docs/specs/household.md), with any sheets it names that are new
+  icons install <dir> [--name <set>]
+                           Install a pixel icon set and wear it: <dir>'s manifest.json, or every
+                           <app>.png in it (32×32, e.g. home.png, inbox.png), kept at icons/<set>/.
+                           Members see it with Appearance's "Pixel icons" on
+  icons set <app> <file.png>
+                           Give one app of the set in use a new icon
+  icons use <set>|none     Wear another installed set, or none
+  icons list               The sets installed, and the one in use
   commons                  Move the default agent's knowledge.db to commons/knowledge.db and
                            split every agent's person cards (handles and facts to the commons
                            directory, the rest stays as its relationships). Once, with
@@ -125,6 +134,35 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       }
       io.stdout(`${agent}: a pixel face, facing ${spriteOf(h, agent)?.facings.join(', ')}.\n`);
       return 0;
+    }
+    if (sub === 'icons') {
+      const h = need(io);
+      if (!h) return 1;
+      const [verb, ...args] = rest;
+      if (verb === 'install' && args[0]) {
+        const r = installIconSet(h, args[0], flag(args, '--name'));
+        io.stdout(`Icon set ${r.set}: ${r.apps.length} icons (${r.apps.join(', ')}), in use.\n`
+          + (r.line.length ? `Line-only, inverted on a dark key: ${r.line.join(', ')}.\n` : ''));
+        return 0;
+      }
+      if (verb === 'set' && args[0] && args[1]) {
+        const r = setIcon(h, args[0], readFileSync(args[1]));
+        io.stdout(`${args[0]}: a new icon in ${r.set}${r.line ? ' (line-only)' : ''}.\n`);
+        return 0;
+      }
+      if (verb === 'use' && args[0]) {
+        useIconSet(h, args[0] === 'none' ? null : args[0]);
+        io.stdout(args[0] === 'none' ? 'No icon set in use.\n' : `Icon set ${args[0]} in use.\n`);
+        return 0;
+      }
+      if (verb === 'list') {
+        const using = iconSetName(h);
+        const sets = installedIconSets(h);
+        io.stdout(sets.length ? sets.map((s) => `${s}${s === using ? ` (in use: ${Object.keys(iconSetOf(h)?.apps ?? {}).length} icons)` : ''}\n`).join('') : 'No icon sets installed.\n');
+        return 0;
+      }
+      io.stderr(HOUSEHOLD_USAGE);
+      return 2;
     }
     io.stderr(HOUSEHOLD_USAGE);
     return sub === undefined || sub === '--help' || sub === '-h' ? 0 : 2;

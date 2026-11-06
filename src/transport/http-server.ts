@@ -61,6 +61,7 @@ import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
 import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
+import { backfillRefs } from '../comms-work.js';
 import { takeAudit } from '../audit-take.js';
 import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
 
@@ -392,6 +393,8 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   if (live && !opts.createServer) {
     try { sweepComms(live()); } catch (e) { process.stderr.write(`loom: the Comms sweep failed: ${(e as Error).name}\n`); }
     watchComms(live().home);
+    // Threads from before the refs index get it once (comms.md, "Older threads"); a start that finds it done reads nothing.
+    void backfillRefs(live(), process.env).catch((e) => process.stderr.write(`loom: the Comms refs backfill failed: ${(e as Error).name}\n`));
   }
 
   // The page is the owner's: in a household, only owner tokens log in to it.

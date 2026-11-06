@@ -4,7 +4,7 @@
     {
       "name": "runtime",
       "repo": "sleepunit-agents/loom-box",
-      "commit": "0c50eca9fc500175befbcf232623c8ccbd6d4f4d",
+      "commit": "95ec62d93203d6eb47400f0f8492379ff9a04885",
       "version": "0.1.0",
       "label": "Runtime",
       "description": "The runtime: machines (boxes) and the containers (houses) an agent runs its work in."
@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "41554d0ce4eeed83a1d6e9ec4add1c9d5d1d6d06",
+      "commit": "3d005c210292e293ee119f81ddf57138b6026ab9",
       "version": "0.6.1",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "c2e798a702668c2f1175ea72f3f574217870aa9d",
+      "commit": "b5cae2d5f6adeda11b25405032fd8dedfd4a1995",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."
@@ -44,7 +44,7 @@
     {
       "name": "changes",
       "repo": "sleepunit-agents/loom-changes",
-      "commit": "1268c52af3e259cb64a5d5026d724863a44ff07b",
+      "commit": "098a51855bc13e2861f8bf79a390cca8f8ee2472",
       "version": "0.1.0",
       "label": "Changes",
       "description": "What's waiting to go up: every open change in your projects' repos, by project, read-only, with Yes, merge it where a rule asks you."

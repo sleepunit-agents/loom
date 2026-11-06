@@ -47,7 +47,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
 import { APP_JS } from './app.js';
-import { askKey, publicKey, pushSub, pushTitle, watch } from './push.js';
+import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, SW_JS } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
@@ -66,12 +66,14 @@ import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
+import { resolveFrom } from '../comms-work.js';
 
 const COOKIE = 'loom_ui';
 const LOGIN_MAX_BYTES = 4096;
@@ -118,12 +120,17 @@ export interface UiOptions {
   member?: Member;
 }
 
+/** An app's pixel icon (src/icon-set.ts): /pixel-icons/<app>.png, the app as ICON_APP has it. */
+const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\.png$`);
+
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
   return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
+    // The household's pixel icons: an agent owner is a member, and their shell names them as anyone's does.
+    || pathname.startsWith('/pixel-icons/')
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
     || pathname.startsWith('/conversation/')
@@ -192,7 +199,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
 /** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
 const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
 
-const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
+const PAGE_ROOTS = ['/app', '/faces', '/pixel-icons', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -502,6 +509,12 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string; face
   }));
 }
 
+/** The household's pixel icons, for the shell (src/icon-set.ts): none without a set in use. */
+function iconsView(h: Household): { icons?: { v: string; apps: Record<string, { line?: true }> } } {
+  const s = iconSetOf(h);
+  return s ? { icons: { v: s.v, apps: s.apps } } : {};
+}
+
 /** Each agent's name and mark, for drawing marks on rows that name an agent. */
 function agentsOf(h: Household | undefined): Record<string, { label: string; bg: string; fg: string; face: { shape: string; eyes: string } }> | undefined {
   if (!h) return undefined;
@@ -532,7 +545,7 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
 }
 
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
-export async function pushWatch(opts: UiOptions): Promise<number> {
+export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>[3]): Promise<number> {
   const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
   const hh = opts.household?.();
   // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
@@ -544,11 +557,33 @@ export async function pushWatch(opts: UiOptions): Promise<number> {
     if (!m) return false;
     return m.agents === '*' || (a.open === true && a.agent !== undefined && m.agents.includes(a.agent));
   };
-  return watch(storeFor(opts), async () => (await yourCall(opts)).map((a) => ({
+  return watch(storeFor(opts), async () => [...(await yourCall(opts)).map((a) => ({
     key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-  })), subject, undefined, hears);
+  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined));
 }
+
+/**
+ * Comms replies to push (docs/specs/comms.md, "Notifications"): each thread's newest reply its member hasn't read,
+ * when no app of theirs has had that thread in front in the last 2 minutes. Its words never go: the title says who
+ * replied, the body is the thread's title (or "in a new thread"). Only its member's devices hear it.
+ */
+export function commsAnnouncements(h: Household, now = Date.now()): Announce[] {
+  const out: Announce[] = [];
+  for (const m of h.members) {
+    let threads: ReturnType<typeof threadsOf>;
+    try { threads = threadsOf(h, m); } catch { continue; }
+    for (const t of threads) {
+      if (!t.unread || (t.in_front !== null && now - t.in_front < COMMS_IN_FRONT_MS)) continue;
+      const name = agentName(agentDir(h, t.agent));
+      out.push({ key: `comms-${t.id}-${t.last_reply}`, title: t.title ? `${name} replied` : `${name} replied in a new thread`, body: t.title ?? '',
+        agent: t.agent, open: true, member: m.person, url: `/comms/${t.id}` });
+    }
+  }
+  return out;
+}
+/** A thread that's been in front this recently (its app's read calls) needs no push. */
+const COMMS_IN_FRONT_MS = 2 * 60_000;
 
 /** loom's own asks: an agent's memory proposals waiting to be ratified. */
 /** The longest drafted memory Home's card quotes whole, and so lets you ratify there. */
@@ -962,6 +997,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       shell: {
         owner: opts.viewer ?? h.owner ?? firstOwner(h)?.person ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
         ...(opts.ownerScope ? {} : backupOf(h)),
+        ...iconsView(h),
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
@@ -1179,6 +1215,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   // The agent the owner is looking at (an agent's own pages, else the chosen scope); pieces get it as LOOM_SCOPE.
   const hhScope = opts.household?.();
+  // A piece's page may say where a task or change came from: drawn here, for this member only (comms.md, "From").
+  const drawFrom = <T,>(p: T): T => (typeof p === 'string' || !p || typeof p !== 'object' || !('sections' in p) ? p
+    : resolveFrom(p as unknown as Page, hhScope?.home, who?.member) as unknown as T);
   const scope = /^\/a\/([a-z][a-z0-9-]{0,39})(?:\/|$)/.exec(pathname)?.[1] ?? scopeOf(req, hhScope);
   const scopedEnv: NodeJS.ProcessEnv = hhScope && scope !== 'household' && hhScope.agents.includes(scope) ? { ...opts.env, LOOM_SCOPE: scope } : opts.env;
   const csrf = who?.kind === 'session' ? csrfFor(who.cookie, storeFor(opts).key) : '';
@@ -1240,7 +1279,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     };
     await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
       // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
-      agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))), session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+      agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
+      // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
+      pieces: async () => forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope), session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
     return;
   }
 
@@ -1329,6 +1370,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': file.endsWith('.png') ? 'image/png' : 'application/json',
       'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
     return void res.end(req.method === 'HEAD' ? undefined : body);
+  }
+  // An app's pixel icon (src/icon-set.ts): the household's art, so only for someone signed in (this is past the sign-in
+  // check), never public like the app's own icons under /icons/. The page asks with the set's version (?v=).
+  const pix = PIXEL_ICON.exec(pathname);
+  if (pix) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
+    const file = hh ? iconFile(hh, pix[1]) : undefined;
+    if (!file) return send(res, 404, 'text/plain', 'not found');
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'image/png',
+      'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
+    return void res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
   }
   // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
   // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).
@@ -1651,7 +1703,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const info = shown && !shown.actions?.length && shown.kind !== 'answered' && shown.page ? pieces.find((p) => pieceSource(p.piece).id === shown.source.id && hasPages(p)) : undefined;
       const sp = info ? splitPage(shown!.page!) : null;
       if (info && sp && !sp.core && sp.path !== '') {
-        const pg = await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who));
+        const pg = drawFrom(await piecePage(info, sp.path, sp.query, scopedEnv, callerOf(who)));
         if (typeof pg !== 'string') inline = { key: shown!.key, sections: pg.sections };
       }
       const ch = chrome(req, opts, pieces, skippedNames, 'inbox', csrf, flash);
@@ -1732,7 +1784,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         const path = pp[2] ?? '';
         const asrc = agentPieceSource(agent, pp[1]);
         if (!info || !validPath(path)) return send200(notFound, `a/${agent}`, ctxOf('', asrc), head(`p/${pp[1]}`));
-        const pg = await piecePage(info, path, query, scopedEnv, callerOf(who));
+        const pg = drawFrom(await piecePage(info, path, query, scopedEnv, callerOf(who)));
         if (typeof pg === 'string') {
           return send200({ title: agentTabOf(info)!.label, sections: [{ id: 'error', blocks: [{ type: 'callout', tone: 'bad', text: `${pp[1]} couldn't show this page (${pg}).` }] }] },
             `a/${agent}`, ctxOf(path, asrc), head(`p/${pp[1]}`));
@@ -1774,7 +1826,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const info = pieces.find((p) => p.piece === piece && hasPages(p));
     const ch = chrome(req, opts, pieces, skippedNames, `p/${piece}`, csrf, flash);
     if (!info || path === null || !validPath(path)) { const ctx = { source: pieceSource(piece), path: '', query: {}, csrf }; return view('page', { page: notFound, ctx, chrome: ch }, 404); }
-    const page = await piecePage(info, path, query, scopedEnv, callerOf(who));
+    const page = drawFrom(await piecePage(info, path, query, scopedEnv, callerOf(who)));
     const ctx = { source: pieceSource(piece), path, query, csrf, agents: agentsOf(hhScope) };
     if (typeof page === 'string') {
       { const err = { title: info.manifest.tab?.label ?? piece, sections: [{ id: 'error', blocks: [{ type: 'callout' as const, tone: 'bad' as const, text: `${piece} couldn't show this page (${page}).` }] }] };

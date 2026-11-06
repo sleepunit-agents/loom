@@ -281,6 +281,8 @@ export function BlockView({ b }: { b: Block }) {
         <Arrive as="li" key={s.label} k={`ss:${s.label}\0${s.text ?? ''}\0${s.tone ?? ''}`} className="flex items-center gap-2 text-sm"><span className={`size-2 rounded-full ${DOT[s.tone ?? 'muted']}`} /><span className="font-medium">{s.label}</span>
           <span className="opacity-70">{s.text}</span>{s.meta && <span className="ml-auto text-xs opacity-60">{s.meta}</span>}</Arrive>))}</ul>);
     case 'link': return <PageLink l={b as Extract<Block, { type: 'link' }>} />;
+    // loom draws a from block for the viewer before the page leaves it; one that didn't says nothing of the thread.
+    case 'from': return <p className="text-sm opacity-70">From a conversation</p>;
     case 'code': { const text = (b as { text: string }).text;
       return <Suspense fallback={<pre className="overflow-x-auto rounded-xl p-3 text-xs">{text}</pre>}><CodeBlock code={text} /></Suspense>; }
     case 'buttons': return <div className="flex flex-wrap gap-2">{(b as Extract<Block, { type: 'buttons' }>).items.map((x) => <ActButton key={x.action + x.label} b={x} />)}</div>;

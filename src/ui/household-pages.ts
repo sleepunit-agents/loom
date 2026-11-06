@@ -111,7 +111,7 @@ export function householdHome(h: Household, opts: CoreOptions = {}): { tiles: Ti
     {
       id: 'commons',
       title: 'The commons',
-      side: true,
+      place: 'side' as const,
       blocks: [
         { type: 'stats', items: [
           { label: 'knowledge pages', value: pages.toLocaleString('en-US'), page: 'loom:knowledge' },
@@ -242,7 +242,7 @@ export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {
         ...(cites.length ? [{ id: 'citations', title: 'Sources', blocks: [{ type: 'list' as const, items: cites.map((c) => ({ text: c.claim, meta: `${c.source_kind}${c.source_locator ? ` · ${c.source_locator}` : ''}`, ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) })) }] }] : []),
         // The board's "Still true", after the sources: a verification (the clock the nightly freshness pass reads), as the owner.
         { id: 'verify', blocks: [{ type: 'buttons' as const, items: [{ action: 'knowledge-verify', label: 'Still true', tone: 'primary' as const, fields: { slug: r.slug } }] }] },
-        { id: 'record', side: true, blocks: [{ type: 'kv', items: [
+        { id: 'record', place: 'side' as const, blocks: [{ type: 'kv', items: [
           { label: 'domain', value: r.domain },
           { label: 'sourcing', value: r.sourcing ?? 'unknown' },
           { label: 'updated', value: when(r.updated, tz) },
@@ -471,7 +471,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
       }),
       // Who it may relay to without asking: the runtime's permissions (agent-runtime.md, "Agent-to-agent relay"),
       // read here; the household owner sets them on the runtime's page.
-      { id: 'relay', title: 'Who it may write to', side: true, blocks: (() => {
+      { id: 'relay', title: 'Who it may write to', place: 'side' as const, blocks: (() => {
         const others = h.agents.filter((a) => a !== agent);
         const { authority, to } = relayOf(h.home, h.agents, agent);
         const text = !others.length ? 'There\'s no other agent to write to.'
@@ -513,7 +513,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
 /** Setup's Backup section: the form loom backup set is, filled with what's set. */
 function backupSection(h: Household) {
   const { settings: s } = readSettings(h);
-  return { id: 'backup', title: 'Nightly backup', side: true, blocks: [
+  return { id: 'backup', title: 'Nightly backup', place: 'side' as const, blocks: [
     { type: 'text' as const, tone: 'muted' as const, text: 'Each night loom exports the household, encrypted to your keys, checks it restores, and writes it to a git repo it owns (one commit) or a directory. It pushes with this machine\'s own git login.' },
     { type: 'details' as const, summary: s ? 'Change it' : 'Set it up', blocks: [{ type: 'form' as const, action: 'backup-set', submit: 'Save', fields: [
       { name: 'target', label: 'Where', kind: 'text' as const, required: true, ...(s ? { value: targetString(s.target) } : {}), hint: 'git:https://github.com/you/backup.git, or path:/mnt/usb' },

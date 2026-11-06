@@ -168,7 +168,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
     : [{ type: 'text', text: 'Everything in loom\'s catalog is installed.', tone: 'muted' }] });
   // Pieces on PATH that loom didn't install: loom runs them, but doesn't update or remove them.
   if (byHand.length) {
-    sections.push({ id: 'by-hand', title: `Managed by hand · ${byHand.length}`, side: true, blocks: [
+    sections.push({ id: 'by-hand', title: `Managed by hand · ${byHand.length}`, place: 'side' as const, blocks: [
       { type: 'list', items: byHand.map((p) => ({ text: p.name, meta: env.HOME && p.path.startsWith(`${env.HOME}/`) ? `~${p.path.slice(env.HOME.length)}` : p.path })) },
       { type: 'text', text: 'On PATH, not installed by loom: it runs them, but updating and removing them is yours.', tone: 'muted' },
     ] });
@@ -199,7 +199,7 @@ export function piecesPage(env: NodeJS.ProcessEnv, query: Record<string, string>
       );
     }
   }
-  sections.push({ id: 'github', title: 'From GitHub', side: true, blocks: github });
+  sections.push({ id: 'github', title: 'From GitHub', place: 'side' as const, blocks: github });
   // While an install runs, the page reloads itself to show it finish.
   return { title: 'Pieces', intro: 'What loom runs beside itself: install, update, roll back and remove them here.', sections,
     ...(jobs[0]?.state === 'running' ? { refresh: 3 } : {}) };

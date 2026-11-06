@@ -4,8 +4,9 @@
 // what it's on; the pieces' own tiles; the nightly backup. Never a number loom doesn't have.
 //
 // Its own chunk, loaded only on a screen this wide under Neon (App.tsx): a phone never fetches it.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { readRecent } from './recent';
+import { visited } from './trail';
 import './desk.css';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
@@ -23,7 +24,7 @@ import { reducedMotion } from './access';
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
   doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string } };
-export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[]; moving: { agent?: string; text: string; meta?: string }[] };
+export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
 
 const ago = (iso?: string) => {
   const t = iso ? Date.parse(iso) : NaN;
@@ -192,20 +193,6 @@ function BackupW({ b }: { b: NonNullable<Shell['backup']> }) {
   );
 }
 
-/** What's moving: the agents' work as the pieces report it, a line each. */
-function Tape({ rows }: { rows: DeskHomeData['moving'] }) {
-  const { ctx } = useEnv();
-  const agents = ctx.agents ?? {};
-  return (
-    <section className="loom-w loom-w--tape" data-tint="olive" aria-label="What's moving">
-      <span className="loom-tape__label" aria-hidden>Moving</span>
-      <ul className="loom-tape">{rows.filter((r, n) => rows.findIndex((x) => x.agent === r.agent && x.text === r.text) === n).slice(0, 6).map((r, n) => (
-        <li key={n}><b>{(r.agent && agents[r.agent]?.label) || r.agent}</b> {r.text}{r.meta && <span className="loom-tape__meta"> · {r.meta}</span>}</li>))}
-      </ul>
-    </section>
-  );
-}
-
 function NoAgents() {
   const { go } = useEnv();
   return <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one."><Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>;
@@ -224,14 +211,15 @@ export function DeskHome({ home, shell }: { home: DeskHomeData; shell: Shell }) 
   const backup = shell.backup;
   return (
     <div className="loom-desk-home">
+      {/* How everyone is, across the top: above all three columns, never inside one, so their first widgets share a
+          top edge (Jonathan, 2026-11-05). What each agent is on is its own card's: no strip repeats it. */}
+      <p className="loom-desk-headline">{home.headline}</p>
       <div className="loom-desk-col loom-desk-col--left">
         <Needs d={home} />
       </div>
       <div className="loom-desk-col loom-desk-col--mid">
-        <p className="loom-desk-headline">{home.headline}</p>
         {home.cards.length === 0 ? <NoAgents />
           : <div className="loom-desk-agents">{home.cards.map((c) => <Agent key={c.id} c={c} />)}</div>}
-        {home.moving.length > 0 && <Tape rows={home.moving} />}
       </div>
       <div className="loom-desk-col loom-desk-col--right">
         <Vitals shell={shell} />
@@ -253,34 +241,6 @@ let closing: string | null = null;
 function keyFor(href: string): HTMLElement | null {
   const t = tabs.filter((x) => !x.href.startsWith('#')).find((x) => href === x.href || (x.href !== '/' && href.startsWith(`${x.href}/`)));
   return t ? document.querySelector<HTMLElement>(`.loom-dock-bar [data-part="item"][aria-label="${CSS.escape(t.label)}"]`) : null;
-}
-
-// ---- minimized: a window shrunk back into its key, kept where it was -------------------------------------------
-
-/** Where each app was left when its window was minimized, by its dock key (the key's href): the page, its query, and
- * how far down it was. This session's, in this tab (sessionStorage, read once; in memory alone where it can't be kept). */
-/** Where a minimized window was: its page (path and query) and how far down it was scrolled. */
-export type Place = { url: string; top: number };
-type Left = Record<string, Place>;
-const LEFT = 'loom-desk-left';
-const left: Left = (() => { try { const v = JSON.parse(sessionStorage.getItem(LEFT) ?? '{}') as unknown; return v && typeof v === 'object' ? v as Left : {}; } catch { return {}; } })();
-const keepLeft = () => { try { sessionStorage.setItem(LEFT, JSON.stringify(left)); } catch { /* a private window: in memory only */ } };
-
-/** Minimize (Jonathan, 2026-11-05: "like a real OS"): the app whose key is `key` is kept where it is (App.tsx then goes
- * home, and the window shrinks back into that key: deskGo's close). */
-export function deskMinimize(key: string, at: Place) {
-  left[key] = { url: at.url, top: Math.max(0, Math.round(at.top)) };
-  keepLeft();
-}
-/** Where the app under `key` was minimized, if it was: taken, so the window opened there again is open, not kept. */
-export function deskRestore(key: string): Place | undefined {
-  const l = left[key];
-  if (l) { delete left[key]; keepLeft(); }
-  return l;
-}
-/** Closed, not minimized: its key opens the app at its start again. */
-export function deskForget(key: string | undefined) {
-  if (key && left[key]) { delete left[key]; keepLeft(); }
 }
 
 type VT = { finished: Promise<void> };
@@ -336,12 +296,69 @@ export function DeskKeys({ close, places }: { close: () => void; places: Tab[] }
   return null;
 }
 
-/** One big window over the ground (desk.css): its title strip in the app's colour (its key, its name, where it is),
- * Close (and Esc) back to the desktop; a double-click on the strip (not on a control in it) minimizes it, as its open
- * key does (App.tsx); on a wide enough screen, where you've been lately beside it. Focus goes to its title as each page
- * opens in it, once per page (a page drawn again, Try again or a refresh, leaves focus be). */
-export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimize, children }: { tint: string; lead: React.ReactNode; title: string; url: string; waiting: boolean;
-  go: (href: string) => void; close: () => void; minimize: () => void; children: React.ReactNode }) {
+type Crumb = { label: string; href: string };
+type Step = { url: string; label?: string } | undefined;
+
+/** A page the window's side column offers when the page puts nothing there itself: in this app, by its path. */
+const inApp = (href: string, app?: string) => { const p = href.split('?')[0]; return !!app && (p === app || p.startsWith(`${app}/`)); };
+
+/** The trail in a window's strip (Jonathan, 2026-11-05: "back/breadcrumbs/etc first"): the app, the page this one is
+ * under, then this one's title. When it's longer than the strip, everything between the app and this page folds into
+ * "…" (a link to the page just above this one) before the title is cut short; a title that still doesn't fit ends in
+ * an ellipsis. It never scrolls. */
+function Trail({ crumbs, title, head, go }: { crumbs: Crumb[]; title: string; head: React.RefObject<HTMLHeadingElement | null>; go: (href: string) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [folded, setFolded] = useState(false);
+  const key = crumbs.map((c) => c.label).join('\0') + '\0' + title;
+  useLayoutEffect(() => { setFolded(false); }, [key]);
+  useLayoutEffect(() => {
+    const b = box.current;
+    if (!b) return;
+    // Whole, and the page's own title not cut short: the middle of the trail gives way before the page's name does.
+    const h = head.current;
+    const fits = () => b.scrollWidth <= b.clientWidth + 1 && (!h || h.scrollWidth <= h.clientWidth + 1);
+    const check = () => { if (!folded && crumbs.length > 1 && !fits()) setFolded(true); };
+    check();
+    // Narrower: fold if it no longer fits. Wider again: try it whole (and fold again if it still doesn't fit).
+    let w = b.clientWidth;
+    const ro = new ResizeObserver(() => { if (folded && b.clientWidth > w + 1) setFolded(false); else check(); w = b.clientWidth; });
+    ro.observe(b);
+    return () => ro.disconnect();
+  }, [key, folded, crumbs.length]);
+  const shown: Array<Crumb & { more?: string }> = folded && crumbs.length > 1
+    ? [crumbs[0], { ...crumbs[crumbs.length - 1], label: '…', more: crumbs.slice(1).map((c) => c.label).join(' › ') }] : crumbs;
+  return (
+    <div className="loom-window__where" ref={box}>
+      {shown.length > 0 && (
+        <nav className="loom-window__trail" aria-label="Where you are">
+          <ol>{shown.map((c, i) => (
+            <li key={i}><a href={c.href} title={c.more ?? c.label} aria-label={c.more ? `Up to ${c.more}` : undefined}
+              onClick={(e) => { e.preventDefault(); go(c.href); }}>{c.label}</a></li>
+          ))}</ol>
+        </nav>
+      )}
+      <h2 id="loom-window-title" tabIndex={-1} ref={head} title={title}>{title || ' '}</h2>
+    </div>
+  );
+}
+
+/** One big window over the ground (desk.css): its title strip in the app's colour (its key, Back and Forward in this
+ * app's own history, the trail to where it is, Close (and Esc) back to the desktop); a double-click on the strip (not
+ * on a control in it) minimizes it, as its open key does (App.tsx). Alt+← and Alt+→ are its Back and Forward while the
+ * window has the keys, and only when it has somewhere to go that way: otherwise (and with a field, a sheet or a menu
+ * taking the keys, or the dock or Find having them) they stay the browser's own. Focus goes to its title as each page
+ * opens in it, once per page (a page drawn again, Try again or a refresh, leaves focus be).
+ *
+ * At 1280 px and wider it has a side column (App.tsx SIDE_COLUMN): the page's own side sections, drawn into it, or,
+ * when the page has none, Recent here: the pages of this app you've been to lately. Nothing in it scrolls sideways. */
+export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimize, crumbs, back, forward, move, side, children }: {
+  tint: string; lead: React.ReactNode; title: string; url: string; waiting: boolean;
+  go: (href: string) => void; close: () => void; minimize: () => void;
+  crumbs: Crumb[]; back: Step; forward: Step; move: (by: -1 | 1) => void;
+  /** The side column, when the screen has room for it: whether the page has sections for it, where they're drawn, and
+   * for Recent here the app (its key, as its history has it) and the path its pages are under. */
+  side?: { has: boolean; el: (e: HTMLElement | null) => void; app?: string; under?: string };
+  children: React.ReactNode }) {
   const head = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef('');
   useEffect(() => {
@@ -349,8 +366,38 @@ export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimiz
     focusedFor.current = url;
     head.current?.focus({ preventScroll: true });
   }, [url, waiting]);
-  const recents = useMemo(() => readRecent().filter((r) => r.href !== url).slice(0, 6), [url]);
+  const now = useRef({ back, forward, move });
+  now.current = { back, forward, move };
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.defaultPrevented) return;
+      if (typing() || popUpOpen()) return;
+      const a = document.activeElement;
+      if (a && a !== document.body && !a.closest('.loom-window')) return;
+      const by = e.key === 'ArrowLeft' ? -1 : 1;
+      if (!(by < 0 ? now.current.back : now.current.forward)) return;
+      e.preventDefault();
+      now.current.move(by);
+    };
+    addEventListener('keydown', f); return () => removeEventListener('keydown', f);
+  }, []);
+  // Recent here: this app's pages, as its own history has them (one Setup window holds Appearance and Accessibility
+  // alike), then the ones this device opened under its path in earlier visits. Never another app's.
+  const app = side?.app, under = side?.under;
+  const recent = useMemo(() => {
+    const seen = new Set([url]);
+    return [...visited(app).filter((v) => v.label).map((v) => ({ href: v.url, label: v.label! })), ...readRecent().filter((r) => inApp(r.href, under))]
+      .filter((r) => !seen.has(r.href) && (seen.add(r.href), true)).slice(0, 8);
+  }, [url, app, under]);
   const path = url.split('?')[0];
+  const arrow = (by: -1 | 1, to: Step) => {
+    const word = by < 0 ? 'Back' : 'Forward';
+    return (
+      <button type="button" className="loom-window__step" disabled={!to} onClick={() => move(by)}
+        aria-label={to ? `${word} to ${to.label ?? 'the page before'}` : `${word}: nowhere yet`} title={`${word} (Alt+${by < 0 ? '←' : '→'})`}>
+        <AnimatedIcon name={iconFor(by < 0 ? 'chevron-left' : 'chevron-right')} size="sm" /></button>
+    );
+  };
   return (
     <section className="loom-window" aria-labelledby="loom-window-title" style={{ '--t': tint } as React.CSSProperties}>
       <div className="loom-window__bar" onDoubleClick={(e) => {
@@ -359,17 +406,21 @@ export function DeskWindow({ tint, lead, title, url, waiting, go, close, minimiz
         minimize();
       }}>
         <span className="loom-window__key" aria-hidden>{lead}</span>
-        <h2 id="loom-window-title" tabIndex={-1} ref={head}>{title || ' '}</h2>
+        <span className="loom-window__steps">{arrow(-1, back)}{arrow(1, forward)}</span>
+        <Trail crumbs={crumbs} title={title} head={head} go={go} />
         <span className="loom-window__path loom-data" aria-hidden>loom{path}</span>
         <button type="button" className="loom-window__close" aria-label="Close, back to the desktop" title="Close (Esc)" onClick={close}>
           <AnimatedIcon name={iconFor('x')} size="sm" /></button>
       </div>
       <div className="loom-window__body">
         {children}
-        {recents.length > 0 && (
-          <nav className="loom-window__side" aria-label="Recently opened">
-            <h3>Lately</h3>
-            <ul>{recents.map((r) => <li key={r.href}><a href={r.href} onClick={(e) => { e.preventDefault(); go(r.href); }}>{r.label}</a></li>)}</ul>
+        {side?.has ? <aside className="loom-window__side" aria-label="More on this page" ref={side.el} />
+          : side && recent.length > 0 && (
+          <nav className="loom-window__side" aria-label="Recent here">
+            <div className="loom-side-col">
+              <h3>Recent here</h3>
+              <ul>{recent.map((r) => <li key={r.href}><a href={r.href} title={r.label} onClick={(e) => { e.preventDefault(); go(r.href); }}>{r.label}</a></li>)}</ul>
+            </div>
           </nav>
         )}
       </div>

@@ -11,7 +11,7 @@
  */
 import { watch, type FSWatcher } from 'node:fs';
 import type { ServerResponse } from 'node:http';
-import { movedSince, onBump, seqsOf } from '../comms.js';
+import { movedSince, onBump, seqsOf, threadState } from '../comms.js';
 import { changedFor } from './live.js';
 
 const BEAT_MS = 25_000;
@@ -19,7 +19,8 @@ const POLL_MS = 2_000;
 /** Streams per thread per signed-in browser, at most; the oldest goes. */
 const PER_SESSION = 4;
 
-interface Stream { res: ServerResponse; thread: string; session: string; sent: number; may: () => boolean }
+/** `state`: the thread's state this stream last told of (comms.ts threadState: working, a delivery's outcome; t-1881). */
+interface Stream { res: ServerResponse; thread: string; session: string; sent: number; state: string; may: () => boolean }
 const streams = new Set<Stream>();
 const homes = new Map<string, { watcher?: FSWatcher; poll: NodeJS.Timeout; beat: NodeJS.Timeout; seen: number; off: () => void }>();
 
@@ -40,13 +41,18 @@ function write(s: Stream, text: string): void {
   try { s.res.write(text); } catch { drop(s); }
 }
 
-/** Send each open stream its thread's newest seq, if it moved and the member may still see it. */
+/**
+ * Send each open stream its thread's newest seq, if it moved and the member may still see it: a new message, or its
+ * state (a message delivered or not, the body at work or done), which the app reads again (t-1881).
+ */
 function pass(home: string): void {
   for (const s of [...streams]) {
     const { last } = seqsOf(home, s.thread);
-    if (last <= s.sent) continue;
+    const state = threadState(home, s.thread);
+    if (last <= s.sent && state === s.state) continue;
     if (!s.may()) { drop(s); continue; }
-    s.sent = last;
+    s.sent = Math.max(s.sent, last);
+    s.state = state;
     write(s, `event: message\ndata: ${JSON.stringify({ seq: last })}\n\n`);
   }
 }
@@ -87,7 +93,7 @@ export function openThreadStream(res: ServerResponse, headers: Record<string, st
   if (mine.length >= PER_SESSION) drop(mine[0]);
   res.writeHead(200, { ...headers, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', 'x-accel-buffering': 'no', connection: 'keep-alive' });
   res.write('retry: 3000\n\n');
-  const s: Stream = { res, thread: opts.thread, session: opts.session, sent: opts.from, may: opts.may };
+  const s: Stream = { res, thread: opts.thread, session: opts.session, sent: opts.from, state: threadState(home, opts.thread), may: opts.may };
   streams.add(s);
   res.on('close', () => drop(s));
   ensure(home);

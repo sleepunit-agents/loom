@@ -223,6 +223,9 @@ copy of that block in the piece's `piece.json`: the installer already writes one
 `owner/repo` passed as `github:owner/repo`), each in the card's order. It runs in the piece's own environment, through the same runner
   as manifests (extensions.md "Limits"): **3 s**, the process group killed afterwards, at most 6 pieces at once.
   Results are not cached, with one exception: the Projects index's counts (below).
+- A piece that also declares `sections.thread` ([comms.md](comms.md), "Project hubs") is passed `--conversation <cv>`
+  for each of the project's filed Comms threads (newest first, at most 200), after the arguments above. Others never
+  are: an older feed refuses a flag it doesn't know.
 - `"unfiled": true` says the piece can also be asked with `--unfiled --since <iso>`, for items that belong to no
   project. loom's Home asks it with `since` 7 days ago, through the same runner, and shows the result as "Unfiled".
 
