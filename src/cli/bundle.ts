@@ -16,14 +16,17 @@ encrypts itself (loom-<piece> bundle export). A plain context dir exports as a
 household of one.
 `;
 
-const RESTORE_USAGE = `Usage: loom restore <file> --identity <key file> [--to <dir>] [--no-install]
+const RESTORE_USAGE = `Usage: loom restore <file> --identity <key file> [--to <dir>] [--no-install] [--allow-outside]
        loom restore <file> --identity <key file> --drill
 
 Lay a bundle down in an empty LOOM_HOME (--to, else $LOOM_HOME, else
 ~/.config/loom), install the managed pieces it names at their pinned commits
 with their settings (--no-install skips that), then hand each installed piece
 its part (loom-<piece> bundle import). A piece that isn't installed keeps its
-part in pieces-pending/.
+part in pieces-pending/, as does one whose settings name a path outside the
+home: --allow-outside, for your own restore onto a new machine, lets them name
+one that isn't there yet (one that is, a live store, is always refused).
+Services start only when the home is this machine's household.
 
 --drill restores into a throwaway directory instead and compares it with the
 live household (agents, identities, memories, every card, knowledge, tokens),
@@ -78,10 +81,11 @@ export async function runRestore(rawArgv: string[], io: IOStreams): Promise<numb
       return 1;
     }
     const home = flags(argv, '--to')[0] ?? householdHome(io.env);
-    const r = await restoreBundle({ file, identity, home, env: io.env, ...(argv.includes('--no-install') ? { install: false as const } : {}) });
+    const r = await restoreBundle({ file, identity, home, env: io.env, ...(argv.includes('--no-install') ? { install: false as const } : {}), allowOutside: argv.includes('--allow-outside') });
     io.stdout(`Restored the household (${r.manifest.household.agents.join(', ')}, bundle from ${r.manifest.created}) to ${r.home}.\n`);
     for (const p of r.installs) io.stdout(`  installed ${p.name} at ${p.commit.slice(0, 7)}: ${p.installed ? 'yes' : `no (${p.reason})`}\n`);
     for (const p of r.pieces) io.stdout(`  piece ${p.name}: ${p.restored ? 'restored' : `not restored (${p.reason})`}\n`);
+    for (const n of r.notes) io.stdout(`  ${n}\n`);
     return 0;
   } catch (err) {
     if (err instanceof BundleError) { io.stderr(`${err.message}\n`); return 1; }
