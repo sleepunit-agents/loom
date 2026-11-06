@@ -124,3 +124,7 @@
   background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border);font:inherit}
 /* a sheet from the bottom (drawer.tsx) sits on the tile's own bottom edge, not over the screen's dock */
 :root[data-look] .loom-tile__layer .v-drawer{left:12px;right:12px;bottom:12px;max-height:calc(100% - 24px);overflow:auto}
+/* Needs you drawn compact (rule 1): its first ask's question in two lines, not its why cut off mid-sentence */
+:root[data-look] .loom-wtile[data-compact] .loom-need__why,:root[data-look] .loom-wtile[data-compact] .loom-need__fine{display:none}
+:root[data-look] .loom-wtile[data-compact] .loom-need__title{-webkit-line-clamp:2}
+:root[data-look] .loom-wtile[data-compact] .loom-need{padding:10px 16px}
