@@ -271,11 +271,12 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await f.p.locator('.loom-find[role="dialog"]').waitFor({ state: 'detached' });
     // A key held a moment still shows its name, with the dock now taking touches whole. (Held by a mouse: Chrome's
     // emulated touch never sets :active, on any element, so a held finger can't be checked here.)
-    await f.p.mouse.move(kx, ky); await f.p.mouse.down(); await f.p.waitForTimeout(800);
-    const named = await f.p.locator('.loom-dock-now [data-part="item"][aria-label="Places"] [data-part="label"]').evaluate((e) => getComputedStyle(e).opacity);
+    // Its name fades in: waited on while held, not read after a fixed 800 ms (mid-fade on a loaded runner, t-1886).
+    await f.p.mouse.move(kx, ky); await f.p.mouse.down();
+    const label = f.p.locator('.loom-dock-now [data-part="item"][aria-label="Places"] [data-part="label"]');
+    await expect.poll(() => label.evaluate((e) => getComputedStyle(e).opacity), { timeout: 10_000 }).toBe('1');
     await f.p.mouse.up();
     await f.p.waitForTimeout(600);
-    expect(named).toBe('1');
     await f.p.goto(`${base}/`); await f.p.locator('.loom-top h1').waitFor(); await f.p.waitForTimeout(1800);
     await forget(f);
     const [ix, iy] = await keyAt(f, 'Inbox');
