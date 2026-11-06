@@ -8,7 +8,7 @@
 // On a phone: the list, then a thread pushed over it, its composer above the dock and clear of the keyboard. On a
 // desktop: the two side by side in the app's window. Each thread has its comm screen: the agent's pixel portrait in a
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './comms.css';
 import { WorkPanel } from './comms-work';
 import { AgentAvatar, useEnv, type Mark } from './blocks';
@@ -18,6 +18,9 @@ import { bits, githubUrl } from './plain';
 import { prose } from '../../src/ui/prose';
 import { act, type Chrome } from './loom';
 import type { FaceState } from './face';
+import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatPermission, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
+import { AgentState, type AgentStatus } from '@/components/ui/agent-state';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const PixelFace = lazy(() => import('./pixel-face'));
 const DrawnFace = lazy(() => import('./face'));
@@ -144,6 +147,10 @@ export function faceOf(s: { failed: boolean; asking: boolean; talking: boolean; 
   if (s.waitingOnAgent) return 'thinking';
   return 'idle';
 }
+
+/** The 000h agent state a face shows (a reply landing reads as done). */
+export const statusOf = (f: FaceState): AgentStatus => (f === 'talking' ? 'complete' : f);
+const STATUS_WORDS: Partial<Record<AgentStatus, string>> = { thinking: 'Thinking', 'needs-input': 'Waiting on you', error: 'Can\'t reach it' };
 
 type Link = 'ok' | 'lost' | 'none';
 const LINK_WORDS: Record<Link, string> = { ok: 'LINK OK', lost: 'LINK LOST', none: 'NO CARRIER' };
@@ -291,62 +298,72 @@ function useKeyboardInset() {
   }, []);
 }
 
-function Composer({ onSend, disabled, accent, placeholder }: { onSend: (text: string) => Promise<boolean>; disabled?: boolean; accent?: string; placeholder: string }) {
+/** Whether this is a touch screen: its keyboard has no Shift to reach for, so Enter stays a new line there. */
+const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+
+/** The 000h agent chat composer (components/ui/agent-chat.tsx), with loom's keys and its phone's focus kept. */
+function Composer({ onSend, disabled, accent, placeholder, label }: { onSend: (text: string) => Promise<boolean>; disabled?: boolean; accent?: string; placeholder: string; label: string }) {
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const area = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => { const a = area.current; if (a) { a.style.height = 'auto'; a.style.height = `${Math.min(a.scrollHeight, 180)}px`; } }, [text]);
+  const busy = useRef(false);
+  const touch = useMemo(coarse, []);
   const send = async () => {
     const t = text.trim();
-    if (!t || busy) return;
-    setBusy(true);
+    if (!t || busy.current) return;
+    busy.current = true;
     if (await onSend(t)) setText('');
-    setBusy(false);
+    busy.current = false;
   };
   return (
-    <form className="comms-composer" style={{ '--c': accent } as React.CSSProperties} onSubmit={(e) => { e.preventDefault(); void send(); }}>
-      <textarea ref={area} rows={1} value={text} disabled={disabled} placeholder={placeholder} aria-label="Message"
-        onChange={(e) => setText(e.target.value)}
-        // Enter sends and Shift+Enter is a new line, where there's a hardware keyboard. A phone's keyboard has no Shift
-        // to reach for, so its Enter stays a new line and the Send button sends. Never mid-composition (an IME's Enter).
-        onKeyDown={(e) => {
-          if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing || matchMedia('(pointer: coarse)').matches) return;
-          e.preventDefault(); void send();
-        }} />
-      {/* A press on Send leaves the field focused, so a phone's keyboard stays up: were the field to blur, the keyboard
-          would start closing and --comms-kb drop, the composer jumping down from under the finger before its click. */}
-      <button type="submit" disabled={disabled || busy || !text.trim()} className="comms-composer__send"
-        onMouseDown={(e) => e.preventDefault()}>Send</button>
-    </form>
+    <AgentChatComposer className="comms-composer" style={{ '--c': accent } as React.CSSProperties} value={text} onValueChange={setText}
+      onSend={() => void send()} disabled={disabled} placeholder={placeholder} label={label}
+      hint={touch ? 'Send sends · Return is a new line' : 'Enter to send · Shift+Enter for a new line'}
+      // Enter sends and Shift+Enter is a new line, where there's a hardware keyboard (the component's own Ctrl/Cmd+Enter
+      // still sends). A phone's keyboard has no Shift, so its Enter stays a new line. Never mid-composition (an IME's).
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' || e.shiftKey || e.metaKey || e.ctrlKey || e.nativeEvent.isComposing || touch) return;
+        if (!(e.target instanceof HTMLTextAreaElement)) return;
+        e.preventDefault(); void send();
+      }}
+      // A press on Send leaves the field focused, so a phone's keyboard stays up: were the field to blur, the keyboard
+      // would start closing and --comms-kb drop, the composer jumping down from under the finger before its click.
+      onMouseDown={(e) => { if ((e.target as HTMLElement).closest('.v-agent-chat__send')) e.preventDefault(); }} />
   );
 }
 
 // ---- one thread ----------------------------------------------------------------------------------
 
-function Message({ m, marks, agent, owner }: { m: Msg; marks: Record<string, Mark>; agent: string; owner?: string }) {
-  const who = m.kind === 'message' ? 'you' : m.from === 'loom' ? 'loom' : agentName(m.from, marks).toLowerCase();
-  if (m.kind === 'error') return <li className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p></li>;
-  if (m.kind === 'ask') return <li className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {who}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></li>;
+function Message({ m, marks, agent, owner, you }: { m: Msg; marks: Record<string, Mark>; agent: string; owner?: string; you: string }) {
+  if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p></div>;
+  if (m.kind === 'ask') return <div className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {agentName(m.from, marks).toLowerCase()}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></div>;
   const mine = m.kind === 'message';
+  const delivery = mine ? deliveryOf(m) : undefined;
+  const mark = marks[m.from];
+  const avatar = mine
+    ? <Avatar variant="blue" className="v-agent-chat__avatar" aria-hidden="true"><AvatarFallback>{(you[0] ?? 'Y').toUpperCase()}</AvatarFallback></Avatar>
+    : mark ? <AgentAvatar a={mark} size={28} className="v-agent-chat__avatar comms-msg__face" /> : undefined;
   return (
-    <li className={`comms-msg ${mine ? 'comms-msg--mine' : 'comms-msg--agent'}`} data-undelivered={mine && deliveryOf(m) === 'failed' ? '' : undefined} data-delivery={mine ? deliveryOf(m) : undefined}>
-      <span className="comms-msg__meta loom-data">{!mine && marks[m.from] && <AgentAvatar a={marks[m.from]} size={22} className="comms-msg__face" />}{hhmm(m.at)} · {who}{mine && deliveryOf(m) === 'sending' && <span className="comms-msg__sending"> · sending…</span>}</span>
+    <AgentChatMessage from={mine ? 'user' : 'agent'} author={mine ? 'You' : m.from === 'loom' ? 'loom' : agentName(m.from, marks)} avatar={avatar}
+      className={mine ? 'comms-msg--mine' : 'comms-msg--agent'} data-delivery={delivery} data-undelivered={delivery === 'failed' ? '' : undefined}
+      meta={<span className="loom-data">{hhmm(m.at)}{delivery === 'sending' && ' · sending…'}{delivery === 'failed' && ' · not delivered'}</span>}>
       {m.text === null ? <p className="comms-msg__gone">(older than this thread keeps)</p> : mine ? <p className="comms-msg__text">{m.text}</p> : <Reply text={m.text} owner={owner} />}
-    </li>
+    </AgentChatMessage>
   );
 }
 
-/** A run's activity cards, one line until opened (comms.md, "The look"). */
+/** A card's state as the progress list draws it. */
+const stepOf = (c: Msg): AgentChatStep['status'] => { const st = String(c.card?.state ?? ''); return st === 'failed' ? 'error' : st === 'running' ? 'current' : 'complete'; };
+
+/** A run's activity cards, one line until opened (comms.md, "The look"), then the 000h progress list. */
 function Steps({ cards }: { cards: Msg[] }) {
   const [open, setOpen] = useState(false);
   const newest = cards[cards.length - 1];
   return (
-    <li className="comms-steps" data-open={open || undefined}>
+    <div className="comms-steps" data-open={open || undefined}>
       <button type="button" className="comms-steps__line loom-data" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? '▾' : '▸'} {cards.length} step{cards.length === 1 ? '' : 's'} · {newest.text ?? 'a step'}
       </button>
-      {open && <ol>{cards.map((c) => <li key={c.seq} data-state={String(c.card?.state ?? '')}><span className="loom-data">{String(c.card?.state ?? '') === 'failed' ? '✕' : String(c.card?.state ?? '') === 'running' ? '…' : '✓'}</span> {c.text}</li>)}</ol>}
-    </li>
+      {open && <AgentChatProgress steps={cards.map((c) => ({ id: String(c.seq), label: c.text ?? 'a step', status: stepOf(c) }))} />}
+    </div>
   );
 }
 
@@ -509,6 +526,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
         {!wide && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
         {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
+        {face !== 'idle' && <AgentState className="comms-state" status={statusOf(face)} size="sm"
+          label={face === 'working' ? `Working · ${Math.floor(since / 60)}:${String(since % 60).padStart(2, '0')}` : STATUS_WORDS[statusOf(face)]} />}
         {thread.state.working && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
         <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
         {menu && (
@@ -523,63 +542,65 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
       <div className="comms-thread__body">
         {!wide && <div ref={top} className="comms-thread__strip">{screen}</div>}
         {!wide && <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />}
-        <ol className="comms-msgs" aria-live="polite">
-          {swept && initial.earlier?.length ? (
-            <li className="comms-earlier">
-              <span className="loom-data">EARLIER, AS {mark.label.toUpperCase()} SUMMED IT UP</span>
-              {initial.earlier.map((d) => <p key={d.at}>{d.summary}</p>)}
-            </li>
-          ) : null}
-          {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
-            <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} />
-          ))}
-          {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
-          {lastMine && deliveryOf(lastMine) === 'failed' && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
-          {thread.state.working && <li className="comms-working loom-data">{mark.label.toUpperCase()} · working · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</li>}
-          {link === 'lost' && <li className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></li>}
-          <div ref={bottom} />
-        </ol>
+        <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
+          <AgentChatThread className="comms-msgs" jumpLabel="Latest">
+            {swept && initial.earlier?.length ? (
+              <div className="comms-earlier">
+                <span className="loom-data">EARLIER, AS {mark.label.toUpperCase()} SUMMED IT UP</span>
+                {initial.earlier.map((d) => <p key={d.at}>{d.summary}</p>)}
+              </div>
+            ) : null}
+            {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
+              <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} />
+            ))}
+            {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
+            {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></div>}
+            {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
+            <div ref={bottom} />
+          </AgentChatThread>
+        </AgentChat>
         {wide && <aside className="comms-thread__side">{screen}<WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} /></aside>}
       </div>
-      <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} />
+      <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} />
     </article>
   );
 }
 
-/** An ask, answered here as the Inbox would answer it: its piece's own action, with this page's form token. */
+/** An ask, answered here as the Inbox would answer it: its piece's own action, with this page's form token, drawn as
+ *  the 000h permission (no implied consent: a deliberate Allow once or Deny). */
 function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: string; agentName: string; onAnswered: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [decision, setDecision] = useState<'pending' | 'allowed' | 'denied'>('pending');
   const [said, setSaid] = useState<string | null>(null);
-  const answer = async (b: ThreadAsk['actions'][number]) => {
+  const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
+  const no = a.actions.find((b) => b.tone === 'danger');
+  const answer = async (d: 'allowed' | 'denied') => {
+    const b = d === 'allowed' ? yes : no;
+    if (!b) return;
     // A danger button (Deny) or one that says so asks first, as the Inbox's does (blocks.tsx ActButton).
     if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return;
     setBusy(true);
     const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
-    setSaid(r.message || (r.ok ? 'Answered.' : 'That didn\'t go through.'));
     setBusy(false);
-    if (r.ok) onAnswered();
+    if (r.ok) { setDecision(d); setSaid(r.message || null); onAnswered(); } else setSaid(r.message || 'That didn\'t go through.');
   };
-  const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
-  const no = a.actions.find((b) => b.tone === 'danger');
   return (
-    <li className="comms-ask" role="group" aria-label={`${who} asks`}>
-      <span className="loom-data comms-ask__who">{who.toUpperCase()} ASKS</span>
-      <p className="comms-ask__text">{a.text}</p>
-      {a.why && <p className="comms-ask__why">{a.why}</p>}
-      {(a.if_yes || a.if_no) && (
-        <dl className="comms-ask__either">
-          {a.if_yes && <><dt>If you allow</dt><dd>{a.if_yes}</dd></>}
-          {a.if_no && <><dt>If you deny</dt><dd>{a.if_no}</dd></>}
-        </dl>
-      )}
-      {a.fine && <p className="comms-ask__fine loom-data">Exactly what this allows: {a.fine}</p>}
-      {said ? <p className="comms-ask__said">{said}</p> : (
-        <div className="comms-ask__buttons">
-          <button type="button" disabled={busy} className="comms-ask__yes" onClick={() => void answer(yes)}>{yes.label}</button>
-          {no && <button type="button" disabled={busy} className="comms-ask__no" onClick={() => void answer(no)}>{no.label}</button>}
-        </div>
-      )}
-    </li>
+    <div className="comms-ask" aria-label={`${who} asks`}>
+      <AgentChatPermission title={a.text} description={a.why ?? `${who} is asking you.`} decision={decision} disabled={busy}
+        onDecision={(d) => void answer(d)} allowLabel={yes.label} denyLabel={no?.label ?? 'Deny'}
+        scope={(a.if_yes || a.if_no || a.fine) ? (
+          <>
+            {(a.if_yes || a.if_no) && (
+              <dl className="comms-ask__either">
+                {a.if_yes && <><dt>If you allow</dt><dd>{a.if_yes}</dd></>}
+                {a.if_no && <><dt>If you deny</dt><dd>{a.if_no}</dd></>}
+              </dl>
+            )}
+            {a.fine && <p className="comms-ask__fine loom-data">Exactly what this allows: {a.fine}</p>}
+          </>
+        ) : undefined} />
+      {said && <p className="comms-ask__said" role="status">{said}</p>}
+    </div>
   );
 }
 
@@ -611,7 +632,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide }: { agents: st
         ))}
       </div>
       {error && <p className="comms-msg comms-msg--error" role="alert">{error}</p>}
-      <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} placeholder={`Message ${agentName(agent, marks)}`} />
+      <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} />
     </article>
   );
 }

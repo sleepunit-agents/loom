@@ -1,0 +1,434 @@
+@layer cojeev-states {
+[data-slot="questionnaire-progress"] b {
+  color: var(--v-text);
+}
+[data-slot="questionnaire-progress"] .v-track {
+  flex: 1;
+  min-width: 80px;
+}
+[data-slot="questionnaire-option"] {
+  transition:
+    background var(--t-element),
+    box-shadow var(--t-element);
+}
+[data-slot="questionnaire-option"]:not(:has(input:checked)) {
+  box-shadow: inset 0 0 0 1px var(--v-border);
+}
+[data-slot="questionnaire-option"]:not(:has(input:checked)):hover {
+  background: var(--v-beige-2);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+}
+[data-slot="questionnaire-option"]:active {
+  transform: none;
+}
+[data-slot="questionnaire-option"] input {
+  order: 3;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--v-edge);
+  background: var(--v-canvas);
+  display: grid;
+  place-items: center;
+  transition:
+    background var(--t-micro),
+    border-color var(--t-micro);
+}
+[data-slot="questionnaire-option"] .v-disk[data-slot] {
+  order: 1;
+  width: 36px;
+  height: 36px;
+}
+[data-slot="questionnaire-option"] input:checked {
+  background:
+    radial-gradient(circle, var(--ink-fixed) 0 4px, transparent 4.6px),
+    var(--v-pink);
+  border-color: var(--v-pink);
+  border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  animation: v-questionnaire-tick var(--t-max) var(--enter) both;
+}
+[data-slot="questionnaire-options"]:not(.v-glide)
+  [data-slot="questionnaire-option"]:has(input:checked) {
+  background: var(--v-pink-soft);
+  color: var(--v-text);
+  box-shadow: none;
+}
+[data-slot="questionnaire-option"]:has(input:checked) .v-quest__opt-body small {
+  color: var(--v-text);
+}
+[data-slot="questionnaire-option"]:has(input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+[data-slot="questionnaire-option-body"] b {
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+  line-height: 1.3;
+}
+[data-slot="questionnaire-option-body"] small {
+  font-size: var(--fs-small);
+  color: var(--v-text-2);
+  line-height: 1.4;
+}
+[data-slot="questionnaire-option"]:has(input:disabled) {
+  color: var(--v-disabled-ink);
+  cursor: not-allowed;
+}
+:root[data-mode="dark"] [data-slot="questionnaire-option"] {
+  background: var(--v-beige);
+}
+:root[data-mode="dark"] [data-slot="questionnaire-option"] input {
+  border-color: var(--v-text-2);
+  background: var(--v-beige-2);
+}
+:root[data-mode="dark"] [data-slot="questionnaire-option"] input:checked {
+  background:
+    radial-gradient(circle, var(--ink-fixed) 0 4px, transparent 4.6px),
+    var(--v-pink);
+  border-color: var(--v-pink);
+}
+@keyframes v-questionnaire-tick {
+  0% {
+    transform: scale(0.8);
+    border-radius: 54% 46% 50% 50%/46% 50% 50% 54%;
+  }
+  55% {
+    transform: scale(1.14, 0.94);
+    border-radius: 50% 50% 46% 54%/54% 50% 46% 50%;
+  }
+  80% {
+    transform: scale(0.98, 1.04);
+  }
+  100% {
+    transform: scale(1);
+    border-radius: 46% 54% 50% 50%/50% 46% 54% 50%;
+  }
+}
+
+[data-slot="questionnaire-weekday"] {
+  transition:
+    background var(--t-micro),
+    color var(--t-micro);
+}
+[data-slot="questionnaire-weekday"] input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+}
+[data-slot="questionnaire-weekday"]:hover {
+  background: color-mix(in oklab, var(--card) 90%, var(--v-ink));
+  color: var(--v-text);
+}
+[data-slot="questionnaire-weekday"]:has(input:checked) {
+  background: var(--v-pink);
+  color: var(--v-on-accent);
+}
+[data-slot="questionnaire-weekday"]:has(input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  [data-slot="questionnaire-weekday"] {
+    flex: 1 1 0;
+    min-width: 0;
+    aspect-ratio: 1;
+  }
+}
+:root[data-mode="dark"] [data-slot="questionnaire-weekday"] {
+  background: var(--v-beige);
+}
+
+/* The native input remains the focus/form owner; the same organic selector used
+   by RadioGroup paints its checked state without replacing native behaviour. */
+[data-slot="questionnaire-option"] {
+  position: relative;
+  border-radius: var(--r-card-sm);
+  grid-template-columns: 36px minmax(0, 1fr) var(--selector-size, 28px);
+}
+[data-slot="questionnaire-option"] [data-slot="questionnaire-option-input"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+[data-slot="questionnaire-selector"] {
+  order: 3;
+  display: inline-grid;
+  width: var(--selector-size, 28px);
+  height: var(--selector-size, 28px);
+}
+[data-slot="questionnaire-option-body"] {
+  overflow-wrap: anywhere;
+}
+[data-slot="questionnaire-option"]:not(:has(.v-disk)) {
+  grid-template-columns: minmax(0, 1fr) var(--selector-size, 28px);
+}
+[data-slot="questionnaire-option"]:has(input:disabled) {
+  background: var(--v-disabled-face);
+}
+
+/* The shared Button body engine owns the moving selector contour. The original
+   SVG is the immediate SSR/Off/reduced fallback; the mark stays above either. */
+[data-slot="selector-glyph"]:has(
+    [data-slot="selector-surface-host"] > svg.v-morph
+  )
+  [data-slot="selector-surface"] {
+  opacity: 0;
+}
+[data-slot="selector-drawing"] {
+  position: relative;
+  pointer-events: none;
+}
+
+[data-slot="questionnaire-question"] > legend {
+  margin-bottom: var(--s-3);
+}
+
+/* New questionnaire compositions are opt-in; AgentChat keeps the legacy layout. */
+.v-questionnaire-example {
+  width: 100%;
+  min-width: 0;
+  max-width: 720px;
+  margin-inline: auto;
+  padding-inline: var(--s-2);
+  box-sizing: border-box;
+}
+.v-quest[data-presentation] {
+  gap: var(--s-6);
+  color: var(--v-text);
+}
+.v-questionnaire-example__intro {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: var(--s-4);
+  align-items: center;
+}
+.v-questionnaire-example__intro p {
+  margin: 0 0 var(--s-1);
+  color: var(--v-text-2);
+  font-size: var(--fs-meta);
+}
+.v-questionnaire-example__intro h3 {
+  font: var(--fw-medium) clamp(22px, 3vw, 28px) / 1.2 var(--font-display);
+  margin: 0;
+}
+.v-questionnaire-example__tab {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 56px;
+  background: var(--v-yellow);
+  color: var(--v-on-accent);
+  border-radius: var(--r-sm) var(--r-sm) var(--r-panel) var(--r-sm);
+}
+.v-quest[data-presentation] .v-quest__progress {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: var(--s-4);
+  font-size: var(--fs-meta);
+}
+.v-quest[data-presentation] .v-quest__progress > b {
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+.v-questionnaire-example__questions {
+  display: grid;
+  gap: var(--s-6);
+  min-width: 0;
+}
+.v-quest[data-presentation] [data-slot="questionnaire-question"] {
+  --questionnaire-flow-face: color-mix(
+    in oklab,
+    var(--v-pink) 18%,
+    var(--v-canvas)
+  );
+  --questionnaire-flow-base: transparent;
+  position: relative;
+  min-width: 0;
+  margin: 0;
+  padding: var(--s-2) var(--s-5) var(--s-5);
+  border: 1px solid var(--v-border);
+  border-radius: min(var(--v-control-radius, 24px), 24px);
+  background: var(--v-canvas);
+}
+.v-quest[data-presentation] [data-slot="questionnaire-question"][hidden] {
+  display: none;
+}
+.v-quest[data-presentation] [data-slot="questionnaire-question"] > legend {
+  max-width: 100%;
+  padding: 0 var(--s-2);
+  margin: 0 0 var(--s-1) -8px;
+  font: var(--fw-medium) var(--fs-title)/1.4 var(--font-display);
+  color: var(--v-text);
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-question"]
+  > legend:focus {
+  outline: none;
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-question"]
+  > legend:focus-visible {
+  outline: 2px solid var(--v-brand);
+  outline-offset: 4px;
+  border-radius: var(--r-xs);
+}
+.v-questionnaire-example__number {
+  display: inline-grid;
+  place-items: center;
+  vertical-align: middle;
+  width: 36px;
+  height: 42px;
+  border-radius: var(--r-sm) var(--r-sm) var(--r-card-sm) var(--r-sm);
+  background: var(--v-pink);
+  color: var(--v-on-accent);
+  font-size: var(--fs-reading);
+  font-variant-numeric: tabular-nums;
+}
+.v-questionnaire-example__heading {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-question"]:nth-child(2)
+  .v-questionnaire-example__number {
+  background: var(--v-blue);
+}
+.v-quest[data-presentation] [data-slot="questionnaire-question"]:nth-child(2) {
+  --questionnaire-flow-face: color-mix(
+    in oklab,
+    var(--v-blue) 18%,
+    var(--v-canvas)
+  );
+}
+.v-questionnaire-example__hint {
+  margin: 0 0 var(--s-1);
+  color: var(--v-text-2);
+  font-size: var(--fs-small);
+  line-height: 1.5;
+}
+.v-quest[data-presentation] .v-quest__opts {
+  gap: var(--s-2);
+}
+.v-quest[data-presentation] [data-slot="questionnaire-option"] {
+  min-height: 76px;
+  padding: var(--s-4) var(--s-4);
+  gap: var(--s-3);
+  grid-template-columns: minmax(0, 1fr) var(--selector-size, 28px);
+  border-radius: min(var(--v-control-radius, 16px), 16px);
+  box-shadow: inset 0 0 0 1px var(--v-border);
+  background: transparent;
+  transition: background var(--t-element);
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-option"]:has(input:checked) {
+  background: color-mix(in oklab, var(--v-pink) 18%, var(--v-canvas));
+  color: var(--v-text);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in oklab, var(--v-pink) 60%, var(--v-edge));
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-question"]:nth-child(2)
+  [data-slot="questionnaire-option"]:has(input:checked) {
+  background: color-mix(in oklab, var(--v-blue) 18%, var(--v-canvas));
+  box-shadow: inset 0 0 0 1px
+    color-mix(in oklab, var(--v-blue) 60%, var(--v-edge));
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-option"]:has(input:disabled) {
+  background: var(--v-disabled-face);
+  color: var(--v-disabled-ink);
+}
+.v-quest[data-presentation]
+  [data-slot="questionnaire-option"]:has(input:disabled)
+  small {
+  color: inherit;
+}
+.v-questionnaire-example__footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+.v-questionnaire-example__footer .v-btn {
+  min-height: 44px;
+}
+.v-questionnaire-example__footer > .v-btn:last-child {
+  margin-inline-start: auto;
+}
+.v-questionnaire-example__result {
+  margin: 0;
+  padding-top: var(--s-4);
+  border-top: 1px dashed var(--v-border);
+  font-size: var(--fs-small);
+  line-height: 1.6;
+  color: var(--v-text-2);
+}
+.v-quest[data-presentation="journey"] .v-questionnaire-example__questions {
+  border-inline-start: 1px solid var(--v-border);
+  padding-inline-start: var(--s-5);
+}
+.v-quest[data-presentation="journey"] [data-slot="questionnaire-question"] {
+  padding-top: var(--s-4);
+}
+.v-quest[data-presentation="journey"] .v-questionnaire-example__number {
+  width: 44px;
+  height: 48px;
+  border-radius: 50% 40% 48% 35%;
+}
+.v-quest[data-presentation="worksheet"] .v-questionnaire-example__questions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--s-5);
+}
+.v-quest[data-presentation="worksheet"] [data-slot="questionnaire-question"] {
+  padding-inline: var(--s-4);
+}
+.v-quest[data-presentation="worksheet"]
+  [data-slot="questionnaire-question"]
+  > legend {
+  font-size: var(--fs-lead);
+}
+.v-quest[data-presentation="worksheet"] [data-slot="questionnaire-option"] {
+  min-height: 120px;
+  padding: var(--s-4) var(--s-3);
+}
+@media (max-width: 640px) {
+  .v-quest[data-presentation="worksheet"] .v-questionnaire-example__questions {
+    grid-template-columns: 1fr;
+  }
+  .v-quest[data-presentation="worksheet"] [data-slot="questionnaire-option"] {
+    min-height: 88px;
+  }
+  .v-quest[data-presentation] [data-slot="questionnaire-question"] {
+    padding-inline: var(--s-3);
+  }
+  .v-questionnaire-example__number {
+    width: 28px;
+    height: 36px;
+  }
+  .v-quest[data-presentation] [data-slot="questionnaire-question"] > legend {
+    font-size: var(--fs-lead);
+  }
+  .v-quest[data-presentation="journey"] .v-questionnaire-example__questions {
+    padding-inline-start: var(--s-3);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .v-quest[data-presentation] [data-slot="questionnaire-option"] {
+    transition: none;
+  }
+}
+
+}
