@@ -206,10 +206,12 @@ choice, and the body's brief. The new parts follow.
     conversation:<cv>." (the thread's conversation, so a house body can pass it: "Made here"), and `readers: [<member>]`.
   - `status: working` shows the thread's working line, and `done` clears it. After the member presses Stop, the next
     `status` call answers `stop: true` once.
-  - `done` with `replied: false` and its `run` (t-1900) says the body's turn is over and nothing reached the thread:
-    no send reached the runtime in that run. The thread gains an error card, `no-reply`, once per run (the same run
-    said again adds nothing), so a turn that ends in silence isn't silence on screen. `run` is the runtime's run id,
-    1 to 64 letters, digits, `.`, `_` or `-`; without a well-formed one, `replied: false` is ignored.
+  - `done` with `replied: false` and its `run` (t-1900) says the body's turn is over and nothing it said was posted
+    in that run (it sent nothing, or every send was refused; a turn refused for a usage limit, run again on another
+    harness, and one the member stopped, aren't said). The thread gains an error message, `no-reply`, once per run
+    (the same run said again adds nothing), so a turn that ends in silence isn't silence on screen. `run` is the
+    runtime's run id, 1 to 128 letters, digits, `.`, `_`, `:` or `-`; without a well-formed one, `replied: false` is
+    ignored, as it is on `working`.
 - **The sender's trust.** For a delivery on `loom` from source `loom`, the runtime takes the sender as **tier 3**,
   the owner (loom-box's tiers: 1 guest, 2 trusted, 3 owner; `src/policy.mjs`). It never looks the sender up in the
   gates. Core delivers there only from a member who owns the agent (rule 3), so the gates have nothing to add. A
@@ -611,6 +613,7 @@ Neon OS's own, not copied from any game.
   | after the talking beat, with `status: done` or no `working` for 30 s | `complete` (done), then `idle` |
   | an ask pending in the thread | `needs-input` (waiting, always facing south) |
   | the last delivery or post failed, or a loop pause | `error` |
+  | a turn over with no reply (the `no-reply` message after your last message) | `idle`: the wait is over, as after a reply |
 
   A pending ask wins over everything except `error`: with an ask pending, `working` and `talking` show as
   `needs-input`, and an `error` still shows as `error`.
@@ -989,6 +992,9 @@ A thread filed under a project already feeds its hub (section "Project" above). 
       that row's error message. Closing the thread's stream mid-turn and reopening it shows the missed messages once.
     - A ninth pin and a send to an archived thread answer a reason in words. No error message or toast is a bare status
       code.
+13a. **No reply.** The runtime's `status: done` with `replied: false` and a run gives the thread one "Art finished without replying."
+    message with **What happened** (the trace's link), live; the same run said again adds nothing; a `done` without
+    it, or on `working`, adds nothing; and the face leaves `thinking` for `idle`.
 14. **Links.** In a reply, `t-12`, `acme/app#3`, `note:pond/plan` and `cv-…` render as their links, and an `http://` or
     `javascript:` URL renders as plain text. Rendering a reply makes no network request.
 

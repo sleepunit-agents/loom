@@ -172,11 +172,15 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.goto(`${base}/comms/${opened.thread.id}`);
       await page.locator('.comms-thread').waitFor();
       expect(await page.locator('.comms-msg--error').count()).toBe(0);
+      // Delivered, nothing back: the face is thinking.
+      expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('thinking');
       adapterCall(h, process.env, { op: 'status', place: opened.thread.id, agent: 'art', status: 'done', replied: false, run: 'run-00c0ffee0000' });
       const card = page.locator('.comms-msg--error', { hasText: 'Art finished without replying.' });
       await card.waitFor({ timeout: 10_000 });
       expect(await card.locator('a.comms-trace').getAttribute('href')).toBe(`/p/runtime/trace/${opened.thread.conversation}`);
       expect(await card.locator('a.comms-trace').textContent()).toBe('What happened');
+      // The wait is over, as after a reply: not thinking for ever under its own "finished without replying".
+      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 5000 });
       expect(errors).toEqual([]);
     } finally { await ctx.close(); }
   }, 30_000);
