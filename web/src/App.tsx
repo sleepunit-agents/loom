@@ -20,11 +20,11 @@ import { Boundary, Callout, iconFor } from './safe';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Spinner } from '@/components/ui/spinner';
-import { refreshEvery, type Showing } from './refresh';
+import { usePage, hasKept } from './page';
 // The toasts load with the first one (toasts.tsx).
 const Toasts = lazy(() => import('./toasts'));
 import type { Note } from './toasts';
-import { act, fetchView, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
+import { act, type ActResult, type AgentHead, type Chrome, type Ctx, type Page, type View } from './loom';
 import { AgentAvatar, BlockView, EnvContext, type Env } from './blocks';
 import { type Ground, DashboardView, HouseHomeView } from './views';
 import { placesOf, settingsOf } from './nav';
@@ -117,13 +117,6 @@ export default function App() {
   const sideWide = useMedia(SIDE_COLUMN);
   const [vw, setVw] = useState(() => innerWidth);
   useEffect(() => { const f = () => setVw(innerWidth); addEventListener('resize', f); return () => removeEventListener('resize', f); }, []);
-  const [url, setUrl] = useState(() => location.pathname + location.search);
-  const [data, setData] = useState<View | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // A page with no copy kept yet: its header and its shape (states.tsx Skeleton) until it lands. `pending` is where to.
-  const [waiting, setWaiting] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<string | undefined>();
   const [notes, setNotes] = useState<Note[]>([]);
   const [more, setMore] = useState(false);
   const [moreAsked, setMoreAsked] = useState(false);
@@ -192,80 +185,14 @@ export default function App() {
     setNotes((x) => (x.some((y) => y.message === n.message && y.ok === n.ok && Date.now() - y.id < 5000)
     ? x : [...x, { ...n, id: Date.now() + Math.random() }])); }, []);
 
-  // The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is
-  // asked behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow").
-  const kept = useRef(new Map<string, { etag?: string; data: View }>());
-  const showing = useRef(url);
-  const load = useCallback(async (to: string, push: boolean, quiet = false) => {
-    const have = kept.current.get(to);
-    if (!quiet) {
-      showing.current = to;
-      if (have) {
-        if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
-        setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); window.scrollTo({ top: 0 });
-      }
-      setWaiting(!have); setPending(have ? null : to);
-    }
-    const r = await fetchView(to, have?.etag).catch(() => ({ status: 0 } as { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string }));
-    if (!quiet && showing.current === to) setWaiting(false);
-    if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
-      if (r.data && r.etag && !r.redirect && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
-      return;
-    }
-    if (r.status === 304) return;   // nothing new: what's shown is current
-    if ((quiet || have) && !r.data && !r.redirect) return;   // a refresh that missed keeps what's shown
-    if (!r.data && (r.redirect || r.status === 401)) { location.href = r.redirect ?? '/login'; return; }   // signed out: loom's own sign-in page
-    if (r.redirect) { to = r.redirect; if (!push || have) history.replaceState(null, '', to); }   // loom moved it (/mind → an agent's Mind): show where it landed
-    if (!r.data) {
-      if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
-      setSavedAt(undefined); setUrl(to);
-      setError(r.status ? 'server' : 'offline');
-      return;
-    }
-    // A one-time message (?_flash=, after a form's post) is shown once, then leaves the address.
-    const once = /[?&]_flash=/.test(to);
-    if (once) { const u = new URL(to, location.href); u.searchParams.delete('_flash'); to = u.pathname + u.search; if (!push) history.replaceState(null, '', to); }
-    if (push && to !== location.pathname + location.search) history.pushState(null, '', to);
-    showing.current = to;
-    setError(null); setData(r.data); setUrl(to); setSavedAt(r.savedAt);
-    if (r.etag && !r.savedAt) kept.current.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
-    const flash = r.data.chrome?.flash;
-    if (flash) say(flash);
-    if (!quiet && !have) window.scrollTo({ top: 0 });
-  }, [say]);
+  // The page (page.ts): what's shown, loaded and kept current, its address the browser's.
+  const { url, data, error, waiting, pending, savedAt, showing, load } = usePage(location.pathname + location.search, say);
 
   // What's new arrives (arrive.tsx): what this page showed at its last answer, against what it shows now.
   const shown = useRef<{ url: string; data: View | null; keys: Set<string> }>({ url: '', data: null, keys: new Set() });
   const arrivals: Arrivals = { before: shown.current.url === url && shown.current.data !== null ? shown.current.keys : null, now: new Set() };
   useEffect(() => { shown.current = { url, data, keys: arrivals.now }; });   // after every draw
 
-  // Live (src/ui/live.ts): loom says "something changed" and this page asks again, with its fingerprint (a 304
-  // when nothing it shows moved). While the stream is open, the timer below is only a slow fallback.
-  const [live, setLive] = useState(false);
-  useEffect(() => {
-    if (!('EventSource' in window)) return;
-    const es = new EventSource('/events');
-    es.onopen = () => setLive(true);
-    es.onerror = () => setLive(false);
-    es.addEventListener('change', () => { if (!document.hidden) void load(showing.current, false, true); });
-    const back = () => { if (!document.hidden) void load(showing.current, false, true); };
-    document.addEventListener('visibilitychange', back);
-    return () => { es.close(); document.removeEventListener('visibilitychange', back); };
-  }, [load]);
-
-  // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
-  // page's own refresh as it asked, live or not; never while a sheet, an editor or a field is in use, or hidden.
-  const every = refreshEvery(data as Showing | null, live);
-  useEffect(() => {
-    if (!every) return;
-    const t = setInterval(() => {
-      const busy = document.hidden || document.querySelector('[role="dialog"],[role="alertdialog"]') || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName));
-      if (!busy) void load(location.pathname + location.search, false, true);
-    }, every * 1000);
-    return () => clearInterval(t);
-  }, [every]); 
-
-  useEffect(() => { const f = () => void load(location.pathname + location.search, false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
   // How a page change moves (transitions.ts): by the dock's order between its own pages, else a push into a page and a
   // pop back out of one. What it's read against is the page shown (set as each one draws, below).
   const moveFrom = useRef<{ pages: string[]; path: string; active: number; crumb?: string }>({ pages: [], path: '/', active: -1 });
@@ -571,7 +498,7 @@ export default function App() {
   // The dock's next and last pages are fetched a moment after one lands, so a swipe opens on the page, not its shape.
   useEffect(() => {
     if (wide || hereIndex < 0) return;
-    const t = setTimeout(() => { for (const n of [dockPages[hereIndex - 1], dockPages[hereIndex + 1]]) if (n && !kept.current.has(n)) void load(n, false, true); }, 1200);
+    const t = setTimeout(() => { for (const n of [dockPages[hereIndex - 1], dockPages[hereIndex + 1]]) if (n && !hasKept(n)) void load(n, false, true); }, 1200);
     return () => clearTimeout(t);
   }, [wide, hereIndex, dockPages.join(' ')]);   // eslint-disable-line react-hooks/exhaustive-deps
   useGestures(!wide && !!chrome?.shell, {
