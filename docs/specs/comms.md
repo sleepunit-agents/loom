@@ -1033,7 +1033,9 @@ A thread filed under a project already feeds its hub (section "Project" above). 
       the first is deleted.
     - The desktop shows the YOU panel and a phone doesn't.
 18. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
-    the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes.
+    the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes,
+    and one at a time when the Comms box is narrower than 620 px (a narrow window, a tile): the list, then a thread or
+    New thread with a way back; 619 px is one pane, 620 two, and an open thread stays mounted across the edge.
     The dock has a Comms key for a member who owns an agent, with the unread count, and none for a member who owns
     none.
 19. The JS and CSS budgets still pass. Comms loads as its own chunk.

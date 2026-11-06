@@ -81,6 +81,13 @@ const Backup = () => (
   </svg>
 );
 
+/** A place's words in a line: its label, then its tile, never a word twice. A tile that already names what it counts
+ * stands alone ("3 boxes", not "Boxes 3 boxes"); one that doesn't keeps its label ("Tasks 29 in progress"). */
+export function placeWords(label: string, stat: string): string {
+  const word = label.trim().toLowerCase().replace(/e?s$/, '');
+  return word && new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i').test(stat) ? stat : `${label} ${stat}`;
+}
+
 type Item = { key: string; label: string; glyph: React.ReactNode; count?: string; dim?: boolean; href?: string };
 
 /** The Boxes piece: the runtime (its id, /p/runtime; /p/box before the catalog renamed it). */
