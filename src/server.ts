@@ -1488,7 +1488,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       description:
       'Read a Comms thread of your own agent\'s (a conversation in loom\'s own app, venue loom): its messages as its ' +
       'owner sees them, oldest first, with the owner\'s words, your replies, tool cards and any error card such as ' +
-      '"your reply couldn\'t be shown". Words go after 14 days; the message stays without them. With no thread, the one ' +
+      '"your reply couldn\'t be shown". Words go after the household\'s comms_days (14 at most); the message stays. With no thread, the one ' +
       'of the conversation given to identity. Never another agent\'s thread. Read only.',
       inputSchema: z.object({
         thread: z.string().max(20).optional().describe('A thread id of yours, th:… (its place). Left off: this body\'s own thread.'),

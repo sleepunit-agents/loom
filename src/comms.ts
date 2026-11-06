@@ -956,7 +956,10 @@ export async function agentThreadRead(home: string, env: NodeJS.ProcessEnv, agen
   const limit = typeof at.limit === 'number' && Number.isInteger(at.limit) && at.limit >= 1 ? Math.min(at.limit, AGENT_READ_MAX) : AGENT_READ_DEFAULT;
   const before = typeof at.before === 'number' && Number.isInteger(at.before) && at.before > 0 ? at.before : undefined;
   const all = existsSync(join(home, COMMS_DB)) ? await messagesOf(h, env, t, before !== undefined ? { before } : {}) : [];
-  return { thread: { id: t.id, title: t.title, archived: t.archived, state: stateOf(t) }, messages: all.slice(-limit) };
+  // The word rule at read time too: the sweep runs on the daemon's clock, and a stdio server reads with no daemon up.
+  const cutoff = Date.now() - (h.commsDays ?? COMMS_DAYS_DEFAULT) * DAY_MS;
+  const kept = all.slice(-limit).map((m) => (m.kind !== 'error' && m.text !== null && Date.parse(m.at) < cutoff ? { ...m, text: null } : m));
+  return { thread: { id: t.id, title: t.title, archived: t.archived, state: stateOf(t) }, messages: kept };
 }
 
 /**

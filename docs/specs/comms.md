@@ -363,7 +363,7 @@ their fixed words. That's how a body checks whether its reply showed, or what th
   `thread`, it's the thread of the conversation given to identity. With one, it's that thread only when its agent is
   the same agent. Another agent's thread, a deleted one, or an id that never was are the same refusal, and say nothing
   of it. A body can name another of its own agent's threads: they're one agent's, and the words were said to it.
-- **What.** The newest `limit` (30 by default, at most 100) messages, or those before `before`, oldest first, and the
+- **What.** Words past `comms_days` are dropped at read time too, not only by the sweep. The newest `limit` (30 by default, at most 100) messages, or those before `before`, oldest first, and the
   thread's state. Never a write.
 
 ### Tracing a reply (t-1895)
@@ -375,9 +375,11 @@ end, what it sent and what was refused). The runtime joins them: its `comms_trac
 
 - **`trace {op, place, agent}`** answers `{ok: true, trace: {thread, conversation, archived, working_since,
   queued_since, last_failed, messages}}`: the newest 100 messages' `seq`, `at`, `kind`, `from`, `run`, a member's
-  message's `delivery`, an error card's code and fixed words, a tool card's tool and state. Never a message's words. An
+  message's `delivery`, an error card's code and its words (the fixed table, with the runtime's own reason in it where
+  the card has one), a tool card's tool and state. Never a member's or an agent's words. An
   archived thread answers too. A place that isn't a thread of that agent's is `{ok: false, permanent: true}`.
-- **Who reads a trace.** An agent, its own agent's threads (the runtime's tool runs as the session's agent); an owner,
+- **Who reads a trace.** The op takes the agent the runtime names, as `post` and `status` do: the runtime is trusted to
+  name it, and it answers only that agent's caller. An agent, its own agent's threads (the runtime's tool runs as the session's agent); an owner,
   the threads of agents they own (owners.md), as for any conversation record (conversations.md, "Reading"). Never
   across agents.
 

@@ -138,7 +138,7 @@ an agent's persistent state:
   most 60 characters, for the conversation given to `identity`; never over the
   owner's own name for it (docs/specs/comms.md).
 - **`comms_thread`** — read, read only, a Comms thread of the agent's own: its
-  messages as the owner sees them (words for 14 days), its replies, tool cards and
+  messages as the owner sees them (words for the household's `comms_days`, 14 at most), its replies, tool cards and
   error cards. This body's own thread, or one named by id; never another agent's.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and

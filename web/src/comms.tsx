@@ -342,7 +342,7 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
   // An error card links to what happened: the runtime's trace of this thread (none when there's no runtime to ask).
   const card = (m.card ?? {}) as { error?: unknown };
   if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p>
-    {conversation && card.error !== 'no-runtime' && <a className="loom-data comms-trace" href={traceHref(conversation)}>What happened</a>}</div>;
+    {conversation && !['no-runtime', 'busy', 'loop'].includes(String(card.error)) && <a className="loom-data comms-trace" href={traceHref(conversation)}>What happened</a>}</div>;
   if (m.kind === 'ask') return <div className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {agentName(m.from, marks).toLowerCase()}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></div>;
   const mine = m.kind === 'message';
   const delivery = mine ? deliveryOf(m) : undefined;

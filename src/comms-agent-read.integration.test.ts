@@ -14,7 +14,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLoomServer } from './server.js';
 import { agentDir, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { adapterCall, openThread, recordDelivery, sweepComms, threadFor } from './comms.js';
+import { adapterCall, COMMS_DB, openThread, recordDelivery, sweepComms, threadFor } from './comms.js';
 import { isCoreMcpTool } from './offers.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
@@ -95,6 +95,12 @@ describe.skipIf(!hasAge)('Comms: an agent reads its own threads', () => {
       sweepComms(h, new Date(Date.now() + 15 * 86_400_000));
       const r = await read('art', t.conversation);
       expect((r.body.messages as Array<{ kind: string; text: string | null }>)[0]).toMatchObject({ kind: 'message', text: null });
+      // And with no sweep (the daemon down): words past comms_days are still not read.
+      const old = thread(9);
+      const db = new BetterSqlite3(join(h.home, COMMS_DB));
+      db.prepare('UPDATE comms_messages SET at = ? WHERE thread = ?').run(new Date(Date.now() - 15 * 86_400_000).toISOString(), old.id);
+      db.close();
+      expect(((await read('art', old.conversation)).body.messages as Array<{ text: string | null }>)[0].text).toBeNull();
     });
 
     it('is a core tool name, so no piece may offer one by it', () => {
