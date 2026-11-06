@@ -38,7 +38,7 @@ flowchart LR
       PROJW["Projects wing: tools/project.ts<br/>project_write · project_verify · project_archive<br/>project_restore · project_history · project_revision_restore<br/>project · project_list · project_hub · project_orphans"]
       KW["Knowledge wing: knowledge-tools.ts<br/>knowledge_write · knowledge_recall · knowledge_maintain<br/>knowledge_archive · knowledge_restore · knowledge_supersede<br/>knowledge_move · knowledge_merge · knowledge_purge<br/>knowledge_verify · knowledge_history<br/>knowledge_list (server.ts, not the peer scope)"]
       NOTEW["Notes: src/notes.ts<br/>note_write · note_read · note_list<br/>keep · while · short; a sweep lets the expired go<br/>unless a memory or knowledge page cites them"]
-      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings · comms_title<br/>turns arrive on POST /api/loom/conversations/turn<br/>raw text on POST /api/loom/audit (audit.db, encrypted)<br/>review: audit/take · audit/done · scores · findings"]
+      CONVW["Conversations: src/conversations.ts<br/>conversation_digest · conversations<br/>conversation · conversation_findings · comms_title · comms_thread<br/>turns arrive on POST /api/loom/conversations/turn<br/>raw text on POST /api/loom/audit (audit.db, encrypted)<br/>review: audit/take · audit/done · scores · findings"]
     end
     APPS["MCP-App widgets: mcp-app-hello.ts<br/>env-gated LOOM_MCP_APP_HELLO<br/>loom_hello · loom_display_modes<br/>loom_top_of_mind · loom_proposals<br/>widgets/*.tsx → dist/widgets"]
   end

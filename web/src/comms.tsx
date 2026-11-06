@@ -335,8 +335,14 @@ function Composer({ onSend, disabled, accent, placeholder, label }: { onSend: (t
 
 // ---- one thread ----------------------------------------------------------------------------------
 
-function Message({ m, marks, agent, owner, you }: { m: Msg; marks: Record<string, Mark>; agent: string; owner?: string; you: string }) {
-  if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p></div>;
+/** The runtime's trace of a thread's replies (comms.md, "Tracing a reply"): its page, for the owner, by conversation. */
+const traceHref = (conversation: string) => `/p/runtime/trace/${conversation}`;
+
+function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks: Record<string, Mark>; agent: string; owner?: string; you: string; conversation?: string }) {
+  // An error card links to what happened: the runtime's trace of this thread (none when there's no runtime to ask).
+  const card = (m.card ?? {}) as { error?: unknown };
+  if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p>
+    {conversation && card.error !== 'no-runtime' && <a className="loom-data comms-trace" href={traceHref(conversation)}>What happened</a>}</div>;
   if (m.kind === 'ask') return <div className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {agentName(m.from, marks).toLowerCase()}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></div>;
   const mine = m.kind === 'message';
   const delivery = mine ? deliveryOf(m) : undefined;
@@ -554,10 +560,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
               </div>
             ) : null}
             {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
-              <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} />
+              <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} conversation={thread.conversation} />
             ))}
             {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
-            {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></div>}
+            {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
             {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
             <div ref={bottom} />
           </AgentChatThread>

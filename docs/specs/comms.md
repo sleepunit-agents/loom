@@ -78,9 +78,10 @@ _Avoid_: log, trace, transcript
    The app's shared stream, `GET /events` (ui-app.md, "Live"), carries nothing of Comms but a bare `change` (so the
    dock's unread count refreshes), sent only to the streams of the thread's own member. That needs a member-scoped
    `changed` in `src/ui/live.ts`: today's `changed(about)` reaches every owner of an agent.
-5. **Agent tokens and pieces can't reach Comms.** Comms routes take a signed-in page session and its anti-forgery
-   token for writes, as every page action does. An agent reaches a thread only as its body, through the runtime
-   (below). The runtime reaches only the two `/api/loom/comms/…` routes, with its own token.
+5. **Agent tokens and pieces can't reach Comms' routes.** Comms routes take a signed-in page session and its
+   anti-forgery token for writes, as every page action does. An agent reaches a thread only as its body, through the
+   runtime (below), and reads its own agent's threads through one MCP tool, `comms_thread` ("An agent reading its own
+   threads"). The runtime reaches only the two `/api/loom/comms/…` routes, with its own token.
 
 **Not now: a shared agent.** An agent that many people work with directly, Comms-style, would need to run on something
 meant for sharing: an API key, or a Team or Enterprise plan, not one person's subscription. If that's ever wanted, it's
@@ -190,6 +191,7 @@ choice, and the body's brief. The new parts follow.
   | `post` | `{op, place, agent, text}` | `{ok: true, id}` (the new message's `seq`, as a string) or `{ok: false, reason, permanent?}` |
   | `describe` | `{op, place, agent}` | `{ok: true, brief, readers}` |
   | `status` | `{op, place, agent, status: "working"\|"done", messages?: [delivery id]}` | `{ok: true, stop?: true}` |
+  | `trace` | `{op, place, agent}` | `{ok: true, trace}`: the thread's delivery facts, no words ("Tracing a reply") |
 
   - These run under the runtime's existing limits for an adapter call: 15 s, one retry for an answered `ok: false`
     without `permanent`, and never a retry after a timeout.
@@ -349,6 +351,35 @@ the runtime's business: a refused one is logged, and the member sees nothing.
 
 A message whose delivery failed is kept, marked "not delivered", with **Send again**, which re-sends it with the same
 id.
+
+### An agent reading its own threads (t-1896)
+
+A body can read, read only, the messages of a thread its own agent is the agent of, as the thread's member sees them:
+the member's words and its replies (for `comms_days`, then the message without them), tool cards, and error cards in
+their fixed words. That's how a body checks whether its reply showed, or what the "couldn't be shown" card said.
+
+- **One MCP tool, `comms_thread {thread?, before?, limit?}`.** No route: rule 5 stands for every Comms route.
+- **Whose.** The agent is the MCP server's own agent dir, never anything the caller sends (as `comms_title`). With no
+  `thread`, it's the thread of the conversation given to identity. With one, it's that thread only when its agent is
+  the same agent. Another agent's thread, a deleted one, or an id that never was are the same refusal, and say nothing
+  of it. A body can name another of its own agent's threads: they're one agent's, and the words were said to it.
+- **What.** The newest `limit` (30 by default, at most 100) messages, or those before `before`, oldest first, and the
+  thread's state. Never a write.
+
+### Tracing a reply (t-1895)
+
+What happened to one message, from the member's send to the reply on screen, is in two records: core's (the message's
+delivery, the thread's state, the reply's `run`, any error card) and the runtime's (the run: its body, its house, its
+end, what it sent and what was refused). The runtime joins them: its `comms_trace` tool and `loom runtime trace`
+(loom-box, `src/trace.mjs`) read its own record and ask core's half with the adapter op `trace`.
+
+- **`trace {op, place, agent}`** answers `{ok: true, trace: {thread, conversation, archived, working_since,
+  queued_since, last_failed, messages}}`: the newest 100 messages' `seq`, `at`, `kind`, `from`, `run`, a member's
+  message's `delivery`, an error card's code and fixed words, a tool card's tool and state. Never a message's words. An
+  archived thread answers too. A place that isn't a thread of that agent's is `{ok: false, permanent: true}`.
+- **Who reads a trace.** An agent, its own agent's threads (the runtime's tool runs as the session's agent); an owner,
+  the threads of agents they own (owners.md), as for any conversation record (conversations.md, "Reading"). Never
+  across agents.
 
 ## The thread and its messages
 

@@ -34,7 +34,7 @@ export const TOOLS = [
   'project_revision_restore', 'project', 'project_list', 'project_hub', 'project_orphans',
   'note_write', 'note_read', 'note_list',
   'conversation_digest', 'conversations', 'conversation', 'conversation_findings',
-  'comms_title',
+  'comms_title', 'comms_thread',
 ];
 
 function toolList(prefix: string): string {
