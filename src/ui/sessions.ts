@@ -75,6 +75,8 @@ interface File {
 export interface Prefs { look?: Look | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
   /** Pixel icons (Appearance, web/src/app-icon.tsx): the household's icon set in place of the line icons; off unless turned on. */
   icons?: boolean;
+  /** The desktop (Appearance, "Desktop", docs/specs/desk-tiling.md): apps share a big screen as tiles; off unless turned on. */
+  tiling?: boolean;
   /** Allow zoom (Accessibility): pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
   zoom?: boolean;
   /** Reduce motion (Accessibility, web/src/access.ts): follow the phone's own setting (the default), or on, or off. */
@@ -92,7 +94,7 @@ export function lookOf(look: unknown, mode: unknown): Look | undefined {
   return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : 'neon';
 }
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
-  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], icons: [true, false], haptics: [true, false], zoom: [true, false],
+  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], icons: [true, false], tiling: [true, false], haptics: [true, false], zoom: [true, false],
   motion: ['follow', 'on', 'off'], contrast: ['follow', 'on', 'off'],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */

@@ -18,7 +18,7 @@ import type { Follow } from './access';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
+export function SheetView({ which, chrome, icon, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, tiling, setTiling, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; tiling: boolean; setTiling: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -47,7 +47,7 @@ export function SheetView({ which, chrome, icon, ground, setGround, look, setLoo
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} iconSet={!!s?.icons} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
+  if (which === 'appearance') return <AppearanceApp ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} tiling={tiling} setTiling={setTiling} iconSet={!!s?.icons} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
   // Accessibility: an app of its own beside Appearance (Jonathan, 2026-11-05), the person's too.
   if (which === 'accessibility') return <AccessibilityApp zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} />;
   if (which === 'scope' && s) {
@@ -97,7 +97,7 @@ function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContr
 }
 
 /** The Appearance app: the look, and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, iconSet, haptics, setHaptics, sprites }: { ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; iconSet: boolean; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
+function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, tiling, setTiling, iconSet, haptics, setHaptics, sprites }: { ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; tiling: boolean; setTiling: (on: boolean) => void; iconSet: boolean; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
   return (
     <Card id="appearance">
       <CardContent className="grid divide-y">
@@ -116,6 +116,10 @@ function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixe
         {iconSet && row('Pixel icons', 'The household’s pixel art on the dock and the app tiles, in each app’s colour. Off unless you turn it on.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Pixel icons" value={pixIcons ? 'on' : 'off'} onValueChange={(v) => { if (v) setPixIcons(v === 'on'); }}>
             <ToggleGroupItem value="off">Off</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem></ToggleGroup>
+        ))}
+        {row('Desktop', 'On a big screen (1024 px and wider): apps side by side, each in a tile of its own, or one window at a time.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Desktop" value={tiling ? 'tiling' : 'one'} onValueChange={(v) => { if (v) setTiling(v === 'tiling'); }}>
+            <ToggleGroupItem value="one">One window at a time</ToggleGroupItem><ToggleGroupItem value="tiling">Tiling</ToggleGroupItem></ToggleGroup>
         ))}
         {row('Sound', 'A chime when loom opens and when something you did lands. Off unless you turn it on.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Sound" value={sound ? 'on' : 'off'} onValueChange={(v) => { if (v) setSound(v === 'on'); }}>

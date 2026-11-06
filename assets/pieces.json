@@ -60,7 +60,7 @@
     {
       "name": "discord",
       "repo": "sleepunit-agents/loom-discord",
-      "commit": "93a213debec3f899d9241a65c73c335efc62127c",
+      "commit": "427ba03745b4c4fad87a674de81dee56790f8052",
       "version": "0.1.0",
       "label": "Discord",
       "description": "Discord as a venue: each agent's own bot; a message is routed (a mention, the channel's primary, the gates) and delivered to the agent, and its replies post as that bot."
@@ -68,7 +68,7 @@
     {
       "name": "slack",
       "repo": "sleepunit-agents/loom-slack",
-      "commit": "8d473734a530f1f79eebf75837dfaaf69a071707",
+      "commit": "c558f8e316a4b05e6ae6ea5f145ec1f3bd519e86",
       "version": "0.1.0",
       "label": "Slack",
       "description": "Slack as a venue: each agent's own app; a DM or group DM is checked against Slack and the gates and delivered to the agent, and its replies post as that app."

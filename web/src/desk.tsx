@@ -20,6 +20,8 @@ import { markColor } from './look';
 import { DOT } from './tones';
 import type { Shell } from './loom';
 import { reducedMotion } from './access';
+// The tiled desktop (tiling/tiles.tsx, docs/specs/desk-tiling.md), in this chunk: a phone never fetches it.
+export { TileDesk } from './tiling/tiles';
 
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
