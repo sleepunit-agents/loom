@@ -40,7 +40,8 @@ _Avoid_: gadget, applet
 
 **Fit**:
 what an app declares about the room it can use: a minimum, an ideal and a maximum width, a minimum height, and whether
-it wants the big slot.
+it wants the big slot. The maximum is the width past which the app gains nothing: the rule gives the room past it to a
+side that can use it, or to widget columns, and only when nothing else can use it does the app get it anyway.
 _Avoid_: size hint, constraints
 
 **The big slot**:
@@ -62,8 +63,16 @@ same tiles in the same order, it draws the same screen, whatever it was asked be
 - Each widget brings its height as drawn at the column's width (measured), or, until it's measured, the default height
   in the widget table below.
 
-The rule lives in `web/src/tiling/layout.ts` (`layout`, `place`, `admit`, `promote`, `swap`), its tests in
-`src/ui/desk-tiling-layout.test.ts`.
+The rule lives in `web/src/tiling/layout.ts`, its tests in `src/ui/desk-tiling-layout.test.ts`. An app is
+`{ id, name, fit, pinned? }`, a widget `{ id, name, kind, h? }`; all of these are pure:
+
+- `layout(apps, widgets, area, screen)` → each app's and widget's rectangle, the widgets' mode (desk, board, rail or
+  strip), their column count and the desktop's groups;
+- `place(apps, app, from?)` → the order with `app` in it (rule 3; `from` is `{ tile }` or `{ widget: true }`);
+- `admit(apps, app, widgets, area, screen, { from?, usedAt? })` → the order after rule 3 and rule 4, and the apps sent
+  to the dock, each with its words (`usedAt` is each app's last focus time);
+- `promote(apps, id)` and `swap(apps, i, j)` → the order after "make this the big one" and a swap;
+- `capFor(screen)` and `columnWidth(screen)` → rule 4's cap and rule 1's column width.
 
 ### 1. Widgets first: the desktop, a rail, or a strip
 
@@ -75,15 +84,17 @@ The rule lives in `web/src/tiling/layout.ts` (`layout`, `place`, `admit`, `promo
   - A widget column is 280 px wide on a screen under 1440 px, 300 px under 1920, and 340 px from 1920.
   - If the apps' combined **max** leaves room for at least one column and a gutter, the widgets get as many columns as
     fit there, up to 3 and no more than the groups the widgets fall in (Needs you, the agents, the rest: so Needs you,
-    Art and Mark make 2 groups). Each group is a column; with fewer columns than groups, the last groups share the last
-    column.
+    Art and Mark make 2 groups). The columns go left to right in that group order, each widget in the order it was
+    added; with fewer columns than groups, the last groups share the last column, in group order.
   - Else, if the apps' combined **min** leaves room for one column, the widgets stack in a **rail** one column wide.
   - Else the rail folds to the **strip**: one 64 px key per widget, with a face or an icon and a count. A key opens the
     widget's app. The strip always takes its 64 px and a gutter; an app that then falls under its minimum is rule 4's
     (it goes to the dock), never drawn over.
-  - "Combined" is the width the apps need split as rule 2 splits them: the first beside the rest, the second over the
-    rest, and so on (`need` in `layout.ts`); an app without a max makes the combined max unlimited.
-- A rail taller than the screen draws its cards and Needs you compact (a card shows its face, name and status line; Needs
+  - "Combined" is the width the apps need when split as rule 2 splits them, alternating, starting side by side:
+    `need(run, side) = side ? w(first) + 10 + need(rest, stacked) : max(w(first), need(rest, side by side))`, and
+    `need` of one app is its own `w` (its min or its max). An app without a max makes any combined max it's in
+    unlimited.
+- A rail taller than the area draws its cards and Needs you compact (a card shows its face, name and status line; Needs
   you shows its first ask and "N more"). If it's still taller, the rail scrolls inside itself.
 - A widget never takes a split of the app area. A widget in half the screen is the failure this rule exists to prevent.
 
@@ -111,10 +122,15 @@ Split ratios come from fit, in this order:
      stops at its max. If the first has no max and the rest all have one, the first takes at least what the rest can't
      use (`W − their combined max`). When both sides have a max, or neither does, step 1's width stands: a max only
      decides who takes the room when one side can use it and the other can't. (Room past every max goes to widget
-     columns, rule 1.) A max applied here can take the first under 34 percent.
+     columns when rule 1 gives them more; otherwise the apps keep it.) A max applied here can take the first under 34
+     percent.
   3. Then the minimums: the rest keep their combined minimum, and the first keeps its own as far as that allows.
 - **Stacked:** half each (`round((h − gutter) / 2)`), then clamped so the rest keep the largest minimum height among
   them, and the first keeps its own as far as that allows.
+
+Rule 2 always draws a layout; step 3 and the stacked clamp can still leave an app under its minimum when there isn't
+room. Rule 4 then reads that layout, and while any app in it is under its minimum, or there are more apps than the cap,
+it sends one to the dock and lays them out again.
 
 ### 3. Which app is first
 
@@ -142,9 +158,13 @@ A split is never made if it would put an app under its minimum width or height. 
   repeats this until the layout fits. When no app may go, what's left stays, each at what the split gives it.
 - The same happens past the cap for the screen's width: **2** apps under 1280 px, **3** under 1600, **4** under 2560,
   and **6** from 2560.
-- A toast says which app went to the dock and why, and the live region (Accessibility) says the same words: "Comms
-  went to the dock to make room for Changes: it would have been under its 360 px minimum height", or "…: 3 apps is the
-  most this screen holds".
+- A toast says which app went to the dock and why, and the live region (Accessibility) says the same words:
+  `<gone> went to the dock to make room for <opened>: ` and then one of
+  - `it would have been under its <n> px minimum` (plus ` height` for a height), when the app that went is the one
+    that would have been too small;
+  - `<app> would have been under its <n> px minimum` (or ` height`), when another app was too small and this one went
+    because it was used least recently (the first app the layout puts under its minimum, in the order);
+  - `<cap> apps is the most this screen holds`.
 
 Why this and not a phone layout: a phone layout in a 300 px tile is a page you can't use beside the others. Moving the
 oldest app to the dock keeps every tile usable and loses nothing, because its key brings it back where it was.
@@ -214,11 +234,11 @@ you's first ask and "N more"; it's `min(height, compact height)`.
 
 ## Interaction
 
-- **Opening, from the dock or Find:**
-  - If the app isn't open, a tile is added.
+- **Opening, from the dock, Find or a link:**
+  - If the app isn't open, a tile is added, and it takes focus.
   - If it's open, its tile is focused, and goes to the page asked for when that's another page.
   - If it's minimized, it comes back into the layout where its history stands.
-- **The focused app's own dock key** minimizes it, as it does today (`desk.tsx`, #532).
+- **The focused app's own dock key** minimizes it, as it does today (`desk.tsx`, loom#532).
 - **Home** (its key, or Alt+H) sends every app to the dock and shows the desktop. Home again brings them back in their
   order.
 - **Links:**
@@ -244,20 +264,20 @@ or a letter.
 
 | keys | what |
 |---|---|
-| Alt+Shift+← ↑ → ↓ | focus the tile that way (by position, widgets included) |
+| Alt+Shift+← ↑ → ↓ | focus the tile that way, widgets included: of the tiles that start past this one's edge that way, the one whose centre is nearest this one's; a tie goes to the earlier in the order |
 | Alt+Shift+Enter | make this the big one |
 | Alt+Shift+, / . | swap with the tile before / after |
 | Alt+Shift+M | minimize to the dock |
 | Alt+Shift+W | close the tile |
-| Alt+← / → | Back and Forward in the focused tile, only when it has somewhere to go (as today, #536) |
+| Alt+← / → | Back and Forward in the focused tile, only when it has somewhere to go (as today, loom#536) |
 | Alt+H | Home: apps to the dock, the desktop shows |
 
 Esc never closes a tile: with several on screen, it would close the wrong one too easily. Esc still closes a sheet, a
 dialog and Find.
 
-## Per-tile pages and history (reusing #536)
+## Per-tile pages and history (reusing loom#536)
 
-#536 gave each app its own history (`web/src/trail.ts`: `note`, `step`, `keepTop`, `lastAt`, `visited`, `minimize`,
+loom#536 gave each app its own history (`web/src/trail.ts`: `note`, `step`, `keepTop`, `lastAt`, `visited`, `minimize`,
 `restore`, `forget`, keyed by app). The window's strip (`DeskWindow`) draws Back, Forward and a trail from it. Tiling
 reuses all of it:
 
@@ -267,6 +287,11 @@ reuses all of it:
   `load()`). Phase 1 moves that into a hook, `usePage(url)`, that each tile runs for its own URL. The phone and the
   shell keep using it once, so nothing visible changes. Redirects, `_flash`, live refresh (`/events`) and the page's own
   refresh rules move with it.
+  Two things stay one for the whole tab, however many tiles: the live stream (`/events`, one per open app as
+  `docs/specs/ui-app.md` "Live" has it; every tile listens to it) and the kept copies of pages (each page's last answer
+  and its fingerprint), so a tile opening a page another has shown opens it at once. The refresh timer's pause (a dialog
+  open, a field in use, the tab hidden) is the screen's: a dialog in one tile pauses every tile's timer, never the live
+  stream's refreshes.
 - **The tile's Env:** each tile renders inside its own `EnvContext` (`web/src/blocks.tsx` `Env`). The tile's `go`
   follows the link rules above, and its `send` is its own page's. Blocks need no change: they already link and act
   through `useEnv()`.
@@ -279,8 +304,8 @@ reuses all of it:
 Radix dialogs and sheets portal to `<body>`, trap focus across the whole page and hide everything else from assistive
 tech. In a tile:
 
-- Each tile has its own portal root. A tile's `Dialog`, `Sheet`, `DropdownMenu` and `Select` render into it, through a
-  `PortalContainer` context the `components/ui` wrappers read.
+- Each tile has its own portal root. A tile's `Dialog`, `AlertDialog`, `Drawer`, `Sheet`, `DropdownMenu` and `Select`
+  render into it, through a `PortalContainer` context the `components/ui` wrappers read.
 - A tile's dialog is modal to its tile only. Its overlay covers the tile, its focus trap is the tile, and the other
   tiles stay usable and readable. The desk's own keys ask `popUpOpen()` (`desk.tsx`) before taking Esc or Alt+←/→;
   that check becomes per tile.
@@ -301,6 +326,8 @@ tech. In a tile:
 - **The query** holds the set:
   - `t` is the apps on screen in order, each by its key's name (the last part of its dock key's path: `comms`,
     `inbox`, `tasks` for `/p/tasks`), a `*` before the focused one and a `!` after the pinned one: `*tasks!` is both.
+    An agent's pages are an app of their own per agent (key `/a/<id>`, name its id), so two agents' pages are two
+    tiles; a household app's name wins over an agent with the same id.
   - `m` is the minimized apps, in the order they went to the dock.
   - `w` is the widgets in order (`needs`, `vitals`, `backup`, `ticker`, and an agent's card by the agent's id).
   - For example, `/comms/th/7f3a?t=tasks!,*comms,inbox&m=boxes&w=art,mark,needs`. Each app's page is its own history's
@@ -318,7 +345,8 @@ tech. In a tile:
 ## Accessibility
 
 - **Focus order:** the DOM order is the order list (`t`): position 0 (the big slot), then 1, 2 and so on, which is the
-  order the rule subdivides them in; then the widgets in their order. Tab order and reading order follow it.
+  order the rule subdivides them in; then the widgets as drawn, column by column, top to bottom. Tab order and reading
+  order follow it.
 - **Each tile** is a `region` with `aria-roledescription="tile"` and the label "tile 2 of 3, Comms". Moving focus with
   the keys moves it to the tile's title, which announces exactly that.
 - **One polite live region** says what changed: "Tasks opened, tile 1 of 3"; "Inbox closed"; and rule 4's toast,
@@ -334,7 +362,7 @@ tech. In a tile:
 
 ## Budget
 
-First-page JS is about 239 KB of the 250 KB budget (`src/ui/web-app.test.ts`).
+First-page JS was about 240 KB of the 250 KB budget on 2026-11-06 (`src/ui/web-app.test.ts`, run on a built app).
 
 - Tiling lives in `web/src/tiling/`, loaded with the desk's own chunk, at 1024 px and wider only. A phone never fetches
   it.
@@ -360,6 +388,10 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
    - In 3000 wide, Setup (max 680) then Tasks gives Setup 680 px: the max wins over the 34 percent floor.
    - In 1810 wide, Comms (max 820) then Inbox (max 980) gives Comms 850 px and Inbox 950: with both capped, the ratio
      stands.
+   - In 1810 wide, Setup then Changes gives Setup 612 px: its raw share (560/1660, 33.7 percent, 607 px) is clamped up
+     to 34 percent.
+   - In 3000 wide, Tasks (no max) then Comms (max 820) gives Tasks 2,170 px and Comms 820: Tasks takes what Comms can't
+     use, past its ratio's 1,809.
 4. **Where a new app goes.**
    - From the dock: Tasks with Comms open goes first; Comms with Tasks open goes last; with Comms made the big one,
      Tasks goes last.
@@ -368,12 +400,12 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
    - From a widget: Tasks with Comms open goes last.
    - Swapping the pinned tile out of position 0 unpins it.
 5. **Widgets never split.**
-   - With Needs you, Art and Mark, and 1 to 4 apps, on screens of 1280, 1600 and 1920 (areas 48 px narrower, 800
-     tall), no widget's rectangle is wider than 340 px.
+   - With Needs you, Art and Mark, and the first 1 to 4 of Tasks, Comms, Inbox and Knowledge, on screens of 1280, 1600
+     and 1920 (areas 48 px narrower, 800 tall), no widget's rectangle is wider than 340 px.
    - With no apps, Vitals, Art, Needs you, Mark and Backup group into [Needs you] | [Art, Mark] | [Vitals, Backup].
 6. **Rail, columns, strip, compact.** The widgets are Needs you, Art and Mark unless named.
    - Comms alone in 1872×890 on 1920 gives the widgets 2 columns (2 groups).
-   - Tasks and Comms there give a rail of 340 px.
+   - Tasks and Comms there give a rail of 340 px; in 1552×800 on 1600, 300 px; in 1232×800 on 1280, 280 px.
    - Tasks and Changes in 1232×600 on 1280 give the strip (64 px).
    - Tasks and Comms in 1872×600 on 1920 with Needs you and three agents' cards draw the cards and Needs you compact,
      and don't scroll; with seven cards, the rail scrolls.
@@ -381,16 +413,23 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
    - In 1232×597 on 1280, with Tasks and Comms open and Tasks focused after Comms, opening Changes from the dock sends
      Comms to the dock (it would be under its 360 px minimum height), its words "Comms went to the dock to make room for
      Changes: …minimum…", and every remaining app is at or above its minimum.
-   - The same, opened from the Comms tile: Tasks goes instead. The same with Comms made the big one: Tasks goes.
+   - The same, opened from the Comms tile: Tasks goes instead, its words "Tasks went to the dock to make room for
+     Changes: Comms would have been under its 360 px minimum height". The same with Comms made the big one: Tasks goes.
    - In 1104×700 on 1152, with Tasks open and the three widgets, opening Changes sends Tasks to the dock, and the strip
      keeps its 64 px.
-8. **The cap.** With Inbox and Comms open in 1232×760, opening Knowledge on a 1279 px screen sends one to the dock
-   ("2 apps is the most this screen holds"); on 1280 it doesn't.
-9. **Deterministic.** Four apps and the three widgets in 1872×890 on 1920 give identical rectangles before and after
-   laying out a different set in between.
+8. **The cap.** Areas are 48 px narrower than the screen; no app has had focus.
+   - With Inbox and Comms open (760 tall), opening Knowledge on 1279 sends Inbox to the dock ("2 apps is the most this
+     screen holds"); on 1280 it doesn't.
+   - With Appearance, Accessibility and Account open (1000 tall), opening Passkeys on 1599 sends Appearance ("3 apps…");
+     on 1600 it doesn't.
+   - With those and Passkeys open (1300 tall), opening Secrets on 2559 sends Appearance ("4 apps…"); on 2560 it
+     doesn't.
+9. **Deterministic.** Tasks, Comms, Inbox and Knowledge and the three widgets in 1872×890 on 1920 give identical
+   rectangles before and after laying out a different set in between.
 
-**The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`, at 1024×768, 1280×800 and 1920×1080, Tiling
-chosen):**
+**The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`, Tiling chosen).** Criteria 10 and 11 run at
+1024×768, 1280×800 and 1920×1080; the rest, which need three or more apps, at 1280×800 and 1920×1080 (and 17's four
+apps at 1920×1080 only).
 
 10. **Open, focus, minimize.**
     - The Inbox key, then the Comms key, gives two tiles and an address whose query has `t=inbox,*comms`.
@@ -410,7 +449,8 @@ chosen):**
 14. **Reload.** A reload of `/comms?t=tasks!,*comms&m=inbox&w=art,needs` draws Tasks (pinned, first), then Comms,
     focused, the Inbox in the dock, and the two widgets, in that order.
 15. **Keys.**
-    - With three tiles, Alt+Shift+→ moves focus to the tile on the right, and the live region says "tile 2 of 3, …".
+    - With three tiles and the big one focused, Alt+Shift+→ moves focus to position 1 (the upper of the two on the
+      right), and the live region says "tile 2 of 3, …"; Alt+Shift+↓ from there moves to position 2.
     - Alt+Shift+Enter makes it first. Alt+Shift+, swaps it with the tile before, Alt+Shift+. with the one after.
     - Alt+Shift+M minimizes it, Alt+Shift+W closes it.
     - Alt+H shows the desktop with every app in the dock; Alt+H again brings them back in their order.
@@ -422,7 +462,8 @@ chosen):**
     - Another tile's buttons still respond to a click.
     - Nothing outside that tile has `aria-hidden`.
 17. **Nothing sideways, nothing overlapping, in order.**
-    - With 1 to 4 apps (and, from phase 4, Needs you, Art and Mark), no two tiles' boxes overlap.
+    - With the first 1 to 4 of Tasks, Comms, Inbox and Knowledge (and, from phase 4, Needs you, Art and Mark), no two
+      tiles' boxes overlap.
     - Every tile is inside the area between the bars and the dock, and the page never scrolls sideways.
     - The tiles' DOM order is the `t` order, then the widgets.
 18. **The setting.** With no choice made, the desktop is One window at a time: opening a second app replaces the first
@@ -461,8 +502,8 @@ shipped and been checked, and then the owner decides.
 1. **Rail side:** the widget rail goes on the **right**.
 2. **Two tiles of the same app** (two Comms threads side by side): **later**, not in this build.
 3. **Tiling is opt-in** at first, a per-person Appearance setting: "Tiling" / "One window at a time". It becomes the
-   default once phase 5 (tile-scoped dialogs, transitions, keys, plain mode) has shipped and been checked. The build
-   says when it's ready to flip and doesn't flip it itself.
+   default once phase 5 (tile-scoped dialogs, transitions, keys, plain mode) has shipped and been checked: the build
+   says when it's ready, and the owner flips it, not the build.
 4. **No drag-to-resize gutters** for now.
 5. **Day-one widgets:** agent cards, Needs you, Vitals, Backup and the ticker. A box's own vitals as a widget is
    allowed: the owner's rule of 2026-10-27 is that Home shows no box's own state (a box's state lives on its page),
