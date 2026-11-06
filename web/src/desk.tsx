@@ -20,6 +20,9 @@ import { markColor } from './look';
 import { DOT } from './tones';
 import type { Shell } from './loom';
 import { reducedMotion } from './access';
+// The tiling rule (tiling/layout.ts, docs/specs/desk-tiling.md) rides in this chunk, never a phone's; the tiles drawn
+// with it come next (phase 3).
+export { layout as tileLayout } from './tiling/layout';
 
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
