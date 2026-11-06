@@ -49,7 +49,7 @@ export function SheetView({ which, chrome, icon, ground, setGround, look, setLoo
   // Appearance: an app of Setup's, the person's look (look.ts).
   if (which === 'appearance') return <AppearanceApp ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} tiling={tiling} setTiling={setTiling} iconSet={!!s?.icons} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
   // Accessibility: an app of its own beside Appearance (Jonathan, 2026-11-05), the person's too.
-  if (which === 'accessibility') return <AccessibilityApp zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} />;
+  if (which === 'accessibility') return <AccessibilityApp zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} tiling={tiling} setTiling={setTiling} />;
   if (which === 'scope' && s) {
     return (
       <div className="grid gap-3">
@@ -80,7 +80,7 @@ const follow = (label: string, value: Follow, set: (v: Follow) => void) => (
 );
 
 /** The Accessibility app (Jonathan, 2026-11-05): zoom, motion and contrast. The person's, on every device (access.ts). */
-function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContrast }: { zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
+function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContrast, tiling, setTiling }: { zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void; tiling: boolean; setTiling: (on: boolean) => void }) {
   return (
     <Card id="accessibility">
       <CardContent className="grid divide-y">
@@ -90,6 +90,11 @@ function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContr
         ))}
         {row('Reduce motion', 'Pages fade instead of sliding, and nothing loops or animates. Follow the phone uses its own setting.', follow('Reduce motion', motion, setMotion))}
         {row('Higher contrast', 'Brighter text, stronger edges and focus rings, solid backgrounds behind words, no glows.', follow('Higher contrast', contrast, setContrast))}
+        {/* The plain mode (docs/specs/desk-tiling.md, "The setting"): the same choice as Appearance's Desktop. */}
+        {row('One window at a time', 'On a big screen, one app at a time in one window, and Home as the desktop. Off, apps share the screen as tiles.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="One window at a time" value={tiling ? 'off' : 'on'} onValueChange={(v) => { if (v) setTiling(v === 'off'); }}>
+            <ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
+        ))}
         <p className="pt-3 text-sm opacity-60">Yours on every device you sign in on.</p>
       </CardContent>
     </Card>

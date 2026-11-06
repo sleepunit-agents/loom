@@ -8,8 +8,10 @@ import { cn } from "@/lib/utils";
 import * as Primitive from "@radix-ui/react-dialog";
 import { useFlowAppearance } from "@/lib/cojeev-motion/use-flow";
 export type DrawerProps = React.ComponentProps<typeof Primitive.Root>;
+/** In a tile, modal to the tile alone (as Dialog: dialog.tsx). */
 export function Drawer(props: DrawerProps) {
-  return <Primitive.Root {...props} />;
+  const tile = usePortalContainer();
+  return <Primitive.Root {...props} modal={tile ? false : props.modal} />;
 }
 export type DrawerTriggerProps = React.ComponentProps<typeof Primitive.Trigger>;
 export function DrawerTrigger(props: DrawerTriggerProps) {
@@ -67,6 +69,8 @@ export function DrawerContent({
         data-part="content"
         className={cn(drawerContentVariants(), className)}
         {...props}
+        // In a tile, a press in another tile leaves it open; one on its own tile closes it (as Dialog's).
+        {...(tile ? { onInteractOutside: (e: Event) => { if (!tile.contains(e.target as Node)) e.preventDefault(); props.onInteractOutside?.(e as never); } } : {})}
       >
         {children}
         {showCloseButton && (

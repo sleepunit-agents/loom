@@ -448,12 +448,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const focusEl = (el: HTMLElement) => {
     const key = el.dataset.tile;
     if (key) {
+      el.querySelector<HTMLElement>('.loom-tile__bar h2')?.focus({ preventScroll: true });
       focus(key);
-      requestAnimationFrame(() => {
-        const t = box.current?.querySelector<HTMLElement>(`.loom-tile[data-tile="${CSS.escape(key)}"]`);
-        t?.querySelector<HTMLElement>('.loom-tile__bar h2')?.focus({ preventScroll: true });
-        if (t) announce(t.getAttribute('aria-label') ?? '');
-      });
+      announce(el.getAttribute('aria-label') ?? '');
       return;
     }
     el.focus({ preventScroll: true });
@@ -490,7 +487,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     let done = true;
     if (e.shiftKey) {
       if (arrows[e.code]) toward(arrows[e.code]);
-      else if (e.code === 'Enter' && key) { makeBig(key); focusEl(el!); }
+      else if (e.code === 'Enter' && key) makeBig(key);
       else if ((e.code === 'Comma' || e.code === 'Period') && (key || widget)) swapBy((key ?? widget)!, e.code === 'Comma' ? -1 : 1);
       else if (e.code === 'KeyM' && key) minimize(key);
       else if (e.code === 'KeyW' && key) close(key);
