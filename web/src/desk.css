@@ -9,18 +9,30 @@
 /* the bars span the screen, not a phone's column */
 :root[data-look] .loom-desk .loom-top>div{max-width:none;padding-inline:var(--desk-gutter)}
 :root[data-look] .loom-desk .loom-top{flex:none}
+/* ---- the desktop's one bar (phone-bar.tsx PhoneBar with its clock and status; Jonathan, 2026-11-06: "one line, like a
+   real desktop OS"): loom's clock and the page's name on the left, LOOM//OS and the status glyphs on the right, the
+   ticker between them, across the whole screen, a hairline under it. The glyphs' words drop below the bar. ---- */
+:root[data-look] .loom-desk .loom-top--one{padding-top:env(safe-area-inset-top);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--v-canvas) 96%,transparent),color-mix(in srgb,var(--v-canvas) 84%,transparent));
+  box-shadow:inset 0 -1px 0 var(--v-border),0 1px 0 color-mix(in srgb,var(--v-pink) 26%,transparent)}
+:root[data-look] .loom-pbar--one{height:34px;gap:14px;font-size:12px}
+:root[data-look] .loom-pbar--one .loom-sys__clock{flex:none;color:var(--v-text-2)}
+:root[data-look] .loom-pbar--one .loom-pbar__name{max-width:30%}
+:root[data-look] .loom-pbar--one .loom-pbar__name h1{line-height:34px;letter-spacing:.04em}
+:root[data-look] .loom-pbar--one .loom-sys__icons{flex:none;margin-right:-3px}
+:root[data-look] .loom-pbar--one .loom-sys__icon{height:34px;color:var(--v-text-2)}
+:root[data-look] .loom-pbar--one .loom-sys__icon[data-dim]{color:var(--loom-warn-ink)}
 :root[data-look] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
   padding:14px var(--desk-gutter) var(--desk-dock);display:flex;flex-direction:column;gap:12px;overflow:hidden}
 
 /* ---- the desktop's layout: what needs you on the left, the agents in the middle, vitals on the right. The side columns
    keep a readable width from 1024 to 2560; the middle takes the rest, and its agents fill it two or three across. ---- */
 :root[data-look] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
-  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px);grid-template-rows:auto minmax(0,1fr)}
+  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px);grid-template-rows:minmax(0,1fr)}
 @media (min-width:1600px){:root[data-look] .loom-desk-home{grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(300px,380px);gap:20px}}
 :root[data-look] .loom-desk-col{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;scrollbar-width:thin;
   padding:2px 4px 8px;margin:-2px -4px 0}
 :root[data-look] .loom-desk-agents{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
-:root[data-look] .loom-desk-headline{grid-column:1/-1;font-family:var(--font-display);font-weight:600;font-size:22px;letter-spacing:.01em;line-height:1.2;color:var(--v-text)}
 
 /* ---- a widget: a dark panel over the ground, a hairline edge, a lit tick in its tint on the top edge, a cut corner ---- */
 :root[data-look] .loom-w{--t:var(--v-pink);position:relative;display:flex;flex-direction:column;min-width:0;flex:none;

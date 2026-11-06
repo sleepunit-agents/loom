@@ -1,5 +1,5 @@
 /**
- * Neon wider than a phone (Jonathan, 2026-11-05): the phone's bar (phone-bar.tsx) at every width, under loom's own
+ * Neon wider than a phone (Jonathan, 2026-11-05; a desktop one line since 2026-11-06, desk-chrome.integration.test.ts): the phone's bar (phone-bar.tsx) at every width, under loom's own
  * system bar (system-bar.tsx) where a phone's status bar would be: loom's clock (loom's time, in loom's zone, never the
  * browser's) on the left, a few monochrome glyphs on the right, each with its words; the big icon-and-title header is
  * gone. In a real browser at 1280 and 800 px, over a household with a Boxes piece that has an alert and reports an agent
@@ -117,7 +117,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
   }
   const open = async (p: Page, path: string) => { await p.goto(`${base}${path}`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(400); };
 
-  it('at 1280 px: the system bar\'s clock and named glyphs over the phone\'s bar; no big header; the name is the ⓘ when the page has info; the count shows', async () => {
+  it('at 1280 px (a desktop): one bar, the clock and the name on its left, LOOM//OS and the named glyphs on its right; no big header; the name is the ⓘ when the page has info; the count shows', async () => {
     const p = await device('neon', 'reduce', 1280);
     await open(p, '/');
     // The big header is gone: one title, the bar's, small and bold; no app tile.
@@ -125,9 +125,9 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     expect(await p.locator('.loom-pbar h1').innerText()).toBe('Home');
     expect(await p.locator('.loom-pbar h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize))).toBe(13);
     expect(await p.locator('.loom-top .loom-app-tile').count()).toBe(0);
-    // The system bar: over the phone's bar, the clock on its left (the time alone: "9:41"), small and bold.
-    const sys = p.locator('.loom-sys');
-    expect(await sys.count()).toBe(1);
+    // One bar (Jonathan, 2026-11-06: "one line, like a real desktop OS"): no system bar over it; the clock is the bar's.
+    expect(await p.locator('.loom-sys').count()).toBe(0);
+    expect(await p.locator('.loom-pbar--one .loom-sys__clock').count()).toBe(1);
     const clock = p.locator('.loom-sys__clock');
     // loom's time in loom's zone (Kathmandu here), not the browser's (Los Angeles): "9:41", no AM or PM.
     const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
@@ -138,13 +138,12 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     expect(shown).toMatch(/^\d{1,2}:\d{2}$/);
     expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(shown);
     expect(await clock.evaluate((e) => ({ size: parseFloat(getComputedStyle(e).fontSize), weight: getComputedStyle(e).fontWeight }))).toEqual({ size: 13, weight: '700' });
-    const [sb, bar, name, brand] = await Promise.all(['.loom-sys', '.loom-pbar', '.loom-pbar__name', '.loom-pbar__brand'].map(async (s) => (await p.locator(s).boundingBox())!));
-    expect(sb.y + sb.height).toBeLessThanOrEqual(bar.y + 1);
-    // As on a phone: the clock over the page's name, the glyphs over LOOM//OS (the bar spans the page's column).
-    const cb = (await clock.boundingBox())!, last = (await p.locator('.loom-sys__icon svg').last().boundingBox())!;
-    expect(Math.abs(cb.x - name.x)).toBeLessThanOrEqual(2);
-    expect(Math.abs(last.x + last.width - (bar.x + bar.width))).toBeLessThanOrEqual(4);
-    expect(last.x).toBeGreaterThan(brand.x);
+    const [bar, name, brand] = await Promise.all(['.loom-pbar', '.loom-pbar__name', '.loom-pbar__brand'].map(async (s) => (await p.locator(s).boundingBox())!));
+    // One line: the clock, then the name; LOOM//OS, then the glyphs; all on the bar's middle.
+    const cb = (await clock.boundingBox())!, first = (await p.locator('.loom-sys__icon svg').first().boundingBox())!;
+    expect(cb.x + cb.width).toBeLessThanOrEqual(name.x);
+    expect(first.x).toBeGreaterThan(brand.x + brand.width);
+    for (const b of [cb, name, brand, first]) expect(Math.abs(b.y + b.height / 2 - (bar.y + bar.height / 2))).toBeLessThanOrEqual(2);
     // The glyphs: each named in words (aria-label), the same words shown on hover. Live; one agent at work; Boxes dimmed by its alert;
     // the backup, not set up here.
     const icons = await p.locator('.loom-sys__icon').evaluateAll((es) => es.map((e) => ({ k: (e as HTMLElement).dataset.k, name: e.getAttribute('aria-label'), dim: e.hasAttribute('data-dim') })));
@@ -235,12 +234,12 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await p.context().close();
   }, 60_000);
 
-  it('Low Light and Daylight at 1280 px: the same system bar and phone bar, no big header', async () => {
+  it('Low Light and Daylight at 1280 px: the same one bar, no big header', async () => {
     for (const look of ['lowlight', 'daylight'] as const) {
       const p = await device(look, 'reduce', 1280);
       await open(p, '/');
       expect(await p.evaluate(() => document.documentElement.dataset.look), look).toBe(look);
-      expect([await p.locator('.loom-sys').count(), await p.locator('.loom-pbar').count(), await p.locator('.loom-top h1').count()], look).toEqual([1, 1, 1]);
+      expect([await p.locator('.loom-pbar--one').count(), await p.locator('.loom-pbar').count(), await p.locator('.loom-top h1').count()], look).toEqual([1, 1, 1]);
       expect(await p.locator('.loom-pbar h1').evaluate((e) => parseFloat(getComputedStyle(e).fontSize)), look).toBe(13);
       await p.context().close();
     }

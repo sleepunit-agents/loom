@@ -36,7 +36,8 @@ its own frame.
 _Avoid_: window (the old single big frame, gone 2026-11-06), pane, panel
 
 **Widget**:
-a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup), or the ticker (the bar's feed as a card). It is
+a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup). (The ticker was one until 2026-11-06; the
+desktop's bar scrolls it, so it went.) It is
 live, it never gets a split of its own, and it opens its app beside it.
 _Avoid_: gadget, applet
 
@@ -59,7 +60,7 @@ per widget.
 The layout is a pure function: `layout(apps, widgets, area, screen) → rectangles`. It has no state of its own. Given the
 same tiles in the same order, it draws the same screen, whatever it was asked before. Gutters are 10 px.
 
-- `area` is the room the tiles share, in px: the desk between the bars and the dock, inside the desk's own 24 px side
+- `area` is the room the tiles share, in px: the desk between the bar and the dock, inside the desk's own 24 px side
   gutters (`desk.css` `--desk-gutter`).
 - `screen` is the viewport's width (`innerWidth`). The caps (rule 4) and the widget column's width read it, never the
   area.
@@ -79,10 +80,10 @@ The rule lives in `web/src/tiling/layout.ts`, its tests in `src/ui/desk-tiling-l
 
 ### 1. Widgets first: the desktop, a rail, or a strip
 
-- **No app open:** the widgets *are* the desktop, laid out as Home is today, its headline across the top. Needs you is
-  the left column, the agents are the middle (their cards fill it two or three across), and everything else is the right
-  column. A fresh device starts here, with the seed (below, "A fresh desktop"). With apps open, the headline isn't
-  drawn.
+- **No app open:** the widgets *are* the desktop, laid out as Home is today, and nothing else: no headline or status
+  line (Jonathan, 2026-11-06: "just cards, widgets and windows"). Needs you is the left column, the agents are the middle
+  (their cards fill it two or three across), and everything else is the right column. A fresh device starts here, with
+  the seed (below, "A fresh desktop").
 - **Apps open:** the widgets move to the right edge.
   - A widget column is 280 px wide on a screen under 1440 px, 300 px under 1920, and 340 px from 1920.
   - If the apps' combined **max** leaves room for at least one column and a gutter, the widgets get as many columns as
@@ -199,7 +200,6 @@ drop the detail pane, and under 600 px drop their extra columns.
 | Needs you | 260×130 | 240 | 130 |
 | Vitals | 260×110 | 180 | as drawn |
 | Backup | 260×90 | 110 | as drawn |
-| the ticker | 260×44 | 44 | as drawn |
 
 A widget's height is its own, measured as drawn at the column's width (its asks, its places, its lines); the default is
 what the rule uses before it has been measured. "Compact" (rule 1) is the card's face, name and status line, and Needs
@@ -227,8 +227,7 @@ you's first ask and "N more"; it's `min(height, compact height)`.
 
 - **Adding:**
   - A **+ key** in the dock (the widget launcher) lists what can go on the desktop: Needs you, each agent's card,
-    Vitals, Backup and the ticker. One already on the desktop shows "on the desktop" and focuses it. The ticker
-    widget shows the same feed as the bar's ticker (`phone-bar.tsx`); the bar keeps its own.
+    Vitals and Backup. One already on the desktop shows "on the desktop" and focuses it.
   - **Find** lists the same as "Add widget: …".
   - An agent's pages have **Pin card to the desktop**: the agent's tile strip carries it (an agent's pages are its
     tile). The dock's agent key menu would have it too, but the household's dock has no agent keys yet (an agent's own
@@ -244,8 +243,8 @@ you's first ask and "N more"; it's `min(height, compact height)`.
 ## A fresh desktop
 
 A person with no saved layout on this device (a new device, a first visit) gets the **seed**, so the desktop is never
-blank: Needs you, each agent's card they can see (pixel faces where they have them), Vitals, Backup (when it's set up)
-and the ticker. It's one short list in code, `web/src/tiling/widgets.ts` `SEED`, so it's easy to change; an entry that
+blank: Needs you, each agent's card they can see (pixel faces where they have them), Vitals and Backup (when it's set up).
+It's one short list in code, `web/src/tiling/widgets.ts` `SEED`, so it's easy to change; an entry that
 isn't there (no backup, no agents yet) is left out, and a household with no agents shows "No agents yet" and New agent
 where their cards would be. A saved layout (`loom-tiles`, or a set in the address) is never touched.
 
@@ -271,6 +270,13 @@ window at a time saved there (`tiling: false`) has this on, until they choose in
 (`src/ui/sessions.ts` `oneWindowOf`), and a device that kept `loom-tiling` as `off` starts with it on
 (`web/src/look.ts` `oneWindowKept`). The old `tiling` field is still taken and kept, so a device running the older app
 gets no error.
+
+## The bar
+
+One line across the top, as a desktop OS has (Jonathan, 2026-11-06): loom's clock and the focused page's name on the
+left; LOOM//OS, the status glyphs (`system-bar.tsx`) and the needs-you count on the right; the ticker scrolls between
+them (`phone-bar.tsx` `PhoneBar` with its `clock` and `status`, drawn as one line by `desk.css` `.loom-pbar--one`).
+Narrower than a desktop, a screen keeps two (loom's status bar over the phone's), and a phone its own one.
 
 ## Interaction
 
@@ -378,7 +384,8 @@ tech. In a tile:
     An agent's pages are an app of their own per agent (key `/a/<id>`, name its id), so two agents' pages are two
     tiles; a household app's name wins over an agent with the same id.
   - `m` is the minimized apps, in the order they went to the dock.
-  - `w` is the widgets in order (`needs`, `vitals`, `backup`, `ticker`, and an agent's card by the agent's id).
+  - `w` is the widgets in order (`needs`, `vitals`, `backup`, and an agent's card by the agent's id). A retired
+    widget's id (`ticker`, 2026-11-06) is dropped as the set loads, and the device's copy is written again without it.
   - For example, `/comms/th/7f3a?t=tasks!,*comms,inbox&m=boxes&w=art,mark,needs`. Each app's page is its own history's
     (`trail.ts`, this tab's), and the path is the focused one's.
 - **On reload**, the address restores the set, minimized apps in the dock.
@@ -515,11 +522,11 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
 17. **Nothing sideways, nothing overlapping, in order.**
     - With the first 1 to 4 of Tasks, Comms, Inbox and Knowledge (and, from phase 4, Needs you, Art and Mark), no two
       tiles' boxes overlap.
-    - Every tile is inside the area between the bars and the dock, and the page never scrolls sideways.
+    - Every tile is inside the area between the bar and the dock, and the page never scrolls sideways.
     - The tiles' DOM order is the `t` order, then the widgets.
 18. **The only desktop, seeded, and One window at a time** (`src/ui/desk-tiling-only.integration.test.ts`).
     - At 1280 and 1920, a fresh session (nothing saved) lands on the seeded widgets, Needs you, both agents' cards,
-      Vitals and the ticker, with no setting chosen; Appearance has no Desktop choice.
+      Vitals and Backup, with no setting chosen; Appearance has no Desktop choice.
     - A saved `tiling: false` is served as `oneWindow: true`, and a device's `loom-tiling` of `off` starts with it on.
     - With One window at a time on, the Inbox then Comms gives one tile, Comms; the Inbox is in the dock, and the toast
       says `Inbox went to the dock to make room for Comms: one window at a time is on`. The widgets stay. Turning it
@@ -530,6 +537,12 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
     screen fetches no `desk-*` asset, and `/comms?t=tasks,*comms` there draws Comms as today's phone page. A desktop
     window with the Inbox and Comms tiled, narrowed from 1280 to 900 px, draws Comms as today's phone page; widened back
     to 1280, the two tiles return.
+
+22. **One bar** (`src/ui/desk-chrome.integration.test.ts`). At 1024, 1280 and 1920 the bar is one line, 34 px tall: the
+    clock, then the name, on the left; LOOM//OS, then the glyphs, on the right; the ticker between, wider than either
+    side's gap. No second bar. A saved layout or an address with `ticker` in its widgets loads without it, and the
+    device's copy is written again without it; the seed has no ticker; the desktop draws no headline. 390 px: the
+    phone's bar, no clock, no glyphs.
 
 **Pieces (vitest):**
 
@@ -565,7 +578,7 @@ screen readers. It shipped before tiling could be the default; the owner then ma
    window at a time an Accessibility option inside tiling ("I'd rather it behave like this and just prevent opening the
    second window"). The old window and its setting are gone.
 4. **No drag-to-resize gutters** for now.
-5. **Day-one widgets:** agent cards, Needs you, Vitals, Backup and the ticker. A box's own vitals as a widget is
+5. **Day-one widgets:** agent cards, Needs you, Vitals and Backup (the ticker widget retired 2026-11-06: the bar has it). A box's own vitals as a widget is
    allowed: the owner's rule of 2026-10-27 is that Home shows no box's own state (a box's state lives on its page),
    and a widget the person chooses to pin is a view of that page, not Home's. It is a follow-up, not in phases 1 to 6.
    A project's status widget is later too.

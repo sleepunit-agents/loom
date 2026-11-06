@@ -1,7 +1,7 @@
 // The tiled desktop's address (docs/specs/desk-tiling.md, "The address"): the path is the focused tile's own page, and
 // the query carries the set. `t` is the apps on screen in order, each by its name (the last part of its dock key's
 // path), a `*` before the focused one and a `!` after the pinned one; `m` is the minimized apps, in the order they went
-// to the dock; `w` is the widgets in the order they were added (`needs`, `vitals`, `backup`, `ticker`, or an agent's id).
+// to the dock; `w` is the widgets in the order they were added (`needs`, `vitals`, `backup`, or an agent's id).
 // Anything else in the query is the focused page's own.
 //
 // No React here, so it's tested on its own (src/ui/desk-tiling-address.test.ts).

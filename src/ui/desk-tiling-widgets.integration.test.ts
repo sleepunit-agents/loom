@@ -93,10 +93,10 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
   for (const [w, hgt] of [[1280, 800], [1920, 1080]]) {
     it(`a fresh device starts with today's Home set, as the desktop, then beside the apps; Chat opens the latest thread beside the rail, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);
-      // The seed (widgets.ts SEED), laid out as Home: Needs you, each agent's card, Vitals, Backup and the ticker.
-      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup', 'ticker']);
-      expect(await p.locator('.loom-desk-home .loom-desk-headline').count()).toBe(1);
-      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup,ticker');
+      // The seed (widgets.ts SEED), laid out as Home: Needs you, each agent's card, Vitals and Backup; no headline.
+      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
+      expect(await p.locator('.loom-desk-home .loom-desk-headline').count()).toBe(0);
+      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup');
       // An app opens: the widgets move to the right edge, never a split of their own (each at most 340 px wide).
       await p.click(KEY('Inbox'));
       await expect.poll(() => labels(p)).toEqual(['Inbox']);
@@ -142,15 +142,15 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     expect(await list.count()).toBe(0);
     // Find: "Add widget: …"
     await p.keyboard.press('Control+k');
-    await p.locator('input[aria-label="Find anything"]').fill('ticker');
-    await p.locator('[role="option"]', { hasText: 'Add widget: Ticker' }).click();
-    await expect.poll(() => widgets(p)).toEqual(['mark', 'vitals', 'ticker']);
+    await p.locator('input[aria-label="Find anything"]').fill('backup');
+    await p.locator('[role="option"]', { hasText: 'Add widget: Backup' }).click();
+    await expect.poll(() => widgets(p)).toEqual(['mark', 'vitals', 'backup']);
     // one that's on the desktop already: the + key focuses it
     await p.click(KEY('Add a widget'));
     await list.locator('button', { hasText: 'Vitals' }).click();
     await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('vitals');
     // with no app and no widget: how to get some
-    for (const id of ['mark', 'vitals', 'ticker']) await p.locator(`[data-widget="${id}"] .loom-wtile__x`).click();
+    for (const id of ['mark', 'vitals', 'backup']) await p.locator(`[data-widget="${id}"] .loom-wtile__x`).click();
     await p.click(KEY('Home'));
     await expect.poll(() => p.getByText('Open an app from the dock, or add a widget with the + key.').count()).toBe(1);
     await p.context().close();

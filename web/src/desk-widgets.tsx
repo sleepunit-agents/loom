@@ -1,11 +1,10 @@
 // Home's widgets (docs/specs/desk-tiling.md, "Widgets"): what needs you, answered where it stands; one card per agent with
-// its face and what it's on; box vitals from the pieces' own tiles; the nightly backup; the ticker. The tiled desktop
+// its face and what it's on; box vitals from the pieces' own tiles; the nightly backup. The tiled desktop
 // (tiling/tiles.tsx) draws them as tiles: on the desktop, in the rail or the board beside the apps, or as the strip's
 // keys. Never a number loom doesn't have.
 //
 // In the desk's own chunk (desk.tsx and the tiles import it): a phone never fetches it.
 import { useState } from 'react';
-import { Ticker, tickerParts } from './phone-bar';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, LoomMark, Nothing, useEnv, type Mark } from './blocks';
@@ -213,15 +212,6 @@ export function NoAgents() {
 
 // ---- as tiles (tiling/tiles.tsx) ---------------------------------------------------------------
 
-/** The ticker as a widget: the bar's feed (phone-bar.tsx), the same words; the bar keeps its own. */
-export function TickerW({ shell, live }: { shell: Shell; live: boolean }) {
-  return (
-    <Widget tint="yellow" title="Ticker" className="loom-w--ticker">
-      <div className="loom-w-tick"><Ticker live={live} parts={tickerParts(shell)} /></div>
-    </Widget>
-  );
-}
-
 export type WidgetData = { home: DeskHomeData; shell: Shell; live: boolean };
 type Kind = WidgetKind;
 
@@ -230,7 +220,6 @@ export function WidgetBody({ id, kind, d, compact, chat }: { id: string; kind: K
   if (kind === 'needs') return <Needs d={d.home} compact={compact} />;
   if (kind === 'vitals') return <Vitals shell={d.shell} />;
   if (kind === 'backup') return d.shell.backup ? <BackupW b={d.shell.backup} /> : null;
-  if (kind === 'ticker') return <TickerW shell={d.shell} live={d.live} />;
   const c = d.home.cards.find((x) => x.id === id);
   return c ? <Agent c={c} compact={compact} chat={chat ? () => chat(id) : undefined} /> : null;
 }
@@ -262,8 +251,8 @@ export function StripKey({ id, kind, name, d, open }: { id: string; kind: Kind; 
   );
 }
 
-/** The desktop with no app open (docs/specs/desk-tiling.md rule 1): the widgets laid out as Home is, its headline across
- * the top: Needs you on the left, the agents in the middle, the rest on the right; each in the order added, each with its
+/** The desktop with no app open (docs/specs/desk-tiling.md rule 1): the widgets laid out as Home is, and nothing else
+ * (no status line: Jonathan, 2026-11-06, "just cards, widgets and windows"): Needs you on the left, the agents in the middle, the rest on the right; each in the order added, each with its
  * ×. With none, it says how to get some. */
 export function WidgetDesk({ ws, d, chat, frame }: {
   ws: { id: string; kind: Kind; name: string }[]; d: WidgetData; chat?: (agent: string) => void;
@@ -279,7 +268,6 @@ export function WidgetDesk({ ws, d, chat, frame }: {
   const agents = draw((w) => w.kind === 'agent');
   return (
     <div className="loom-desk-home">
-      <p className="loom-desk-headline">{d.home.headline}</p>
       <div className="loom-desk-col loom-desk-col--left">{draw((w) => w.kind === 'needs')}</div>
       {/* A household with no agent yet: how to make the first, where their cards would be. */}
       <div className="loom-desk-col loom-desk-col--mid">{agents.length > 0 ? <div className="loom-desk-agents">{agents}</div> : !d.shell.agents.length && <NoAgents />}</div>

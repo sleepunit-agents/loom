@@ -132,15 +132,19 @@ function PageName({ title, info, where }: { title: string; info?: PageInfo; wher
 
 /** The bar itself: the page's name (in its app's colour, or its agent's; the way to its info when it has some), the
  * ticker, LOOM//OS, and the count. */
-export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info, where }: {
+export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info, where, clock, status }: {
   title: string; color: string; crumb?: { label: string; href: string }; go: (href: string) => void; shell: Shell; offline: boolean;
   info?: PageInfo; where: string;
   /** The chevron goes back in the app's history (App.tsx, trail.ts) rather than to `crumb.href` as a new page. */
   onBack?: () => void;
+  /** A desktop's one line (Jonathan, 2026-11-06): loom's clock before the name, the status glyphs after LOOM//OS
+   * (system-bar.tsx SysClock, SysIcons). A phone's own bar has neither: the phone shows its own. */
+  clock?: React.ReactNode; status?: React.ReactNode;
 }) {
   const asks = shell.asks;
   return (
-    <div className="loom-pbar">
+    <div className={clock || status ? 'loom-pbar loom-pbar--one' : 'loom-pbar'}>
+      {clock}
       <div className="loom-pbar__name" style={{ color }}>
         {crumb && (
           <button type="button" className="loom-pbar__back" aria-label={`Back to ${crumb.label}`} onClick={() => (onBack ? onBack() : go(crumb.href))}>
@@ -151,6 +155,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
       </div>
       <Ticker live={!offline} parts={tickerParts(shell)} />
       <span className="loom-pbar__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
+      {status}
       {asks > 0 && (
         <a href="/inbox" className="loom-pbar__needs loom-data" aria-label={`${asks} need${asks === 1 ? 's' : ''} you`}
           onClick={(e) => { e.preventDefault(); go('/inbox'); }}>{asks}</a>
