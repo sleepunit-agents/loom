@@ -18,7 +18,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   addMemberMessage, askStop, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
-  recordDelivery, setArchived, setPinned, setProject, setTitle, stateOf, stillSees, threadFor, threadsOf, type Thread,
+  deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { deliverAsOwner } from '../delivery.js';
 import type { Household, Member } from '../household.js';
@@ -82,8 +82,12 @@ function endBody(env: NodeJS.ProcessEnv, t: Thread): void {
 
 /** A member's message into the runtime, and what came of it recorded on the thread. */
 async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: string, text: string): Promise<{ delivered: boolean; body?: string; error?: string }> {
+  // The same delivery every time, Send again too (its id, its time and its label from its first try): core and the
+  // runtime answer a repeat with the first answer, so a message whose first try got through after all (its answer
+  // lost) never reaches a body twice.
+  const facts = deliveryFacts(c.household, t, seq);
   const r = await deliverAsOwner(c.env, c.household, {
-    id: `comms:${t.id}:${id}`, agent: t.agent, venue: COMMS_VENUE, place: t.id, label: t.title ?? 'New thread', person: t.member, text,
+    id: `comms:${t.id}:${id}`, agent: t.agent, venue: COMMS_VENUE, place: t.id, label: facts.label, person: t.member, text, at: facts.at,
   });
   const b = r.body as { body?: string; reason?: string; error?: string };
   if (r.status === 200) {
@@ -95,6 +99,22 @@ async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: strin
   const code = r.status === 503 && /no installed piece offers delivery/.test(err) ? 'no-runtime' : r.status >= 400 && r.status < 500 ? 'refused' : 'unreachable';
   recordDelivery(c.household, t, seq, { delivered: false, error: { code, reason: err } });
   return { delivered: false, error: err };
+}
+
+/**
+ * The delivery, in the background (t-1881): a send is accepted once it's recorded, and answers at once. A body can take
+ * 20 s or more to start, and the app shows the message on its way from the thread's live state until core records
+ * what came of it, delivered or not. The words come from the store when they aren't given (Send again).
+ */
+function deliverLater(c: CommsContext, t: Thread, seq: number, id: string, text: string | null): void {
+  void (async () => {
+    const words = text ?? await memberWords(c.household, c.env, t, seq);
+    if (words === null) { recordDelivery(c.household, t, seq, { delivered: false, error: { code: 'refused', reason: 'its words are gone; send it again as a new message' } }); return; }
+    await deliverMessage(c, t, seq, id, words);
+  })().catch((e) => {
+    process.stderr.write(`loom: delivering a Comms message failed: ${(e as Error).message}\n`);
+    try { recordDelivery(c.household, t, seq, { delivered: false, error: { code: 'unreachable', reason: (e as Error).message } }); } catch { /* the stale sweep records it */ }
+  });
 }
 
 const view = (t: Thread) => ({
@@ -164,6 +184,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       const archived = new URL(req.url ?? '/', 'http://x').searchParams.get('archived') === '1';
+      settleThread(h.home, null);
       const threads = threadsOf(h, m, { archived });
       const unread = archived ? threadsOf(h, m).filter((t) => t.unread).length : threads.filter((t) => t.unread).length;
       send(200, { ...(await asView(c, 'list', pathname)), threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
@@ -180,16 +201,18 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
       const o = openThread(h, c.env, m, body);
       if (o.created) {
-        const d = await deliverMessage(c, o.thread, o.seq, String(body.id), String(body.text));
-        send(200, { thread: view(o.thread), seq: o.seq, delivered: d.delivered, ...(d.error ? { error: d.error } : {}) });
+        deliverLater(c, o.thread, o.seq, String(body.id), String(body.text));
+        send(200, { thread: view(o.thread), seq: o.seq, delivery: 'sending' });
       } else send(200, { thread: view(o.thread), seq: o.seq, repeat: true });
       return true;
     }
     const mm = /^\/comms\/(th:[a-z2-7]{10}|[^/]+)(?:\/(since|before)\/(\d{1,12})|\/([a-z]+))?$/.exec(pathname);
     if (!mm) return send(404, { error: 'not-found' }), true;
     const [, id, dir, seqRaw, verb] = mm;
-    const t = threadFor(h, m, decodeURIComponent(id));
+    let t = threadFor(h, m, decodeURIComponent(id));
     if (req.method === 'GET') {
+      // What's recorded made true of now first: a send cut off is not delivered, a body long silent isn't working.
+      if (verb !== 'events' && settleThread(h.home, t.id)) t = threadFor(h, m, t.id);
       if (verb === 'events') {
         const from = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('from') ?? '0') || 0;
         const person = m!.person;
@@ -212,12 +235,15 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     if (why) return send(403, { error: why }), true;
     switch (verb) {
       case 'send': {
+        // Accepted once recorded (t-1881): the delivery goes on in the background, and the thread's live state says
+        // what came of it. The same id again is Send again: a message not delivered goes again, once; one on its way
+        // or delivered answers where it is.
         const a = addMemberMessage(h, c.env, t, body);
-        if (a.repeat && a.delivered) return send(200, { seq: a.seq, delivered: true, repeat: true }), true;
-        const words = a.repeat ? await memberWords(h, c.env, t, a.seq) : String(body.text);
-        if (words === null) return send(409, { error: 'conflict: that message\'s words are gone; send it again as a new message' }), true;
-        const d = await deliverMessage(c, t, a.seq, String(body.id), words);
-        send(200, { seq: a.seq, delivered: d.delivered, ...(a.repeat ? { repeat: true } : {}), ...(d.error ? { error: d.error } : {}) });
+        if (!a.repeat) { deliverLater(c, t, a.seq, String(body.id), String(body.text)); return send(200, { seq: a.seq, delivery: 'sending' }), true; }
+        if (a.delivery !== 'failed') return send(200, { seq: a.seq, delivery: a.delivery, repeat: true }), true;
+        if (await memberWords(h, c.env, t, a.seq) === null) return send(409, { error: 'conflict: that message\'s words are gone; send it again as a new message' }), true;
+        if (resendMessage(h, t, a.seq)) deliverLater(c, t, a.seq, String(body.id), null);
+        send(200, { seq: a.seq, delivery: 'sending', repeat: true });
         return true;
       }
       case 'title': send(200, { thread: view(setTitle(h, t, body.title, 'member')) }); return true;

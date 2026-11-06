@@ -321,12 +321,13 @@ export const OWNER_SOURCE = 'loom';
  * only from an adapter) are for pieces, and the page already knows this is the owner, speaking for themselves.
  * Idempotent on `id` like any delivery.
  */
-export async function deliverAsOwner(env: NodeJS.ProcessEnv, h: Household, m: { id: string; agent: string; venue: string; place: string; label?: string | null; person: string; text: string },
+export async function deliverAsOwner(env: NodeJS.ProcessEnv, h: Household, m: { id: string; agent: string; venue: string; place: string; label?: string | null; person: string; text: string; at?: string },
   nowMs: () => number = Date.now): Promise<DeliverResult> {
   if (!h.agents.includes(m.agent)) return refuse(403, `forbidden: ${m.agent} isn't one of this household's agents`);
   const d = parseDeliver({
     id: m.id, agent: m.agent, venue: m.venue, place: m.place, ...(m.label ? { label: m.label } : {}),
-    from: { kind: 'person', slug: m.person }, kind: 'message', at: new Date(nowMs()).toISOString(), text: m.text,
+    // `at`, when given, is the message's own time (a Comms message sent again is the same delivery: t-1881).
+    from: { kind: 'person', slug: m.person }, kind: 'message', at: m.at ?? new Date(nowMs()).toISOString(), text: m.text,
   });
   if (typeof d === 'string') return refuse(400, `bad-input: ${d}`);
   return forwardKept(env, h, { piece: OWNER_SOURCE }, d, nowMs);

@@ -14,7 +14,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
-import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, sweepComms } from './comms.js';
+import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, SEND_STALE_MS, settleThread, sweepComms, WORKING_STALE_MS } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { stopCommsWatch } from './ui/comms-live.js';
@@ -122,10 +122,23 @@ describe.skipIf(!hasAge)('Comms', () => {
   };
   const mode = (m: 'ok' | 'said' | 'refuse' | 'failed') => writeFileSync(join(h.home, 'runtime-mode'), m);
   let n = 100;
+  /** Until no member's message in the thread is on its way: a send is accepted at once, delivered in the background. */
+  const settled = async (thread: string) => {
+    const end = Date.now() + 10_000;
+    for (;;) {
+      const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true });
+      const busy = (() => { try { return (db.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE thread = ? AND kind = 'message' AND delivered IS NULL").get(thread) as { n: number }).n; } finally { db.close(); } })();
+      if (!busy) return;
+      if (Date.now() > end) throw new Error(`${thread} still has a message on its way`);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
   const open = async (token = tok.jonathan, agent = 'art', text = 'hello art') => {
     const r = await page(token, 'POST', '/comms/new', { agent, id: mid(n++), text });
     expect(r.status).toBe(200);
-    return (r.body.thread as { id: string; conversation: string; channel: number });
+    const t = r.body.thread as { id: string; conversation: string; channel: number };
+    await settled(t.id);
+    return t;
   };
 
   beforeAll(async () => {
@@ -327,9 +340,13 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       expect(String(d[0].id)).toMatch(new RegExp(`^comms:${t.id}:[a-z2-7]{16}$`));
       const id = mid(n++);
       const a = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'second' });
+      // Accepted at once, on its way; the same id again meanwhile is the same message, still on its way, and no second delivery.
+      expect(a.body).toMatchObject({ delivery: 'sending' });
+      const during = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'second' });
+      expect(during.body).toMatchObject({ seq: a.body.seq, repeat: true });
+      await settled(t.id);
       const b = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'second' });
-      expect(a.body).toMatchObject({ delivered: true });
-      expect(b.body).toMatchObject({ seq: a.body.seq, delivered: true, repeat: true });
+      expect(b.body).toMatchObject({ seq: a.body.seq, delivery: 'delivered', repeat: true });
       expect(deliveries().length - before).toBe(2);
       const other = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'other words' });
       expect(other.status).toBe(409);
@@ -371,14 +388,20 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       mode('said');
       const id = mid(n++);
       const a = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'try me' });
-      expect(a.body).toMatchObject({ delivered: false });
+      expect(a.body).toMatchObject({ delivery: 'sending' });
+      await settled(t.id);
+      const failed = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; delivered: boolean | null; delivery?: string; seq: number }>;
+      expect(failed.find((m) => m.seq === a.body.seq)).toMatchObject({ delivered: false, delivery: 'failed' });
       mode('ok');
       const before = deliveries().length;
-      const b = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'try me' });
-      expect(b.body).toMatchObject({ seq: a.body.seq, delivered: true });
+      // Send again, tapped three times: it goes again once, and is on its way meanwhile.
+      const b = await Promise.all([1, 2, 3].map(() => page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'try me' })));
+      for (const x of b) expect(x.body).toMatchObject({ seq: a.body.seq, repeat: true });
+      expect(b.some((x) => x.body.delivery === 'sending')).toBe(true);
+      await settled(t.id);
       expect(deliveries().length - before).toBe(1);
       const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; delivered: boolean | null; seq: number }>;
-      expect(msgs.find((m) => m.seq === a.body.seq)?.delivered).toBe(true);
+      expect(msgs.find((m) => m.seq === a.body.seq)).toMatchObject({ delivered: true, delivery: 'delivered' });
     });
   });
 
@@ -674,6 +697,62 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
         expect((await page(tok.loren, 'GET', `/comms/${lorens.id}`)).body.asks).toEqual([]);
         expect((await page(tok.loren, 'GET', `/comms/${lorens.id}/since/0`)).body.asks).toEqual([]);
       } finally { rmSync(join(h.home, 'household-asks.json')); clearPieceCache(); }
+    });
+  });
+
+  describe('t-1881: on its way, delivered, or not; working only while the runtime says so', () => {
+    const state = async (t: { id: string }) => (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.thread as { state: { working: boolean; failed: boolean } };
+    it('working clears when the runtime says done', async () => {
+      const t = await open();
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working' });
+      expect((await state(t)).state.working).toBe(true);
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done' });
+      expect((await state(t)).state.working).toBe(false);
+    });
+    it('working clears when the runtime stops saying it (its body gone, its done lost), and comes back with its next word', async () => {
+      const t = await open();
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working' });
+      // Its beat, within the window: still working.
+      expect(settleThread(h.home, t.id, new Date(Date.now() + WORKING_STALE_MS - 5000))).toBe(false);
+      expect((await state(t)).state.working).toBe(true);
+      // Past it, with no word: recorded as not working.
+      expect(settleThread(h.home, t.id, new Date(Date.now() + WORKING_STALE_MS + 1000))).toBe(true);
+      expect((await state(t)).state.working).toBe(false);
+      await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r9', cards: [{ id: 'k1', at: new Date().toISOString(), tool: 'Read', summary: 'Read a file', state: 'running' }] });
+      expect((await state(t)).state.working).toBe(true);
+    });
+    it('a send cut off (loom restarted under it) is recorded not delivered, and Send again delivers it once', async () => {
+      const t = await open();
+      const id = mid(n++);
+      const before = deliveries().length;
+      const a = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'cut off' });
+      await settled(t.id);
+      // As if its delivery's process died: back on its way, begun long ago.
+      const db = new BetterSqlite3(join(h.home, COMMS_DB));
+      try { db.prepare('UPDATE comms_messages SET delivered = NULL, sending_at = ? WHERE thread = ? AND seq = ?').run(Date.now() - SEND_STALE_MS - 1000, t.id, a.body.seq); } finally { db.close(); }
+      const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ seq: number; kind: string; delivery?: string; text: string }>;
+      expect(msgs.find((m) => m.seq === a.body.seq)?.delivery).toBe('failed');
+      expect(msgs.at(-1)).toMatchObject({ kind: 'error', text: 'Art couldn\'t be reached: loom restarted while it was delivering it.' });
+      expect((await state(t)).state.failed).toBe(true);
+      const again = await page(tok.jonathan, 'POST', `/comms/${t.id}/send`, { id, text: 'cut off' });
+      expect(again.body).toMatchObject({ seq: a.body.seq, delivery: 'sending', repeat: true });
+      await settled(t.id);
+      // The same delivery id both times: its first try had reached the runtime, so core answers the kept answer and the
+      // runtime hears it once, never a second body; the message is delivered.
+      expect(deliveries().length - before).toBe(1);
+      expect(deliveries().at(-1)!.id).toBe(`comms:${t.id}:${id}`);
+      const after = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ seq: number; delivery?: string }>;
+      expect(after.find((m) => m.seq === a.body.seq)?.delivery).toBe('delivered');
+      expect((await state(t)).state.failed).toBe(false);
+    });
+    it('a message on its way, not stale, is not marked failed by a read', async () => {
+      const t = await open();
+      const db = new BetterSqlite3(join(h.home, COMMS_DB));
+      const seq = (() => { try { return (db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'message'").get(t.id) as { seq: number }).seq; } finally { db.close(); } })();
+      const d2 = new BetterSqlite3(join(h.home, COMMS_DB));
+      try { d2.prepare('UPDATE comms_messages SET delivered = NULL, sending_at = ? WHERE thread = ? AND seq = ?').run(Date.now() - 1000, t.id, seq); } finally { d2.close(); }
+      const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ seq: number; delivery?: string }>;
+      expect(msgs.find((m) => m.seq === seq)?.delivery).toBe('sending');
     });
   });
 

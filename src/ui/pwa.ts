@@ -135,6 +135,9 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
   if (req.mode === 'navigate') return e.respondWith(page(req));
+  // A Comms thread's live reads (since, before) are its state now, never a kept copy (t-1881): an old one would say a
+  // message is still on its way, or not delivered, when it isn't.
+  if (/^\\/comms\\/[^/]+\\/(since|before)\\//.test(url.pathname)) return;
   if (SHELL.includes(url.pathname) || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/app/assets/')) return e.respondWith(shell(req));
   if ((req.headers.get('accept') || '').startsWith('application/json') && !NEVER.test(url.pathname)) return e.respondWith(view(req));
 });

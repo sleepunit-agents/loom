@@ -29,7 +29,15 @@ export type Thread = {
   opened: string; last: string; read_seq: number; channel: number; conversation: string; state: ThreadState; unread?: boolean; last_seq?: number;
 };
 export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' | 'ask' | 'error'; from: string; id: string; text: string | null;
-  card: Record<string, unknown> | null; run: string | null; delivered: boolean | null };
+  card: Record<string, unknown> | null; run: string | null; delivered: boolean | null; delivery?: Delivery };
+/** Where a message of yours is, as the server recorded it (comms.md, "Sending"): never a guess the app makes. */
+type Delivery = 'sending' | 'delivered' | 'failed';
+const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? 'delivered' : m.delivered === false ? 'failed' : 'sending');
+/**
+ * Whether a message can still change where it is: one of yours not yet delivered, or a step still running. The app
+ * reads the thread again from the oldest of these, so their state is the server's, not what it was when first read.
+ */
+const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) !== 'delivered') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
 /** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
 export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
   actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> };
@@ -311,8 +319,8 @@ function Message({ m, marks, agent, owner }: { m: Msg; marks: Record<string, Mar
   if (m.kind === 'ask') return <li className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {who}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></li>;
   const mine = m.kind === 'message';
   return (
-    <li className={`comms-msg ${mine ? 'comms-msg--mine' : 'comms-msg--agent'}`} data-undelivered={mine && m.delivered === false ? '' : undefined}>
-      <span className="comms-msg__meta loom-data">{!mine && marks[m.from] && <AgentAvatar a={marks[m.from]} size={22} className="comms-msg__face" />}{hhmm(m.at)} · {who}</span>
+    <li className={`comms-msg ${mine ? 'comms-msg--mine' : 'comms-msg--agent'}`} data-undelivered={mine && deliveryOf(m) === 'failed' ? '' : undefined} data-delivery={mine ? deliveryOf(m) : undefined}>
+      <span className="comms-msg__meta loom-data">{!mine && marks[m.from] && <AgentAvatar a={marks[m.from]} size={22} className="comms-msg__face" />}{hhmm(m.at)} · {who}{mine && deliveryOf(m) === 'sending' && <span className="comms-msg__sending"> · sending…</span>}</span>
       {m.text === null ? <p className="comms-msg__gone">(older than this thread keeps)</p> : mine ? <p className="comms-msg__text">{m.text}</p> : <Reply text={m.text} owner={owner} />}
     </li>
   );
@@ -359,6 +367,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
   const [compact, setCompact] = useState(false);
   const [now, setNow] = useState(Date.now());
   const last = useRef(initial.messages.at(-1)?.seq ?? 0);
+  // The oldest message that can still change (unsettled): each read starts there, so it's read again until it settles.
+  const shown = useRef(initial.messages);
+  useEffect(() => { shown.current = messages; }, [messages]);
   const seenReply = useRef(initial.messages.filter((m) => m.kind === 'reply').at(-1)?.seq ?? 0);
   const bottom = useRef<HTMLDivElement>(null);
   const top = useRef<HTMLDivElement>(null);
@@ -367,23 +378,30 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   // New messages: fetched after the last seq we have, once the stream says the thread moved.
   const pull = useCallback(async () => {
-    const r = await getJson<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${last.current}`);
+    const oldest = shown.current.slice(-100).find(unsettled);
+    const from = oldest ? Math.min(last.current, oldest.seq - 1) : last.current;
+    const r = await getJson<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${from}`);
     if (!r) return;
-    setThread(r.thread);
+    // Only when it moved: a read that changed nothing redraws nothing.
+    setThread((t) => (JSON.stringify(t) === JSON.stringify(r.thread) ? t : r.thread));
     setAsks(r.asks ?? []);
     if (r.thread.state.failed) setLink('none');
-    if (!r.messages.length) return;
-    last.current = r.messages.at(-1)!.seq;
+    // What's new or moved (a read from an unsettled message brings back some the app already has, unchanged).
+    const had = new Map(shown.current.map((m) => [m.seq, m]));
+    const moved = r.messages.filter((m) => { const o = had.get(m.seq); return !o || o.delivered !== m.delivered || o.delivery !== m.delivery || o.text !== m.text || JSON.stringify(o.card) !== JSON.stringify(m.card); });
+    if (!moved.length) return;
+    last.current = Math.max(last.current, r.messages.at(-1)!.seq);
+    shown.current = [...new Map([...shown.current, ...moved].map((m) => [m.seq, m])).values()].sort((a, b) => a.seq - b.seq);
     setMessages((ms) => {
       const kept = new Map(ms.map((m) => [m.seq, m]));
-      for (const m of r.messages) kept.set(m.seq, m);
+      for (const m of moved) kept.set(m.seq, m);
       return [...kept.values()].sort((a, b) => a.seq - b.seq);
     });
-    const reply = r.messages.filter((m) => m.kind === 'reply' && m.seq > seenReply.current).at(-1);
+    const reply = moved.filter((m) => m.kind === 'reply' && m.seq > seenReply.current).at(-1);
     if (reply) {
       seenReply.current = reply.seq;
       // The beats for what landed now; the player adds them to a run already going and stops at 4 (PIXEL.talkMax).
-      const n = r.messages.filter((m) => m.kind === 'reply').reduce((k, m) => k + talkBeats((m.text ?? '').length), 0);
+      const n = moved.filter((m) => m.kind === 'reply').reduce((k, m) => k + talkBeats((m.text ?? '').length), 0);
       setTalk({ n, key: reply.seq });
       setLink('ok');
     }
@@ -432,7 +450,14 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
     await pull();
     return true;
   };
-  const resend = async (m: Msg) => { if (m.text) { await post(`/comms/${thread.id}/send`, csrf, { id: m.id, text: m.text }); await pull(); } };
+  // Send again: on its way at once, as the server answers it (it's sent again, or it's already on its way or delivered).
+  const resend = async (m: Msg) => {
+    if (!m.text) return;
+    setMessages((ms) => ms.map((x) => (x.seq === m.seq ? { ...x, delivered: null, delivery: 'sending' } : x)));
+    const r = await post(`/comms/${thread.id}/send`, csrf, { id: m.id, text: m.text });
+    if (!r.ok) alert(String(r.body.error ?? 'That didn\'t send.').replace(/^[a-z-]+: /, ''));
+    await pull();
+  };
   const rename = async () => {
     const title = prompt('Name this thread', thread.title ?? '');
     if (title === null || !title.trim()) return;
@@ -457,7 +482,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   const lastMine = messages.filter((m) => m.kind === 'message').at(-1);
   const lastReply = messages.filter((m) => m.kind === 'reply').at(-1);
-  const waitingOnAgent = !!lastMine && lastMine.delivered !== false && (!lastReply || lastReply.seq < lastMine.seq);
+  const waitingOnAgent = !!lastMine && deliveryOf(lastMine) !== 'failed' && (!lastReply || lastReply.seq < lastMine.seq);
   // An ask waiting on you wins over everything but an error (comms.md's precedence).
   const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
@@ -494,7 +519,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
             <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} />
           ))}
           {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
-          {lastMine?.delivered === false && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
+          {lastMine && deliveryOf(lastMine) === 'failed' && <li className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button></li>}
           {thread.state.working && <li className="comms-working loom-data">{mark.label.toUpperCase()} · working · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</li>}
           {link === 'lost' && <li className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></li>}
           <div ref={bottom} />
