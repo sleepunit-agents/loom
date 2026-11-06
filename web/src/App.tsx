@@ -20,7 +20,7 @@ import { Boundary, Callout, iconFor } from './safe';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Spinner } from '@/components/ui/spinner';
-import { usePage, hasKept } from './page';
+import { usePage, hasKept, screenNav, type PageNav, type PageState } from './page';
 // The toasts load with the first one (toasts.tsx).
 const Toasts = lazy(() => import('./toasts'));
 import type { Note } from './toasts';
@@ -154,6 +154,10 @@ export default function App() {
   // he wants to live with them first).
   const [pixIcons, setPixIconsState] = useState(() => { try { return localStorage.getItem('loom-icons') === 'on'; } catch { return false; } });
   const setPixIcons = (on: boolean) => { setPixIconsState(on); keep('loom-icons', on ? 'on' : 'off'); save({ icons: on }); };
+  // Tiling (docs/specs/desk-tiling.md): on a big screen, apps share it by a rule, each in a tile of its own. Off unless
+  // the person chooses it (Appearance, "Desktop"); One window at a time is today's window.
+  const [tiling, setTilingState] = useState(() => { try { return localStorage.getItem('loom-tiling') === 'on'; } catch { return false; } });
+  const setTiling = (on: boolean) => { setTilingState(on); keep('loom-tiling', on ? 'on' : 'off'); save({ tiling: on }); };
   const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
   // Haptics (haptic.tsx): on unless the person turns them off; their chunk loads once the first page is up, while on.
   const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
@@ -186,7 +190,19 @@ export default function App() {
     ? x : [...x, { ...n, id: Date.now() + Math.random() }])); }, []);
 
   // The page (page.ts): what's shown, loaded and kept current, its address the browser's.
-  const { url, data, error, waiting, pending, savedAt, showing, load } = usePage(location.pathname + location.search, say);
+  // Tiled (tiling/tiles.tsx), the screen's page is the desktop's (Home), and the address is the tiles': it stands aside.
+  const tiledNow = useRef(false);
+  const appNav = useMemo<PageNav>(() => ({
+    here: () => (tiledNow.current ? '/' : screenNav.here()), push: (to) => { if (!tiledNow.current) screenNav.push(to); },
+    replace: (to) => { if (!tiledNow.current) screenNav.replace(to); }, top: () => { if (!tiledNow.current) screenNav.top(); },
+  }), []);
+  const mainPage = usePage(location.pathname + location.search, say, appNav);
+  const { url, data, error, waiting, pending, savedAt, showing, load } = mainPage;
+  const tilesApi = useRef<import('./tiling/tiles').TilesApi | null>(null);
+  // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
+  const [D, setD] = useState(desk$);
+  // The tile that has focus (tiles.tsx tells): the dock lights its key and the bar says its page.
+  const [tileFocus, setTileFocus] = useState<import('./tiling/tiles').Focused>(null);
 
   // What's new arrives (arrive.tsx): what this page showed at its last answer, against what it shows now.
   const shown = useRef<{ url: string; data: View | null; keys: Set<string> }>({ url: '', data: null, keys: new Set() });
@@ -216,6 +232,7 @@ export default function App() {
   useEffect(() => {
     void load(url, false);
     const f = () => {
+      if (tiledNow.current) { tilesApi.current?.pop(); return; }
       // The browser's Back or Forward: the page it leaves is still the one shown. Its history and the app's agree when
       // it lands on the app's page before or after this one, and that page comes back where it was.
       const to = location.pathname + location.search;
@@ -240,6 +257,8 @@ export default function App() {
     // Find is an overlay over the page you're in, not a page of its own (find.tsx).
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
+    // Tiled: a page opens in its app's tile; the desktop sends the apps to the dock.
+    if (tiledNow.current && tilesApi.current) { if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
     // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
     trail.keepTop(appKeyRef.current, location.pathname + location.search, scrolled());
     intent.current = { how: o?.how ?? 'go', url: u.pathname + u.search };
@@ -265,11 +284,27 @@ export default function App() {
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
     if (p.icons !== undefined) { setPixIconsState(p.icons); keep('loom-icons', p.icons ? 'on' : 'off'); }
+    if (p.tiling !== undefined) { setTilingState(p.tiling); keep('loom-tiling', p.tiling ? 'on' : 'off'); }
     if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
     if (p.zoom !== undefined) { setZoomState(p.zoom); keep('loom-zoom', p.zoom ? 'on' : 'off'); }
     if (p.motion) { setMotionState(p.motion); keep('loom-motion', p.motion); wearMotion(p.motion); }
     if (p.contrast) { setContrastState(p.contrast); keep('loom-contrast', p.contrast); wearContrast(p.contrast); }
   }, [chrome]);
+  // Tiled (docs/specs/desk-tiling.md): a desktop, the person chose Tiling, and the desk's chunk is here.
+  const tiled = wide && !!chrome?.shell?.household && tiling && !!D;
+  useLayoutEffect(() => { tiledNow.current = tiled; });
+  // Into tiles, the screen's page becomes the desktop (the page that was shown is a tile now); out of them, the
+  // focused tile's page is the screen's again.
+  const wasTiled = useRef(false);
+  useEffect(() => {
+    if (tiled === wasTiled.current) return;
+    wasTiled.current = tiled;
+    if (tiled) { if (url !== '/') void load('/', false); return; }
+    const u = new URL(location.href);
+    u.searchParams.delete('t'); u.searchParams.delete('m');
+    history.replaceState(null, '', u.pathname + u.search);
+    void load(u.pathname + u.search, false);
+  }, [tiled]);   // eslint-disable-line react-hooks/exhaustive-deps
   const ctx = (data && 'ctx' in data ? data.ctx : undefined) as Ctx | undefined;
   const head = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
   const accent = useMemo(() => {
@@ -277,25 +312,30 @@ export default function App() {
     return agentId ? chrome?.shell?.agents.find((a) => a.id === agentId) : undefined;
   }, [url, chrome]);
 
-  const send = useCallback(async (action: string, fields: Record<string, string>, on?: Ctx): Promise<boolean> => {
-    const c = on ?? ctx;
-    if (!c || !chrome) return false;
-    const r: ActResult = await act(c, chrome.csrf, action, fields);
-    say({ ok: r.ok, message: r.message, from: r.from, undo: r.undo });
-    if (r.go) go(r.go); else if (r.ok) void load(url, false);
-    return r.ok;
-  }, [ctx, chrome, say, go, load, url]);
-
-  // Pages without a ctx of their own (the household's home, a sheet) act and link as loom itself.
-  const baseCtx: Ctx | null = ctx ?? (chrome ? { source: { id: 'loom', base: '/' }, path: url.replace(/^\//, '').split('?')[0], query: {}, csrf: chrome.csrf,
-    agents: Object.fromEntries((chrome.shell?.agents ?? []).map((a) => [a.id, { label: a.label, bg: a.bg, fg: a.fg }])) } : null);
   // Acting as another source (an ask's or a tile's piece, an Inbox item's), the page to come back to is still this one:
   // it goes as loom's own link (loom:inbox?i=…), or the piece reads it as one of its pages and lands on its Not found.
   // (An agent's page is loom's too, under /a/<agent>/: loom:a/art, loom:a/art/mind.)
   const backAs = (c: Ctx) => (c.source.id !== 'loom' || c.path.startsWith('loom:') ? c.path
     : `loom:${(c.source.base.slice(1) + c.path).replace(/\/$/, '')}`);
-  const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => send(a, f, c), go, wide, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
-  const env: Env | null = baseCtx ? envFor(baseCtx) : null;
+  /** A page's Env (blocks.tsx): its links go by `goTo`, and an action that lands refreshes that page. Pages without a ctx
+   * of their own (the household's home, a sheet) act and link as loom itself. */
+  const pageEnv = (pg: PageState, goTo: (href: string) => void): Env | null => {
+    const ch = pg.data?.chrome;
+    const own = (pg.data && 'ctx' in pg.data ? pg.data.ctx : undefined) as Ctx | undefined;
+    const base: Ctx | null = own ?? (ch ? { source: { id: 'loom', base: '/' }, path: pg.url.replace(/^\//, '').split('?')[0], query: {}, csrf: ch.csrf,
+      agents: Object.fromEntries((ch.shell?.agents ?? []).map((a) => [a.id, { label: a.label, bg: a.bg, fg: a.fg }])) } : null);
+    if (!base) return null;
+    const sendAs = async (action: string, fields: Record<string, string>, c: Ctx): Promise<boolean> => {
+      if (!ch) return false;
+      const r: ActResult = await act(c, ch.csrf, action, fields);
+      say({ ok: r.ok, message: r.message, from: r.from, undo: r.undo });
+      if (r.go) goTo(r.go); else if (r.ok) void pg.load(pg.url, false);
+      return r.ok;
+    };
+    const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => sendAs(a, f, c), go: goTo, wide, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
+    return envFor(base);
+  };
+  const env: Env | null = pageEnv(mainPage, go);
   const nav = chrome ? tabsOf(chrome, head) : { tabs: [], more: [] };
   const icon = useMemo(() => iconsOf(chrome), [chrome]);
   // The household's pixel icons, while the person wears them (app-icon.tsx): none, and every app keeps its line icon.
@@ -331,7 +371,7 @@ export default function App() {
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
-  const lit = accountOpen && me ? '/account' : current(phoneTabs);
+  const lit = tiled && tileFocus ? tileFocus.key : accountOpen && me ? '/account' : current(phoneTabs);
   // A desktop's window and the household key it's open under (desk.tsx): its open key, or a double-click on its strip,
   // minimizes it, kept where it is; that key opens it there again; Close and Esc close it, forgetting. Home always
   // goes to the desktop (minimizing what's open, as a desktop's "show desktop" does). An agent's own dock is its own.
@@ -345,6 +385,7 @@ export default function App() {
   const pick = (href: string) => {
     buzz(haptics, true);
     if (href === '#more') { setMoreAsked(true); setMore(true); return; }
+    if (tiledNow.current && tilesApi.current) { tilesApi.current.pick(href); return; }
     if (href === '#back') { go('/'); return; }
     if (deskNow.current && !agentDock && desk$) {
       const home = new URL(href, location.href).pathname === '/';
@@ -369,6 +410,29 @@ export default function App() {
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
   const placeAt = (at: string) => shellPlaces.find((p) => at === p.href) ?? shellPlaces.find((p) => p.href !== '/' && at.startsWith(`${p.href}/`));
+  // Which app a page is in, as a tile (tiling/tiles.tsx): keyed as the dock keys it (trail.ts keys the same), an agent's
+  // pages that agent's; Home is no tile.
+  const agentOf = (key: string) => chrome?.shell?.agents.find((a) => key === `/a/${a.id}`);
+  const tileOf = (at: string): { key: string; label: string } | null => {
+    if (at === '/' || !chrome?.shell) return null;
+    const agent = /^\/a\/([a-z][a-z0-9-]*)/.exec(at)?.[1];
+    if (agent) { const a = chrome.shell.agents.find((x) => x.id === agent); return a ? { key: `/a/${a.id}`, label: a.label } : null; }
+    const tab = [...nav.tabs, ...nav.more].find((t) => !t.href.startsWith('#') && t.href !== '/' && (at === t.href || at.startsWith(`${t.href}/`)));
+    if (tab) return { key: tab.href, label: tab.label };
+    if (at === '/account' || at === '/passkeys') return { key: '/account', label: 'Account' };
+    if (settingsOf(chrome.shell).some((p) => at === p.href || at.startsWith(`${p.href}/`))) return { key: '/setup', label: 'Setup' };
+    const p = placeAt(at);
+    if (p) return { key: p.href, label: p.label };
+    const seg = at.split('/')[1] ?? '';
+    return seg ? { key: `/${seg}`, label: seg[0].toUpperCase() + seg.slice(1) } : null;
+  };
+  /** An app by its name in the tiles' address (the last part of its key): a household app's first, then an agent's. */
+  const tileNamed = (name: string) => {
+    const hrefs = [...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
+      .concat('/setup', '/account', ...shellPlaces.map((p) => p.href), ...(chrome?.shell?.agents ?? []).map((a) => `/a/${a.id}`));
+    for (const h of hrefs) { const r = tileOf(h); if (r && r.key.split('/').filter(Boolean).pop() === name) return { ...r, href: h }; }
+    return null;
+  };
   // On its way, or not opened: the header still says which app (a place's name), not the last page's title.
   const path = (waiting && pending ? pending : url).split('?')[0];
   const place = placeAt(path);
@@ -392,6 +456,44 @@ export default function App() {
   ) : accent ? <AgentAvatar a={accent} size={44} className="shrink-0" state={accent.asks ? 'needs-input' : 'idle'} />
     : data?.view === 'passkeys' && chrome?.shell ? <MeAvatar name={chrome.shell.owner} size={44} className="shrink-0" />
     : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
+
+  /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
+  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals) => {
+    const data = pg.data;
+    return (<>
+            {pg.waiting && <Skeleton />}
+            {pg.savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
+              This is how it looked at <span className="loom-data">{new Date(pg.savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>. Actions wait for a connection.</Callout>}
+            {!pg.waiting && pg.error && (pg.error === 'offline'
+              ? <StateCard icon="cloud-off" tint="blue" title="Can’t reach loom" text="This page isn’t saved on this device yet. It opens as soon as there’s a connection."
+                  action={{ label: 'Try again', onClick: () => void pg.load(pg.url, false) }} />
+              : <StateCard icon="triangle-alert" tint="yellow" title={`${placeAt(pg.url.split('?')[0])?.label ?? 'This page'} didn’t load`} text="loom had trouble opening it. Try again, or come back in a minute."
+                  action={{ label: 'Try again', onClick: () => void pg.load(pg.url, false) }} />)}
+            {/* Home and the Inbox ask a device that could get Your call and doesn't (passkeys.tsx PushAsk). */}
+            {!pg.waiting && !pg.error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
+              <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
+            )}
+            {!pg.waiting && !pg.error && data && env && (
+              <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
+                {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
+                  : data.view === 'house-home' && desk && data.chrome?.shell ? (D ? <D.DeskHome home={data.home as never} shell={data.chrome.shell} /> : <Skeleton />)
+                  : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
+                  : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
+                  : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
+                  : data.view === 'comms' ? <Suspense fallback={<Spinner appearance="orbit" />}><CommsView data={data as never} /></Suspense>
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
+                  : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                    <AccountView me={(data.me as { name: string; role: string }) ?? { name: data.chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
+                      add={data.add as never} reload={() => void pg.load(pg.url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
+                  : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                    <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} tiling={tiling} setTiling={setTiling} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
+                  : <NotYet kind={data.view} url={pg.url} />}
+              </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
+            )}
+            {!pg.waiting && !pg.error && data && !env && <NotYet kind={data.view} url={pg.url} />}
+    </>);
+  };
 
   // The app's arrival, once a session: the first time a page with its header has landed (arrive.tsx arriveOnce).
   const arrived = useRef(false);
@@ -472,8 +574,6 @@ export default function App() {
   const [sideEl, setSideEl] = useState<HTMLElement | null>(null);
   const pageSide = !!(data as { page?: Page } | null)?.page?.sections?.some(isSide);
   const sideAt: SideAt = !sideWide ? 'fold' : inWindow ? (pageSide ? { el: sideEl } : 'fold') : 'column';
-  // The desktop's chunk (desk.tsx), once it's here; asked for when a screen becomes a desktop (a look changed).
-  const [D, setD] = useState(desk$);
   useEffect(() => { if (desk && !D) void deskChunk().then(setD); }, [desk, D]);
   const deskBar = phoneBar && vw >= 640;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
@@ -527,7 +627,7 @@ export default function App() {
                 {/* Wider than a phone: loom's own status bar over it, across the page's column, so its clock sits over
                     the page's name and its glyphs over LOOM//OS and the count, as a phone's do (system-bar.tsx). */}
                 {deskBar && <SystemBar shell={chrome.shell} clock={{ text: chrome.clock, tz: chrome.tz }} offline={!!savedAt} go={go} />}
-                <PhoneBar title={shownTitle ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={url}
+                <PhoneBar title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={url}
                   info={{ line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
               </div>
@@ -542,6 +642,15 @@ export default function App() {
           </header>
           )}
 
+          {tiled && D && chrome?.shell ? (
+            <main className="loom-desk-main loom-tiles-main">
+              <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
+                render={(pg, g) => pageBody(pg, pageEnv(pg, g), 'fold', { before: null, now: new Set() })}
+                home={pageBody(mainPage, env, sideAt, arrivals)}
+                lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <AgentAvatar a={agentOf(o.key)!} size={20} /> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
+                tint={(o) => (agentOf(o.key) ? markColor(agentOf(o.key)!.bg) : `var(--loom-tint-${tint(o.label)})`)} />
+            </main>
+          ) : (
           <Wrap on={inWindow && !!D} wrap={(page) => D && (
             <D.DeskWindow url={url} waiting={waiting} go={go} close={closeWindow} minimize={minimize} title={shownTitle || place?.label || ''}
               crumbs={crumbs} back={trail.step(appKey, -1)} forward={trail.step(appKey, 1)} move={move}
@@ -550,39 +659,10 @@ export default function App() {
               lead={accent ? <AgentAvatar a={accent} size={22} /> : <AppIcon label={tileLabel || ''} name={iconFor(icon(tileLabel || ''))} size="sm" lit />}>{page}</D.DeskWindow>
           )}>
           <main ref={mainRef} aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
-            {waiting && <Skeleton />}
-            {savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
-              This is how it looked at <span className="loom-data">{new Date(savedAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>. Actions wait for a connection.</Callout>}
-            {!waiting && error && (error === 'offline'
-              ? <StateCard icon="cloud-off" tint="blue" title="Can’t reach loom" text="This page isn’t saved on this device yet. It opens as soon as there’s a connection."
-                  action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />
-              : <StateCard icon="triangle-alert" tint="yellow" title={`${place?.label ?? 'This page'} didn’t load`} text="loom had trouble opening it. Try again, or come back in a minute."
-                  action={{ label: 'Try again', onClick: () => void load(location.pathname + location.search, false) }} />)}
-            {/* Home and the Inbox ask a device that could get Your call and doesn't (passkeys.tsx PushAsk). */}
-            {!waiting && !error && data?.chrome && ['house-home', 'home', 'inbox'].includes(data.view) && (
-              <Suspense fallback={null}><PushAsk csrf={data.chrome.csrf} /></Suspense>
-            )}
-            {!waiting && !error && data && env && (
-              <ArrivalContext.Provider value={arrivals}><EnvContext.Provider value={env}><SideAtContext.Provider value={sideAt}><Boundary where={url}>
-                {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
-                  : data.view === 'house-home' && desk && chrome?.shell ? (D ? <D.DeskHome home={data.home as never} shell={chrome.shell} /> : <Skeleton />)
-                  : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
-                  : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
-                  : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
-                  : data.view === 'comms' ? <Suspense fallback={<Spinner appearance="orbit" />}><CommsView data={data as never} /></Suspense>
-                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
-                  : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
-                    <AccountView me={(data.me as { name: string; role: string }) ?? { name: chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
-                      add={data.add as never} reload={() => void load(url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
-                  : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
-                    <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
-                  : <NotYet kind={data.view} url={url} />}
-              </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
-            )}
-            {!waiting && !error && data && !env && <NotYet kind={data.view} url={url} />}
+            {pageBody(mainPage, env, sideAt, arrivals)}
           </main>
           </Wrap>
+          )}
 
           {!wide && chrome && <div aria-hidden className="loom-fade pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
           {pill && (
@@ -604,7 +684,7 @@ export default function App() {
         </div>
       </div>
 
-      {desk && D && <D.DeskKeys close={closeWindow} places={[...nav.tabs, ...nav.more]} />}
+      {desk && D && !tiled && <D.DeskKeys close={closeWindow} places={[...nav.tabs, ...nav.more]} />}
       {booting && D && chrome?.shell && <D.DeskBoot shell={chrome.shell} offline={!!savedAt} onDone={() => {
         setBooting(false);
         if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundOn.current) void import('./sound').then((m) => m.chime('boot'));
