@@ -382,6 +382,12 @@ html[data-gestures] :is(main, .loom-top) { touch-action: pan-y pinch-zoom; }
 /* Every part of them: the dock's keys sit in a scroll area of its own, where a touch's own rules start again. */
 html[data-gestures] :is(.loom-dock-bar, .loom-dock-bar *, .loom-find-pill, .loom-find-pill *) { touch-action: none; }
 html[data-gestures][data-look] .loom-dock-bar { pointer-events: auto; }
+/* ...but only the bar's own box and the stage in it (the keys and the strip over them). The dock's scroller reaches its
+   reserved lift (48 px, looks.css) past the bar's top, room for a grown key's glow; taking touches there it lay over
+   Comms' composer, its field and its Send, which then took no tap (Jonathan, 2026-11-05: "Hard to get the input to
+   take and then ... I can't get send to work"). */
+html[data-gestures][data-look] .loom-dock-bar :is(.v-dock, .v-dock__scroll, [data-part="viewport"]) { pointer-events: none; }
+html[data-gestures][data-look] .loom-dock-bar [data-part="stage"] { pointer-events: auto; }
 .loom-haptic { position: absolute; inset: 0; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
 /* The fallback lean (gestures.ts, where pages don't move) never widens the page. */
 html[data-gestures] .loom-page-clip { overflow-x: clip; }

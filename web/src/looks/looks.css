@@ -262,7 +262,7 @@ html.loom-ios-app:root[data-look] .loom-sys{display:none}
    top, past the stage's 32px: the scroller and its viewport clip, so their clip reaches the dock's own reserved lift
    (dock.tsx --dock-reserved-lift, 48px at 52px keys) further up, with no change to where anything sits (the padding gives
    back what the margin takes). Jonathan, 2026-11-05: "when the icons grow on hover, the top of them is cut off". The bar
-   takes no pointer (above), so the room steals no taps from the page; while a key is engaged the bar sits over Find's
+   takes no pointer (above), nor does the room under gestures (index.css: only the bar and the stage), so it steals no taps from the page (Comms' composer sits in it); while a key is engaged the bar sits over Find's
    pill, so a key grown toward it, or its name, isn't under it. */
 :root[data-look] .loom-dock-bar .v-dock:not([data-variant="rail"]) :is(.v-dock__scroll,[data-part="viewport"]){margin-top:calc(-1 * var(--dock-reserved-lift));padding-top:var(--dock-reserved-lift)}
 :root[data-look] .loom-dock-bar:has([data-part="lane"][data-engaged]){z-index:41}
