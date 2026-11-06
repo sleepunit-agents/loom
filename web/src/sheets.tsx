@@ -3,6 +3,7 @@
 import { useContext } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
+import { AppIcon } from './app-icon';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -17,7 +18,7 @@ import type { Follow } from './access';
 
 const useEnv = () => useContext(EnvContext)!;
 
-export function SheetView({ which, chrome, icon, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
+export function SheetView({ which, chrome, icon, ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, haptics, setHaptics, zoom, setZoom, motion, setMotion, contrast, setContrast }: { which: string; chrome: Chrome; icon: (label: string) => string; ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void }) {
   const { go } = useEnv();
   const tint = useTint();
   const s = chrome.shell;
@@ -28,7 +29,7 @@ export function SheetView({ which, chrome, icon, ground, setGround, look, setLoo
   const launch = (p: { label: string; href: string; stat?: string; tone?: Tone; count?: number }) => (
     <button key={p.href} type="button" onClick={() => go(p.href)} className="loom-launch group grid min-w-0 content-start justify-items-center gap-1.5 text-center">
       <span className="loom-launch-tile relative grid size-16 place-items-center rounded-[var(--loom-r-launch)] shadow-sm transition-transform group-active:scale-95" data-tint={tint(p.label)}>
-        <AnimatedIcon name={iconFor(icon(p.label))} />
+        <AppIcon label={p.label} name={iconFor(icon(p.label))} />
         {p.count ? <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full loom-data bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]">{p.count}</span> : null}
         {p.tone && p.tone !== 'ok' && <span className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full ring-2 ring-[var(--v-paper)] ${DOT[p.tone]}`} />}
       </span>
@@ -46,7 +47,7 @@ export function SheetView({ which, chrome, icon, ground, setGround, look, setLoo
   // is wrong). What's the member's own (passkeys, signing out) is the account's: the avatar on a phone's dock.
   if (which === 'setup' && s) return grid(settingsOf(s));
   // Appearance: an app of Setup's, the person's look (look.ts).
-  if (which === 'appearance') return <AppearanceApp ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
+  if (which === 'appearance') return <AppearanceApp ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} iconSet={!!s?.icons} haptics={haptics} setHaptics={setHaptics} sprites={!!s?.agents.some((a) => a.face?.sprite)} />;
   // Accessibility: an app of its own beside Appearance (Jonathan, 2026-11-05), the person's too.
   if (which === 'accessibility') return <AccessibilityApp zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} />;
   if (which === 'scope' && s) {
@@ -96,7 +97,7 @@ function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContr
 }
 
 /** The Appearance app: the look, and the ground behind every page. The person's, on every device. */
-function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixel, setPixel, haptics, setHaptics, sprites }: { ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
+function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, iconSet, haptics, setHaptics, sprites }: { ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; iconSet: boolean; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
   return (
     <Card id="appearance">
       <CardContent className="grid divide-y">
@@ -111,6 +112,10 @@ function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixe
         {sprites && row('Pixel faces', 'An agent with a pixel portrait wears it; off, every agent has its drawn face.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Pixel faces" value={pixel ? 'on' : 'off'} onValueChange={(v) => { if (v) setPixel(v === 'on'); }}>
             <ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
+        ))}
+        {iconSet && row('Pixel icons', 'The household’s pixel art on the dock and the app tiles, in each app’s colour. Off unless you turn it on.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Pixel icons" value={pixIcons ? 'on' : 'off'} onValueChange={(v) => { if (v) setPixIcons(v === 'on'); }}>
+            <ToggleGroupItem value="off">Off</ToggleGroupItem><ToggleGroupItem value="on">On</ToggleGroupItem></ToggleGroup>
         ))}
         {row('Sound', 'A chime when loom opens and when something you did lands. Off unless you turn it on.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Sound" value={sound ? 'on' : 'off'} onValueChange={(v) => { if (v) setSound(v === 'on'); }}>

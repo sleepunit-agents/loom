@@ -52,6 +52,8 @@ export interface Shell {
   pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint; alerts?: number }[];
   /** The nightly backup, a household owner's (src/backup.ts backupRow). */
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
+  /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for. */
+  icons?: { v: string; apps: Record<string, { line?: true }> };
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }

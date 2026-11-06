@@ -66,6 +66,7 @@ import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
@@ -118,12 +119,17 @@ export interface UiOptions {
   member?: Member;
 }
 
+/** An app's pixel icon (src/icon-set.ts): /pixel-icons/<app>.png, the app as ICON_APP has it. */
+const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\.png$`);
+
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
   return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
+    // The household's pixel icons: an agent owner is a member, and their shell names them as anyone's does.
+    || pathname.startsWith('/pixel-icons/')
     || pathname.startsWith('/a/') || pathname.startsWith('/p/') || pathname.startsWith('/act/')
     // A conversation is found among their agents only (the household they're given is theirs alone).
     || pathname.startsWith('/conversation/')
@@ -192,7 +198,7 @@ function streamOwner(req: IncomingMessage, who: NonNullable<Who>): string {
 /** The Accessibility app's intro (web/src/sheets.tsx draws its settings). */
 const ACCESSIBILITY_INTRO = 'Make loom easier to see and use. Allow zoom, calm the motion, or raise the contrast. Reduce motion and Higher contrast follow your phone’s own settings unless you choose here. Yours on every device you sign in on.';
 
-const PAGE_ROOTS = ['/app', '/faces', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
+const PAGE_ROOTS = ['/app', '/faces', '/pixel-icons', '/events', '/setup', '/appearance', '/accessibility', '/members', '/push', '/app.js', '/sw.js', '/manifest.webmanifest', '/icons', '/fonts', '/scope', '/places', '/find', '/login', '/logout', '/pieces.json', '/pieces', '/passkeys', '/account', '/inbox', '/activity', '/mind', '/people', '/memory', '/p', '/act', '/knowledge', '/projects', '/a', '/new-agent', '/new-person', '/new-fact', '/conversation', '/comms'];
 
 /** Whether a request is for the page (see the header for how `/` is shared with MCP). */
 export function isUiRequest(req: IncomingMessage, pathname: string): boolean {
@@ -500,6 +506,12 @@ function agentMarks(h: Household): Record<string, { bg: string; fg: string; face
     const sprite = spriteOf(h, a);
     return [a, { ...colors, face: { ...faceOf(h, a), ...(sprite ? { sprite: { facings: sprite.facings, v: sprite.v, base: `/faces/${a}/` } } : {}) } }];
   }));
+}
+
+/** The household's pixel icons, for the shell (src/icon-set.ts): none without a set in use. */
+function iconsView(h: Household): { icons?: { v: string; apps: Record<string, { line?: true }> } } {
+  const s = iconSetOf(h);
+  return s ? { icons: { v: s.v, apps: s.apps } } : {};
 }
 
 /** Each agent's name and mark, for drawing marks on rows that name an agent. */
@@ -984,6 +996,7 @@ function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skip
       shell: {
         owner: opts.viewer ?? h.owner ?? firstOwner(h)?.person ?? 'owner', scope, household: true, asks, tab, back, admin: !opts.ownerScope,
         ...(opts.ownerScope ? {} : backupOf(h)),
+        ...iconsView(h),
         home: '/',
         agents: h.agents.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], href: `/a/${a}`, current: scope === a,
           asks: pendingProposals(h, a) + needsCount(h, a) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === a && x.attention !== false).length, 0) - absorbedCount(h, pieces, opts.env, a),
@@ -1353,6 +1366,17 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': file.endsWith('.png') ? 'image/png' : 'application/json',
       'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
     return void res.end(req.method === 'HEAD' ? undefined : body);
+  }
+  // An app's pixel icon (src/icon-set.ts): the household's art, so only for someone signed in (this is past the sign-in
+  // check), never public like the app's own icons under /icons/. The page asks with the set's version (?v=).
+  const pix = PIXEL_ICON.exec(pathname);
+  if (pix) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'text/plain', 'method not allowed');
+    const file = hh ? iconFile(hh, pix[1]) : undefined;
+    if (!file) return send(res, 404, 'text/plain', 'not found');
+    res.writeHead(200, { ...SECURITY_HEADERS, 'content-type': 'image/png',
+      'cache-control': url.searchParams.has('v') ? 'private, max-age=31536000, immutable' : 'private, no-cache' });
+    return void res.end(req.method === 'HEAD' ? undefined : readFileSync(file));
   }
   // An Inbox item opened somewhere other than its sheet (its own page: a task's): read, as /inbox?i=<key> makes it,
   // for whoever opened it. The app posts it, then goes (web/src/views.tsx useOpenItem).

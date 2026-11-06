@@ -7,13 +7,14 @@ import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb';
 import { iconFor } from './safe';
 import { useTint } from './tint';
+import { AppIcon } from './app-icon';
 
 /** An app's icon in its tile, in the app's one colour (tint.ts): the same as its tile in Places or Setup, in the dock and in Find. */
 export function AppTile({ label, icon, size = 44 }: { label: string; icon: string; size?: number }) {
   const tint = useTint();
   return (
     <span aria-hidden className="loom-app-tile grid shrink-0 place-items-center rounded-[var(--loom-r-tile)]" data-tint={tint(label)} style={{ width: size, height: size }}>
-      <AnimatedIcon name={iconFor(icon)} size="sm" />
+      <AppIcon label={label} name={iconFor(icon)} size="sm" />
     </span>
   );
 }
