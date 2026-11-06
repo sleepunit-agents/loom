@@ -9,6 +9,7 @@
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,10 +22,13 @@ import { closeAllBackends } from '../backends/index.js';
 import { AVATAR_SIDE, avatarCrop, avatarScale } from '../../web/src/pixel-face';
 import { checkSpriteManifest, HouseholdError } from '../household.js';
 import { sheet } from './pixel-sheet.fixture.js';
+import { openThread } from '../comms.js';
+import { stopCommsWatch } from './comms-live.js';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
 const built = existsSync(`${root}dist/web/index.html`);
+const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
 
 describe('a small pixel avatar', () => {
   it('is cut over the top of what\'s drawn in the rest frame, 24 pixels square, unless the manifest names its crop', () => {
@@ -74,12 +78,15 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     const conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:making', label: 't-738: sonarr', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Checked.', needs_owner: { ask: 'OK to turn off the recycle bin on Sonarr for a quick rename?',
       why: 'Deleting a big show takes hours.', if_yes: 'I turn it off.', if_no: 'I plan a rework.', refs: ['t-738'] } } as never);
+    // A Comms thread with Art, for its list (Comms keeps its words with age: without it, no thread, and that check waits).
+    if (hasAge) openThread(h, process.env, h.members[0], { agent: 'art', id: 'cccccccccccccccc', text: 'Is the sheet in?' });
     handle = await startHttpServer({ contextDir: art, host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   }, 60_000);
   afterAll(async () => {
     await browser?.close();
+    stopCommsWatch();
     await handle?.close();
     await closeAllBackends();
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
@@ -204,6 +211,17 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     await p.locator('.loom-window').waitFor();
     await settle(p, { small: true });
     check('a window', await faces(p), { small: true });
+    await p.context().close();
+  }, 60_000);
+
+  it.runIf(hasAge)('Comms\' thread list: each thread wears its agent\'s small face, not a letter', async () => {
+    const p = await device(1280);
+    await p.goto(`${base}/comms`);
+    await p.locator('.comms-row').first().waitFor();
+    await settle(p, { small: true, art: false });
+    check('Comms', { ...await faces(p), wide: undefined }, { small: true, art: false });
+    expect(await p.locator('.comms-row .comms-row__avatar .loom-pixel-avatar canvas').count()).toBeGreaterThan(0);
+    expect(await p.locator('.comms-row .comms-row__face').count()).toBe(0);
     await p.context().close();
   }, 60_000);
 
