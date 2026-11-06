@@ -5,13 +5,16 @@ import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import { cva } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import * as Primitive from "@radix-ui/react-dialog";
+import { usePortalContainer } from "@/components/ui/portal-container";
 import { useFlowAppearance } from "@/lib/cojeev-motion/use-flow";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { ScrollArea, type ScrollAreaProps } from "@/components/ui/scroll-area";
 export type DialogProps = React.ComponentProps<typeof Primitive.Root>;
+/** In a tile, modal to the tile alone: no focus trap or aria-hidden across the screen (the tile keeps focus itself). */
 export function Dialog(props: DialogProps) {
-  return <Primitive.Root {...props} />;
+  const tile = usePortalContainer();
+  return <Primitive.Root {...props} modal={tile ? false : props.modal} />;
 }
 export type DialogTriggerProps = React.ComponentProps<typeof Primitive.Trigger>;
 export function DialogTrigger(props: DialogTriggerProps) {
@@ -67,8 +70,9 @@ export function DialogContent({
 }: DialogContentProps) {
   const morphRef = useMorph<HTMLDivElement>("surfaces", ref);
   const flowRef = useFlowAppearance<HTMLDivElement>(true, morphRef, "enter");
+  const tile = usePortalContainer();
   return (
-    <Primitive.Portal>
+    <Primitive.Portal container={tile ?? undefined}>
       <DialogOverlay />
       <Primitive.Content
         ref={flowRef}
@@ -80,6 +84,8 @@ export function DialogContent({
         data-stable-hit=""
         className={cn(dialogContentVariants(), className)}
         {...props}
+        // In a tile, a press in another tile leaves it open (the other tiles stay usable); one on its own tile closes it.
+        {...(tile ? { onInteractOutside: (e: Event) => { if (!tile.contains(e.target as Node)) e.preventDefault(); props.onInteractOutside?.(e as never); } } : {})}
       >
         {children}
         {showCloseButton && (

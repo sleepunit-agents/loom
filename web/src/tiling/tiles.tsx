@@ -12,6 +12,9 @@
 // The Appearance setting "Tiling" turns it on (App.tsx); "One window at a time" is today's window. Loaded with the
 // desk's own chunk (desk.tsx), at 1024 px and wider only: a phone never fetches it.
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { PortalContainer } from '@/components/ui/portal-container';
+import { reducedMotion } from '../access';
 import { EnvContext, type Env } from '../blocks';
 import type { Shell } from '../loom';
 import { readRecent } from '../recent';
@@ -22,7 +25,7 @@ import { usePage, type PageNav, type PageState } from '../page';
 import * as trail from '../trail';
 import { iconFor } from '../safe';
 import type { Note } from '../toasts';
-import { admit, capFor, layout, promote, underMinimum, type AppTile, type Rect, type WidgetTile } from './layout';
+import { admit, capFor, layout, promote, swap, underMinimum, type AppTile, type Rect, type WidgetTile } from './layout';
 import { nameOf, readSet, writeSet, type TileSet } from './address';
 import { AGENT_FIT, fitFor, type Fit } from './fit';
 import './tiles.css';
@@ -64,6 +67,21 @@ const savedSet = (): TileSet | null => {
   try { const v = JSON.parse(localStorage.getItem(SAVED) ?? 'null') as TileSet | null; return v && Array.isArray(v.t) && Array.isArray(v.m) && (v.w === undefined || Array.isArray(v.w)) ? v : null; } catch { return null; }
 };
 const sameOrigin = (u: URL) => u.origin === location.origin;
+
+// ---- keys, pop-ups and moves (docs/specs/desk-tiling.md, "Keys", "Sheets and dialogs stay inside their tile", "Transitions")
+/** A field has the keys. */
+const typing = () => { const a = document.activeElement as HTMLElement | null; return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable); };
+const POP_UP = ':is([role="dialog"],[role="alertdialog"],[role="listbox"],[role="menu"]):not([data-state="closed"])';
+/** A pop-up that takes the keys from this tile: one of its own, or one of the screen's (Find, the + key's list); never
+ * another tile's, which is modal to that tile only. */
+const popUpFor = (tile: Element | null) => [...document.querySelectorAll(POP_UP)].some((e) => { const t = e.closest('.loom-tile'); return !t || t === tile; });
+type VT = { finished: Promise<void> };
+type Doc = Document & { startViewTransition?: (update: () => void) => VT };
+/** A view-transition name for a tile's key or a widget's id (one per element, letters, digits and dashes). */
+const vtName = (prefix: string, id: string) => `${prefix}-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
+/** Tabbable elements inside `el`, in order. */
+const tabbables = (el: Element) => [...el.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
+  .filter((x) => x.offsetParent !== null || x === document.activeElement);
 const titleOf = (p: PageState, o: Open): string => {
   const d = p.data as { view?: string; page?: { title?: string }; dashboard?: { label?: string } } | null;
   if (p.error || p.waiting || !d) return o.label;
@@ -155,13 +173,39 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const addressOf = (s: State) => writeSet(s.apps.find((a) => a.key === s.focus)?.url ?? '/', set(s));
   /** The new state, and the address for it: a page change in a tile is a new entry (Back walks it); opening, closing,
    * swapping and promoting replace the one there is, so Back never closes a tile. */
-  const commit = (next: State, how: 'push' | 'replace' = 'replace') => {
+  const commit = (next: State, how: 'push' | 'replace' = 'replace', move = false) => {
+    const before = S.current;
     S.current = next;
     const to = addressOf(next);
     if (how === 'push') history.pushState({ tile: next.focus }, '', to);
     else if (to !== location.pathname + location.search) history.replaceState({ tile: next.focus }, '', to);
     keepSet(set(next));
-    bump();
+    if (move) reflow(before); else bump();
+  };
+  // A reflow (a tile added, closed, minimized, swapped or made the big one; a widget added or taken off): one document
+  // View Transition morphs every tile from its old box to its new one, each named for itself (tiles.css). The screen
+  // keeps drawing the state before it (`drawn`) until the transition has its picture of it. One at a time: a change
+  // during one simply applies. Reduced motion (access.ts), or no API: the layout simply changes.
+  const drawn = useRef<State | null>(null);
+  const moving = useRef(false);
+  const canMove = () => !moving.current && !reducedMotion() && typeof (document as Doc).startViewTransition === 'function';
+  const transition = (kind: 'reflow' | 'page', update: () => void, tile?: string) => {
+    const root = document.documentElement;
+    moving.current = true;
+    root.dataset.tileMove = kind;
+    if (tile) box.current?.querySelector(`[data-tile="${CSS.escape(tile)}"]`)?.setAttribute('data-moving', '');
+    const vt = (document as Doc).startViewTransition!(update);
+    const done = () => {
+      moving.current = false;
+      if (root.dataset.tileMove === kind) delete root.dataset.tileMove;
+      box.current?.querySelectorAll('[data-moving]').forEach((e) => e.removeAttribute('data-moving'));
+    };
+    vt.finished.then(done, done);
+  };
+  const reflow = (before: State) => {
+    if (!canMove()) { drawn.current = null; bump(); return; }
+    drawn.current = before;
+    transition('reflow', () => { drawn.current = null; flushSync(bump); });
   };
   const tiles = (apps: Open[]): AppTile[] => apps.map((a) => ({ id: a.key, name: a.label, fit: a.fit, ...(a.pinned ? { pinned: true } : {}) }));
   // Each widget's height as drawn at the column's width (measured), for the rule; until then its default (fit.ts).
@@ -198,7 +242,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     }
     usedAt.current[o.key] = Date.now();
     next.focus = o.key;
-    commit(next);
+    commit(next, 'replace', true);
     const i = next.apps.findIndex((a) => a.key === o.key);
     announce([`${o.label} opened, tile ${i + 1} of ${next.apps.length}`, ...r.docked.map((d) => d.why)].join('. '));
   };
@@ -228,7 +272,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const minimize = (key: string) => {
     const o = S.current.apps.find((a) => a.key === key);
     if (!o) return;
-    commit(toDock(S.current, o));
+    commit(toDock(S.current, o), 'replace', true);
     announce(`${o.label} minimized to the dock`);
   };
   const close = (key: string) => {
@@ -237,7 +281,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (!o) return;
     trail.forget(key);
     const apps = s.apps.filter((a) => a.key !== key);
-    commit({ ...s, apps, focus: s.focus === key ? apps[apps.length - 1]?.key ?? null : s.focus });
+    commit({ ...s, apps, focus: s.focus === key ? apps[apps.length - 1]?.key ?? null : s.focus }, 'replace', true);
     announce(`${o.label} closed`);
   };
   /** While there are more apps than the cap, or one is under its minimum, the least recently used (never the focused,
@@ -257,13 +301,32 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const makeBig = (key: string) => {
     const s = S.current;
     const order = promote(tiles(s.apps), key);
-    commit(shed({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'it didn’t fit beside the big one'));
+    commit(shed({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'it didn’t fit beside the big one'), 'replace', true);
+    announce(`${s.apps.find((a) => a.key === key)?.label ?? 'It'} is the big one, tile 1 of ${S.current.apps.length}`);
+  };
+  /** Swap with the tile before (-1) or after (1): its place in the order; a pinned tile swapped out of the big slot isn't
+   * pinned any more. A widget swaps with the widget beside it, in the order they were added. */
+  const swapBy = (key: string, by: -1 | 1) => {
+    const s = S.current;
+    const i = s.apps.findIndex((a) => a.key === key);
+    if (i >= 0) {
+      const order = swap(tiles(s.apps), i, i + by);
+      if (order === tiles(s.apps) || !s.apps[i + by]) return;
+      commit({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'replace', true);
+      announce(`${s.apps[i].label} swapped with ${s.apps[i + by].label}, tile ${i + by + 1} of ${s.apps.length}`);
+      return;
+    }
+    const j = s.w.indexOf(key);
+    if (j < 0 || !s.w[j + by]) return;
+    const w = [...s.w];
+    [w[j], w[j + by]] = [w[j + by], w[j]];
+    commit({ ...s, w }, 'replace', true);
   };
   const homeKey = () => {
     const s = S.current;
     if (s.apps.length) {
       const sent = s.apps.reduce((x, o) => toDock(x, o), s);
-      commit({ ...sent, home: s.apps.map((a) => a.key) });
+      commit({ ...sent, home: s.apps.map((a) => a.key) }, 'replace', true);
       announce('The desktop: every app is in the dock');
       return;
     }
@@ -271,7 +334,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     // Home again: back in their order.
     const back = s.home.map((k) => s.min.find((a) => a.key === k)).filter((a): a is Open => !!a)
       .map((a) => ({ ...a, url: trail.restore(a.key)?.url ?? a.url }));
-    commit(shed({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null }, 'not all of them fit this screen now'));
+    commit(shed({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null }, 'not all of them fit this screen now'), 'replace', true);
+    announce(`${back.map((a) => a.label).join(', ')} back from the dock`);
   };
 
   // ---- widgets ----
@@ -286,13 +350,13 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       requestAnimationFrame(() => box.current?.querySelector<HTMLElement>(`[data-widget="${CSS.escape(id)}"] :is(a, button)`)?.focus());
       return;
     }
-    commit(shed({ ...s, w: [...s.w, id] }, `${w.label} needed the room`));
+    commit(shed({ ...s, w: [...s.w, id] }, `${w.label} needed the room`), 'replace', true);
     announce(`${w.label} added to the desktop`);
   };
   const removeWidget = (id: string) => {
     const s = S.current;
     const w = widgetRef(id, shell.agents, wok);
-    commit({ ...s, w: s.w.filter((x) => x !== id) });
+    commit({ ...s, w: s.w.filter((x) => x !== id) }, 'replace', true);
     announce(`${w?.label ?? 'The widget'} removed from the desktop`);
   };
   /** A widget's link: its app opens beside it (last, next to the rail); anything else is the screen's. */
@@ -351,7 +415,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (!p || !here) return;
     trail.keepTop(key, here.url, scrollOf(key));
     intents.current.set(key, { how: o?.how ?? 'go', url: to, top: o?.top });
-    void p.load(to, true);
+    // Only this tile's page moves: its body is the transition's one named part (tiles.css), the other tiles stand still.
+    if (canMove()) transition('page', () => flushSync(() => { void p.load(to, true); }), key);
+    else void p.load(to, true);
   };
   /** Where a tile's page landed, whatever took it there (its links, its Back, the browser's): the set's from now on. */
   const landed = (key: string, url: string) => {
@@ -367,6 +433,79 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     replace: (to) => { const s = S.current; commit({ ...s, apps: s.apps.map((a) => (a.key === key ? { ...a, url: to } : a)) }); },
     top: () => { const b = bodies.current.get(key); if (b) b.scrollTop = 0; },
   });
+
+  // ---- the keys (docs/specs/desk-tiling.md, "Keys"): Alt+Shift moves between and arranges the tiles; Alt+← → is the
+  // focused tile's Back and Forward; Alt+H is Home. Never while a field has the keys, nor while a pop-up in this tile
+  // (or the screen's, Find) is open. Esc never closes a tile.
+  const steps = useRef(new Map<string, (by: -1 | 1) => boolean>());
+  /** The tile or widget the keys act on: the one focus is in, else the focused tile. */
+  const current = (): HTMLElement | null => {
+    const a = document.activeElement;
+    const el = a && a !== document.body ? a.closest<HTMLElement>('.loom-tile, .loom-tiles [data-widget]') : null;
+    return el ?? (S.current.focus ? box.current?.querySelector<HTMLElement>(`.loom-tile[data-tile="${CSS.escape(S.current.focus)}"]`) ?? null : null);
+  };
+  /** Focus a tile (its title, which reads its label: "tile 2 of 3, Comms") or a widget, and say so. */
+  const focusEl = (el: HTMLElement) => {
+    const key = el.dataset.tile;
+    if (key) {
+      focus(key);
+      requestAnimationFrame(() => {
+        const t = box.current?.querySelector<HTMLElement>(`.loom-tile[data-tile="${CSS.escape(key)}"]`);
+        t?.querySelector<HTMLElement>('.loom-tile__bar h2')?.focus({ preventScroll: true });
+        if (t) announce(t.getAttribute('aria-label') ?? '');
+      });
+      return;
+    }
+    el.focus({ preventScroll: true });
+    announce(`${el.getAttribute('aria-label') ?? 'widget'}, widget`);
+  };
+  const toward = (dir: 'left' | 'right' | 'up' | 'down') => {
+    const from = current();
+    if (!from) {
+      const first = box.current?.querySelector<HTMLElement>('.loom-tile, .loom-tiles [data-widget]');
+      if (first) focusEl(first);
+      return;
+    }
+    const r = from.getBoundingClientRect();
+    const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    const all = [...(box.current?.querySelectorAll<HTMLElement>('.loom-tile, .loom-tiles [data-widget]') ?? [])].filter((e) => e !== from);
+    let best: HTMLElement | null = null, bestD = Infinity;
+    for (const e of all) {
+      const b = e.getBoundingClientRect();
+      // Those that start past this one's edge that way; of them, the nearest centre; a tie, the earlier in the order.
+      const past = dir === 'right' ? b.x >= r.x + r.width - 1 : dir === 'left' ? b.x + b.width <= r.x + 1 : dir === 'down' ? b.y >= r.y + r.height - 1 : b.y + b.height <= r.y + 1;
+      if (!past) continue;
+      const d = Math.hypot(b.x + b.width / 2 - cx, b.y + b.height / 2 - cy);
+      if (d < bestD - 0.5) { best = e; bestD = d; }
+    }
+    if (best) focusEl(best);
+  };
+  const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  onKey.current = (e: KeyboardEvent) => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented || typing()) return;
+    const el = current();
+    if (popUpFor(el)) return;
+    const key = el?.dataset.tile, widget = el?.dataset.widget;
+    const arrows: Record<string, 'left' | 'right' | 'up' | 'down'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
+    let done = true;
+    if (e.shiftKey) {
+      if (arrows[e.code]) toward(arrows[e.code]);
+      else if (e.code === 'Enter' && key) { makeBig(key); focusEl(el!); }
+      else if ((e.code === 'Comma' || e.code === 'Period') && (key || widget)) swapBy((key ?? widget)!, e.code === 'Comma' ? -1 : 1);
+      else if (e.code === 'KeyM' && key) minimize(key);
+      else if (e.code === 'KeyW' && key) close(key);
+      else if (e.code === 'KeyW' && widget) removeWidget(widget);
+      else done = false;
+    } else if (e.code === 'KeyH') homeKey();
+    else if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && key) done = steps.current.get(key)?.(e.code === 'ArrowLeft' ? -1 : 1) ?? false;
+    else done = false;
+    if (done) e.preventDefault();
+  };
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => onKey.current(e);
+    addEventListener('keydown', f);
+    return () => removeEventListener('keydown', f);
+  }, []);
 
   // The room the tiles share, as it changes.
   useLayoutEffect(() => {
@@ -386,7 +525,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   // The address and this device's copy, as the set first stands.
   useEffect(() => { commit(S.current); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const s = S.current;
+  // What's drawn: the state before a reflow until its transition has the picture of it, else the state.
+  const s = drawn.current ?? S.current;
   const ws = wrefs(s.w);
   const l = useMemo(() => layout(tiles(s.apps), wtiles(s.w), area, innerWidth), [s.apps, s.w, area, heights]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Taller widgets than were allowed for (measured): what no longer fits beside them goes to the dock.
@@ -406,7 +546,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const wd: WidgetData | null = homeData ? { home: homeData, shell, live } : null;
   const wenv = widgetEnv(goWidget);
   const frame = (w: { id: string; name: string }, body: React.ReactNode, o: { rect?: Rect; compact?: boolean; measure?: (h: number) => void } = {}) => (
-    <WidgetFrame key={w.id} id={w.id} name={w.name} rect={o.rect} compact={o.compact} measure={o.measure} remove={() => removeWidget(w.id)}>{body}</WidgetFrame>
+    <WidgetFrame key={w.id} id={w.id} name={w.name} named={!!o.rect} rect={o.rect} compact={o.compact} measure={o.measure} remove={() => removeWidget(w.id)}>{body}</WidgetFrame>
   );
   const wa = l.widgetArea;
   const widgetsDrawn = !wd || !wenv ? null : !s.apps.length ? (
@@ -442,7 +582,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       {s.apps.length === 0 ? (wd && wenv ? <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider> : home) : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)}
-          landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)}
+          landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)}
           pin={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? { on: s.w.includes(nameOf(o.key)), toggle: () => (s.w.includes(nameOf(o.key)) ? removeWidget : addWidget)(nameOf(o.key)) } : undefined} />
       ))}
       {s.apps.length > 0 && wenv && <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider>}
@@ -465,7 +605,7 @@ function holdScroll(el: HTMLElement, top: number) {
   el.addEventListener('wheel', stop, { passive: true }); el.addEventListener('pointerdown', stop);
 }
 
-function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, landed, onFocus, minimize, close, makeBig, pin }: {
+function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, landed, onFocus, minimize, close, makeBig, pin, steps }: {
   o: Open & { restoreTop?: number }; n: number; of: number; rect: Rect | undefined; focused: boolean;
   say: (n: Omit<Note, 'id'>) => void; nav: (key: string) => PageNav;
   pages: React.MutableRefObject<Map<string, PageState>>; bodies: React.MutableRefObject<Map<string, HTMLElement>>;
@@ -475,6 +615,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   lead: React.ReactNode; tint: string; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
   /** An agent's tile: its card on the desktop, or not. */
   pin?: { on: boolean; toggle: () => void };
+  /** Back and Forward for the keys (Alt+← →): true when there was somewhere to go. */
+  steps: React.MutableRefObject<Map<string, (by: -1 | 1) => boolean>>;
 }) {
   const myNav = useMemo(() => nav(o.key), [o.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const p = usePage(o.url, say, myNav);
@@ -498,7 +640,32 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
     if (top !== undefined && body.current) holdScroll(body.current, top);
   }, [p.url, p.data, p.waiting, p.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   const back = trail.step(o.key, -1), forward = trail.step(o.key, 1);
-  const step = (by: -1 | 1) => { const v = by < 0 ? back : forward; if (v) go(v.url, { how: by < 0 ? 'back' : 'forward', top: v.top }); };
+  const step = (by: -1 | 1) => { const v = by < 0 ? back : forward; if (v) go(v.url, { how: by < 0 ? 'back' : 'forward', top: v.top }); return !!v; };
+  steps.current.set(o.key, step);
+  useEffect(() => () => { steps.current.delete(o.key); }, [o.key, steps]);
+  // Its own layer for pop-ups (components/ui/portal-container.ts): a sheet, a dialog, a menu or a list opened in this
+  // tile renders there, over this tile only. While a dialog is open in it, the tile's own page and strip are inert, and
+  // Tab goes round the dialog: focus stays in the tile; the other tiles stay usable, and nothing outside is hidden.
+  const [layer, setLayer] = useState<HTMLDivElement | null>(null);
+  const [blocked, setBlocked] = useState(false);
+  useEffect(() => {
+    if (!layer) return;
+    const check = () => setBlocked(!!layer.querySelector(':is([role="dialog"],[role="alertdialog"])[data-state="open"]'));
+    check();
+    const mo = new MutationObserver(check);
+    mo.observe(layer, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state'] });
+    const tab = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      const d = layer.querySelector(':is([role="dialog"],[role="alertdialog"])[data-state="open"]');
+      if (!d) return;
+      const t = tabbables(d);
+      if (!t.length) { e.preventDefault(); return; }
+      const i = t.indexOf(document.activeElement as HTMLElement);
+      if (e.shiftKey ? i <= 0 : i === t.length - 1) { e.preventDefault(); t[e.shiftKey ? t.length - 1 : 0].focus(); }
+    };
+    layer.addEventListener('keydown', tab);
+    return () => { mo.disconnect(); layer.removeEventListener('keydown', tab); };
+  }, [layer]);
   const arrow = (by: -1 | 1) => {
     const to = by < 0 ? back : forward, word = by < 0 ? 'Back' : 'Forward';
     return <button type="button" className="loom-tile__btn" disabled={!to} onClick={() => step(by)}
@@ -515,9 +682,10 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   const recent = useMemo(() => (wide && !pageSide && !p.waiting ? recentHere(p.url, o.key) : []), [wide, pageSide, p.url, p.waiting, o.key]);
   return (
     <section className="loom-tile" role="region" aria-roledescription="tile" aria-label={label} data-tile={o.key} data-focused={focused || undefined}
-      style={Object.assign({ '--t': tint }, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
+      data-blocked={blocked || undefined}
+      style={Object.assign({ '--t': tint, '--vt': vtName('tile', o.key) }, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
       onPointerDownCapture={onFocus} onFocusCapture={onFocus}>
-      <div className="loom-tile__bar" onDoubleClick={(e) => {
+      <div className="loom-tile__bar" inert={blocked || undefined} onDoubleClick={(e) => {
         if (e.button !== 0 || (e.target as Element).closest('button, a, input, select, textarea, [role="button"]')) return;
         e.preventDefault(); minimize();
       }}>
@@ -538,8 +706,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
             <AnimatedIcon name={iconFor('x')} size="sm" /></button>
         </span>
       </div>
-      <div className="loom-tile__body" ref={body}>
-        <div className="loom-tile__page" aria-busy={p.waiting || undefined}>{render(p, go, wide)}</div>
+      <div className="loom-tile__body" ref={body} inert={blocked || undefined}>
+        <div className="loom-tile__page" aria-busy={p.waiting || undefined}><PortalContainer.Provider value={layer}>{render(p, go, wide)}</PortalContainer.Provider></div>
         {recent.length > 0 && (
           <nav className="loom-tile__side" aria-label="Recent here">
             <div className="loom-side-col">
@@ -549,14 +717,15 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
           </nav>
         )}
       </div>
+      <div className="loom-tile__layer" ref={setLayer} />
     </section>
   );
 }
 
 /** A widget as a tile: where the rule puts it (absent: in the desktop's own grid), its × to take it off the desktop,
  * and its height as drawn reported for the rule (not while it's drawn compact: that's the rule's own height). */
-function WidgetFrame({ id, name, rect, compact, measure, remove, children }: {
-  id: string; name: string; rect?: Rect; compact?: boolean; measure?: (h: number) => void; remove: () => void; children: React.ReactNode;
+function WidgetFrame({ id, name, named, rect, compact, measure, remove, children }: {
+  id: string; name: string; named?: boolean; rect?: Rect; compact?: boolean; measure?: (h: number) => void; remove: () => void; children: React.ReactNode;
 }) {
   const inner = useRef<HTMLDivElement>(null);
   const tell = useRef(measure);
@@ -572,8 +741,8 @@ function WidgetFrame({ id, name, rect, compact, measure, remove, children }: {
     return () => ro.disconnect();
   }, [measuring]);
   return (
-    <div className="loom-wtile" data-widget={id} data-compact={compact || undefined}
-      style={rect ? { position: 'absolute', left: rect.x, top: rect.y, width: rect.w, height: rect.h } : undefined}>
+    <div className="loom-wtile" data-widget={id} data-compact={compact || undefined} tabIndex={-1} role="region" aria-roledescription="widget" aria-label={name}
+      style={Object.assign(named ? { '--vt': vtName('w', id) } : {}, rect ? { position: 'absolute', left: rect.x, top: rect.y, width: rect.w, height: rect.h } : {}) as React.CSSProperties}>
       <div className="loom-wtile__in" ref={inner}>{children}</div>
       <button type="button" className="loom-wtile__x" aria-label={`Remove ${name} from the desktop`} title="Remove from the desktop" onClick={remove}>
         <AnimatedIcon name={iconFor('x')} size="sm" /></button>

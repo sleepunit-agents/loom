@@ -1,5 +1,6 @@
 "use client";
 
+import { usePortalContainer } from "@/components/ui/portal-container";
 import * as React from "react";
 import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import { cva } from "class-variance-authority";
@@ -56,8 +57,9 @@ export function DrawerContent({
 }: DrawerContentProps) {
   const morphRef = useMorph<HTMLDivElement>("surfaces", ref);
   const flowRef = useFlowAppearance<HTMLDivElement>(true, morphRef, "slide-block");
+  const tile = usePortalContainer();
   return (
-    <Primitive.Portal>
+    <Primitive.Portal container={tile ?? undefined}>
       <DrawerOverlay />
       <Primitive.Content
         ref={flowRef}

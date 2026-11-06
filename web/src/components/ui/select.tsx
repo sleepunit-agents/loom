@@ -17,6 +17,7 @@ import {
 import { StateChevron, AnimatedIcon } from "@/components/ui/animated-icon";
 import { Icon } from "@/components/ui/icon";
 import * as Primitive from "@radix-ui/react-select";
+import { usePortalContainer } from "@/components/ui/portal-container";
 import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import { useFlowPress } from "@/lib/cojeev-motion/flow-press";
 import { assignMotionRef } from "@/lib/cojeev-motion/refs";
@@ -215,8 +216,9 @@ export function SelectContent({
     activeSelector: "[data-highlighted]",
   });
   const flowRef = useFlowAppearance<HTMLDivElement>(true, groupRef, "grow");
+  const tile = usePortalContainer();
   return (
-    <Primitive.Portal>
+    <Primitive.Portal container={tile ?? undefined}>
       <Primitive.Content
         ref={flowRef}
         data-slot="select-content"
