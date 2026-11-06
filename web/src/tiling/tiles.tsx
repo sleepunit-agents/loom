@@ -35,6 +35,8 @@ export type TilesApi = {
 export type Focused = { key: string; label: string; title: string } | null;
 
 const SAVED = 'loom-tiles';
+/** A tile this wide or wider has the page's side column beside it (docs/specs/desk-tiling.md, "The frame"). */
+const SIDE_WIDE = 1100;
 const keepSet = (set: TileSet) => { try { localStorage.setItem(SAVED, JSON.stringify(set)); } catch { /* private window */ } };
 const savedSet = (): TileSet | null => {
   try { const v = JSON.parse(localStorage.getItem(SAVED) ?? 'null') as TileSet | null; return v && Array.isArray(v.t) && Array.isArray(v.m) ? v : null; } catch { return null; }
@@ -57,7 +59,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   /** An app by its name in the address. */
   byName: (name: string) => (Named & { href: string }) | null;
   /** A page's body, linking and acting in its tile. */
-  render: (p: PageState, go: (href: string) => void) => React.ReactNode;
+  render: (p: PageState, go: (href: string) => void, wide: boolean) => React.ReactNode;
   /** The desktop, when no app is open. */
   home: React.ReactNode;
   say: (n: Omit<Note, 'id'>) => void;
@@ -196,10 +198,23 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     commit({ ...s, apps, focus: s.focus === key ? apps[apps.length - 1]?.key ?? null : s.focus });
     announce(`${o.label} closed`);
   };
+  /** While there are more apps than the cap, or one is under its minimum, the least recently used (never the focused,
+   * never the pinned) goes to the dock, said in a toast. After anything that changes the set other than opening (which
+   * `admit` does): the screen resized, Home again, make this the big one. */
+  const shed = (s: State, why: string): State => {
+    for (;;) {
+      const over = s.apps.length > capFor(innerWidth) || underMinimum(tiles(s.apps), [], area, innerWidth);
+      const may = s.apps.filter((a) => a.key !== s.focus && !a.pinned);
+      if (!over || !may.length || !area.w) return s;
+      const o = may.reduce((x, y) => ((usedAt.current[y.key] ?? 0) < (usedAt.current[x.key] ?? 0) ? y : x));
+      s = toDock(s, o);
+      say({ ok: true, message: `${o.label} went to the dock: ${why}` });
+    }
+  };
   const makeBig = (key: string) => {
     const s = S.current;
     const order = promote(tiles(s.apps), key);
-    commit({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key });
+    commit(shed({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'it didn’t fit beside the big one'));
   };
   const homeKey = () => {
     const s = S.current;
@@ -213,7 +228,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     // Home again: back in their order.
     const back = s.home.map((k) => s.min.find((a) => a.key === k)).filter((a): a is Open => !!a)
       .map((a) => ({ ...a, url: trail.restore(a.key)?.url ?? a.url }));
-    commit({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null });
+    commit(shed({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null }, 'not all of them fit this screen now'));
   };
 
   api.current = {
@@ -257,6 +272,14 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     intents.current.set(key, { how: o?.how ?? 'go', url: to, top: o?.top });
     void p.load(to, true);
   };
+  /** Where a tile's page landed, whatever took it there (its links, its Back, the browser's): the set's from now on. */
+  const landed = (key: string, url: string) => {
+    const s = S.current;
+    if (s.apps.find((a) => a.key === key)?.url === url) return;
+    S.current = { ...s, apps: s.apps.map((a) => (a.key === key ? { ...a, url } : a)) };
+    keepSet(set(S.current));
+    bump();
+  };
   const navFor = (key: string): PageNav => ({
     here: () => S.current.apps.find((a) => a.key === key)?.url ?? '/',
     push: (to) => { const s = S.current; commit({ ...s, apps: s.apps.map((a) => (a.key === key ? { ...a, url: to } : a)), focus: key }, 'push'); },
@@ -276,17 +299,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   }, []);
   // Narrower (a window resized): what no longer fits goes to the dock, least recently used first, never the focused.
   useEffect(() => {
-    if (!area.w) return;
-    let s = S.current;
-    const gone: Open[] = [];
-    for (;;) {
-      const over = s.apps.length > capFor(innerWidth) || underMinimum(tiles(s.apps), [], area, innerWidth);
-      const may = s.apps.filter((a) => a.key !== s.focus && !a.pinned);
-      if (!over || !may.length) break;
-      const o = may.reduce((x, y) => ((usedAt.current[y.key] ?? 0) < (usedAt.current[x.key] ?? 0) ? y : x));
-      s = toDock(s, o); gone.push(o);
-    }
-    if (gone.length) { commit(s); for (const o of gone) say({ ok: true, message: `${o.label} went to the dock: the screen got too small for it` }); }
+    const s = shed(S.current, 'the screen got too small for it');
+    if (s !== S.current) commit(s);
   }, [area.w, area.h]);   // eslint-disable-line react-hooks/exhaustive-deps
   // The address and this device's copy, as the set first stands.
   useEffect(() => { commit(S.current); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -308,21 +322,34 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       {s.apps.length === 0 ? home : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)}
-          onFocus={() => focus(o.key)} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)} />
+          landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)} />
       ))}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>
   );
 }
 
-function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, onFocus, minimize, close, makeBig }: {
+/** Scrolled to `top`, and kept there while the page is still growing under it (a chunk, a face, a font landing): a
+ * page shorter than `top` when it's first drawn would otherwise stop short. Lets go after a second, or at a touch. */
+function holdScroll(el: HTMLElement, top: number) {
+  el.scrollTop = top;
+  const page = el.firstElementChild;
+  if (!page || el.scrollTop === top) return;
+  const ro = new ResizeObserver(() => { el.scrollTop = top; if (el.scrollTop === top) stop(); });
+  const stop = () => { ro.disconnect(); clearTimeout(t); el.removeEventListener('wheel', stop); el.removeEventListener('pointerdown', stop); };
+  const t = setTimeout(stop, 1000);
+  ro.observe(page);
+  el.addEventListener('wheel', stop, { passive: true }); el.addEventListener('pointerdown', stop);
+}
+
+function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, landed, onFocus, minimize, close, makeBig }: {
   o: Open & { restoreTop?: number }; n: number; of: number; rect: Rect | undefined; focused: boolean;
   say: (n: Omit<Note, 'id'>) => void; nav: (key: string) => PageNav;
   pages: React.MutableRefObject<Map<string, PageState>>; bodies: React.MutableRefObject<Map<string, HTMLElement>>;
   intents: React.MutableRefObject<Map<string, { how: trail.How; url: string; top?: number }>>;
   go: (href: string, o?: { how?: 'back' | 'forward'; top?: number }) => void;
-  render: (p: PageState, go: (href: string) => void) => React.ReactNode;
-  lead: React.ReactNode; tint: string; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
+  render: (p: PageState, go: (href: string) => void, wide: boolean) => React.ReactNode;
+  lead: React.ReactNode; tint: string; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
 }) {
   const myNav = useMemo(() => nav(o.key), [o.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const p = usePage(o.url, say, myNav);
@@ -340,9 +367,10 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
     const mine = i?.url === p.url;
     if (mine) intents.current.delete(o.key);
     if (trail.note(o.key, p.url, mine ? i!.how : 'go', title || undefined)) moved();
+    landed(p.url);
     const top = mine ? i!.top : first.current;
     first.current = undefined;
-    if (top !== undefined && body.current) body.current.scrollTop = top;
+    if (top !== undefined && body.current) holdScroll(body.current, top);
   }, [p.url, p.data, p.waiting, p.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   const back = trail.step(o.key, -1), forward = trail.step(o.key, 1);
   const step = (by: -1 | 1) => { const v = by < 0 ? back : forward; if (v) go(v.url, { how: by < 0 ? 'back' : 'forward', top: v.top }); };
@@ -353,6 +381,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
       <AnimatedIcon name={iconFor(by < 0 ? 'chevron-left' : 'chevron-right')} size="sm" /></button>;
   };
   const path = p.url.split('?')[0];
+  // The trail: the app, as its start was last left, when this page is under it.
+  const up = path !== o.key && !p.waiting ? { url: trail.lastAt(o.key, o.key)?.url ?? o.key } : undefined;
   const label = `tile ${n + 1} of ${of}, ${o.label}`;
   return (
     <section className="loom-tile" role="region" aria-roledescription="tile" aria-label={label} data-tile={o.key} data-focused={focused || undefined}
@@ -364,6 +394,7 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
       }}>
         <span className="loom-tile__key" aria-hidden>{lead}</span>
         <span className="loom-tile__steps">{arrow(-1)}{arrow(1)}</span>
+        {up && <a className="loom-tile__crumb" href={up.url} onClick={(e) => { e.preventDefault(); go(up.url); }}>{o.label}</a>}
         <h2 tabIndex={-1} title={title}>{title}</h2>
         <span className="loom-tile__path loom-data" aria-hidden>loom{path}</span>
         <span className="loom-tile__acts">
@@ -376,7 +407,7 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
         </span>
       </div>
       <div className="loom-tile__body" ref={body}>
-        <div className="loom-tile__page" aria-busy={p.waiting || undefined}>{render(p, go)}</div>
+        <div className="loom-tile__page" aria-busy={p.waiting || undefined}>{render(p, go, (rect?.w ?? 0) >= SIDE_WIDE)}</div>
       </div>
     </section>
   );

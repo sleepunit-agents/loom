@@ -21,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dock, type DockItem } from '@/components/ui/dock';
 import { Spinner } from '@/components/ui/spinner';
 import { usePage, hasKept, screenNav, type PageNav, type PageState } from './page';
+import { nameOf as tileName } from './tiling/name';
 // The toasts load with the first one (toasts.tsx).
 const Toasts = lazy(() => import('./toasts'));
 import type { Note } from './toasts';
@@ -430,7 +431,7 @@ export default function App() {
   const tileNamed = (name: string) => {
     const hrefs = [...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
       .concat('/setup', '/account', ...shellPlaces.map((p) => p.href), ...(chrome?.shell?.agents ?? []).map((a) => `/a/${a.id}`));
-    for (const h of hrefs) { const r = tileOf(h); if (r && r.key.split('/').filter(Boolean).pop() === name) return { ...r, href: h }; }
+    for (const h of hrefs) { const r = tileOf(h); if (r && tileName(r.key) === name) return { ...r, href: h }; }
     return null;
   };
   // On its way, or not opened: the header still says which app (a place's name), not the last page's title.
@@ -645,7 +646,7 @@ export default function App() {
           {tiled && D && chrome?.shell ? (
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
-                render={(pg, g) => pageBody(pg, pageEnv(pg, g), 'fold', { before: null, now: new Set() })}
+                render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() })}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <AgentAvatar a={agentOf(o.key)!} size={20} /> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
                 tint={(o) => (agentOf(o.key) ? markColor(agentOf(o.key)!.bg) : `var(--loom-tint-${tint(o.label)})`)} />

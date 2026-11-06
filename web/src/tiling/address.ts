@@ -10,8 +10,7 @@ export type TileSet = { t: Entry[]; m: string[] };
 
 const NAME = /^[a-z0-9][a-z0-9_-]*$/i;
 
-/** An app's name in the address: the last part of its key's path (`/p/tasks` → `tasks`, `/a/art` → `art`). */
-export const nameOf = (key: string): string => key.split('?')[0].split('/').filter(Boolean).pop() ?? '';
+export { nameOf } from './name';
 
 /** The set an address carries, and the page's own address without it. `set` is null when the query has no `t` or `m`. */
 export function readSet(url: string): { set: TileSet | null; page: string } {

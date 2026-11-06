@@ -106,8 +106,12 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await setup.locator('a, button', { hasText: 'Appearance' }).first().click();
       await expect.poll(() => where(p)).toMatch(/^\/appearance\?/);
       await setup.locator('[aria-label="Desktop"]').waitFor();
+      // a short screen, so Appearance scrolls in its tile
+      await p.setViewportSize({ width: w, height: 560 });
       const body = setup.locator('.loom-tile__body');
-      const top = await body.evaluate((b) => { b.scrollTop = 120; return b.scrollTop; });
+      await expect.poll(() => body.evaluate((b) => b.scrollHeight - b.clientHeight)).toBeGreaterThan(100);
+      const top = await body.evaluate((b) => { b.scrollTop = 100; return b.scrollTop; });
+      expect(top).toBe(100);
       await p.click(KEY('Setup')); await expect.poll(() => tile(p, 'Setup').count()).toBe(0);
       await p.click(KEY('Setup')); await tile(p, 'Setup').locator('[aria-label="Desktop"]').waitFor();
       expect(new URL(p.url()).pathname).toBe('/appearance');
@@ -116,7 +120,7 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     }, 60_000);
   }
 
-  for (const [w, hgt] of [[1024, 768], [1920, 1080]]) {
+  for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     it(`11. history per tile, and the browser's Back, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);
       const before = await p.evaluate(() => history.length);
@@ -127,15 +131,19 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await tile(p, 'Inbox').locator('button[aria-label="Close Inbox"]').click();
       await expect.poll(() => p.locator('.loom-tile').count()).toBe(1);
       expect(await p.evaluate(() => history.length)).toBe(before);
-      await open(p, 'Inbox', 2);
-      // a page change in Setup's tile, then its own Back: only Setup moves
+      await p.click(KEY('People')); await expect.poll(() => labels(p)).toEqual(['Setup', 'People']);
+      // a page change in each tile: People to a person, Setup to Accessibility; then Setup's own Back: only Setup moves
+      await tile(p, 'People').locator('main a[href^="/people/"], a[href^="/people/"]').first().click();
+      await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/people\/./);
+      const person = new URL(p.url()).pathname;
       const setup = tile(p, 'Setup');
       await setup.locator('a, button', { hasText: 'Accessibility' }).first().click();
       await expect.poll(() => new URL(p.url()).pathname).toBe('/accessibility');
-      expect(await p.evaluate(() => history.length)).toBe(before + 1);
+      expect(await p.evaluate(() => history.length)).toBe(before + 2);
       await setup.locator('.loom-tile__btn[aria-label^="Back"]').click();
       await expect.poll(() => new URL(p.url()).pathname).toBe('/setup');
-      expect(await tile(p, 'Inbox').locator('h2').textContent()).toMatch(/inbox/i);
+      // People stayed on its person
+      expect(await tile(p, 'People').locator('.loom-tile__path').textContent()).toBe(`loom${person}`);
       // the browser's Back and Forward walk the focused tile's history
       await setup.locator('a, button', { hasText: 'Appearance' }).first().click();
       await expect.poll(() => new URL(p.url()).pathname).toBe('/appearance');
@@ -143,6 +151,11 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await expect.poll(() => new URL(p.url()).pathname).toBe('/setup');
       await expect.poll(() => setup.locator('h2').textContent()).toMatch(/setup/i);
       expect(await p.locator('.loom-tile').count()).toBe(2);
+      // what the browser's Back landed on is the tile's page now: minimized and back, it's Setup's start, not Appearance
+      await p.click(KEY('Setup')); await expect.poll(() => tile(p, 'Setup').count()).toBe(0);
+      expect(query(p, 'm')).toBe('setup');
+      await p.click(KEY('Setup')); await tile(p, 'Setup').waitFor();
+      await expect.poll(() => new URL(p.url()).pathname).toBe('/setup');
       await p.context().close();
     }, 60_000);
   }
@@ -197,17 +210,19 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     }, 60_000);
   }
 
-  it('17. 1 to 4 apps at 1920: nothing overlaps, everything inside the desk, nothing sideways, DOM order is the order', async () => {
-    const p = await screen(1920, 1080);
+  for (const [w, hgt] of [[1280, 800], [1920, 1080]]) it(`17. apps at ${w}×${hgt}: nothing overlaps, everything inside the desk, nothing sideways, DOM order is the order`, async () => {
+    const p = await screen(w, hgt);
     const bars = await p.locator('.loom-top').evaluate((e) => e.getBoundingClientRect().bottom);
     const dock = await p.locator('.loom-dock-bar').evaluate((e) => e.getBoundingClientRect().top);
     for (const [n, label] of (['Inbox', 'Comms', 'People', 'Knowledge'] as const).entries()) {
-      await open(p, label, n + 1);
+      await p.click(KEY(label));
+      await expect.poll(() => labels(p)).toContain(label);
+      if (w >= 1920) expect(await p.locator('.loom-tile').count()).toBe(n + 1);
       const ts = await tiles(p);
       for (const t of ts) {
         expect(t.y, `${label}: under the bars`).toBeGreaterThanOrEqual(bars - 0.5);
         expect(t.y + t.h, `${label}: over the dock`).toBeLessThanOrEqual(dock + 0.5);
-        expect(t.x).toBeGreaterThanOrEqual(0); expect(t.x + t.w).toBeLessThanOrEqual(1920);
+        expect(t.x).toBeGreaterThanOrEqual(0); expect(t.x + t.w).toBeLessThanOrEqual(w);
       }
       for (let i = 0; i < ts.length; i++) for (let j = i + 1; j < ts.length; j++) {
         const [a, b] = [ts[i], ts[j]];
@@ -239,8 +254,8 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     await p.context().close();
   }, 60_000);
   // Last: choosing in Appearance is the person's (kept by loom), so it would choose for every test after it.
-  it('18. One window at a time is the default; choosing Tiling in Appearance tiles at once, no reload', async () => {
-    const p = await screen(1280, 800, { tiling: false });
+  for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) it(`18. One window at a time is the default; choosing Tiling in Appearance tiles at once, no reload, at ${w}×${hgt}`, async () => {
+    const p = await screen(w, hgt, { tiling: false });
     await p.click(KEY('Inbox')); await p.locator('.loom-window').waitFor();
     await p.click(KEY('Setup')); await expect.poll(() => where(p)).toBe('/setup');
     expect(await p.locator('.loom-window').count()).toBe(1);
