@@ -45,6 +45,18 @@ export const MAX_CARDS = 50;
 export const MAX_SUMMARY = 120;
 /** A queued message with no `working` from the runtime for this long is "busy" (comms.md, section 7). */
 export const BUSY_MS = 2 * 60_000;
+/**
+ * A member's message still marked on its way this long after its delivery began was cut off (the daemon restarted
+ * under it), so it's recorded as not delivered, and Send again delivers it (t-1881). Core's delivery to the runtime
+ * gives up at 120 s once it runs (DELIVERY_LIMITS.timeoutMs), after waiting its turn in its piece's pool (2 running,
+ * 4 waiting): 6 × 120 s at the very worst, so 15 minutes is past any delivery still going.
+ */
+export const SEND_STALE_MS = 15 * 60_000;
+/**
+ * The runtime says `working` again every 15 s while a thread's body works (loom-box delivery.mjs, PRESENCE_MS), and
+ * posts its activity: a thread with no word of it this long has no body at work, whatever its last word was (t-1881).
+ */
+export const WORKING_STALE_MS = 90_000;
 const DAY_MS = 86_400_000;
 
 /** A message's id from the app: 16 characters of RFC 4648 base32, lowercased. */
@@ -79,6 +91,8 @@ export interface Thread {
   read_seq: number;
   channel: number;
   working_since: string | null;
+  /** When the runtime last said the thread's body is at work (its status or its activity), ms. */
+  working_beat: number | null;
   queued_since: string | null;
   last_failed: boolean;
   /** When an app of its member last had it in front (its read calls), ms; null for never. */
@@ -95,8 +109,14 @@ export interface Message {
   text: string | null;
   card: Record<string, unknown> | null;
   run: string | null;
+  /** On a member's message: true once delivered, false when its delivery failed, null while it's on its way. */
   delivered: boolean | null;
+  /** On a member's message, the same in a word (comms.md, "Sending"); absent on every other kind. */
+  delivery?: Delivery;
 }
+
+/** Where a member's message is: on its way, delivered, or not delivered (a failure core recorded). */
+export type Delivery = 'sending' | 'delivered' | 'failed';
 
 // ─── Keys ──────────────────────────────────────────────────────────────────────
 
@@ -238,6 +258,7 @@ const THREADS_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_threads (
     first_id      TEXT NOT NULL,
     first_hash    TEXT NOT NULL,
     working_since TEXT,
+    working_beat  INTEGER,
     queued_since  TEXT,
     last_failed   INTEGER NOT NULL DEFAULT 0,
     stop          INTEGER NOT NULL DEFAULT 0,
@@ -267,6 +288,8 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
     card_json TEXT,
     run       TEXT,
     delivered INTEGER,
+    sending_at INTEGER,
+    delivery_json TEXT,
     PRIMARY KEY (thread, seq)
   );
   CREATE INDEX IF NOT EXISTS comms_messages_id ON comms_messages (thread, kind, id);
@@ -275,7 +298,7 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
 const threadsReady = new Set<string>();
 function withThreads<T>(home: string, f: (db: Database) => T): T {
   return withHouseholdDb(home, (db) => {
-    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); threadsReady.add(home); }
+    if (!threadsReady.has(home)) { db.exec(THREADS_SCHEMA); addColumn(db, 'comms_threads', 'working_beat', 'INTEGER'); threadsReady.add(home); }
     return f(db);
   });
 }
@@ -291,7 +314,15 @@ function openMessages(home: string): Database {
   db.pragma('journal_mode = DELETE');
   db.pragma('secure_delete = ON');
   db.exec(MESSAGES_SCHEMA);
+  addColumn(db, 'comms_messages', 'sending_at', 'INTEGER');
+  addColumn(db, 'comms_messages', 'delivery_json', 'TEXT');
   return db;
+}
+
+/** A column a store made before it gains it (t-1881): added once, empty. */
+function addColumn(db: Database, table: string, column: string, type: string): void {
+  const have = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((c) => c.name === column);
+  if (!have) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 function withMessages<T>(home: string, f: (db: Database) => T): T {
   const db = openMessages(home);
@@ -301,13 +332,13 @@ function withMessages<T>(home: string, f: (db: Database) => T): T {
 interface ThreadRow {
   id: string; agent: string; member: string; conversation: string; title: string | null; titled_by: string | null; project: string | null;
   pinned: number; archived: string | null; opened: string; last: string; read_seq: number; channel: number; first_id: string; first_hash: string;
-  working_since: string | null; queued_since: string | null; last_failed: number; stop: number; in_front: number | null; updated: number;
+  working_since: string | null; working_beat: number | null; queued_since: string | null; last_failed: number; stop: number; in_front: number | null; updated: number;
 }
 const threadOf = (r: ThreadRow): Thread => ({
   id: r.id, agent: r.agent, member: r.member, conversation: r.conversation, title: r.title,
   titled_by: r.titled_by === 'agent' || r.titled_by === 'member' ? r.titled_by : null, project: r.project, pinned: r.pinned === 1,
   archived: r.archived, opened: r.opened, last: r.last, read_seq: r.read_seq, channel: r.channel,
-  working_since: r.working_since, queued_since: r.queued_since, last_failed: r.last_failed === 1, in_front: r.in_front,
+  working_since: r.working_since, working_beat: r.working_beat ?? null, queued_since: r.queued_since, last_failed: r.last_failed === 1, in_front: r.in_front,
 });
 
 // ─── Who may ───────────────────────────────────────────────────────────────────
@@ -343,6 +374,8 @@ export function stillSees(h: Household, person: string, id: string): boolean {
 
 interface MsgRow { seq: number; at: string; kind: string; sender: string; id: string; text: Buffer | null; card_json: string | null; run: string | null; delivered: number | null }
 
+const deliveryOf = (delivered: number | null): Delivery => (delivered === 1 ? 'delivered' : delivered === 0 ? 'failed' : 'sending');
+
 /** An error message's words: a fixed table, never stored (comms.md, section 7). */
 export function errorWords(code: string, agentName: string, reason: string | undefined): string {
   const r = reason ? reason.replace(/^[a-z-]+: /, '') : '';
@@ -371,7 +404,8 @@ async function messageOf(home: string, env: NodeJS.ProcessEnv, agent: string, r:
   let text: string | null = null;
   if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined);
   else if (r.text) text = await decrypt(home, env, r.text);
-  return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1 };
+  return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1,
+    ...(r.kind === 'message' ? { delivery: deliveryOf(r.delivered) } : {}) };
 }
 
 /** A thread's messages: the newest PAGE, or those after `after`, or the PAGE before `before`; oldest first. */
@@ -440,13 +474,13 @@ const listeners = new Set<() => void>();
 /** A same-process listener for thread moves (the live streams). */
 export function onBump(f: () => void): () => void { listeners.add(f); return () => listeners.delete(f); }
 
-function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean }, now: Date): number {
+function append(home: string, env: NodeJS.ProcessEnv, thread: string, m: { kind: MessageKind; from: string; id: string; text?: string; hash?: string; card?: Record<string, unknown>; run?: string; delivered?: boolean | 'sending' }, now: Date): number {
   const blob = m.text !== undefined ? encrypt(home, env, m.text) : null;
   return withMessages(home, (db) => db.transaction(() => {
     const seq = ((db.prepare('SELECT MAX(seq) AS n FROM comms_messages WHERE thread = ?').get(thread) as { n: number | null }).n ?? 0) + 1;
-    db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    db.prepare('INSERT INTO comms_messages (thread, seq, at, kind, sender, id, hash, text, card_json, run, delivered, sending_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
       thread, seq, nowIso(now), m.kind, m.from, m.id, m.hash ?? null, blob, m.card ? JSON.stringify(m.card) : null, m.run ?? null,
-      m.delivered === undefined ? null : m.delivered ? 1 : 0);
+      m.delivered === undefined || m.delivered === 'sending' ? null : m.delivered ? 1 : 0, m.delivered === 'sending' ? now.getTime() : null);
     return seq;
   }).immediate());
 }
@@ -503,33 +537,94 @@ export function openThread(h: Household, env: NodeJS.ProcessEnv, member: Member,
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(place, agent, member.person, conversationId(agent, COMMS_VENUE, place), project, at, at, channel, id, hash, now.getTime());
     return threadOf(db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(place) as ThreadRow);
   }).immediate());
-  const seq = append(h.home, env, thread.id, { kind: 'message', from: member.person, id, text, hash, delivered: false }, now);
+  const seq = append(h.home, env, thread.id, { kind: 'message', from: member.person, id, text, hash, delivered: 'sending' }, now);
   bump(h.home);
   return { thread, seq, created: true };
 }
 
 /**
- * A member's message into their thread (POST /comms/<thread>/send). The same id with the same words answers the first
- * message's seq (`repeat`), and whether it was delivered; with other words, a 409.
+ * A member's message into their thread (POST /comms/<thread>/send), recorded on its way. The same id with the same
+ * words answers the first message's seq (`repeat`) and where it is: delivered, on its way, or not delivered (after a
+ * failure core recorded, or one cut off: settleThread); with other words, a 409.
  */
-export function addMemberMessage(h: Household, env: NodeJS.ProcessEnv, t: Thread, raw: Record<string, unknown>, now: Date = new Date()): { seq: number; repeat: boolean; delivered: boolean } {
+export function addMemberMessage(h: Household, env: NodeJS.ProcessEnv, t: Thread, raw: Record<string, unknown>, now: Date = new Date()): { seq: number; repeat: boolean; delivery: Delivery } {
   if (t.archived) return fail('conflict: that thread is archived: unarchive it first', 409);
   const id = checkId(raw.id);
   const text = checkText(raw.text);
   const hash = wordsHash(h.home, text);
-  const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, hash, delivered FROM comms_messages WHERE thread = ? AND kind = 'message' AND id = ?").get(t.id, id) as { seq: number; hash: string | null; delivered: number | null } | undefined);
+  const look = () => withMessages(h.home, (db) => db.prepare("SELECT seq, hash, delivered FROM comms_messages WHERE thread = ? AND kind = 'message' AND id = ?").get(t.id, id) as { seq: number; hash: string | null; delivered: number | null } | undefined);
+  let prior = look();
   if (prior) {
     if (prior.hash !== hash) return fail('conflict: that message id was already sent with other words', 409);
-    return { seq: prior.seq, repeat: true, delivered: prior.delivered === 1 };
+    if (prior.delivered === null) { settleThread(h.home, t.id, now); prior = look()!; }
+    return { seq: prior.seq, repeat: true, delivery: deliveryOf(prior.delivered) };
   }
   if (!ageReady(h.home, env)) {
     append(h.home, env, t.id, { kind: 'error', from: 'loom', id: `e${randomBytes(6).toString('hex')}`, card: { error: 'no-age' } }, now);
     bump(h.home);
     return fail('no-age: loom keeps a thread\'s words encrypted, and the age programs aren\'t installed', 503);
   }
-  const seq = append(h.home, env, t.id, { kind: 'message', from: t.member, id, text, hash, delivered: false }, now);
+  const seq = append(h.home, env, t.id, { kind: 'message', from: t.member, id, text, hash, delivered: 'sending' }, now);
   withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { last: nowIso(now) }, now));
-  return { seq, repeat: false, delivered: false };
+  return { seq, repeat: false, delivery: 'sending' };
+}
+
+/**
+ * Send again (t-1881): a message not delivered goes back on its way, once. True when this call took it; false when it
+ * isn't one that failed (it's delivered, or already on its way again, from another tab or a second tap).
+ */
+export function resendMessage(h: Household, t: Thread, seq: number, now: Date = new Date()): boolean {
+  const took = withMessages(h.home, (db) => db.prepare("UPDATE comms_messages SET delivered = NULL, sending_at = ? WHERE thread = ? AND seq = ? AND kind = 'message' AND delivered = 0").run(now.getTime(), t.id, seq).changes === 1);
+  if (took) withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { last_failed: 0 }, now));
+  return took;
+}
+
+/**
+ * What's recorded, made true of now (t-1881), for one thread or every one: a member's message on its way past
+ * SEND_STALE_MS was cut off (its delivery's process is gone), so it's not delivered, with its error line; a thread
+ * whose body the runtime hasn't said is at work for WORKING_STALE_MS isn't working. Each is written, never a guess
+ * the app makes. Answers whether anything moved.
+ */
+export function settleThread(home: string, thread: string | null, now: Date = new Date()): boolean {
+  let moved = false;
+  if (existsSync(join(home, COMMS_DB))) {
+    const cut = withMessages(home, (db) => (thread === null
+      ? db.prepare("SELECT thread, seq FROM comms_messages WHERE kind = 'message' AND delivered IS NULL AND sending_at < ?").all(now.getTime() - SEND_STALE_MS)
+      : db.prepare("SELECT thread, seq FROM comms_messages WHERE thread = ? AND kind = 'message' AND delivered IS NULL AND sending_at < ?").all(thread, now.getTime() - SEND_STALE_MS)) as Array<{ thread: string; seq: number }>);
+    for (const c of cut) {
+      const took = withMessages(home, (db) => db.prepare("UPDATE comms_messages SET delivered = 0, sending_at = NULL WHERE thread = ? AND seq = ? AND delivered IS NULL").run(c.thread, c.seq).changes === 1);
+      if (!took) continue;
+      append(home, process.env, c.thread, { kind: 'error', from: 'loom', id: `e${c.seq}`, card: { error: 'unreachable', reason: 'loom restarted while it was delivering it' } }, now);
+      if (existsSync(join(home, 'household.db'))) withThreads(home, (db) => touch(home, db, c.thread, { last_failed: 1 }, now));
+      moved = true;
+    }
+  }
+  if (existsSync(join(home, 'household.db'))) {
+    const beat = now.getTime() - WORKING_STALE_MS;
+    const since = new Date(beat).toISOString();
+    // A beat older than its window, or none at all (a thread from before the beat) and working since before it.
+    const stale = withThreads(home, (db) => (thread === null
+      ? db.prepare('SELECT id FROM comms_threads WHERE working_since IS NOT NULL AND (working_beat < ? OR (working_beat IS NULL AND working_since < ?))').all(beat, since)
+      : db.prepare('SELECT id FROM comms_threads WHERE id = ? AND working_since IS NOT NULL AND (working_beat < ? OR (working_beat IS NULL AND working_since < ?))').all(thread, beat, since)) as Array<{ id: string }>);
+    for (const r of stale) { withThreads(home, (db) => touch(home, db, r.id, { working_since: null, working_beat: null }, now)); moved = true; }
+  }
+  return moved;
+}
+
+/**
+ * What a member's message is delivered with besides its words, fixed at its first try (t-1881): its time and the
+ * thread's title then. Send again delivers exactly the same message, so core and the runtime answer it as the repeat
+ * it is (one that reached the runtime after all is never refused as "another message", nor heard twice).
+ */
+export function deliveryFacts(h: Household, t: Thread, seq: number): { at: string; label: string } {
+  return withMessages(h.home, (db) => {
+    const r = db.prepare("SELECT at, delivery_json FROM comms_messages WHERE thread = ? AND seq = ? AND kind = 'message'").get(t.id, seq) as { at: string; delivery_json: string | null } | undefined;
+    if (!r) return fail('not-found: no such message', 404);
+    if (r.delivery_json) { try { const f = JSON.parse(r.delivery_json) as { at: string; label: string }; if (typeof f.at === 'string' && typeof f.label === 'string') return f; } catch { /* written again below */ } }
+    const f = { at: r.at, label: t.title ?? 'New thread' };
+    db.prepare('UPDATE comms_messages SET delivery_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify(f), t.id, seq);
+    return f;
+  });
 }
 
 /** A member message's words, to deliver again (Send again); null once swept. */
@@ -540,7 +635,7 @@ export async function memberWords(h: Household, env: NodeJS.ProcessEnv, t: Threa
 
 /** What delivering a member's message came to: delivered or not, and an error message when it failed. */
 export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { delivered: boolean; body?: string; error?: { code: string; reason?: string } }, now: Date = new Date()): void {
-  withMessages(h.home, (db) => db.prepare("UPDATE comms_messages SET delivered = ? WHERE thread = ? AND seq = ? AND kind = 'message'").run(outcome.delivered ? 1 : 0, t.id, seq));
+  withMessages(h.home, (db) => db.prepare("UPDATE comms_messages SET delivered = ?, sending_at = NULL WHERE thread = ? AND seq = ? AND kind = 'message'").run(outcome.delivered ? 1 : 0, t.id, seq));
   if (outcome.error) {
     append(h.home, process.env, t.id, { kind: 'error', from: 'loom', id: `e${seq}`, card: { error: outcome.error.code, ...(outcome.error.reason ? { reason: outcome.error.reason.slice(0, 300) } : {}) } }, now);
   }
@@ -581,7 +676,7 @@ export function setPinned(h: Household, t: Thread, pinned: boolean, now: Date = 
 }
 
 export function setArchived(h: Household, t: Thread, archived: boolean, now: Date = new Date()): void {
-  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { archived: archived ? nowIso(now) : null, working_since: archived ? null : t.working_since }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, t.id, { archived: archived ? nowIso(now) : null, working_since: archived ? null : t.working_since, ...(archived ? { working_beat: null } : {}) }, now));
 }
 
 /** The member read up to `seq` (never backwards), with the thread in front now. */
@@ -654,6 +749,7 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
   const stop = r.stop === 1;
   withThreadsAt(h.home, (db) => touch(h.home, db, r.id, {
     working_since: status === 'working' ? (r.working_since ?? nowIso(now)) : null,
+    working_beat: status === 'working' ? now.getTime() : null,
     ...(status === 'working' ? { queued_since: null } : {}),
     ...(stop ? { stop: 0 } : {}),
   }, now));
@@ -697,7 +793,7 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       added++;
     }
   }
-  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), queued_since: null }, now));
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null }, now));
   return { ok: true, added, updated };
 }
 
@@ -720,6 +816,7 @@ export function sweepComms(h: Household, now: Date = new Date()): number {
       withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { queued_since: null }, now));
     }
   }
+  settleThread(h.home, null, now);
   return swept;
 }
 
@@ -731,7 +828,7 @@ export function noteLoopPause(home: string, conversation: string, now: Date = ne
   const t = threadOfConversation(home, conversation);
   if (!t) return;
   append(home, process.env, t.id, { kind: 'error', from: 'loom', id: `loop${now.getTime()}`, card: { error: 'loop' } }, now);
-  withThreads(home, (db) => touch(home, db, t.id, { last_failed: 1, working_since: null }, now));
+  withThreads(home, (db) => touch(home, db, t.id, { last_failed: 1, working_since: null, working_beat: null }, now));
 }
 
 /** The thread for a conversation (the title tool, the hub): undefined when it has none. */
@@ -768,6 +865,22 @@ export function titleFromAgent(home: string, agent: string, conversation: string
   if (!t) return fail('comms_title names a Comms thread, and this conversation isn\'t one');
   const h = householdAt(home);
   return setTitle(h, t, title, 'agent', now);
+}
+
+/**
+ * What of a thread its app draws as state, as one string (t-1881): the body at work, queued, a failure, its title, and
+ * how many of its messages are still on their way and how many steps still running. A live stream tells its app when
+ * this moves; a read mark (which moves the row too) doesn't.
+ */
+export function threadState(home: string, thread: string): string {
+  if (!existsSync(join(home, 'household.db'))) return '';
+  const r = withThreads(home, (db) => db.prepare('SELECT working_since, queued_since, last_failed, title, archived FROM comms_threads WHERE id = ?').get(thread) as Record<string, unknown> | undefined);
+  if (!r) return '';
+  const m = existsSync(join(home, COMMS_DB)) ? withMessages(home, (db) => db.prepare(`SELECT
+      SUM(CASE WHEN kind = 'message' AND delivered IS NULL THEN 1 ELSE 0 END) AS sending,
+      SUM(CASE WHEN kind = 'card' AND card_json LIKE '%"state":"running"%' THEN 1 ELSE 0 END) AS running
+    FROM comms_messages WHERE thread = ?`).get(thread) as { sending: number | null; running: number | null }) : { sending: 0, running: 0 };
+  return JSON.stringify([r.working_since, r.queued_since, r.last_failed, r.title, r.archived, m.sending ?? 0, m.running ?? 0]);
 }
 
 /** Threads whose rows moved since `ms` (the live streams' cross-process read). */

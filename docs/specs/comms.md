@@ -155,6 +155,18 @@ choice, and the body's brief. The new parts follow.
       message and no second delivery. That's core's delivery rule: only a successful answer is kept.
     - A send whose delivery failed kept nothing, so the same id delivers afresh. That's what Send again does, and its
       message row is the same one, marked delivered once it goes.
+  - **Sending** (t-1881). A send is accepted once its message is recorded: `new` and `send` answer at once with
+    `delivery: "sending"`, and core delivers in the background. A body can take 20 s or more to start, and nothing
+    waits on it. The message is `sending` until core records what came of it: `delivered`, or `failed` with its error
+    line. The thread's live stream tells the app when that's recorded, and the app shows only what the server
+    recorded, never a guess: "sending…" while it's on its way, "Not delivered · Send again" only after a recorded
+    failure.
+    - Send again (the same id, after a failure) puts it back on its way, once: a second tap, or another tab, while it's
+      on its way answers `sending` and delivers nothing more. It's the same delivery as the first try (its id, its
+      time and its label are the first try's), so if the first had reached the runtime after all, the runtime answers
+      the repeat and no body hears it twice.
+    - A message still `sending` 15 minutes after its delivery began was cut off (loom restarted under it): it's
+      recorded `failed` ("couldn't be reached: loom restarted while it was delivering it"), and Send again delivers it.
   - **Text** on `new` and `send` is 1–40,000 characters, the delivery contract's bounds. Anything else is a `400`.
 - **Core is its adapter.** The runtime makes three adapter calls on a venue (as built in loom-box, `src/delivery.mjs`
   and `src/policy.mjs`). For a piece's venue, all three run on its declared `send` argv:
@@ -365,7 +377,8 @@ Messages (`comms_messages`):
   "text": "<age blob or null>",    // words, kept per "History"; null once swept
   "card": null,                    // a card: {tool, state} (its summary is in text); an ask: {approval} or {digest}
   "run": "…",                      // on a card or reply: the body run it came from (the runtime's run id)
-  "delivered": true }              // on a member's message: false while its delivery failed
+  "delivered": true,               // on a member's message: false while its delivery failed, null while on its way
+  "delivery": "delivered" }        // on a member's message: sending, delivered or failed
 ```
 
 - **Who it's from.** A `message` is from the member. A `reply`, `card` or `ask` is from the agent. An `error` is from
@@ -511,7 +524,9 @@ A real chat, with a terminal's flavour:
   and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to its summaries, each with its state.
 - **The working line** is one mono line under the newest message, `ART · working · 0:42` (the agent's name in capitals
   and the seconds since `status: working` began). It shows while the runtime's `status` says working, and goes on
-  `done`. The list row shows "working…" at the same time.
+  `done`. The list row shows "working…" at the same time. The runtime says `working` again every 15 s while the body
+  works, and posts its activity: a thread with no word of either for 90 s isn't working any more (its body gone, its
+  `done` lost), and core records it so (t-1881). The runtime also tries a `done` that didn't land again, each tick.
 - **New things arrive** as `web/src/arrive.tsx` draws them (decode, focus, one glow). Reduced motion: they simply
   appear.
 - **Nothing new in the vocabulary.** Comms is loom's own app, not a piece page, so it adds no block type to `vocab.ts`.
@@ -542,7 +557,7 @@ Neon OS's own, not copied from any game.
 
   | The thread | Face state |
   |---|---|
-  | a delivery answered `started`, `resumed` or `queued`, and no card or `working` status yet | `thinking` |
+  | a message of yours on its way or delivered (`started`, `resumed` or `queued`), and no card or `working` status yet | `thinking` |
   | `status: working`, or a card arriving | `working` |
   | a reply lands | `talking`, one beat |
   | after the talking beat, with `status: done` or no `working` for 30 s | `complete` (done), then `idle` |
@@ -664,6 +679,10 @@ Neon OS's own, not copied from any game.
    - A member's title over 60 characters, or with a line break, is a `400`.
    - With the runtime answering `503`, the message is kept with `delivered: false`, and Send again with the same id
      delivers it once.
+   - With the runtime taking 20 s to answer, `send` answers at once, the message is `sending` the whole time (never
+     "Not delivered"), then `delivered`, with no error recorded. Send again tapped three times while it's on its way
+     delivers it once. A `sending` message past 15 minutes reads `failed`, with its error line (t-1881). A store made
+     before t-1881 gains its new columns in place.
 4. **The adapter route.**
    - `post` for a live thread answers `{ok: true, id}` and adds a `reply` message.
    - `post` answers `{ok: false, permanent: true}` for each of: an archived thread, a deleted one, an unknown place,
@@ -671,6 +690,7 @@ Neon OS's own, not copied from any game.
    - `describe` answers `readers: [<member>]`, and carries the project line only when the thread has a project, and
      the title line only while it has no title.
    - `status: working` shows the working line (`<NAME> · working · m:ss`) and `done` clears it.
+   - With no `working` and no activity for 90 s, the working line clears on its own (t-1881).
    - After Stop, exactly the next `status` call answers `stop: true`.
    - Only a `runtime` token reaches the route.
 5. **Activity.**
@@ -713,7 +733,9 @@ Neon OS's own, not copied from any game.
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**
-    - A reply sends `message {seq}` on the thread's stream within 250 ms.
+    - A reply sends `message {seq}` on the thread's stream within 250 ms. So does a move of the thread's state with
+      no new message (working or done, a message delivered or not, a step done): the event carries the newest seq,
+      and the app reads again (t-1881).
     - The event's data has exactly the key `seq`.
     - `since/<seq>` returns exactly the messages after `seq`, in order.
 11. **Push.**
