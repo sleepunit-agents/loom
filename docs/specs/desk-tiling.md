@@ -1,8 +1,9 @@
 # Desk tiling: apps share the screen, and widgets are tiles too
 
-*2026-11-05. Status: **proposed, not built**. This is a design doc in the `docs/specs/` sense: what loom would build,
-and the acceptance criteria its suites must pin. The owner plays with the prototype and says go or no before any of it
-is built (t-1884). Prototype: the desktop prototype's Level 2, "Tiling".*
+*2026-11-05; accepted 2026-11-06. Status: **accepted, building in phases**. This is a design doc in the `docs/specs/`
+sense: what loom builds, and the acceptance criteria its suites must pin. The owner played with the prototype (the
+desktop prototype's Level 2, "Tiling") and said go on 2026-11-06: "tiling fucks, lets do that for sure" (t-1884). His
+answers to the open questions are under "Decided" at the end, and the text below already follows them.*
 
 ## Why
 
@@ -33,7 +34,7 @@ its own frame.
 _Avoid_: window (today's single big frame), pane, panel
 
 **Widget**:
-a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup, the ticker, a project's status). It is
+a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup, the ticker). It is
 live, it never gets a split of its own, and it opens its app beside it.
 _Avoid_: gadget, applet
 
@@ -142,7 +143,7 @@ drop the detail pane, and under 600 px drop their extra columns.
 | Vitals | 260×110 | 320×(its places) |
 | Backup | 260×90 | 320×(its lines) |
 | the ticker | 260×44 | 320×44 |
-| a project's status | 260×120 | 320×(its lines) |
+| a box's vitals (if cheap; else later) | 260×110 | 320×(its meters) |
 
 - **Core apps** declare fit in code, one table in `web/src/tiling/fit.ts`, keyed as `trail.ts` keys apps.
 - **Pieces** declare it in their manifest, as a small addition to `tab` (`docs/extensions.md`):
@@ -162,7 +163,7 @@ drop the detail pane, and under 600 px drop their extra columns.
 
 - **Adding:**
   - A **+ key** in the dock (the widget launcher) lists what can go on the desktop: Needs you, each agent's card,
-    Vitals, Backup, the ticker, and each project's status. One already on the desktop shows "on the desktop" and focuses
+    Vitals, Backup and the ticker (and each box's vitals, if built). One already on the desktop shows "on the desktop" and focuses
     it.
   - **Find** lists the same as "Add widget: …".
   - An agent's pages have **Pin card to the desktop**, and the dock's agent key menu has it too.
@@ -186,16 +187,16 @@ drop the detail pane, and under 600 px drop their extra columns.
 - **Links:**
   - A link to a page in the **same** app stays in the tile.
   - A link to **another** app opens that app beside this tile, or focuses it if it's open.
-  - Shift+click opens a same-app link in a new tile of its own. That is the one way to have two tiles of the same app,
-    for two Comms threads side by side.
+  - Two tiles of the same app (two Comms threads side by side) are **later**, not in this build. Until then a tile is
+    one app, and opening an app that's open focuses its tile.
 - **Closing** (×, or Alt+Shift+W) removes the tile and forgets its history (`trail.forget`, as Close does today).
   **Minimizing** (_, or Alt+Shift+M) keeps it. Either way the rest reflow.
 - **Focus** goes to a tile when you press anywhere in it (click to focus; hover never moves focus). The focused tile's
   frame is lit in its app's colour.
 - **Swap:** drag a title strip onto another tile of the same kind, or use Alt+Shift+, and Alt+Shift+. to swap with the
   tile before or after. **Make this the big one:** the strip's ⤢, a double-click on the strip, or Alt+Shift+Enter.
-- **Resizable gutters:** left out of the first build. The split ratios come from fit, and a dragged ratio would need
-  saving per pair of apps per screen width. If the owner misses it after a week, it's a phase of its own.
+- **Resizable gutters:** not built (decided 2026-11-06). The split ratios come from fit, and a dragged ratio would need
+  saving per pair of apps per screen width. If the owner misses it after use, it's a phase of its own.
 
 ### Keys
 
@@ -222,9 +223,8 @@ dialog, Find and the keys sheet.
 `restore`, `forget`, keyed by app). The window's strip (`DeskWindow`) draws Back, Forward and a trail from it. Tiling
 reuses all of it:
 
-- **History key:** a tile's key is its app's key, as `trail.ts` has it. The one exception is a second tile of the same
-  app (Shift+click), keyed `<app>#2`. So a tile's Back, Forward, trail, Recent here and minimize-where-it-was are #536's,
-  unchanged.
+- **History key:** a tile's key is its app's key, as `trail.ts` has it. So a tile's Back, Forward, trail, Recent here
+  and minimize-where-it-was are #536's, unchanged. (Two tiles of the same app, later, would need a key of their own.)
 - **One page loader per tile:** `App.tsx` loads one page for the whole screen today (`url`, `data`, `error`, `waiting`,
   `load()`). Phase 1 moves that into a hook, `usePage(url)`, that each tile runs for its own URL. The phone and the
   shell keep using it once, so nothing visible changes. Redirects, `_flash`, live refresh (`/events`) and the page's own
@@ -277,8 +277,12 @@ tech. In a tile:
   the keys moves it to the tile's title, which announces exactly that.
 - **One polite live region** says what changed: "Tasks opened, tile 1 of 3"; "Comms went to the dock to make room";
   "Inbox closed".
-- **Plain mode:** an Accessibility setting, "One app at a time", turns tiling off. Apps open one at a time in today's
-  big window, and Home is today's Home. Tiling is never forced on anyone.
+- **The setting:** tiling is a per-person Appearance setting, "Desktop", with two choices: **Tiling** and **One window
+  at a time**. It's kept by loom with the rest of Appearance (`/appearance/prefs`, a `tiling` field), with this device's
+  copy in `localStorage` (`loom-tiling`) for first paint, the way a look is. One window at a time is today's desktop:
+  apps open one at a time in today's big window, and Home is today's Home. It is the default until phase 5 has shipped
+  and been checked; then the owner decides whether Tiling becomes the default. Either way it is never forced on anyone:
+  One window at a time stays a choice, and it is the plain mode.
 - **Reduced motion** skips the reflow animation (above).
 - The hover-only parts (the strip's buttons' hover state) also show on focus.
 
@@ -353,8 +357,9 @@ First-page JS is about 239 KB of the 250 KB budget (`src/ui/web-app.test.ts`).
 17. **Nothing sideways, nothing overlapping.**
     - With 1 to 4 apps and 3 widgets at both sizes, no two tiles' boxes overlap.
     - Every tile is inside the area between the bars and the dock, and the page never scrolls sideways.
-18. **Plain mode.** With "One app at a time" on, opening a second app replaces the first in today's window, and Home is
-    today's Home.
+18. **The setting.** With no choice made, the desktop is One window at a time: opening a second app replaces the first
+    in today's window, and Home is today's Home. With Tiling chosen, the second app gives two tiles. Choosing either in
+    Appearance applies at once, without a reload.
 19. **Reduced motion.** With reduced motion, opening a second app starts no View Transition.
 20. **Budget.** First-page JS stays under 250 KB gzipped. A 390 px screen fetches no `desk-*` or `tiling-*` asset.
 
@@ -371,26 +376,27 @@ Each phase is its own PR and leaves loom working.
 |---|---|---|
 | 1 | `usePage(url)` out of App.tsx; the phone and the shell use it once. No visible change. | 2–3 |
 | 2 | `tiling/layout.ts`, the pure rule, with criteria 1–9 as its tests | 1 |
-| 3 | App tiles: the frame, focus, close, minimize and the dock, `?t=` and the device's saved set, history per tile (10–12, 14, 17) | 3–4 |
+| 3 | The Appearance setting (off by default), app tiles: the frame, focus, close, minimize and the dock, `?t=` and the device's saved set, history per tile (10–12, 14, 17, 18) | 3–4 |
 | 4 | Widgets as tiles: the rail, the strip, the launcher, pin, Chat beside, live (13) | 2–3 |
-| 5 | Scoped dialogs and sheets, per-tile transitions, keys, announcements, plain mode (15, 16, 18, 19) | 2–3 |
+| 5 | Scoped dialogs and sheets, per-tile transitions, keys, announcements, reduced motion (15, 16, 19) | 2–3 |
 | 6 | `tab.fit` for pieces (21); widgets from pieces stay designed only | 1 |
 
 The total is **about 11 to 15 sessions**. Phase 1 is the risky one: App.tsx is shared with other work in flight, so it
 lands alone and early. Phases 1 to 4 are a usable tiling desktop. Phase 5 is what makes it solid for keyboards and
-screen readers. It ships before tiling is the default, and plain mode stays the default until it does.
+screen readers. It ships before tiling can be the default: One window at a time stays the default until phase 5 has
+shipped and been checked, and then the owner decides.
 
-## Open questions
+## Decided (the owner, 2026-11-06)
 
-1. **Rail side.** The rail is on the right, so the screen grades from the big app on the left to small cards on the
-   right, and Chat on a card opens next to it. Today's Home has Needs you on the *left*. Is right fine?
-2. **Two of the same app.** Shift+click gives a second tile of the same app (two threads side by side). Is that wanted
-   in the first build, or later?
-3. **Tiling by default?** Should it be on by default at 1024 px and wider, or opt-in from Appearance until phase 5 is
-   in?
-4. **Gutter dragging.** Leave it out (fit decides) and revisit after a week of use?
-5. **Which widgets first?** The launcher has Needs you, agents, Vitals, Backup, the ticker and a project's status. Is
-   anything missing that he'd want on day one (a box, a single task, the clock)?
+1. **Rail side:** the widget rail goes on the **right**.
+2. **Two tiles of the same app** (two Comms threads side by side): **later**, not in this build.
+3. **Tiling is opt-in** at first, a per-person Appearance setting: "Tiling" / "One window at a time". It becomes the
+   default once phase 5 (tile-scoped dialogs, transitions, keys, plain mode) has shipped and been checked. The build
+   says when it's ready to flip and doesn't flip it itself.
+4. **No drag-to-resize gutters** for now.
+5. **Day-one widgets:** agent cards, Needs you, Vitals, Backup and the ticker. A box's own vitals as a widget is fine
+   (a box's state stays on its page; the widget is a view the person chooses to pin, which keeps the Oct 27 rule). It
+   is built if cheap, else listed as a follow-up. A project's status widget is later.
 
 ## Sources
 
