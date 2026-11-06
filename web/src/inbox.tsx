@@ -241,7 +241,7 @@ export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
         {/* A press on Send leaves the reply box focused, as Comms' composer does: a phone's keyboard doesn't start
             closing (and the sheet move under the finger) before the click lands. */}
         <Button variant={yesNo ? 'outline' : 'default'} disabled={a.busy || !a.drafted} onClick={() => void a.reply()}
-          onPointerDown={(e) => e.preventDefault()} onMouseDown={(e) => e.preventDefault()}>{a.busy ? 'Sending…' : 'Send'}</Button>
+          onMouseDown={(e) => e.preventDefault()}>{a.busy ? 'Sending…' : 'Send'}</Button>
       </div>
     </section>
   );

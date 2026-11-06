@@ -316,7 +316,7 @@ function Composer({ onSend, disabled, accent, placeholder }: { onSend: (text: st
       {/* A press on Send leaves the field focused, so a phone's keyboard stays up: were the field to blur, the keyboard
           would start closing and --comms-kb drop, the composer jumping down from under the finger before its click. */}
       <button type="submit" disabled={disabled || busy || !text.trim()} className="comms-composer__send"
-        onPointerDown={(e) => e.preventDefault()} onMouseDown={(e) => e.preventDefault()}>Send</button>
+        onMouseDown={(e) => e.preventDefault()}>Send</button>
     </form>
   );
 }

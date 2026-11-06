@@ -184,7 +184,8 @@ describe.runIf(built && chrome && hasAge)('Comms\' phone composer under a finger
       await tap(f, [x, y]);
       expect(await f.p.locator('.loom-find').count()).toBe(0);
       expect(sends(f)).toBe(0);
-      // The dock's own strip, just over its keys, still opens Find on a swipe up.
+      // The dock's keys still take their taps, and its strip just over them still opens Find on a swipe up.
+      expect(await under(f, '.loom-dock-bar [data-part="item"]')).toBe('itself');
       const key = (await f.p.locator('.loom-dock-bar [data-part="item"]').first().boundingBox())!;
       await drag(f, [key.x + key.width / 2, key.y - 12], [key.x + key.width / 2, key.y - 160]);
       expect(await f.p.locator('.loom-find').count()).toBe(1);
