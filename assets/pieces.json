@@ -52,7 +52,7 @@
     {
       "name": "clock",
       "repo": "sleepunit-agents/loom-clock",
-      "commit": "3ce1ab5fadaa2ecb78989f07ed4ec66081f8fed4",
+      "commit": "8f0acd5cf4ec3318a161c953eae845537df415da",
       "version": "0.1.0",
       "label": "Clock",
       "description": "Wakes an agent: self-set alarms, recurring schedules, the household's lanes assigned to an agent, and relays between agents, each run in a house or as a session here."
