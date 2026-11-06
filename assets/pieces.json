@@ -28,7 +28,7 @@
     {
       "name": "tasks",
       "repo": "sleepunit-agents/taskstore",
-      "commit": "b9ef5ef7c82aa034475cf2db07ae1a5b9b6ea8e2",
+      "commit": "3d005c210292e293ee119f81ddf57138b6026ab9",
       "version": "0.6.1",
       "label": "Tasks",
       "description": "A work store: tasks, links, comments and the ready queue."
@@ -44,7 +44,7 @@
     {
       "name": "changes",
       "repo": "sleepunit-agents/loom-changes",
-      "commit": "1268c52af3e259cb64a5d5026d724863a44ff07b",
+      "commit": "098a51855bc13e2861f8bf79a390cca8f8ee2472",
       "version": "0.1.0",
       "label": "Changes",
       "description": "What's waiting to go up: every open change in your projects' repos, by project, read-only, with Yes, merge it where a rule asks you."
