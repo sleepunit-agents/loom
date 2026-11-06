@@ -1,8 +1,8 @@
 /**
- * Desk tiling, phase 3 (docs/specs/desk-tiling.md, criteria 10, 11, 12, 14, 17 for apps, 18 and 20's phone half): with
- * Tiling chosen, apps share a big screen as tiles, each with its own page and history; the dock opens, focuses,
- * minimizes and brings back; the address carries the set and a reload restores it; One window at a time, the default,
- * is today's window. The apps are ones every household has (Inbox, Comms, Setup, Places, People, Knowledge): the
+ * Desk tiling, phase 3 (docs/specs/desk-tiling.md, criteria 10, 11, 12, 14, 17 for apps, and 20's phone half):
+ * apps share a big screen as tiles, each with its own page and history; the dock opens, focuses, minimizes and brings
+ * back; the address carries the set and a reload restores it. (Criterion 18, tiling the only desktop and One window at
+ * a time: desk-tiling-only.integration.test.ts.) The apps are ones every household has (Inbox, Comms, Setup, Places, People, Knowledge): the
  * criteria's Tasks and Changes are pieces a test household doesn't install. Real Chrome, Neon Noir.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
@@ -62,17 +62,16 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
-  /** A screen this size, signed in; Tiling chosen on this device unless `tiling: false`. */
-  async function screen(width: number, height: number, o: { path?: string; tiling?: boolean; touch?: boolean } = {}): Promise<Page> {
+  /** A screen this size, signed in. */
+  async function screen(width: number, height: number, o: { path?: string; touch?: boolean } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce', serviceWorkers: 'block', hasTouch: !!o.touch, isMobile: !!o.touch });
-    const tiling = o.tiling === false ? '' : `localStorage.setItem('loom-tiling', 'on');`;
-    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); ${tiling} sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     await p.goto(`${base}${o.path ?? '/'}`);
     await p.locator('.loom-dock-bar [data-part="item"]').first().waitFor();
     // Tiled once the desk's chunk is here (its tile desk drawn); else the page as it was.
-    if (o.tiling !== false && width >= 1024) await p.locator('.loom-tiles').waitFor();
+    if (width >= 1024) await p.locator('.loom-tiles').waitFor();
     await p.waitForTimeout(300);
     return p;
   }
@@ -99,14 +98,14 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       expect([query(p, 't'), query(p, 'm')]).toEqual(['*inbox', 'comms']);
       // and back, on the page it was on
       await open(p, 'Comms', 2);
-      // (a fresh device's widgets, today's Home set, ride in the address too: desk-tiling-widgets.integration.test.ts)
-      expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup');
+      // (a fresh device's widgets, the seed, ride in the address too: desk-tiling-widgets.integration.test.ts)
+      expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup,ticker');
       // a page scrolled down comes back scrolled where it was: Setup's Appearance, in a short screen
       await p.click(KEY('Setup')); await expect.poll(() => p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
       const setup = tile(p, 'Setup');
       await setup.locator('a, button', { hasText: 'Appearance' }).first().click();
       await expect.poll(() => where(p)).toMatch(/^\/appearance\?/);
-      await setup.locator('[aria-label="Desktop"]').waitFor();
+      await setup.locator('[aria-label="Look"]').waitFor();
       // a short screen, so Appearance scrolls in its tile
       await p.setViewportSize({ width: w, height: 560 });
       const body = setup.locator('.loom-tile__body');
@@ -114,7 +113,7 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       const top = await body.evaluate((b) => { b.scrollTop = 100; return b.scrollTop; });
       expect(top).toBe(100);
       await p.click(KEY('Setup')); await expect.poll(() => tile(p, 'Setup').count()).toBe(0);
-      await p.click(KEY('Setup')); await tile(p, 'Setup').locator('[aria-label="Desktop"]').waitFor();
+      await p.click(KEY('Setup')); await tile(p, 'Setup').locator('[aria-label="Look"]').waitFor();
       expect(new URL(p.url()).pathname).toBe('/appearance');
       await expect.poll(() => tile(p, 'Setup').locator('.loom-tile__body').evaluate((b) => b.scrollTop)).toBe(top);
       await p.context().close();
@@ -252,28 +251,6 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     expect(where(p)).toBe('/comms');
     await p.setViewportSize({ width: 1280, height: 800 });
     await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
-    await p.context().close();
-  }, 60_000);
-  // Last: choosing in Appearance is the person's (kept by loom), so it would choose for every test after it.
-  for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) it(`18. One window at a time is the default; choosing Tiling in Appearance tiles at once, no reload, at ${w}×${hgt}`, async () => {
-    const p = await screen(w, hgt, { tiling: false });
-    await p.click(KEY('Inbox')); await p.locator('.loom-window').waitFor();
-    await p.click(KEY('Setup')); await expect.poll(() => where(p)).toBe('/setup');
-    expect(await p.locator('.loom-window').count()).toBe(1);
-    expect(await p.locator('.loom-tile').count()).toBe(0);
-    await p.goto(`${base}/appearance`); await p.locator('[aria-label="Desktop"]').waitFor();
-    await p.locator('[aria-label="Desktop"] [role="radio"]', { hasText: 'Tiling' }).click();
-    await expect.poll(() => p.locator('.loom-tile').count()).toBe(1);
-    expect(await labels(p)).toEqual(['Setup']);
-    expect(await p.locator('.loom-window').count()).toBe(0);
-    await open(p, 'Inbox', 2);
-    // and back: the focused tile's page is the window's again
-    await p.click(KEY('Setup'));   // focus Setup first (its key focuses an open tile)
-    await expect.poll(async () => (await tiles(p)).find((t) => t.focused)?.label).toBe('Setup');
-    await p.locator('[aria-label="Desktop"] [role="radio"]', { hasText: 'One window at a time' }).click();
-    await expect.poll(() => p.locator('.loom-window').count()).toBe(1);
-    expect(await p.locator('.loom-tile').count()).toBe(0);
-    expect(query(p, 't')).toBeNull();
     await p.context().close();
   }, 60_000);
 });

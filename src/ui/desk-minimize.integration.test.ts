@@ -1,8 +1,7 @@
 /**
- * The desktop's windows minimize, like a real OS (Jonathan, 2026-11-05): clicking the open app's dock key, or
- * double-clicking its window's title strip, shrinks the window back into its key and shows the desktop; clicking that
- * key again opens the app where it was left (the same page and query, and its scroll). A different app's key still
- * switches to it; Home always goes to the desktop; Close forgets. And the dock itself: a key never stays magnified
+ * The desktop's tiles minimize, like a real OS (Jonathan, 2026-11-05): double-clicking a tile's title strip sends it to
+ * the dock, and its key brings it back where it was (the dock key's own minimize, Home and Close are
+ * desk-tiling.integration.test.ts's). And the dock itself: a key never stays magnified
  * once the pointer isn't over it (after a click that navigates, a minimize, or a tap), and the first and last keys,
  * grown, keep their glow whole: nothing that clips cuts it, at 1280 px and at a phone's width. Real Chrome, Neon Noir;
  * the phone's own layout is unchanged.
@@ -102,15 +101,12 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     return p;
   }
   const where = (p: Page) => { const u = new URL(p.url()); return u.pathname + u.search; };
-  /** On the desktop, the window's shrink over (while it runs the page is a view transition's picture: a pointer over it
-   * reaches nothing under it). */
+  /** On the desktop: no tile open (every app in the dock), the widgets the desktop, and any reflow over (while one
+   * runs the page is a view transition's picture: a pointer over it reaches nothing under it). */
   const onDesktop = async (p: Page) => {
-    await p.locator('.loom-desk-home').waitFor(); await expect.poll(() => p.locator('.loom-window').count()).toBe(0); expect(new URL(p.url()).pathname).toBe('/');
-    await expect.poll(() => p.evaluate(() => document.documentElement.dataset.deskMove ?? ''), { timeout: 8000 }).toBe('');
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0); await p.locator('.loom-desk-home').waitFor();
+    await expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
   };
-  /** The window's page, scrolled this far down (as far as it goes, if it's shorter). */
-  const scrollTo = (p: Page, top: number) => p.locator('.loom-window main').evaluate((m, t) => { m.scrollTop = t; return m.scrollTop; }, top);
-  const scrolled = (p: Page) => p.locator('.loom-window main').evaluate((m) => m.scrollTop);
   /** A key at rest: drawn at its own size, not engaged. */
   const atRest = (p: Page, label: string) => p.locator(KEY(label)).evaluate((el) => {
     const v = el.querySelector('[data-part="visual"]')!.getBoundingClientRect();
@@ -118,102 +114,25 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   });
   const away = async (p: Page) => { await p.mouse.move(640, 300); await p.waitForTimeout(450); };
 
-  it('clicking the open app\'s key minimizes it to the desktop; clicking it again opens it where it was, page, query and scroll', async () => {
-    // A screen short enough that Appearance scrolls in its window (at 800 px tall it fits), so its scroll is kept.
-    const p = await screen(1280, { path: '/appearance?from=minimize', height: 560 });
-    await p.locator('.loom-window main').waitFor();
-    await p.locator('.loom-window main > *').first().waitFor();
-    // Once its page is drawn whole (its sheet arrives a moment after the window): it scrolls, so there's a scroll to keep.
-    await expect.poll(() => scrollTo(p, 240), { timeout: 10_000 }).toBeGreaterThan(0);
-    const top = await scrolled(p);
-    const moves: string[] = [];
-    await p.exposeFunction('noteMove', (m: string) => moves.push(m));
-    await p.evaluate(() => new MutationObserver(() => { const m = document.documentElement.dataset.deskMove; if (m) (window as unknown as { noteMove: (m: string) => void }).noteMove(m); })
-      .observe(document.documentElement, { attributes: true, attributeFilter: ['data-desk-move'] }));
-    // The Setup key is the open app's (Appearance is in Setup).
-    expect(await p.locator(KEY('Setup')).getAttribute('aria-pressed')).toBe('true');
-    await p.locator(KEY('Setup')).click();
-    await onDesktop(p);
-    await expect.poll(() => moves).toEqual(['close']);   // the window shrinks back into its key, as Close's does
-    await p.locator(KEY('Setup')).click();
-    await p.locator('.loom-window main > *').first().waitFor();
-    expect(where(p)).toBe('/appearance?from=minimize');
-    await expect.poll(() => scrolled(p)).toBe(top);
-    // Again, from a page with no scroll of its own: it comes back at its top.
-    await scrollTo(p, 0);
-    await p.locator(KEY('Setup')).click();
-    await onDesktop(p);
-    await p.locator(KEY('Setup')).click();
-    await expect.poll(() => where(p)).toBe('/appearance?from=minimize');
-    expect(await scrolled(p)).toBe(0);
-    await p.context().close();
-  }, 90_000);
-
-  it('a different app\'s key switches to it; Home goes to the desktop; Close forgets where the app was', async () => {
-    const p = await screen(1280, { path: '/appearance?from=switch' });
-    await p.locator('.loom-window main > *').first().waitFor();
-    // Another app's key: that app, at its own root, as before.
-    await p.locator(KEY('Inbox')).click();
-    await expect.poll(() => where(p)).toBe('/inbox');
-    expect(await p.locator('.loom-window').count()).toBe(1);
-    // Home: the desktop, always.
-    await p.locator(KEY('Home')).click();
-    await onDesktop(p);
-    await p.locator(KEY('Home')).click();
-    await p.waitForTimeout(300);
-    await onDesktop(p);
-    // Minimized, then closed: Close forgets it, so its key opens the app's root.
-    await p.goto(`${base}/appearance?from=close`);
-    await p.locator('.loom-window main > *').first().waitFor();
-    await p.locator(KEY('Setup')).click();
-    await onDesktop(p);
-    await p.locator(KEY('Setup')).click();
-    await expect.poll(() => where(p)).toBe('/appearance?from=close');
-    // Minimized again, then the app reached another way (its address, a reload: the place survives it) and closed.
-    await p.locator(KEY('Setup')).click();
-    await onDesktop(p);
-    await p.goto(`${base}/appearance?from=elsewhere`);
-    await p.locator('.loom-window main > *').first().waitFor();
-    await p.getByRole('button', { name: /^Close, back to the desktop/ }).click();
-    await onDesktop(p);
-    await p.locator(KEY('Setup')).click();
-    await expect.poll(() => where(p)).toBe('/setup');
-    await p.context().close();
-  }, 90_000);
-
-  it('double-clicking the window\'s title strip minimizes it; double-clicking its Close doesn\'t', async () => {
+  it('double-clicking a tile\'s title strip minimizes it to the dock; double-clicking its Close doesn\'t', async () => {
     const p = await screen(1280, { path: '/appearance?from=strip' });
-    await p.locator('.loom-window main > *').first().waitFor();
-    // A double-click that lands on Close alone (no clicks before it): the window stays.
-    await p.locator('.loom-window__close').dispatchEvent('dblclick');
+    const tile = p.locator('.loom-tile');
+    await tile.locator('.loom-tile__page > *').first().waitFor();
+    // A double-click that lands on Close alone (no clicks before it): the tile stays.
+    await tile.locator('button[aria-label="Close Setup"]').dispatchEvent('dblclick');
     await p.waitForTimeout(400);
-    expect(await p.locator('.loom-window').count()).toBe(1);
-    expect(where(p)).toBe('/appearance?from=strip');
-    // The strip itself, by its title and by its empty middle.
-    for (const at of ['#loom-window-title', '.loom-window__path']) {
-      await p.locator(at).dblclick();
+    expect(await tile.count()).toBe(1);
+    expect(where(p)).toMatch(/^\/appearance\?from=strip/);
+    // The strip itself, by its title and by its empty middle: to the dock, and its key brings it back where it was.
+    for (const at of ['.loom-tile__bar h2', '.loom-tile__path']) {
+      await tile.locator(at).dblclick();
       await onDesktop(p);
       await p.locator(KEY('Setup')).click();
-      await expect.poll(() => where(p), at).toBe('/appearance?from=strip');
-      await p.locator('.loom-window main > *').first().waitFor();
+      await expect.poll(() => where(p), at).toMatch(/^\/appearance\?from=strip/);
+      await tile.locator('.loom-tile__page > *').first().waitFor();
     }
     await p.context().close();
   }, 90_000);
-
-  it('under reduced motion a minimize still happens, with no shrink', async () => {
-    const p = await screen(1280, { motion: 'reduce', path: '/appearance?from=still' });
-    await p.locator('.loom-window main > *').first().waitFor();
-    await p.evaluate(() => { const w = window as unknown as { moves: number }; w.moves = 0;
-      new MutationObserver(() => { if (document.documentElement.dataset.deskMove) w.moves++; }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-desk-move'] }); });
-    await p.locator(KEY('Setup')).click();
-    await onDesktop(p);
-    await p.locator(KEY('Setup')).click();
-    await expect.poll(() => where(p)).toBe('/appearance?from=still');
-    await p.locator('#loom-window-title').dblclick();
-    await onDesktop(p);
-    expect(await p.evaluate(() => (window as unknown as { moves: number }).moves)).toBe(0);
-    await p.context().close();
-  }, 60_000);
 
   it('a key lets go of its magnification once the pointer leaves it: after a click that opens an app, and after a minimize', async () => {
     const p = await screen(1280);
@@ -221,20 +140,19 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     const key = p.locator(KEY('Inbox'));
     // Open it from its key, then the pointer goes away.
     await key.click();
-    await p.locator('.loom-window').waitFor();
+    await p.locator('.loom-tile').waitFor();
     await away(p);
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
-    // Minimize from the same key, and away (focus goes back to the key the window shrank into: that isn't hover).
+    // Minimize from the same key, and away.
     await key.click();
     await onDesktop(p);
     await away(p);
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // Close, by the mouse, does the same (it stayed grown here before: 1.65x and engaged, the pointer far away).
     await key.click();
-    await p.locator('.loom-window').waitFor();
-    await p.getByRole('button', { name: /^Close, back to the desktop/ }).click();
+    await p.locator('.loom-tile').waitFor();
+    await p.locator('.loom-tile button[aria-label="Close Inbox"]').click();
     await onDesktop(p);
-    await expect.poll(() => p.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Inbox');
     await away(p);
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // While the pointer is on it, it's grown; off it, it isn't (a mouse's way there, in steps, as a hand moves one).
@@ -253,7 +171,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     const p = await screen(1280, { touch: true });
     await p.locator('.loom-desk-home').waitFor();
     await p.locator(KEY('Inbox')).tap();
-    await p.locator('.loom-window').waitFor();
+    await p.locator('.loom-tile').waitFor();
     await p.waitForTimeout(450);
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     await p.context().close();
@@ -313,7 +231,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   });
 
   for (const width of [1280, 1855, 1920]) {
-    it(`${width} px: the dock never shows a scrollbar, after loading, hovering, a minimize or an agent's dock`, async () => {
+    it(`${width} px: the dock never shows a scrollbar, after loading, hovering, or a minimize`, async () => {
       const p = await screen(width);
       await p.locator('.loom-desk-home').waitFor();
       await p.waitForTimeout(3000);
@@ -326,28 +244,19 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
         expect(await bars(p), `hovering key ${i}`).toEqual([]);
       }
       await p.locator(KEY('Inbox')).click();
-      await p.locator('.loom-window').waitFor();
+      await p.locator('.loom-tile').waitFor();
       await p.locator(KEY('Inbox')).click();
       await onDesktop(p);
       await p.waitForTimeout(3000);
       expect(await bars(p), 'after a minimize').toEqual([]);
-      // An agent's own dock (the dock swaps to its pages), and back.
-      await p.locator('a.loom-w--agent').first().click();
-      await p.locator('.loom-agent-dock').waitFor();
-      await p.waitForTimeout(3000);
-      expect(await bars(p), 'an agent\'s dock').toEqual([]);
-      await p.locator('.loom-dock-bar [data-part="item"][aria-label="Back"]').click();
-      await onDesktop(p);
-      await p.waitForTimeout(3000);
-      expect(await bars(p), 'back from it').toEqual([]);
       await p.context().close();
     }, 90_000);
   }
 
-  it('a phone keeps its own layout: no window, and its open page\'s key leaves it open; the dock sits where it did', async () => {
+  it('a phone keeps its own layout: no tiles, and its open page\'s key leaves it open; the dock sits where it did', async () => {
     const p = await screen(390, { touch: true, path: '/inbox' });
     await p.locator('.loom-top h1').waitFor();
-    expect(await p.locator('.loom-window, .loom-desk').count()).toBe(0);
+    expect(await p.locator('.loom-tiles, .loom-desk').count()).toBe(0);
     await p.locator(KEY('Inbox')).tap();
     await p.waitForTimeout(500);
     expect(where(p)).toBe('/inbox');

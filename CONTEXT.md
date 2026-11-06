@@ -324,7 +324,12 @@ _Avoid_: miscategorized, wrong bucket, drift
 **Tile**:
 One app on a big screen, sharing the screen with others by the tiling rule (docs/specs/desk-tiling.md). It has its own
 page, its own history and its own frame.
-_Avoid_: window (the single big frame of One window at a time), pane, panel
+_Avoid_: window (the old single big frame, gone 2026-11-06), pane, panel
+
+**One window at a time**:
+An Accessibility choice: the same tiled desktop with one app tile at most; opening another sends the one there to the
+dock. Kept per person (`oneWindow`).
+_Avoid_: plain mode, single-window mode
 
 **Widget**:
 A small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup) or the ticker. It is live, never gets a

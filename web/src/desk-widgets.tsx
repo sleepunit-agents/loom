@@ -1,7 +1,7 @@
 // Home's widgets (docs/specs/desk-tiling.md, "Widgets"): what needs you, answered where it stands; one card per agent with
-// its face and what it's on; box vitals from the pieces' own tiles; the nightly backup; the ticker. The desktop (desk.tsx
-// DeskHome) draws them on the ground, and the tiled desktop (tiling/tiles.tsx) draws them as tiles: on the desktop, in
-// the rail or the board beside the apps, or as the strip's keys. Never a number loom doesn't have.
+// its face and what it's on; box vitals from the pieces' own tiles; the nightly backup; the ticker. The tiled desktop
+// (tiling/tiles.tsx) draws them as tiles: on the desktop, in the rail or the board beside the apps, or as the strip's
+// keys. Never a number loom doesn't have.
 //
 // In the desk's own chunk (desk.tsx and the tiles import it): a phone never fetches it.
 import { useState } from 'react';
@@ -167,14 +167,14 @@ export function Agent({ c, chat, compact }: { c: Card; chat?: () => void; compac
 
 /** Box vitals, from what every page's shell already carries (never a number of its own): the Boxes place's count, its
  * tone and its open alerts, then any other place that's in trouble. Each a link to its page. */
-export function Vitals({ shell, always }: { shell: Shell; /** a tile: drawn even with nothing to list */ always?: boolean }) {
+export function Vitals({ shell }: { shell: Shell }) {
   const { go } = useEnv();
   const places = shell.pieces as (Shell['pieces'][number] & { alerts?: number })[];
   const trouble = (p: (typeof places)[number]) => (p.alerts ?? 0) > 0 || p.tone === 'bad' || p.tone === 'warn';
   // One row per place: two pieces can carry the same one for a while (a piece and its successor side by side).
   const rows = [...places.filter((p) => p.label === 'Boxes'), ...places.filter((p) => p.label !== 'Boxes' && trouble(p))]
     .filter((p, n, all) => all.findIndex((x) => x.href === p.href) === n);
-  if (!rows.length) return always ? <Widget tint="blue" title="Vitals" className="loom-w--vitals"><p className="loom-w__quiet">All quiet.</p></Widget> : null;
+  if (!rows.length) return <Widget tint="blue" title="Vitals" className="loom-w--vitals"><p className="loom-w__quiet">All quiet.</p></Widget>;
   return (
     <Widget tint="blue" title="Vitals" className="loom-w--vitals">
       <ul className="loom-vitals">{rows.map((p) => {
@@ -228,7 +228,7 @@ type Kind = WidgetKind;
 /** One widget, by its id and kind, drawn from Home's data: null when it has nothing to draw from (an agent gone). */
 export function WidgetBody({ id, kind, d, compact, chat }: { id: string; kind: Kind; d: WidgetData; compact?: boolean; chat?: (agent: string) => void }) {
   if (kind === 'needs') return <Needs d={d.home} compact={compact} />;
-  if (kind === 'vitals') return <Vitals shell={d.shell} always />;
+  if (kind === 'vitals') return <Vitals shell={d.shell} />;
   if (kind === 'backup') return d.shell.backup ? <BackupW b={d.shell.backup} /> : null;
   if (kind === 'ticker') return <TickerW shell={d.shell} live={d.live} />;
   const c = d.home.cards.find((x) => x.id === id);
@@ -281,7 +281,8 @@ export function WidgetDesk({ ws, d, chat, frame }: {
     <div className="loom-desk-home">
       <p className="loom-desk-headline">{d.home.headline}</p>
       <div className="loom-desk-col loom-desk-col--left">{draw((w) => w.kind === 'needs')}</div>
-      <div className="loom-desk-col loom-desk-col--mid">{agents.length > 0 && <div className="loom-desk-agents">{agents}</div>}</div>
+      {/* A household with no agent yet: how to make the first, where their cards would be. */}
+      <div className="loom-desk-col loom-desk-col--mid">{agents.length > 0 ? <div className="loom-desk-agents">{agents}</div> : !d.shell.agents.length && <NoAgents />}</div>
       <div className="loom-desk-col loom-desk-col--right">{draw((w) => w.kind !== 'needs' && w.kind !== 'agent')}</div>
     </div>
   );

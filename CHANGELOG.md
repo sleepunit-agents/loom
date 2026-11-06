@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Tiling is the only desktop** (t-1884; `docs/specs/desk-tiling.md`, "A fresh desktop", "One window at a time"). At
+  1024 px and wider, apps share the screen as tiles for everyone: Appearance's Desktop choice and the old single window
+  are gone. A device with no saved layout starts with Needs you, each agent's card, Vitals, Backup and the ticker
+  (`web/src/tiling/widgets.ts` `SEED`). One window at a time is now an Accessibility choice inside tiling, off unless
+  turned on: one app tile at most, and opening another sends the one there to the dock, said in a toast. Whoever had
+  One window at a time saved under Appearance has it on; the old `tiling` field is still taken, so an older app gets
+  no error.
+  A tile now does what the old window did: its page wears its app's colour, its pages reach Find's Recent, the bar's ⓘ
+  is its page's, and the dock lights its key. Comms in a tile under 760 px keeps its comm screen to a strip's height,
+  so the messages always have room.
 - **Desk tiling: widgets are tiles** (t-1884, phase 4 of `docs/specs/desk-tiling.md`). With Tiling chosen
   (Appearance → Desktop), Home's widgets (Needs you, each agent's card, Vitals, Backup, the ticker) are the desktop
   with no app open, and move to the right edge beside the apps: in columns, a rail, or a strip of keys. Chat on an

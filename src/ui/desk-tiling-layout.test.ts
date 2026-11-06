@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { admit, capFor, columnWidth, GUTTER, layout, place, promote, swap, underMinimum, type AppTile, type Rect, type WidgetTile } from '../../web/src/tiling/layout';
 import { AGENT_FIT, fitFor } from '../../web/src/tiling/fit';
-import { addable, freshSet, widgetRef } from '../../web/src/tiling/widgets';
+import { addable, AGENTS, freshSet, SEED, widgetRef } from '../../web/src/tiling/widgets';
 
 const app = (name: string, pinned = false): AppTile => ({ id: name.toLowerCase(), name, fit: fitFor(name), ...(pinned ? { pinned } : {}) });
 const area = (w: number, h: number): Rect => ({ x: 0, y: 0, w, h });
@@ -195,9 +195,12 @@ describe('the tiling rule', () => {
 
 describe('the widgets the desktop can show (tiling/widgets.ts)', () => {
   const agents = [{ id: 'art', label: 'Art' }, { id: 'mark', label: 'Mark' }];
-  it('a fresh device starts with today\'s Home set: Needs you, each agent\'s card, Vitals, Backup (no ticker)', () => {
-    expect(freshSet(agents, { backup: true })).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
-    expect(freshSet(agents, { backup: false })).toEqual(['needs', 'art', 'mark', 'vitals']);
+  it('a fresh device starts with the seed: Needs you, each agent\'s card, Vitals, Backup and the ticker', () => {
+    expect(SEED).toEqual(['needs', AGENTS, 'vitals', 'backup', 'ticker']);
+    expect(freshSet(agents, { backup: true })).toEqual(['needs', 'art', 'mark', 'vitals', 'backup', 'ticker']);
+    // what isn't here is left out: no backup set up, no agents yet
+    expect(freshSet(agents, { backup: false })).toEqual(['needs', 'art', 'mark', 'vitals', 'ticker']);
+    expect(freshSet([], { backup: false })).toEqual(['needs', 'vitals', 'ticker']);
   });
   it('the + key offers every widget there can be, the ticker last', () => {
     expect(addable(agents, { backup: true }).map((w) => [w.id, w.kind, w.label])).toEqual([

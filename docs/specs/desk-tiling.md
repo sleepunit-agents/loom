@@ -1,6 +1,8 @@
 # Desk tiling: apps share the screen, and widgets are tiles too
 
-*2026-11-05; accepted 2026-11-06. Status: **accepted, building in phases**. This is a design doc in the `docs/specs/`
+*2026-11-05; accepted 2026-11-06; phases 1 to 6 built 2026-11-06, and that day tiling became the only desktop (t-1884:
+"holy fuck this is so good. it should be the default ... if there's any significant amount of code required to keep the
+old way that we're not using, toss it and make this the only option"). Status: **built**. This is a design doc in the `docs/specs/`
 sense: what loom builds, and the acceptance criteria its suites must pin. The owner played with the prototype (the
 desktop prototype's Level 2, "Tiling") and said go on 2026-11-06: "tiling fucks, lets do that for sure" (t-1884). His
 answers to the open questions are under "Decided" at the end, and the text below already follows them.*
@@ -18,10 +20,10 @@ answers to the open questions are under "Decided" at the end, and the text below
 > here… I'm imagining being able to have art and mark's status cards up and also a chat with one of them and also tasks
 > and whatever. like our fake OS is doing real shit" — the owner, 2026-11-05
 
-Today, at 1024 px and wider, an app opens in one big window over the desktop (`web/src/desk.tsx` `DeskWindow`). Comms
-in a 1,800 px window is mostly empty. There are no saved layouts and no workspaces. Opening a second app splits the
-screen by a rule. The rule reads each app's own declaration of how much room it can use. Home's widgets are small tiles
-in the same arrangement.
+Before this, at 1024 px and wider, an app opened in one big window over the desktop (`DeskWindow`, removed 2026-11-06).
+Comms in a 1,800 px window was mostly empty. With tiling there are no saved layouts and no workspaces. Opening a second
+app splits the screen by a rule. The rule reads each app's own declaration of how much room it can use. Home's widgets
+are small tiles in the same arrangement. It is the only desktop: the old window, its setting and its code are gone.
 
 This is loom's own design. It borrows the family (automatic dynamic tiling: each new window subdivides the newest) and
 no product's look, keys or names.
@@ -31,7 +33,7 @@ no product's look, keys or names.
 **Tile**:
 one app on a big screen, sharing the screen with others by the tiling rule. It has its own page, its own history and
 its own frame.
-_Avoid_: window (today's single big frame), pane, panel
+_Avoid_: window (the old single big frame, gone 2026-11-06), pane, panel
 
 **Widget**:
 a small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup), or the ticker (the bar's feed as a card). It is
@@ -79,8 +81,8 @@ The rule lives in `web/src/tiling/layout.ts`, its tests in `src/ui/desk-tiling-l
 
 - **No app open:** the widgets *are* the desktop, laid out as Home is today, its headline across the top. Needs you is
   the left column, the agents are the middle (their cards fill it two or three across), and everything else is the right
-  column. A fresh device starts here, with today's Home set: Needs you, each agent's card, Vitals and Backup. With apps
-  open, the headline isn't drawn.
+  column. A fresh device starts here, with the seed (below, "A fresh desktop"). With apps open, the headline isn't
+  drawn.
 - **Apps open:** the widgets move to the right edge.
   - A widget column is 280 px wide on a screen under 1440 px, 300 px under 1920, and 340 px from 1920.
   - If the apps' combined **max** leaves room for at least one column and a gutter, the widgets get as many columns as
@@ -239,6 +241,37 @@ you's first ask and "N more"; it's `min(height, compact height)`.
 - **Order:** widgets keep the order they were added in. Drag one onto another to swap them. In the desktop layout (no
   apps) they group by kind, as Home does.
 
+## A fresh desktop
+
+A person with no saved layout on this device (a new device, a first visit) gets the **seed**, so the desktop is never
+blank: Needs you, each agent's card they can see (pixel faces where they have them), Vitals, Backup (when it's set up)
+and the ticker. It's one short list in code, `web/src/tiling/widgets.ts` `SEED`, so it's easy to change; an entry that
+isn't there (no backup, no agents yet) is left out, and a household with no agents shows "No agents yet" and New agent
+where their cards would be. A saved layout (`loom-tiles`, or a set in the address) is never touched.
+
+The seed opens **no app tile**. An Inbox tile when something needs you was weighed and left out: Needs you already shows
+those asks and answers them where they stand, and an open app moves every widget to the rail, so the first screen would
+be busier and say the same thing twice.
+
+## One window at a time
+
+An Accessibility choice, per person, off unless turned on (`oneWindow` in `/appearance/prefs`; this device's copy is
+`loom-one-window`). It is the same tiled desktop, with the widgets on the desktop, in the rail or the strip as the rule
+says, the same keys and the same dock, and one difference: **one app tile at most**.
+
+- Opening a second app sends the one on screen to the dock, kept where it was (its page, its history, how far down),
+  as rule 4 sends one that doesn't fit, and a toast and the live region say
+  `<gone> went to the dock to make room for <opened>: one window at a time is on`.
+- Turned on with several apps open, the focused one stays and the rest go to the dock. An address with several apps
+  (`?t=`) opens the focused one, the rest in the dock.
+- A pinned app (the big one) goes like any other: one is the most there is.
+
+It replaces Appearance's old "Desktop" choice (Tiling, or One window at a time in the old window). Whoever had One
+window at a time saved there (`tiling: false`) has this on, until they choose in Accessibility: loom serves it so
+(`src/ui/sessions.ts` `oneWindowOf`), and a device that kept `loom-tiling` as `off` starts with it on
+(`web/src/look.ts` `oneWindowKept`). The old `tiling` field is still taken and kept, so a device running the older app
+gets no error.
+
 ## Interaction
 
 - **Opening, from the dock, Find or a link:**
@@ -259,7 +292,7 @@ you's first ask and "N more"; it's `min(height, compact height)`.
   frame is lit in its app's colour.
 - **Swap:** drag a title strip onto another tile of the same kind, or use Alt+Shift+, and Alt+Shift+. to swap with the
   tile before or after. **Make this the big one:** the strip's ⤢ or Alt+Shift+Enter. A double-click on the strip
-  minimizes the tile, as it minimizes today's window.
+  minimizes the tile, as it minimized the old window.
 - **Resizable gutters:** not built (decided 2026-11-06). The split ratios come from fit, and a dragged ratio would need
   saving per pair of apps per screen width. If the owner misses it after use, it's a phase of its own.
 
@@ -285,8 +318,8 @@ dialog and Find.
 ## Per-tile pages and history (reusing loom#536)
 
 loom#536 gave each app its own history (`web/src/trail.ts`: `note`, `step`, `keepTop`, `lastAt`, `visited`, `minimize`,
-`restore`, `forget`, keyed by app). The window's strip (`DeskWindow`) draws Back, Forward and a trail from it. Tiling
-reuses all of it:
+`restore`, `forget`, keyed by app). The old window's strip drew Back, Forward and a trail from it. Tiling reuses all of
+it:
 
 - **History key:** a tile's key is its app's key, as `trail.ts` has it. So a tile's Back, Forward, trail, Recent here
   and minimize-where-it-was are #536's, unchanged. (Two tiles of the same app, later, would need a key of their own.)
@@ -302,9 +335,12 @@ reuses all of it:
 - **The tile's Env:** each tile renders inside its own `EnvContext` (`web/src/blocks.tsx` `Env`). The tile's `go`
   follows the link rules above, and its `send` is its own page's. Blocks need no change: they already link and act
   through `useEnv()`.
-- **The frame:** `DeskWindow`'s strip becomes the tile's strip, slimmer: 30 px with the app's key, Back, Forward, the
+- **The frame:** the old window's strip became the tile's strip, slimmer: 30 px with the app's key, Back, Forward, the
   trail, then ⤢, _ and ×. The side column (`SIDE_COLUMN`, Recent here) shows in a tile only when the tile is at least
   1,100 px wide.
+- **What the old window did that a tile now does** (2026-11-06, when the window went): a tile's page wears its app's
+  colour (or its agent's) as its accent (`data-accent`); each page a tile opens is noted for Find's Recent; the bar's
+  ⓘ is the focused tile's page's intro; and the dock lights the focused app's key, Home's with none.
 
 ### Sheets and dialogs stay inside their tile
 
@@ -314,8 +350,8 @@ tech. In a tile:
 - Each tile has its own portal root. A tile's `Dialog`, `AlertDialog`, `Drawer`, `Sheet`, `DropdownMenu` and `Select`
   render into it, through a `PortalContainer` context the `components/ui` wrappers read.
 - A tile's dialog is modal to its tile only. Its overlay covers the tile, its focus trap is the tile, and the other
-  tiles stay usable and readable. The desk's own keys ask `popUpOpen()` (`desk.tsx`) before taking Esc or Alt+←/→;
-  that check becomes per tile.
+  tiles stay usable and readable. The desk's keys ask whether a pop-up is open in this tile (`tiles.tsx` `popUpFor`)
+  before taking Alt+←/→ or the tiling keys.
 - `Sheet` here is `web/src/panel.tsx`'s (a `components/ui/dialog` when wide); it takes the same container.
 - Find, toasts and the boot stay screen-wide.
 - As built (phase 5, 2026-11-06): Radix's `Select` and `AlertDialog` are always modal to the whole screen (neither has
@@ -349,8 +385,8 @@ tech. In a tile:
 - **An address with no set** (a bare `/`, a link, a bookmark) restores this device's last set from `localStorage`
   (`loom-tiles`, wrapped in try/catch), else the fresh-device set, and the address's own page opens focused in its
   app's tile.
-- **Under 1024 px, or with One window at a time,** `t`, `m` and `w` are ignored, and the saved set is neither read nor
-  written: the path's page draws as it does today. A window narrowed under 1024 px with tiles open shows the focused
+- **Under 1024 px,** `t`, `m` and `w` are ignored, and the saved set is neither read nor written: the path's page draws
+  as a phone's. A window narrowed under 1024 px with tiles open shows the focused
   tile's page as today's phone page, and the address drops its set; widened again, the set comes back from this
   device's saved one.
 - **Inside a tile, a page change** is a `pushState` of the new address, with `{tile}` in its state. So the browser's
@@ -366,12 +402,8 @@ tech. In a tile:
   the keys moves it to the tile's title, which announces exactly that.
 - **One polite live region** says what changed: "Tasks opened, tile 1 of 3"; "Inbox closed"; and rule 4's toast,
   word for word.
-- **The setting:** tiling is a per-person Appearance setting, "Desktop", with two choices: **Tiling** and **One window
-  at a time**. It's kept by loom with the rest of Appearance (`/appearance/prefs`, a `tiling` field), with this device's
-  copy in `localStorage` (`loom-tiling`) for first paint, the way a look is. One window at a time is today's desktop:
-  apps open one at a time in today's big window, and Home is today's Home. It is the default until phase 5 has shipped
-  and been checked; then the owner decides whether Tiling becomes the default. Either way it is never forced on anyone:
-  One window at a time stays a choice, and it is the plain mode.
+- **The plain mode** is Accessibility's One window at a time (above): the same desktop, one app tile at most. Tiling
+  itself is not a setting: it is the only desktop (2026-11-06).
 - **Reduced motion** skips the reflow animation (above).
 - The hover-only parts (the strip's buttons' hover state) also show on focus.
 
@@ -446,9 +478,9 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
 9. **Deterministic.** Tasks, Comms, Inbox and Knowledge and the three widgets in 1872×890 on 1920 give identical
    rectangles before and after laying out a different set in between.
 
-**The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`, Tiling chosen).** Criteria 10, 11, 16, 18 and
-19 run at 1024×768, 1280×800 and 1920×1080; 12, 13, 14 and 17 at 1280×800 and 1920×1080 (17's four apps at 1920×1080
-only); 15 at 1920×1080; 20 at 390×844 and across 1024.
+**The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`).** Criteria 10, 11, 16 and
+19 run at 1024×768, 1280×800 and 1920×1080; 12, 13, 14, 17 and 18 at 1280×800 and 1920×1080 (17's four apps at
+1920×1080 only); 15 at 1920×1080; 20 at 390×844 and across 1024.
 
 10. **Open, focus, minimize.**
     - The Inbox key, then the Comms key, gives two tiles and an address whose query has `t=inbox,*comms`.
@@ -485,9 +517,13 @@ only); 15 at 1920×1080; 20 at 390×844 and across 1024.
       tiles' boxes overlap.
     - Every tile is inside the area between the bars and the dock, and the page never scrolls sideways.
     - The tiles' DOM order is the `t` order, then the widgets.
-18. **The setting.** With no choice made, the desktop is One window at a time: opening a second app replaces the first
-    in today's window, and Home is today's Home. With Tiling chosen, the second app gives two tiles. Choosing either in
-    Appearance applies at once, without a reload.
+18. **The only desktop, seeded, and One window at a time** (`src/ui/desk-tiling-only.integration.test.ts`).
+    - At 1280 and 1920, a fresh session (nothing saved) lands on the seeded widgets, Needs you, both agents' cards,
+      Vitals and the ticker, with no setting chosen; Appearance has no Desktop choice.
+    - A saved `tiling: false` is served as `oneWindow: true`, and a device's `loom-tiling` of `off` starts with it on.
+    - With One window at a time on, the Inbox then Comms gives one tile, Comms; the Inbox is in the dock, and the toast
+      says `Inbox went to the dock to make room for Comms: one window at a time is on`. The widgets stay. Turning it
+      on in Accessibility with two apps open leaves the focused one.
 19. **Reduced motion.** With reduced motion, opening a second app starts no View Transition.
 20. **Budget, and phones untouched.** First-page JS stays under 250 KB gzipped (`src/ui/web-app.test.ts`; it needs the
     built app, which CI builds before it tests, `.github/workflows/ci.yml`; locally, `npm run build` first). A 390 px
@@ -508,15 +544,15 @@ Each phase is its own PR and leaves loom working, and every one passes criterion
 |---|---|---|
 | 1 | `usePage(url)` out of App.tsx; the phone and the shell use it once. No visible change. | 2–3 |
 | 2 | `tiling/layout.ts`, the pure rule, with criteria 1–9 as its tests | 1 |
-| 3 | The Appearance setting (off by default), app tiles: the frame, focus, close, minimize and the dock, `?t=`/`&m=` and the device's saved set, history per tile (10–12, 14, 17 for apps, 18) | 3–4 |
+| 3 | The Appearance setting (off by default; gone since 2026-11-06), app tiles: the frame, focus, close, minimize and the dock, `?t=`/`&m=` and the device's saved set, history per tile (10–12, 14, 17 for apps) | 3–4 |
+| after 6 | Tiling the only desktop: the old window and its setting removed, the seed, One window at a time in Accessibility (18) | 1 |
 | 4 | Widgets as tiles: the rail, the strip, the launcher, pin, Chat beside, live, `&w=` (13, 14's widgets, 17 with widgets) | 2–3 |
 | 5 | Scoped dialogs and sheets, per-tile transitions, keys, announcements, reduced motion (15, 16, 19) | 2–3 |
 | 6 | `tab.fit` for pieces (21); widgets from pieces stay designed only | 1 |
 
 The total is **about 11 to 15 sessions**. Phase 1 is the risky one: App.tsx is shared with other work in flight, so it
 lands alone and early. Phases 1 to 4 are a usable tiling desktop. Phase 5 is what makes it solid for keyboards and
-screen readers. It ships before tiling can be the default: One window at a time stays the default until phase 5 has
-shipped and been checked, and then the owner decides.
+screen readers. It shipped before tiling could be the default; the owner then made it the only desktop (2026-11-06).
 
 ## Decided (the owner, 2026-11-06)
 
@@ -524,7 +560,10 @@ shipped and been checked, and then the owner decides.
 2. **Two tiles of the same app** (two Comms threads side by side): **later**, not in this build.
 3. **Tiling is opt-in** at first, a per-person Appearance setting: "Tiling" / "One window at a time". It becomes the
    default once phase 5 (tile-scoped dialogs, transitions, keys, plain mode) has shipped and been checked, when the
-   owner says so: the build says when it's ready and doesn't flip it itself.
+   owner says so: the build says when it's ready and doesn't flip it itself. **Superseded 2026-11-06:** after using it,
+   the owner made tiling the only desktop ("toss it and make this the only option"), with a seeded start, and One
+   window at a time an Accessibility option inside tiling ("I'd rather it behave like this and just prevent opening the
+   second window"). The old window and its setting are gone.
 4. **No drag-to-resize gutters** for now.
 5. **Day-one widgets:** agent cards, Needs you, Vitals, Backup and the ticker. A box's own vitals as a widget is
    allowed: the owner's rule of 2026-10-27 is that Home shows no box's own state (a box's state lives on its page),
@@ -534,7 +573,8 @@ shipped and been checked, and then the owner decides.
 ## Sources
 
 - The owner's words: the coordinator's relay, 2026-11-05 (t-1884).
-- Today's desktop: `web/src/desk.tsx` (`DeskHome`, `DeskWindow`, `deskGo`), `web/src/desk.css`, `web/src/App.tsx`.
+- The desktop before tiling: `web/src/desk.tsx` (`DeskHome`, `DeskWindow`, `deskGo`) before loom's tiling-only change
+  (2026-11-06), which removed them.
 - Per-app history: `web/src/trail.ts` (#536, t-1879).
 - The first-page budget: `src/ui/web-app.test.ts`.
 - The manifest: `docs/extensions.md` ("The manifest", `tab`, `tile`).

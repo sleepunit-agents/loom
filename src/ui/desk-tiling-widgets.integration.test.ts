@@ -1,6 +1,6 @@
 /**
- * Desk tiling, phase 4 (docs/specs/desk-tiling.md, criteria 13, 14's widgets and 17 with widgets): with Tiling chosen,
- * Home's widgets are tiles. A fresh device starts with today's Home set; with no app open they are the desktop, and with
+ * Desk tiling, phase 4 (docs/specs/desk-tiling.md, criteria 13, 14's widgets and 17 with widgets): Home's
+ * widgets are tiles. A fresh device starts with the seed (widgets.ts SEED); with no app open they are the desktop, and with
  * apps open they move to the right edge (columns, a rail, or the strip). Chat on an agent's card opens its latest Comms
  * thread beside the rail; an agent's tile pins its card; × removes one; the + key and Find add them; they update live.
  * Real Chrome, Neon Noir.
@@ -74,7 +74,7 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
 
   async function screen(width: number, height: number, path = '/'): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: 'reduce', serviceWorkers: 'block' });
-    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); localStorage.setItem('loom-tiling', 'on'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     await p.goto(`${base}${path}`);
@@ -93,10 +93,10 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
   for (const [w, hgt] of [[1280, 800], [1920, 1080]]) {
     it(`a fresh device starts with today's Home set, as the desktop, then beside the apps; Chat opens the latest thread beside the rail, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);
-      // Today's Home set, laid out as Home: Needs you, each agent's card, Vitals and Backup.
-      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
+      // The seed (widgets.ts SEED), laid out as Home: Needs you, each agent's card, Vitals, Backup and the ticker.
+      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup', 'ticker']);
       expect(await p.locator('.loom-desk-home .loom-desk-headline').count()).toBe(1);
-      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup');
+      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup,ticker');
       // An app opens: the widgets move to the right edge, never a split of their own (each at most 340 px wide).
       await p.click(KEY('Inbox'));
       await expect.poll(() => labels(p)).toEqual(['Inbox']);
@@ -278,14 +278,5 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     });
     expect(await two(p, '.loom-tile[data-tile="/comms"] .comms')).toEqual({ list: 320, beside: true, back: false });
     await p.context().close();
-    // and One window at a time, untouched: two panes in the window
-    const w = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
-    await w.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
-    await w.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
-    const q = await w.newPage();
-    await q.goto(`${base}/comms/${artLatest}`);
-    await q.locator('.loom-window .comms-thread').waitFor();
-    expect(await two(q, '.loom-window .comms')).toEqual({ list: 320, beside: true, back: false });
-    await w.close();
   }, 60_000);
 });

@@ -75,7 +75,11 @@ interface File {
 export interface Prefs { look?: Look | '000h'; mode?: 'auto' | 'light' | 'dark'; ground?: 'depth' | 'contours' | 'wash'; sound?: boolean; pixel?: boolean; haptics?: boolean;
   /** Pixel icons (Appearance, web/src/app-icon.tsx): the household's icon set in place of the line icons; off unless turned on. */
   icons?: boolean;
-  /** The desktop (Appearance, "Desktop", docs/specs/desk-tiling.md): apps share a big screen as tiles; off unless turned on. */
+  /** One window at a time (Accessibility, docs/specs/desk-tiling.md, "One window at a time"): the tiled desktop with
+   * one app tile at most; opening another sends the one there to the dock. Off unless turned on. */
+  oneWindow?: boolean;
+  /** Before 2026-11-06, Appearance's "Desktop" (Tiling or One window at a time). Tiling is the only desktop now: still
+   * taken and kept, so a device running the older app gets no error, and read back as `oneWindow` (oneWindowOf). */
   tiling?: boolean;
   /** Allow zoom (Accessibility): pinch and double-tap zoom on a phone (web/src/immersion.ts; off unless turned on). */
   zoom?: boolean;
@@ -93,8 +97,14 @@ export function lookOf(look: unknown, mode: unknown): Look | undefined {
   if (look === 'neon' || look === 'lowlight' || look === 'daylight') return look;
   return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : 'neon';
 }
+/** Prefs as loom serves them: one who chose "One window at a time" under Appearance's old Desktop (`tiling: false`) and
+ * hasn't chosen in Accessibility since has One window at a time on. What's on disk stays as it was. (A device's own copy
+ * of the old choice, `loom-tiling` = `off`, is read the same way for first paint: web/src/look.ts oneWindowKept.) */
+export function oneWindowOf(p: Prefs): Prefs {
+  return p.oneWindow === undefined && p.tiling === false ? { ...p, oneWindow: true } : p;
+}
 const PREF_VALUES: { [K in Exclude<keyof Prefs, 'at'>]-?: readonly unknown[] } = {
-  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], icons: [true, false], tiling: [true, false], haptics: [true, false], zoom: [true, false],
+  look: ['neon', 'lowlight', 'daylight', '000h'], mode: ['auto', 'light', 'dark'], ground: ['depth', 'contours', 'wash'], sound: [true, false], pixel: [true, false], icons: [true, false], tiling: [true, false], oneWindow: [true, false], haptics: [true, false], zoom: [true, false],
   motion: ['follow', 'on', 'off'], contrast: ['follow', 'on', 'off'],
 };
 /** The Appearance fields of a request body (none: empty), or null if any field given isn't one loom keeps. */
@@ -383,7 +393,7 @@ export class SessionStore {
     const f = this.read();
     const p = { ...((reader ? f.members?.[reader]?.prefs : f.prefs) ?? {}) };
     if (p.look) p.look = lookOf(p.look, p.mode);
-    return p;
+    return oneWindowOf(p);
   }
 
   /** Change some of this reader's Appearance; what's not given stays as it was. */
@@ -396,7 +406,7 @@ export class SessionStore {
       r.prefs = { ...(r.prefs ?? {}), ...p, at: Math.max(nowMs, (r.prefs?.at ?? 0) + 1) };
       const out = { ...r.prefs };
       if (out.look) out.look = lookOf(out.look, out.mode);
-      return out;
+      return oneWindowOf(out);
     });
   }
 

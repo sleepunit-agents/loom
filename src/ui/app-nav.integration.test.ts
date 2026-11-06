@@ -1,18 +1,19 @@
 /**
- * An app's window finds its way around, and its side column is the app's (Jonathan, 2026-11-05: "I open tasks, I open
+ * An app's tile finds its way around, and its side column is the app's (Jonathan, 2026-11-05: "I open tasks, I open
  * details for a particular task... I have no real way back to the task list"; "something in the vein of lately, but
  * related to what we're looking at"). In real Chrome, Neon Noir, over a piece that draws like the Tasks piece: a list
  * with filters, a chart of what was opened and done, and recently updated beside it; a task's own page; and a page
- * with nothing for the side.
+ * with nothing for the side. A big screen is tiled (docs/specs/desk-tiling.md): each app is a tile with its own history.
  *
- * - The window's Back and Forward walk this app's own history: Back from a task is the list you came from, with its
- *   query and its scroll; Alt+← and Alt+→ do the same while the window has the keys, and leave the browser's Back
+ * - The tile's Back and Forward walk this app's own history: Back from a task is the list you came from, with its
+ *   query and its scroll; Alt+← and Alt+→ do the same while the tile has the keys, and leave the browser's Back
  *   alone; the browser's own Back still works, and agrees.
- * - The strip's trail ("Tasks › the task") goes up, folds its middle into "…" when it's long, and never scrolls.
- * - At 1280 the page's side sections are in the window's right-hand column; a page with none gets Recent here (this
- *   app's pages only). Nothing in the column scrolls sideways, whatever it holds.
- * - Narrower, and on a phone, they fold into one block at the top of the page, closed. A phone's back chevron goes to
- *   the page before this one in the app, as it was left.
+ * - The strip's crumb (the app) goes up to the list as it was left; a long title is cut short and the strip never
+ *   scrolls.
+ * - In a tile 1,100 px wide or wider the page's side sections are its right-hand column; a page with none gets Recent
+ *   here (this app's pages only). Nothing in the column scrolls sideways, whatever it holds.
+ * - In a narrower tile, and on a phone, they fold into one block at the top of the page, closed. A phone's back
+ *   chevron goes to the page before this one in the app, as it was left.
  * - The chart's two series are two colours, named in its legend, though the app's tint is one of them.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
@@ -82,7 +83,7 @@ ${UNBROKEN}
 });
 `;
 
-describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and its side column', { timeout: 60_000 }, () => {
+describe.runIf(built && chrome)('an app\'s tile: Back, Forward, its crumb and its side column', { timeout: 60_000 }, () => {
   let h: Household;
   let handle: HttpServeHandle;
   let browser: Browser;
@@ -129,43 +130,47 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     p.on('pageerror', (e) => errors.push(e.message));
     (p as Page & { errors: string[] }).errors = errors;
     await p.goto(`${base}${path}`);
-    await p.locator('main > *').first().waitFor();
+    await p.locator(width >= 1024 ? '.loom-tile__page > *' : 'main > *').first().waitFor();
     await p.waitForTimeout(300);
     return p;
   }
-  const where = (p: Page) => { const u = new URL(p.url()); return u.pathname + u.search; };
+  /** The page's own address: the tiles' set (t, m, w) left out. */
+  const where = (p: Page) => { const u = new URL(p.url()); for (const k of ['t', 'm', 'w']) u.searchParams.delete(k); return u.pathname + u.search; };
+  /** The focused tile: the one the keys and the address are about. */
+  const tile = (p: Page) => p.locator('.loom-tile[data-focused]');
   // (the strip's words are drawn in capitals: what they say is their text)
-  const titled = (p: Page, title: string) => expect.poll(() => p.locator('#loom-window-title').textContent(), { timeout: 8000 }).toBe(title);
-  const mainOf = (p: Page) => p.locator('.loom-window main');
-  const step = (p: Page, which: 'Back' | 'Forward') => p.locator(`.loom-window__step[aria-label^="${which}"]`);
+  const titled = (p: Page, title: string) => expect.poll(() => tile(p).locator('.loom-tile__bar h2').textContent(), { timeout: 8000 }).toBe(title);
+  const bodyOf = (p: Page) => tile(p).locator('.loom-tile__body');
+  const step = (p: Page, which: 'Back' | 'Forward') => tile(p).locator(`.loom-tile__btn[aria-label^="${which}"]`);
   const key = (p: Page, label: string) => p.locator(`.loom-dock-bar [data-part="item"][aria-label="${label}"]`);
+  const side = (p: Page) => tile(p).locator('aside[aria-label="More on this page"]');
 
   it('1280: Back from a task is the list it came from, at its query and its scroll; Forward goes again; the browser\'s Back agrees', async () => {
     const p = await screen(1280, '/p/work?sort=new');
     await titled(p, 'Tasks');
     expect(await step(p, 'Back').isDisabled()).toBe(true);   // nowhere yet: the app opened here
     expect(await step(p, 'Forward').isDisabled()).toBe(true);
-    await mainOf(p).evaluate((m) => { m.scrollTop = 400; });
-    const top = await mainOf(p).evaluate((m) => m.scrollTop);
+    await bodyOf(p).evaluate((m) => { m.scrollTop = 400; });
+    const top = await bodyOf(p).evaluate((m) => m.scrollTop);
     expect(top).toBeGreaterThan(100);
-    await p.locator('.loom-window main a[href$="/task/t-12"]').click();
+    await tile(p).locator('.loom-tile__page a[href$="/task/t-12"]').click();
     await titled(p, 'Task 12');
     expect(where(p)).toBe('/p/work/task/t-12');
-    // The trail: the app, then this page.
-    expect(await p.locator('.loom-window__trail a').allTextContents()).toEqual(['Tasks']);
+    // The crumb: the app.
+    expect(await tile(p).locator('.loom-tile__crumb').allTextContents()).toEqual(['Tasks']);
     expect(await step(p, 'Back').getAttribute('aria-label')).toBe('Back to Tasks');
     await step(p, 'Back').click();
     await titled(p, 'Tasks');
     expect(where(p)).toBe('/p/work?sort=new');
-    await expect.poll(() => mainOf(p).evaluate((m) => m.scrollTop)).toBe(top);
+    await expect.poll(() => bodyOf(p).evaluate((m) => m.scrollTop)).toBe(top);
     expect(await step(p, 'Forward').getAttribute('aria-label')).toBe('Forward to Task 12');
     await step(p, 'Forward').click();
     await titled(p, 'Task 12');
-    // A crumb goes up to the list as it was left (its query), as a new page.
-    await p.locator('.loom-window__trail a', { hasText: 'Tasks' }).click();
+    // The crumb goes up to the list as it was left (its query), as a new page.
+    await tile(p).locator('.loom-tile__crumb').click();
     await titled(p, 'Tasks');
     expect(where(p)).toBe('/p/work?sort=new');
-    // The browser's Back still goes back, and the window's history agrees with it.
+    // The browser's Back still goes back, and the tile's history agrees with it.
     await p.goBack();
     await titled(p, 'Task 12');
     expect(where(p)).toBe('/p/work/task/t-12');
@@ -174,69 +179,52 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.context().close();
   });
 
-  it('1280: each app has its own history: another app\'s window starts with nowhere to go back to, and Tasks\' Back still finds its task', async () => {
-    const p = await screen(1280, '/p/work');
-    await titled(p, 'Tasks');
-    await p.locator('.loom-window main a[href$="/task/t-12"]').click();
-    await titled(p, 'Task 12');
-    await key(p, 'Setup').click();
-    await titled(p, 'Setup');
-    expect(await step(p, 'Back').isDisabled()).toBe(true);   // never back into Tasks from Setup's window
-    await key(p, 'Tasks').click();
-    await titled(p, 'Tasks');
-    expect(await step(p, 'Back').getAttribute('aria-label')).toBe('Back to Task 12');
-    await step(p, 'Back').click();
-    await titled(p, 'Task 12');
-    await p.context().close();
-  });
-
-  it('1280: a minimized window opens again where its history stands, with its Back and Forward as they were', async () => {
+  it('1280: a minimized tile opens again where its history stands, with its Back and Forward as they were; Close forgets', async () => {
     const p = await screen(1280, '/p/work?sort=new');
     await titled(p, 'Tasks');
-    await p.locator('.loom-window main a[href$="/task/t-12"]').click();
+    await tile(p).locator('.loom-tile__page a[href$="/task/t-12"]').click();
     await titled(p, 'Task 12');
     await step(p, 'Back').click();
     await titled(p, 'Tasks');
-    await key(p, 'Tasks').click();   // the open app's key: minimize
+    await key(p, 'Tasks').click();   // the focused app's key: minimize
     await p.locator('.loom-desk-home').waitFor();
-    await expect.poll(() => p.locator('.loom-window').count()).toBe(0);
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     await key(p, 'Tasks').click();   // and open it again
     await titled(p, 'Tasks');
     expect(where(p)).toBe('/p/work?sort=new');
     expect(await step(p, 'Forward').getAttribute('aria-label')).toBe('Forward to Task 12');
     expect(await step(p, 'Back').isDisabled()).toBe(true);
     // Close forgets it: the app opens at its start, with nothing behind or ahead.
-    await p.locator('.loom-window__close').click();
-    await p.locator('.loom-desk-home').waitFor();
-    await expect.poll(() => p.locator('.loom-window').count()).toBe(0);
+    await tile(p).locator('button[aria-label="Close Tasks"]').click();
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     await key(p, 'Tasks').click();
-    await expect.poll(() => where(p)).toBe('/p/work');   // (the strip names the app while its page is on its way)
+    await expect.poll(() => where(p)).toBe('/p/work');
     await titled(p, 'Tasks');
     expect(await step(p, 'Forward').isDisabled()).toBe(true);
     await p.context().close();
   });
 
-  it('1280: Alt+← and Alt+→ are the window\'s Back and Forward while it has the keys, and nothing in a field', async () => {
-    const p = await screen(1280, '/p/work?sort=updated');
+  it('1920: Alt+← and Alt+→ are the tile\'s Back and Forward while it has the keys, and nothing in a field', async () => {
+    const p = await screen(1920, '/p/work?sort=updated', 1080);
     await titled(p, 'Tasks');
-    await p.locator('.loom-window main a[href$="/task/t-2"]').click();
+    await tile(p).locator('.loom-tile__page a[href$="/task/t-2"]').first().click();
     await titled(p, 'Task 2');
-    await p.locator('#loom-window-title').focus();
+    await tile(p).locator('.loom-tile__bar h2').focus();
     await p.keyboard.press('Alt+ArrowLeft');
     await titled(p, 'Tasks');
     expect(where(p)).toBe('/p/work?sort=updated');
     await p.keyboard.press('Alt+ArrowRight');
     await titled(p, 'Task 2');
     // In a field, Alt+← is the field's (a word back, on a Mac): the page stays.
-    await p.locator('.loom-window__step[aria-label^="Back"]').click();
+    await step(p, 'Back').click();
     await titled(p, 'Tasks');
-    const find = p.locator('.loom-window__side input[type="search"]');
+    const find = side(p).locator('input[type="search"]');
     await find.fill('some words');
     await find.press('Alt+ArrowRight');
     await p.waitForTimeout(400);
     expect(where(p)).toBe('/p/work?sort=updated');
-    // With Find open over the window, the keys are Find's.
-    await p.locator('.loom-window main a[href$="/task/t-2"]').click();
+    // With Find open over the tiles, the keys are Find's.
+    await tile(p).locator('.loom-tile__page a[href$="/task/t-2"]').first().click();
     await titled(p, 'Task 2');
     await p.keyboard.press('Control+k');
     await p.locator('[role="dialog"]').first().waitFor();
@@ -246,10 +234,10 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.keyboard.press('Escape');
     await step(p, 'Back').click();
     await titled(p, 'Tasks');
-    // With nowhere to go that way, the window leaves the key to the browser: it doesn't swallow it.
+    // With nowhere to go that way, the tile leaves the key to the browser: it doesn't swallow it.
     const swallowed = await p.evaluate(() => {
       (document.activeElement as HTMLElement | null)?.blur();
-      const e = new KeyboardEvent('keydown', { key: 'ArrowLeft', altKey: true, bubbles: true, cancelable: true });
+      const e = new KeyboardEvent('keydown', { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true, bubbles: true, cancelable: true });
       dispatchEvent(e);
       return e.defaultPrevented;
     });
@@ -257,22 +245,22 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.context().close();
   });
 
-  it('1280: the side sections stand in the window\'s right-hand column, and nothing in it scrolls sideways', async () => {
-    const p = await screen(1280, '/p/work');
+  it('1920: the side sections stand in a wide tile\'s right-hand column, and nothing in it scrolls sideways', async () => {
+    const p = await screen(1920, '/p/work', 1080);
     await titled(p, 'Tasks');
-    const side = p.locator('aside.loom-window__side');
-    await side.locator('.loom-chart').waitFor();
+    const col = side(p);
+    await col.locator('.loom-chart').waitFor();
     // All three of the page's side sections are there, and none of them in the page itself; no fold either.
-    for (const t of ['Opened and done', 'Filter and sort', 'Recently updated']) expect(await side.getByText(t, { exact: true }).count()).toBe(1);
-    expect(await mainOf(p).locator('.loom-chart, input[type="search"]').count()).toBe(0);
+    for (const t of ['Opened and done', 'Filter and sort', 'Recently updated']) expect(await col.getByText(t, { exact: true }).count()).toBe(1);
+    expect(await tile(p).locator('.loom-chart, input[type="search"]').count()).toBe(await col.locator('.loom-chart, input[type="search"]').count());
     expect(await p.locator('.loom-side-fold').count()).toBe(0);
-    // A fixed width, beside the page, inside the window.
-    const box = await side.boundingBox();
-    expect(box!.width).toBeLessThanOrEqual(300);
-    expect(box!.x + box!.width).toBeLessThanOrEqual(1280);
+    // A fixed width, beside the page, inside the tile.
+    const box = (await col.boundingBox())!, t = (await tile(p).boundingBox())!;
+    expect(box.width).toBeLessThanOrEqual(300);
+    expect(box.x + box.width).toBeLessThanOrEqual(t.x + t.width);
     // Never sideways: not the column, and nothing in it reaches past its edge (the unbroken word wraps).
     // (once the chart has measured the column: it draws at a default width for its first frame)
-    const measure = () => side.evaluate((s) => {
+    const measure = () => col.evaluate((s) => {
       const r = s.getBoundingClientRect();
       const out = [...s.querySelectorAll('*')].filter((e) => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > r.right + 0.5; })
         .map((e) => `${e.tagName}.${e.getAttribute('class') ?? ''}`);
@@ -282,26 +270,24 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     const m = await measure();
     expect(m.sw).toBeLessThanOrEqual(m.cw);
     // Nor anything in it that scrolls sideways itself (a code block, a table, a fenced block in prose).
-    const scrollers = await side.evaluate((s) => [...s.querySelectorAll('*')].filter((e) => {
+    const scrollers = await col.evaluate((s) => [...s.querySelectorAll('*')].filter((e) => {
       const o = getComputedStyle(e).overflowX;
       return (o === 'auto' || o === 'scroll') && e.scrollWidth > e.clientWidth + 1;
     }).map((e) => `${e.tagName}.${e.getAttribute('class') ?? ''}`));
     expect(scrollers).toEqual([]);
-    // The column holds the page's sections as they are: their titles aren't Recent here's small capitals.
-    expect(await side.getByText('Recently updated', { exact: true }).evaluate((t) => getComputedStyle(t).textTransform)).not.toBe('uppercase');
-    expect(await side.getByText(UNBROKEN).count()).toBeGreaterThan(0);
+    expect(await col.getByText(UNBROKEN).count()).toBeGreaterThan(0);
     // The filters work from the side, keeping the page's own query.
-    await side.getByRole('radio', { name: 'Newest' }).click();
+    await col.getByRole('radio', { name: 'Newest' }).click();
     await expect.poll(() => where(p)).toBe('/p/work?sort=new');
     await p.context().close();
   });
 
-  it('1280: the chart\'s two series are two colours, each named in its legend, in an app whose tint is one of them', async () => {
-    const p = await screen(1280, '/p/work');
-    const chart = p.locator('aside.loom-window__side .loom-chart');
+  it('1920: the chart\'s two series are two colours, each named in its legend, in an app whose tint is one of them', async () => {
+    const p = await screen(1920, '/p/work', 1080);
+    const chart = side(p).locator('.loom-chart');
     await chart.waitFor();
-    // Tasks wears olive (tint.ts): its page re-points --v-pink at olive, and its "Opened" pink went olive with it.
-    expect(await mainOf(p).getAttribute('data-accent')).toBe('olive');
+    // Tasks wears olive (tint.ts): its tile re-points --v-pink at olive, and its "Opened" pink went olive with it.
+    expect(await tile(p).getAttribute('data-accent')).toBe('olive');
     expect(await chart.locator('.v-chart-legend__item').allInnerTexts()).toEqual(['Opened', 'Done']);
     const keys = await chart.locator('.v-chart-legend__item .v-chart-key').evaluateAll((ks) => ks.map((k) => getComputedStyle(k).backgroundColor));
     expect(new Set(keys).size).toBe(2);
@@ -313,12 +299,14 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.context().close();
   });
 
-  it('1280: a page with nothing for the side gets Recent here, this app\'s pages only', async () => {
-    const p = await screen(1280, '/appearance');
+  it('1920: a page with nothing for the side gets Recent here, this app\'s pages only', async () => {
+    const p = await screen(1920, '/appearance', 1080);
     await titled(p, 'Appearance');
+    await tile(p).locator('button[aria-label="Close Setup"]').click();
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     await p.goto(`${base}/p/work/task/t-5`); await titled(p, 'Task 5');
     await p.goto(`${base}/p/work/about`); await titled(p, 'About tasks');
-    const recent = p.locator('nav.loom-window__side[aria-label="Recent here"]');
+    const recent = tile(p).locator('nav.loom-tile__side[aria-label="Recent here"]');
     await recent.waitFor();
     const names = await recent.locator('a').allInnerTexts();
     expect(names).toContain('Task 5');
@@ -327,60 +315,39 @@ describe.runIf(built && chrome)('an app\'s window: Back, Forward, its trail and 
     await p.context().close();
   });
 
-  it('1280: Recent here is the app\'s as its window has it: Setup\'s pages are each other\'s', async () => {
-    const p = await screen(1280, '/appearance');
-    await titled(p, 'Appearance');
-    await key(p, 'Setup').click();   // minimize, so the next page opens in the same Setup window's history
-    await p.locator('.loom-desk-home').waitFor();
-    await expect.poll(() => p.locator('.loom-window').count()).toBe(0);
-    await p.goto(`${base}/accessibility`);
-    await titled(p, 'Accessibility');
-    const names = await p.locator('nav.loom-window__side[aria-label="Recent here"] a').allTextContents();
-    expect(names).toContain('Appearance');
-    await p.context().close();
-  });
-
   it('a long title is cut short and the strip never scrolls', async () => {
     for (const w of [1024, 1280]) {
       const p = await screen(w, '/p/work');
-      await p.locator('.loom-window main a[href$="/task/t-7"]').click();
+      await tile(p).locator('.loom-tile__page a[href$="/task/t-7"]').click();
       await titled(p, LONG_TITLE);
-      const m = await p.locator('.loom-window__bar').evaluate((b) => ({ sw: b.scrollWidth, cw: b.clientWidth, where: (() => { const x = b.querySelector('.loom-window__where')!; return { sw: x.scrollWidth, cw: x.clientWidth }; })() }));
+      const m = await tile(p).locator('.loom-tile__bar').evaluate((b) => ({ sw: b.scrollWidth, cw: b.clientWidth, title: (() => { const x = b.querySelector('h2')!; return { sw: x.scrollWidth, cw: x.clientWidth }; })() }));
       expect(m.sw, `${w}: the strip`).toBeLessThanOrEqual(m.cw);
-      expect(m.where.sw, `${w}: the trail`).toBeLessThanOrEqual(m.where.cw + 1);
+      expect(m.title.cw, `${w}: the title is cut short, not gone`).toBeGreaterThan(0);
       // The title is cut short, not the strip widened; the app's crumb stays.
-      expect(await p.locator('.loom-window__trail a').first().textContent()).toBe('Tasks');
+      expect(await tile(p).locator('.loom-tile__crumb').textContent()).toBe('Tasks');
       await p.context().close();
     }
   });
 
-  it('an agent\'s page starts its trail at the agent; squeezed, the middle folds into "…", which still goes up', async () => {
-    const p = await screen(1024, '/a/art/people/nobody');
-    await p.locator('.loom-window__trail').waitFor();
-    expect(await p.locator('.loom-window__trail a').allTextContents()).toEqual(['art', 'People']);
-    // A strip with less room than the trail needs (as a long agent's name and page would leave it): the middle folds
-    // before the page's own name is cut short.
-    await p.addStyleTag({ content: '.loom-window__where{max-width:150px}' });
-    await expect.poll(() => p.locator('.loom-window__trail a').allTextContents()).toEqual(['art', '…']);
-    const box = await p.locator('.loom-window__where').evaluate((x) => ({ sw: x.scrollWidth, cw: x.clientWidth }));
-    expect(box.sw).toBeLessThanOrEqual(box.cw + 1);
-    expect(await p.locator('#loom-window-title').evaluate((t) => t.scrollWidth <= t.clientWidth + 1)).toBe(true);
-    expect(await p.locator('.loom-window__trail a', { hasText: '…' }).getAttribute('aria-label')).toBe('Up to People');
-    await p.locator('.loom-window__trail a', { hasText: '…' }).click();
-    await expect.poll(() => new URL(p.url()).pathname).toBe('/a/art/people');
+  it('an agent\'s page is the agent\'s tile: its crumb is the agent, and goes up to its pages', async () => {
+    const p = await screen(1280, '/a/art/people/nobody');
+    await tile(p).locator('.loom-tile__crumb').waitFor();
+    expect(await tile(p).locator('.loom-tile__crumb').allTextContents()).toEqual(['art']);
+    await tile(p).locator('.loom-tile__crumb').click();
+    await expect.poll(() => new URL(p.url()).pathname).toBe('/a/art');
     await p.context().close();
   });
 
-  it('a narrower window (1024) folds the side sections into one closed block at the top of the page', async () => {
-    const p = await screen(1024, '/p/work');
+  it('a narrower tile (under 1,100 px) folds the side sections into one closed block at the top of the page', async () => {
+    const p = await screen(1280, '/p/work');
     await titled(p, 'Tasks');
-    const fold = mainOf(p).locator('details.loom-side-fold');
+    const fold = tile(p).locator('details.loom-side-fold');
     await fold.waitFor();
     expect(await fold.evaluate((d) => (d as HTMLDetailsElement).open)).toBe(false);
     expect(await fold.locator('summary .loom-side-fold__name').innerText()).toBe('Filters & more');
     // At the top: before the page's own sections.
-    expect(await mainOf(p).evaluate((m) => m.querySelector('.loom-side-fold')!.compareDocumentPosition(m.querySelector('[data-slot="card"]')!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
-    expect(await p.locator('.loom-window__side').count()).toBe(0);
+    expect(await tile(p).locator('.loom-tile__page').evaluate((m) => m.querySelector('.loom-side-fold')!.compareDocumentPosition(m.querySelector('[data-slot="card"]')!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+    expect(await side(p).count()).toBe(0);
     await p.context().close();
   });
 

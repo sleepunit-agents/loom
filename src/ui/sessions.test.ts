@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, onTestFinished } from 'vit
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MAX_SESSIONS, SEEN_GAP_S, SessionStore } from './sessions.js';
+import { MAX_SESSIONS, SEEN_GAP_S, SessionStore, prefsOf } from './sessions.js';
 
 describe('the page\'s sessions on disk', () => {
   let dir: string;
@@ -79,5 +79,33 @@ describe('a look kept from before Low Light and Daylight', () => {
     // Another choice saved leaves the 000h on disk as it was (an app that knew 000h still finds it), read back mapped.
     expect(store.setPrefs({ sound: true })).toMatchObject({ look: 'daylight', sound: true });
     expect(JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).prefs).toMatchObject({ look: '000h', mode: 'light', sound: true });
+  });
+});
+
+describe('One window at a time kept from before tiling was the only desktop (docs/specs/desk-tiling.md)', () => {
+  it('a saved tiling: false reads back as oneWindow: true until the person chooses; tiling: true or none is off', () => {
+    // A file written before 2026-11-06: the owner chose One window at a time under Appearance's Desktop, sam Tiling.
+    const dir = mkdtempSync(join(tmpdir(), 'loom-prefs-'));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, 'ui-sessions.json'), JSON.stringify({ v: 1, sessions: {}, prefs: { tiling: false, at: 1 },
+      members: { sam: { prefs: { tiling: true, at: 1 } }, kim: { prefs: { look: 'neon', at: 1 } } } }));
+    const store = new SessionStore(dir);
+    expect(store.prefs()).toMatchObject({ oneWindow: true });
+    expect(store.prefs('sam').oneWindow).toBeUndefined();
+    expect(store.prefs('kim').oneWindow).toBeUndefined();
+    // Another choice saved keeps it; the stored key stays as it was.
+    expect(store.setPrefs({ sound: true })).toMatchObject({ oneWindow: true, sound: true });
+    expect(JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).prefs).toMatchObject({ tiling: false, sound: true });
+    expect(JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).prefs.oneWindow).toBeUndefined();
+    // Their own choice in Accessibility wins.
+    expect(store.setPrefs({ oneWindow: false })).toMatchObject({ oneWindow: false });
+    expect(store.prefs()).toMatchObject({ oneWindow: false });
+  });
+
+  it('an older app still saving tiling gets no error; oneWindow is taken too, and nothing else', () => {
+    expect(prefsOf({ tiling: false })).toEqual({ tiling: false });
+    expect(prefsOf({ tiling: true, _csrf: 'x' })).toEqual({ tiling: true });
+    expect(prefsOf({ oneWindow: true })).toEqual({ oneWindow: true });
+    expect(prefsOf({ oneWindow: 'yes' })).toBeNull();
   });
 });

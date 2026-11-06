@@ -1,16 +1,16 @@
 // Where you've been inside each app (Jonathan, 2026-11-05: "I open tasks, I open details for a particular task... I have
-// no real way back to the task list"): a history of its own per app, this tab's. A desktop window's Back and Forward
-// walk it, and a phone bar's back chevron pops it. Back from a task goes to the list you came from, with its filters,
+// no real way back to the task list"): a history of its own per app, this tab's. A desktop tile's Back and Forward
+// walk it (tiling/tiles.tsx), and a phone bar's back chevron pops it. Back from a task goes to the list you came from, with its filters,
 // its query and how far down it was.
 //
-// One record per app, so the window's history and where it was left agree: what a minimized window opens at again
-// (desk.tsx, its key or a double-click on its strip) is simply where its history stands. Close forgets both.
+// One record per app, so the tile's history and where it was left agree: what a minimized tile opens at again (its
+// key in the dock) is simply where its history stands. Close forgets both.
 //
-// No React here: App.tsx tells it each page that lands, and how it was reached.
+// No React here: App.tsx and the tiles tell it each page that lands, and how it was reached.
 
 /** A page in an app's history: its address (path and query), its title, and how far down it was scrolled. */
 export type Visit = { url: string; top: number; label?: string };
-/** How a page was reached: a link or a key (go), the window's own Back or Forward, or the browser's (pop). */
+/** How a page was reached: a link or a key (go), the tile's own Back or Forward, or the browser's (pop). */
 export type How = 'go' | 'back' | 'forward' | 'pop';
 type Stack = { pages: Visit[]; at: number; min?: boolean };
 
@@ -65,7 +65,7 @@ export function lastAt(app: string | undefined, path: string): Visit | undefined
   return undefined;
 }
 
-/** Every page in `app`'s history, the latest first, each once: Recent here's (desk.tsx), keyed as Back's is. */
+/** Every page in `app`'s history, the latest first, each once: Recent here's (tiling/tiles.tsx), keyed as Back's is. */
 export function visited(app: string | undefined): Visit[] {
   const s = app ? stacks[app] : undefined;
   if (!s) return [];

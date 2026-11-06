@@ -1,7 +1,7 @@
 // loom's page as an app (docs/specs/ui-app.md): every page is the JSON loom answers for its path.
 // A phone gets a top bar and 000h's dock at the bottom (four tabs and More); a desktop the dock as a rail.
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { flushSync } from 'react-dom';
 // An agent's state beside its name (a desktop's alone): its own chunk.
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 // The ground (contour field), on its own (ground.tsx).
@@ -59,7 +59,7 @@ import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { allowZoom } from './immersion';
 import { keptFollow, wearContrast, wearMotion, type Follow } from './access';
-import { keep, lookOf, markColor, modeOf, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, lookOf, markColor, modeOf, oneWindowKept, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -79,10 +79,8 @@ function useMedia(q: string) {
   return on;
 }
 const useWide = () => useMedia('(min-width: 1024px)');
-/** Where a page's side sections stand (docs/extensions.md, "Pages"): 1280 px and wider, a column of their own (a desktop
- * window's right-hand one, else beside the page); narrower, folded together at the top of the page. 1280, not the old
- * Lately's 1600: the common laptop widths (1280 to 1536) get the column, and a window there still leaves the page about
- * 860 px, wider than its rows need. Below it, the page would be squeezed under 700. */
+/** Where a page's side sections stand (docs/extensions.md, "Pages"): 1280 px and wider, a column of their own beside the
+ * page; narrower, folded together at the top of the page. (A desktop's tile has its own rule: tiles.tsx SIDE_WIDE.) */
 const SIDE_COLUMN = '(min-width: 1280px)';
 
 type Tab = { label: string; href: string; current: boolean; count?: number };
@@ -155,10 +153,10 @@ export default function App() {
   // he wants to live with them first).
   const [pixIcons, setPixIconsState] = useState(() => { try { return localStorage.getItem('loom-icons') === 'on'; } catch { return false; } });
   const setPixIcons = (on: boolean) => { setPixIconsState(on); keep('loom-icons', on ? 'on' : 'off'); save({ icons: on }); };
-  // Tiling (docs/specs/desk-tiling.md): on a big screen, apps share it by a rule, each in a tile of its own. Off unless
-  // the person chooses it (Appearance, "Desktop"); One window at a time is today's window.
-  const [tiling, setTilingState] = useState(() => { try { return localStorage.getItem('loom-tiling') === 'on'; } catch { return false; } });
-  const setTiling = (on: boolean) => { setTilingState(on); keep('loom-tiling', on ? 'on' : 'off'); save({ tiling: on }); };
+  // One window at a time (Accessibility; docs/specs/desk-tiling.md): the tiled desktop with one app tile at most. Off
+  // unless the person turns it on; a device that kept the old Desktop choice as One window at a time starts with it on.
+  const [oneWindow, setOneWindowState] = useState(oneWindowKept);
+  const setOneWindow = (on: boolean) => { setOneWindowState(on); keep('loom-one-window', on ? 'on' : 'off'); save({ oneWindow: on }); };
   const setSound = (on: boolean) => { setSoundState(on); keep('loom-sound', on ? 'on' : 'off'); save({ sound: on }); };
   // Haptics (haptic.tsx): on unless the person turns them off; their chunk loads once the first page is up, while on.
   const [haptics, setHapticsState] = useState(() => { try { return localStorage.getItem('loom-haptics') !== 'off'; } catch { return true; } });
@@ -229,7 +227,6 @@ export default function App() {
   const appKeyRef = useRef<string | undefined>(undefined);
   const intent = useRef<{ how: trail.How; url: string } | null>(null);
   const restoreTo = useRef<trail.Visit | null>(null);
-  const scrolled = () => (deskNow.current && mainRef.current ? mainRef.current.scrollTop : scrollY);
   useEffect(() => {
     void load(url, false);
     const f = () => {
@@ -237,7 +234,7 @@ export default function App() {
       // The browser's Back or Forward: the page it leaves is still the one shown. Its history and the app's agree when
       // it lands on the app's page before or after this one, and that page comes back where it was.
       const to = location.pathname + location.search;
-      trail.keepTop(appKeyRef.current, showing.current, scrolled());
+      trail.keepTop(appKeyRef.current, showing.current, scrollY);
       intent.current = { how: 'pop', url: to };
       const near = [trail.step(appKeyRef.current, -1), trail.step(appKeyRef.current, 1)].find((p) => p?.url === to);
       if (near) restoreTo.current = near;
@@ -246,8 +243,6 @@ export default function App() {
     addEventListener('popstate', f); return () => removeEventListener('popstate', f);
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Whether this is a desktop, for go (worked out below): read when it runs.
-  const deskNow = useRef(false);
   // ⌘K / Ctrl-K: Find, from anywhere.
   useEffect(() => {
     const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); } };
@@ -261,10 +256,8 @@ export default function App() {
     // Tiled: a page opens in its app's tile; the desktop sends the apps to the dock.
     if (tiledNow.current && tilesApi.current) { if (href[0] === '#') tilesApi.current.open(href); else if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
     // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
-    trail.keepTop(appKeyRef.current, location.pathname + location.search, scrolled());
+    trail.keepTop(appKeyRef.current, location.pathname + location.search, scrollY);
     intent.current = { how: o?.how ?? 'go', url: u.pathname + u.search };
-    // A desktop (desk.css): the window grows out of its dock key on the way into an app, and back into it on the way home.
-    if (deskNow.current && desk$?.deskGo(location.pathname, u.pathname, () => flushSync(() => { void load(u.pathname + u.search, true); }))) return;
     showWith(moveFor(u.pathname, o?.how === 'back'), u.pathname + u.search, true);
   }, [load]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -285,14 +278,15 @@ export default function App() {
     if (p.sound !== undefined) { setSoundState(p.sound); keep('loom-sound', p.sound ? 'on' : 'off'); }
     if (p.pixel !== undefined) { setPixelState(p.pixel); keep('loom-pixel', p.pixel ? 'on' : 'off'); }
     if (p.icons !== undefined) { setPixIconsState(p.icons); keep('loom-icons', p.icons ? 'on' : 'off'); }
-    if (p.tiling !== undefined) { setTilingState(p.tiling); keep('loom-tiling', p.tiling ? 'on' : 'off'); }
+    if (p.oneWindow !== undefined) { setOneWindowState(p.oneWindow); keep('loom-one-window', p.oneWindow ? 'on' : 'off'); }
     if (p.haptics !== undefined) { setHapticsState(p.haptics); keep('loom-haptics', p.haptics ? 'on' : 'off'); }
     if (p.zoom !== undefined) { setZoomState(p.zoom); keep('loom-zoom', p.zoom ? 'on' : 'off'); }
     if (p.motion) { setMotionState(p.motion); keep('loom-motion', p.motion); wearMotion(p.motion); }
     if (p.contrast) { setContrastState(p.contrast); keep('loom-contrast', p.contrast); wearContrast(p.contrast); }
   }, [chrome]);
-  // Tiled (docs/specs/desk-tiling.md): a desktop, the person chose Tiling, and the desk's chunk is here.
-  const tiled = wide && !!chrome?.shell?.household && tiling && !!D;
+  // Tiled (docs/specs/desk-tiling.md): a desktop (1024 px and wider, in a household), and the desk's chunk is here. The
+  // only desktop there is (Jonathan, 2026-11-06: "it should be the default ... make this the only option").
+  const tiled = wide && !!chrome?.shell?.household && !!D;
   useLayoutEffect(() => { tiledNow.current = tiled; });
   // Into tiles, the screen's page becomes the desktop (the page that was shown is a tile now); out of them, the
   // focused tile's page is the screen's again.
@@ -366,34 +360,19 @@ export default function App() {
       // An agent's own dock wears the agent's colour, not an app's tint (looks.css): the pixel ramps are the apps' tints,
       // so its keys keep their line icons.
       ? <AnimatedIcon name={iconFor(icon(t.label))} active={t.current} />
-      : <AppIcon label={t.href === '/setup' ? 'Setup' : t.label} name={iconFor(icon(t.label))} active={t.current} lit={t.current} />}<HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
+      // On the tiled desktop, the key of the app that has focus (or Home's, with none) is the one lit.
+      : <AppIcon label={t.href === '/setup' ? 'Setup' : t.label} name={iconFor(icon(t.label))} active={tiled ? t.href === lit : t.current} lit={tiled ? t.href === lit : t.current} />}<HapticLabel on={haptics} /></>, ...(agentDock ? {} : { tint: tint(t.label) }),
     ...(t.count ? { badge: <span className="loom-data text-[10px] font-semibold">{t.count}</span> } : {}),
   }));
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
   const lit = tiled && tileFocus ? tileFocus.key : accountOpen && me ? '/account' : current(phoneTabs);
-  // A desktop's window and the household key it's open under (desk.tsx): its open key, or a double-click on its strip,
-  // minimizes it, kept where it is; that key opens it there again; Close and Esc close it, forgetting. Home always
-  // goes to the desktop (minimizing what's open, as a desktop's "show desktop" does). An agent's own dock is its own.
-  const deskKey = () => deskNow.current && !agentDock && location.pathname !== '/' && lit && new URL(lit, location.href).pathname !== '/' ? lit : undefined;
-  const minimize = () => {
-    const key = deskKey();
-    if (key) trail.minimize(key, { url: location.pathname + location.search, top: scrolled() });
-    go('/');
-  };
-  const closeWindow = () => { trail.forget(deskKey()); go('/'); };
   const pick = (href: string) => {
     buzz(haptics, true);
     if (href === '#more') { setMoreAsked(true); setMore(true); return; }
     if (tiledNow.current && tilesApi.current) { tilesApi.current.pick(href); return; }
     if (href === '#back') { go('/'); return; }
-    if (deskNow.current && !agentDock && desk$) {
-      const home = new URL(href, location.href).pathname === '/';
-      if (location.pathname !== '/' && (href === deskKey() || home)) { minimize(); return; }
-      const was = home ? undefined : trail.restore(href);
-      if (was) { restoreTo.current = was; go(was.url); return; }
-    }
     go(href);
   };
   const backTile: DockItem | null = agentDock && accent ? {
@@ -477,7 +456,8 @@ export default function App() {
             {!pg.waiting && !pg.error && data && env && (
               <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
                 {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
-                  : data.view === 'house-home' && desk && data.chrome?.shell ? (D ? <D.DeskHome home={data.home as never} shell={data.chrome.shell} /> : <Skeleton />)
+                  // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
+                  : data.view === 'house-home' && desk ? <Skeleton />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
@@ -488,7 +468,7 @@ export default function App() {
                       add={data.add as never} reload={() => void pg.load(pg.url, false, true)}><PageView page={data.page as Page} /></AccountView></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} tiling={tiling} setTiling={setTiling} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} oneWindow={oneWindow} setOneWindow={setOneWindow} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
                   : <NotYet kind={data.view} url={pg.url} />}
               </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
             )}
@@ -511,35 +491,27 @@ export default function App() {
     if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
   }, [data, waiting]);
 
-  // A desktop's page scrolls inside its own space (desk.css): a new page opens at its top.
-  const mainRef = useRef<HTMLElement>(null);
-  useLayoutEffect(() => { if (mainRef.current) mainRef.current.scrollTop = 0; }, [url]);
-  // ... unless it's a minimized window opened again (pick, above), or a page come back to with Back or Forward: back
-  // where it was, once its page is drawn. A desktop's window scrolls inside itself, a phone's page the whole screen.
+  // A page come back to with Back or Forward: back where it was, once its page is drawn.
   useLayoutEffect(() => {
     const r = restoreTo.current;
     if (!r || waiting) return;
     restoreTo.current = null;
     if (url !== r.url) return;
-    if (deskNow.current && mainRef.current) mainRef.current.scrollTop = r.top; else scrollTo({ top: r.top });
+    scrollTo({ top: r.top });
   }, [url, waiting, data]);
   // Where you've been, for Find's Recent: each page that opened, by its title.
   useEffect(() => { if (!error && data && title && url !== '/') noteRecent(title, url); }, [url, title, error, data]);
   // The phone's bar at every width (phone-bar.tsx). On a phone it merges with the phone's own status bar; wider,
   // there's none, so loom draws one over it (system-bar.tsx; Jonathan, 2026-11-05). A page with no shell keeps the big header.
   const phoneBar = !!chrome?.shell;
-  // 1024 px and wider, in a household (desk.tsx): a desktop. Home is widgets on the ground, the dock sits at the
-  // bottom centre (no rail), and every other page fills the space between the bars and the dock. 1024 is where the rail
-  // took over from the phone's dock before: below it the phone's layout (its dock, its gestures) is unchanged.
+  // 1024 px and wider, in a household (desk.tsx): a desktop, tiled (tiles.tsx). The dock sits at the bottom centre (no
+  // rail). 1024 is where the rail took over from the phone's dock before: below it the phone's layout (its dock, its
+  // gestures) is unchanged.
   const desk = wide && !!chrome?.shell?.household;
-  useLayoutEffect(() => { deskNow.current = desk; });
-  // Every page but Home is in the window; Home never is, even one that didn't load (it says so on the desktop).
-  const inWindow = desk && path !== '/';
 
-  // The app the page shown is in, for its own history (trail.ts): on a desktop the dock key its window is open under,
-  // as minimizing keys it; an agent's pages are that agent's; else the place it's under.
-  const appKey = path === '/' ? undefined : desk && !agentDock && lit && lit.split('?')[0] !== '/' ? lit
-    : accent ? `/a/${accent.id}` : place?.href ?? `/${path.split('/')[1]}`;
+  // The app the page shown is in, for its own history (trail.ts): an agent's pages are that agent's; else the place it's
+  // under. (A desktop's tiles keep their own: tiles.tsx.)
+  const appKey = path === '/' ? undefined : accent ? `/a/${accent.id}` : place?.href ?? `/${path.split('/')[1]}`;
   useLayoutEffect(() => { if (!waiting) appKeyRef.current = appKey; });
   const [, setMoved] = useState(0);
   useEffect(() => {
@@ -557,24 +529,12 @@ export default function App() {
     go(p.url, { how: by < 0 ? 'back' : 'forward' });
   };
   const back = chrome?.shell?.back;
-  const pathOf = (h: string) => h.split('?')[0];
-  // A window's trail (desk.tsx): the app, then the page this one is under, then this one. A crumb goes to that page as
-  // it was last left in this app's history (the list with its filters), else to its start.
-  // An agent's pages start at the agent.
-  const top = place ?? (accent ? { label: accent.label, href: `/a/${accent.id}` } : undefined);
-  const crumbs = inWindow ? [...(top && top.href !== path ? [top] : []),
-    ...(back && pathOf(back.href) !== path && pathOf(back.href) !== top?.href ? [back] : [])]
-    .map((c) => ({ label: c.label, href: trail.lastAt(appKey, pathOf(c.href))?.url ?? c.href })) : [];
   // A phone's back chevron (phone-bar.tsx), on a page under another: the page before this one in the same app, as it
-  // was left; opened from somewhere else (a link, Find, the Inbox), the page it's under, as before. A desktop's window
-  // has its own Back, so its bar has no chevron.
-  const prevHere = back && !inWindow ? trail.step(appKey, -1) : undefined;
-  const phoneCrumb = inWindow ? undefined : prevHere ? { label: prevHere.label ?? back!.label, href: prevHere.url } : back;
-  // Where the page's side sections stand (SIDE_COLUMN): a desktop window's own right-hand column at 1280 and wider,
-  // beside the page wider than that elsewhere, else folded at its top.
-  const [sideEl, setSideEl] = useState<HTMLElement | null>(null);
-  const pageSide = !!(data as { page?: Page } | null)?.page?.sections?.some(isSide);
-  const sideAt: SideAt = !sideWide ? 'fold' : inWindow ? (pageSide ? { el: sideEl } : 'fold') : 'column';
+  // was left; opened from somewhere else (a link, Find, the Inbox), the page it's under, as before.
+  const prevHere = back ? trail.step(appKey, -1) : undefined;
+  const phoneCrumb = prevHere ? { label: prevHere.label ?? back!.label, href: prevHere.url } : back;
+  // Where the page's side sections stand (SIDE_COLUMN): beside the page at 1280 and wider, else folded at its top.
+  const sideAt: SideAt = sideWide ? 'column' : 'fold';
   useEffect(() => { if (desk && !D) void deskChunk().then(setD); }, [desk, D]);
   const deskBar = phoneBar && vw >= 640;
   const pill = !wide && !error && !waiting && !!chrome?.shell && !agentDock && ['home', 'places'].includes(chrome.shell.tab);
@@ -628,8 +588,8 @@ export default function App() {
                 {/* Wider than a phone: loom's own status bar over it, across the page's column, so its clock sits over
                     the page's name and its glyphs over LOOM//OS and the count, as a phone's do (system-bar.tsx). */}
                 {deskBar && <SystemBar shell={chrome.shell} clock={{ text: chrome.clock, tz: chrome.tz }} offline={!!savedAt} go={go} />}
-                <PhoneBar title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={url}
-                  info={{ line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
+                <PhoneBar title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={tiled && tileFocus ? `${tileFocus.key}\0${tileFocus.title}` : url}
+                  info={tiled ? { more: tileFocus?.intro } : { line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
               </div>
             </header>
@@ -647,23 +607,20 @@ export default function App() {
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
                 shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} live={!savedAt} widgetEnv={(g) => pageEnv(mainPage, g)}
-                render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() })}
+                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() })}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <AgentAvatar a={agentOf(o.key)!} size={20} /> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
-                tint={(o) => (agentOf(o.key) ? markColor(agentOf(o.key)!.bg) : `var(--loom-tint-${tint(o.label)})`)} />
+                tint={(o) => (agentOf(o.key) ? markColor(agentOf(o.key)!.bg) : `var(--loom-tint-${tint(o.label)})`)}
+                // A tile's page wears its app's colour (tint.ts), or its agent's, as the page did before tiles: its
+                // buttons, switches and selection (000h's --v-pink). Not the account's.
+                accent={(o) => { const a = agentOf(o.key); return a ? { name: accentOf(a.bg), style: { '--loom-accent': a.bg, '--loom-on-accent': a.fg, '--loom-accent-lit': markColor(a.bg) } as React.CSSProperties }
+                  : o.key === '/account' || tint(o.label) === 'pink' ? {} : { name: tint(o.label) }; }} />
             </main>
           ) : (
-          <Wrap on={inWindow && !!D} wrap={(page) => D && (
-            <D.DeskWindow url={url} waiting={waiting} go={go} close={closeWindow} minimize={minimize} title={shownTitle || place?.label || ''}
-              crumbs={crumbs} back={trail.step(appKey, -1)} forward={trail.step(appKey, 1)} move={move}
-              side={sideWide ? { has: pageSide, el: setSideEl, app: appKey, under: top?.href } : undefined}
-              tint={accent ? markColor(accent.bg) : `var(--loom-tint-${appTint ?? 'pink'})`}
-              lead={accent ? <AgentAvatar a={accent} size={22} /> : <AppIcon label={tileLabel || ''} name={iconFor(icon(tileLabel || ''))} size="sm" lit />}>{page}</D.DeskWindow>
-          )}>
-          <main ref={mainRef} aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
+          // A phone's page, or a desktop's for the moment before the desk's chunk is here.
+          <main aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
             {pageBody(mainPage, env, sideAt, arrivals)}
           </main>
-          </Wrap>
           )}
 
           {!wide && chrome && <div aria-hidden className="loom-fade pointer-events-none fixed inset-x-0 bottom-0 z-20 h-44" style={{ background: 'linear-gradient(to top, var(--v-canvas) 45%, transparent)' }} />}
@@ -686,7 +643,6 @@ export default function App() {
         </div>
       </div>
 
-      {desk && D && !tiled && <D.DeskKeys close={closeWindow} places={[...nav.tabs, ...nav.more]} />}
       {booting && D && chrome?.shell && <D.DeskBoot shell={chrome.shell} offline={!!savedAt} onDone={() => {
         setBooting(false);
         if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundOn.current) void import('./sound').then((m) => m.chime('boot'));
@@ -710,9 +666,8 @@ const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
 const FoldCard = lazy(() => import('./fold'));
 
-/** Where a page's side sections go (App's sideAt): folded at its top, a column beside it, or a desktop window's own
- * right-hand column (drawn into it). */
-type SideAt = 'fold' | 'column' | { el: HTMLElement | null };
+/** Where a page's side sections go (App's sideAt): folded at its top, or a column beside it. */
+type SideAt = 'fold' | 'column';
 const SideAtContext = createContext<SideAt>('fold');
 /** A section in the side column: `place: side`, or a kept copy from before it had a name (`side`). */
 const isSide = (s: Page['sections'][number]) => s.place === 'side' || !!s.side;
@@ -758,7 +713,6 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
         {main.map(card)}
       </div>
       {column && <aside className="loom-side-col grid content-start gap-4" aria-label="More on this page">{sideCards}</aside>}
-      {side.length > 0 && typeof at === 'object' && at.el && createPortal(<div className="loom-side-col grid content-start gap-4">{sideCards}</div>, at.el)}
     </div>
   );
 }
@@ -767,9 +721,4 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
 function NotYet({ kind, url }: { kind: string; url: string }) {
   void kind; void url;
   return <StateCard icon="refresh-cw" tint="olive" title="This page needs a newer app" text="loom has been updated. Reload to get the new version." action={{ label: 'Reload', onClick: () => location.reload() }} />;
-}
-
-/** Its children, or its children wrapped (a desktop's window around the page). */
-function Wrap({ on, wrap, children }: { on: boolean; wrap: (c: React.ReactNode) => React.ReactNode; children: React.ReactNode }) {
-  return <>{on ? wrap(children) : children}</>;
 }
