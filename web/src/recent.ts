@@ -3,7 +3,7 @@
 
 export type Recent = { label: string; href: string };
 const KEY = 'loom-recent';
-/** Kept: enough that each app's Recent here (desk.tsx) still has some after the others' visits; Find shows the first five. */
+/** Kept: enough that each app's Recent here (tiling/tiles.tsx) still has some after the others' visits; Find shows the first five. */
 const KEEP = 40;
 /** Pages not worth going back to from Find: Home (the dock has it), Find itself, signing in and out. */
 const SKIP = /^\/(find|login|logout)?(\?|$)/;

@@ -98,8 +98,8 @@ export function lookOf(look: unknown, mode: unknown): Look | undefined {
   return look === '000h' ? (mode === 'light' ? 'daylight' : 'lowlight') : 'neon';
 }
 /** Prefs as loom serves them: one who chose "One window at a time" under Appearance's old Desktop (`tiling: false`) and
- * hasn't chosen in Accessibility since has One window at a time on (web/src/look.ts oneWindowOf, the same rule). What's
- * on disk stays as it was. */
+ * hasn't chosen in Accessibility since has One window at a time on. What's on disk stays as it was. (A device's own copy
+ * of the old choice, `loom-tiling` = `off`, is read the same way for first paint: web/src/look.ts oneWindowKept.) */
 export function oneWindowOf(p: Prefs): Prefs {
   return p.oneWindow === undefined && p.tiling === false ? { ...p, oneWindow: true } : p;
 }

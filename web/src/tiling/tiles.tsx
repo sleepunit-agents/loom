@@ -363,7 +363,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     // Home again: back in their order.
     const back = s.home.map((k) => s.min.find((a) => a.key === k)).filter((a): a is Open => !!a)
       .map((a) => ({ ...a, url: trail.restore(a.key)?.url ?? a.url }));
-    commit(shed({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null }, 'not all of them fit this screen now'), 'replace', true);
+    commit(shed({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null }, oneWindow ? 'one window at a time is on' : 'not all of them fit this screen now'), 'replace', true);
     announce(`${back.map((a) => a.label).join(', ')} back from the dock`);
   };
 

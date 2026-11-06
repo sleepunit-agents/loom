@@ -1,6 +1,6 @@
 /* A big screen (desk.tsx, App.tsx): the tiled desktop's frame and Home's widgets, in every look (each its own colours:
-   looks/looks.css). Loaded with the desk's own chunk, so a phone never fetches it. Everything is under .loom-desk, which App.tsx sets at 1024 px and wider,
-   in a household.
+   looks/looks.css). Loaded with the desk's own chunk, so a phone never fetches it. Everything is under .loom-desk,
+   which App.tsx sets at 1024 px and wider, in a household.
 
    The screen is the bars on top, the desktop between them and the dock, and the dock: one screen's height, never a
    scrolling page. A widget column that has more than fits scrolls inside itself. */

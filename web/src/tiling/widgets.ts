@@ -39,7 +39,9 @@ export function addable(agents: Agent[], o: { backup: boolean }): WidgetRef[] {
  * answers them where they stand, and an app tile would move every widget to the rail, so the first screen would be
  * busier and say the same thing twice. The widgets on the whole desktop are the calm start; the dock is one press away.
  */
+/** In SEED: each agent's card, in the household's order. */
 export const AGENTS = '*agents';
+/** The seed (above). */
 export const SEED: readonly string[] = ['needs', AGENTS, 'vitals', 'backup', 'ticker'];
 
 /** A fresh device's widgets: SEED, each agent's card in place of AGENTS, what isn't here left out. */

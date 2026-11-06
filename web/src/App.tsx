@@ -227,7 +227,6 @@ export default function App() {
   const appKeyRef = useRef<string | undefined>(undefined);
   const intent = useRef<{ how: trail.How; url: string } | null>(null);
   const restoreTo = useRef<trail.Visit | null>(null);
-  const scrolled = () => scrollY;
   useEffect(() => {
     void load(url, false);
     const f = () => {
@@ -235,7 +234,7 @@ export default function App() {
       // The browser's Back or Forward: the page it leaves is still the one shown. Its history and the app's agree when
       // it lands on the app's page before or after this one, and that page comes back where it was.
       const to = location.pathname + location.search;
-      trail.keepTop(appKeyRef.current, showing.current, scrolled());
+      trail.keepTop(appKeyRef.current, showing.current, scrollY);
       intent.current = { how: 'pop', url: to };
       const near = [trail.step(appKeyRef.current, -1), trail.step(appKeyRef.current, 1)].find((p) => p?.url === to);
       if (near) restoreTo.current = near;
@@ -257,7 +256,7 @@ export default function App() {
     // Tiled: a page opens in its app's tile; the desktop sends the apps to the dock.
     if (tiledNow.current && tilesApi.current) { if (href[0] === '#') tilesApi.current.open(href); else if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
     // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
-    trail.keepTop(appKeyRef.current, location.pathname + location.search, scrolled());
+    trail.keepTop(appKeyRef.current, location.pathname + location.search, scrollY);
     intent.current = { how: o?.how ?? 'go', url: u.pathname + u.search };
     showWith(moveFor(u.pathname, o?.how === 'back'), u.pathname + u.search, true);
   }, [load]);   // eslint-disable-line react-hooks/exhaustive-deps

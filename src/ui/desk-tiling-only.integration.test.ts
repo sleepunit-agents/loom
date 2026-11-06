@@ -43,7 +43,7 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
       writeFileSync(join(home, 'agents', a, 'IDENTITY.md'), `# ${a}\n`);
       const db = new BetterSqlite3(join(home, 'agents', a, 'memories.db')); createConversationTables(db); db.close();
     }
-    const people = ['jonathan', 'sam', 'kim', 'lee'];
+    const people = ['jonathan', 'sam', 'kim', 'lee', 'max'];
     writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', owner: 'jonathan',
       members: people.map((person) => ({ person, role: 'owner', agents: '*' })) }));
     for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
@@ -136,6 +136,32 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
       await p.context().close();
     }, 60_000);
   }
+
+  it('18. a saved layout is left alone: a bare / opens this device\'s own widgets, not the seed', async () => {
+    const p = await screen(1280, 800, 'jonathan', { init: `localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: ['mark', 'vitals'] }));` });
+    await expect.poll(() => widgets(p)).toEqual(['mark', 'vitals']);
+    expect(query(p, 'w')).toBe('mark,vitals');
+    // and one with every widget taken off stays empty
+    await p.evaluate(() => localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: [] })));
+    await p.goto(`${base}/`); await p.locator('.loom-tiles').waitFor(); await p.waitForTimeout(300);
+    expect(await widgets(p)).toEqual([]);
+    await p.context().close();
+  }, 60_000);
+
+  it('18. a saved tiling: false (the old One window at a time) reaches a device with nothing kept as One window at a time on', async () => {
+    // The old app's choice, saved for max as it saved it.
+    const first = await screen(1280, 800, 'max');
+    const csrf = await first.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
+    const r = await first.context().request.post(`${base}/appearance/prefs`, { data: { _csrf: csrf, tiling: false }, headers: { origin: base } });
+    expect(r.status()).toBe(200);
+    await first.context().close();
+    // Another device: no loom-one-window, no loom-tiling. loom's answer turns it on.
+    const p = await screen(1920, 1080, 'max');
+    expect(await p.evaluate(() => [localStorage.getItem('loom-one-window'), localStorage.getItem('loom-tiling')])).toEqual(['on', null]);
+    await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual(['Inbox']);
+    await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toEqual(['Comms']);
+    await p.context().close();
+  }, 60_000);
 
   it('18. a device that kept the old Desktop choice as One window at a time starts with it on', async () => {
     const p = await screen(1280, 800, 'lee', { init: `localStorage.setItem('loom-tiling', 'off');` });
