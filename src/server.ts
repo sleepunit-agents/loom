@@ -70,7 +70,7 @@ import {
 import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
 import { conversationsList, conversationView, homeFor } from './conversations.js';
-import { CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
+import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
 import { householdOf } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
@@ -1475,6 +1475,36 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       try {
         const t = titleFromAgent(home, self, here.conversation, title);
         return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, thread: t.id, title: t.title }) }] };
+      } catch (e) {
+        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
+        throw e;
+      }
+    },
+  );
+
+  server.registerTool(
+    'comms_thread',
+    {
+      description:
+      'Read a Comms thread of your own agent\'s (a conversation in loom\'s own app, venue loom): its messages as its ' +
+      'owner sees them, oldest first, with the owner\'s words, your replies, tool cards and any error card such as ' +
+      '"your reply couldn\'t be shown". Words go after the household\'s comms_days (14 at most); the message stays. With no thread, the one ' +
+      'of the conversation given to identity. Never another agent\'s thread. Read only.',
+      inputSchema: z.object({
+        thread: z.string().max(20).optional().describe('A thread id of yours, th:… (its place). Left off: this body\'s own thread.'),
+        before: z.number().int().positive().optional().describe('Only messages before this seq: scrolling back.'),
+        limit: z.number().int().min(1).max(100).optional().describe('How many of the newest messages (default 30, at most 100).'),
+      }).strict(),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ thread, before, limit }) => {
+      const home = homeFor(contextDir);
+      // Whose thread: the server's own agent dir, never anything the caller sends.
+      const self = householdOf(contextDir)?.agent;
+      if (!home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'no household here' }) }], isError: true };
+      try {
+        const r = await agentThreadRead(home, process.env, self, { conversation: here?.conversation, thread, before, limit });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(r) }] };
       } catch (e) {
         if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
         throw e;

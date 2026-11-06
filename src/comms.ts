@@ -713,7 +713,52 @@ function liveThreadAt(home: string, agent: string, place: string): ThreadRow | u
   return r && r.agent === agent && r.archived === null ? r : undefined;
 }
 
-export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true } | { ok: false; reason: string; permanent?: true };
+export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?: string[]; stop?: true; trace?: ThreadTrace } | { ok: false; reason: string; permanent?: true };
+
+/** One message of a thread as a trace shows it (t-1895): where it is and what it was, never its words. */
+export interface TraceMessage {
+  seq: number;
+  at: string;
+  kind: MessageKind;
+  from: string;
+  run: string | null;
+  /** A member's message: delivered, failed (core recorded a failure) or still sending. */
+  delivery?: Delivery;
+  /** An error card: its code and its words from the fixed table (comms.md, section 7). */
+  error?: { code: string; words: string };
+  /** A tool card: its tool and state. */
+  card?: { tool: string; state: string };
+}
+
+/** A thread's delivery record for a trace: its state and its newest messages' facts, no words. */
+export interface ThreadTrace {
+  thread: string;
+  conversation: string;
+  archived: string | null;
+  working_since: string | null;
+  queued_since: string | null;
+  last_failed: boolean;
+  messages: TraceMessage[];
+}
+
+/** The newest TRACE_MAX messages a trace carries. */
+export const TRACE_MAX = 100;
+
+/** A thread's trace facts (comms.md, "Tracing a reply"): what the runtime's `trace` op answers, and nothing of the words. */
+export function traceOf(home: string, r: ThreadRow): ThreadTrace {
+  const rows = existsSync(join(home, COMMS_DB))
+    ? (withMessages(home, (db) => db.prepare('SELECT seq, at, kind, sender, run, delivered, card_json FROM comms_messages WHERE thread = ? ORDER BY seq DESC LIMIT ?').all(r.id, TRACE_MAX)) as Array<Omit<MsgRow, 'text' | 'id' | 'hash'>>).reverse()
+    : [];
+  const messages = rows.map((m): TraceMessage => {
+    const card = m.card_json ? JSON.parse(m.card_json) as Record<string, unknown> : null;
+    const out: TraceMessage = { seq: m.seq, at: m.at, kind: m.kind as MessageKind, from: m.sender, run: m.run };
+    if (m.kind === 'message') out.delivery = deliveryOf(m.delivered);
+    if (m.kind === 'error') { const code = String(card?.error ?? ''); out.error = { code, words: errorWords(code, label(r.agent), typeof card?.reason === 'string' ? card.reason : undefined) }; }
+    if (m.kind === 'card') out.card = { tool: String(card?.tool ?? ''), state: String(card?.state ?? '') };
+    return out;
+  });
+  return { thread: r.id, conversation: r.conversation, archived: r.archived, working_since: r.working_since, queued_since: r.queued_since, last_failed: r.last_failed === 1, messages };
+}
 
 /**
  * POST /api/loom/comms/adapter (comms.md, section 1): the runtime's post, describe and status for venue `loom`, the
@@ -721,9 +766,17 @@ export type AdapterAnswer = { ok: true; id?: string; brief?: string[]; readers?:
  */
 export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): AdapterAnswer {
   const { op, place, agent } = raw;
-  if (op !== 'post' && op !== 'describe' && op !== 'status') return fail('bad-input: op is post, describe or status');
+  if (op !== 'post' && op !== 'describe' && op !== 'status' && op !== 'trace') return fail('bad-input: op is post, describe, status or trace');
   if (typeof agent !== 'string' || !h.agents.includes(agent)) return fail('bad-input: agent names one of this household\'s agents');
   if (typeof place !== 'string') return fail('bad-input: place is a thread');
+  // trace (t-1895): the thread's delivery facts for the runtime's reply trace, read only. An archived thread too (its
+  // record is still the agent's); never one of another agent's, and never its words.
+  if (op === 'trace') {
+    if (!THREAD_ID.test(place)) return { ok: false, reason: `${place} isn't a thread`, permanent: true };
+    const t = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(place) as ThreadRow | undefined);
+    if (!t || t.agent !== agent) return { ok: false, reason: `${place} isn't a thread of ${agent}'s (deleted, or never one)`, permanent: true };
+    return { ok: true, trace: traceOf(h.home, t) };
+  }
   const r = liveThreadAt(h.home, agent, place);
   if (op === 'post') {
     const text = raw.text;
@@ -872,6 +925,41 @@ export function titleFromAgent(home: string, agent: string, conversation: string
   if (!t) return fail('comms_title names a Comms thread, and this conversation isn\'t one');
   const h = householdAt(home);
   return setTitle(h, t, title, 'agent', now);
+}
+
+/** How many messages comms_thread answers at most, and by default. */
+export const AGENT_READ_MAX = 100;
+export const AGENT_READ_DEFAULT = 30;
+
+/**
+ * comms_thread (an MCP tool, comms.md "An agent reading its own threads", t-1896): a body reads the messages of a Comms
+ * thread its own agent is the agent of, as the thread's member sees them (words for 14 days, then none; error cards in
+ * their fixed words). Which agent is the server's own agent dir, never what the caller sends: with no `thread`, the
+ * thread of the conversation given to identity; with one, only a thread whose agent is that same agent. Another agent's
+ * thread, a deleted one, or one that never existed is the same refusal. Read only.
+ */
+export async function agentThreadRead(home: string, env: NodeJS.ProcessEnv, agent: string, at: { conversation?: string; thread?: unknown; before?: unknown; limit?: unknown }): Promise<{ thread: { id: string; title: string | null; archived: string | null; state: ReturnType<typeof stateOf> }; messages: Message[] }> {
+  const refuse = (): never => fail('comms_thread reads a Comms thread of yours: that isn\'t one', 403);
+  let t: Thread | undefined;
+  if (at.thread !== undefined) {
+    if (typeof at.thread !== 'string' || !THREAD_ID.test(at.thread) || !existsSync(join(home, 'household.db'))) return refuse();
+    const r = withThreadsAt(home, (db) => db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(at.thread) as ThreadRow | undefined);
+    t = r && r.agent === agent ? threadOf(r) : undefined;
+  } else if (at.conversation) {
+    t = threadOfAgentConversation(home, agent, at.conversation);
+  } else {
+    return fail('comms_thread needs a thread: name one of yours, or call identity with this body\'s conversation first');
+  }
+  if (!t) return refuse();
+  const h = householdAt(home);
+  if (!h.agents.includes(agent)) return refuse();
+  const limit = typeof at.limit === 'number' && Number.isInteger(at.limit) && at.limit >= 1 ? Math.min(at.limit, AGENT_READ_MAX) : AGENT_READ_DEFAULT;
+  const before = typeof at.before === 'number' && Number.isInteger(at.before) && at.before > 0 ? at.before : undefined;
+  const all = existsSync(join(home, COMMS_DB)) ? await messagesOf(h, env, t, before !== undefined ? { before } : {}) : [];
+  // The word rule at read time too: the sweep runs on the daemon's clock, and a stdio server reads with no daemon up.
+  const cutoff = Date.now() - (h.commsDays ?? COMMS_DAYS_DEFAULT) * DAY_MS;
+  const kept = all.slice(-limit).map((m) => (m.kind !== 'error' && m.text !== null && Date.parse(m.at) < cutoff ? { ...m, text: null } : m));
+  return { thread: { id: t.id, title: t.title, archived: t.archived, state: stateOf(t) }, messages: kept };
 }
 
 /**

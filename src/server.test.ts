@@ -126,6 +126,7 @@ describe('createLoomServer', () => {
     project_orphans: { readOnlyHint: true, openWorldHint: false },
     conversation_digest: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     comms_title: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    comms_thread: { readOnlyHint: true, openWorldHint: false },
     conversations: { readOnlyHint: true, openWorldHint: false },
     conversation: { readOnlyHint: true, openWorldHint: true },
     conversation_findings: { readOnlyHint: true, openWorldHint: false },
