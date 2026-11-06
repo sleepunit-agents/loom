@@ -188,7 +188,7 @@ choice, and the body's brief. The new parts follow.
 
   | `op` | Body | Answer |
   |---|---|---|
-  | `post` | `{op, place, agent, text}` | `{ok: true, id}` (the new message's `seq`, as a string) or `{ok: false, reason, permanent?}` |
+  | `post` | `{op, place, agent, text, run?, on?}` | `{ok: true, id}` (the new message's `seq`, as a string) or `{ok: false, reason, permanent?}` |
   | `describe` | `{op, place, agent}` | `{ok: true, brief, readers}` |
   | `status` | `{op, place, agent, status: "working"\|"done", messages?: [delivery id]}` | `{ok: true, stop?: true}` |
   | `trace` | `{op, place, agent}` | `{ok: true, trace}`: the thread's delivery facts, no words ("Tracing a reply") |
@@ -197,6 +197,10 @@ choice, and the body's brief. The new parts follow.
     without `permanent`, and never a retry after a timeout.
   - `post` is `{ok: false, permanent: true}`, with the reason in words, for: a place that isn't a thread of that
     agent, an archived or deleted thread, empty text, or text over 40,000 characters.
+  - `post`'s `on` names the harness a switched body answers on (loom-box t-1907: `"Codex"` while the agent's own
+    account is out of quota). It's one word, a letter then up to 23 letters, digits, `.` or `-`. It's kept as the
+    reply's card, `{on}` and nothing else. An `on` of any other shape is dropped and the reply posts without it,
+    never refused.
   - `describe` answers `brief`, whose first line is "A private thread in loom's app with your owner, <their name>. Only
     they read it. They can see your tool use as you work. Work you record here can name this conversation as its source:
     conversation:<cv>." (the thread's conversation, so a house body can pass it: "Made here"), and `readers: [<member>]`.
@@ -585,7 +589,8 @@ Neon OS's own, not copied from any game.
     when the last delivery failed. The signal meter goes with it: full, flickering low, empty.
   - `· ON CODEX` follows it while the thread's latest reply came from a body on another harness than the agent's own,
     because that account was out of quota. The runtime's `post` names the harness (`on: "Codex"`), and core keeps it
-    on the reply's card. (loom-box t-1907.)
+    on the reply's card. (loom-box t-1907.) It's read from the messages the app has loaded: a thread whose newest 100
+    messages hold no reply at all shows no word. That's accepted, since every turn ends in a reply.
 - **Where it sits:**
   - **Desktop:** a column at the right of the thread pane, about 240 px, beside the messages. A thread pane narrower
     than 760 px puts it at the top of the pane instead.
@@ -907,6 +912,8 @@ A thread filed under a project already feeds its hub (section "Project" above). 
      before t-1881 gains its new columns in place.
 4. **The adapter route.**
    - `post` for a live thread answers `{ok: true, id}` and adds a `reply` message.
+   - `post` with `on: "Codex"` keeps `{on: "Codex"}` as the reply's card, and nothing else. `on` of another shape (markup,
+     two words, over 24 characters, not a string) leaves the card empty.
    - `post` answers `{ok: false, permanent: true}` for each of: an archived thread, a deleted one, an unknown place,
      another agent's thread, empty text, and text over 40,000 characters.
    - `describe` answers `readers: [<member>]`, and carries the project line only when the thread has a project, and
@@ -1010,7 +1017,8 @@ A thread filed under a project already feeds its hub (section "Project" above). 
       landing during the second beat of a 3-beat run ends it at 4. Each gap between two talking beats is 400–1200 ms
       of the rest frame. With reduced motion, no talking beat plays.
     - The frame's label reads `<NAME> · CH <nn> · LINK OK` with the stream open, `LINK LOST` with it closed, and
-      `NO CARRIER` after a failed delivery. A member's third thread with an agent is `CH 03`, and stays `CH 03` after
+      `NO CARRIER` after a failed delivery. A reply posted with `on: "Codex"` adds `· ON CODEX`, and the next reply
+      without it takes it away. A member's third thread with an agent is `CH 03`, and stays `CH 03` after
       the first is deleted.
     - The desktop shows the YOU panel and a phone doesn't.
 18. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with

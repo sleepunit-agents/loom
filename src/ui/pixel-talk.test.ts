@@ -3,6 +3,7 @@
  * Talking on the comm screen (docs/specs/comms.md, "How talking plays"; criterion 17): a bounded run of talking beats,
  * a 400-1200 ms breath between them, then the done beat, then rest as idle; a reply mid-run extends it, never past 4;
  * nothing while it isn't live (reduced motion, off screen); a manifest without talking plays done's, then working's.
+ * And the channel line's harness word (loom-box t-1907).
  */
 import { describe, expect, it } from 'vitest';
 import { createPlayer, PIXEL, stateFrom, type Frame, type PlayerEnv } from '../../web/src/pixel-face';
@@ -170,5 +171,8 @@ describe('the channel line names a switched harness (loom-box t-1907)', () => {
     expect(onOf([reply(1, null)])).toBeNull();
     expect(onOf([reply(1, null), reply(2, { on: 'Codex' })])).toBe('Codex');
     expect(onOf([reply(1, { on: 'Codex' }), reply(2, null)])).toBeNull();
+    // What follows a switched reply that isn't a reply (a card, an error, the member's message) doesn't clear it.
+    const other = (seq: number, kind: 'card' | 'error' | 'message') => ({ ...reply(seq, kind === 'card' ? { tool: 'Bash', state: 'done' } : null), kind });
+    expect(onOf([reply(1, { on: 'Codex' }), other(2, 'card'), other(3, 'error'), other(4, 'message')])).toBe('Codex');
   });
 });

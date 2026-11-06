@@ -142,6 +142,13 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       // Then done, then back to the thread's own state.
       await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'complete', undefined, { timeout: 6000 });
       await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 3000 });
+      // A switched body's reply names its harness on the channel line; one from the agent's own clears it.
+      adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'On Codex for now.', on: 'Codex' });
+      await page.waitForFunction(() => /· ON CODEX$/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });
+      expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · CH 01 · LINK (OK|LOST) · ON CODEX/);
+      adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'Back on Claude.' });
+      await page.waitForFunction(() => !/ON CODEX/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });
+      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 12000 });
       // No runtime installed here: a message from the composer can't be delivered, and the link says so.
       // Shift+Enter is a new line; Enter sends (a desktop's keyboard; the Send button is the phone's).
       const box = page.locator('.comms-composer textarea');

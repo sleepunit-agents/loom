@@ -217,7 +217,8 @@ Where it comes from:
     busy, and with `done` when its turn ends. It answers `{ok: true, stop?: true}`, and `stop: true` ends that body.
   - **A venue core adapts itself** (`loom`, [comms.md](comms.md)) has no bin. Its row in `GET /api/loom/venues`
     says `"adapter": "core"` instead of `send`. For it, the runtime makes the same three calls (post, describe,
-    status) as `POST /api/loom/comms/adapter` `{op, place, agent, …}` with its own token. They have the same limits,
+    status) as `POST /api/loom/comms/adapter` `{op, place, agent, …}` with its own token. A switched body's post adds
+    `on` (its harness, e.g. `"Codex"`; comms.md). They have the same limits,
     the same retry rule and the same answer shapes. A delivery on `loom` from core's own source `loom` comes only
     from one of the agent's owners, so the runtime takes its sender as tier 3 without reading the gates.
 - **Activity, for `loom` conversations only** ([comms.md](comms.md), "Activity"). The runtime reads a body's own

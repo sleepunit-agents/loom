@@ -108,6 +108,7 @@ export interface Message {
   id: string;
   /** The words (null once swept); for an error, its words from the fixed table. */
   text: string | null;
+  /** An activity card's or an error's payload; on a reply, `{on}` when a switched body sent it (the adapter route). */
   card: Record<string, unknown> | null;
   run: string | null;
   /** On a member's message: true once delivered, false when its delivery failed, null while it's on its way. */
@@ -790,7 +791,7 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     }
     // `on`: the harness a switched body answers on (loom-box t-1907: "Codex" while the agent's own account is out of
     // quota), kept on the reply's card for the comm screen's channel line. A short word, or nothing.
-    const on = typeof raw.on === 'string' && /^[A-Za-z][A-Za-z0-9 .-]{0,23}$/.test(raw.on) ? raw.on : undefined;
+    const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
     const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
     withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };
@@ -820,6 +821,8 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
 }
 
 const TOOL = /^[A-Za-z0-9_.:\-]{1,64}$/;
+/** A reply's `on` (comms.md, the adapter route): a harness's name in one short word, e.g. "Codex". Else dropped. */
+export const HARNESS_WORD = /^[A-Za-z][A-Za-z0-9.-]{0,23}$/;
 const PRINTABLE_LINE = /^[^\x00-\x1f\x7f\u2028\u2029]*$/;
 
 /**
