@@ -4,15 +4,25 @@
 // it; Home sends every app to the dock and shows the desktop, and Home again brings them back. The address is the
 // focused tile's page with the set in its query (address.ts); this device keeps its last set for a bare `/`.
 //
+// Home's widgets are tiles too (phase 4): with no app open they are the desktop, laid out as Home is; with apps open
+// they move to the right edge, in columns, a rail or the strip, as the rule says (layout.ts rule 1). A widget is live
+// (it draws from Home's own page, which the live stream keeps current), its × removes it, and what it links to opens
+// beside it, last, next to the rail. The + key in the dock and Find add them; an agent's tile can pin its card.
+//
 // The Appearance setting "Tiling" turns it on (App.tsx); "One window at a time" is today's window. Loaded with the
 // desk's own chunk (desk.tsx), at 1024 px and wider only: a phone never fetches it.
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { EnvContext, type Env } from '../blocks';
+import type { Shell } from '../loom';
+import { readRecent } from '../recent';
+import { StripKey, WidgetBody, WidgetDesk, type DeskHomeData, type WidgetData } from '../desk-widgets';
+import { addable, freshSet, widgetRef, type WidgetRef } from './widgets';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { usePage, type PageNav, type PageState } from '../page';
 import * as trail from '../trail';
 import { iconFor } from '../safe';
 import type { Note } from '../toasts';
-import { admit, capFor, layout, promote, underMinimum, type AppTile, type Rect } from './layout';
+import { admit, capFor, layout, promote, underMinimum, type AppTile, type Rect, type WidgetTile } from './layout';
 import { nameOf, readSet, writeSet, type TileSet } from './address';
 import { AGENT_FIT, fitFor, type Fit } from './fit';
 import './tiles.css';
@@ -20,7 +30,8 @@ import './tiles.css';
 /** An app as a tile knows it: its key (the dock key it's open under, as trail.ts keys it), its label and its fit. */
 export type AppRef = { key: string; label: string; fit: Fit };
 type Open = AppRef & { url: string; pinned?: boolean };
-type State = { apps: Open[]; min: Open[]; focus: string | null; /** what Home sent to the dock, to bring back */ home: string[] | null };
+type State = { apps: Open[]; min: Open[]; focus: string | null; /** what Home sent to the dock, to bring back */ home: string[] | null;
+  /** the widgets, by id, in the order added */ w: string[] };
 
 export type TilesApi = {
   /** Open a page: in its app's tile (added, focused, or back from the dock). False when it isn't a tile's (Home). */
@@ -31,15 +42,26 @@ export type TilesApi = {
   pop: () => void;
   /** The desktop: every app to the dock (a link to Home). */
   desktop: () => void;
+  /** What can go on the desktop, and whether each is there (Find's "Add widget: …"). */
+  addable: () => (WidgetRef & { on: boolean })[];
 };
+/** Opened from a widget: placed last, next to the rail (layout.ts place). */
+const FROM_WIDGET = '#widget';
 export type Focused = { key: string; label: string; title: string } | null;
 
 const SAVED = 'loom-tiles';
 /** A tile this wide or wider has the page's side column beside it (docs/specs/desk-tiling.md, "The frame"). */
 const SIDE_WIDE = 1100;
 const keepSet = (set: TileSet) => { try { localStorage.setItem(SAVED, JSON.stringify(set)); } catch { /* private window */ } };
+/** Pages of this app you've been to lately, for a wide tile's side column (as the window's Recent here, desk.tsx). */
+const recentHere = (url: string, app: string) => {
+  const seen = new Set([url]);
+  const under = (h: string) => { const p = h.split('?')[0]; return p === app || p.startsWith(`${app}/`); };
+  return [...trail.visited(app).filter((v) => v.label).map((v) => ({ href: v.url, label: v.label! })), ...readRecent().filter((r) => under(r.href))]
+    .filter((r) => !seen.has(r.href) && (seen.add(r.href), true)).slice(0, 8);
+};
 const savedSet = (): TileSet | null => {
-  try { const v = JSON.parse(localStorage.getItem(SAVED) ?? 'null') as TileSet | null; return v && Array.isArray(v.t) && Array.isArray(v.m) ? v : null; } catch { return null; }
+  try { const v = JSON.parse(localStorage.getItem(SAVED) ?? 'null') as TileSet | null; return v && Array.isArray(v.t) && Array.isArray(v.m) && (v.w === undefined || Array.isArray(v.w)) ? v : null; } catch { return null; }
 };
 const sameOrigin = (u: URL) => u.origin === location.origin;
 const titleOf = (p: PageState, o: Open): string => {
@@ -52,7 +74,7 @@ type Named = { key: string; label: string };
 /** An app's fit: an agent's pages are one kind; every other app by its label (fit.ts). */
 const withFit = <T extends Named>(r: T | null): (T & { fit: Fit }) | null => (r ? { ...r, fit: r.key.startsWith('/a/') ? AGENT_FIT : fitFor(r.label) } : null);
 
-export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, onFocus, outerGo }: {
+export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, onFocus, outerGo, shell, homeData, live, widgetEnv }: {
   api: React.MutableRefObject<TilesApi | null>;
   /** The app a page is in, or null for the desktop (Home) and anything that isn't a tile. */
   appOf: (path: string) => Named | null;
@@ -68,6 +90,13 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   onFocus: (f: Focused) => void;
   /** Anything that isn't a tile's (Find, signing out, another site). */
   outerGo: (href: string) => void;
+  shell: Shell;
+  /** Home's own page (the widgets draw from it), once it's here. */
+  homeData: DeskHomeData | null;
+  /** loom can be reached (the ticker says live or offline). */
+  live: boolean;
+  /** The widgets' Env: Home's page's, linking by `go`. */
+  widgetEnv: (go: (href: string) => void) => Env | null;
 }) {
   const appOf = (path: string) => withFit(appOfRaw(path));
   const byName = (name: string) => withFit(byNameRaw(name));
@@ -78,8 +107,12 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   if (!S.current) {
     const { set, page } = readSet(location.pathname + location.search);
     const path = page.split('?')[0];
-    const from = set ?? savedSet();
-    const s: State = { apps: [], min: [], focus: null, home: null };
+    const saved = set ? null : savedSet();
+    const from = set ?? saved;
+    // The widgets: the address's (none when it has a set without them), else this device's last, else today's Home set.
+    const ok = { backup: !!shell.backup };
+    const w = (set ? set.w ?? [] : saved?.w ?? freshSet(shell.agents, ok)).filter((id) => widgetRef(id, shell.agents, ok));
+    const s: State = { apps: [], min: [], focus: null, home: null, w };
     const here = appOf(path);
     const make = (name: string, focused: boolean): Open | null => {
       const r = byName(name);
@@ -117,6 +150,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const set = (s: State): TileSet => ({
     t: s.apps.map((a) => ({ name: nameOf(a.key), ...(a.key === s.focus ? { focused: true } : {}), ...(a.pinned ? { pinned: true } : {}) })),
     m: s.min.map((a) => nameOf(a.key)),
+    w: s.w,
   });
   const addressOf = (s: State) => writeSet(s.apps.find((a) => a.key === s.focus)?.url ?? '/', set(s));
   /** The new state, and the address for it: a page change in a tile is a new entry (Back walks it); opening, closing,
@@ -130,6 +164,13 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     bump();
   };
   const tiles = (apps: Open[]): AppTile[] => apps.map((a) => ({ id: a.key, name: a.label, fit: a.fit, ...(a.pinned ? { pinned: true } : {}) }));
+  // Each widget's height as drawn at the column's width (measured), for the rule; until then its default (fit.ts).
+  const [heights, setHeights] = useState<Record<string, number>>({});
+  const hs = useRef(heights);
+  hs.current = heights;
+  const wok = { backup: !!shell.backup };
+  const wrefs = (ids: string[]): WidgetRef[] => ids.map((id) => widgetRef(id, shell.agents, wok)).filter((w): w is WidgetRef => !!w);
+  const wtiles = (ids = S.current.w): WidgetTile[] => wrefs(ids).map((w) => ({ id: w.id, name: w.name, kind: w.kind, ...(hs.current[w.id] ? { h: hs.current[w.id] } : {}) }));
   const scrollOf = (key: string) => bodies.current.get(key)?.scrollTop ?? 0;
   const announce = (m: string) => { setSaid(''); requestAnimationFrame(() => setSaid(m)); };
 
@@ -147,7 +188,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   /** An app into the layout: placed by the rule, and whatever doesn't fit then goes to the dock, said in a toast. */
   const add = (o: Open, from?: string) => {
     const s = S.current;
-    const r = admit(tiles(s.apps), tiles([o])[0], [], area, innerWidth, { from: from ? { tile: from } : undefined, usedAt: usedAt.current });
+    const r = admit(tiles(s.apps), tiles([o])[0], wtiles(), area, innerWidth, { from: from === FROM_WIDGET ? { widget: true } : from ? { tile: from } : undefined, usedAt: usedAt.current });
     let next: State = { ...s, min: s.min.filter((a) => a.key !== o.key), home: null };
     next.apps = r.apps.map((t) => (t.id === o.key ? o : { ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned }));
     for (const d of r.docked) {
@@ -163,6 +204,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   };
 
   const open = (href: string, from?: string): boolean => {
+    if (href.startsWith('#widget:')) { addWidget(href.slice(8)); return true; }
     const u = new URL(href, location.href);
     const to = u.pathname + u.search;
     const r = appOf(u.pathname);
@@ -203,12 +245,13 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
    * `admit` does): the screen resized, Home again, make this the big one. */
   const shed = (s: State, why: string): State => {
     for (;;) {
-      const over = s.apps.length > capFor(innerWidth) || underMinimum(tiles(s.apps), [], area, innerWidth);
+      const over = s.apps.length > capFor(innerWidth) || underMinimum(tiles(s.apps), wtiles(s.w), area, innerWidth);
       const may = s.apps.filter((a) => a.key !== s.focus && !a.pinned);
       if (!over || !may.length || !area.w) return s;
       const o = may.reduce((x, y) => ((usedAt.current[y.key] ?? 0) < (usedAt.current[x.key] ?? 0) ? y : x));
       s = toDock(s, o);
       say({ ok: true, message: `${o.label} went to the dock: ${why}` });
+      announce(`${o.label} went to the dock: ${why}`);
     }
   };
   const makeBig = (key: string) => {
@@ -231,10 +274,48 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     commit(shed({ ...s, apps: back, min: s.min.filter((a) => !s.home!.includes(a.key)), home: null, focus: back[0]?.key ?? null }, 'not all of them fit this screen now'));
   };
 
+  // ---- widgets ----
+  const [launching, setLaunching] = useState(false);
+  const addWidget = (id: string) => {
+    const s = S.current;
+    const w = widgetRef(id, shell.agents, wok);
+    if (!w) return;
+    setLaunching(false);
+    if (s.w.includes(id)) {
+      // On the desktop already: focus it.
+      requestAnimationFrame(() => box.current?.querySelector<HTMLElement>(`[data-widget="${CSS.escape(id)}"] :is(a, button)`)?.focus());
+      return;
+    }
+    commit(shed({ ...s, w: [...s.w, id] }, `${w.label} needed the room`));
+    announce(`${w.label} added to the desktop`);
+  };
+  const removeWidget = (id: string) => {
+    const s = S.current;
+    const w = widgetRef(id, shell.agents, wok);
+    commit({ ...s, w: s.w.filter((x) => x !== id) });
+    announce(`${w?.label ?? 'The widget'} removed from the desktop`);
+  };
+  /** A widget's link: its app opens beside it (last, next to the rail); anything else is the screen's. */
+  const goWidget = (href: string) => {
+    const u = new URL(href, location.href);
+    if (!sameOrigin(u) || u.pathname === '/' || !appOf(u.pathname)) { outerGo(href); return; }
+    open(u.pathname + u.search, FROM_WIDGET);
+  };
+  /** Chat on an agent's card: its latest Comms thread beside the rail, else Comms. */
+  const chat = appOf('/comms') ? (agent: string) => {
+    void fetch('/comms', { credentials: 'same-origin', headers: { accept: 'application/json' } }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((d: { threads?: { id: string; agent: string; last: string }[] } | null) => {
+        const t = (d?.threads ?? []).filter((x) => x.agent === agent).sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0))[0];
+        open(t ? `/comms/${t.id}` : '/comms', FROM_WIDGET);
+      });
+  } : undefined;
+
   api.current = {
+    addable: () => addable(shell.agents, wok).map((w) => ({ ...w, on: S.current.w.includes(w.id) })),
     open,
     desktop: () => { if (S.current.apps.length) homeKey(); },
     pick: (href) => {
+      if (href === '#widgets') { setLaunching((o) => !o); return; }
       const u = new URL(href, location.href);
       if (u.pathname === '/') { homeKey(); return; }
       const r = appOf(u.pathname);
@@ -306,7 +387,46 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   useEffect(() => { commit(S.current); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const s = S.current;
-  const l = useMemo(() => layout(tiles(s.apps), [], area, innerWidth), [s.apps, area]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const ws = wrefs(s.w);
+  const l = useMemo(() => layout(tiles(s.apps), wtiles(s.w), area, innerWidth), [s.apps, s.w, area, heights]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Taller widgets than were allowed for (measured): what no longer fits beside them goes to the dock.
+  useEffect(() => {
+    const n = shed(S.current, 'the widgets needed the room');
+    if (n !== S.current) commit(n);
+  }, [heights]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // What Needs you and Vitals hold changes their height: measured again (drawn in full once) when it does.
+  const holds = homeData ? `${homeData.needs}\0${(homeData.stack ?? []).map((i) => i.key).join(',')}\0${shell.pieces.map((p) => `${p.label}:${p.tone ?? ''}`).join(',')}` : '';
+  const [full, setFull] = useState<ReadonlySet<string>>(() => new Set());
+  const held = useRef(holds);
+  useEffect(() => { if (held.current !== holds) { held.current = holds; setFull(new Set(['needs', 'vitals'])); } }, [holds]);
+  const measured = (id: string) => (h: number) => {
+    setHeights((x) => (Math.abs((x[id] ?? 0) - h) < 2 ? x : { ...x, [id]: h }));
+    setFull((f) => (f.has(id) ? new Set([...f].filter((x) => x !== id)) : f));
+  };
+  const wd: WidgetData | null = homeData ? { home: homeData, shell, live } : null;
+  const wenv = widgetEnv(goWidget);
+  const frame = (w: { id: string; name: string }, body: React.ReactNode, o: { rect?: Rect; compact?: boolean; measure?: (h: number) => void } = {}) => (
+    <WidgetFrame key={w.id} id={w.id} name={w.name} rect={o.rect} compact={o.compact} measure={o.measure} remove={() => removeWidget(w.id)}>{body}</WidgetFrame>
+  );
+  const wa = l.widgetArea;
+  const widgetsDrawn = !wd || !wenv ? null : !s.apps.length ? (
+    <WidgetDesk ws={ws} d={wd} chat={chat} frame={(w, b) => frame(w, b)} />
+  ) : ws.length > 0 && wa ? (
+    <div className="loom-wrail" data-mode={l.mode} data-scroll={l.scroll || undefined} role="group" aria-label="Widgets"
+      style={{ left: wa.x, top: wa.y, width: wa.w, height: wa.h }}>
+      {/* In the order drawn, column by column, top to bottom: the tab and reading order (spec, "Accessibility"). */}
+      {[...ws].sort((a, b) => (l.widgets[a.id]?.x ?? 0) - (l.widgets[b.id]?.x ?? 0) || (l.widgets[a.id]?.y ?? 0) - (l.widgets[b.id]?.y ?? 0)).map((w) => {
+        const r = l.widgets[w.id];
+        if (!r) return null;
+        const rect = { x: r.x - wa.x, y: r.y - wa.y, w: r.w, h: r.h };
+        if (l.mode === 'strip') return <div key={w.id} className="loom-wtile loom-wtile--key" data-widget={w.id} style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
+          <StripKey id={w.id} kind={w.kind} name={w.label} d={wd} open={goWidget} /></div>;
+        // Drawn in full until it's been measured once (the rule's compact is a guess before that), then as the rule says.
+        const compact = !!r.compact && heights[w.id] !== undefined && !full.has(w.id);
+        return frame(w, <WidgetBody id={w.id} kind={w.kind} d={wd} compact={compact} chat={chat} />, { rect, compact, measure: compact ? undefined : measured(w.id) });
+      })}
+    </div>
+  ) : null;
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
   const focusedTitle = f ? titleOf(pages.current.get(f.key) ?? ({ data: null } as PageState), f) : '';
   const told = useRef('');
@@ -318,12 +438,15 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   });
 
   return (
-    <div className="loom-tiles" ref={box} data-count={s.apps.length}>
-      {s.apps.length === 0 ? home : s.apps.map((o, i) => (
+    <div className="loom-tiles" ref={box} data-count={s.apps.length} data-widgets={l.mode}>
+      {s.apps.length === 0 ? (wd && wenv ? <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider> : home) : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)}
-          landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)} />
+          landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)}
+          pin={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? { on: s.w.includes(nameOf(o.key)), toggle: () => (s.w.includes(nameOf(o.key)) ? removeWidget : addWidget)(nameOf(o.key)) } : undefined} />
       ))}
+      {s.apps.length > 0 && wenv && <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider>}
+      {launching && <Launcher items={api.current.addable()} pick={addWidget} close={() => setLaunching(false)} />}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>
   );
@@ -342,7 +465,7 @@ function holdScroll(el: HTMLElement, top: number) {
   el.addEventListener('wheel', stop, { passive: true }); el.addEventListener('pointerdown', stop);
 }
 
-function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, landed, onFocus, minimize, close, makeBig }: {
+function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, landed, onFocus, minimize, close, makeBig, pin }: {
   o: Open & { restoreTop?: number }; n: number; of: number; rect: Rect | undefined; focused: boolean;
   say: (n: Omit<Note, 'id'>) => void; nav: (key: string) => PageNav;
   pages: React.MutableRefObject<Map<string, PageState>>; bodies: React.MutableRefObject<Map<string, HTMLElement>>;
@@ -350,6 +473,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   go: (href: string, o?: { how?: 'back' | 'forward'; top?: number }) => void;
   render: (p: PageState, go: (href: string) => void, wide: boolean) => React.ReactNode;
   lead: React.ReactNode; tint: string; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
+  /** An agent's tile: its card on the desktop, or not. */
+  pin?: { on: boolean; toggle: () => void };
 }) {
   const myNav = useMemo(() => nav(o.key), [o.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const p = usePage(o.url, say, myNav);
@@ -384,6 +509,10 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   // The trail: the app, as its start was last left, when this page is under it.
   const up = path !== o.key && !p.waiting ? { url: trail.lastAt(o.key, o.key)?.url ?? o.key } : undefined;
   const label = `tile ${n + 1} of ${of}, ${o.label}`;
+  // A wide tile has the side column: the page's own side sections, or, when it has none, Recent here.
+  const wide = (rect?.w ?? 0) >= SIDE_WIDE;
+  const pageSide = !!(p.data as { page?: { sections?: { place?: string; side?: unknown }[] } } | null)?.page?.sections?.some((x) => x.place === 'side' || !!x.side);
+  const recent = useMemo(() => (wide && !pageSide && !p.waiting ? recentHere(p.url, o.key) : []), [wide, pageSide, p.url, p.waiting, o.key]);
   return (
     <section className="loom-tile" role="region" aria-roledescription="tile" aria-label={label} data-tile={o.key} data-focused={focused || undefined}
       style={Object.assign({ '--t': tint }, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
@@ -398,6 +527,9 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
         <h2 tabIndex={-1} title={title}>{title}</h2>
         <span className="loom-tile__path loom-data" aria-hidden>loom{path}</span>
         <span className="loom-tile__acts">
+          {pin && <button type="button" className="loom-tile__btn" aria-pressed={pin.on} onClick={pin.toggle}
+            aria-label={pin.on ? `${o.label}’s card is on the desktop. Take it off` : `Pin ${o.label}’s card to the desktop`}
+            title={pin.on ? 'On the desktop' : 'Pin card to the desktop'}><AnimatedIcon name={iconFor('pin')} size="sm" /></button>}
           {n > 0 && <button type="button" className="loom-tile__btn" aria-label={`Make ${o.label} the big one`} title="Make this the big one" onClick={makeBig}>
             <AnimatedIcon name={iconFor('maximize-2')} size="sm" /></button>}
           <button type="button" className="loom-tile__btn" aria-label={`Minimize ${o.label} to the dock`} title="Minimize to the dock" onClick={minimize}>
@@ -407,8 +539,71 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
         </span>
       </div>
       <div className="loom-tile__body" ref={body}>
-        <div className="loom-tile__page" aria-busy={p.waiting || undefined}>{render(p, go, (rect?.w ?? 0) >= SIDE_WIDE)}</div>
+        <div className="loom-tile__page" aria-busy={p.waiting || undefined}>{render(p, go, wide)}</div>
+        {recent.length > 0 && (
+          <nav className="loom-tile__side" aria-label="Recent here">
+            <div className="loom-side-col">
+              <h3>Recent here</h3>
+              <ul>{recent.map((r) => <li key={r.href}><a href={r.href} title={r.label} onClick={(e) => { e.preventDefault(); go(r.href); }}>{r.label}</a></li>)}</ul>
+            </div>
+          </nav>
+        )}
       </div>
     </section>
+  );
+}
+
+/** A widget as a tile: where the rule puts it (absent: in the desktop's own grid), its × to take it off the desktop,
+ * and its height as drawn reported for the rule (not while it's drawn compact: that's the rule's own height). */
+function WidgetFrame({ id, name, rect, compact, measure, remove, children }: {
+  id: string; name: string; rect?: Rect; compact?: boolean; measure?: (h: number) => void; remove: () => void; children: React.ReactNode;
+}) {
+  const inner = useRef<HTMLDivElement>(null);
+  const tell = useRef(measure);
+  tell.current = measure;
+  const measuring = !!measure;
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (!el || !measuring) return;
+    const f = () => tell.current?.(Math.ceil(el.getBoundingClientRect().height));
+    f();
+    const ro = new ResizeObserver(f);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measuring]);
+  return (
+    <div className="loom-wtile" data-widget={id} data-compact={compact || undefined}
+      style={rect ? { position: 'absolute', left: rect.x, top: rect.y, width: rect.w, height: rect.h } : undefined}>
+      <div className="loom-wtile__in" ref={inner}>{children}</div>
+      <button type="button" className="loom-wtile__x" aria-label={`Remove ${name} from the desktop`} title="Remove from the desktop" onClick={remove}>
+        <AnimatedIcon name={iconFor('x')} size="sm" /></button>
+    </div>
+  );
+}
+
+/** The + key's list (docs/specs/desk-tiling.md, "Adding"): what can go on the desktop; one already there says so, and
+ * choosing it focuses it. Over the dock, not modal: Esc, a click outside or a choice closes it. */
+function Launcher({ items, pick, close }: { items: (WidgetRef & { on: boolean })[]; pick: (id: string) => void; close: () => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const shut = useRef(close);
+  shut.current = close;
+  useEffect(() => {
+    box.current?.querySelector<HTMLElement>('button')?.focus();
+    const out = (e: PointerEvent) => {
+      const t = e.target as Element;
+      if (!box.current?.contains(t) && !t.closest?.('.loom-dock-bar')) shut.current();
+    };
+    addEventListener('pointerdown', out, true);
+    return () => removeEventListener('pointerdown', out, true);
+  }, []);
+  return (
+    <div className="loom-wlaunch" ref={box} role="dialog" aria-label="Add a widget"
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } }}>
+      <h2>Add a widget</h2>
+      <ul>{items.map((w) => (
+        <li key={w.id}><button type="button" onClick={() => pick(w.id)} data-on={w.on || undefined}>
+          <span>{w.label}</span>{w.on && <span className="loom-wlaunch__on">on the desktop</span>}</button></li>
+      ))}</ul>
+    </div>
   );
 }

@@ -99,7 +99,8 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       expect([query(p, 't'), query(p, 'm')]).toEqual(['*inbox', 'comms']);
       // and back, on the page it was on
       await open(p, 'Comms', 2);
-      expect(where(p)).toBe('/comms?t=inbox,*comms');
+      // (a fresh device's widgets, today's Home set, ride in the address too: desk-tiling-widgets.integration.test.ts)
+      expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup');
       // a page scrolled down comes back scrolled where it was: Setup's Appearance, in a short screen
       await p.click(KEY('Setup')); await expect.poll(() => p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
       const setup = tile(p, 'Setup');

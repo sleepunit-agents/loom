@@ -228,7 +228,9 @@ you's first ask and "N more"; it's `min(height, compact height)`.
     Vitals, Backup and the ticker. One already on the desktop shows "on the desktop" and focuses it. The ticker
     widget shows the same feed as the bar's ticker (`phone-bar.tsx`); the bar keeps its own.
   - **Find** lists the same as "Add widget: …".
-  - An agent's pages have **Pin card to the desktop**, and the dock's agent key menu has it too.
+  - An agent's pages have **Pin card to the desktop**: the agent's tile strip carries it (an agent's pages are its
+    tile). The dock's agent key menu would have it too, but the household's dock has no agent keys yet (an agent's own
+    dock does, on its pages): that half waits for one (phase 4, 2026-11-06).
 - **Linked:** a widget's actions open its app beside it. On an agent's card, **Chat** opens that agent's latest Comms
   thread and **Open** opens their pages. On Needs you, an ask opens in the Inbox. An app opened this way goes last, next
   to the rail. A widget is live: it draws from the same live data its app does (`/events`), so it never goes stale.

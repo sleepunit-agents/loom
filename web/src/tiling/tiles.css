@@ -8,7 +8,7 @@
 :root[data-look] .loom-tile{--cut:10px;position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
   background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);
   box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
-:root[data-look] .loom-tile[data-focused]{box-shadow:inset 0 0 0 1px var(--t),0 0 0 1px color-mix(in srgb,var(--t) 30%,transparent)}
+:root[data-look] .loom-tile[data-focused]{box-shadow:inset 0 0 0 1px var(--t),inset 0 0 0 2px color-mix(in srgb,var(--t) 30%,transparent)}
 :root[data-look] .loom-tile__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:6px;height:32px;padding-right:4px;
   border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
 :root[data-look] .loom-tile[data-focused] .loom-tile__bar{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
@@ -28,6 +28,75 @@
 :root[data-look] .loom-tile__btn:disabled{color:var(--v-text-3);opacity:.45}
 :root[data-look] .loom-tile__btn:not(:disabled):is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
 /* The page: its own scroll, its own width (an app's narrow layout asks the tile, not the screen: container queries). */
-:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:inline-size;container-name:tile}
+:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:size;container-name:tile}
 :root[data-look] .loom-tile__page{padding:16px 18px 28px;display:flex;flex-direction:column;gap:16px}
 :root[data-look] .loom-tile__page>*{width:100%;max-width:72rem;margin-inline:auto}
+/* A wide tile's side column (SIDE_WIDE): Recent here, as the window has it, beside the page; it stays as the page scrolls. */
+:root[data-look] .loom-tile__body:has(>.loom-tile__side){display:flex;align-items:flex-start}
+:root[data-look] .loom-tile__body:has(>.loom-tile__side)>.loom-tile__page{flex:1 1 auto;min-width:0}
+:root[data-look] .loom-tile__side{position:sticky;top:0;flex:none;width:260px;max-width:260px;overflow-x:hidden;padding:18px 14px 24px;border-left:1px solid var(--v-border)}
+:root[data-look] .loom-tile__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
+:root[data-look] .loom-tile__side ul{display:grid;gap:2px}
+:root[data-look] .loom-tile__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
+  text-decoration:none;box-shadow:inset 1px 0 0 var(--v-border)}
+:root[data-look] .loom-tile__side a:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
+:root[data-look] .loom-tile__btn[aria-pressed="true"]{color:var(--t)}
+
+/* ---- widgets as tiles (docs/specs/desk-tiling.md rule 1): on the desktop in Home's grid; beside the apps in the
+   board's columns or the rail, each where the rule puts it; or folded to the strip's 64 px keys. ---- */
+:root[data-look] .loom-tiles>.loom-desk-home--empty{display:grid;place-items:center;grid-template-columns:1fr;grid-template-rows:1fr}
+:root[data-look] .loom-wrail{position:absolute;overflow:hidden}
+:root[data-look] .loom-wrail[data-scroll]{overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
+:root[data-look] .loom-wtile{position:relative;min-width:0}
+:root[data-look] .loom-wrail .loom-wtile{overflow:hidden}
+:root[data-look] .loom-wtile__in>.loom-w{width:100%}
+/* its ×: top right, clear of the cut corner; what was there moves aside for it */
+:root[data-look] .loom-wtile__x{position:absolute;top:7px;right:18px;z-index:2;display:grid;place-items:center;width:26px;height:26px;color:var(--v-text-3)}
+:root[data-look] .loom-wtile__x:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-border)}
+:root[data-look] .loom-wtile .loom-w__more{margin-right:48px}
+:root[data-look] .loom-wtile .loom-agent__who{padding-right:48px}
+/* an agent's card as a tile: the whole card opens the agent, and Chat sits in its foot */
+:root[data-look] .loom-agent__open{position:absolute;inset:0;z-index:0}
+:root[data-look] .loom-w--agent:has(>.loom-agent__open:focus-visible){box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
+:root[data-look] .loom-w--agent:has(>.loom-agent__open)>:not(.loom-agent__open,.loom-agent__chat){pointer-events:none}
+:root[data-look] .loom-w--agent>.loom-agent__chat{pointer-events:auto;position:absolute;right:12px;bottom:6px;z-index:1;display:flex;align-items:center;gap:6px;
+  height:30px;padding:0 12px;font-size:13px;font-weight:600;color:var(--v-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 55%,var(--v-border));
+  background:color-mix(in srgb,var(--t) 10%,var(--v-paper))}
+:root[data-look] .loom-w--agent>.loom-agent__chat:is(:hover,:focus-visible){background:color-mix(in srgb,var(--t) 22%,var(--v-paper))}
+:root[data-look] .loom-w--agent:has(>.loom-agent__chat) .loom-agent__foot>span+span{display:none}
+/* compact (a rail taller than the screen): a card is its face, its name and its line */
+:root[data-look] .loom-w--agent[data-compact]{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "face line";column-gap:12px}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__face{width:64px;height:64px;margin:12px 0 12px 12px}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__face>*{scale:.62}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__who{padding:12px 48px 0 0}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__eyebrow,:root[data-look] .loom-w--agent[data-compact] .loom-agent__foot,
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__where{display:none}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__name{font-size:17px}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__line{margin:2px 12px 10px 0;padding:4px 8px;font-size:12.5px}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__text{-webkit-line-clamp:1}
+:root[data-look] .loom-w--agent[data-compact]>.loom-agent__chat{top:7px;bottom:auto;right:46px;width:28px;height:26px;padding:0;justify-content:center}
+:root[data-look] .loom-w--agent[data-compact]>.loom-agent__chat>span:last-child{display:none}
+:root[data-look] .loom-w--agent[data-compact] .loom-agent__who{padding-right:80px}
+:root[data-look] .loom-w-tick{display:flex;padding:12px 16px;font-size:12.5px;color:var(--v-text-2)}
+/* the strip: a key per widget, a face or an icon and a count; it opens the widget's app */
+:root[data-look] .loom-strip-key{--t:var(--v-pink);position:relative;display:grid;place-items:center;width:100%;height:100%;color:var(--v-text-2);
+  background:color-mix(in srgb,var(--v-paper) 86%,transparent);box-shadow:inset 0 0 0 1px var(--v-border);text-decoration:none}
+:root[data-look] .loom-strip-key:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
+:root[data-look] .loom-strip-key__n{position:absolute;right:4px;top:4px;min-width:18px;padding:0 4px;font-size:11px;line-height:18px;text-align:center;
+  color:var(--v-on-accent);background:var(--v-pink)}
+/* the + key's list, over the dock */
+:root[data-look] .loom-wlaunch{position:absolute;left:50%;bottom:6px;translate:-50% 0;z-index:40;width:min(340px,calc(100% - 32px));padding:12px;
+  background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border),var(--shadow-float)}
+:root[data-look] .loom-wlaunch h2{padding:2px 6px 8px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
+:root[data-look] .loom-wlaunch ul{display:grid;gap:2px}
+:root[data-look] .loom-wlaunch button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:6px 10px;text-align:left;font-size:14px;color:var(--v-text)}
+:root[data-look] .loom-wlaunch button:is(:hover,:focus-visible){background:color-mix(in srgb,var(--v-pink) 10%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
+:root[data-look] .loom-wlaunch__on{margin-left:auto;font-size:12px;color:var(--v-text-3)}
+/* a card in a 280-340 px column: a smaller face, so its name has the room */
+:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]){column-gap:12px}
+:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__face{width:80px;height:80px;margin:14px 0 4px 14px}
+:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__face>*{scale:.75}
+:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__who{padding:14px 44px 4px 0}
+:root[data-look] .loom-wrail .loom-agent__name{font-size:20px}
+/* Comms in a tile fills the tile's height (its own height is the window's, read from the screen: comms.css) */
+:root[data-look] .loom-tile__page>.comms[data-wide]{height:calc(100cqh - 44px);min-height:300px}

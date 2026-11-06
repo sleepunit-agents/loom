@@ -259,7 +259,7 @@ export default function App() {
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
     // Tiled: a page opens in its app's tile; the desktop sends the apps to the dock.
-    if (tiledNow.current && tilesApi.current) { if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
+    if (tiledNow.current && tilesApi.current) { if (href[0] === '#') tilesApi.current.open(href); else if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
     // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
     trail.keepTop(appKeyRef.current, location.pathname + location.search, scrolled());
     intent.current = { how: o?.how ?? 'go', url: u.pathname + u.search };
@@ -302,7 +302,7 @@ export default function App() {
     wasTiled.current = tiled;
     if (tiled) { if (url !== '/') void load('/', false); return; }
     const u = new URL(location.href);
-    u.searchParams.delete('t'); u.searchParams.delete('m');
+    for (const k of ['t', 'm', 'w']) u.searchParams.delete(k);
     history.replaceState(null, '', u.pathname + u.search);
     void load(u.pathname + u.search, false);
   }, [tiled]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -646,6 +646,7 @@ export default function App() {
           {tiled && D && chrome?.shell ? (
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
+                shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} live={!savedAt} widgetEnv={(g) => pageEnv(mainPage, g)}
                 render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() })}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <AgentAvatar a={agentOf(o.key)!} size={20} /> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
@@ -676,7 +677,7 @@ export default function App() {
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : me ? [...dockItems(phoneTabs), me] : dockItems(phoneTabs)}
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(tiled ? [{ value: '#widgets', label: 'Add a widget', icon: <AnimatedIcon name={iconFor('plus')} /> }] : []), ...(me ? [me] : [])]}
                 value={lit} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
               </DockSwap>
@@ -694,7 +695,7 @@ export default function App() {
       {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
         go={(href) => { setMore(false); go(href); }} /></Suspense>}
 
-      {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
+      {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} widgets={tiled ? tilesApi.current?.addable() : undefined} /></Suspense>}
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}

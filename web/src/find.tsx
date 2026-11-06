@@ -21,8 +21,11 @@ type Group = { label: string; rows: Row[] };
 
 const Tile = ({ label, icon }: { label: string; icon: string }) => <AppTile label={label} icon={icon} size={36} />;
 
-export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
-  chrome: Chrome; icon: (label: string) => string; go: (href: string) => void; autoFocus?: boolean; onClose?: () => void;
+/** A widget the tiled desktop can add (tiling/tiles.tsx): Find lists them as "Add widget: …". */
+export type Addable = Pick<import('./tiling/widgets').WidgetRef, 'id' | 'label'> & { on: boolean };
+
+export function FindPanel({ chrome, icon, go, autoFocus = true, onClose, widgets }: {
+  chrome: Chrome; icon: (label: string) => string; go: (href: string) => void; autoFocus?: boolean; onClose?: () => void; widgets?: Addable[];
 }) {
   const s = chrome.shell;
   const [q, setQ] = useState('');
@@ -79,6 +82,8 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
     const lead = (name: string, label: string) => <Tile label={label} icon={name} />;
     return [
       { label: 'Go to', rows: [...s.agents.filter((a) => has(a.label)).map(agent), ...apps.filter((p) => has(p.label) || (p.href === '/account' && has('passkeys sign out'))).map(app)] },
+      { label: 'Add widget', rows: (widgets ?? []).map((w) => ({ key: `w:${w.id}`, label: `Add widget: ${w.label}`, href: `#widget:${w.id}`, sub: w.on ? 'on the desktop' : undefined,
+        lead: <Tile label="Home" icon="plus" /> })).filter((r) => has(r.label)) },
       { label: 'Waiting on you', rows: (f.do ?? []).map((x) => ({ key: `d:${x.href}:${x.label}`, label: x.label, href: x.href, lead: lead('inbox', 'Inbox') })) },
       { label: 'People', rows: (f.people ?? []).filter((p) => !s.agents.some((a) => a.label === p.label)).map(person) },
       { label: 'Knowledge', rows: (f.knowledge ?? []).map((x) => ({ key: x.href, label: x.label, href: x.href, lead: lead('book-open', 'Knowledge') })) },
@@ -87,7 +92,7 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
         return { key: x.href, label: x.label, href: x.href, sub: ag?.label, lead: lead('brain', 'Mind') };
       }) },
     ].filter((g) => g.rows.length);
-  }, [s, needle, found, people, icon]);
+  }, [s, needle, found, people, icon, widgets]);
 
   const rows = groups.flatMap((g) => g.rows);
   useEffect(() => setSel(0), [needle, found]);
@@ -135,7 +140,7 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose }: {
 }
 
 /** Find over the app you're in: a panel from the top, the page dimmed behind it. */
-export default function FindOverlay({ open, onOpenChange, ...rest }: { open: boolean; onOpenChange: (o: boolean) => void; chrome: Chrome; icon: (label: string) => string; go: (href: string) => void }) {
+export default function FindOverlay({ open, onOpenChange, ...rest }: { open: boolean; onOpenChange: (o: boolean) => void; chrome: Chrome; icon: (label: string) => string; go: (href: string) => void; widgets?: Addable[] }) {
   return (
     <Primitive.Root open={open} onOpenChange={onOpenChange}>
       <Primitive.Portal>

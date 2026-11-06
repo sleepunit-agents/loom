@@ -26,7 +26,7 @@ const TONE_FIRST: Record<string, number> = { bad: 0, warn: 1 };
 
 /** What the ticker says, from what the shell already has: how many agents, what each is up to, and each place's
  * tile (trouble first). Words, never colours alone. */
-function tickerParts(shell: Shell): { text: string; tone?: string }[] {
+export function tickerParts(shell: Shell): { text: string; tone?: string }[] {
   const n = shell.agents.length;
   const places = shell.pieces.filter((p) => p.stat && !isTime(p.stat))
     .map((p, i) => ({ p, i })).sort((a, b) => (TONE_FIRST[a.p.tone ?? ''] ?? 2) - (TONE_FIRST[b.p.tone ?? ''] ?? 2) || a.i - b.i);
@@ -44,7 +44,7 @@ function useReduced() {
 }
 
 /** The ticker: still when its words fit (or motion is reduced), else a slow loop; held while touched or hidden. */
-function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: string }[] }) {
+export function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: string }[] }) {
   const box = useRef<HTMLDivElement>(null);
   const line = useRef<HTMLSpanElement>(null);
   const reduced = useReduced();
