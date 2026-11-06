@@ -332,6 +332,25 @@ describe.runIf(built && chrome && hasAge)('Comms delivery, as the owner sees it'
     } finally { await ctx.close(); }
   }, 60_000);
 
+  it('a 15,000-character paste is sent whole: the composer takes what Comms takes (40,000), not its own 12,000', async () => {
+    runtime('ok', 0);
+    const t = thread();
+    const { ctx, page, errors } = await open(t.id);
+    try {
+      const long = Array.from({ length: 15_000 }, (_, i) => 'abcdefghij'[i % 10]).join('').slice(0, 14_990) + 'THE-TAIL!!';
+      const box = page.locator('.comms-composer textarea');
+      await box.focus();
+      // A paste, as the browser takes it: inserted text is cut at the box's maxlength, where fill() would not be.
+      await page.keyboard.insertText(long);
+      expect(await box.inputValue()).toHaveLength(15_000);
+      const before = calls().length;
+      await page.locator('.comms-composer .v-agent-chat__send').click();
+      await lastIs(page, 'delivered', 15_000);
+      expect(calls().length - before).toBe(1);
+      expect(calls().at(-1)?.text).toBe(long);
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 60_000);
   it('Not delivered only after a failure the server recorded; Send again shows it sending and delivers exactly once', async () => {
     runtime('said', 0);
     const t = thread();

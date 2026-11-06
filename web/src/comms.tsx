@@ -301,6 +301,9 @@ function useKeyboardInset() {
 /** Whether this is a touch screen: its keyboard has no Shift to reach for, so Enter stays a new line there. */
 const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
+/** What a message to Comms may carry: the server's MAX_TEXT (src/comms.ts). The composer's own default is 12,000. */
+const MAX_TEXT = 40_000;
+
 /** The 000h agent chat composer (components/ui/agent-chat.tsx), with loom's keys and its phone's focus kept. */
 function Composer({ onSend, disabled, accent, placeholder, label }: { onSend: (text: string) => Promise<boolean>; disabled?: boolean; accent?: string; placeholder: string; label: string }) {
   const [text, setText] = useState('');
@@ -315,7 +318,7 @@ function Composer({ onSend, disabled, accent, placeholder, label }: { onSend: (t
   };
   return (
     <AgentChatComposer className="comms-composer" style={{ '--c': accent } as React.CSSProperties} value={text} onValueChange={setText}
-      onSend={() => void send()} disabled={disabled} placeholder={placeholder} label={label}
+      onSend={() => void send()} disabled={disabled} placeholder={placeholder} label={label} maxLength={MAX_TEXT}
       hint={touch ? 'Send sends · Return is a new line' : 'Enter to send · Shift+Enter for a new line'}
       // Enter sends and Shift+Enter is a new line, where there's a hardware keyboard (the component's own Ctrl/Cmd+Enter
       // still sends). A phone's keyboard has no Shift, so its Enter stays a new line. Never mid-composition (an IME's).
