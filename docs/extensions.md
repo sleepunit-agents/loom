@@ -346,6 +346,20 @@ that ignores it keeps working. Outside a household there's no `caller`.
   ```json
   { "tab": { "label": "Garden", "icon": "sprout", "accent": "olive" } }
   ```
+  Optional `fit`: how much room the piece's pages can use when apps share a big
+  screen as tiles (Appearance → Desktop → Tiling; `docs/specs/desk-tiling.md`,
+  "Fit"). `min` is `[width, height]` in pixels, the least a tile of it can be
+  (narrower and it goes to the dock rather than be drawn cramped); `ideal` is the
+  width it looks best at, which sets its share of a split; `max` is the width past
+  which it gains nothing (`null`: it can use any); `big: true` asks for the big
+  slot on the left. Every key is optional and falls back to loom's default row
+  (`min` `[420, 300]`, `ideal` `720`, no `max`, not `big`); a piece's own fit wins
+  over loom's row for its label. A `min` under `[320, 240]`, an `ideal` under the
+  min's width, or a `max` under the `ideal` is refused with the manifest, naming
+  the field.
+  ```json
+  { "tab": { "label": "Garden", "fit": { "min": [420, 300], "ideal": 760, "max": 1000, "big": false } } }
+  ```
 - **`agentTab`** (`{ "label": "Clock" }`) puts a tab on each agent's own pages
   too, beside Today, Mind and Setup: served at `/a/<agent>/p/<piece>/<path>`,
   the piece called with `LOOM_SCOPE=<agent>`, its links and actions staying

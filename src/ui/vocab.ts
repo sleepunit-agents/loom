@@ -167,6 +167,12 @@ export type Level = 'loom' | 'agent';
  * (each palette and light or dark has its own) and the ink on it stays readable. */
 export const ACCENTS = ['pink', 'blue', 'yellow', 'olive'] as const;
 export type Accent = typeof ACCENTS[number];
+/** A piece's own fit (docs/specs/desk-tiling.md, "Fit"): a minimum width and height, an ideal width, a maximum width
+ * (null: it can use any), and whether it wants the big slot. Every key optional. */
+export type TabFit = { min?: [number, number]; ideal?: number; max?: number | null; big?: boolean };
+/** The default row a fit's missing keys fall back to (web/src/tiling/fit.ts DEFAULT_FIT), and the least it may ask. */
+export const FIT_DEFAULT = { min: [420, 300] as [number, number], ideal: 720, max: null as number | null };
+export const FIT_LEAST = { w: 320, h: 240 };
 
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
@@ -180,8 +186,10 @@ export interface Manifest {
   /** kind: 'setting' puts it under Setup (rarely visited: boxes, subscriptions); a place by default. level: 'agent' puts it on each agent's pages.
    * icon: a lucide icon's name for its tile and tab (`alarm-clock`); one loom can't draw is a plain one.
    * accent: its colour everywhere it's drawn (tile, dock, its page's header), one of loom's palette (ACCENTS), so it
-   * holds in light and dark and under every palette; without one, loom's own for a catalog piece, else one from its name. */
-  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string; accent?: Accent };
+   * holds in light and dark and under every palette; without one, loom's own for a catalog piece, else one from its name.
+   * fit: the room its pages can use on a tiled desktop (docs/specs/desk-tiling.md, "Fit"); a key left out is the default
+   * row's (min [420, 300], ideal 720, no max, not big). */
+  tab?: { label: string; kind?: 'place' | 'setting'; level?: Level; icon?: string; accent?: Accent; fit?: TabFit };
   /**
    * A tab on each agent's own pages as well (or instead, with tab.level 'agent'): served at
    * /a/<agent>/p/<piece>/, the piece called with LOOM_SCOPE=<agent>. For a piece whose things are
@@ -832,6 +840,30 @@ function attempt<T>(f: () => T): T | string {
 }
 
 /** Validate a piece's `ui --json` answer (v2, or a first-version `{sections}`). */
+/** A tab's fit: each key optional (the default row's otherwise); a min under 320×240, an ideal under the min's width, or
+ * a max under the ideal is refused, naming the field. Judged with the defaults filled in, as the desk will use it. */
+function tabFit(v: unknown): TabFit {
+  const f = obj(v, 'tab.fit');
+  for (const k of Object.keys(f)) if (!['min', 'ideal', 'max', 'big'].includes(k)) throw new Invalid(`tab.fit.${k} isn't a fit key (min, ideal, max, big)`);
+  const px = (x: unknown, what: string) => {
+    if (typeof x !== 'number' || !Number.isInteger(x) || x <= 0 || x > 10000) throw new Invalid(`${what} must be a whole number of pixels`);
+    return x;
+  };
+  const out: TabFit = {};
+  if (f.min !== undefined) {
+    if (!Array.isArray(f.min) || f.min.length !== 2) throw new Invalid('tab.fit.min must be [width, height]');
+    out.min = [px(f.min[0], 'tab.fit.min width'), px(f.min[1], 'tab.fit.min height')];
+    if (out.min[0] < FIT_LEAST.w || out.min[1] < FIT_LEAST.h) throw new Invalid(`tab.fit.min must be at least [${FIT_LEAST.w}, ${FIT_LEAST.h}]: a tile narrower or shorter can't be used beside others`);
+  }
+  if (f.ideal !== undefined) out.ideal = px(f.ideal, 'tab.fit.ideal');
+  if (f.max !== undefined) out.max = f.max === null ? null : px(f.max, 'tab.fit.max');
+  if (f.big !== undefined) { if (typeof f.big !== 'boolean') throw new Invalid('tab.fit.big must be true or false'); out.big = f.big; }
+  const min = out.min ?? FIT_DEFAULT.min, ideal = out.ideal ?? FIT_DEFAULT.ideal;
+  if (ideal < min[0]) throw new Invalid(`tab.fit.ideal (${ideal}) must be at least its min's width (${min[0]})`);
+  if (out.max != null && out.max < ideal) throw new Invalid(`tab.fit.max (${out.max}) must be at least its ideal (${ideal})`);
+  return out;
+}
+
 export function parseManifest(value: unknown): Manifest | string {
   return attempt(() => {
     const top = obj(value, 'answer');
@@ -856,8 +888,9 @@ export function parseManifest(value: unknown): Manifest | string {
       if (icon !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(icon)) throw new Invalid('tab.icon must be a lucide icon name (alarm-clock)');
       const accent = optStr(t.accent, 'tab.accent');
       if (accent !== undefined && !(ACCENTS as readonly string[]).includes(accent)) throw new Invalid(`tab.accent must be one of loom's palette: ${ACCENTS.join(', ')}`);
+      const fit = t.fit === undefined ? undefined : tabFit(t.fit);
       m.tab = { label: str(t.label, 'tab.label'), ...(t.kind ? { kind: t.kind as 'place' | 'setting' } : {}), ...(lv ? { level: lv } : {}), ...(icon ? { icon } : {}),
-        ...(accent ? { accent: accent as Accent } : {}) };
+        ...(accent ? { accent: accent as Accent } : {}), ...(fit ? { fit } : {}) };
     }
     if (top.agentTab !== undefined) {
       const t = obj(top.agentTab, 'agentTab');

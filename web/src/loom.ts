@@ -51,7 +51,9 @@ export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;
   back?: { label: string; href: string };
   core: { label: string; href: string; current: boolean; count?: number }[];
-  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint; alerts?: number }[];
+  pieces: { label: string; href: string; current: boolean; tone?: Tone; stat?: string; kind?: 'place' | 'setting'; icon?: string; accent?: Tint; alerts?: number;
+    /** its own fit on a tiled desktop (a manifest's tab.fit: docs/specs/desk-tiling.md, "Fit") */
+    fit?: { min?: [number, number]; ideal?: number; max?: number | null; big?: boolean } }[];
   /** The nightly backup, a household owner's (src/backup.ts backupRow). */
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
   /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for. */
