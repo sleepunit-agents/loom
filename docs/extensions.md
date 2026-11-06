@@ -181,7 +181,7 @@ own schema:
 
 | Key | What core does with it | Its schema |
 |---|---|---|
-| `sections` | runs `sections.project` as a project's section feed | [specs/projects.md](specs/projects.md), "Section feeds (the seam)" |
+| `sections` | runs `sections.project` as a project's section feed, and `sections.thread` as a Comms thread's work | [specs/projects.md](specs/projects.md), "Section feeds (the seam)"; [specs/comms.md](specs/comms.md), "The thread feed" |
 | `venues` | keeps the piece's venues, and runs each one's `render` and `send` | [specs/conversations.md](specs/conversations.md), "Venues" (`send` from [specs/agent-runtime.md](specs/agent-runtime.md)) |
 | `mcp_tools` | adds up to 8 tools to an agent's MCP session | [specs/agent-runtime.md](specs/agent-runtime.md), "Seams this needs from core" |
 | `grants` | asks this piece before running a piece call for an agent | [specs/agent-runtime.md](specs/agent-runtime.md), "Permissions" |
@@ -281,6 +281,10 @@ own data. Core only runs the feed and shows what it answers, keyed
   returns.
 - **`unfiled: true`** says the feed can also be asked `--unfiled --since <iso>`
   (7 days ago) for items that belong to no project: Home's "Unfiled" list.
+- **`sections.thread`** (`label`, `argv`) is a Comms thread's work: run with `--conversation <cv>` and a `--ref`
+  per ref the thread named, `{caller}` on stdin, answering `{"items": [{"title", "ref", "status", "tone", "when",
+  "page", "href", "made"}]}` ([specs/comms.md](specs/comms.md), "The thread feed"). A piece declaring it also
+  accepts `--conversation <cv>` on its project feed, for the project's filed threads.
 - The feeds run through the one runner above, each time a hub is asked for
   (`project_hub`, `loom project hub`), never for the project list, and are
   not cached (`src/project-feeds.ts`).
@@ -480,7 +484,7 @@ characters. A path the piece doesn't know should answer with
 
 Every section is a list of blocks. A link inside a block is either `page`
 (a page of the same piece, or `loom:<path>` for one of loom's own pages:
-Home, `mind`, `people`, `people/<slug>` or `memory/<ref>`; either with an
+Home, `mind`, `people`, `people/<slug>`, `memory/<ref>` or a Comms thread, `comms/<thread>`; either with an
 optional `?key=value` query, such as `?replace=sentry-dsn`) or `href` (an absolute `http(s)` URL that opens
 outside the page).
 
@@ -499,6 +503,7 @@ outside the page).
 | `link` | `text`, and `page` or `href` |
 | `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
+| `from` | `conversation` (a `cv-` id). Where a task or change came from: loom draws it for each viewer, as a link "From: <thread title>" for the Comms thread's own member, "From a Comms thread" for another owner of its agent, and "From a conversation" for everyone else ([specs/comms.md](specs/comms.md), "From"). The piece never sees which |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value), `submits` (up to 3 more ways to send it, beside `submit`: `label`, optional `fields` (name → value, sent with the form's) and `tone`; a task's Yes and No over a box of words). Words typed in a `textarea` are kept on the device until the form is sent, and the form says "Not sent yet" meanwhile, so leaving the page or pressing another button loses nothing |
 | `buttons` | `items`: `action`, `label`, optional `tone` (`primary`, `danger`), `confirm` (what happens, one sentence: a `danger` button asks first in a sheet that says it), `fields` (name → value) |
 | `meter` | `items`: `label`, `value` (a number from 0 to 1), optional `detail`, `tone`. A bar with its percent, like a usage window |

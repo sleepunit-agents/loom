@@ -10,6 +10,7 @@
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './comms.css';
+import { WorkPanel } from './comms-work';
 import { AgentAvatar, useEnv, type Mark } from './blocks';
 import { markColor } from './look';
 import { reducedMotion } from './access';
@@ -513,6 +514,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
       </header>
       <div className="comms-thread__body">
         {!wide && <div ref={top} className="comms-thread__strip">{screen}</div>}
+        {!wide && <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />}
         <ol className="comms-msgs" aria-live="polite">
           {swept && initial.earlier?.length ? (
             <li className="comms-earlier">
@@ -529,7 +531,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
           {link === 'lost' && <li className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></li>}
           <div ref={bottom} />
         </ol>
-        {wide && <aside className="comms-thread__side">{screen}</aside>}
+        {wide && <aside className="comms-thread__side">{screen}<WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} /></aside>}
       </div>
       <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} />
     </article>

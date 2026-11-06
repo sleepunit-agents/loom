@@ -344,6 +344,12 @@ export function clearPiecePages(path: string): void {
 }
 
 /** Every installed piece's manifest, plus the ones that had nothing to show and why. */
+/** The installed pieces whose manifest says they understand agent owners (owners: 2), whatever else they show. */
+export async function ownersAwarePieces(env: NodeJS.ProcessEnv, nowMs = Date.now()): Promise<Set<string>> {
+  const results = await Promise.all(shownPieces(env).map((p) => manifestFor(p.name, p.path, env, nowMs)));
+  return new Set(results.filter((r): r is PieceInfo => 'manifest' in r && r.manifest.owners === 2).map((r) => r.piece));
+}
+
 export async function pieceManifests(
   env: NodeJS.ProcessEnv,
   nowMs = Date.now(),

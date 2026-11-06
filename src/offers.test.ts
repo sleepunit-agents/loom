@@ -22,7 +22,7 @@ describe('sections.project', () => {
   });
 
   it.each<[string, unknown, RegExp]>([
-    ['an unknown section key', { project: feed, people: feed }, /one key, project/],
+    ['an unknown section key', { project: feed, people: feed }, /two keys, project and thread/],
     ['a missing label', { project: { argv: feed.argv } }, /label is required/],
     ['an over-long label', { project: { ...feed, label: long(41) } }, /label is required/],
     ['an empty argv', { project: { ...feed, argv: [] } }, /argv is a list of 1-16/],

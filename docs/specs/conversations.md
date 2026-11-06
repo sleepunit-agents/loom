@@ -54,6 +54,10 @@ The owner's other rulings shape everything below:
      - read only by the thread's member, who must own its agent, and by no identity, token or tool;
      - never in a bundle or export;
      - wiped at once when the thread is deleted.
+
+     A thread's refs index (comms.md, "Work in this thread") isn't words: it keeps the tasks, changes and notes a
+     message named (`t-12`, `github:acme/app#3`, `note:pond/plan`), never the text around them. So it may outlive the
+     words, and the sweep leaves it.
 5. **Review has two halves.**
    - *Grading:* bare models, blind to which model, agent and person is involved, score samples household-wide, and
      their scores feed model choice.

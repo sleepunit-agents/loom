@@ -55,6 +55,8 @@ export type Block =
   // busy: something is under way (a sign-in being checked): drawn with a spinner in place of its tone's icon.
   | { type: 'callout'; text: string; title?: string; tone?: Tone; busy?: boolean }
   | ({ type: 'link'; text: string } & Target)
+  /** Where a task or change came from: core draws it per viewer before the page is drawn (comms.md, "From"). */
+  | { type: 'from'; conversation: string }
   | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
@@ -244,7 +246,9 @@ const PATH_CHARS = /^[a-z0-9._~/-]*$/;
 class Invalid extends Error {}
 
 /** loom's own pages a link may name with `loom:`. */
-const CORE_PAGES = /^(|inbox|activity|mind|people|projects|projects\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+const CORE_PAGES = /^(|inbox|activity|mind|people|projects|projects\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?|pieces|passkeys|p\/[a-z][a-z0-9-]{0,39}(?:\/.*)?|people\/[a-z0-9][a-z0-9-]*|memory\/.+|knowledge|knowledge\/.+|new-agent|new-person|new-fact|conversation\/cv-[0-9a-f]{12}|comms\/th:[a-z2-7]{10}|a\/[a-z][a-z0-9-]{0,39}(|\/mind|\/setup|\/people|\/people\/[a-z0-9][a-z0-9-]*|\/memory\/.+|\/conversation\/cv-[0-9a-f]{12}))$/;
+
+const COMMS_THREAD_PAGE = /^comms\/th:[a-z2-7]{10}$/;
 
 /** A page path: `""` (the main page) or lowercase segments, never `..`, never absolute. */
 export function validPath(p: string): boolean {
@@ -357,7 +361,8 @@ export function splitPage(s: string): { core: boolean; path: string; query: Reco
   const rest = core ? s.slice(5) : s;
   const q = rest.indexOf('?');
   const path = q === -1 ? rest : rest.slice(0, q);
-  if (!validPath(path)) return null;
+  // A Comms thread's page (comms.md, "From"): loom's own, and its id carries a colon no other path may.
+  if (!(core && COMMS_THREAD_PAGE.test(path)) && !validPath(path)) return null;
   // Into loom, only pages: loom's own and, as loom:p/<piece>/<path>, another piece's (a conversation's page
   // naming the task it closed, 2026-10-29: a page is only a look, and that piece still says who may see it);
   // never login, logout, actions or the JSON endpoints.
@@ -604,6 +609,10 @@ function block(v: unknown, depth = 0): Block {
     case 'callout':
       if (b.busy !== undefined && typeof b.busy !== 'boolean') throw new Invalid('callout.busy must be true or false');
       return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
+    case 'from': {
+      if (typeof b.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(b.conversation)) throw new Invalid('from.conversation is a conversation id (cv- and 12 hex digits)');
+      return { type: 'from', conversation: b.conversation };
+    }
     case 'link': {
       const t = target(b, 'link');
       if (t.page === undefined && t.href === undefined) throw new Invalid('link needs page or href');
