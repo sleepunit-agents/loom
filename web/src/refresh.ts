@@ -1,4 +1,4 @@
-// How often an open page is fetched again in place (App.tsx). No React here, so it's tested on its own
+// How often an open page is fetched again in place (page.ts usePage). No React here, so it's tested on its own
 // (src/ui/refresh.test.ts).
 //
 // - A piece's page that sets `refresh` (docs/extensions.md, "Pages") asked for exactly that while something is

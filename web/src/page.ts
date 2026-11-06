@@ -4,8 +4,11 @@
 // tiles each run it for their own address.
 //
 // Where the address lives is the caller's (`nav`): the screen's is the browser's own (history, location), a tile's is
-// its own. Everything else is the same for both.
-import { useCallback, useEffect, useRef, useState } from 'react';
+// its own. Everything else is the same for both, except that signing out sends the whole window to sign in.
+//
+// It moved here from App.tsx unchanged (2026-11-06): what it does is pinned by the browser suites that drive the app
+// (ui, app-nav, look-sync, gestures, desk, comms), not by a test of its own.
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { fetchView, type View } from './loom';
 import { refreshEvery, type Showing } from './refresh';
 import type { Note } from './toasts';
@@ -34,6 +37,7 @@ type Answer = { status: number; data?: View; redirect?: string; savedAt?: string
  * behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow"). One for the
  * tab: a tile opening a page another has seen opens it at once too. */
 const kept = new Map<string, { etag?: string; data: View }>();
+
 const keep = (to: string, r: Answer) => {
   if (r.data && r.etag && !r.savedAt) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
 };
@@ -41,6 +45,26 @@ const keep = (to: string, r: Answer) => {
 export const hasKept = (to: string): boolean => kept.has(to);
 
 export type Load = (to: string, push: boolean, quiet?: boolean) => Promise<void>;
+
+// The live stream (docs/specs/ui-app.md, "Live"): one per open app, however many pages it shows. Each page listens to
+// it; it opens with the first and closes with the last.
+const hearers = new Set<{ change: () => void; open: (on: boolean) => void }>();
+let stream: EventSource | null = null;
+let streamOpen = false;
+function listen(h: { change: () => void; open: (on: boolean) => void }): () => void {
+  hearers.add(h);
+  if (!stream && 'EventSource' in window) {
+    const es = stream = new EventSource('/events');
+    es.onopen = () => { streamOpen = true; for (const x of hearers) x.open(true); };
+    es.onerror = () => { streamOpen = false; for (const x of hearers) x.open(false); };
+    es.addEventListener('change', () => { for (const x of hearers) x.change(); });
+  }
+  h.open(streamOpen);
+  return () => {
+    hearers.delete(h);
+    if (!hearers.size && stream) { stream.close(); stream = null; streamOpen = false; }
+  };
+}
 
 export interface PageState {
   url: string;
@@ -52,10 +76,8 @@ export interface PageState {
   pending: string | null;
   /** When the copy shown was saved, while loom can't be reached. */
   savedAt: string | undefined;
-  /** Whether the live stream is open (refresh.ts reads it). */
-  live: boolean;
   /** The address being shown or asked for: the one a quiet refresh asks again. */
-  showing: React.MutableRefObject<string>;
+  showing: RefObject<string>;
   /** Open a page: `push` puts it after the one shown (a link); `quiet` refreshes what's shown without a wait. */
   load: Load;
 }
@@ -117,14 +139,10 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
 
   const [live, setLive] = useState(false);
   useEffect(() => {
-    if (!('EventSource' in window)) return;
-    const es = new EventSource('/events');
-    es.onopen = () => setLive(true);
-    es.onerror = () => setLive(false);
-    es.addEventListener('change', () => { if (!document.hidden) void load(showing.current, false, true); });
-    const back = () => { if (!document.hidden) void load(showing.current, false, true); };
-    document.addEventListener('visibilitychange', back);
-    return () => { es.close(); document.removeEventListener('visibilitychange', back); };
+    const again = () => { if (!document.hidden) void load(showing.current, false, true); };
+    const stop = listen({ change: again, open: setLive });
+    document.addEventListener('visibilitychange', again);
+    return () => { stop(); document.removeEventListener('visibilitychange', again); };
   }, [load]);
 
   // A page that stays fresh is fetched again in place (the classic page's data-live), as often as refresh.ts says: a
@@ -137,9 +155,9 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
       if (!busy) void load(navNow.current.here(), false, true);
     }, every * 1000);
     return () => clearInterval(t);
-  }, [every]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [every]);
 
   useEffect(() => { const f = () => void load(navNow.current.here(), false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
 
-  return { url, data, error, waiting, pending, savedAt, live, showing, load };
+  return { url, data, error, waiting, pending, savedAt, showing, load };
 }
