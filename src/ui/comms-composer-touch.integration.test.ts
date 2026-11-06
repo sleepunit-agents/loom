@@ -137,7 +137,7 @@ describe.runIf(built && chrome && hasAge)('Comms\' phone composer under a finger
         await openThreadPage(f);
         // Keyboard down: the composer sits on the dock, and nothing of the dock's lies over it.
         expect(await under(f, '.comms-composer textarea')).toBe('itself');
-        expect(await under(f, '.comms-composer__send')).toBe('itself');
+        expect(await under(f, '.comms-composer .v-agent-chat__send')).toBe('itself');
         await keyboard(f);
         // A tap on the field focuses it, and the (stood-in) keyboard comes up.
         await tap(f, await centre(f, '.comms-composer textarea'));
@@ -145,10 +145,10 @@ describe.runIf(built && chrome && hasAge)('Comms\' phone composer under a finger
         expect(await kb(f)).toBe(`${KB}px`);
         expect(await under(f, '.comms-composer textarea')).toBe('itself');
         await f.p.keyboard.type('Testing, one two');
-        expect(await under(f, '.comms-composer__send')).toBe('itself');
+        expect(await under(f, '.comms-composer .v-agent-chat__send')).toBe('itself');
         // A tap on Send, keyboard up: it sends once, the field keeps its focus, the keyboard stays.
         await f.p.evaluate(() => addEventListener('click', () => { (window as unknown as { __at: string }).__at = document.activeElement?.tagName.toLowerCase() ?? ''; }, { capture: true, once: true }));
-        await tap(f, await centre(f, '.comms-composer__send'));
+        await tap(f, await centre(f, '.comms-composer .v-agent-chat__send'));
         expect(await f.p.evaluate(() => (window as unknown as { __at: string }).__at)).toBe('textarea');
         await f.p.waitForTimeout(300);
         expect(sends(f)).toBe(1);
@@ -160,8 +160,8 @@ describe.runIf(built && chrome && hasAge)('Comms\' phone composer under a finger
         await f.p.evaluate(() => (document.activeElement as HTMLElement).blur());
         await f.p.waitForTimeout(100);
         expect(await kb(f)).toBe('0px');
-        expect(await under(f, '.comms-composer__send')).toBe('itself');
-        await tap(f, await centre(f, '.comms-composer__send'));
+        expect(await under(f, '.comms-composer .v-agent-chat__send')).toBe('itself');
+        await tap(f, await centre(f, '.comms-composer .v-agent-chat__send'));
         await f.p.waitForTimeout(300);
         expect(sends(f)).toBe(2);
       } finally { await f.p.context().close(); }
@@ -174,7 +174,7 @@ describe.runIf(built && chrome && hasAge)('Comms\' phone composer under a finger
       await openThreadPage(f);
       const path = await f.p.evaluate(() => location.pathname);
       const [x, y] = await centre(f, '.comms-composer textarea');
-      const [sx, sy] = await centre(f, '.comms-composer__send');
+      const [sx, sy] = await centre(f, '.comms-composer .v-agent-chat__send');
       const drags: [[number, number], [number, number]][] = [[[x, y], [x, y - 80]], [[x, y], [x - 120, y + 4]], [[sx, sy], [sx, sy - 80]], [[sx, sy], [sx - 150, sy]]];
       for (const [from, to] of drags) {
         await drag(f, from, to);

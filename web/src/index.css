@@ -44,6 +44,14 @@
 @import "@/styles/cojeev/breadcrumb.css";
 @import "@/styles/cojeev/avatar.css";
 @import "@/styles/cojeev/activity-feed.css";
+@import "@/styles/cojeev/agent-state.css";
+@import "@/styles/cojeev/message.css";
+@import "@/styles/cojeev/message-scroller.css";
+@import "@/styles/cojeev/attachment.css";
+@import "@/styles/cojeev/bubble.css";
+@import "@/styles/cojeev/input-group.css";
+@import "@/styles/cojeev/questionnaire.css";
+@import "@/styles/cojeev/agent-chat.css";
 @import "@/styles/cojeev/table.css";
 @import "@/styles/cojeev/pagination.css";
 @import "@/styles/cojeev/navigation-menu.css";

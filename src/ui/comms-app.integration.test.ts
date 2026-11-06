@@ -181,7 +181,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       });
       await page.goto(`${base}/comms/${thread.id}`);
       await page.locator('.comms-ask').waitFor();
-      expect(await page.locator('.comms-ask__text').textContent()).toBe('OK to merge the comm screen PR?');
+      expect(await page.locator('.comms-ask h3').textContent()).toBe('OK to merge the comm screen PR?');
       expect(await page.locator('.comms-ask__either').textContent()).toContain('If you allowI merge it.');
       expect(await page.locator('.comms-ask__fine').textContent()).toBe('Exactly what this allows: merge · github:acme/app#3@abc');
       expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('needs-input');
@@ -305,7 +305,7 @@ describe.runIf(built && chrome && hasAge)('Comms delivery, as the owner sees it'
       const before = calls().length;
       const sentAt = Date.now();
       await page.locator('.comms-composer textarea').fill('A second message, while its body starts');
-      await page.locator('.comms-composer__send').click();
+      await page.locator('.comms-composer .v-agent-chat__send').click();
       await page.locator('.comms-msg--mine', { hasText: 'A second message' }).waitFor({ timeout: 5000 });
       // For as long as the runtime is still answering: on its way, never Not delivered; and the composer free at once
       // (the send was accepted, not held for the 20 s the body takes).
@@ -332,13 +332,32 @@ describe.runIf(built && chrome && hasAge)('Comms delivery, as the owner sees it'
     } finally { await ctx.close(); }
   }, 60_000);
 
+  it('a 15,000-character paste is sent whole: the composer takes what Comms takes (40,000), not its own 12,000', async () => {
+    runtime('ok', 0);
+    const t = thread();
+    const { ctx, page, errors } = await open(t.id);
+    try {
+      const long = Array.from({ length: 15_000 }, (_, i) => 'abcdefghij'[i % 10]).join('').slice(0, 14_990) + 'THE-TAIL!!';
+      const box = page.locator('.comms-composer textarea');
+      await box.focus();
+      // A paste, as the browser takes it: inserted text is cut at the box's maxlength, where fill() would not be.
+      await page.keyboard.insertText(long);
+      expect(await box.inputValue()).toHaveLength(15_000);
+      const before = calls().length;
+      await page.locator('.comms-composer .v-agent-chat__send').click();
+      await lastIs(page, 'delivered', 15_000);
+      expect(calls().length - before).toBe(1);
+      expect(calls().at(-1)?.text).toBe(long);
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 60_000);
   it('Not delivered only after a failure the server recorded; Send again shows it sending and delivers exactly once', async () => {
     runtime('said', 0);
     const t = thread();
     const { ctx, page, errors } = await open(t.id);
     try {
       await page.locator('.comms-composer textarea').fill('Can you hear me?');
-      await page.locator('.comms-composer__send').click();
+      await page.locator('.comms-composer .v-agent-chat__send').click();
       await page.locator('.comms-resend').waitFor({ timeout: 10_000 });
       expect(rows(t.id).some((x) => x.kind === 'error'), 'the failure is on record').toBe(true);
       // Now the runtime takes it, slowly: Send again shows it sending at once, and never Not delivered meanwhile.

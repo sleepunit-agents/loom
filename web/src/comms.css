@@ -55,15 +55,25 @@
 .comms-thread[data-wide] .comms-msgs { overflow-y: auto; }
 .comms-thread__strip { position: sticky; top: 0; z-index: 5; padding: 8px 12px 0; background: linear-gradient(var(--v-canvas, transparent) 70%, transparent); }
 
-/* ---- messages ---- */
-.comms-msgs { list-style: none; margin: 0; padding: 14px 14px 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* ---- messages: the 000h agent chat thread, inside Comms' own panes ---- */
+.comms .comms-chat[data-slot="agent-chat"] { max-width: none; height: auto; min-height: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.comms-thread[data-wide] .comms-chat[data-slot="agent-chat"] { height: 100%; overflow: hidden; }
+.comms .comms-msgs.v-agent-chat__thread[data-slot] { gap: 16px; padding: 16px 16px 20px; }
+.comms[data-phone] .comms-msgs.v-agent-chat__thread[data-slot] { overflow: visible; }
+/* On a phone the page scrolls, not the thread: its scroll area takes its words' height (the strip above still collapses). */
+.comms[data-phone] .comms-chat > .v-message-scroll-root[data-slot] { flex: none; height: auto; overflow: visible; }
+.comms[data-phone] .comms-chat [data-radix-scroll-area-viewport] { overflow: visible !important; height: auto; }
+.comms .v-agent-chat__message[data-from="user"] { flex-direction: row-reverse; }
+.comms .v-agent-chat__message[data-from="user"] .v-agent-chat__message-content { align-items: flex-end; }
+.comms .v-agent-chat__message[data-from="user"] .v-agent-chat__author { justify-content: flex-end; }
+.comms .v-agent-chat__message[data-from="agent"] .v-agent-chat__message-body { border-left: 2px solid color-mix(in srgb, var(--c, var(--v-pink)) 55%, transparent); }
+.comms .v-agent-chat__message[data-undelivered] .v-agent-chat__message-body { box-shadow: inset 0 0 0 1px var(--v-danger, #f55); }
+.comms .v-agent-chat__message .comms-reply > :last-child { margin-bottom: 0; }
+.comms .v-agent-chat__author .loom-data { font-size: 11px; letter-spacing: .04em; }
+.comms-state[data-slot] { flex-shrink: 0; }
 .comms-msg { display: flex; flex-direction: column; gap: 3px; max-width: min(640px, 86%); min-width: 0; }
 .comms-msg__meta, .comms-msg > .loom-data { font-size: 10.5px; letter-spacing: .06em; color: var(--v-text-3); }
-.comms-msg--mine { align-self: flex-end; align-items: flex-end; }
-.comms-msg--mine .comms-msg__text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 12px 12px 4px 12px; background: color-mix(in srgb, var(--v-text) 9%, transparent); }
 .comms-msg[data-undelivered] .comms-msg__text { opacity: .6; border: 1px dashed var(--v-danger, #f55); }
-.comms-msg--agent { align-self: flex-start; }
-.comms-msg--agent .comms-reply { padding: 2px 0 0; overflow-wrap: anywhere; }
 .comms-msg__gone { color: var(--v-text-3); font-style: italic; font-size: 13px; }
 .comms-msg--error { align-self: stretch; max-width: none; border-left: 2px solid var(--v-danger, #f55); padding: 4px 10px; color: var(--v-text-2); font-size: 13px; }
 .comms-msg--ask { align-self: stretch; max-width: none; border-left: 2px solid var(--v-yellow); padding: 4px 10px; font-size: 13px; }
@@ -71,19 +81,25 @@
 .comms-earlier .loom-data { font-size: 10px; letter-spacing: .14em; color: var(--v-text-3); display: block; margin-bottom: 4px; }
 .comms-steps { align-self: flex-start; font-size: 12.5px; color: var(--v-text-2); max-width: 100%; }
 .comms-steps__line { text-align: left; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--comms-line); min-height: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.comms-steps ol { list-style: none; margin: 6px 0 0 6px; padding: 0 0 0 10px; border-left: 1px solid var(--comms-line); display: flex; flex-direction: column; gap: 3px; }
-.comms-steps li[data-state="failed"] { color: var(--v-danger, #f55); }
-.comms-working { font-size: 11px; letter-spacing: .1em; color: var(--c, var(--v-pink)); }
 .comms-resend button { font-size: 12px; color: var(--v-danger, #f55); padding: 4px 0; min-height: 36px; }
 
 /* ---- the composer: above the dock on a phone, clear of the keyboard ---- */
-.comms-composer { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--comms-line); background: var(--v-paper); }
+/* The 000h agent chat composer (styles/cojeev/agent-chat.css), fitted: one line that grows, no resize grip, no
+   chatter line, the agent's accent on Send. */
+.comms .comms-composer { padding: 10px 12px 8px; border-top: 1px solid var(--comms-line); background: var(--v-paper); }
+.comms .comms-composer .v-agent-chat__draft[data-slot] { flex-direction: row; flex-wrap: nowrap; height: auto; align-items: flex-end; gap: 6px; padding: 4px; border-radius: 14px; }
+.comms .comms-composer .v-agent-chat__draft[data-slot]:focus-within { outline: none; }
+.comms .comms-composer .v-agent-chat__input[data-slot] { flex: 1 1 0; width: auto; min-width: 0; min-height: 44px; max-height: 180px; resize: none; field-sizing: content; padding: 10px 12px; border-radius: 10px;
+  background: transparent; box-shadow: none; font-size: 16px; line-height: 1.4; }
+.comms .comms-composer .v-agent-chat__input[data-slot]:focus, .comms .comms-composer .v-agent-chat__input[data-slot]:focus-visible { background: transparent; box-shadow: none; outline: none; }
+.comms .comms-composer .v-agent-chat__draft .v-agent-chat__composer-bar[data-slot] { width: auto; flex: 0 0 auto; padding: 0 0 2px; }
+.comms .comms-composer .v-agent-chat__composer-note { display: none; }
+.comms .comms-composer .v-agent-chat__send[data-slot] { --v-brand: var(--c, var(--v-pink)); min-height: 40px; }
+.comms .comms-composer .v-agent-chat__hint { margin-top: 4px; justify-content: flex-start; padding-left: 14px; }
+.comms[data-phone] .comms-composer .v-agent-chat__hint { display: none; }
 .comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 25; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px));
   /* Its surface runs down behind the dock, so no message shows through between them. */
   box-shadow: 0 var(--dock-h) 0 0 var(--v-paper); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
-.comms-composer textarea { flex: 1; min-width: 0; resize: none; font: inherit; font-size: 16px; line-height: 1.4; padding: 9px 12px; background: transparent; border: 0; outline: none; color: var(--v-text); max-height: 180px; }
-.comms-composer__send { font-size: 14px; padding: 0 14px; height: 40px; border-radius: 10px; color: var(--v-on-accent); background: var(--c, var(--v-pink)); }
-.comms-composer__send:disabled { opacity: .4; }
 .comms-pick { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 14px; }
 .comms-pick__agent { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 12px; border: 1px solid var(--comms-line); min-height: 48px; }
 .comms-pick__agent[data-on] { border-color: var(--c, var(--v-pink)); box-shadow: 0 0 0 1px var(--c, var(--v-pink)) inset; }
@@ -122,15 +138,9 @@
 .comms-thread__strip .comms-screen:not([data-compact]) .comms-screen__glass { aspect-ratio: auto; height: min(30dvh, 240px); }
 
 /* ---- an ask, inline (comms.md, "Asks inline"): its words whole, Allow once and Deny beside what each does ---- */
-.comms-ask { align-self: stretch; border: 1px solid color-mix(in srgb, var(--v-yellow) 55%, transparent); border-left-width: 3px; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: color-mix(in srgb, var(--v-yellow) 7%, transparent); }
-.comms-ask__who { font-size: 10px; letter-spacing: .14em; color: var(--v-yellow); }
-.comms-ask__text { font-weight: 600; }
-.comms-ask__why { color: var(--v-text-2); font-size: 14px; }
+.comms-ask { align-self: stretch; display: flex; flex-direction: column; gap: 6px; }
+.comms-ask .v-agent-chat__permission { border-left: 3px solid var(--v-yellow); }
 .comms-ask__either { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 13px; }
 .comms-ask__either dt { color: var(--v-text-3); }
 .comms-ask__fine { font-size: 11px; color: var(--v-text-3); overflow-wrap: anywhere; }
-.comms-ask__buttons { display: flex; gap: 8px; margin-top: 2px; }
-.comms-ask__buttons button { min-height: 40px; padding: 0 14px; border-radius: 10px; font-size: 14px; }
-.comms-ask__yes { color: var(--v-on-accent); background: var(--v-pink); }
-.comms-ask__no { border: 1px solid var(--v-danger, #f55); color: var(--v-danger, #f55); }
 .comms-ask__said { font-size: 13px; color: var(--v-text-2); }
