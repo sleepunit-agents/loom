@@ -27,6 +27,8 @@ describe('the tiling rule', () => {
     expect(t.apps.inbox.x).toBe(t.apps.tasks.w + GUTTER);
     expect(t.apps.comms.y).toBe(t.apps.inbox.h + GUTTER);
     for (const a of apps) { expect(t.apps[a.id].w).toBeGreaterThanOrEqual(a.fit.min[0]); expect(t.apps[a.id].h).toBeGreaterThanOrEqual(a.fit.min[1]); }
+    // "Widest of the rest" is the largest ideal among them (Inbox's 760), not the first of them (Comms's 680).
+    expect(layout([app('Tasks'), app('Comms'), app('Inbox')], [], A, 1920).apps.tasks.w).toBe(1104);
   });
 
   it('2. dwindle: at 2560×1300 the fourth app sits beside the third, under the second', () => {
@@ -94,6 +96,11 @@ describe('the tiling rule', () => {
   it('6. the widgets get columns, a rail or the strip', () => {
     const board = layout([app('Comms')], three, area(1872, 890), 1920);
     expect([board.mode, board.cols]).toEqual(['board', 2]);
+    // Columns by fit, not by groups: three groups, room for two 300 px columns; the last two groups share the last.
+    const fitCols = layout([app('Comms')], [W.needs, W.art, W.vitals], area(1552, 800), 1600);
+    expect([fitCols.mode, fitCols.cols]).toEqual(['board', 2]);
+    expect([fitCols.widgets.needs.x, fitCols.widgets.art.x, fitCols.widgets.vitals.x]).toEqual([1252 - 310, 1252, 1252]);
+    expect(fitCols.widgets.vitals.y).toBeGreaterThan(fitCols.widgets.art.y);
     const rail = layout([app('Tasks'), app('Comms')], three, area(1872, 890), 1920);
     expect(rail.mode).toBe('rail');
     expect(rail.widgetArea!.w).toBe(340);
