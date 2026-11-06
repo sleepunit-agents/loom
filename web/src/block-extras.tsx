@@ -14,8 +14,8 @@ import type { Button as Btn } from './loom';
  * which an alert dialog can't be (Radix's is always the screen's): a dialog with the alert's role and the same answers,
  * that a press outside doesn't close. */
 export function Confirm({ b, open, onOpenChange, fire }: { b: Btn; open: boolean; onOpenChange: (o: boolean) => void; fire: () => void }) {
-  const tile = usePortalContainer();
-  if (tile) return (
+  const layer = usePortalContainer();
+  if (layer) return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent role="alertdialog" appearance="confirmation" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader><DialogTitle>{b.label}?</DialogTitle>

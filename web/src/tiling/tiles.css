@@ -106,8 +106,8 @@
    tile is the containing block for its fixed children: its backdrop-filter), never wider or taller than the tile. ---- */
 :root[data-look] .loom-tile__layer{position:absolute;inset:0;z-index:20;pointer-events:none}
 :root[data-look] .loom-tile__layer>*{pointer-events:auto}
-:root[data-look] .loom-tile[data-blocked] .loom-tile__layer{pointer-events:auto;background:color-mix(in srgb,var(--v-canvas) 62%,transparent)}
-:root[data-look] .loom-tile__layer :is([role="dialog"],[role="alertdialog"]){max-width:calc(100% - 24px);max-height:calc(100% - 24px)}
+:root[data-look] .loom-tile[data-blocked] .loom-tile__layer{pointer-events:auto;background:var(--v-scrim)}
+:root[data-look] .loom-tile__layer :is([role="dialog"],[role="alertdialog"]){max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto}
 
 /* ---- moves (docs/specs/desk-tiling.md, "Transitions"): every tile and every widget in the rail is named for itself,
    so one View Transition morphs each from its old box to its new one. A page change in one tile names only that
@@ -117,7 +117,10 @@
 :root[data-tile-move="page"] .loom-tile[data-moving] .loom-tile__body{view-transition-name:loom-tile-page}
 :root[data-tile-move]::view-transition-group(*){animation-duration:.22s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
 :root[data-tile-move="page"]::view-transition-old(root),:root[data-tile-move="page"]::view-transition-new(root){animation:none}
-/* the hover-only parts show on focus too */
+/* a widget the keys moved to (Alt+Shift+arrows) shows where focus is */
 :root[data-look] .loom-wtile:focus-visible{outline:1px solid var(--v-blue);outline-offset:2px}
+/* a choice of many in a tile is the browser's own list (choice-select.tsx), dressed as the look's field */
+:root[data-look] .loom-tile .loom-native-select{width:100%;min-width:0;height:40px;padding:0 10px;border-radius:var(--r-field,10px);color:var(--v-text);
+  background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border);font:inherit}
 /* a sheet from the bottom (drawer.tsx) sits on the tile's own bottom edge, not over the screen's dock */
 :root[data-look] .loom-tile__layer .v-drawer{left:12px;right:12px;bottom:12px;max-height:calc(100% - 24px);overflow:auto}

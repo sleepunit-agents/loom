@@ -21,7 +21,7 @@ import { readRecent } from '../recent';
 import { StripKey, WidgetBody, WidgetDesk, type DeskHomeData, type WidgetData } from '../desk-widgets';
 import { addable, freshSet, widgetRef, type WidgetRef } from './widgets';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
-import { usePage, type PageNav, type PageState } from '../page';
+import { hasKept, usePage, type PageNav, type PageState } from '../page';
 import * as trail from '../trail';
 import { iconFor } from '../safe';
 import type { Note } from '../toasts';
@@ -78,7 +78,7 @@ const popUpFor = (tile: Element | null) => [...document.querySelectorAll(POP_UP)
 type VT = { finished: Promise<void> };
 type Doc = Document & { startViewTransition?: (update: () => void) => VT };
 /** A view-transition name for a tile's key or a widget's id (one per element, letters, digits and dashes). */
-const vtName = (prefix: string, id: string) => `${prefix}-${id.replace(/[^a-z0-9_-]/gi, '-')}`;
+const vtName = (prefix: string, id: string) => `${prefix}-${id.replace(/[^a-z0-9]/gi, (c) => `_${c.charCodeAt(0).toString(16)}`)}`;
 /** Tabbable elements inside `el`, in order. */
 const tabbables = (el: Element) => [...el.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
   .filter((x) => x.offsetParent !== null || x === document.activeElement);
@@ -194,13 +194,17 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     moving.current = true;
     root.dataset.tileMove = kind;
     if (tile) box.current?.querySelector(`[data-tile="${CSS.escape(tile)}"]`)?.setAttribute('data-moving', '');
-    const vt = (document as Doc).startViewTransition!(update);
     const done = () => {
       moving.current = false;
       if (root.dataset.tileMove === kind) delete root.dataset.tileMove;
       box.current?.querySelectorAll('[data-moving]').forEach((e) => e.removeAttribute('data-moving'));
     };
-    vt.finished.then(done, done);
+    try {
+      (document as Doc).startViewTransition!(update).finished.then(done, done);
+    } catch {
+      // The browser refused to start one: the change simply applies.
+      done(); update();
+    }
   };
   const reflow = (before: State) => {
     if (!canMove()) { drawn.current = null; bump(); return; }
@@ -310,8 +314,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     const s = S.current;
     const i = s.apps.findIndex((a) => a.key === key);
     if (i >= 0) {
+      if (!s.apps[i + by]) return;
       const order = swap(tiles(s.apps), i, i + by);
-      if (order === tiles(s.apps) || !s.apps[i + by]) return;
       commit({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'replace', true);
       announce(`${s.apps[i].label} swapped with ${s.apps[i + by].label}, tile ${i + by + 1} of ${s.apps.length}`);
       return;
@@ -321,6 +325,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     const w = [...s.w];
     [w[j], w[j + by]] = [w[j + by], w[j]];
     commit({ ...s, w }, 'replace', true);
+    announce(`${widgetRef(key, shell.agents, wok)?.label ?? 'The widget'} swapped with ${widgetRef(s.w[j + by], shell.agents, wok)?.label ?? 'the next'}`);
   };
   const homeKey = () => {
     const s = S.current;
@@ -416,7 +421,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     trail.keepTop(key, here.url, scrollOf(key));
     intents.current.set(key, { how: o?.how ?? 'go', url: to, top: o?.top });
     // Only this tile's page moves: its body is the transition's one named part (tiles.css), the other tiles stand still.
-    if (canMove()) transition('page', () => flushSync(() => { void p.load(to, true); }), key);
+    // Only when the page is here already (kept): else the transition would morph into the wait, and the page land after.
+    if (canMove() && hasKept(to)) transition('page', () => flushSync(() => { void p.load(to, true); }), key);
     else void p.load(to, true);
   };
   /** Where a tile's page landed, whatever took it there (its links, its Back, the browser's): the set's from now on. */
@@ -453,8 +459,10 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       announce(el.getAttribute('aria-label') ?? '');
       return;
     }
-    el.focus({ preventScroll: true });
-    announce(`${el.getAttribute('aria-label') ?? 'widget'}, widget`);
+    // A widget's frame takes focus; a key in the strip is its link.
+    const f = el.matches('[tabindex]') ? el : el.querySelector<HTMLElement>('a, button');
+    f?.focus({ preventScroll: true });
+    announce(`${f?.getAttribute('aria-label') ?? el.getAttribute('aria-label') ?? 'a widget'}, widget`);
   };
   const toward = (dir: 'left' | 'right' | 'up' | 'down') => {
     const from = current();
@@ -484,11 +492,15 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (popUpFor(el)) return;
     const key = el?.dataset.tile, widget = el?.dataset.widget;
     const arrows: Record<string, 'left' | 'right' | 'up' | 'down'> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
+    // , and . by what they type where that's what they are (AZERTY's , is where QWERTY's M is), else by where they sit
+    // (a Mac's Option+Shift types other characters); letters by where they sit.
+    const swapKey = [',', '<'].includes(e.key) || (e.code === 'Comma' && !['.', '>'].includes(e.key)) ? -1
+      : ['.', '>'].includes(e.key) || e.code === 'Period' ? 1 : 0;
     let done = true;
     if (e.shiftKey) {
       if (arrows[e.code]) toward(arrows[e.code]);
       else if (e.code === 'Enter' && key) makeBig(key);
-      else if ((e.code === 'Comma' || e.code === 'Period') && (key || widget)) swapBy((key ?? widget)!, e.code === 'Comma' ? -1 : 1);
+      else if (swapKey && (key || widget)) swapBy((key ?? widget)!, swapKey);
       else if (e.code === 'KeyM' && key) minimize(key);
       else if (e.code === 'KeyW' && key) close(key);
       else if (e.code === 'KeyW' && widget) removeWidget(widget);
@@ -638,7 +650,7 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   }, [p.url, p.data, p.waiting, p.error]);   // eslint-disable-line react-hooks/exhaustive-deps
   const back = trail.step(o.key, -1), forward = trail.step(o.key, 1);
   const step = (by: -1 | 1) => { const v = by < 0 ? back : forward; if (v) go(v.url, { how: by < 0 ? 'back' : 'forward', top: v.top }); return !!v; };
-  steps.current.set(o.key, step);
+  useEffect(() => { steps.current.set(o.key, step); });
   useEffect(() => () => { steps.current.delete(o.key); }, [o.key, steps]);
   // Its own layer for pop-ups (components/ui/portal-container.ts): a sheet, a dialog, a menu or a list opened in this
   // tile renders there, over this tile only. While a dialog is open in it, the tile's own page and strip are inert, and
@@ -658,7 +670,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
       const t = tabbables(d);
       if (!t.length) { e.preventDefault(); return; }
       const i = t.indexOf(document.activeElement as HTMLElement);
-      if (e.shiftKey ? i <= 0 : i === t.length - 1) { e.preventDefault(); t[e.shiftKey ? t.length - 1 : 0].focus(); }
+      // Round the ends; from the dialog itself (focused when it has nothing to focus first), to its first or last.
+      if (i < 0 || (e.shiftKey ? i === 0 : i === t.length - 1)) { e.preventDefault(); t[e.shiftKey ? t.length - 1 : 0].focus(); }
     };
     layer.addEventListener('keydown', tab);
     return () => { mo.disconnect(); layer.removeEventListener('keydown', tab); };

@@ -91,9 +91,9 @@ function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContr
         {row('Reduce motion', 'Pages fade instead of sliding, and nothing loops or animates. Follow the phone uses its own setting.', follow('Reduce motion', motion, setMotion))}
         {row('Higher contrast', 'Brighter text, stronger edges and focus rings, solid backgrounds behind words, no glows.', follow('Higher contrast', contrast, setContrast))}
         {/* The plain mode (docs/specs/desk-tiling.md, "The setting"): the same choice as Appearance's Desktop. */}
-        {row('One window at a time', 'On a big screen, one app at a time in one window, and Home as the desktop. Off, apps share the screen as tiles.', (
-          <ToggleGroup type="single" className="v-seg" aria-label="One window at a time" value={tiling ? 'off' : 'on'} onValueChange={(v) => { if (v) setTiling(v === 'off'); }}>
-            <ToggleGroupItem value="on">On</ToggleGroupItem><ToggleGroupItem value="off">Off</ToggleGroupItem></ToggleGroup>
+        {row('Desktop', 'On a big screen: one app at a time in one window (the plain one), or apps side by side, each in a tile.', (
+          <ToggleGroup type="single" className="v-seg" aria-label="Desktop" value={tiling ? 'tiling' : 'one'} onValueChange={(v) => { if (v) setTiling(v === 'tiling'); }}>
+            <ToggleGroupItem value="one">One window at a time</ToggleGroupItem><ToggleGroupItem value="tiling">Tiling</ToggleGroupItem></ToggleGroup>
         ))}
         <p className="pt-3 text-sm opacity-60">Yours on every device you sign in on.</p>
       </CardContent>

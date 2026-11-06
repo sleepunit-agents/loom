@@ -1,6 +1,6 @@
 "use client";
 
-import { usePortalContainer } from "@/components/ui/portal-container";
+import { tileOnly, usePortalContainer } from "@/components/ui/portal-container";
 import * as React from "react";
 import { useMorph } from "@/lib/cojeev-motion/use-morph";
 import { cva } from "class-variance-authority";
@@ -10,8 +10,8 @@ import { useFlowAppearance } from "@/lib/cojeev-motion/use-flow";
 export type DrawerProps = React.ComponentProps<typeof Primitive.Root>;
 /** In a tile, modal to the tile alone (as Dialog: dialog.tsx). */
 export function Drawer(props: DrawerProps) {
-  const tile = usePortalContainer();
-  return <Primitive.Root {...props} modal={tile ? false : props.modal} />;
+  const layer = usePortalContainer();
+  return <Primitive.Root {...props} modal={layer ? false : props.modal} />;
 }
 export type DrawerTriggerProps = React.ComponentProps<typeof Primitive.Trigger>;
 export function DrawerTrigger(props: DrawerTriggerProps) {
@@ -59,9 +59,9 @@ export function DrawerContent({
 }: DrawerContentProps) {
   const morphRef = useMorph<HTMLDivElement>("surfaces", ref);
   const flowRef = useFlowAppearance<HTMLDivElement>(true, morphRef, "slide-block");
-  const tile = usePortalContainer();
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal container={tile ?? undefined}>
+    <Primitive.Portal container={layer ?? undefined}>
       <DrawerOverlay />
       <Primitive.Content
         ref={flowRef}
@@ -69,8 +69,7 @@ export function DrawerContent({
         data-part="content"
         className={cn(drawerContentVariants(), className)}
         {...props}
-        // In a tile, a press in another tile leaves it open; one on its own tile closes it (as Dialog's).
-        {...(tile ? { onInteractOutside: (e: Event) => { if (!tile.contains(e.target as Node)) e.preventDefault(); props.onInteractOutside?.(e as never); } } : {})}
+        {...tileOnly(layer, props.onInteractOutside)}
       >
         {children}
         {showCloseButton && (

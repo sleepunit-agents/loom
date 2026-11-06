@@ -9,7 +9,7 @@
 import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 60_000 });
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -42,7 +42,16 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
       const db = new BetterSqlite3(join(home, 'agents', a, 'memories.db')); createConversationTables(db); db.close();
     }
     writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', owner: 'jonathan', members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
-    for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
+    for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME', 'PATH']) saved[k] = process.env[k];
+    // A piece whose page has a choice of many (a select), to open one inside a tile.
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    const kinds = ['Tomato', 'Basil', 'Chard', 'Leek', 'Onion', 'Radish', 'Squash'].map((l) => ({ value: l.toLowerCase(), label: l }));
+    writeFileSync(join(bin, 'garden.json'), JSON.stringify({ v: 2, tab: { label: 'Garden' } }));
+    writeFileSync(join(bin, 'page.json'), JSON.stringify({ title: 'Garden', sections: [{ id: 'plant', title: 'Plant', blocks: [{ type: 'form', action: 'plant', submit: 'Plant', fields: [{ name: 'kind', label: 'Kind', kind: 'choice', options: kinds }] }] }] }));
+    writeFileSync(join(bin, 'loom-garden'), `#!/bin/sh\ncase "$1 $2" in "ui --json") cat "${join(bin, 'garden.json')}" ;; *) cat "${join(bin, 'page.json')}" ;; esac\n`);
+    chmodSync(join(bin, 'loom-garden'), 0o755);
+    process.env.PATH = `${bin}:${process.env.PATH}`;
     process.env.LOOM_HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     h = loadHousehold(home)!;
@@ -68,7 +77,13 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
   async function screen(width: number, height: number, path: string, o: { motion?: boolean } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: o.motion ? 'no-preference' : 'reduce', serviceWorkers: 'block' });
     await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); localStorage.setItem('loom-tiling', 'on'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');
-      window.__vt = 0; const s = Document.prototype.startViewTransition; if (s) Document.prototype.startViewTransition = function (...a) { window.__vt++; return s.apply(this, a); };`);
+      window.__vt = 0; window.__named = []; const s = Document.prototype.startViewTransition;
+      if (s) Document.prototype.startViewTransition = function (...a) {
+        window.__vt++;
+        // what each tile, and each tile's body, is named for this transition, as it starts
+        window.__named.push([...document.querySelectorAll('.loom-tile')].map((t) => [t.getAttribute('data-tile'), getComputedStyle(t).viewTransitionName, getComputedStyle(t.querySelector('.loom-tile__body')).viewTransitionName]));
+        return s.apply(this, a);
+      };`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     await p.goto(`${base}${path}`);
@@ -92,9 +107,12 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
       await inbox.getByText(ASK).first().click();
       const sheet = inbox.locator('.loom-tile__layer [role="dialog"][data-state="open"]');
       await sheet.waitFor();
-      // its scrim and the sheet are inside the tile's box
-      const box = await inbox.boundingBox(), scrim = await inbox.locator('.loom-tile__layer').boundingBox(), s = await sheet.boundingBox();
-      for (const b of [scrim!, s!]) {
+      // its scrim covers its tile, and only its tile; the sheet is inside the tile's box
+      const box = await inbox.boundingBox(), s = await sheet.boundingBox();
+      const scrimOf = (t: string) => p.locator(`.loom-tile[data-tile="${t}"] .loom-tile__layer`).evaluate((e) => getComputedStyle(e).backgroundColor);
+      expect(await scrimOf('/inbox')).not.toMatch(/^rgba\(0, 0, 0, 0\)$|transparent/);
+      expect(await scrimOf('/people')).toMatch(/^rgba\(0, 0, 0, 0\)$|transparent/);
+      for (const b of [s!]) {
         expect(b.x).toBeGreaterThanOrEqual(box!.x - 0.5); expect(b.y).toBeGreaterThanOrEqual(box!.y - 0.5);
         expect(b.x + b.width).toBeLessThanOrEqual(box!.x + box!.width + 0.5); expect(b.y + b.height).toBeLessThanOrEqual(box!.y + box!.height + 0.5);
       }
@@ -135,11 +153,18 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
     // make it the big one
     await key(p, 'Alt+Shift+Enter');
     await expect.poll(() => query(p, 't')).toBe('*comms!,inbox,people');
+    // drawn so too: the big slot on the left
+    const at = () => p.$$eval('.loom-tile', (ts) => ts.map((t) => { const r = t.getBoundingClientRect(); return [t.getAttribute('data-tile'), Math.round(r.x), Math.round(r.y)] as [string, number, number]; }));
+    await expect.poll(() => labels(p)).toEqual(['Comms', 'Inbox', 'People']);
+    expect((await at())[0][1]).toBeLessThan((await at())[1][1]);
     // swap with the one after (it isn't pinned once it leaves the big slot), then back
     await key(p, 'Alt+Shift+Period');
     await expect.poll(() => query(p, 't')).toBe('inbox,*comms,people');
+    await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms', 'People']);
+    expect((await at()).map((x) => x[0])).toEqual(['/inbox', '/comms', '/people']);
     await key(p, 'Alt+Shift+Comma');
     await expect.poll(() => query(p, 't')).toBe('*comms,inbox,people');
+    await expect.poll(() => labels(p)).toEqual(['Comms', 'Inbox', 'People']);
     // minimize; close
     await key(p, 'Alt+Shift+KeyM');
     await expect.poll(() => [query(p, 't'), query(p, 'm')]).toEqual(['inbox,*people', 'comms']);
@@ -178,25 +203,69 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
     await p.context().close();
   }, 60_000);
 
-  it('19. reduced motion starts no View Transition; with motion, opening a second app morphs the tiles', async () => {
-    const still = await screen(1280, 800, '/inbox?t=*inbox&w=');
+  it('15. the arrows reach a widget too, a key in the strip included, and say which', async () => {
+    const p = await screen(1024, 768, '/inbox?t=*inbox,comms&w=needs,art');
+    await expect.poll(() => p.locator('.loom-tiles').getAttribute('data-widgets')).toBe('strip');
+    await p.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar h2').focus();
+    // the key whose centre is nearest Comms's (Art's, the lower of the two), then up to Needs you
+    await key(p, 'Alt+Shift+ArrowRight');
+    await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('art');
+    await expect.poll(() => said(p)).toMatch(/^art.*, widget$/i);
+    await key(p, 'Alt+Shift+ArrowUp');
+    await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('needs');
+    await expect.poll(() => said(p)).toMatch(/^Needs you.*, widget$/);
+    await p.context().close();
+  }, 60_000);
+
+  it('16. a choice of many in a tile is the browser\'s own list, so nothing outside the tile is hidden while it\'s used', async () => {
+    const p = await screen(1280, 800, '/p/garden?t=*garden,inbox&w=');
+    const garden = p.locator('.loom-tile[data-tile="/p/garden"]');
+    const select = garden.locator('select.loom-native-select');
+    await garden.waitFor();
+    await select.waitFor();
+    expect(await garden.locator('[data-slot="select-trigger"]').count()).toBe(0);
+    const hidden = () => p.evaluate(() => [...document.querySelectorAll('[aria-hidden="true"]')].filter((e) => !e.closest('.loom-tile[data-tile="/p/garden"]')).length);
+    const before = await hidden();
+    await select.focus();
+    await select.selectOption('chard');
+    expect(await select.inputValue()).toBe('chard');
+    expect(await hidden()).toBe(before);
+    await p.context().close();
+  }, 60_000);
+
+  for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) it(`19. reduced motion starts no View Transition; with motion, opening a second app morphs every tile, and a page change in one names only that one, at ${w}×${hgt}`, async () => {
+    const still = await screen(w, hgt, '/inbox?t=*inbox&w=');
     await still.click('.loom-dock-bar [data-part="item"][aria-label="People"]');
     await expect.poll(() => labels(still)).toEqual(['Inbox', 'People']);
     expect(await still.evaluate(() => (window as unknown as { __vt: number }).__vt)).toBe(0);
     await still.context().close();
-    const moving = await screen(1280, 800, '/inbox?t=*inbox&w=', { motion: true });
+    const moving = await screen(w, hgt, '/inbox?t=*inbox&w=', { motion: true });
     await moving.click('.loom-dock-bar [data-part="item"][aria-label="People"]');
     await expect.poll(() => labels(moving)).toEqual(['Inbox', 'People']);
     expect(await moving.evaluate(() => (window as unknown as { __vt: number }).__vt)).toBeGreaterThanOrEqual(1);
+    type Named = [string, string, string][][];
+    const named = () => moving.evaluate(() => (window as unknown as { __named: Named }).__named);
+    // the reflow: every tile named for itself, no body named
+    const reflow = (await named()).at(-1)!;
+    expect(reflow.every((x) => x[1] !== 'none' && x[2] === 'none')).toBe(true);
+    expect(new Set(reflow.map((x) => x[1])).size).toBe(reflow.length);
+    // a page change in People (a page it has shown, so it's here at once): only People's body is named
+    const people = moving.locator('.loom-tile[data-tile="/people"]');
+    await people.locator('a[href^="/people/"]').first().click();
+    await expect.poll(() => people.locator('.loom-tile__path').textContent()).toMatch(/^loom\/people\/./);
+    await people.locator('.loom-tile__btn[aria-label^="Back"]').click();
+    await expect.poll(() => people.locator('.loom-tile__path').textContent()).toBe('loom/people');
+    const page = (await named()).at(-1)!;
+    expect(page).toEqual([['/inbox', 'none', 'none'], ['/people', 'none', 'loom-tile-page']]);
     await moving.context().close();
   }, 60_000);
 
   it('the plain mode: One window at a time is in Accessibility too, and choosing it there leaves the tiles at once', async () => {
     const p = await screen(1280, 800, '/accessibility?t=*setup,inbox&w=');
-    const plain = p.locator('[aria-label="One window at a time"]');
+    const plain = p.locator('.loom-tile [aria-label="Desktop"]');
     await plain.waitFor();
-    expect(await plain.locator('[role="radio"][aria-checked="true"]').textContent()).toBe('Off');
-    await plain.locator('[role="radio"]', { hasText: 'On' }).click();
+    expect(await plain.locator('[role="radio"][aria-checked="true"]').textContent()).toBe('Tiling');
+    await plain.locator('[role="radio"]', { hasText: 'One window at a time' }).click();
     await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     expect(await p.locator('.loom-window').count()).toBe(1);
     await p.context().close();

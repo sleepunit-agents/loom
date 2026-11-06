@@ -216,9 +216,9 @@ export function SelectContent({
     activeSelector: "[data-highlighted]",
   });
   const flowRef = useFlowAppearance<HTMLDivElement>(true, groupRef, "grow");
-  const tile = usePortalContainer();
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal container={tile ?? undefined}>
+    <Primitive.Portal container={layer ?? undefined}>
       <Primitive.Content
         ref={flowRef}
         data-slot="select-content"

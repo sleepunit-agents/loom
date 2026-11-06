@@ -17,8 +17,8 @@ import { StateChevron, AnimatedIcon } from "@/components/ui/animated-icon";
 
 export type DropdownMenuProps = React.ComponentProps<typeof Primitive.Root>;
 export function DropdownMenu(props: DropdownMenuProps) {
-  const tile = usePortalContainer();
-  return <Primitive.Root {...props} modal={tile ? false : props.modal} />;
+  const layer = usePortalContainer();
+  return <Primitive.Root {...props} modal={layer ? false : props.modal} />;
 }
 export type DropdownMenuPortalProps = React.ComponentProps<
   typeof Primitive.Portal
@@ -84,9 +84,9 @@ export function DropdownMenuContent({
     activeSelector: "[data-highlighted]",
   });
   const flowRef = useFlowAppearance<HTMLDivElement>(true, groupRef, "grow");
-  const tile = usePortalContainer();
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal container={tile ?? undefined}>
+    <Primitive.Portal container={layer ?? undefined}>
       <Primitive.Content
         ref={flowRef}
         data-slot="dropdown-menu-content"
@@ -115,9 +115,9 @@ export function DropdownMenuSubContent({
     activeSelector: "[data-highlighted]",
   });
   const flowRef = useFlowAppearance<HTMLDivElement>(true, groupRef, "grow");
-  const tile = usePortalContainer();
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal container={tile ?? undefined}>
+    <Primitive.Portal container={layer ?? undefined}>
       <Primitive.SubContent
         ref={flowRef}
         data-slot="dropdown-menu-sub-content"

@@ -68,9 +68,12 @@ export function AlertDialogContent({
 }: AlertDialogContentProps) {
   const morphRef = useMorph<HTMLDivElement>("surfaces", ref);
   const flowRef = useFlowAppearance<HTMLDivElement>(true, morphRef, "enter");
-  const tile = usePortalContainer();
+  // Radix's alert dialog is always modal to the screen (no `modal` prop): in a tile it renders in the tile's layer, but
+  // still traps focus and hides the rest. A tile's confirm is a Dialog with the alert's role (block-extras.tsx Confirm):
+  // use that pattern in a tile, not this.
+  const layer = usePortalContainer();
   return (
-    <Primitive.Portal container={tile ?? undefined}>
+    <Primitive.Portal container={layer ?? undefined}>
       <AlertDialogOverlay />
       <Primitive.Content
         ref={flowRef}
