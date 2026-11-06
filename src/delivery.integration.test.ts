@@ -8,7 +8,8 @@
  * The stub runtime appends every stdin it gets to $LOOM_HOME/runtime-calls.jsonl, so a test
  * can see whether core called it, and how often. $LOOM_HOME/runtime-mode picks its answer:
  * ok (the default), fail (exit 1, nothing said), said (exit 1 with {status: 503, error}),
- * bad (an answer that isn't the contract's), slow (400 ms), sleep:<ms>.
+ * bad (an answer that isn't the contract's), slow (400 ms), sleep:<ms>, hold (answers once
+ * $LOOM_HOME/runtime-release exists).
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -63,6 +64,7 @@ process.stdin.on('end', () => {
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
   if (mode === 'slow') setTimeout(answer, 400);
   else if (mode.startsWith('sleep:')) setTimeout(answer, Number(mode.slice(6)));
+  else if (mode === 'hold') { const t = setInterval(() => { if (fs.existsSync(home + '/runtime-release')) { clearInterval(t); answer(); } }, 20); }
   else answer();
 });
 `;
@@ -112,7 +114,7 @@ describe('POST /api/loom/deliver', () => {
     const f = join(h.home, 'runtime-calls.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'said-400' | 'bad' | 'huge' | 'slow' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'fail' | 'said' | 'said-badly' | 'said-400' | 'bad' | 'huge' | 'slow' | 'hold' | `sleep:${number}`) => writeFileSync(join(h.home, 'runtime-mode'), m);
   const kept = (): number => {
     const db = new BetterSqlite3(join(h.home, 'household.db'));
     try {
@@ -157,6 +159,7 @@ describe('POST /api/loom/deliver', () => {
   beforeEach(() => {
     Object.assign(DELIVERY_LIMITS, LIMITS0);
     rmSync(join(h.home, 'runtime-calls.jsonl'), { force: true });
+    rmSync(join(h.home, 'runtime-release'), { force: true });
     mode('ok');
     piece(h.home, 'runtime', RUNTIME_LOOM, RUNTIME_BIN);
     clearPieceCache();
@@ -475,8 +478,14 @@ describe('POST /api/loom/deliver', () => {
     it('the delivery pool full (8 running, 32 waiting, across pieces) is a 503 busy, not kept', async () => {
       // Each piece may run 9 here, so five pieces (45 at once) overrun the pool's 40.
       Object.assign(DELIVERY_LIMITS, { perPieceRunning: 9, perPieceWaiting: 0 });
-      mode('sleep:300');
-      const rs = await Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => post(tok[w], wake(`busy-${i}`)))));
+      // Held until all 45 are in: with a fixed sleep, the first ones finished on a slow runner before the last arrived,
+      // freeing their places, and all 45 got in (t-1886).
+      mode('hold');
+      let refused = 0;
+      const sent = Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => post(tok[w], wake(`busy-${i}`)).then((r) => { if (r.status === 503) refused++; return r; }))));
+      for (let i = 0; i < 200 && refused < 5; i++) await new Promise((r) => setTimeout(r, 50));
+      writeFileSync(join(h.home, 'runtime-release'), '');
+      const rs = await sent;
       const busy = rs.filter((r) => r.status === 503);
       expect(rs.filter((r) => r.status === 200)).toHaveLength(40);
       expect(busy).toHaveLength(5);

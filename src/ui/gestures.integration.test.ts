@@ -351,8 +351,10 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     expect(mid).toEqual({ dock: dockBefore, bar: barBefore });
     let s = await seen(f);
     expect(s.moves).toEqual(['right']);
-    // Nothing of the dock's, the bar's or the fade's is animated: they stay put. The page's name crossfades.
-    const pes = s.anims.flat().map((x) => x.pe);
+    // Nothing of the dock's, the bar's or the fade's is animated: they stay put. The page's name crossfades. (Noted
+    // once the transition is ready, which can be after the address has changed: t-1886.)
+    await expect.poll(async () => (await seen(f)).anims.length).toBeGreaterThan(0);
+    const pes = (await seen(f)).anims.flat().map((x) => x.pe);
     expect(pes.filter((x) => /loom-(dock|bar|fade)\)/.test(x))).toEqual([]);
     expect(pes).toContain('::view-transition-new(loom-title)');
     await f.p.waitForTimeout(1500);
@@ -368,7 +370,8 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await expect.poll(() => where(f)).toBe('/a/art');
     s = await seen(f);
     expect(s.moves).toEqual(['push']);
-    expect(s.anims.flat().some((a) => a.pe === '::view-transition-new(loom-page)' && a.name === 'loom-move-in-right')).toBe(true);
+    // Noted once the transition is ready, as above.
+    await expect.poll(async () => (await seen(f)).anims.flat().some((a) => a.pe === '::view-transition-new(loom-page)' && a.name === 'loom-move-in-right')).toBe(true);
     await f.p.waitForTimeout(800);
     await forget(f);
     await f.p.goBack();

@@ -130,18 +130,37 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('idle');
       // The dock carries Comms.
       expect(await page.locator('[aria-label="Comms"]').count()).toBeGreaterThan(0);
-      await page.waitForTimeout(400);
-      const seen = page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-signal') === 'on', undefined, { timeout: 5000 });
+      // The screen's changes, logged in the page as they happen and timed by its own clock: the signal is on for only
+      // 250 ms, so a poll from here can miss it whole or see it late on a loaded runner (both failed CI, t-1886).
+      await page.evaluate(() => {
+        const w = window as unknown as { screen_: { at: number; signal: string | null; face: string | null }[] };
+        w.screen_ = [];
+        new MutationObserver((ms) => {
+          for (const m of ms) {
+            const el = m.target as Element;
+            if (el.matches('.comms-screen')) w.screen_.push({ at: performance.now(), signal: el.getAttribute('data-signal'), face: el.getAttribute('data-face') });
+          }
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-signal', 'data-face'] });
+      });
+      // When the screen has been each of these in turn: the times, in the page's clock.
+      const after = (steps: ({ signal: string } | { face: string })[], timeout: number) => page.waitForFunction((steps) => {
+        const log = (window as unknown as { screen_: { at: number; signal: string | null; face: string | null }[] }).screen_;
+        const at: number[] = [];
+        let i = 0;
+        for (const step of steps) {
+          i = log.findIndex((e, k) => k >= i && ('signal' in step ? e.signal === step.signal : e.face === step.face));
+          if (i < 0) return null;
+          at.push(log[i].at);
+        }
+        return at;
+      }, steps, { timeout }).then((h) => h.jsonValue() as Promise<number[]>);
       adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'And a scanline roll when a reply lands.' });
-      await seen;
-      const signalAt = Date.now();
-      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'talking', undefined, { timeout: 3000 });
+      const [signalAt, talkingAt] = await after([{ signal: 'on' }, { face: 'talking' }], 8000);
       // The signal plays first, for its 250 ms: talking never starts with it.
-      expect(Date.now() - signalAt).toBeGreaterThanOrEqual(150);
+      expect(talkingAt - signalAt).toBeGreaterThanOrEqual(150);
       expect(await page.locator('.comms-msg--agent').last().textContent()).toContain('scanline roll');
       // Then done, then back to the thread's own state.
-      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'complete', undefined, { timeout: 6000 });
-      await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 3000 });
+      await after([{ signal: 'on' }, { face: 'talking' }, { face: 'complete' }, { face: 'idle' }], 9000);
       // A switched body's reply names its harness on the channel line; one from the agent's own clears it.
       adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'On Codex for now.', on: 'Codex' });
       await page.waitForFunction(() => /· ON CODEX$/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });

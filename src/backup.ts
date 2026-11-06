@@ -16,8 +16,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync, closeSync, copyFileSync, existsSync, linkSync, realpathSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync,
-  statSync, unlinkSync, writeFileSync, writeSync,
+  chmodSync, closeSync, copyFileSync, existsSync, realpathSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync,
+  rmdirSync, statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
@@ -247,14 +247,22 @@ export function takeLock(home: string, nowMs = Date.now()): { release: () => voi
       let alive = false;
       if (Number.isInteger(held.pid) && held.pid! > 0) { try { process.kill(held.pid!, 0); alive = true; } catch (err) { alive = (err as NodeJS.ErrnoException).code === 'EPERM'; } }
       if (alive && age < LOCK_STALE_MS) return null;
-      // Stale. Take it over atomically: rename it aside (only one taker's rename finds it), and only if what was moved
-      // is the lock judged stale is it gone; one that's changed meanwhile is someone's fresh lock, put back.
-      const aside = `${p}.stale-${process.pid}-${token}`;
-      try { renameSync(p, aside); } catch { return null; }
-      let moved = '';
-      try { moved = readFileSync(aside, 'utf-8'); } catch { /* gone */ }
-      if (moved !== raw) { try { linkSync(aside, p); } catch { /* another lock is there now: it wins */ } try { unlinkSync(aside); } catch { /* gone */ } return null; }
-      try { unlinkSync(aside); } catch { /* gone */ }
+      // Stale. Taken over by one taker at a time, under a directory beside it that only one can make: read again
+      // there, and only the lock judged stale is removed; one that's changed meanwhile is someone's fresh lock, left
+      // where it is. (Moving it aside to look, as before, could move a fresh one, and a third taker made its own in
+      // the gap: two ran, t-1886.)
+      const over = `${p}.takeover`;
+      try { mkdirSync(over); } catch {
+        // A taker that died inside its takeover leaves the directory: after a minute it's cleared.
+        try { if (Date.now() - statSync(over).mtimeMs > 60_000) rmdirSync(over); } catch { /* gone */ }
+        return null;
+      }
+      try {
+        let now = '';
+        try { now = readFileSync(p, 'utf-8'); } catch { /* gone: free */ }
+        if (now && now !== raw) return null;
+        if (now) { try { unlinkSync(p); } catch { /* gone */ } }
+      } finally { try { rmdirSync(over); } catch { /* gone */ } }
     }
   }
   return null;

@@ -455,7 +455,9 @@ describe.skipIf(!hasTools)('loom backup', () => {
     settings(`path:${dir}`);
     const heard = join(work, 'heard');
     const cmd = join(work, 'alert.sh');
-    writeFileSync(cmd, `#!/bin/sh\nprintf '%s\\n' "$@" > ${heard}\n`);
+    // Written whole, then moved into place: a plain `>` makes the file before printf fills it, and the wait below read
+    // it empty (t-1886).
+    writeFileSync(cmd, `#!/bin/sh\nprintf '%s\\n' "$@" > ${heard}.part && mv ${heard}.part ${heard}\n`);
     chmodSync(cmd, 0o755);
     writeFileSync(join(h.home, 'household.json'), JSON.stringify({ ...rawHousehold(h.home), backup: { ...(rawHousehold(h.home).backup as object), alertCommand: ['/bin/touch', join(work, 'planted')] } }));
     const { alert: _a, ...noAlert } = fakes({ drills: [false, false, false, false] });
@@ -524,8 +526,20 @@ describe.skipIf(!hasTools)('loom backup', () => {
     writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
     const script = join(work, 'race.mjs');
     writeFileSync(script, `import { takeLock } from ${JSON.stringify(new URL('./backup.ts', import.meta.url).pathname.replace(/\.ts$/, '.js').replace('/src/', '/dist/'))};
-const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) setTimeout(() => l.release(), 400);`);
-    const run1 = () => new Promise<string>((res) => { const c = spawn(process.execPath, [script, h.home], { env }); let o = ''; c.stdout.on('data', (d) => { o += d; }); c.on('close', () => res(o.trim())); });
+const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) { process.stdin.on('end', () => l.release()); process.stdin.resume(); }`);
+    // The one that gets it holds it until all three have said (a fixed 400 ms let a slow starter find it free, t-1886).
+    let said = 0;
+    const all: Array<() => void> = [];
+    const run1 = () => new Promise<string>((res) => {
+      const c = spawn(process.execPath, [script, h.home], { env });
+      all.push(() => c.stdin.end());
+      let o = '';
+      let heard = false;
+      // One that dies without a word has said too, so the holder is never left waiting.
+      const say = () => { if (heard) return; heard = true; if (++said === 3) for (const end of all) end(); };
+      c.stdout.on('data', (d) => { o += d; say(); });
+      c.on('close', () => { say(); res(o.trim()); });
+    });
     const outs = await Promise.all([run1(), run1(), run1()]);
     expect(outs.sort()).toEqual(['busy', 'busy', 'got']);
     // A lock taken over as stale: the old holder's release leaves the new one's.
