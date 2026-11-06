@@ -6,9 +6,10 @@
 // rest are its routes (send, title, pin, archive, stop, read, delete). Every word a thread shows comes from those.
 //
 // On a phone: the list, then a thread pushed over it, its composer above the dock and clear of the keyboard. On a
-// desktop: the two side by side in the app's window. Each thread has its comm screen: the agent's pixel portrait in a
+// desktop: the two side by side in the app's window, or one at a time with a way back when that window (or tile) is
+// narrower than two panes fit (ONE_PANE_BELOW). Each thread has its comm screen: the agent's pixel portrait in a
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import './comms.css';
 import { WorkPanel } from './comms-work';
 import { AgentAvatar, useEnv, type Mark } from './blocks';
@@ -248,7 +249,8 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
         if (s && s.x - e.changedTouches[0].clientX > 80 && Math.abs(s.y - e.changedTouches[0].clientY) < 40) { acted.current = true; onArchive(); }
       }}>
       <button type="button" className="comms-row__btn" onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
-        <span className="comms-row__face" style={{ '--c': mark ? markColor(mark.bg) : undefined } as React.CSSProperties}>{(mark?.label ?? t.agent)[0]}</span>
+        {mark ? <AgentAvatar a={mark} size={32} className="comms-row__avatar" />
+          : <span className="comms-row__face">{t.agent[0]}</span>}
         <span className="comms-row__main">
           <span className="comms-row__title">{t.title ?? `New thread with ${agentName(t.agent, marks)}`}</span>
           <span className="comms-row__sub loom-data">{t.state.working ? 'working…' : `CH ${String(t.channel).padStart(2, '0')}${t.project ? ` · ${t.project}` : ''}`}</span>
@@ -396,8 +398,10 @@ function grouped(messages: Msg[]): Array<{ key: string; msg?: Msg; cards?: Msg[]
   return out;
 }
 
-function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, github }: {
+function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChanged, github }: {
   initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[]; asks?: ThreadAsk[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
+  /** Whether it shows its own way back to the list: a phone's, or one pane at a time in a narrow window or tile. */
+  back: boolean;
   onBack: () => void; onChanged: () => void;
 }) {
   const [thread, setThread] = useState(initial.thread);
@@ -540,7 +544,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
   return (
     <article className="comms-thread" data-wide={wide || undefined}>
       <header className="comms-thread__head">
-        {!wide && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
+        {back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
         {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
         {face !== 'idle' && <AgentState className="comms-state" status={statusOf(face)} size="sm"
@@ -623,7 +627,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
 
 // ---- a new thread ------------------------------------------------------------------------------
 
-function NewThread({ agents, marks, csrf, onOpened, onBack, wide }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (id: string) => void; onBack: () => void; wide: boolean }) {
+function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (id: string) => void; onBack: () => void; wide: boolean; back: boolean }) {
   const [agent, setAgent] = useState(agents[0]);
   const [error, setError] = useState<string | null>(null);
   const id = useRef(newId());
@@ -637,14 +641,14 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide }: { agents: st
   return (
     <article className="comms-thread comms-new-thread" data-wide={wide || undefined}>
       <header className="comms-thread__head">
-        {!wide && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
+        {back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <span className="comms-thread__title">New thread</span>
       </header>
       <div className="comms-pick" role="radiogroup" aria-label="Who with">
         {agents.map((a) => (
           <button key={a} type="button" role="radio" aria-checked={a === agent} className="comms-pick__agent" data-on={a === agent || undefined}
             style={{ '--c': marks[a] ? markColor(marks[a].bg) : undefined } as React.CSSProperties} onClick={() => setAgent(a)}>
-            <span className="comms-row__face">{agentName(a, marks)[0]}</span>{agentName(a, marks)}
+            {marks[a] ? <AgentAvatar a={marks[a]} size={32} className="comms-row__avatar" /> : <span className="comms-row__face">{agentName(a, marks)[0]}</span>}{agentName(a, marks)}
           </button>
         ))}
       </div>
@@ -655,6 +659,9 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide }: { agents: st
 }
 
 // ---- the view ----------------------------------------------------------------------------------
+
+/** Narrower than this, a desktop's Comms shows one pane at a time: a 320 px list beside a thread needs room. */
+const ONE_PANE_BELOW = 620;
 
 export function CommsView({ data }: { data: CommsData }) {
   const { go, wide } = useEnv();
@@ -669,15 +676,31 @@ export function CommsView({ data }: { data: CommsData }) {
   useEffect(() => { setMaking(false); }, [data.thread?.id]);
   const open = (id: string) => go(`/comms/${id}`);
   const back = () => { setMaking(false); go('/comms'); };
-  const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} />
-    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} onBack={back} onChanged={reload} github={data.github} />
+  // A desktop's Comms in a box narrower than two panes fit (a narrow window, a tile): one pane at a time, the list, then
+  // the thread with a way back. Measured on the box, not the screen; before the first paint, so two never flash.
+  const box = useRef<HTMLDivElement>(null);
+  const [one, setOne] = useState(false);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!wide || !el) return;
+    // Its border box, both times: the first read and every resize after measure the same edge.
+    const fit = (w: number) => setOne(w > 0 && w < ONE_PANE_BELOW);
+    fit(el.getBoundingClientRect().width);
+    const ro = new ResizeObserver(([e]) => fit(e.borderBoxSize?.[0]?.inlineSize ?? el.getBoundingClientRect().width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [wide]);
+  const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} />
+    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} />
       : null;
   const list = <ThreadList threads={threads} marks={marks} current={data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
+  // The same two places in both, the list's and the pane's: crossing the width keeps an open thread mounted (its
+  // draft, its live messages), only the list comes and goes.
   return (
-    <div className="comms" data-wide="">
-      {list}
-      {pane ?? <div className="comms-blank"><p className="loom-data">PICK A THREAD, OR START ONE</p></div>}
+    <div ref={box} className="comms" data-wide="" data-one={one ? '' : undefined}>
+      {one && pane ? null : list}
+      {pane ?? (one ? null : <div className="comms-blank"><p className="loom-data">PICK A THREAD, OR START ONE</p></div>)}
     </div>
   );
 }

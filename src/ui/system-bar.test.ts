@@ -3,7 +3,7 @@
  * says, only from what the shell has. Its place on the page: desk-bar.integration.test.ts.
  */
 import { describe, it, expect } from 'vitest';
-import { clockText, clockWords, statusItems } from '../../web/src/system-bar';
+import { clockText, clockWords, placeWords, statusItems } from '../../web/src/system-bar';
 import type { Shell } from '../../web/src/loom';
 
 const shell = (o: Partial<Shell> = {}): Shell => ({ owner: 'jonathan', scope: 'household', household: true, agents: [], asks: 0, home: '/', core: [], pieces: [], tab: 'home', ...o });
@@ -11,6 +11,17 @@ const said = (s: Shell, offline = false) => statusItems(s, offline).map(({ key, 
 const agent = (id: string, working?: true) => ({ id, label: id, bg: '#000', fg: '#fff', href: `/a/${id}`, current: false, ...(working ? { working } : {}) });
 
 describe('the system bar', () => {
+  it('a place in a line says each word once: a tile that names what it counts stands alone', () => {
+    // Before: "Boxes 3 boxes" in the ticker.
+    expect(placeWords('Boxes', '3 boxes')).toBe('3 boxes');
+    expect(placeWords('Boxes', '1 box')).toBe('1 box');
+    expect(placeWords('Tasks', '29 in progress')).toBe('Tasks 29 in progress');
+    expect(placeWords('Secrets', '61')).toBe('Secrets 61');
+    expect(placeWords('Changes', '15 open')).toBe('Changes 15 open');
+    // A word inside another isn't it.
+    expect(placeWords('Box', '3 inboxes')).toBe('Box 3 inboxes');
+  });
+
   it('its clock: the time alone, in loom\'s zone, not the browser\'s', () => {
     const at = Date.UTC(2026, 10, 5, 14, 2);
     expect(clockText(at, 'America/Chicago')).toBe('8:02');

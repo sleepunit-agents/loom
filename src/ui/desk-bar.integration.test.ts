@@ -206,6 +206,10 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     // Measured once its typeface is in (the words' width changes with it), and settled, even on a busy machine.
     await p.waitForFunction(() => document.fonts.status === 'loaded');
     expect((await state()).w).toBeGreaterThan(500);
+    // Each place said once: the Boxes tile names what it counts, so it stands alone (it said "Boxes 3 boxes").
+    const parts = await tick.locator('.loom-tick__line').first().locator('.loom-tick__part').allTextContents();
+    expect(parts).toContain('3 boxes');
+    expect(parts.filter((t) => /boxes.*boxes/i.test(t))).toEqual([]);
     await expect.poll(async () => { const s = await state(); return s.run === s.over; }, { timeout: 10_000 }).toBe(true);
     // Crowded, it moves.
     await tick.evaluate((e) => { (e as HTMLElement).style.flex = 'none'; (e as HTMLElement).style.width = '120px'; });

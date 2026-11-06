@@ -207,6 +207,60 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     } finally { await ctx.close(); }
   }, 30_000);
 
+  it('on a desktop, in a box narrower than two panes fit (a narrow window, a tile): one pane, the list, then the thread or a new one with a way back', async () => {
+    const { ctx, page, errors } = await open(false);
+    try {
+      // The box, not the screen: a desktop's Comms held to a width, as a tile or a narrow window holds it.
+      const hold = (w: number | null) => page.evaluate((w) => {
+        document.getElementById('hold')?.remove();
+        if (w === null) return;
+        const s = document.createElement('style'); s.id = 'hold'; s.textContent = `.comms { width: ${w}px !important; max-width: none !important; box-sizing: border-box; }`; document.head.append(s);
+      }, w);
+      const back = page.locator('.comms-thread .comms-back');
+      await page.goto(`${base}/comms`);
+      await page.locator('.comms-list').waitFor();
+      await hold(560);
+      await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-thread, .comms-blank').count()).toBe(0);
+      // The list's faces are the agents' own (Art here has no pixel sheet: his drawn face), never their letters.
+      const rows = await page.locator('.comms-row').count();
+      expect(rows).toBeGreaterThan(0);
+      expect(await page.locator('.comms-row .comms-row__avatar :is([data-slot="agent-face"], .loom-pixel-avatar)').count()).toBe(rows);
+      expect(await page.locator('.comms-row .comms-row__face').count()).toBe(0);
+      // A thread: the list makes way, and the thread has its way back.
+      await page.locator('.comms-row__btn').first().click();
+      await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-list').count()).toBe(0);
+      expect(await back.isVisible()).toBe(true);
+      await back.click();
+      await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-thread').count()).toBe(0);
+      // New thread: the same, with its own way back.
+      await page.locator('.comms-new').click();
+      await page.locator('.comms[data-one] .comms-new-thread').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-list').count()).toBe(0);
+      expect(await page.locator('.comms-new-thread .comms-back').isVisible()).toBe(true);
+      await page.locator('.comms-new-thread .comms-back').click();
+      await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
+      // The edge: 619 px is one pane, 620 two, side by side with no way back. A thread open across it stays mounted.
+      await page.locator('.comms-row__btn').first().click();
+      await page.locator('.comms-composer textarea').fill('a draft kept across the width');
+      await hold(619);
+      await page.waitForFunction(() => document.querySelector('.comms')?.hasAttribute('data-one'));
+      await hold(620);
+      await page.locator('.comms:not([data-one]) .comms-list').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-thread').count()).toBe(1);
+      expect(await back.count()).toBe(0);
+      expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
+      await hold(619);
+      await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
+      expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
+      await hold(null);
+      await page.locator('.comms:not([data-one]) .comms-list').waitFor({ timeout: 8000 });
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 45_000);
+
   it('an ask asked from the thread: drawn with its words, the face waiting on you, Allow once posted to its piece', async () => {
     const { ctx, page, errors } = await open(false);
     try {

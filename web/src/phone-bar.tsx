@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { buzz, HapticLabel, useHaptics } from './haptic';
 import type { Shell } from './loom';
+import { placeWords } from './system-bar';
 import { motionQuery, reducedMotion } from './access';
 
 /** How fast the ticker moves, in CSS pixels a second (his "slow, ~20-30 px/s"). */
@@ -32,7 +33,7 @@ function tickerParts(shell: Shell): { text: string; tone?: string }[] {
   return [
     { text: `${n} agent${n === 1 ? '' : 's'}` },
     ...shell.agents.map((a) => ({ text: a.sub ? `${a.label} ${a.sub}` : a.label })),
-    ...places.map(({ p }) => ({ text: `${p.label} ${p.stat}`, tone: p.tone === 'bad' || p.tone === 'warn' ? p.tone : undefined })),
+    ...places.map(({ p }) => ({ text: placeWords(p.label, p.stat!), tone: p.tone === 'bad' || p.tone === 'warn' ? p.tone : undefined })),
   ];
 }
 
