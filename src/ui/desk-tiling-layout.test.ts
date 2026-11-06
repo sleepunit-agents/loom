@@ -60,6 +60,11 @@ describe('the tiling rule', () => {
     // Both capped: the ratio stands.
     const both = layout([app('Comms'), app('Inbox')], [], area(1810, 900), 1920);
     expect([both.apps.comms.w, both.apps.inbox.w]).toEqual([850, 950]);
+    // The 34 percent floor: Setup's raw 607 px is clamped up.
+    expect(layout([app('Setup'), app('Changes')], [], area(1810, 900), 1920).apps.setup.w).toBe(612);
+    // The first has no max and the rest have one: it takes what they can't use.
+    const noMax = layout([app('Tasks'), app('Comms')], [], area(3000, 1300), 3000);
+    expect([noMax.apps.tasks.w, noMax.apps.comms.w]).toEqual([2170, 820]);
   });
 
   it('4. a big app takes the big slot, unless the person made another the big one', () => {
@@ -93,6 +98,9 @@ describe('the tiling rule', () => {
     expect(rail.mode).toBe('rail');
     expect(rail.widgetArea!.w).toBe(340);
     expect(rail.widgets.art.w).toBe(columnWidth(1920));
+    expect(layout([app('Tasks'), app('Comms')], three, area(1552, 800), 1600).widgetArea!.w).toBe(300);
+    const r1280 = layout([app('Tasks'), app('Comms')], three, area(1232, 800), 1280);
+    expect([r1280.mode, r1280.widgetArea!.w]).toEqual(['rail', 280]);
     const strip = layout([app('Tasks'), app('Changes')], three, area(1232, 600), 1280);
     expect(strip.mode).toBe('strip');
     expect(strip.widgetArea!.w).toBe(STRIP);
@@ -114,7 +122,7 @@ describe('the tiling rule', () => {
     for (const a of r.apps) { const l = layout(r.apps, [], A, 1280).apps[a.id]; expect(l.w).toBeGreaterThanOrEqual(a.fit.min[0]); expect(l.h).toBeGreaterThanOrEqual(a.fit.min[1]); }
     // Comms is the one it came from: Tasks goes instead, though Comms was used less recently.
     const from = admit([app('Tasks'), app('Comms')], app('Changes'), [], A, 1280, { usedAt: used, from: { tile: 'comms' } });
-    expect(from.docked.map((d) => d.app.name)).toEqual(['Tasks']);
+    expect(from.docked.map((d) => d.why)).toEqual(['Tasks went to the dock to make room for Changes: Comms would have been under its 360 px minimum height']);
     // Comms is pinned: Tasks goes.
     const pin = admit(promote([app('Tasks'), app('Comms')], 'comms'), app('Changes'), [], A, 1280, { usedAt: used });
     expect(pin.docked.map((d) => d.app.name)).toEqual(['Tasks']);
@@ -129,10 +137,14 @@ describe('the tiling rule', () => {
 
   it('8. the cap: a third app at 1279 px sends one to the dock; at 1280 it fits', () => {
     expect([capFor(1279), capFor(1280), capFor(1599), capFor(1600), capFor(2559), capFor(2560)]).toEqual([2, 3, 3, 4, 4, 6]);
-    const A = area(1232, 760);
     const apps = [app('Inbox'), app('Comms')];
-    expect(admit(apps, app('Knowledge'), [], A, 1279).docked.map((d) => d.why)[0]).toMatch(/2 apps is the most/);
-    expect(admit(apps, app('Knowledge'), [], A, 1280).docked).toEqual([]);
+    expect(admit(apps, app('Knowledge'), [], area(1231, 760), 1279).docked.map((d) => d.why)).toEqual(['Inbox went to the dock to make room for Knowledge: 2 apps is the most this screen holds']);
+    expect(admit(apps, app('Knowledge'), [], area(1232, 760), 1280).docked).toEqual([]);
+    const set = ['Appearance', 'Accessibility', 'Account', 'Passkeys'].map((n) => app(n));
+    expect(admit(set.slice(0, 3), app('Passkeys'), [], area(1551, 1000), 1599).docked.map((d) => d.why)).toEqual(['Appearance went to the dock to make room for Passkeys: 3 apps is the most this screen holds']);
+    expect(admit(set.slice(0, 3), app('Passkeys'), [], area(1552, 1000), 1600).docked).toEqual([]);
+    expect(admit(set, app('Secrets'), [], area(2511, 1300), 2559).docked.map((d) => d.why)).toEqual(['Appearance went to the dock to make room for Secrets: 4 apps is the most this screen holds']);
+    expect(admit(set, app('Secrets'), [], area(2512, 1300), 2560).docked).toEqual([]);
   });
 
   it('9. deterministic: the same tiles at the same size give the same boxes', () => {

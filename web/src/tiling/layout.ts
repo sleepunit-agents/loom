@@ -210,7 +210,7 @@ export function admit(apps: AppTile[], add: AppTile, widgets: WidgetTile[], area
     const used = (a: AppTile) => o.usedAt?.[a.id] ?? 0;
     const go = may.reduce((x, y) => (used(y) < used(x) ? y : x));
     const why = over ? `${cap} apps is the most this screen holds`
-      : `${under!.app.id === go.id ? 'it' : under!.app.name} would have been under ${under!.app.id === go.id ? 'its' : 'its own'} ${under!.px} px minimum${under!.edge === 'height' ? ' height' : ''}`;
+      : `${under!.app.id === go.id ? 'it' : under!.app.name} would have been under its ${under!.px} px minimum${under!.edge === 'height' ? ' height' : ''}`;
     docked.push({ app: go, why: `${go.name} went to the dock to make room for ${add.name}: ${why}` });
     order = order.filter((a) => a.id !== go.id);
   }
