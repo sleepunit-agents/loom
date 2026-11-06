@@ -155,8 +155,14 @@ const STATUS_WORDS: Partial<Record<AgentStatus, string>> = { thinking: 'Thinking
 type Link = 'ok' | 'lost' | 'none';
 const LINK_WORDS: Record<Link, string> = { ok: 'LINK OK', lost: 'LINK LOST', none: 'NO CARRIER' };
 
-function CommScreen({ agent, mark, channel, face: base, talk, link, you, compact, wide }: {
-  agent: string; mark: Mark; channel: number; face: FaceState; talk: { n: number; key: number } | null; link: Link; you?: string; compact: boolean; wide: boolean;
+/** The harness the thread's latest reply came from, when it was a switch (its card's `on`, comms.md): "Codex", or null. */
+export const onOf = (messages: Msg[]): string | null => {
+  const on = messages.filter((m) => m.kind === 'reply').at(-1)?.card?.on;
+  return typeof on === 'string' && on ? on : null;
+};
+
+function CommScreen({ agent, mark, channel, face: base, talk, link, on, you, compact, wide }: {
+  agent: string; mark: Mark; channel: number; face: FaceState; talk: { n: number; key: number } | null; link: Link; on?: string | null; you?: string; compact: boolean; wide: boolean;
 }) {
   const [signal, setSignal] = useState(false);
   const [talkNow, setTalkNow] = useState<{ n: number; key: number } | undefined>();
@@ -209,7 +215,7 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, you, compact
           {signal && <span className="comms-screen__static" aria-hidden />}
         </div>
         <footer className="comms-screen__label loom-data">
-          <span>{name} · CH {String(channel).padStart(2, '0')} · {LINK_WORDS[link]}</span>
+          <span>{name} · CH {String(channel).padStart(2, '0')} · {LINK_WORDS[link]}{on ? ` · ON ${on.toUpperCase()}` : ''}</span>
           <span className="comms-screen__meter" aria-label={`signal ${meter} of 4`}>{[1, 2, 3, 4].map((i) => <i key={i} data-on={i <= meter || undefined} />)}</span>
         </footer>
       </div>
@@ -527,7 +533,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
   const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
-  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} you={member} compact={!wide && compact} wide={wide} />;
+  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} you={member} compact={!wide && compact} wide={wide} />;
 
   return (
     <article className="comms-thread" data-wide={wide || undefined}>

@@ -411,7 +411,17 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       const ok = await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'hi jonathan' });
       expect(ok.body).toMatchObject({ ok: true });
       const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string; from: string }>;
-      expect(msgs.at(-1)).toMatchObject({ kind: 'reply', text: 'hi jonathan', from: 'art' });
+      expect(msgs.at(-1)).toMatchObject({ kind: 'reply', text: 'hi jonathan', from: 'art', card: null });
+      // A switched body's reply names its harness (loom-box t-1907), kept on its card for the channel line; anything
+      // but a short word is dropped.
+      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'on codex now', on: 'Codex' });
+      for (const bad of ['<b>x</b>', 'Codex Max', 'C'.repeat(25), 7]) await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: `odd on ${String(bad).length}`, on: bad });
+      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'longest', on: 'C'.repeat(24) });
+      const after = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ text: string; card: unknown }>;
+      // Only `on` is kept, nothing else of the call.
+      expect(after.find((m) => m.text === 'on codex now')?.card).toEqual({ on: 'Codex' });
+      expect(after.filter((m) => m.text.startsWith('odd on')).map((m) => m.card)).toEqual([null, null, null, null]);
+      expect(after.find((m) => m.text === 'longest')?.card).toEqual({ on: 'C'.repeat(24) });
       const mt = await open(tok.jonathan, 'mark');
       const cases: Array<Record<string, unknown>> = [
         { place: 'th:aaaaaaaaaa', agent: 'art', text: 'x' }, { place: mt.id, agent: 'art', text: 'x' },

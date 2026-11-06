@@ -128,6 +128,19 @@ Its inputs:
 
 It replaces the clock's `WAKE_MODEL` and the bridges piece's resolver.
 
+**When an account runs out** (loom-box t-1907, Jonathan 2026-11-06: "I don't want slack bodies to stop responding as
+Art if we hit 100%"). "Quota left" also means no **hold**. A hold is written when a provider refuses a body's turn for
+a usage limit, read from the harness's structured error and never its words, and lasts until that limit's reset. A
+window past its reset time has room again.
+- A resume whose slot's harness has no room parks that slot as the conversation's home, and starts a fresh body on
+  another harness, from the digests.
+- The conversation goes home at its next run once that harness has room and the reset has passed.
+- A refused turn runs once more elsewhere, never twice.
+- When nothing has room, the conversation is answered plainly and the owner alerted.
+- The owner gets one Inbox FYI per agent per switch, and one when it's back. The agent's card reads "Model: on Codex",
+  and the comm screen's channel line reads `ON CODEX`.
+- A deny list Codex can't keep (anything but whole MCP servers) keeps that body off Codex.
+
 ### 5. Delivery
 
 Anything addressed to an agent arrives the same way:
@@ -204,7 +217,8 @@ Where it comes from:
     busy, and with `done` when its turn ends. It answers `{ok: true, stop?: true}`, and `stop: true` ends that body.
   - **A venue core adapts itself** (`loom`, [comms.md](comms.md)) has no bin. Its row in `GET /api/loom/venues`
     says `"adapter": "core"` instead of `send`. For it, the runtime makes the same three calls (post, describe,
-    status) as `POST /api/loom/comms/adapter` `{op, place, agent, …}` with its own token. They have the same limits,
+    status) as `POST /api/loom/comms/adapter` `{op, place, agent, …}` with its own token. A switched body's post adds
+    `on` (its harness, e.g. `"Codex"`; comms.md). They have the same limits,
     the same retry rule and the same answer shapes. A delivery on `loom` from core's own source `loom` comes only
     from one of the agent's owners, so the runtime takes its sender as tier 3 without reading the gates.
 - **Activity, for `loom` conversations only** ([comms.md](comms.md), "Activity"). The runtime reads a body's own
