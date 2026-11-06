@@ -411,7 +411,14 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       const ok = await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'hi jonathan' });
       expect(ok.body).toMatchObject({ ok: true });
       const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string; from: string }>;
-      expect(msgs.at(-1)).toMatchObject({ kind: 'reply', text: 'hi jonathan', from: 'art' });
+      expect(msgs.at(-1)).toMatchObject({ kind: 'reply', text: 'hi jonathan', from: 'art', card: null });
+      // A switched body's reply names its harness (loom-box t-1907), kept on its card for the channel line; anything
+      // but a short word is dropped.
+      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'on codex now', on: 'Codex' });
+      await api(tok.runtime, 'comms/adapter', { op: 'post', place: t.id, agent: 'art', text: 'odd on', on: '<b>x</b>' });
+      const after = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ text: string; card: unknown }>;
+      expect(after.at(-2)).toMatchObject({ text: 'on codex now', card: { on: 'Codex' } });
+      expect(after.at(-1)).toMatchObject({ text: 'odd on', card: null });
       const mt = await open(tok.jonathan, 'mark');
       const cases: Array<Record<string, unknown>> = [
         { place: 'th:aaaaaaaaaa', agent: 'art', text: 'x' }, { place: mt.id, agent: 'art', text: 'x' },

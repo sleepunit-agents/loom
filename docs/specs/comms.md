@@ -583,6 +583,9 @@ Neon OS's own, not copied from any game.
     shown with at least two digits (`CH 03`, `CH 112`).
   - The link word is `LINK OK` while the thread's stream is open, `LINK LOST` while it reconnects, and `NO CARRIER`
     when the last delivery failed. The signal meter goes with it: full, flickering low, empty.
+  - `· ON CODEX` follows it while the thread's latest reply came from a body on another harness than the agent's own,
+    because that account was out of quota. The runtime's `post` names the harness (`on: "Codex"`), and core keeps it
+    on the reply's card. (loom-box t-1907.)
 - **Where it sits:**
   - **Desktop:** a column at the right of the thread pane, about 240 px, beside the messages. A thread pane narrower
     than 760 px puts it at the top of the pane instead.

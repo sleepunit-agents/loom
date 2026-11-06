@@ -788,7 +788,10 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
       bump(h.home);
       return { ok: false, reason: 'the age programs aren\'t installed, so loom can\'t keep the reply' };
     }
-    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}) }, now);
+    // `on`: the harness a switched body answers on (loom-box t-1907: "Codex" while the agent's own account is out of
+    // quota), kept on the reply's card for the comm screen's channel line. A short word, or nothing.
+    const on = typeof raw.on === 'string' && /^[A-Za-z][A-Za-z0-9 .-]{0,23}$/.test(raw.on) ? raw.on : undefined;
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
     withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };
   }

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createPlayer, PIXEL, stateFrom, type Frame, type PlayerEnv } from '../../web/src/pixel-face';
-import { faceOf, talkBeats, newId, replyHtml, staysInside } from '../../web/src/comms';
+import { faceOf, talkBeats, newId, onOf, replyHtml, staysInside } from '../../web/src/comms';
 
 function fakeEnv(seed = 11): PlayerEnv & { run: (ms: number) => void; t: () => number } {
   let now = 0, id = 0, s = seed;
@@ -161,5 +161,14 @@ describe('the comm screen\'s rules', () => {
     for (const href of ['//evil.com/p/tasks/t-1', '/\\evil.com', 'https://evil.com/p/tasks/t-1', 'javascript:alert(1)', '/../x', '/p/tasks/t-1/../../admin', '/p/notes/x']) {
       expect(staysInside(href, here), href).toBe(false);
     }
+  });
+});
+
+describe('the channel line names a switched harness (loom-box t-1907)', () => {
+  const reply = (seq: number, card: Record<string, unknown> | null) => ({ seq, at: '', kind: 'reply' as const, from: 'art', id: `r${seq}`, text: 'x', card, run: null, delivered: null });
+  it('is the latest reply\'s `on`, and nothing once a reply comes from the agent\'s own harness again', () => {
+    expect(onOf([reply(1, null)])).toBeNull();
+    expect(onOf([reply(1, null), reply(2, { on: 'Codex' })])).toBe('Codex');
+    expect(onOf([reply(1, { on: 'Codex' }), reply(2, null)])).toBeNull();
   });
 });
