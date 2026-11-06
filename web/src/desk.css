@@ -55,9 +55,9 @@
 :root[data-look] .loom-need__fine{font-size:12px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere}
 
 /* ---- an agent: its face big on the left, how it is and its name beside it, the one thing it's on under them ---- */
-:root[data-look] a.loom-w--agent{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "line line" "foot foot";
+:root[data-look] .loom-w--agent{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "line line" "foot foot";
   align-items:center;column-gap:18px;text-decoration:none;--t:var(--acc,var(--v-pink));cursor:pointer;transition:box-shadow .15s ease-out}
-:root[data-look] a.loom-w--agent::before{width:72px}
+:root[data-look] .loom-w--agent::before{width:72px}
 :root[data-look] .loom-agent__face{grid-area:face;display:grid;place-items:center;width:112px;height:112px;margin:18px 0 6px 18px;
   background:radial-gradient(closest-side,color-mix(in srgb,var(--t) 16%,transparent),transparent)}
 :root[data-look] .loom-agent__who{grid-area:who;display:grid;gap:4px;min-width:0;padding:18px 18px 6px 0}
@@ -102,10 +102,10 @@
 @media (hover:hover) and (pointer:fine){
   :root[data-look] :is(.loom-w__more,.loom-w__foot):hover{color:var(--v-text)}
   :root[data-look] .loom-need__title:hover{text-decoration:underline;text-underline-offset:3px}
-  :root[data-look] a.loom-w--agent:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
+  :root[data-look] .loom-w--agent:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
   :root[data-look] .loom-vital:hover{background:color-mix(in srgb,var(--t) 6%,transparent)}
 }
-:root[data-look] a.loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
+:root[data-look] .loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
 /* ---- an app's window (App.tsx): one big frame over the ground, between the bars and the dock. A chassis: a hairline
    edge in the app's colour, two cut corners, a ruled strip down its left side, a title strip with the app's key, its
    name and where it is, and Close. The page inside reads at a page's width, never a phone's, and scrolls inside. ---- */

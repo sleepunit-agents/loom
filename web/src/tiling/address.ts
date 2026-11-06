@@ -1,24 +1,26 @@
 // The tiled desktop's address (docs/specs/desk-tiling.md, "The address"): the path is the focused tile's own page, and
 // the query carries the set. `t` is the apps on screen in order, each by its name (the last part of its dock key's
 // path), a `*` before the focused one and a `!` after the pinned one; `m` is the minimized apps, in the order they went
-// to the dock. Anything else in the query is the focused page's own.
+// to the dock; `w` is the widgets in the order they were added (`needs`, `vitals`, `backup`, `ticker`, or an agent's id).
+// Anything else in the query is the focused page's own.
 //
 // No React here, so it's tested on its own (src/ui/desk-tiling-address.test.ts).
 
 export type Entry = { name: string; focused?: boolean; pinned?: boolean };
-export type TileSet = { t: Entry[]; m: string[] };
+export type TileSet = { t: Entry[]; m: string[]; /** absent: a set from before widgets (a fresh device's set) */ w?: string[] };
 
 const NAME = /^[a-z0-9][a-z0-9_-]*$/i;
 
 export { nameOf } from './name';
 
-/** The set an address carries, and the page's own address without it. `set` is null when the query has no `t` or `m`. */
+/** The set an address carries, and the page's own address without it. `set` is null when the query has no `t`, `m` or
+ * `w`; an address with a set and no `w` has no widgets. */
 export function readSet(url: string): { set: TileSet | null; page: string } {
   const u = new URL(url, 'http://x');
-  const t = u.searchParams.get('t'), m = u.searchParams.get('m');
-  u.searchParams.delete('t'); u.searchParams.delete('m');
+  const t = u.searchParams.get('t'), m = u.searchParams.get('m'), w = u.searchParams.get('w');
+  for (const k of ['t', 'm', 'w']) u.searchParams.delete(k);
   const page = u.pathname + u.search;
-  if (t === null && m === null) return { set: null, page };
+  if (t === null && m === null && w === null) return { set: null, page };
   const seen = new Set<string>();
   const entries: Entry[] = [];
   for (const raw of (t ?? '').split(',')) {
@@ -33,16 +35,18 @@ export function readSet(url: string): { set: TileSet | null; page: string } {
   for (const e of entries) { if (e.focused && f) delete e.focused; f ||= !!e.focused; }
   entries.forEach((e, i) => { if (e.pinned && i > 0) delete e.pinned; });
   const mins = (m ?? '').split(',').filter((n) => NAME.test(n) && !seen.has(n) && (seen.add(n), true));
-  return { set: { t: entries, m: mins }, page };
+  const ws = new Set<string>();
+  const widgets = (w ?? '').split(',').filter((n) => NAME.test(n) && !ws.has(n) && (ws.add(n), true));
+  return { set: { t: entries, m: mins, w: widgets }, page };
 }
 
 /** The address for a page (the focused tile's, or `/`) and the set. */
 export function writeSet(page: string, set: TileSet): string {
   const u = new URL(page, 'http://x');
-  u.searchParams.delete('t'); u.searchParams.delete('m');
+  for (const k of ['t', 'm', 'w']) u.searchParams.delete(k);
   const t = set.t.map((e) => `${e.focused ? '*' : ''}${e.name}${e.pinned ? '!' : ''}`).join(',');
   // Written by hand, not URLSearchParams: `*`, `!` and `,` stay as they are, so the address reads as the spec writes it.
   const own = u.search.replace(/^\?/, '');
-  const q = [own, t && `t=${t}`, set.m.length ? `m=${set.m.join(',')}` : ''].filter(Boolean).join('&');
+  const q = [own, t && `t=${t}`, set.m.length ? `m=${set.m.join(',')}` : '', set.w?.length ? `w=${set.w.join(',')}` : ''].filter(Boolean).join('&');
   return u.pathname + (q ? `?${q}` : '');
 }
