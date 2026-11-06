@@ -173,6 +173,7 @@ export type TabFit = { min?: [number, number]; ideal?: number; max?: number | nu
 /** The default row a fit's missing keys fall back to (web/src/tiling/fit.ts DEFAULT_FIT), and the least it may ask. */
 export const FIT_DEFAULT = { min: [420, 300] as [number, number], ideal: 720, max: null as number | null };
 export const FIT_LEAST = { w: 320, h: 240 };
+const FIT_MOST = 10000;
 
 export interface Manifest {
   /** The piece narrows its data to the agent in LOOM_SCOPE; without it, loom says it shows the whole household. */
@@ -839,14 +840,13 @@ function attempt<T>(f: () => T): T | string {
   }
 }
 
-/** Validate a piece's `ui --json` answer (v2, or a first-version `{sections}`). */
-/** A tab's fit: each key optional (the default row's otherwise); a min under 320×240, an ideal under the min's width, or
- * a max under the ideal is refused, naming the field. Judged with the defaults filled in, as the desk will use it. */
-function tabFit(v: unknown): TabFit {
+/** A tab's fit: each key optional (the default row's otherwise; an ideal left out is the default's or the min's width,
+ * whichever is wider); a min under 320×240, an ideal it gives under the min's width, or a max under the ideal is refused,
+ * naming the field. Keys it doesn't know are left alone, as `tab`'s are. Empty, it's no fit at all (loom's row stands). */
+function tabFit(v: unknown): TabFit | undefined {
   const f = obj(v, 'tab.fit');
-  for (const k of Object.keys(f)) if (!['min', 'ideal', 'max', 'big'].includes(k)) throw new Invalid(`tab.fit.${k} isn't a fit key (min, ideal, max, big)`);
   const px = (x: unknown, what: string) => {
-    if (typeof x !== 'number' || !Number.isInteger(x) || x <= 0 || x > 10000) throw new Invalid(`${what} must be a whole number of pixels`);
+    if (typeof x !== 'number' || !Number.isInteger(x) || x <= 0 || x > FIT_MOST) throw new Invalid(`${what} must be a whole number of pixels, at most ${FIT_MOST}`);
     return x;
   };
   const out: TabFit = {};
@@ -858,12 +858,13 @@ function tabFit(v: unknown): TabFit {
   if (f.ideal !== undefined) out.ideal = px(f.ideal, 'tab.fit.ideal');
   if (f.max !== undefined) out.max = f.max === null ? null : px(f.max, 'tab.fit.max');
   if (f.big !== undefined) { if (typeof f.big !== 'boolean') throw new Invalid('tab.fit.big must be true or false'); out.big = f.big; }
-  const min = out.min ?? FIT_DEFAULT.min, ideal = out.ideal ?? FIT_DEFAULT.ideal;
-  if (ideal < min[0]) throw new Invalid(`tab.fit.ideal (${ideal}) must be at least its min's width (${min[0]})`);
+  const min = out.min ?? FIT_DEFAULT.min, ideal = out.ideal ?? Math.max(FIT_DEFAULT.ideal, min[0]);
+  if (out.ideal !== undefined && ideal < min[0]) throw new Invalid(`tab.fit.ideal (${ideal}) must be at least its min's width (${min[0]})`);
   if (out.max != null && out.max < ideal) throw new Invalid(`tab.fit.max (${out.max}) must be at least its ideal (${ideal})`);
-  return out;
+  return Object.keys(out).length ? out : undefined;
 }
 
+/** Validate a piece's `ui --json` answer (v2, or a first-version `{sections}`). */
 export function parseManifest(value: unknown): Manifest | string {
   return attempt(() => {
     const top = obj(value, 'answer');

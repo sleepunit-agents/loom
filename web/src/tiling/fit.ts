@@ -30,7 +30,9 @@ export const AGENT_FIT: Fit = { min: [420, 360], ideal: 760, max: 1000, big: fal
 export function fitFor(label: string, own?: Partial<Omit<Fit, 'why'>>): Fit {
   const base = FIT[label] ?? DEFAULT_FIT;
   if (!own) return base;
-  return { min: own.min ?? DEFAULT_FIT.min, ideal: own.ideal ?? DEFAULT_FIT.ideal, max: own.max === undefined ? DEFAULT_FIT.max : own.max,
+  // An ideal left out is the default's, or the min's width when that's wider (vocab.ts tabFit judges it so).
+  const min = own.min ?? DEFAULT_FIT.min;
+  return { min, ideal: own.ideal ?? Math.max(DEFAULT_FIT.ideal, min[0]), max: own.max === undefined ? DEFAULT_FIT.max : own.max,
     big: own.big ?? DEFAULT_FIT.big, why: 'its own fit' };
 }
 

@@ -1,7 +1,7 @@
 // A piece's own fit (docs/specs/desk-tiling.md, "Fit"; criterion 21): a manifest's tab.fit is read, judged and refused
 // with a message naming the field, and what it says is what the desk's fit table gives that app.
 import { describe, it, expect } from 'vitest';
-import { parseManifest } from './vocab.js';
+import { FIT_DEFAULT, parseManifest } from './vocab.js';
 import { DEFAULT_FIT, FIT, fitFor } from '../../web/src/tiling/fit';
 
 const tab = (fit: unknown) => parseManifest({ v: 2, tab: { label: 'Garden', fit } });
@@ -18,7 +18,21 @@ describe('a manifest\'s tab.fit', () => {
     expect(fitFor('Tasks')).toBe(FIT.Tasks);
     // max: null is "any width"
     expect((tab({ max: null }) as { tab: { fit: object } }).tab.fit).toEqual({ max: null });
-    expect((tab({}) as { tab: { fit: object } }).tab.fit).toEqual({});
+    // an empty fit is none: loom's own row for its label stands (Tasks keeps its 520×320, 1040)
+    const empty = parseManifest({ v: 2, tab: { label: 'Tasks', fit: {} } }) as { tab: { fit?: object } };
+    expect(empty.tab.fit).toBeUndefined();
+    expect(fitFor('Tasks', empty.tab.fit)).toBe(FIT.Tasks);
+    // a wide min alone is fine: the ideal it leaves out is the min's width
+    const wide = (tab({ min: [800, 400] }) as { tab: { fit: { min: [number, number] } } }).tab.fit;
+    expect(wide).toEqual({ min: [800, 400] });
+    expect(fitFor('Garden', wide)).toMatchObject({ min: [800, 400], ideal: 800 });
+    expect(tab({ min: [800, 400], max: 760 })).toMatch(/tab\.fit\.max .*800/);
+    // a key it doesn't know is left alone, as tab's own are
+    expect((tab({ ideal: 900, grow: 1 }) as { tab: { fit: object } }).tab.fit).toEqual({ ideal: 900 });
+  });
+
+  it('keeps one default row on both sides (the manifest\'s judge and the desk)', () => {
+    expect(FIT_DEFAULT).toEqual({ min: DEFAULT_FIT.min, ideal: DEFAULT_FIT.ideal, max: DEFAULT_FIT.max });
   });
 
   it('refuses a min under 320×240, an ideal under the min\'s width, a max under the ideal, naming the field', () => {
@@ -31,7 +45,7 @@ describe('a manifest\'s tab.fit', () => {
     expect(tab({ min: '420x300' })).toMatch(/tab\.fit\.min/);
     expect(tab({ ideal: 'wide' })).toMatch(/tab\.fit\.ideal/);
     expect(tab({ big: 'yes' })).toMatch(/tab\.fit\.big/);
-    expect(tab({ grow: 1 })).toMatch(/tab\.fit\.grow/);
+    expect(tab({ max: 20000 })).toMatch(/tab\.fit\.max must be a whole number of pixels, at most 10000/);
     expect(tab('wide')).toMatch(/tab\.fit/);
   });
 });

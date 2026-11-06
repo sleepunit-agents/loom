@@ -353,10 +353,13 @@ that ignores it keeps working. Outside a household there's no `caller`.
   width it looks best at, which sets its share of a split; `max` is the width past
   which it gains nothing (`null`: it can use any); `big: true` asks for the big
   slot on the left. Every key is optional and falls back to loom's default row
-  (`min` `[420, 300]`, `ideal` `720`, no `max`, not `big`); a piece's own fit wins
-  over loom's row for its label. A `min` under `[320, 240]`, an `ideal` under the
-  min's width, or a `max` under the `ideal` is refused with the manifest, naming
-  the field.
+  (`min` `[420, 300]`, `ideal` `720`, or the `min`'s width when that's wider, no
+  `max`, not `big`); a piece's own fit wins over loom's row for its label, and an
+  empty `fit` is none. Sizes are whole pixels, at most 10000. A `min` under
+  `[320, 240]`, an `ideal` under the min's width, or a `max` under the `ideal` is
+  refused with the manifest, naming the field. A tab on each agent's pages
+  (`level: "agent"`, or `agentTab`) is drawn as that agent's pages, whose room is
+  loom's own: `fit` applies to the household's tab.
   ```json
   { "tab": { "label": "Garden", "fit": { "min": [420, 300], "ideal": 760, "max": 1000, "big": false } } }
   ```
