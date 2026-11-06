@@ -95,3 +95,9 @@ export function restore(app: string): Visit | undefined {
 export function forget(app: string | undefined): void {
   if (app && stacks[app]) { delete stacks[app]; save(); }
 }
+
+/** Where `app`'s history stands now, if it has one (a tile brought back from the address opens there). */
+export function current(app: string): Visit | undefined {
+  const s = stacks[app];
+  return s ? s.pages[s.at] : undefined;
+}
