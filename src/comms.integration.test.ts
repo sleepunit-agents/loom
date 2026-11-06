@@ -14,7 +14,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
-import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, SEND_STALE_MS, settleThread, sweepComms, WORKING_STALE_MS } from './comms.js';
+import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, WORKING_STALE_MS, type Thread } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { stopCommsWatch } from './ui/comms-live.js';
@@ -744,6 +744,38 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       const after = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ seq: number; delivery?: string }>;
       expect(after.find((m) => m.seq === a.body.seq)?.delivery).toBe('delivered');
       expect((await state(t)).state.failed).toBe(false);
+    });
+    it('Send again takes a failed message back on its way once: a second take, while it\'s on its way, takes nothing', async () => {
+      const t = await open();
+      const db = new BetterSqlite3(join(h.home, COMMS_DB));
+      const seq = (() => { try { return (db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'message'").get(t.id) as { seq: number }).seq; } finally { db.close(); } })();
+      const d2 = new BetterSqlite3(join(h.home, COMMS_DB));
+      try { d2.prepare('UPDATE comms_messages SET delivered = 0, sending_at = NULL WHERE thread = ? AND seq = ?').run(t.id, seq); } finally { d2.close(); }
+      expect(resendMessage(h, t as unknown as Thread, seq)).toBe(true);
+      expect(resendMessage(h, t as unknown as Thread, seq)).toBe(false);
+    });
+    it('a store made before t-1881 gains its columns in place: a send, a read and the sweep all work on it', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'loom-comms-old-'));
+      try {
+        const m = new BetterSqlite3(join(home, COMMS_DB));
+        m.exec(`CREATE TABLE comms_messages (thread TEXT NOT NULL, seq INTEGER NOT NULL, at TEXT NOT NULL, kind TEXT NOT NULL, sender TEXT NOT NULL, id TEXT NOT NULL,
+          hash TEXT, text BLOB, card_json TEXT, run TEXT, delivered INTEGER, PRIMARY KEY (thread, seq))`);
+        m.prepare("INSERT INTO comms_messages VALUES ('th:aaaaaaaaaa', 1, ?, 'message', 'jonathan', 'aaaaaaaaaaaaaaaa', NULL, NULL, NULL, NULL, 0)").run(new Date().toISOString());
+        m.close();
+        const t = new BetterSqlite3(join(home, 'household.db'));
+        t.exec(`CREATE TABLE comms_threads (id TEXT PRIMARY KEY, agent TEXT NOT NULL, member TEXT NOT NULL, conversation TEXT NOT NULL, title TEXT, titled_by TEXT,
+          project TEXT, pinned INTEGER NOT NULL DEFAULT 0, archived TEXT, opened TEXT NOT NULL, last TEXT NOT NULL, read_seq INTEGER NOT NULL DEFAULT 0,
+          channel INTEGER NOT NULL, first_id TEXT NOT NULL, first_hash TEXT NOT NULL, working_since TEXT, queued_since TEXT, last_failed INTEGER NOT NULL DEFAULT 0,
+          stop INTEGER NOT NULL DEFAULT 0, in_front INTEGER, updated INTEGER NOT NULL)`);
+        t.prepare("INSERT INTO comms_threads (id, agent, member, conversation, opened, last, channel, first_id, first_hash, working_since, updated) VALUES ('th:aaaaaaaaaa', 'art', 'jonathan', 'cv-0123456789ab', ?, ?, 1, 'aaaaaaaaaaaaaaaa', 'x', ?, 0)")
+          .run(new Date().toISOString(), new Date().toISOString(), new Date(Date.now() - 3_600_000).toISOString());
+        t.close();
+        expect(settleThread(home, null)).toBe(true);
+        expect(threadState(home, 'th:aaaaaaaaaa')).toContain('null');
+        const cols = (f: string, table: string) => { const d = new BetterSqlite3(join(home, f), { readonly: true }); try { return (d.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name); } finally { d.close(); } };
+        expect(cols(COMMS_DB, 'comms_messages')).toEqual(expect.arrayContaining(['sending_at', 'delivery_json']));
+        expect(cols('household.db', 'comms_threads')).toContain('working_beat');
+      } finally { rmSync(home, { recursive: true, force: true }); }
     });
     it('a message on its way, not stale, is not marked failed by a read', async () => {
       const t = await open();

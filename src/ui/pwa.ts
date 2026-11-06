@@ -38,7 +38,8 @@ export const MANIFEST = JSON.stringify({
 });
 
 /** Bumped when what the worker keeps changes shape; an old cache is dropped on activate. */
-const VERSION = 'loom-3';
+// loom-4 (t-1881): drops the copies of Comms threads' live reads the worker kept before it stopped keeping them.
+const VERSION = 'loom-4';
 
 export const SW_JS = `'use strict';
 const PAGES = '${VERSION}-pages', VIEWS = '${VERSION}-views', STATIC = '${VERSION}-static';

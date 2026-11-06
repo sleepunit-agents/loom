@@ -47,10 +47,11 @@ export const MAX_SUMMARY = 120;
 export const BUSY_MS = 2 * 60_000;
 /**
  * A member's message still marked on its way this long after its delivery began was cut off (the daemon restarted
- * under it): core's delivery to the runtime gives up well before (DELIVERY_LIMITS.timeoutMs, 120 s, after its turn in the pool), so it's recorded
- * as not delivered, and Send again delivers it (t-1881).
+ * under it), so it's recorded as not delivered, and Send again delivers it (t-1881). Core's delivery to the runtime
+ * gives up at 120 s once it runs (DELIVERY_LIMITS.timeoutMs), after waiting its turn in its piece's pool (2 running,
+ * 4 waiting): 6 × 120 s at the very worst, so 15 minutes is past any delivery still going.
  */
-export const SEND_STALE_MS = 300_000;
+export const SEND_STALE_MS = 15 * 60_000;
 /**
  * The runtime says `working` again every 15 s while a thread's body works (loom-box delivery.mjs, PRESENCE_MS), and
  * posts its activity: a thread with no word of it this long has no body at work, whatever its last word was (t-1881).

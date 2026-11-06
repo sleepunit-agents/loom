@@ -34,10 +34,11 @@ export type Msg = { seq: number; at: string; kind: 'message' | 'reply' | 'card' 
 type Delivery = 'sending' | 'delivered' | 'failed';
 const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? 'delivered' : m.delivered === false ? 'failed' : 'sending');
 /**
- * Whether a message can still change where it is: one of yours not yet delivered, or a step still running. The app
- * reads the thread again from the oldest of these, so their state is the server's, not what it was when first read.
+ * Whether a message can still change where it is on its own: one of yours on its way, or a step still running. The
+ * app reads the thread again from the oldest of these, so their state is the server's, not what it was when first
+ * read. (Your last message, not delivered, is read again too: Send again from another tab puts it back on its way.)
  */
-const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) !== 'delivered') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
+const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) === 'sending') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
 /** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
 export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
   actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> };
@@ -378,7 +379,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   // New messages: fetched after the last seq we have, once the stream says the thread moved.
   const pull = useCallback(async () => {
-    const oldest = shown.current.slice(-100).find(unsettled);
+    const lastMine = shown.current.filter((m) => m.kind === 'message').at(-1);
+    const oldest = shown.current.slice(-100).find((m) => unsettled(m) || (m === lastMine && deliveryOf(m) === 'failed'));
     const from = oldest ? Math.min(last.current, oldest.seq - 1) : last.current;
     const r = await getJson<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${from}`);
     if (!r) return;
@@ -450,12 +452,15 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
     await pull();
     return true;
   };
-  // Send again: on its way at once, as the server answers it (it's sent again, or it's already on its way or delivered).
+  // Send again: where it is as the server answers at once (sent again, or already on its way, or delivered), drawn
+  // from that answer, never assumed; a refused one stays Not delivered and says why.
   const resend = async (m: Msg) => {
     if (!m.text) return;
-    setMessages((ms) => ms.map((x) => (x.seq === m.seq ? { ...x, delivered: null, delivery: 'sending' } : x)));
     const r = await post(`/comms/${thread.id}/send`, csrf, { id: m.id, text: m.text });
-    if (!r.ok) alert(String(r.body.error ?? 'That didn\'t send.').replace(/^[a-z-]+: /, ''));
+    const d = r.body.delivery;
+    if (r.ok && (d === 'sending' || d === 'delivered' || d === 'failed')) {
+      setMessages((ms) => ms.map((x) => (x.seq === m.seq ? { ...x, delivered: d === 'sending' ? null : d === 'delivered', delivery: d } : x)));
+    } else alert(String(r.body.error ?? 'That didn\'t send.').replace(/^[a-z-]+: /, ''));
     await pull();
   };
   const rename = async () => {

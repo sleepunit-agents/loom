@@ -165,7 +165,7 @@ choice, and the body's brief. The new parts follow.
       on its way answers `sending` and delivers nothing more. It's the same delivery as the first try (its id, its
       time and its label are the first try's), so if the first had reached the runtime after all, the runtime answers
       the repeat and no body hears it twice.
-    - A message still `sending` 5 minutes after its delivery began was cut off (loom restarted under it): it's
+    - A message still `sending` 15 minutes after its delivery began was cut off (loom restarted under it): it's
       recorded `failed` ("couldn't be reached: loom restarted while it was delivering it"), and Send again delivers it.
   - **Text** on `new` and `send` is 1–40,000 characters, the delivery contract's bounds. Anything else is a `400`.
 - **Core is its adapter.** The runtime makes three adapter calls on a venue (as built in loom-box, `src/delivery.mjs`
@@ -557,7 +557,7 @@ Neon OS's own, not copied from any game.
 
   | The thread | Face state |
   |---|---|
-  | a delivery answered `started`, `resumed` or `queued`, and no card or `working` status yet | `thinking` |
+  | a message of yours on its way or delivered (`started`, `resumed` or `queued`), and no card or `working` status yet | `thinking` |
   | `status: working`, or a card arriving | `working` |
   | a reply lands | `talking`, one beat |
   | after the talking beat, with `status: done` or no `working` for 30 s | `complete` (done), then `idle` |
@@ -681,7 +681,8 @@ Neon OS's own, not copied from any game.
      delivers it once.
    - With the runtime taking 20 s to answer, `send` answers at once, the message is `sending` the whole time (never
      "Not delivered"), then `delivered`, with no error recorded. Send again tapped three times while it's on its way
-     delivers it once. A `sending` message past 5 minutes reads `failed`, with its error line (t-1881).
+     delivers it once. A `sending` message past 15 minutes reads `failed`, with its error line (t-1881). A store made
+     before t-1881 gains its new columns in place.
 4. **The adapter route.**
    - `post` for a live thread answers `{ok: true, id}` and adds a `reply` message.
    - `post` answers `{ok: false, permanent: true}` for each of: an archived thread, a deleted one, an unknown place,
@@ -732,7 +733,9 @@ Neon OS's own, not copied from any game.
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**
-    - A reply sends `message {seq}` on the thread's stream within 250 ms.
+    - A reply sends `message {seq}` on the thread's stream within 250 ms. So does a move of the thread's state with
+      no new message (working or done, a message delivered or not, a step done): the event carries the newest seq,
+      and the app reads again (t-1881).
     - The event's data has exactly the key `seq`.
     - `since/<seq>` returns exactly the messages after `seq`, in order.
 11. **Push.**

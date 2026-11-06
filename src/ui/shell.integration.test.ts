@@ -84,7 +84,9 @@ describe('the app shell', () => {
     expect(swText).toContain("searchParams.has('_flash')");
     expect(swText).toMatch(/NEVER = .*login\|logout/);
     // What it keeps changed shape (the app's one page, under one key): a new cache, the old one dropped.
-    expect(swText).toContain("'loom-3-pages'");
+    expect(swText).toContain("'loom-4-pages'");
+    // A Comms thread's live reads never come from a kept copy (t-1881).
+    expect(swText).toContain(String.raw`/^\/comms\/[^/]+\/(since|before)\//`);
     expect(swText).toContain("const APP = new URL('/__app', location.origin).href");
     expect(swText).toContain('c.put(APP,');
     // The app's JSON views are kept the same way, and dropped with the pages.
