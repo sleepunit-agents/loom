@@ -116,7 +116,25 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
       render: getComputedStyle(c).imageRendering }));
     return { drawn: of('[data-slot="agent-face"]'), pixels: of('.loom-pixel-face canvas'), small, wide: document.documentElement.scrollWidth };
   });
-  const settle = async (p: Page) => { await p.waitForTimeout(900); await p.waitForFunction(() => [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].every((c) => c.dataset.scale), null, { timeout: 10_000 }); };
+  /**
+   * Until the faces `check` will look for are showing and still: each small one scaled, and nothing round a face
+   * moving. A fixed 900 ms wait (the arrive animation's length) read a widget that arrived late at its first frame,
+   * scaled to .975 (t-1886): sizes are read once the finite animations on a face and what holds it have finished.
+   */
+  const settle = (p: Page, o: { art?: boolean; small?: boolean; drawnArt?: boolean } = {}) => p.waitForFunction((o) => {
+    const vis = (e: Element) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    const moving = (e: Element | null) => {
+      for (; e; e = e.parentElement) if (e.getAnimations().some((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)) return true;
+      return false;
+    };
+    const art = (sel: string) => [...document.querySelectorAll(sel)].filter((e) => vis(e) && (e.getAttribute('aria-label') ?? '').startsWith('Art E Fish'));
+    const small = [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].filter(vis);
+    const faces = [...document.querySelectorAll('.loom-pixel-face canvas, [data-slot="agent-face"]')].filter(vis);
+    if (o.small && !small.length) return false;
+    if (o.art !== false && !o.drawnArt && !art('.loom-pixel-face canvas').length) return false;
+    if (o.drawnArt && !art('[data-slot="agent-face"]').length) return false;
+    return small.every((c) => c.dataset.scale) && ![...small, ...faces].some(moving);
+  }, o, { timeout: 15_000 });
   /** Art in pixels, never drawn; Mark drawn, never in pixels; each small one a 24-pixel crop at a whole-pixel scale. */
   function check(at: string, f: Awaited<ReturnType<typeof faces>>, o: { art?: boolean; small?: boolean } = {}) {
     if (f.wide !== undefined && at !== 'the desktop' && at !== 'a window') expect(f.wide, `${at}: wider than 390`).toBeLessThanOrEqual(390);
@@ -137,7 +155,7 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     for (const path of ['/', '/inbox', '/people', '/people/art', '/a/art']) {
       await p.goto(`${base}${path}`);
       await p.locator('.loom-top h1').waitFor();
-      await settle(p);
+      await settle(p, { small: path === '/inbox', art: path !== '/people' });
       const f = await faces(p);
       // People's list draws people as their letters (history-style: they stay); Art's own entry wears his face.
       check(path, f, { small: path === '/inbox', art: path !== '/people' });
@@ -164,7 +182,7 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
   it('a small one is the rest frame\'s crop, pixel for pixel, drawn once and never again', async () => {
     const p = await device(390);
     await p.goto(`${base}/inbox`);
-    await settle(p);
+    await settle(p, { small: true });
     // The crop (x 16, y 20, 24 square) of the rest frame: cyan, with the rest frame's own magenta mark at (4, 1); a
     // squashed whole cell would have the cell's empty margin at its corners, another frame no mark.
     const px = await p.evaluate(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-pixel-avatar canvas')!; const g = c.getContext('2d')!;
@@ -180,11 +198,11 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     const p = await device(1280);
     await p.goto(`${base}/`);
     await p.locator('.loom-desk-home').waitFor();
-    await settle(p);
+    await settle(p, { small: true });
     check('the desktop', await faces(p), { small: true });
     await p.goto(`${base}/inbox`);
     await p.locator('.loom-window').waitFor();
-    await settle(p);
+    await settle(p, { small: true });
     check('a window', await faces(p), { small: true });
     await p.context().close();
   }, 60_000);
@@ -194,7 +212,7 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     for (const path of ['/', '/inbox', '/a/art']) {
       await p.goto(`${base}${path}`);
       await p.locator('.loom-top h1').waitFor();
-      await p.waitForTimeout(900);
+      await settle(p, { drawnArt: true });
       const f = await faces(p);
       expect(f.pixels, path).toEqual([]);
       expect(f.drawn, path).toContain('Art E Fish');

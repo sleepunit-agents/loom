@@ -9,7 +9,7 @@
  * can see whether core called it, and how often. $LOOM_HOME/runtime-mode picks its answer:
  * ok (the default), fail (exit 1, nothing said), said (exit 1 with {status: 503, error}),
  * bad (an answer that isn't the contract's), slow (400 ms), sleep:<ms>, hold (answers once
- * $LOOM_HOME/runtime-release exists).
+ * $LOOM_HOME/runtime-release exists, or after 30 s whatever: a failed test never leaves it running).
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -64,7 +64,7 @@ process.stdin.on('end', () => {
   const answer = () => console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: n, body: 'started' }));
   if (mode === 'slow') setTimeout(answer, 400);
   else if (mode.startsWith('sleep:')) setTimeout(answer, Number(mode.slice(6)));
-  else if (mode === 'hold') { const t = setInterval(() => { if (fs.existsSync(home + '/runtime-release')) { clearInterval(t); answer(); } }, 20); }
+  else if (mode === 'hold') { const until = Date.now() + 30000; const t = setInterval(() => { if (fs.existsSync(home + '/runtime-release') || Date.now() > until) { clearInterval(t); answer(); } }, 20); }
   else answer();
 });
 `;
@@ -483,7 +483,9 @@ describe('POST /api/loom/deliver', () => {
       mode('hold');
       let refused = 0;
       const sent = Promise.all(['w1', 'w2', 'w3', 'w4', 'w5'].flatMap((w) => [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => post(tok[w], wake(`busy-${i}`)).then((r) => { if (r.status === 503) refused++; return r; }))));
+      // Five refused is the pool saying full; ten seconds without them is a pool that never refused (said below).
       for (let i = 0; i < 200 && refused < 5; i++) await new Promise((r) => setTimeout(r, 50));
+      expect(refused, 'the pool refused none, or too few, while all 45 were held').toBe(5);
       writeFileSync(join(h.home, 'runtime-release'), '');
       const rs = await sent;
       const busy = rs.filter((r) => r.status === 503);

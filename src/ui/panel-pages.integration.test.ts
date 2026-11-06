@@ -76,7 +76,7 @@ describe.runIf(built && chrome)('a long panel', () => {
     const panels = page.locator('[data-slot="panel"]');
     // Each panel is its own lazy chunk behind its own Suspense, so the first panel drawn can be any of them: wait for
     // all five, or nth(0) is whichever came first (the short one, sometimes, on a loaded runner).
-    await expect.poll(() => panels.count(), { timeout: 20_000 }).toBe(PAGE.sections.length);
+    await expect.poll(() => panels.count(), { timeout: 20_000 }).toBe(PAGE.sections.flatMap((s) => s.blocks).filter((b) => b.type === 'panel').length);
     const labels = (i: number) => panels.nth(i).locator('ul').first().locator(':scope > li').evaluateAll((ls) => ls.map((l) => (l.textContent ?? '').match(/^(Secret|Rule|Fifteen|Sixteen) \d+/)?.[0]));
     // Before (panels drew every row): 40 rows. After: the first 15, then the pager, then the panel's action.
     expect(await labels(0)).toEqual(Array.from({ length: 15 }, (_, i) => `Secret ${i + 1}`));

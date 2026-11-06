@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { loadHousehold, rawHousehold, type Household } from './household.js';
@@ -520,18 +520,59 @@ describe.skipIf(!hasTools)('loom backup', () => {
     expect(alerts[0].facts).toMatchObject({ minutes: 1800 });
   });
 
+  it('a lock that changes after it was judged stale is someone\'s fresh one: left where it is, never taken', () => {
+    mkdirSync(join(h.home, 'backup'), { recursive: true });
+    const lock = join(h.home, 'backup', 'run.lock');
+    writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
+    let fresh: ReturnType<typeof takeLock> = null;
+    // Between this taker's judging and its takeover, another takes the stale lock over and holds a fresh one.
+    const late = takeLock(h.home, Date.now(), { judged: () => { fresh = takeLock(h.home); } });
+    expect(fresh).not.toBeNull();
+    expect(late).toBeNull();
+    const held = JSON.parse(readFileSync(lock, 'utf-8'));
+    expect(held.pid).toBe(process.pid);
+    fresh!.release();
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it('a takeover claim held by a live taker is waited on; one whose taker died is cleared, and the lock is taken next time', () => {
+    mkdirSync(join(h.home, 'backup'), { recursive: true });
+    const lock = join(h.home, 'backup', 'run.lock');
+    const stale = JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() });
+    writeFileSync(lock, stale);
+    // A live taker (this process) is mid-takeover, however long it's been: the lock is left alone.
+    writeFileSync(`${lock}.takeover`, `${process.pid} someone`);
+    utimesSync(`${lock}.takeover`, new Date(0), new Date(0));
+    expect(takeLock(h.home, Date.now() + 86_400_000)).toBeNull();
+    expect(readFileSync(lock, 'utf-8')).toBe(stale);
+    expect(existsSync(`${lock}.takeover`)).toBe(true);
+    // Its taker died there: the claim is cleared, and the next try takes the lock over.
+    writeFileSync(`${lock}.takeover`, `${2 ** 22 + 999} someone`);
+    expect(takeLock(h.home)).toBeNull();
+    expect(existsSync(`${lock}.takeover`)).toBe(false);
+    const got = takeLock(h.home);
+    expect(got).not.toBeNull();
+    got!.release();
+    expect(readdirSync(join(h.home, 'backup')).filter((n) => n.startsWith('run.lock'))).toEqual([]);
+  });
+
   it('a stale lock taken over by two processes at once: one gets it; a run never releases its successor\'s lock', async () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
     writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: 2 ** 22 + 4321, at: new Date().toISOString() }));
     const script = join(work, 'race.mjs');
     writeFileSync(script, `import { takeLock } from ${JSON.stringify(new URL('./backup.ts', import.meta.url).pathname.replace(/\.ts$/, '.js').replace('/src/', '/dist/'))};
-const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) { process.stdin.on('end', () => l.release()); process.stdin.resume(); }`);
+import { readdirSync, writeFileSync } from 'node:fs';
+// All three judge the same lock stale before any takes it over: each says so, then waits for the others (5 s at most).
+const met = process.argv[3];
+const judged = () => { writeFileSync(met + '/' + process.pid, ''); const until = Date.now() + 5000; while (readdirSync(met).length < 3 && Date.now() < until); };
+const l = takeLock(process.argv[2], Date.now(), { judged }); console.log(l ? 'got' : 'busy'); if (l) { process.stdin.on('end', () => l.release()); process.stdin.resume(); }`);
+    const met = join(work, 'met'); mkdirSync(met);
     // The one that gets it holds it until all three have said (a fixed 400 ms let a slow starter find it free, t-1886).
     let said = 0;
     const all: Array<() => void> = [];
     const run1 = () => new Promise<string>((res) => {
-      const c = spawn(process.execPath, [script, h.home], { env });
+      const c = spawn(process.execPath, [script, h.home, met], { env });
       all.push(() => c.stdin.end());
       let o = '';
       let heard = false;
@@ -542,6 +583,8 @@ const l = takeLock(process.argv[2]); console.log(l ? 'got' : 'busy'); if (l) { p
     });
     const outs = await Promise.all([run1(), run1(), run1()]);
     expect(outs.sort()).toEqual(['busy', 'busy', 'got']);
+    // All three were in the takeover at once, not one after another's fresh lock.
+    expect(readdirSync(met)).toHaveLength(3);
     // A lock taken over as stale: the old holder's release leaves the new one's.
     const old = takeLock(h.home)!;
     writeFileSync(join(h.home, 'backup', 'run.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString(), token: 'successor' }));
