@@ -28,7 +28,7 @@ export function lookOf(saved: string | null | undefined, mode?: string | null): 
 
 /** The person's Appearance, as loom keeps it (src/ui/sessions.ts): whatever they've chosen, nothing else. `mode` is
  * 000h's light or dark, read only to bring a 000h choice across (lookOf). */
-export type Prefs = { look?: Look | '000h'; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** pixel icons, where the household has a set (off unless turned on: app-icon.tsx) */ icons?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (Accessibility; off unless turned on: immersion.ts) */ zoom?: boolean; /** Reduce motion and Higher contrast (Accessibility: access.ts) */ motion?: Follow; contrast?: Follow; /** loom's version of them: when they last changed */ at?: number };
+export type Prefs = { look?: Look | '000h'; mode?: Mode; ground?: Ground; sound?: boolean; /** pixel faces, where an agent has a sheet (on unless turned off) */ pixel?: boolean; /** pixel icons, where the household has a set (off unless turned on: app-icon.tsx) */ icons?: boolean; /** haptics, on a phone (on unless turned off) */ haptics?: boolean; /** pinch and double-tap zoom, on a phone (Accessibility; off unless turned on: immersion.ts) */ zoom?: boolean; /** the desktop: tiles (Appearance's "Desktop", docs/specs/desk-tiling.md; off unless turned on) */ tiling?: boolean; /** Reduce motion and Higher contrast (Accessibility: access.ts) */ motion?: Follow; contrast?: Follow; /** loom's version of them: when they last changed */ at?: number };
 
 const root = () => document.documentElement;
 
