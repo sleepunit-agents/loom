@@ -458,6 +458,24 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       expect((await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working' })).body).toEqual({ ok: true });
     });
 
+    it('a turn over with nothing sent says so in the thread, once per run; a done that replied, or names no run, adds nothing', async () => {
+      const t = await open();
+      const errors = async () => ((await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string; run: string | null; card: { error?: string } | null }>).filter((m) => m.kind === 'error');
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done' });
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done', replied: false });
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done', replied: false, run: 'bad run!' });
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'working', replied: false, run: 'run-0123456789ab' });
+      expect(await errors()).toEqual([]);
+      expect((await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done', replied: false, run: 'run-0123456789ab' })).body).toEqual({ ok: true });
+      // Said again (the runtime retries a done it didn't hear back from): still one.
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done', replied: false, run: 'run-0123456789ab' });
+      const said = await errors();
+      expect(said.map((m) => [m.text, m.run, m.card?.error])).toEqual([['Art finished without replying.', 'run-0123456789ab', 'no-reply']]);
+      // Another run's silence is its own.
+      await api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', status: 'done', replied: false, run: 'run-ba9876543210' });
+      expect(await errors()).toHaveLength(2);
+    });
+
     it('takes only the runtime\'s token', async () => {
       expect((await api(tok.art, 'comms/adapter', { op: 'describe', place: 'th:aaaaaaaaaa', agent: 'art' })).status).toBe(403);
     });

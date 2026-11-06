@@ -190,7 +190,7 @@ choice, and the body's brief. The new parts follow.
   |---|---|---|
   | `post` | `{op, place, agent, text, run?, on?}` | `{ok: true, id}` (the new message's `seq`, as a string) or `{ok: false, reason, permanent?}` |
   | `describe` | `{op, place, agent}` | `{ok: true, brief, readers}` |
-  | `status` | `{op, place, agent, status: "working"\|"done", messages?: [delivery id]}` | `{ok: true, stop?: true}` |
+  | `status` | `{op, place, agent, status: "working"\|"done", messages?: [delivery id], replied?: false, run?}` | `{ok: true, stop?: true}` |
   | `trace` | `{op, place, agent}` | `{ok: true, trace}`: the thread's delivery facts, no words ("Tracing a reply") |
 
   - These run under the runtime's existing limits for an adapter call: 15 s, one retry for an answered `ok: false`
@@ -206,6 +206,10 @@ choice, and the body's brief. The new parts follow.
     conversation:<cv>." (the thread's conversation, so a house body can pass it: "Made here"), and `readers: [<member>]`.
   - `status: working` shows the thread's working line, and `done` clears it. After the member presses Stop, the next
     `status` call answers `stop: true` once.
+  - `done` with `replied: false` and its `run` (t-1900) says the body's turn is over and nothing reached the thread:
+    no send reached the runtime in that run. The thread gains an error card, `no-reply`, once per run (the same run
+    said again adds nothing), so a turn that ends in silence isn't silence on screen. `run` is the runtime's run id,
+    1 to 64 letters, digits, `.`, `_` or `-`; without a well-formed one, `replied: false` is ignored.
 - **The sender's trust.** For a delivery on `loom` from source `loom`, the runtime takes the sender as **tier 3**,
   the owner (loom-box's tiers: 1 guest, 2 trusted, 3 owner; `src/policy.mjs`). It never looks the sender up in the
   gates. Core delivers there only from a member who owns the agent (rule 3), so the gates have nothing to add. A
@@ -346,6 +350,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | `body: "queued"`, and no `status: working` within 2 minutes | "Art is busy with other work; this is waiting its turn." |
 | A loop pause (the runtime's `deferred` note turn) | "Paused: Art was repeating itself." The Inbox's Resume and Dismiss are on it |
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
+| A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |
 | No `age` program (the send is refused with `503`, nothing delivered, nothing stored but the error) | "loom can't keep messages safely right now: the age program is missing." |
 | The stream dropped | "Reconnecting…" while it's down, then the missed messages, fetched by `seq` |
 

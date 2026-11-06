@@ -164,6 +164,23 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     } finally { await ctx.close(); }
   }, 30_000);
 
+  it('a turn that ends with nothing sent shows in the thread, live: "finished without replying", and what happened', async () => {
+    const { ctx, page, errors } = await open(false);
+    try {
+      const opened = openThread(h, process.env, h.members[0], { agent: 'art', id: 'eeeeeeeeeeeeeeee', text: 'Anything?' });
+      recordDelivery(h, opened.thread, opened.seq, { delivered: true, body: 'started' });
+      await page.goto(`${base}/comms/${opened.thread.id}`);
+      await page.locator('.comms-thread').waitFor();
+      expect(await page.locator('.comms-msg--error').count()).toBe(0);
+      adapterCall(h, process.env, { op: 'status', place: opened.thread.id, agent: 'art', status: 'done', replied: false, run: 'run-00c0ffee0000' });
+      const card = page.locator('.comms-msg--error', { hasText: 'Art finished without replying.' });
+      await card.waitFor({ timeout: 10_000 });
+      expect(await card.locator('a.comms-trace').getAttribute('href')).toBe(`/p/runtime/trace/${opened.thread.conversation}`);
+      expect(await card.locator('a.comms-trace').textContent()).toBe('What happened');
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 30_000);
+
   it('an ask asked from the thread: drawn with its words, the face waiting on you, Allow once posted to its piece', async () => {
     const { ctx, page, errors } = await open(false);
     try {
