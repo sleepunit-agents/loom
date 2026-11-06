@@ -128,3 +128,4 @@
 :root[data-look] .loom-wtile[data-compact] .loom-need__why,:root[data-look] .loom-wtile[data-compact] .loom-need__fine{display:none}
 :root[data-look] .loom-wtile[data-compact] .loom-need__title{-webkit-line-clamp:2}
 :root[data-look] .loom-wtile[data-compact] .loom-need{padding:10px 16px}
+:root[data-look] .loom-wtile[data-compact] .loom-need__body>:not(.loom-need__title){display:none}

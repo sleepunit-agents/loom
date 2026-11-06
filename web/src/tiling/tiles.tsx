@@ -90,7 +90,8 @@ const titleOf = (p: PageState, o: Open): string => {
 
 type Named = { key: string; label: string };
 /** An app's fit: an agent's pages are one kind; every other app by its label (fit.ts). */
-const withFit = <T extends Named>(r: T | null): (T & { fit: Fit }) | null => (r ? { ...r, fit: r.key.startsWith('/a/') ? AGENT_FIT : fitFor(r.label) } : null);
+const withFit = <T extends Named>(r: T | null, own: (key: string) => Partial<Omit<Fit, 'why'>> | undefined): (T & { fit: Fit }) | null =>
+  (r ? { ...r, fit: r.key.startsWith('/a/') ? AGENT_FIT : fitFor(r.label, own(r.key)) } : null);
 
 export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, onFocus, outerGo, shell, homeData, live, widgetEnv }: {
   api: React.MutableRefObject<TilesApi | null>;
@@ -116,8 +117,10 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   /** The widgets' Env: Home's page's, linking by `go`. */
   widgetEnv: (go: (href: string) => void) => Env | null;
 }) {
-  const appOf = (path: string) => withFit(appOfRaw(path));
-  const byName = (name: string) => withFit(byNameRaw(name));
+  // A piece's own fit (its manifest's tab.fit) wins over the table's row for its label (fit.ts).
+  const own = (key: string) => shell.pieces.find((p) => p.href === key)?.fit;
+  const appOf = (path: string) => withFit(appOfRaw(path), own);
+  const byName = (name: string) => withFit(byNameRaw(name), own);
   const [, bump] = useReducer((n: number) => n + 1, 0);
   const S = useRef<State>(null as unknown as State);
   // The set at first: the address's, else this device's last (a bare /, a link, a window widened back past 1024 px);
