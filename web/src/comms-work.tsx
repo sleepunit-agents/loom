@@ -46,7 +46,7 @@ function Row({ it }: { it: WorkItem }) {
   );
 }
 
-export function WorkPanel({ thread, wide, replySeq }: { thread: string; wide: boolean; replySeq: number }) {
+export function WorkPanel({ thread, replySeq }: { thread: string; replySeq: number }) {
   const [work, setWork] = useState<Work | null>(null);
   const [open, setOpen] = useState(false);
   const alive = useRef(true);
