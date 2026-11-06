@@ -431,8 +431,10 @@ local), and refuses
 `--context-dir`: it only serves its own stack. It only exists when
 `LOOM_BEARER_TOKEN` is set, and it refuses browser requests (any `Origin`
 header, or a body that isn't `application/json`). The knowledge-only daemon
-has no `/cli`. Every other command (`doctor`, `inject`, `serve`, …) stays
-local, and `--url` on one of them is an error.
+has no `/cli`. `doctor` checks remote identity access when `LOOM_URL` or
+`--url` is set, alongside its local checks; a local default is optional in
+that mode. Other commands (`inject`, `serve`, …) stay local, and `--url`
+on one of them is an error.
 
 ### loom's page
 

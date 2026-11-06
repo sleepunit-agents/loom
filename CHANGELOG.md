@@ -426,6 +426,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `loom doctor` now checks remote identity access in connected houses and treats the local default as optional instead of recommending bootstrap.
+
 - **A restore could write into the live machine's piece stores** (t-1846). The backup drill (loom#488) restored
   into a throwaway home and handed taskstore its part with the caller's environment, which named the live store;
   it didn't write there only by luck. A restore now hands a part only to a piece it installed into the home it
