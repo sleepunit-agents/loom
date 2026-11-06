@@ -108,7 +108,8 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     p.on('pageerror', (e) => errors.push(`${width}: ${e.message}`));
-    await p.goto(`${base}/appearance`);
+    // Home, not a page: a page on a desktop is a tile this device keeps, and the tests' Home would open beside it.
+    await p.goto(`${base}/`);
     await p.locator('.loom-top h1').waitFor();
     const csrf = await p.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
     await p.evaluate(async ([c, px]) => { await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, pixel: px }) }); }, [csrf, pixel] as const);
@@ -144,7 +145,7 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
   }, o, { timeout: 15_000 });
   /** Art in pixels, never drawn; Mark drawn, never in pixels; each small one a 24-pixel crop at a whole-pixel scale. */
   function check(at: string, f: Awaited<ReturnType<typeof faces>>, o: { art?: boolean; small?: boolean } = {}) {
-    if (f.wide !== undefined && at !== 'the desktop' && at !== 'a window') expect(f.wide, `${at}: wider than 390`).toBeLessThanOrEqual(390);
+    if (f.wide !== undefined && at !== 'the desktop' && at !== 'a tile') expect(f.wide, `${at}: wider than 390`).toBeLessThanOrEqual(390);
     expect(f.drawn.filter((w) => w === 'Art E Fish'), `${at}: Art drawn`).toEqual([]);
     expect(f.pixels.filter((w) => w !== 'Art E Fish'), `${at}: someone else in pixels`).toEqual([]);
     if (o.art !== false) expect(f.pixels.filter((w) => w === 'Art E Fish').length, `${at}: Art in pixels`).toBeGreaterThan(0);
@@ -201,16 +202,16 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     await p.context().close();
   }, 60_000);
 
-  it('1280 px, the desktop: its widgets and a window\'s title', async () => {
+  it('1280 px, the desktop: its widgets and a tile\'s title', async () => {
     const p = await device(1280);
     await p.goto(`${base}/`);
     await p.locator('.loom-desk-home').waitFor();
     await settle(p, { small: true });
     check('the desktop', await faces(p), { small: true });
     await p.goto(`${base}/inbox`);
-    await p.locator('.loom-window').waitFor();
+    await p.locator('.loom-tile').waitFor();
     await settle(p, { small: true });
-    check('a window', await faces(p), { small: true });
+    check('a tile', await faces(p), { small: true });
     await p.context().close();
   }, 60_000);
 

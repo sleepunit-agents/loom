@@ -157,7 +157,8 @@ describe('the household\'s pixel icons', () => {
       await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
       if (prefs) {
         const page = await ctx.newPage();
-        await page.goto(`${base}/appearance`);
+        // Home, not a page: a page on a desktop is a tile this device keeps, and the tests' Home would open beside it.
+        await page.goto(`${base}/`);
         const csrf = await page.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
         const r = await ctx.request.post(`${base}/appearance/prefs`, { data: { _csrf: csrf, ...prefs }, headers: { origin: base } });
         expect(r.status()).toBe(200);
@@ -208,9 +209,9 @@ describe('the household\'s pixel icons', () => {
       expect(await key(p, 'Knowledge').locator('svg').count()).toBeGreaterThan(0);
       // Crisp: 32 px at 1×, whole pixels.
       expect(await key(p, 'Home').locator('img.loom-pix').evaluate((el) => [el.getBoundingClientRect().width, getComputedStyle(el).imageRendering])).toEqual([32, 'pixelated']);
-      // The title strip of the window an app opens in.
+      // The title strip of the tile an app opens in.
       await p.goto(`${base}/activity`);
-      await p.locator('.loom-window__key img.loom-pix[data-app="activity"][data-lit]').waitFor();
+      await p.locator('.loom-tile__key img.loom-pix[data-app="activity"][data-lit]').waitFor();
       // Setup's tiles (a phone's More), and Find's.
       await p.goto(`${base}/setup`);
       await p.locator('.loom-launch-tile img.loom-pix[data-app="members"]').waitFor();
@@ -260,7 +261,7 @@ describe('the household\'s pixel icons', () => {
         }
 
         await key(p, 'Inbox').click();
-        await p.waitForURL(`${base}/inbox`);
+        await p.waitForURL((u) => u.pathname === '/inbox');
         await p.locator('.loom-dock-bar [aria-label="Inbox"] img.loom-pix[data-lit]').waitFor();
         const inboxLit = await drawn(p, '.loom-dock-bar [aria-label="Inbox"] img.loom-pix', [5, 29]);
         const l = rampFor(blue, true);

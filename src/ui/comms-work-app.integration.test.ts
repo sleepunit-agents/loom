@@ -1,6 +1,7 @@
 /**
- * Work in this thread, in a real browser (docs/specs/comms.md, "The panel"; criterion 26): at 1280 px the panel sits in
- * the right column under YOU, in the route's order with its status words; at 390 px it's the folded "Work (N)" strip,
+ * Work in this thread, in a real browser (docs/specs/comms.md, "The panel"; criterion 26): at 1280 px, in the Comms
+ * tile, the panel sits under YOU, folded to "Work (N)" in a thread narrower than 760 px, in the route's order with its
+ * status words; at 390 px it's the folded "Work (N)" strip,
  * which opens on a tap; nothing is wider than the viewport, and no console errors. LOOM_SHOT_DIR, when set, keeps a
  * screenshot of each (the PR's evidence).
  *
@@ -112,17 +113,19 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
   const widest = (page: Page) => page.evaluate(() => Math.max(...[...document.querySelectorAll('.comms-work, .comms-work *')].map((e) => e.getBoundingClientRect().right)));
 
-  it('at 1280 px: the panel under YOU in the right column, problems first, with words', async () => {
+  it('at 1280 px, in the Comms tile: the panel under YOU, folded to "Work (N)" in a thread under 760 px, problems first, with words', async () => {
     const { ctx, page, errors } = await open(1280, false);
     try {
       await page.goto(`${base}/comms/${thread.id}`);
-      await page.locator('.comms-thread__side .comms-work__row').first().waitFor();
-      const you = await page.locator('.comms-screen__you').boundingBox();
-      const panel = await page.locator('.comms-thread__side .comms-work').boundingBox();
+      const tile = page.locator('.loom-tile[data-tile="/comms"]');
+      const toggle = tile.locator('.comms-thread__side .comms-work__toggle');
+      await page.waitForFunction(() => /Work \(5/.test(document.querySelector('.loom-tile .comms-work__toggle')?.textContent ?? ''));
+      const you = await tile.locator('.comms-screen__you').boundingBox();
+      const panel = await tile.locator('.comms-thread__side .comms-work').boundingBox();
       expect(panel!.y).toBeGreaterThan(you!.y);
-      expect(await page.locator('.comms-thread__side .comms-work__head').isVisible()).toBe(true);
-      expect(await page.locator('.comms-thread__side .comms-work__toggle').isVisible()).toBe(false);
-      const rows = await page.locator('.comms-work__row').evaluateAll((els) => els.map((e) => [e.querySelector('.comms-work__badge')!.textContent, e.querySelector('.comms-work__meta')!.textContent]));
+      await toggle.click();
+      await tile.locator('.comms-work__row').first().waitFor();
+      const rows = await tile.locator('.comms-work__row').evaluateAll((els) => els.map((e) => [e.querySelector('.comms-work__badge')!.textContent, e.querySelector('.comms-work__meta')!.textContent]));
       expect(rows).toEqual([
         ['Blocked', 't-1881 · made here'],
         ['Waiting on you', 'sleepunit-agents/loom#545 · made here'],
@@ -130,7 +133,10 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
         ['In progress', 't-1882 · made here'],
         ['Done', 't-12'],
       ]);
-      expect(await page.locator('.comms-work__row a').first().getAttribute('href')).toBe('/p/tasks/task/t-1881');
+      expect(await tile.locator('.comms-work__row a').first().getAttribute('href')).toBe('/p/tasks/task/t-1881');
+      // Its rows inside the tile: nothing past its edge.
+      const t = (await tile.boundingBox())!;
+      expect(await widest(page)).toBeLessThanOrEqual(t.x + t.width + 1);
       expect(await noSideways(page)).toBe(true);
       if (shots) await page.screenshot({ path: join(shots, 'after-1280.png') });
       expect(errors).toEqual([]);

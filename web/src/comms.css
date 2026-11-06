@@ -55,6 +55,9 @@
 @container (max-width: 759px) {
   .comms-thread[data-wide] .comms-thread__body { grid-template-rows: auto minmax(0, 1fr); }
   .comms-thread[data-wide] .comms-thread__side { order: -1; padding: 10px 12px 0; }
+  /* Above the messages (a desktop's Comms tile is this narrow): the screen as a phone's strip has it, never so tall
+     that the messages get no room. */
+  .comms-thread[data-wide] .comms-thread__side .comms-screen:not([data-compact]) .comms-screen__glass { aspect-ratio: auto; height: min(30dvh, 240px); }
 }
 .comms-thread[data-wide] .comms-msgs { overflow-y: auto; }
 .comms-thread__strip { position: sticky; top: 0; z-index: 5; padding: 8px 12px 0; background: linear-gradient(var(--v-canvas, transparent) 70%, transparent); }

@@ -68,7 +68,7 @@ describe.runIf(built && chrome)('desk tiling: a piece\'s own fit', () => {
 
   async function inboxThen(label: string): Promise<{ order: string[]; widths: Record<string, number> }> {
     const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
-    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); localStorage.setItem('loom-tiling', 'on'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p: Page = await ctx.newPage();
     await p.goto(`${base}/inbox?t=*inbox&w=`);

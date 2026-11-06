@@ -108,7 +108,8 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     const p = await ctx.newPage();
     p.on('console', (m) => { if (m.type() === 'error') errors.push(`${width}: ${m.text()}`); });
     p.on('pageerror', (e) => errors.push(`${width}: ${e.message}`));
-    await p.goto(`${base}/appearance`);
+    // Home, not a page: a page on a desktop is a tile this device keeps, and the tests' Home would open beside it.
+    await p.goto(`${base}/`);
     await p.locator('.loom-top h1').waitFor();
     const csrf = await p.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
     await p.evaluate(async ([c, l]) => { await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, look: l }) }); }, [csrf, look]);
@@ -201,7 +202,8 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
   it('the ticker has more room and still moves only when its words overflow; reduced motion keeps it still', async () => {
     const p = await device('neon', 'no-preference', 1280);
     await open(p, '/');
-    const tick = p.locator('.loom-tick');
+    // (the bar's ticker: the desktop's ticker widget is another)
+    const tick = p.locator('.loom-top .loom-tick');
     const state = () => tick.evaluate((e) => ({ run: e.hasAttribute('data-run'), w: e.clientWidth, over: (e.querySelector('.loom-tick__line') as HTMLElement).scrollWidth > e.clientWidth + 1 }));
     // Measured once its typeface is in (the words' width changes with it), and settled, even on a busy machine.
     await p.waitForFunction(() => document.fonts.status === 'loaded');
@@ -218,7 +220,7 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
 
     const q = await device('neon', 'reduce', 1280);
     await open(q, '/');
-    const t = q.locator('.loom-tick');
+    const t = q.locator('.loom-top .loom-tick');
     await t.evaluate((e) => { (e as HTMLElement).style.flex = 'none'; (e as HTMLElement).style.width = '120px'; });
     await q.waitForTimeout(300);
     expect(await t.evaluate((e) => ({ run: e.hasAttribute('data-run'), name: getComputedStyle(e.querySelector('.loom-tick__track')!).animationName }))).toEqual({ run: false, name: 'none' });

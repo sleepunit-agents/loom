@@ -76,7 +76,7 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
    * Transitions counted in `window.__vt`. */
   async function screen(width: number, height: number, path: string, o: { motion?: boolean } = {}): Promise<Page> {
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: o.motion ? 'no-preference' : 'reduce', serviceWorkers: 'block' });
-    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); localStorage.setItem('loom-tiling', 'on'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');
       window.__vt = 0; window.__named = []; const s = Document.prototype.startViewTransition;
       if (s) Document.prototype.startViewTransition = function (...a) {
         window.__vt++;
@@ -258,16 +258,5 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
     const page = (await named()).at(-1)!;
     expect(page).toEqual([['/inbox', 'none', 'none'], ['/people', 'none', 'loom-tile-page']]);
     await moving.context().close();
-  }, 60_000);
-
-  it('the plain mode: One window at a time is in Accessibility too, and choosing it there leaves the tiles at once', async () => {
-    const p = await screen(1280, 800, '/accessibility?t=*setup,inbox&w=');
-    const plain = p.locator('.loom-tile [aria-label="Desktop"]');
-    await plain.waitFor();
-    expect(await plain.locator('[role="radio"][aria-checked="true"]').textContent()).toBe('Tiling');
-    await plain.locator('[role="radio"]', { hasText: 'One window at a time' }).click();
-    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
-    expect(await p.locator('.loom-window').count()).toBe(1);
-    await p.context().close();
   }, 60_000);
 });

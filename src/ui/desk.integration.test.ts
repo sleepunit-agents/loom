@@ -87,7 +87,8 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     await ctx.addInitScript(([l, boot]) => { localStorage.setItem('loom-look', l as string); if (!boot) sessionStorage.setItem('loom-arrived', '1'); }, [look, !!o.boot] as const);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
-    await p.goto(`${base}/appearance`);
+    // Home, not a page: a page on a desktop is a tile this device keeps, and the tests' Home would open beside it.
+    await p.goto(`${base}/`);
     await p.locator('.loom-top h1').waitFor();
     const csrf = await p.evaluate(async () => ((await (await fetch('/appearance', { headers: { accept: 'application/json' } })).json()) as { chrome: { csrf: string } }).chrome.csrf);
     await p.evaluate(async ([c, l]) => { await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, look: l }) }); }, [csrf, look]);
@@ -231,97 +232,13 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }
   }, 60_000);
 
-  for (const [w, ht] of SIZES) {
-    it(`${w}x${ht}: an app opens in the window from its dock key; Esc and Close go back to the desktop, focus following`, async () => {
-      const p = await screen('neon', w, ht, { motion: 'no-preference' });
-      await home(p);
-      // Every desk move the page makes, as it makes it (desk.tsx deskGo marks <html> while one runs).
-      await p.evaluate(() => { const w = window as unknown as { moves: string[] }; w.moves = [];
-        new MutationObserver(() => { const m = document.documentElement.dataset.deskMove; if (m) w.moves.push(m); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-desk-move'] }); });
-      const moves = () => p.evaluate(() => (window as unknown as { moves: string[] }).moves);
-      // The window grows out of the Inbox's own key: that key carries the window's transition name as it starts.
-      const named = p.locator('.loom-dock-bar [data-part="item"][aria-label="Inbox"]').evaluate((k) => new Promise<string>((res) => {
-        const o = new MutationObserver(() => { if ((k as HTMLElement).style.viewTransitionName) { o.disconnect(); res((k as HTMLElement).style.viewTransitionName); } });
-        o.observe(k, { attributes: true, attributeFilter: ['style'] }); setTimeout(() => res(''), 3000); }));
-      await p.locator('.loom-dock-bar [data-part="item"][aria-label="Inbox"]').click();
-      expect(await named).toBe('loom-win');
-      await expect.poll(moves).toEqual(['open']);
-      const win = p.locator('.loom-window');
-      await win.waitFor();
-      await p.locator('.loom-window main [data-slot="card"], .loom-window main [role="group"]').first().waitFor();
-      expect(new URL(p.url()).pathname).toBe('/inbox');
-      // The window: its title strip says which app, in the app's colour; the page reads at a page's width.
-      expect(await p.locator('#loom-window-title').innerText()).toMatch(/inbox/i);
-      await expect.poll(() => p.evaluate(() => document.activeElement?.id)).toBe('loom-window-title');
-      // A chassis: cut corners, and the title strip's key in the app's own colour (the Inbox's dock key's).
-      const look = await p.evaluate(() => {
-        const w = document.querySelector('.loom-window')!, k = document.querySelector('.loom-window__key')!;
-        const dock = document.querySelector('.loom-dock-bar [aria-label="Inbox"] [data-part="visual"]')!;
-        return { clip: getComputedStyle(w).clipPath, key: getComputedStyle(k).backgroundColor, tint: getComputedStyle(dock).backgroundColor };
-      });
-      expect(look.clip).toMatch(/^polygon/);
-      expect(look.key).toBe(look.tint);
-      const box = (await win.boundingBox())!;
-      expect(box.width).toBeGreaterThan(w * 0.9);
-      const keyTop = Math.min(...(await p.locator('.loom-dock-bar [data-part="item"]').evaluateAll((bs) => bs.map((b) => b.getBoundingClientRect().top))));
-      expect(box.y + box.height).toBeLessThanOrEqual(keyTop);
-      const page = (await p.locator('.loom-window main > *').first().boundingBox())!;
-      expect(page.width).toBeGreaterThan(700);
-      expect(page.width).toBeLessThanOrEqual(1152 + 1);
-      expect(await p.locator('.loom-desk-home').count()).toBe(0);
-      // Nothing sideways, and the page scrolls inside the window, not the screen.
-      const m = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, sh: document.documentElement.scrollHeight }));
-      expect(m.sw).toBeLessThanOrEqual(w); expect(m.sh).toBeLessThanOrEqual(ht);
-      // Esc: back to the desktop, focus on the key the window came from.
-      await p.keyboard.press('Escape');
-      await p.locator('.loom-desk-home').waitFor();
-      expect(new URL(p.url()).pathname).toBe('/');
-      expect(await win.count()).toBe(0);
-      await expect.poll(moves).toEqual(['open', 'close']);
-      await expect.poll(() => p.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Inbox');
-      // Close does the same.
-      await p.locator('.loom-dock-bar [data-part="item"][aria-label="Setup"]').click();
-      await win.waitFor();
-      await p.getByRole('button', { name: /^Close, back to the desktop/ }).click();
-      await p.locator('.loom-desk-home').waitFor();
-      expect(new URL(p.url()).pathname).toBe('/');
-      await p.context().close();
-    }, 90_000);
-  }
-
-  it('reduced motion: the window opens and closes with no transition', async () => {
-    const p = await screen('neon', 1280, 800, { motion: 'reduce' });
-    await home(p);
-    await p.evaluate(() => { const w = window as unknown as { moves: number }; w.moves = 0;
-      new MutationObserver(() => { if (document.documentElement.dataset.deskMove) w.moves++; }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-desk-move'] }); });
-    await p.locator('.loom-dock-bar [data-part="item"][aria-label="Inbox"]').click();
-    await p.locator('.loom-window main [data-slot="card"], .loom-window main [role="group"]').first().waitFor();
-    await p.keyboard.press('Escape');
-    await p.locator('.loom-desk-home').waitFor();
-    expect(await p.evaluate(() => (window as unknown as { moves: number }).moves)).toBe(0);
-    await p.context().close();
-  }, 60_000);
-
-  it('Esc in a field inside the window is the field\'s: the window stays', async () => {
-    const p = await screen('neon', 1280, 800);
-    await p.goto(`${base}/find`);
-    const field = p.locator('.loom-window main input').first();
-    await field.waitFor();
-    await field.click(); await field.fill('sonarr');
-    await p.keyboard.press('Escape');
-    await p.waitForTimeout(400);
-    expect(new URL(p.url()).pathname).toBe('/find');
-    expect(await p.locator('.loom-window').count()).toBe(1);
-    await p.context().close();
-  }, 60_000);
-
-  it('under 1024 px, apps open as pages: no window', async () => {
+  it('under 1024 px, apps open as pages: no tiles', async () => {
     {
       const [look, w] = ['neon', 1000] as const;
       const p = await screen(look, w, 800);
       for (const path of ['/inbox', '/setup']) {
         await p.goto(`${base}${path}`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(300);
-        expect(await p.locator('.loom-window').count(), `${look} ${w} ${path}`).toBe(0);
+        expect(await p.locator('.loom-tiles, .loom-tile').count(), `${look} ${w} ${path}`).toBe(0);
         await p.keyboard.press('Escape'); await p.waitForTimeout(200);
         expect(new URL(p.url()).pathname, `${look} ${w} ${path}`).toBe(path);
       }
@@ -329,29 +246,11 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }
   }, 90_000);
 
-  it('a sheet opened in the window stays above it, and Esc closes the sheet first, then the window', async () => {
-    const p = await screen('neon', 1280, 800);
-    await p.goto(`${base}/inbox`);
-    await p.locator('.loom-window').waitFor();
-    await p.locator('.loom-window main li button', { hasText: 'Sonarr' }).click();
-    const sheet = p.locator('[role="dialog"]');
-    await sheet.waitFor();
-    const z = await sheet.evaluate((e) => { const r = e.getBoundingClientRect(); const top = document.elementFromPoint(r.left + r.width / 2, r.top + 40); return !!top && e.contains(top); });
-    expect(z).toBe(true);
-    await p.keyboard.press('Escape');
-    await expect.poll(() => sheet.count()).toBe(0);
-    expect(new URL(p.url()).pathname).toBe('/inbox');
-    await p.locator('#loom-window-title').focus();
-    await p.keyboard.press('Escape');
-    await p.locator('.loom-desk-home').waitFor();
-    await p.context().close();
-  }, 90_000);
-
   for (const [w, ht] of SIZES) {
-    it(`${w}x${ht}: Ctrl+K opens Find as a command bar in the middle of the screen, over the desktop or a window; its Esc closes only Find`, async () => {
+    it(`${w}x${ht}: Ctrl+K opens Find as a command bar in the middle of the screen, over the desktop or a tile; its Esc closes only Find`, async () => {
       const p = await screen('neon', w, ht);
       for (const path of ['/', '/inbox']) {
-        await p.goto(`${base}${path}`); await p.locator(path === '/' ? '.loom-desk-home' : '.loom-window').waitFor(); await p.waitForTimeout(300);
+        await p.goto(`${base}${path}`); await p.locator(path === '/' ? '.loom-desk-home' : '.loom-tile').waitFor(); await p.waitForTimeout(300);
         await p.keyboard.press('Control+k');
         await p.locator('[role="dialog"] .loom-find-field').waitFor();
         const b = (await p.locator('[role="dialog"]').boundingBox())!;
@@ -360,7 +259,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
         await p.keyboard.press('Escape');
         await expect.poll(() => p.locator('[role="dialog"]').count()).toBe(0);
         expect(new URL(p.url()).pathname).toBe(path);
-        if (path !== '/') expect(await p.locator('.loom-window').count()).toBe(1);
+        if (path !== '/') expect(await p.locator('.loom-tile').count()).toBe(1);
       }
       await p.context().close();
     }, 90_000);
@@ -440,7 +339,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }
   }, 90_000);
 
-  it('Low Light and Daylight at the same width are the same desktop: widgets, the window, no rail, nothing sideways; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
+  it('Low Light and Daylight at the same width are the same desktop: widgets, a tile, no rail, nothing sideways; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
     for (const look of ['lowlight', 'daylight'] as const) {
       const o = await screen(look, 1280, 800);
       await home(o);
@@ -449,7 +348,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       expect(await o.locator('.loom-side').count(), look).toBe(0);
       expect(await o.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), look).toBeLessThanOrEqual(0);
       await o.goto(`${base}/inbox`);
-      await o.locator('.loom-window').waitFor();
+      await o.locator('.loom-tile').waitFor();
       await o.context().close();
     }
     const n = await screen('neon', 1000, 800);

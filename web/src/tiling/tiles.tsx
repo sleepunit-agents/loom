@@ -9,15 +9,17 @@
 // (it draws from Home's own page, which the live stream keeps current), its × removes it, and what it links to opens
 // beside it, last, next to the rail. The + key in the dock and Find add them; an agent's tile can pin its card.
 //
-// The Appearance setting "Tiling" turns it on (App.tsx); "One window at a time" is today's window. Loaded with the
-// desk's own chunk (desk.tsx), at 1024 px and wider only: a phone never fetches it.
+// The only desktop there is (App.tsx; Jonathan, 2026-11-06). Accessibility's One window at a time is this desktop with
+// one app tile at most: opening another sends the one there to the dock, as the rule sends one that doesn't fit. A fresh
+// device starts with the widgets in widgets.ts SEED. Loaded with the desk's own chunk (desk.tsx), at 1024 px and wider
+// only: a phone never fetches it.
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { PortalContainer } from '@/components/ui/portal-container';
 import { reducedMotion } from '../access';
 import { EnvContext, type Env } from '../blocks';
 import type { Shell } from '../loom';
-import { readRecent } from '../recent';
+import { noteRecent, readRecent } from '../recent';
 import { StripKey, WidgetBody, WidgetDesk, type DeskHomeData, type WidgetData } from '../desk-widgets';
 import { addable, freshSet, widgetRef, type WidgetRef } from './widgets';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -50,7 +52,8 @@ export type TilesApi = {
 };
 /** Opened from a widget: placed last, next to the rail (layout.ts place). */
 const FROM_WIDGET = '#widget';
-export type Focused = { key: string; label: string; title: string } | null;
+export type Focused = { key: string; label: string; title: string; /** what its page says about itself (the bar's ⓘ) */ intro?: string } | null;
+export type Accent = { name?: string; style?: React.CSSProperties };
 
 const SAVED = 'loom-tiles';
 /** A tile this wide or wider has the page's side column beside it (docs/specs/desk-tiling.md, "The frame"). */
@@ -83,9 +86,11 @@ const vtName = (prefix: string, id: string) => `${prefix}-${id.replace(/[^a-z0-9
 const tabbables = (el: Element) => [...el.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
   .filter((x) => x.offsetParent !== null || x === document.activeElement);
 const titleOf = (p: PageState, o: Open): string => {
-  const d = p.data as { view?: string; page?: { title?: string }; dashboard?: { label?: string } } | null;
+  const d = p.data as { view?: string; which?: string; page?: { title?: string }; dashboard?: { label?: string } } | null;
   if (p.error || p.waiting || !d) return o.label;
-  return d.page?.title || d.dashboard?.label || o.label;
+  // A sheet (Appearance, Accessibility in the Setup tile) by its own name.
+  const sheet = d.view === 'sheet' && d.which && d.which !== 'setup' ? d.which[0].toUpperCase() + d.which.slice(1) : '';
+  return d.page?.title || d.dashboard?.label || sheet || o.label;
 };
 
 type Named = { key: string; label: string };
@@ -93,7 +98,7 @@ type Named = { key: string; label: string };
 const withFit = <T extends Named>(r: T | null, own: (key: string) => Partial<Omit<Fit, 'why'>> | undefined): (T & { fit: Fit }) | null =>
   (r ? { ...r, fit: r.key.startsWith('/a/') ? AGENT_FIT : fitFor(r.label, own(r.key)) } : null);
 
-export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, onFocus, outerGo, shell, homeData, live, widgetEnv }: {
+export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home, say, lead, tint, accent, onFocus, outerGo, shell, homeData, live, widgetEnv, oneWindow }: {
   api: React.MutableRefObject<TilesApi | null>;
   /** The app a page is in, or null for the desktop (Home) and anything that isn't a tile. */
   appOf: (path: string) => Named | null;
@@ -106,6 +111,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   say: (n: Omit<Note, 'id'>) => void;
   lead: (o: AppRef) => React.ReactNode;
   tint: (o: AppRef) => string;
+  /** What a tile's page wears as its accent (index.css [data-accent]): its app's colour, or its agent's. */
+  accent: (o: AppRef) => Accent;
   onFocus: (f: Focused) => void;
   /** Anything that isn't a tile's (Find, signing out, another site). */
   outerGo: (href: string) => void;
@@ -116,6 +123,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   live: boolean;
   /** The widgets' Env: Home's page's, linking by `go`. */
   widgetEnv: (go: (href: string) => void) => Env | null;
+  /** One window at a time (Accessibility): one app tile at most. */
+  oneWindow: boolean;
 }) {
   // A piece's own fit (its manifest's tab.fit) wins over the table's row for its label (fit.ts).
   const own = (key: string) => shell.pieces.find((p) => p.href === key)?.fit;
@@ -157,6 +166,11 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       s.focus = here.key;
     }
     s.focus ??= s.apps[0]?.key ?? null;
+    // One window at a time: the focused app alone; the others wait in the dock.
+    if (oneWindow && s.apps.length > 1) {
+      s.min = [...s.min, ...s.apps.filter((a) => a.key !== s.focus)];
+      s.apps = s.apps.filter((a) => a.key === s.focus);
+    }
     S.current = s;
   }
 
@@ -236,22 +250,28 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     const next = apps.reduce<Open | undefined>((x, y) => (!x || (usedAt.current[y.key] ?? 0) > (usedAt.current[x.key] ?? 0) ? y : x), undefined);
     return { ...s, apps, min: [...s.min.filter((a) => a.key !== o.key), o], focus: s.focus === o.key ? next?.key ?? null : s.focus };
   };
-  /** An app into the layout: placed by the rule, and whatever doesn't fit then goes to the dock, said in a toast. */
+  /** The most apps on screen at once: the screen's cap (layout.ts rule 4), or one with One window at a time. */
+  const cap = () => (oneWindow ? 1 : capFor(innerWidth));
+  /** An app into the layout: placed by the rule, and whatever doesn't fit then goes to the dock, said in a toast. With
+   * One window at a time, the app there goes to the dock first, kept where it was, said the same way. */
   const add = (o: Open, from?: string) => {
-    const s = S.current;
+    let s = S.current;
+    const swapped = oneWindow ? s.apps : [];
+    for (const a of swapped) s = toDock(s, a);
     const r = admit(tiles(s.apps), tiles([o])[0], wtiles(), area, innerWidth, { from: from === FROM_WIDGET ? { widget: true } : from ? { tile: from } : undefined, usedAt: usedAt.current });
     let next: State = { ...s, min: s.min.filter((a) => a.key !== o.key), home: null };
     next.apps = r.apps.map((t) => (t.id === o.key ? o : { ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned }));
+    const why = [...swapped.map((a) => `${a.label} went to the dock to make room for ${o.label}: one window at a time is on`), ...r.docked.map((d) => d.why)];
     for (const d of r.docked) {
       const gone = s.apps.find((a) => a.key === d.app.id)!;
       next = toDock({ ...next, apps: [...next.apps, gone] }, gone);
-      say({ ok: true, message: d.why });
     }
+    for (const m of why) say({ ok: true, message: m });
     usedAt.current[o.key] = Date.now();
     next.focus = o.key;
     commit(next, 'replace', true);
     const i = next.apps.findIndex((a) => a.key === o.key);
-    announce([`${o.label} opened, tile ${i + 1} of ${next.apps.length}`, ...r.docked.map((d) => d.why)].join('. '));
+    announce([`${o.label} opened, tile ${i + 1} of ${next.apps.length}`, ...why].join('. '));
   };
 
   const open = (href: string, from?: string): boolean => {
@@ -296,8 +316,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
    * `admit` does): the screen resized, Home again, make this the big one. */
   const shed = (s: State, why: string): State => {
     for (;;) {
-      const over = s.apps.length > capFor(innerWidth) || underMinimum(tiles(s.apps), wtiles(s.w), area, innerWidth);
-      const may = s.apps.filter((a) => a.key !== s.focus && !a.pinned);
+      const over = s.apps.length > cap() || underMinimum(tiles(s.apps), wtiles(s.w), area, innerWidth);
+      // With One window at a time, a pinned app goes too: one is the most there is.
+      const may = s.apps.filter((a) => a.key !== s.focus && (oneWindow || !a.pinned));
       if (!over || !may.length || !area.w) return s;
       const o = may.reduce((x, y) => ((usedAt.current[y.key] ?? 0) < (usedAt.current[x.key] ?? 0) ? y : x));
       s = toDock(s, o);
@@ -534,6 +555,14 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     const s = shed(S.current, 'the screen got too small for it');
     if (s !== S.current) commit(s);
   }, [area.w, area.h]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // One window at a time turned on with apps open: the focused one stays, the others go to the dock.
+  const wasOne = useRef(oneWindow);
+  useEffect(() => {
+    if (wasOne.current === oneWindow) return;
+    wasOne.current = oneWindow;
+    const n = shed(S.current, 'one window at a time is on');
+    if (n !== S.current) commit(n, 'replace', true);
+  }, [oneWindow]);   // eslint-disable-line react-hooks/exhaustive-deps
   // The address and this device's copy, as the set first stands.
   useEffect(() => { commit(S.current); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -580,20 +609,23 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     </div>
   ) : null;
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
-  const focusedTitle = f ? titleOf(pages.current.get(f.key) ?? ({ data: null } as PageState), f) : '';
+  const fp = f ? pages.current.get(f.key) : undefined;
+  const focusedTitle = f ? titleOf(fp ?? ({ data: null } as PageState), f) : '';
+  const fd = fp && !fp.error && !fp.waiting ? fp.data as { view?: string; page?: { intro?: string }; intro?: string } | null : null;
+  const focusedIntro = fd?.view === 'page' ? fd.page?.intro : fd?.view === 'sheet' ? fd.intro : undefined;
   const told = useRef('');
   useEffect(() => {
-    const k = f ? `${f.key}\0${f.label}\0${focusedTitle}` : '';
+    const k = f ? `${f.key}\0${f.label}\0${focusedTitle}\0${focusedIntro ?? ''}` : '';
     if (k === told.current) return;
     told.current = k;
-    onFocus(f ? { key: f.key, label: f.label, title: focusedTitle } : null);
+    onFocus(f ? { key: f.key, label: f.label, title: focusedTitle, intro: focusedIntro } : null);
   });
 
   return (
     <div className="loom-tiles" ref={box} data-count={s.apps.length} data-widgets={l.mode}>
       {s.apps.length === 0 ? (wd && wenv ? <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider> : home) : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
-          pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)}
+          pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)} accent={accent(o)}
           landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)}
           pin={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? { on: s.w.includes(nameOf(o.key)), toggle: () => (s.w.includes(nameOf(o.key)) ? removeWidget : addWidget)(nameOf(o.key)) } : undefined} />
       ))}
@@ -617,14 +649,14 @@ function holdScroll(el: HTMLElement, top: number) {
   el.addEventListener('wheel', stop, { passive: true }); el.addEventListener('pointerdown', stop);
 }
 
-function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, landed, onFocus, minimize, close, makeBig, pin, steps }: {
+function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, accent, landed, onFocus, minimize, close, makeBig, pin, steps }: {
   o: Open & { restoreTop?: number }; n: number; of: number; rect: Rect | undefined; focused: boolean;
   say: (n: Omit<Note, 'id'>) => void; nav: (key: string) => PageNav;
   pages: React.MutableRefObject<Map<string, PageState>>; bodies: React.MutableRefObject<Map<string, HTMLElement>>;
   intents: React.MutableRefObject<Map<string, { how: trail.How; url: string; top?: number }>>;
   go: (href: string, o?: { how?: 'back' | 'forward'; top?: number }) => void;
   render: (p: PageState, go: (href: string) => void, wide: boolean) => React.ReactNode;
-  lead: React.ReactNode; tint: string; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
+  lead: React.ReactNode; tint: string; accent: Accent; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
   /** An agent's tile: its card on the desktop, or not. */
   pin?: { on: boolean; toggle: () => void };
   /** Back and Forward for the keys (Alt+← →): true when there was somewhere to go. */
@@ -646,6 +678,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
     const mine = i?.url === p.url;
     if (mine) intents.current.delete(o.key);
     if (trail.note(o.key, p.url, mine ? i!.how : 'go', title || undefined)) moved();
+    // Where you've been, for Find's Recent and a wide tile's Recent here: each page that opened, by its title.
+    if (title) noteRecent(title, p.url);
     landed(p.url);
     const top = mine ? i!.top : first.current;
     first.current = undefined;
@@ -695,8 +729,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   const recent = useMemo(() => (wide && !pageSide && !p.waiting ? recentHere(p.url, o.key) : []), [wide, pageSide, p.url, p.waiting, o.key]);
   return (
     <section className="loom-tile" role="region" aria-roledescription="tile" aria-label={label} data-tile={o.key} data-focused={focused || undefined}
-      data-blocked={blocked || undefined}
-      style={Object.assign({ '--t': tint, '--vt': vtName('tile', o.key) }, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
+      data-blocked={blocked || undefined} data-accent={accent.name}
+      style={Object.assign({ '--t': tint, '--vt': vtName('tile', o.key) }, accent.style, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
       onPointerDownCapture={onFocus} onFocusCapture={onFocus}>
       <div className="loom-tile__bar" inert={blocked || undefined} onDoubleClick={(e) => {
         if (e.button !== 0 || (e.target as Element).closest('button, a, input, select, textarea, [role="button"]')) return;

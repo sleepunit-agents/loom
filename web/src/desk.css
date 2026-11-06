@@ -1,5 +1,5 @@
-/* A big screen (desk.tsx, App.tsx): the desktop, in every look (each its own colours: looks/looks.css). Loaded with the
-   desk's own chunk, so a phone never fetches it. Everything is under .loom-desk, which App.tsx sets at 1024 px and wider,
+/* A big screen (desk.tsx, App.tsx): the tiled desktop's frame and Home's widgets, in every look (each its own colours:
+   looks/looks.css). Loaded with the desk's own chunk, so a phone never fetches it. Everything is under .loom-desk, which App.tsx sets at 1024 px and wider,
    in a household.
 
    The screen is the bars on top, the desktop between them and the dock, and the dock: one screen's height, never a
@@ -106,92 +106,6 @@
   :root[data-look] .loom-vital:hover{background:color-mix(in srgb,var(--t) 6%,transparent)}
 }
 :root[data-look] .loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
-/* ---- an app's window (App.tsx): one big frame over the ground, between the bars and the dock. A chassis: a hairline
-   edge in the app's colour, two cut corners, a ruled strip down its left side, a title strip with the app's key, its
-   name and where it is, and Close. The page inside reads at a page's width, never a phone's, and scrolls inside. ---- */
-:root[data-look] .loom-window{--t:var(--v-pink);--cut:18px;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;position:relative;
-  margin:12px var(--desk-gutter) var(--desk-dock);background:color-mix(in srgb,var(--v-canvas) 90%,transparent);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
-  clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
-  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 55%,var(--v-border)),inset 0 0 60px -30px color-mix(in srgb,var(--t) 40%,transparent)}
-/* the cut corners' own edges, lit */
-:root[data-look] .loom-window::before,:root[data-look] .loom-window::after{content:"";position:absolute;width:calc(var(--cut) * 1.4142);height:1px;
-  background:var(--t);box-shadow:var(--glow-tick) var(--t);pointer-events:none;z-index:2}
-:root[data-look] .loom-window::before{left:0;top:var(--cut);transform-origin:0 0;rotate:-45deg}
-:root[data-look] .loom-window::after{right:0;bottom:var(--cut);transform-origin:100% 100%;rotate:-45deg}
-/* (a double-click on the strip minimizes the window, desk.tsx: it selects no words of the title on the way) */
-:root[data-look] .loom-window__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:12px;height:40px;padding-right:6px;border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));
-  background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
-:root[data-look] .loom-window__key{flex:none;display:grid;place-items:center;align-self:stretch;width:60px;padding-left:10px;background:var(--t);color:var(--v-on-accent);
-  clip-path:polygon(var(--cut) 0,100% 0,calc(100% - 12px) 100%,0 100%,0 var(--cut))}
-:root[data-look] .loom-window__bar h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;font-size:13px;
-  letter-spacing:.14em;text-transform:uppercase;color:var(--v-text);outline:none}
-:root[data-look] .loom-window__bar h2:focus-visible{text-decoration:underline;text-decoration-color:var(--v-blue);text-underline-offset:4px}
-:root[data-look] .loom-window__path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--v-text-3)}
-:root[data-look] .loom-window__close{margin-left:auto;display:grid;place-items:center;width:36px;height:32px;flex:none;color:var(--v-text-2);
-  box-shadow:inset 0 0 0 1px var(--v-border)}
-:root[data-look] .loom-window__close:hover{color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
-:root[data-look] .loom-window__body{flex:1 1 auto;min-height:0;display:flex;
-  background:linear-gradient(90deg,transparent 0 10px,var(--v-border) 10px 11px,transparent 11px) no-repeat,
-    repeating-linear-gradient(180deg,color-mix(in srgb,var(--t) 40%,transparent) 0 1px,transparent 1px 8px) 0 0/6px 100% no-repeat}
-:root[data-look] .loom-window main.loom-desk-main{flex:1 1 auto;min-width:0;height:auto;overflow:auto;scrollbar-gutter:stable;padding:24px 28px 40px 40px;display:block}
-:root[data-look] .loom-window main.loom-desk-main>*{width:100%;max-width:72rem;margin-inline:auto}
-:root[data-look] .loom-window main.loom-desk-main>*+*{margin-top:16px}
-/* Back and Forward in the app's own history, then the trail to where it is (desk.tsx Trail): the app, the page this one
-   is under, this one. The trail folds its middle into "…" when it's longer than the strip, and the title is cut short:
-   the strip never scrolls. The address after it gives way first. */
-:root[data-look] .loom-window__steps{flex:none;display:flex;margin-left:-6px}
-:root[data-look] .loom-window__step{display:grid;place-items:center;width:30px;height:32px;color:var(--v-text-2)}
-:root[data-look] .loom-window__step:disabled{color:var(--v-text-3);opacity:.45}
-:root[data-look] .loom-window__where{flex:0 1 auto;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden}
-:root[data-look] .loom-window__trail{flex:none;min-width:0}
-:root[data-look] .loom-window__trail ol{display:flex;align-items:center;gap:8px}
-:root[data-look] .loom-window__trail li{flex:none;display:flex;align-items:center;gap:8px;max-width:14em;min-width:0}
-:root[data-look] .loom-window__trail li::after{content:"›";flex:none;color:var(--v-text-3)}
-:root[data-look] .loom-window__trail a{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:600;font-size:12px;
-  letter-spacing:.12em;text-transform:uppercase;color:var(--v-text-2);text-decoration:none}
-:root[data-look] .loom-window__where h2{flex:0 1 auto;min-width:5em}
-:root[data-look] .loom-window__path{flex-shrink:100}
-@media (hover:hover) and (pointer:fine){
-  :root[data-look] .loom-window__step:not(:disabled):hover{color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
-  :root[data-look] .loom-window__trail a:hover{color:var(--v-text);text-decoration:underline;text-underline-offset:3px}
-}
-/* The side column (desk.tsx DeskWindow; App.tsx SIDE_COLUMN): the page's own side sections, or Recent here. A fixed
-   width, its own scroll down, never sideways: what's in it wraps, or is cut short with an ellipsis (index.css
-   .loom-side-col). */
-:root[data-look] .loom-window__side{display:none}
-@media (min-width:1280px){
-  :root[data-look] .loom-window__side{display:block;flex:none;width:300px;max-width:300px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;
-    padding:22px 16px 40px;border-left:1px solid var(--v-border)}
-  :root[data-look] nav.loom-window__side h3{margin-bottom:10px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3)}
-  :root[data-look] nav.loom-window__side ul{display:grid;gap:2px}
-  :root[data-look] nav.loom-window__side a{display:block;padding:6px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px;color:var(--v-text-2);
-    text-decoration:none;box-shadow:inset 1px 0 0 var(--v-border)}
-  :root[data-look] nav.loom-window__side a:hover{color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
-}
-
-/* ---- the window, opened and closed (desk.tsx deskGo): it grows out of its dock key and shrinks back into it;
-   the desktop crossfades behind. Under reduced motion it never runs. ---- */
-html[data-desk-move] .loom-window{view-transition-name:loom-win}
-::view-transition-group(loom-win){animation-duration:.32s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
-::view-transition-old(loom-win),::view-transition-new(loom-win){height:100%;width:100%;object-fit:fill}
-html[data-desk-move="open"]::view-transition-old(loom-win){animation:loom-win-fade-out .12s ease-out both}
-html[data-desk-move="open"]::view-transition-new(loom-win){animation:loom-win-fade-in .22s ease-out both}
-html[data-desk-move="close"]::view-transition-old(loom-win){animation:loom-win-fade-out .22s ease-in both}
-html[data-desk-move="close"]::view-transition-new(loom-win){animation:loom-win-fade-in .16s ease-out .12s both}
-/* the desktop crossfades behind it (a phone's moves hide the old root: index.css, "Page moves") */
-html[data-desk-move]::view-transition-old(root){display:block;animation:loom-win-fade-out .24s ease-out both}
-html[data-desk-move]::view-transition-new(root){animation:loom-win-fade-in .24s ease-out both}
-/* a window with no key to grow from (opened from Find, a link, a widget) */
-html[data-desk-move="open"]::view-transition-new(loom-win):only-child{animation:loom-win-grow .3s cubic-bezier(.2,.8,.2,1) both}
-html[data-desk-move="close"]::view-transition-old(loom-win):only-child{animation:loom-win-shrink .2s ease-in both}
-@keyframes loom-win-fade-in{from{opacity:0}to{opacity:1}}
-@keyframes loom-win-fade-out{from{opacity:1}to{opacity:0}}
-@keyframes loom-win-grow{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
-@keyframes loom-win-shrink{from{opacity:1;transform:none}to{opacity:0;transform:scale(.96)}}
-/* the title takes focus when a window opens (for a screen reader), not a ring: it isn't a control */
-:root[data-look] .loom-window__bar h2:focus{outline:none;box-shadow:none}
-
 /* ---- the boot (desk.tsx DeskBoot): once a session, never under reduced motion, any key or tap skips it. It takes the
    taps while it stands (so one that skips it presses nothing under it), none while it leaves. ---- */
 .loom-boot{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--v-canvas);color:var(--v-text);
