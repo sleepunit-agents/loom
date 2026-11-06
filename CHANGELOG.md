@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Desk tiling: widgets are tiles** (t-1884, phase 4 of `docs/specs/desk-tiling.md`). With Tiling chosen
+  (Appearance → Desktop), Home's widgets (Needs you, each agent's card, Vitals, Backup, the ticker) are the desktop
+  with no app open, and move to the right edge beside the apps: in columns, a rail, or a strip of keys. Chat on an
+  agent's card opens its latest Comms thread beside them; an agent's tile pins its card; the dock's + key and Find add
+  widgets; × removes one. The set rides in the address (`w=`). A wide tile has Recent here.
 - **Comms: asks inline** (t-1876). A thread shows its agent's pending approvals that were asked from it (the approvals
   piece's `--conversation`, kept beside the agent loom authenticated), with the ask, why, If you allow, If you deny
   and the fine print, and Allow once and Deny right there; while one waits, the comm screen's face is waiting on you.

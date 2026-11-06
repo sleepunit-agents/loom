@@ -61,7 +61,7 @@ const recentHere = (url: string, app: string) => {
     .filter((r) => !seen.has(r.href) && (seen.add(r.href), true)).slice(0, 8);
 };
 const savedSet = (): TileSet | null => {
-  try { const v = JSON.parse(localStorage.getItem(SAVED) ?? 'null') as TileSet | null; return v && Array.isArray(v.t) && Array.isArray(v.m) ? v : null; } catch { return null; }
+  try { const v = JSON.parse(localStorage.getItem(SAVED) ?? 'null') as TileSet | null; return v && Array.isArray(v.t) && Array.isArray(v.m) && (v.w === undefined || Array.isArray(v.w)) ? v : null; } catch { return null; }
 };
 const sameOrigin = (u: URL) => u.origin === location.origin;
 const titleOf = (p: PageState, o: Open): string => {
@@ -251,6 +251,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       const o = may.reduce((x, y) => ((usedAt.current[y.key] ?? 0) < (usedAt.current[x.key] ?? 0) ? y : x));
       s = toDock(s, o);
       say({ ok: true, message: `${o.label} went to the dock: ${why}` });
+      announce(`${o.label} went to the dock: ${why}`);
     }
   };
   const makeBig = (key: string) => {
@@ -413,7 +414,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   ) : ws.length > 0 && wa ? (
     <div className="loom-wrail" data-mode={l.mode} data-scroll={l.scroll || undefined} role="group" aria-label="Widgets"
       style={{ left: wa.x, top: wa.y, width: wa.w, height: wa.h }}>
-      {ws.map((w) => {
+      {/* In the order drawn, column by column, top to bottom: the tab and reading order (spec, "Accessibility"). */}
+      {[...ws].sort((a, b) => (l.widgets[a.id]?.x ?? 0) - (l.widgets[b.id]?.x ?? 0) || (l.widgets[a.id]?.y ?? 0) - (l.widgets[b.id]?.y ?? 0)).map((w) => {
         const r = l.widgets[w.id];
         if (!r) return null;
         const rect = { x: r.x - wa.x, y: r.y - wa.y, w: r.w, h: r.h };

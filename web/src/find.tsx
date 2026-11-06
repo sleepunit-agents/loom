@@ -22,7 +22,7 @@ type Group = { label: string; rows: Row[] };
 const Tile = ({ label, icon }: { label: string; icon: string }) => <AppTile label={label} icon={icon} size={36} />;
 
 /** A widget the tiled desktop can add (tiling/tiles.tsx): Find lists them as "Add widget: …". */
-export type Addable = { id: string; label: string; on: boolean };
+export type Addable = Pick<import('./tiling/widgets').WidgetRef, 'id' | 'label'> & { on: boolean };
 
 export function FindPanel({ chrome, icon, go, autoFocus = true, onClose, widgets }: {
   chrome: Chrome; icon: (label: string) => string; go: (href: string) => void; autoFocus?: boolean; onClose?: () => void; widgets?: Addable[];

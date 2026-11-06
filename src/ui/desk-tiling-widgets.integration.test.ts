@@ -36,6 +36,7 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
   let base: string;
   let token: string;
   let artLatest: string;
+  let markLatest: string;
   const saved: Record<string, string | undefined> = {};
 
   beforeAll(async () => {
@@ -51,11 +52,14 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
-    // Art's older thread, Mark's, then Art's latest: Chat opens the latest.
+    // Art's older thread, Art's latest, then Mark's, the household's newest: Chat on a card opens that agent's latest,
+    // not the newest thread there is.
+    const later = () => new Promise((r) => setTimeout(r, 30));
     openThread(h, process.env, h.members[0], { agent: 'art', id: 'aaaaaaaaaaaaaaaa', text: 'An older thread' });
-    openThread(h, process.env, h.members[0], { agent: 'mark', id: 'bbbbbbbbbbbbbbbb', text: 'Mark\'s thread' });
-    await new Promise((r) => setTimeout(r, 30));
+    await later();
     artLatest = openThread(h, process.env, h.members[0], { agent: 'art', id: 'cccccccccccccccc', text: 'The latest with Art' }).thread.id;
+    await later();
+    markLatest = openThread(h, process.env, h.members[0], { agent: 'mark', id: 'bbbbbbbbbbbbbbbb', text: 'Mark\'s thread' }).thread.id;
     handle = await startHttpServer({ contextDir: join(home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -107,12 +111,17 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
       await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
       await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${artLatest}`);
       expect(query(p, 't')).toBe('inbox,*comms');
+      // and Mark's card: Mark's thread, in the Comms tile that's open
+      await p.locator('[data-widget="mark"] button[aria-label^="Chat with"]').click();
+      await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${markLatest}`);
+      expect(await labels(p)).toEqual(['Inbox', 'Comms']);
       await p.context().close();
     }, 60_000);
   }
 
-  it('13. Pin card to the desktop on an agent\'s tile adds its card; × removes a widget; the + key and Find add them', async () => {
-    const p = await screen(1920, 1080, '/a/mark?t=*mark&w=needs');
+  // "Pin card to the desktop" on an agent's pages: the agent's tile's strip carries it (an agent's pages are its tile).
+  for (const [w, hgt] of [[1280, 800], [1920, 1080]]) it(`13. Pin card to the desktop on an agent's pages (its tile) adds its card; × removes a widget; the + key and Find add them, at ${w}×${hgt}`, async () => {
+    const p = await screen(w, hgt, '/a/mark?t=*mark&w=needs');
     await expect.poll(() => labels(p)).toEqual(['mark']);
     expect(await widgets(p)).toEqual(['needs']);
     await p.locator('.loom-tile button[aria-label^="Pin"]').click();
@@ -133,10 +142,17 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     expect(await list.count()).toBe(0);
     // Find: "Add widget: …"
     await p.keyboard.press('Control+k');
-    await p.locator('input[aria-label="Find anything"]').fill('widget ticker');
     await p.locator('input[aria-label="Find anything"]').fill('ticker');
     await p.locator('[role="option"]', { hasText: 'Add widget: Ticker' }).click();
     await expect.poll(() => widgets(p)).toEqual(['mark', 'vitals', 'ticker']);
+    // one that's on the desktop already: the + key focuses it
+    await p.click(KEY('Add a widget'));
+    await list.locator('button', { hasText: 'Vitals' }).click();
+    await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('vitals');
+    // with no app and no widget: how to get some
+    for (const id of ['mark', 'vitals', 'ticker']) await p.locator(`[data-widget="${id}"] .loom-wtile__x`).click();
+    await p.click(KEY('Home'));
+    await expect.poll(() => p.getByText('Open an app from the dock, or add a widget with the + key.').count()).toBe(1);
     await p.context().close();
   }, 60_000);
 
@@ -151,13 +167,37 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.context().close();
   }, 60_000);
 
-  it('14. a reload restores the widgets in their order', async () => {
-    const p = await screen(1920, 1080, '/comms?t=inbox!,*comms&w=art,needs');
+  for (const [w, hgt] of [[1280, 800], [1920, 1080]]) it(`14. a reload restores the widgets in their order, at ${w}×${hgt}`, async () => {
+    const p = await screen(w, hgt, '/comms?t=inbox!,*comms&w=art,needs');
     await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
-    expect(await widgets(p)).toEqual(['art', 'needs']);
+    // two apps leave room for a rail: it stacks them in the order added
+    const drawn = ['art', 'needs'];
+    await expect.poll(() => widgets(p)).toEqual(drawn);
     await p.reload(); await p.locator('.loom-tile').first().waitFor();
-    await expect.poll(() => widgets(p)).toEqual(['art', 'needs']);
+    await expect.poll(() => widgets(p)).toEqual(drawn);
     expect(decodeURIComponent(new URL(p.url()).search)).toBe('?t=inbox!,*comms&w=art,needs');
+    await p.context().close();
+  }, 60_000);
+
+  it('focus and reading order: the widgets as drawn, column by column, not as added (the board at 1920)', async () => {
+    const p = await screen(1920, 1080, '/comms?t=*comms&w=art,needs');
+    await expect.poll(() => p.locator('.loom-tiles').getAttribute('data-widgets')).toBe('board');
+    const xs = Object.fromEntries((await boxes(p, '.loom-wrail [data-widget]', 'data-widget')).map((b) => [b.id, b.x]));
+    expect(xs.needs).toBeLessThan(xs.art);
+    expect(await widgets(p)).toEqual(['needs', 'art']);
+    expect(query(p, 'w')).toBe('art,needs');
+    await p.context().close();
+  }, 60_000);
+
+  it('a tile 1,100 px wide or wider, on a page with no side sections of its own, has Recent here', async () => {
+    const p = await screen(1920, 1080, '/people?t=*people&w=');
+    const people = p.locator('.loom-tile[data-tile="/people"]');
+    expect(await people.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThanOrEqual(1100);
+    await people.locator('a[href^="/people/"]').first().click();
+    await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/people\/./);
+    await people.locator('.loom-tile__btn[aria-label^="Back"]').click();
+    await expect.poll(() => new URL(p.url()).pathname).toBe('/people');
+    await expect.poll(() => people.locator('nav.loom-tile__side[aria-label="Recent here"] a').count()).toBeGreaterThan(0);
     await p.context().close();
   }, 60_000);
 
@@ -171,11 +211,16 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
       await p.waitForTimeout(200);
       const all = [...await boxes(p, '.loom-tile', 'data-tile'), ...await boxes(p, '.loom-wrail [data-widget]', 'data-widget')];
       const rail = await p.locator('.loom-wrail').evaluate((e) => { const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; });
+      // The rail itself is inside the desk; a widget is inside the rail (a rail taller than the desk scrolls inside
+      // itself, so one below its fold is inside the rail's scroll, never over the dock).
+      expect(rail.top, 'the rail: under the bars').toBeGreaterThanOrEqual(bars - 0.5);
+      expect(rail.bottom, 'the rail: over the dock').toBeLessThanOrEqual(dock + 0.5);
       for (const t of all) {
-        expect(t.y, `${t.id}: under the bars`).toBeGreaterThanOrEqual(Math.min(bars, rail.top) - 0.5);
-        // a rail taller than the desk scrolls inside itself: a widget below its fold is inside the rail's scroll
-        if (t.y < rail.bottom) expect(Math.min(t.y + t.h, rail.bottom), `${t.id}: over the dock`).toBeLessThanOrEqual(dock + 0.5);
         expect(t.x).toBeGreaterThanOrEqual(0); expect(t.x + t.w).toBeLessThanOrEqual(w);
+        if (t.id.startsWith('/')) {
+          expect(t.y, `${t.id}: under the bars`).toBeGreaterThanOrEqual(bars - 0.5);
+          expect(t.y + t.h, `${t.id}: over the dock`).toBeLessThanOrEqual(dock + 0.5);
+        } else expect(t.y, `${t.id}: inside the rail`).toBeGreaterThanOrEqual(rail.top - 0.5);
       }
       for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
         const [a, b] = [all[i], all[j]];
@@ -200,28 +245,4 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.context().close();
   }, 60_000);
 
-  it('Comms in a tile under 620 px is one pane: the list, then the thread with its way back', async () => {
-    const p = await screen(1280, 800, '/comms?t=setup,*comms&w=needs');
-    const comms = p.locator('.loom-tile[data-tile="/comms"]');
-    await comms.locator('.comms-list').waitFor();
-    expect(await comms.evaluate((t) => t.getBoundingClientRect().width)).toBeLessThan(620);
-    const shown = (sel: string) => comms.locator(sel).evaluate((e) => getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0).catch(() => false);
-    expect(await shown('.comms-list')).toBe(true);
-    expect(await shown('.comms-blank')).toBe(false);
-    // a thread: only the thread, filling the tile, with Back to the list
-    await comms.locator('.comms-row__btn').first().click();
-    await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/comms\/th/);
-    await comms.locator('.comms-thread').waitFor();
-    expect(await shown('.comms-list')).toBe(false);
-    const [tw, th] = await Promise.all([comms.locator('.comms-thread').evaluate((e) => e.getBoundingClientRect().width), comms.locator('.comms').evaluate((e) => e.getBoundingClientRect().width)]);
-    expect(tw).toBeGreaterThan(th - 4);
-    await comms.locator('button[aria-label="Back to threads"]').click();
-    await expect.poll(() => new URL(p.url()).pathname).toBe('/comms');
-    expect(await shown('.comms-list')).toBe(true);
-    // wide again (Comms alone), two panes and no Back
-    await p.locator('.loom-tile[data-tile="/setup"] button[aria-label="Close Setup"]').click();
-    await expect.poll(() => comms.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThan(620);
-    expect(await shown('.comms-blank')).toBe(true);
-    await p.context().close();
-  }, 60_000);
 });

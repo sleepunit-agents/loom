@@ -8,7 +8,7 @@
 :root[data-look] .loom-tile{--cut:10px;position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
   background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);
   box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
-:root[data-look] .loom-tile[data-focused]{box-shadow:inset 0 0 0 1px var(--t),0 0 0 1px color-mix(in srgb,var(--t) 30%,transparent)}
+:root[data-look] .loom-tile[data-focused]{box-shadow:inset 0 0 0 1px var(--t),inset 0 0 0 2px color-mix(in srgb,var(--t) 30%,transparent)}
 :root[data-look] .loom-tile__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:6px;height:32px;padding-right:4px;
   border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
 :root[data-look] .loom-tile[data-focused] .loom-tile__bar{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
@@ -28,7 +28,7 @@
 :root[data-look] .loom-tile__btn:disabled{color:var(--v-text-3);opacity:.45}
 :root[data-look] .loom-tile__btn:not(:disabled):is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
 /* The page: its own scroll, its own width (an app's narrow layout asks the tile, not the screen: container queries). */
-:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:inline-size;container-name:tile}
+:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:size;container-name:tile}
 :root[data-look] .loom-tile__page{padding:16px 18px 28px;display:flex;flex-direction:column;gap:16px}
 :root[data-look] .loom-tile__page>*{width:100%;max-width:72rem;margin-inline:auto}
 /* A wide tile's side column (SIDE_WIDE): Recent here, as the window has it, beside the page; it stays as the page scrolls. */
@@ -86,7 +86,7 @@
   color:var(--v-on-accent);background:var(--v-pink)}
 /* the + key's list, over the dock */
 :root[data-look] .loom-wlaunch{position:absolute;left:50%;bottom:6px;translate:-50% 0;z-index:40;width:min(340px,calc(100% - 32px));padding:12px;
-  background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border),0 18px 40px -16px rgba(0,0,0,.6)}
+  background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border),var(--shadow-float)}
 :root[data-look] .loom-wlaunch h2{padding:2px 6px 8px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
 :root[data-look] .loom-wlaunch ul{display:grid;gap:2px}
 :root[data-look] .loom-wlaunch button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:6px 10px;text-align:left;font-size:14px;color:var(--v-text)}
@@ -98,3 +98,5 @@
 :root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__face>*{scale:.75}
 :root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__who{padding:14px 44px 4px 0}
 :root[data-look] .loom-wrail .loom-agent__name{font-size:20px}
+/* Comms in a tile fills the tile's height (its own height is the window's, read from the screen: comms.css) */
+:root[data-look] .loom-tile__page>.comms[data-wide]{height:calc(100cqh - 44px);min-height:300px}

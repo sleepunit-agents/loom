@@ -13,7 +13,7 @@ const web = new URL('../../web/src/', import.meta.url);
 const css = (p: string) => readFileSync(new URL(p, web), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
 // The looks' sheet, the face's, and any look's rule loom's own stylesheet carries (its rules under [data-look]).
 const lookRulesOf = (s: string) => [...s.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].includes('data-look')).map((m) => m[0]).join('\n');
-const SHEETS = { 'looks/looks.css': css('looks/looks.css'), 'face.css': css('face.css'), 'desk.css': css('desk.css'), 'index.css (the looks\' rules)': lookRulesOf(css('index.css')) };
+const SHEETS = { 'looks/looks.css': css('looks/looks.css'), 'face.css': css('face.css'), 'desk.css': css('desk.css'), 'tiling/tiles.css': css('tiling/tiles.css'), 'index.css (the looks\' rules)': lookRulesOf(css('index.css')) };
 
 /** A sheet split into what's inside @media (prefers-contrast: more) and what isn't. */
 function split(s: string): { more: string; rest: string } {

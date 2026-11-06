@@ -4,16 +4,6 @@
 .comms { --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); min-height: 0; }
 .comms[data-wide] { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: calc(100dvh - 300px); min-height: 440px; border: 1px solid var(--comms-line); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
 .comms[data-phone] { padding-bottom: calc(var(--dock-h) + 84px + env(safe-area-inset-bottom)); }
-/* In a narrow tile (the tiled desktop, docs/specs/desk-tiling.md rule 4: under 620 px), one pane, as a phone: the list,
-   then the thread with its way back. Two panes there would both be cramped. The back key is a phone's, and a narrow tile's. */
-.comms-back[data-narrow] { display: none; }
-@container tile (max-width: 619px) {
-  .comms[data-wide] { grid-template-columns: minmax(0, 1fr); }
-  .comms[data-wide]:has(> .comms-thread) > .comms-list { display: none; }
-  .comms[data-wide] > .comms-blank { display: none; }
-  .comms[data-wide] .comms-list { border-right: 0; }
-  .comms-back[data-narrow] { display: grid; }
-}
 
 /* ---- the list ---- */
 .comms-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 12px 10px; }

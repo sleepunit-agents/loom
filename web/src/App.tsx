@@ -302,7 +302,7 @@ export default function App() {
     wasTiled.current = tiled;
     if (tiled) { if (url !== '/') void load('/', false); return; }
     const u = new URL(location.href);
-    for (const k of 'tmw') u.searchParams.delete(k);
+    for (const k of ['t', 'm', 'w']) u.searchParams.delete(k);
     history.replaceState(null, '', u.pathname + u.search);
     void load(u.pathname + u.search, false);
   }, [tiled]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -677,7 +677,7 @@ export default function App() {
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(tiled ? [{ value: '#widgets', label: 'Add a widget', icon: <AnimatedIcon name="plus" /> }] : []), ...(me ? [me] : [])]}
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(tiled ? [{ value: '#widgets', label: 'Add a widget', icon: <AnimatedIcon name={iconFor('plus')} /> }] : []), ...(me ? [me] : [])]}
                 value={lit} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
               </DockSwap>

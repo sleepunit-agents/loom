@@ -17,6 +17,7 @@ import { iconFor } from './safe';
 import { markColor } from './look';
 import { DOT } from './tones';
 import type { Shell } from './loom';
+import type { WidgetKind } from './tiling/fit';
 
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
@@ -222,7 +223,7 @@ export function TickerW({ shell, live }: { shell: Shell; live: boolean }) {
 }
 
 export type WidgetData = { home: DeskHomeData; shell: Shell; live: boolean };
-type Kind = 'agent' | 'needs' | 'vitals' | 'backup' | 'ticker' | 'box';
+type Kind = WidgetKind;
 
 /** One widget, by its id and kind, drawn from Home's data: null when it has nothing to draw from (an agent gone). */
 export function WidgetBody({ id, kind, d, compact, chat }: { id: string; kind: Kind; d: WidgetData; compact?: boolean; chat?: (agent: string) => void }) {

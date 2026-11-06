@@ -319,6 +319,30 @@ A knowledge page that is really a memory (about the human or the work), or
 vice versa; `knowledge_maintain` reports them.
 _Avoid_: miscategorized, wrong bucket, drift
 
+## The desktop
+
+**Tile**:
+One app on a big screen, sharing the screen with others by the tiling rule (docs/specs/desk-tiling.md). It has its own
+page, its own history and its own frame.
+_Avoid_: window (the single big frame of One window at a time), pane, panel
+
+**Widget**:
+A small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup) or the ticker. It is live, never gets a
+split of its own, and opens its app beside it.
+_Avoid_: gadget, applet
+
+**Fit**:
+What an app declares about the room it can use: a minimum, an ideal and a maximum width, a minimum height, and whether
+it wants the big slot.
+_Avoid_: size hint, constraints
+
+**The big slot**:
+The first app tile, the large one on the left once there are three or more apps.
+
+**The rail**:
+The column the widgets stack in, on the right, while apps are open. **The strip** is the rail folded to one 64 px key
+per widget.
+
 ## Relationships
 
 - Identity is read at boot; memory and knowledge are read on demand; the
