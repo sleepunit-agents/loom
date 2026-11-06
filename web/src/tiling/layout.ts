@@ -19,7 +19,8 @@ export type Mode = 'empty' | 'apps' | 'desk' | 'board' | 'rail' | 'strip';
 export type Layout = {
   mode: Mode;
   apps: Record<string, Rect>;
-  /** Each widget's box: in the rail, the board's columns or the strip. The desktop (no apps) has none: its groups. */
+  /** Each widget's box: in the rail, the board's columns or the strip. The desktop (no apps) has none: it's Home's own
+   * grid (desk.css .loom-desk-home), drawn from `groups`, its cards filling the middle two or three across by CSS. */
   widgets: Record<string, Rect & { compact?: boolean }>;
   /** The desktop's grouping (no apps): Needs you, the agents, everything else, each a column. */
   groups: string[][];
@@ -119,12 +120,12 @@ export function layout(apps: AppTile[], widgets: WidgetTile[], area: Rect, scree
   const first = apps[0];
   out.why.push(apps.length === 1 ? `1 app: ${first.name} fills the app area.`
     : `${apps.length} apps: ${first.name} has the big slot${first.pinned ? ' (you made it the big one)' : first.fit.big ? ` (it wants room: ${first.fit.why})` : ''}. Each newer one subdivides the newest.`);
-  split(apps, A, out, 0);
+  split(apps, A, out);
   return out;
 }
 
 /** One fills its region; more: the first beside (or over) the rest, and the rest share what's left the same way. */
-function split(ts: AppTile[], R: Rect, out: Layout, depth: number): void {
+function split(ts: AppTile[], R: Rect, out: Layout): void {
   if (ts.length === 1) { out.apps[ts[0].id] = { ...R }; return; }
   const [a, ...rest] = ts;
   if (R.w > R.h * WIDE) {
@@ -137,18 +138,18 @@ function split(ts: AppTile[], R: Rect, out: Layout, depth: number): void {
     if (a.fit.max != null && restMax === Infinity) w0 = Math.min(w0, a.fit.max);
     if (a.fit.max == null && restMax !== Infinity) w0 = Math.max(w0, inner - restMax);
     w0 = Math.max(Math.min(w0, inner - restMin), Math.min(a.fit.min[0], inner - restMin));
-    if (depth < 2) out.why.push(`${a.name} beside ${rest.map((t) => t.name).join(' and ')}: ${Math.round((w0 / inner) * 100)}%, from ideal widths ${ia} and ${ib}.`);
+    out.why.push(`${a.name} beside ${rest.map((t) => t.name).join(' and ')}: ${Math.round((w0 / inner) * 100)}%, from ideal widths ${ia} and ${ib}.`);
     out.apps[a.id] = { x: R.x, y: R.y, w: w0, h: R.h };
-    split(rest, { x: R.x + w0 + GUTTER, y: R.y, w: R.w - w0 - GUTTER, h: R.h }, out, depth + 1);
+    split(rest, { x: R.x + w0 + GUTTER, y: R.y, w: R.w - w0 - GUTTER, h: R.h }, out);
   } else {
     // Stacked: half each, then neither under its minimum height.
     const restMin = Math.max(...rest.map((t) => t.fit.min[1]));
     const inner = R.h - GUTTER;
     let h0 = Math.round(inner / 2);
     h0 = Math.max(Math.min(h0, inner - restMin), Math.min(a.fit.min[1], inner - restMin));
-    if (depth < 3) out.why.push(`${a.name} over ${rest.map((t) => t.name).join(' and ')}: stacked, the region is taller than wide.`);
+    out.why.push(`${a.name} over ${rest.map((t) => t.name).join(' and ')}: stacked, the region is taller than wide.`);
     out.apps[a.id] = { x: R.x, y: R.y, w: R.w, h: h0 };
-    split(rest, { x: R.x, y: R.y + h0 + GUTTER, w: R.w, h: R.h - h0 - GUTTER }, out, depth + 1);
+    split(rest, { x: R.x, y: R.y + h0 + GUTTER, w: R.w, h: R.h - h0 - GUTTER }, out);
   }
 }
 

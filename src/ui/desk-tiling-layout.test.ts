@@ -1,7 +1,7 @@
 // The tiling rule (docs/specs/desk-tiling.md, "The rule", criteria 1 to 9): a pure function, so no browser.
 import { describe, it, expect } from 'vitest';
-import { admit, capFor, columnWidth, GUTTER, layout, place, promote, STRIP, swap, underMinimum, type AppTile, type Rect, type WidgetTile } from '../../web/src/tiling/layout';
-import { fitFor } from '../../web/src/tiling/fit';
+import { admit, capFor, columnWidth, GUTTER, layout, place, promote, swap, underMinimum, type AppTile, type Rect, type WidgetTile } from '../../web/src/tiling/layout';
+import { AGENT_FIT, fitFor } from '../../web/src/tiling/fit';
 
 const app = (name: string, pinned = false): AppTile => ({ id: name.toLowerCase(), name, fit: fitFor(name), ...(pinned ? { pinned } : {}) });
 const area = (w: number, h: number): Rect => ({ x: 0, y: 0, w, h });
@@ -64,6 +64,8 @@ describe('the tiling rule', () => {
     expect([both.apps.comms.w, both.apps.inbox.w]).toEqual([850, 950]);
     // The 34 percent floor: Setup's raw 607 px is clamped up.
     expect(layout([app('Setup'), app('Changes')], [], area(1810, 900), 1920).apps.setup.w).toBe(612);
+    // The 66 percent ceiling: Changes's raw 66.3 percent (1,193 px) is clamped down to 1,188.
+    expect(layout([app('Changes'), app('Setup')], [], area(1810, 900), 1920).apps.changes.w).toBe(1188);
     // The first has no max and the rest have one: it takes what they can't use.
     const noMax = layout([app('Tasks'), app('Comms')], [], area(3000, 1300), 3000);
     expect([noMax.apps.tasks.w, noMax.apps.comms.w]).toEqual([2170, 820]);
@@ -78,6 +80,8 @@ describe('the tiling rule', () => {
     // Opened from a tile: right after it; from a widget: last, next to the rail.
     expect(place([app('Inbox'), app('Comms')], app('Tasks'), { tile: 'inbox' }).map((a) => a.name)).toEqual(['Inbox', 'Tasks', 'Comms']);
     expect(place([app('Comms')], app('Tasks'), { widget: true }).map((a) => a.name)).toEqual(['Comms', 'Tasks']);
+    // Only one is pinned: making another the big one unpins the first.
+    expect(promote(pinned, 'inbox').map((a) => [a.name, !!a.pinned])).toEqual([['Inbox', true], ['Comms', false]]);
     // Swapping a pinned tile out of the big slot unpins it.
     expect(swap(pinned, 0, 1).map((a) => [a.name, !!a.pinned])).toEqual([['Inbox', false], ['Comms', false]]);
   });
@@ -104,13 +108,19 @@ describe('the tiling rule', () => {
     const rail = layout([app('Tasks'), app('Comms')], three, area(1872, 890), 1920);
     expect(rail.mode).toBe('rail');
     expect(rail.widgetArea!.w).toBe(340);
-    expect(rail.widgets.art.w).toBe(columnWidth(1920));
+    expect(rail.widgets.art.w).toBe(340);
     expect(layout([app('Tasks'), app('Comms')], three, area(1552, 800), 1600).widgetArea!.w).toBe(300);
     const r1280 = layout([app('Tasks'), app('Comms')], three, area(1232, 800), 1280);
     expect([r1280.mode, r1280.widgetArea!.w]).toEqual(['rail', 280]);
     const strip = layout([app('Tasks'), app('Changes')], three, area(1232, 600), 1280);
     expect(strip.mode).toBe('strip');
-    expect(strip.widgetArea!.w).toBe(STRIP);
+    expect(strip.widgetArea!.w).toBe(64);
+    expect(Object.values(strip.widgets).map((r) => [r.w, r.h])).toEqual([[64, 64], [64, 64], [64, 64]]);
+    // "Combined" alternates: Tasks beside (Comms over Inbox) needs 520 + 10 + 420 = 950, not their sum (1,340), so there's
+    // room for a 300 px rail, not only the strip.
+    expect(layout([app('Tasks'), app('Comms'), app('Inbox')], three, area(1552, 800), 1600).mode).toBe('rail');
+    // The column's width at each threshold.
+    expect([1439, 1440, 1919, 1920].map(columnWidth)).toEqual([280, 300, 300, 340]);
     // A rail taller than the screen draws its cards compact, then scrolls.
     const cards = (n: number): WidgetTile[] => [W.needs, ...Array.from({ length: n }, (_, i) => ({ id: `a${i}`, name: `A${i}`, kind: 'agent' as const }))];
     const tall = layout([app('Tasks'), app('Comms')], cards(3), area(1872, 600), 1920);
@@ -152,6 +162,13 @@ describe('the tiling rule', () => {
     expect(admit(set.slice(0, 3), app('Passkeys'), [], area(1552, 1000), 1600).docked).toEqual([]);
     expect(admit(set, app('Secrets'), [], area(2511, 1300), 2559).docked.map((d) => d.why)).toEqual(['Appearance went to the dock to make room for Secrets: 4 apps is the most this screen holds']);
     expect(admit(set, app('Secrets'), [], area(2512, 1300), 2560).docked).toEqual([]);
+  });
+
+  it('fit: an agent\'s pages, a core app, a piece\'s own and the default', () => {
+    expect(AGENT_FIT).toMatchObject({ min: [420, 360], ideal: 760, max: 1000, big: false });
+    expect(fitFor('Comms')).toMatchObject({ min: [380, 360], ideal: 680, max: 820, big: false });
+    expect(fitFor('Garden')).toMatchObject({ min: [420, 300], ideal: 720, max: null, big: false });
+    expect(fitFor('Garden', { ideal: 900, max: 1000 })).toMatchObject({ min: [420, 300], ideal: 900, max: 1000, big: false });
   });
 
   it('9. deterministic: the same tiles at the same size give the same boxes', () => {
