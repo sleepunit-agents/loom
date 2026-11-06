@@ -421,7 +421,7 @@ describe('managed pieces', () => {
     const runtimePkg = { name: 'loom-runtime', loom: { name: 'runtime', role: 'runtime', label: 'Runtime' } };
     const both = { 'loom-runtime': 'true', 'loom-box': 'true' };
 
-    it('the table is box → runtime, and the catalog lists loom-box\'s repo as runtime at 7f85322', () => {
+    it('the table is box → runtime, and the catalog lists loom-box\'s repo as runtime at its pinned commit (411f703)', () => {
       expect(PIECE_ALIASES).toEqual({ box: 'runtime' });
       const c = readCatalog();
       expect(c[0]).toMatchObject({ name: 'runtime', repo: 'sleepunit-agents/loom-box', commit: '411f703662b2fc90e8ceebaef18b7de689418ae8', label: 'Runtime', version: '0.1.0' });
