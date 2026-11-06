@@ -223,8 +223,17 @@ function updateState(home: string, f: (s: BackupState) => void): BackupState {
   return s;
 }
 
-/** Take the run lock, or null when another live process holds it. One stale (its pid gone, or too old) is taken over. */
-export function takeLock(home: string, nowMs = Date.now()): { release: () => void } | null {
+/** Whether a pid names a live process here (EPERM: alive, someone else's). */
+function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+/**
+ * Take the run lock, or null when another live process holds it. One stale (its pid gone, or too old) is taken over.
+ * `seam.judged` runs once a lock has been judged stale, before the takeover: tests use it to change the lock there.
+ */
+export function takeLock(home: string, nowMs = Date.now(), seam: { judged?: () => void } = {}): { release: () => void } | null {
   const p = join(ensureDir(home), 'run.lock');
   const token = randomBytes(8).toString('hex');
   const mine = () => { try { return (JSON.parse(readFileSync(p, 'utf-8')) as { token?: string }).token === token; } catch { return false; } };
@@ -244,17 +253,39 @@ export function takeLock(home: string, nowMs = Date.now()): { release: () => voi
       let mtime = nowMs;
       try { mtime = statSync(p).mtimeMs; } catch { continue; }
       const age = nowMs - (Date.parse(held.at ?? '') || mtime);
-      let alive = false;
-      if (Number.isInteger(held.pid) && held.pid! > 0) { try { process.kill(held.pid!, 0); alive = true; } catch (err) { alive = (err as NodeJS.ErrnoException).code === 'EPERM'; } }
-      if (alive && age < LOCK_STALE_MS) return null;
-      // Stale. Take it over atomically: rename it aside (only one taker's rename finds it), and only if what was moved
-      // is the lock judged stale is it gone; one that's changed meanwhile is someone's fresh lock, put back.
-      const aside = `${p}.stale-${process.pid}-${token}`;
-      try { renameSync(p, aside); } catch { return null; }
-      let moved = '';
-      try { moved = readFileSync(aside, 'utf-8'); } catch { /* gone */ }
-      if (moved !== raw) { try { linkSync(aside, p); } catch { /* another lock is there now: it wins */ } try { unlinkSync(aside); } catch { /* gone */ } return null; }
-      try { unlinkSync(aside); } catch { /* gone */ }
+      if (pidAlive(held.pid ?? 0) && age < LOCK_STALE_MS) return null;
+      seam.judged?.();
+      // Stale. Taken over by one taker at a time, under a claim beside it: the taker's pid and token, written whole
+      // and linked into place (a link lands whole or not at all, and only one taker's does). There the lock is read
+      // again, and only the one judged stale is removed; one that's changed meanwhile is someone's fresh lock, left
+      // where it is. (Moving it aside to look, as before, could move a fresh one, and a third taker made its own in
+      // the gap: two ran, t-1886.)
+      const over = `${p}.takeover`;
+      const claim = `${process.pid} ${token}`;
+      const draft = `${over}.${token}`;
+      let claimed = false;
+      try {
+        writeFileSync(draft, claim, { mode: 0o600 });
+        try { linkSync(draft, over); claimed = true; } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err; }
+      } finally { try { unlinkSync(draft); } catch { /* gone */ } }
+      if (!claimed) {
+        // Another taker's claim. One whose taker died there is cleared, for the next tick; a live one, however slow
+        // (a laptop asleep mid-takeover), is waited on: no clock decides it.
+        let other = '';
+        try { other = readFileSync(over, 'utf-8'); } catch { return null; /* done meanwhile */ }
+        if (!pidAlive(Number(other.split(' ')[0]))) {
+          try { if (readFileSync(over, 'utf-8') === other) unlinkSync(over); } catch { /* gone */ }
+        }
+        return null;
+      }
+      try {
+        let now = '';
+        try { now = readFileSync(p, 'utf-8'); } catch { /* gone: free */ }
+        if (now && now !== raw) return null;
+        if (now) { try { unlinkSync(p); } catch { /* gone */ } }
+      } finally {
+        try { if (readFileSync(over, 'utf-8') === claim) unlinkSync(over); } catch { /* gone */ }
+      }
     }
   }
   return null;

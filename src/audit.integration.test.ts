@@ -821,6 +821,8 @@ describe('model families (the mapping core reads)', () => {
 });
 
 describe('the metadata measures (computeMeasures)', () => {
+  // Some twenty writes, each its own transaction (open, commit, fsync): ~0.3 s alone, but past vitest's 5 s default
+  // when the disk is shared with other runs (seen on CI and on a ZFS box under load, t-1886). Its time is the disk's.
   it('computes each kind\'s measures for one UTC day, attributed to the measured turn\'s model', () => {
     const h = household('loom-measures-');
     piece(h.home, 'shuttle', { role: 'runtime', venues: VENUES });
@@ -874,7 +876,7 @@ describe('the metadata measures (computeMeasures)', () => {
     } finally {
       rmSync(h.home, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
 
 // ─── Who a conversation is with: sticky (criterion 10's non-owner rule) ─────

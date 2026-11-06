@@ -26,7 +26,7 @@ const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bi
 const built = existsSync(`${root}dist/web/index.html`);
 
 type Phone = { p: Page; cdp: CDPSession };
-type Seen = { moves: (string | undefined)[]; anims: { pe: string; name: string; ms: number }[][]; buzz: unknown[]; wide: number };
+type Seen = { moves: (string | undefined)[]; anims: { pe: string; name: string; ms: number }[][]; buzz: unknown[]; wide: number; skipped?: string[] };
 
 describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', () => {
   let h: Household;
@@ -81,7 +81,7 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
         const vt = orig.call(this, cb);
         vt.ready.then(() => {
           w.__seen.anims.push(document.getAnimations().map((a) => ({ pe: (a.effect as KeyframeEffect).pseudoElement ?? '', name: (a as CSSAnimation).animationName ?? '', ms: Number(a.effect!.getTiming().duration) })).filter((a) => a.pe.startsWith('::view-transition')));
-        }).catch(() => {});
+        }).catch((e) => { (w.__seen.skipped ??= []).push(`${(e as Error).name}: ${(e as Error).message}`); });
         return vt;
       };
       const watch = () => { w.__seen.wide = Math.max(w.__seen.wide, document.documentElement.scrollWidth); requestAnimationFrame(watch); };
@@ -271,11 +271,12 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await f.p.locator('.loom-find[role="dialog"]').waitFor({ state: 'detached' });
     // A key held a moment still shows its name, with the dock now taking touches whole. (Held by a mouse: Chrome's
     // emulated touch never sets :active, on any element, so a held finger can't be checked here.)
-    await f.p.mouse.move(kx, ky); await f.p.mouse.down(); await f.p.waitForTimeout(800);
-    const named = await f.p.locator('.loom-dock-now [data-part="item"][aria-label="Places"] [data-part="label"]').evaluate((e) => getComputedStyle(e).opacity);
+    // Its name fades in: waited on while held, not read after a fixed 800 ms (mid-fade on a loaded runner, t-1886).
+    await f.p.mouse.move(kx, ky); await f.p.mouse.down();
+    const label = f.p.locator('.loom-dock-now [data-part="item"][aria-label="Places"] [data-part="label"]');
+    await expect.poll(() => label.evaluate((e) => getComputedStyle(e).opacity), { timeout: 10_000 }).toBe('1');
     await f.p.mouse.up();
     await f.p.waitForTimeout(600);
-    expect(named).toBe('1');
     await f.p.goto(`${base}/`); await f.p.locator('.loom-top h1').waitFor(); await f.p.waitForTimeout(1800);
     await forget(f);
     const [ix, iy] = await keyAt(f, 'Inbox');
@@ -351,8 +352,14 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     expect(mid).toEqual({ dock: dockBefore, bar: barBefore });
     let s = await seen(f);
     expect(s.moves).toEqual(['right']);
-    // Nothing of the dock's, the bar's or the fade's is animated: they stay put. The page's name crossfades.
-    const pes = s.anims.flat().map((x) => x.pe);
+    // Nothing of the dock's, the bar's or the fade's is animated: they stay put. The page's name crossfades. (Noted
+    // once the transition is ready, which can be after the address has changed: t-1886.)
+    // expect.poll's own budget is 1 s, and a starved runner can take longer than that to have the transition ready
+    // (seen under 3 suites at once, t-1886): given 10 s. A move whose transition was skipped says why (its ready
+    // rejected), beside what was seen, should it fail.
+    await expect.poll(async () => (await seen(f)).anims.length, { timeout: 10_000 }).toBeGreaterThan(0)
+      .catch(async (e: Error) => { throw new Error(`${e.message}; seen: ${JSON.stringify(await seen(f))}`); });
+    const pes = (await seen(f)).anims.flat().map((x) => x.pe);
     expect(pes.filter((x) => /loom-(dock|bar|fade)\)/.test(x))).toEqual([]);
     expect(pes).toContain('::view-transition-new(loom-title)');
     await f.p.waitForTimeout(1500);
@@ -368,14 +375,15 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await expect.poll(() => where(f)).toBe('/a/art');
     s = await seen(f);
     expect(s.moves).toEqual(['push']);
-    expect(s.anims.flat().some((a) => a.pe === '::view-transition-new(loom-page)' && a.name === 'loom-move-in-right')).toBe(true);
+    // Noted once the transition is ready, as above.
+    await expect.poll(async () => (await seen(f)).anims.flat().some((a) => a.pe === '::view-transition-new(loom-page)' && a.name === 'loom-move-in-right'), { timeout: 10_000 }).toBe(true);
     await f.p.waitForTimeout(800);
     await forget(f);
     await f.p.goBack();
     await expect.poll(() => where(f)).toBe('/');
     s = await seen(f);
     expect(s.moves).toEqual(['pop']);
-    await expect.poll(async () => (await seen(f)).anims.flat().some((a) => a.pe === '::view-transition-old(loom-page)' && a.name === 'loom-move-off-right')).toBe(true);
+    await expect.poll(async () => (await seen(f)).anims.flat().some((a) => a.pe === '::view-transition-old(loom-page)' && a.name === 'loom-move-off-right'), { timeout: 10_000 }).toBe(true);
     expect(s.wide).toBeLessThanOrEqual(390);
     await f.p.context().close();
   }, 90_000);
