@@ -528,7 +528,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, onBack, onChanged, git
 
   const lastMine = messages.filter((m) => m.kind === 'message').at(-1);
   const lastReply = messages.filter((m) => m.kind === 'reply').at(-1);
-  const waitingOnAgent = !!lastMine && deliveryOf(lastMine) !== 'failed' && (!lastReply || lastReply.seq < lastMine.seq);
+  // A turn over with no reply (its no-reply message, t-1900) ends the wait as a reply does: not thinking any more.
+  const lastAnswer = messages.filter((m) => m.kind === 'reply' || (m.kind === 'error' && m.card?.error === 'no-reply')).at(-1);
+  const waitingOnAgent = !!lastMine && deliveryOf(lastMine) !== 'failed' && (!lastAnswer || lastAnswer.seq < lastMine.seq);
   // An ask waiting on you wins over everything but an error (comms.md's precedence).
   const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;

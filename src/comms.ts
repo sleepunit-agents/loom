@@ -388,6 +388,7 @@ export function errorWords(code: string, agentName: string, reason: string | und
     case 'busy': return `${agentName} is busy with other work; this is waiting its turn.`;
     case 'loop': return `Paused: ${agentName} was repeating itself.`;
     case 'post-failed': return `${agentName}'s reply couldn't be shown: ${r || 'no reason given'}.`;
+    case 'no-reply': return `${agentName} finished without replying.`;
     case 'no-age': return 'loom can\'t keep messages safely right now: the age program is missing.';
     default: return `${agentName} couldn't be reached: ${r || 'something went wrong'}.`;
   }
@@ -811,6 +812,12 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
   if (status !== 'working' && status !== 'done') return fail('bad-input: status is working or done');
   if (!r) return { ok: true };
   const stop = r.stop === 1;
+  // Its turn over with nothing sent (t-1900): said in the thread, once per run, not left as silence.
+  if (status === 'done' && raw.replied === false && typeof raw.run === 'string' && RUN_ID.test(raw.run)) {
+    const id = `noreply-${raw.run}`;
+    const said = withMessages(h.home, (db) => db.prepare("SELECT 1 FROM comms_messages WHERE thread = ? AND kind = 'error' AND id = ?").get(r.id, id));
+    if (!said) { append(h.home, env, r.id, { kind: 'error', from: 'loom', id, run: raw.run, card: { error: 'no-reply' } }, now); bump(h.home); }
+  }
   withThreadsAt(h.home, (db) => touch(h.home, db, r.id, {
     working_since: status === 'working' ? (r.working_since ?? nowIso(now)) : null,
     working_beat: status === 'working' ? now.getTime() : null,
@@ -821,6 +828,8 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
 }
 
 const TOOL = /^[A-Za-z0-9_.:\-]{1,64}$/;
+/** A runtime's run id, as `status: done, replied: false` names it (loom-box: run-<hex>); up to 128, as activity's. */
+const RUN_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 /** A reply's `on` (comms.md, the adapter route): a harness's name in one short word, e.g. "Codex". Else dropped. */
 export const HARNESS_WORD = /^[A-Za-z][A-Za-z0-9.-]{0,23}$/;
 const PRINTABLE_LINE = /^[^\x00-\x1f\x7f\u2028\u2029]*$/;
