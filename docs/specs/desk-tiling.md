@@ -486,7 +486,8 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
    rectangles before and after laying out a different set in between.
 
 **The desk (vitest + Chrome, `src/ui/desk-tiling.integration.test.ts`).** Criteria 10, 11, 16 and
-19 run at 1024×768, 1280×800 and 1920×1080; 12, 13, 14, 17 and 18 at 1280×800 and 1920×1080 (17's four apps at
+19 run at 1024×768, 1280×800 and 1920×1080; 12 at 1280×776 and 1920×1080 (at 800 the desktop's one bar leaves room for
+three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×800 and 1920×1080 (17's four apps at
 1920×1080 only); 15 at 1920×1080; 20 at 390×844 and across 1024.
 
 10. **Open, focus, minimize.**
@@ -538,16 +539,17 @@ on a screen `screen` px wide; with no screen named, it's the area's width.
     window with the Inbox and Comms tiled, narrowed from 1280 to 900 px, draws Comms as today's phone page; widened back
     to 1280, the two tiles return.
 
-22. **One bar** (`src/ui/desk-chrome.integration.test.ts`). At 1024, 1280 and 1920 the bar is one line, 34 px tall: the
-    clock, then the name, on the left; LOOM//OS, then the glyphs, on the right; the ticker between, wider than either
-    side's gap. No second bar. A saved layout or an address with `ticker` in its widgets loads without it, and the
-    device's copy is written again without it; the seed has no ticker; the desktop draws no headline. 390 px: the
-    phone's bar, no clock, no glyphs.
-
 **Pieces (vitest):**
 
 21. A manifest's `tab.fit` reaches the desk's fit table. A `min` of `[200, 100]`, an `ideal` under its `min`'s width,
     or a `max` under its `ideal` is refused with a message naming the field.
+
+22. **One bar** (`src/ui/desk-chrome.integration.test.ts`). At 1024, 1280 and 1920 the bar is one line, 34 px tall: the
+    clock, then the name, on the left; LOOM//OS, then the glyphs, on the right; the ticker between, wider than either
+    side's gap. No second bar; at 1023, two. iOS's home-screen app shows neither loom's clock nor its glyphs. A saved
+    layout or an address with `ticker` in its widgets loads without it, and the
+    device's copy is written again without it; the seed has no ticker; the desktop draws no headline. 390 px: the
+    phone's bar, no clock, no glyphs.
 
 ## Build, in phases
 

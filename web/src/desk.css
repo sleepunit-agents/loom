@@ -9,19 +9,6 @@
 /* the bars span the screen, not a phone's column */
 :root[data-look] .loom-desk .loom-top>div{max-width:none;padding-inline:var(--desk-gutter)}
 :root[data-look] .loom-desk .loom-top{flex:none}
-/* ---- the desktop's one bar (phone-bar.tsx PhoneBar with its clock and status; Jonathan, 2026-11-06: "one line, like a
-   real desktop OS"): loom's clock and the page's name on the left, LOOM//OS and the status glyphs on the right, the
-   ticker between them, across the whole screen, a hairline under it. The glyphs' words drop below the bar. ---- */
-:root[data-look] .loom-desk .loom-top--one{padding-top:env(safe-area-inset-top);
-  background:linear-gradient(180deg,color-mix(in srgb,var(--v-canvas) 96%,transparent),color-mix(in srgb,var(--v-canvas) 84%,transparent));
-  box-shadow:inset 0 -1px 0 var(--v-border),0 1px 0 color-mix(in srgb,var(--v-pink) 26%,transparent)}
-:root[data-look] .loom-pbar--one{height:34px;gap:14px;font-size:12px}
-:root[data-look] .loom-pbar--one .loom-sys__clock{flex:none;color:var(--v-text-2)}
-:root[data-look] .loom-pbar--one .loom-pbar__name{max-width:30%}
-:root[data-look] .loom-pbar--one .loom-pbar__name h1{line-height:34px;letter-spacing:.04em}
-:root[data-look] .loom-pbar--one .loom-sys__icons{flex:none;margin-right:-3px}
-:root[data-look] .loom-pbar--one .loom-sys__icon{height:34px;color:var(--v-text-2)}
-:root[data-look] .loom-pbar--one .loom-sys__icon[data-dim]{color:var(--loom-warn-ink)}
 :root[data-look] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
   padding:14px var(--desk-gutter) var(--desk-dock);display:flex;flex-direction:column;gap:12px;overflow:hidden}
 

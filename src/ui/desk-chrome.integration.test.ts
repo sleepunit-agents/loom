@@ -100,6 +100,23 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     });
   }
 
+  it('under 1024 px, two bars as before (at 1023): loom\'s status bar over the phone\'s', async () => {
+    const p = await screen(1023, 768);
+    expect(await p.locator('.loom-sys').count()).toBe(1);
+    expect(await p.locator('.loom-pbar--one').count()).toBe(0);
+    expect(Math.round((await box(p, '.loom-pbar')).height)).toBe(24);
+    await p.context().close();
+  });
+
+  it('iOS\'s home-screen app (an iPad, landscape) draws its own clock and status: the one bar drops loom\'s', async () => {
+    const p = await screen(1180, 820, { init: `Object.defineProperty(navigator, 'standalone', { get: () => true });` });
+    expect(await p.evaluate(() => document.documentElement.classList.contains('loom-ios-app'))).toBe(true);
+    expect(await p.locator('.loom-pbar--one').count()).toBe(1);
+    expect(await p.locator('.loom-pbar--one :is(.loom-sys__clock, .loom-sys__icons)').evaluateAll((es) => es.map((e) => getComputedStyle(e).display))).toEqual(['none', 'none']);
+    expect(await p.locator('.loom-pbar__brand').isVisible()).toBe(true);
+    await p.context().close();
+  });
+
   it('a phone keeps its own bar: the name, the ticker, LOOM//OS; no clock, no glyphs', async () => {
     const p = await screen(390, 844);
     expect(await p.locator('.loom-pbar').count()).toBe(1);

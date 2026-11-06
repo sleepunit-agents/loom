@@ -50,7 +50,7 @@ function busy(dir: string) {
   chmodSync(join(dir, 'loom-busy'), 0o755);
 }
 
-describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under loom\'s own system bar', () => {
+describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under loom\'s own system bar, one line on a desktop', () => {
   let h: Household;
   let handle: HttpServeHandle;
   let browser: Browser;
@@ -201,7 +201,6 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
   it('the ticker has more room and still moves only when its words overflow; reduced motion keeps it still', async () => {
     const p = await device('neon', 'no-preference', 1280);
     await open(p, '/');
-    // (the bar's ticker: the desktop's ticker widget is another)
     const tick = p.locator('.loom-top .loom-tick');
     const state = () => tick.evaluate((e) => ({ run: e.hasAttribute('data-run'), w: e.clientWidth, over: (e.querySelector('.loom-tick__line') as HTMLElement).scrollWidth > e.clientWidth + 1 }));
     // Measured once its typeface is in (the words' width changes with it), and settled, even on a busy machine.

@@ -1,6 +1,8 @@
 // Neon Noir's system bar on a screen that has none of its own (Jonathan, 2026-11-05: "since we don't have the built in
 // top bar from the phone, let's add one here where we put clock and some kind of status icons"): a thin bar over the
-// phone's bar (phone-bar.tsx), where a phone's own status bar would be, across the page's column (App.tsx).
+// phone's bar (phone-bar.tsx), where a phone's own status bar would be, across the page's column (App.tsx). On a
+// desktop (1024 px and wider) there's no bar of its own: its clock and glyphs (SysClock, SysIcons) sit in the phone's
+// bar, made one line (Jonathan, 2026-11-06: "one line, like a real desktop OS").
 //
 // loom's clock on the left, small and bold: loom's time (its latest answer's Date, carried forward a minute at a time)
 // in loom's zone (uiTimeZone, the one every page says a time in), not the device's. On the right a few monochrome
@@ -9,7 +11,7 @@
 // hover or keyboard focus (looks/looks.css .loom-sys__tip). Dimmed means "look at this", and the words say why.
 // Up to four; fewer when loom has nothing to say: no Boxes glyph without the Boxes piece, and the backup only to a
 // household owner (an agent owner never sees its target or errors). Not on iOS's home-screen app (an iPad draws its own
-// status bar there, clock and all).
+// status bar there, clock and all), in either layout (looks/looks.css).
 // Trade-offs, chosen: a glyph's words are in its tooltip and its name, not printed beside it (a phone's status icons
 // carry none, and printed words would make it the old status line again); what's wrong is said in words elsewhere too:
 // offline in the ticker, a box's alert and a failed backup as asks in the Inbox, counted by the bar's own count. And
