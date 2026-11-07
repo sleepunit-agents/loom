@@ -185,22 +185,23 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await q.context().close();
   });
 
-  it('a page named otherwise keeps the app before it: Setup › Appearance', async () => {
-    const p = await screen(1280, 800, { path: '/setup?t=*setup' });
-    const t = p.locator('.loom-tile[data-tile="/setup"]');
-    await t.locator('a, button', { hasText: 'Appearance' }).first().click();
-    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
-    expect(await t.locator('.loom-tile__crumb').textContent()).toBe('Setup');
+  // (Setup is the launcher's now, not a tile, t-1925 G: People and a person's page stand for an app and its own page.)
+  it('a page named otherwise keeps the app before it: People › a person', async () => {
+    const p = await screen(1280, 800, { path: '/people?t=*people' });
+    const t = p.locator('.loom-tile[data-tile="/people"]');
+    await t.locator('a[href="/people/mark"]').first().click();
+    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toMatch(/^mark$/i);
+    expect(await t.locator('.loom-tile__crumb').textContent()).toBe('People');
     await p.context().close();
   });
 
   it('Recent here: not beside the only app tile (it gets the room), widgets or not; still beside a wide one sharing the screen', async () => {
-    const p = await screen(1920, 1080, { path: '/setup?t=*setup&w=vitals' });
-    const t = p.locator('.loom-tile[data-tile="/setup"]');
-    await t.locator('a, button', { hasText: 'Appearance' }).first().click();
-    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
+    const p = await screen(1920, 1080, { path: '/people?t=*people&w=vitals' });
+    const t = p.locator('.loom-tile[data-tile="/people"]');
+    await t.locator('a[href="/people/mark"]').first().click();
+    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toMatch(/^mark$/i);
     await t.locator('.loom-tile__btn[aria-label^="Back"]').click();
-    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toMatch(/setup/i);
+    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toMatch(/people/i);
     expect((await box(p, '.loom-tile')).width).toBeGreaterThan(1100);
     await p.waitForTimeout(300);
     expect(await t.locator('.loom-tile__side').count()).toBe(0);
@@ -209,14 +210,14 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     expect(page.width).toBeGreaterThan(body.width - 40);
     await p.context().close();
     // 3000 px with two: the big tile is still wide, and shares the screen: Recent here is beside it
-    const q = await screen(3000, 1440, { path: '/setup?t=*setup&w=' });
-    const u = q.locator('.loom-tile[data-tile="/setup"]');
-    await u.locator('a, button', { hasText: 'Appearance' }).first().click();
-    await expect.poll(() => u.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
+    const q = await screen(3000, 1440, { path: '/people?t=*people&w=' });
+    const u = q.locator('.loom-tile[data-tile="/people"]');
+    await u.locator('a[href="/people/mark"]').first().click();
+    await expect.poll(() => u.locator('.loom-tile__bar h2').textContent()).toMatch(/^mark$/i);
     await u.locator('.loom-tile__btn[aria-label^="Back"]').click();
     await q.click(KEY('Inbox'));
-    await expect.poll(() => labels(q)).toEqual(['Setup', 'Inbox']);
-    expect((await box(q, '.loom-tile[data-tile="/setup"]')).width).toBeGreaterThanOrEqual(1100);
+    await expect.poll(() => labels(q)).toEqual(['People', 'Inbox']);
+    expect((await box(q, '.loom-tile[data-tile="/people"]')).width).toBeGreaterThanOrEqual(1100);
     await expect.poll(() => u.locator('.loom-tile__side', { hasText: 'Recent here' }).count()).toBe(1);
     await q.context().close();
   });
