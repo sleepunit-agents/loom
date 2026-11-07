@@ -47,7 +47,9 @@ export type Block =
       stats?: Array<{ label: string; value: string }>; links?: Array<{ text: string } & Target> }
   // A row's lead says who: `agent` (an agent's mark; `loom` is loom's own), `person` (a People slug: their avatar) or
   // `avatar` (initials in a plain circle). A list where some rows say who, or that says `who`, draws the rest as nobody's yet.
-  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button } & Target> }
+  // A row with `more` opens in place to those label and value pairs (a task's goal, why and done-when); its `page` or
+  // `href` is then a link inside what opened, named `more.open` ("Open task"), rather than where a tap goes.
+  | { type: 'list'; numbered?: boolean; wrap?: boolean; who?: boolean; pages?: Pages; items: Array<{ text: string; meta?: string; badge?: string; tone?: Tone; agent?: string; person?: string; avatar?: string; act?: Button; more?: RowMore } & Target> }
   | { type: 'table'; columns: string[]; rows: Cell[][]; pages?: Pages }
   | { type: 'kv'; items: Array<{ label: string; value: string; page?: string }> }
   | { type: 'text'; text: string; tone?: Tone }
@@ -57,7 +59,9 @@ export type Block =
   | ({ type: 'link'; text: string } & Target)
   /** Where a task or change came from: core draws it per viewer before the page is drawn (comms.md, "From"). */
   | { type: 'from'; conversation: string }
-  | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string }
+  // `switch`: the options drawn as one segmented switch (2 to 4, a sort) rather than pills. `chips`: rows of chips under
+  // it, each its own query key, any number on at once (`?<param>=a,b`; none on means all), each row one line.
+  | { type: 'filters'; param: string; options: Array<{ value: string; label: string }>; search?: string; switch?: boolean; chips?: ChipRow[] }
   | { type: 'details'; summary: string; meta?: string; blocks: Block[] }
   | { type: 'form'; action: string; submit: string; fields: Field[]; title?: string; note?: string; hidden?: Record<string, string>;
       /** More ways to send it, beside `submit`: each posts the form's fields with its own (Yes and No over a box of words). */
@@ -83,6 +87,12 @@ export interface PanelRow extends Target {
   sheet?: { title?: string; blocks: Block[] };
   act?: Button;
 }
+
+/** What a list row opens to in place (docs/extensions.md, "Blocks", list): up to LIMITS.more label and value pairs, and
+ * what its link is called there. */
+export interface RowMore { items: Array<{ label: string; value: string }>; open?: string }
+/** One row of a filters block's chips: a query key, a label for a screen reader, its chips. */
+export interface ChipRow { param: string; label: string; options: Array<{ value: string; label: string }> }
 
 export type ChartKind = 'bar' | 'area' | 'line';
 export type ChartVariant = 'grouped' | 'stacked' | 'smooth' | 'step';
@@ -236,6 +246,13 @@ export const LIMITS = {
   // A form's extra submits: a Yes, a No, and one more.
   formSubmits: 3,
   options: 50,
+  /** A list row's `more`: a few facts, not a page. */
+  more: 6,
+  /** A filters block's chip rows, and the chips in one. */
+  chipRows: 3,
+  chips: 12,
+  /** A chip's value: a row of LIMITS.chips of them, joined with commas, stays inside queryValue. */
+  chipValue: 15,
   query: 10,
   queryValue: 200,
   path: 200,
@@ -331,6 +348,17 @@ function tone(v: unknown): Tone | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== 'string' || !TONES.has(v)) throw new Invalid(`tone must be one of ${[...TONES].join(', ')}`);
   return v as Tone;
+}
+
+/** A list row's `more`: its label and value pairs, and what its link is called there. */
+function rowMore(v: unknown): RowMore {
+  const o = obj(v, 'list.more');
+  const items = arr(o.items, 'list.more.items', LIMITS.more).map((x) => {
+    const i = obj(x, 'list.more item');
+    return { label: str(i.label, 'list.more.label'), value: str(i.value, 'list.more.value') };
+  });
+  if (!items.length) throw new Invalid('list.more needs an item');
+  return { items, ...(o.open !== undefined ? { open: str(o.open, 'list.more.open') } : {}) };
 }
 
 function arr(v: unknown, what: string, max: number): unknown[] {
@@ -586,6 +614,7 @@ function block(v: unknown, depth = 0): Block {
             tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...(o.person !== undefined ? { person: personSlug(o.person, 'list.person') } : {}),
             avatar: avatarOf(o.avatar), ...target(o, 'list item'),
             ...(o.act !== undefined ? { act: button(o.act) } : {}),
+            ...(o.more !== undefined ? { more: rowMore(o.more) } : {}),
           };
         }),
       };
@@ -630,16 +659,35 @@ function block(v: unknown, depth = 0): Block {
     case 'filters': {
       const param = str(b.param, 'filters.param');
       if (!QUERY_KEY.test(param)) throw new Invalid('filters.param must be a query key');
+      const options = arr(b.options, 'filters.options', LIMITS.options).map((x) => {
+        const o = obj(x, 'filter option');
+        const value = str(o.value, 'filter.value');
+        if (value.length > LIMITS.queryValue) throw new Invalid('filter.value is too long');
+        return { value, label: str(o.label, 'filter.label') };
+      });
+      if (b.switch !== undefined && typeof b.switch !== 'boolean') throw new Invalid('filters.switch must be true or false');
+      if (b.switch === true && (options.length < 2 || options.length > 4)) throw new Invalid('filters.switch needs 2 to 4 options');
+      const keys = new Set([param, 'q']);
+      const chips = b.chips === undefined ? undefined : arr(b.chips, 'filters.chips', LIMITS.chipRows).map((x) => {
+        const r = obj(x, 'chip row');
+        const key = str(r.param, 'chips.param');
+        if (!QUERY_KEY.test(key) || keys.has(key)) throw new Invalid('chips.param must be a query key of its own (not q, nor another row\'s)');
+        keys.add(key);
+        const ops = arr(r.options, 'chips.options', LIMITS.chips).map((y) => {
+          const o = obj(y, 'chip');
+          const value = str(o.value, 'chip.value');
+          if (value === '' || value.includes(',') || value.length > LIMITS.chipValue) throw new Invalid(`chip.value is 1 to ${LIMITS.chipValue} characters, no comma`);
+          return { value, label: str(o.label, 'chip.label') };
+        });
+        if (!ops.length) throw new Invalid('a chip row needs a chip');
+        if (new Set(ops.map((o) => o.value)).size !== ops.length) throw new Invalid('a chip row\'s values are distinct');
+        return { param: key, label: str(r.label, 'chips.label'), options: ops };
+      });
       return {
-        type: 'filters',
-        param,
-        options: arr(b.options, 'filters.options', LIMITS.options).map((x) => {
-          const o = obj(x, 'filter option');
-          const value = str(o.value, 'filter.value');
-          if (value.length > LIMITS.queryValue) throw new Invalid('filter.value is too long');
-          return { value, label: str(o.label, 'filter.label') };
-        }),
+        type: 'filters', param, options,
         search: optStr(b.search, 'filters.search'),
+        ...(b.switch === true ? { switch: true } : {}),
+        ...(chips?.length ? { chips } : {}),
       };
     }
     case 'details':

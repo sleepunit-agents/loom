@@ -491,6 +491,8 @@ export type ChartFrameProps = {
   summary?: { label: string; value: React.ReactNode; detail?: string };
   /** loom: the plot's height in CSS px (300 by default). */
   plotHeight?: number;
+  /** loom: false drops the Show data button (the table stays, visually hidden, for a screen reader). */
+  tableToggle?: boolean;
   children: (plot: ChartPlotState) => React.ReactNode;
 };
 export type ChartPlotState = {
@@ -538,6 +540,7 @@ export function ChartFrame({
   appearance,
   summary,
   plotHeight,
+  tableToggle = true,
   children,
 }: ChartFrameProps) {
   const { quiet, transition } = useChoreography();
@@ -859,7 +862,7 @@ export function ChartFrame({
             </CardContent>
             <CardFooter className="v-chart-frame__footer">
               <span>Hover to explore · Arrow keys to inspect</span>
-              {showTable && appearance !== "ledger" && (
+              {showTable && tableToggle && appearance !== "ledger" && (
                 <Button
                   variant="ghost"
                   size="sm"

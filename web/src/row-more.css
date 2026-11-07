@@ -1,0 +1,9 @@
+/* A list row opened in place (row-more.tsx): its pairs in as many columns as fit (three across a wide list, one under
+   another in a narrow tile or on a phone), labels small and spaced like the page's other eyebrows. */
+.loom-row-more { display: grid; gap: var(--s-3); padding: 0 0 var(--s-4); min-width: 0; }
+.loom-row-more dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: var(--s-3) var(--s-5); margin: 0; }
+.loom-row-more dl > div { min-width: 0; }
+.loom-row-more dt { font-size: var(--fs-caps, 11px); letter-spacing: 0.12em; text-transform: uppercase; color: var(--v-text-2); }
+.loom-row-more dd { margin: 2px 0 0; font-size: var(--fs-small, 13px); line-height: 1.45; overflow-wrap: anywhere; white-space: pre-line; }
+.loom-row-more > a { justify-self: start; }
+.loom-row-more[data-indent] { padding-inline-start: 28px; }

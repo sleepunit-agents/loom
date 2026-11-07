@@ -9,7 +9,9 @@ import './chart.css';
 
 type ChartB = Extract<Block, { type: 'chart' }>;
 
-/** A chart in a page's side column is drawn shorter: a glance beside the page, not its subject. */
+/** A chart in a page's side column is drawn shorter: a glance beside the page, not its subject. There the chart is the
+ * point, so it has no Show data button (Jonathan's Tasks mock, t-1925): its numbers stay in a visually hidden table for
+ * a screen reader. */
 const SIDE_PLOT = 170;
 
 export default function ChartBlock({ b }: { b: ChartB }) {
@@ -18,7 +20,7 @@ export default function ChartBlock({ b }: { b: ChartB }) {
   const data = b.data.map((p) => ({ ...p, label: String(p.label) }));
   return (
     <div className="loom-chart min-w-0"><CartesianChart kind={b.kind} variant={b.variant ?? (b.kind === 'bar' ? 'grouped' : 'smooth')} data={data} series={b.series}
-      caption={b.caption ?? 'Chart'} appearance="brief" valueFormatter={(v) => v.toLocaleString()} {...(side ? { plotHeight: SIDE_PLOT } : {})}
+      caption={b.caption ?? 'Chart'} appearance="brief" valueFormatter={(v) => v.toLocaleString()} {...(side ? { plotHeight: SIDE_PLOT, tableToggle: false } : {})}
       {...(b.summary ? { summary: b.summary } : {})} /></div>
   );
 }
