@@ -18,7 +18,7 @@ import { markColor } from './look';
 import { DOT } from './tones';
 import type { Shell } from './loom';
 import type { WidgetKind } from './tiling/fit';
-import { AgentOpsContext } from './tiling/morph';
+import { WidgetOpsContext } from './tiling/morph';
 
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
@@ -34,14 +34,16 @@ const ago = (iso?: string) => {
 
 /** A widget: a dark panel with a lit edge in its tint, its name in small caps with a dot, and a way to its app. */
 export type Tint = 'pink' | 'blue' | 'yellow' | 'olive';
-export function Widget({ tint, title, more, className, children }: { tint: Tint; title: string; more?: { label: string; href: string }; className?: string; children: React.ReactNode }) {
+export function Widget({ tint, title, more, act, className, children }: { tint: Tint; title: string; more?: { label: string; href: string };
+  /** in place of `more`: a control of its own (Needs you's Expand) */ act?: React.ReactNode; className?: string; children: React.ReactNode }) {
   const { go } = useEnv();
   return (
     <section className={`loom-w ${className ?? ''}`} data-tint={tint} aria-label={title}>
       <header className="loom-w__head">
         <span className="loom-w__dot" aria-hidden />
         <h2>{title}</h2>
-        {more && <a href={more.href} className="loom-w__more" onClick={(e) => { e.preventDefault(); go(more.href); }}>{more.label}</a>}
+        {act}
+        {!act && more && <a href={more.href} className="loom-w__more" onClick={(e) => { e.preventDefault(); go(more.href); }}>{more.label}</a>}
       </header>
       {children}
     </section>
@@ -51,13 +53,16 @@ export function Widget({ tint, title, more, className, children }: { tint: Tint;
 // ---- what needs you, answered where it stands --------------------------------------------------
 
 /** One thing that needs you: who, what, why, and its answers: Allow and Deny under the approval's own words (never the
- * ask's alone: inbox.tsx ApprovalBox), Yes and No for a yes/no ask, else its own buttons. Words, or anything more, open it. */
+ * ask's alone: inbox.tsx ApprovalBox), Yes and No for a yes/no ask, else its own buttons. Words, or anything more, open it:
+ * on the tiled desktop, in the Inbox with it picked, the widget growing into it (Needs you is the Inbox shrunk). */
 function Need({ i }: { i: InboxItem }) {
   const outer = useEnv();
   const agents = outer.ctx.agents ?? {};
   const who = (i.agent && agents[i.agent]?.label) || (i.agent ? i.agent[0].toUpperCase() + i.agent.slice(1) : '');
   const p = plain(i, who);
-  const open = useOpenItem();
+  const ops = useContext(WidgetOpsContext);
+  const openItem = useOpenItem();
+  const open = (x: InboxItem, e: React.MouseEvent) => (ops ? ops.expand('needs', (e.currentTarget as Element).closest('.loom-w'), `/inbox?f=needs&i=${encodeURIComponent(x.key)}`) : openItem(x));
   const [busy, setBusy] = useState(false);
   const approval = i.approval && i.attention ? i.approval : undefined;
   const yesNo = !approval && i.needs?.answers === 'yes-no' && !!i.reply;
@@ -85,7 +90,7 @@ function Need({ i }: { i: InboxItem }) {
     <Arrive as="li" k={`need:${i.key}`} className="loom-need" {...(acts.length ? { 'data-whole': '' } : {})}>
       {i.agent && agents[i.agent] ? <AgentAvatar a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
       <div className="loom-need__body">
-        <button type="button" className="loom-need__title" onClick={() => open(i)}>
+        <button type="button" className="loom-need__title" onClick={(e) => open(i, e)}>
           {i.unread && <span className="loom-need__unread" aria-label="Unread" />}{p.title}
         </button>
         {(p.why ?? i.outcome) && <p className="loom-need__why">{tidy(p.why ?? i.outcome ?? '')}</p>}
@@ -93,12 +98,12 @@ function Need({ i }: { i: InboxItem }) {
         {off && <p className="loom-need__live" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<typeof live, 'live'>]}</p>}
         {!off && approval && <ApprovalBox a={approval} />}
         {/* Answering in words opens its sheet (the Inbox's reader), which checks for itself: always offered. */}
-        {off && words && <div className="loom-need__acts"><Button size="sm" variant="outline" onClick={() => open(i)}>{i.reply!.label || 'Answer'}…</Button></div>}
+        {off && words && <div className="loom-need__acts"><Button size="sm" variant="outline" onClick={(e) => open(i, e)}>{i.reply!.label || 'Answer'}…</Button></div>}
         {!off && (yesNo || words || (acts.length > 0 && !lined)) && (
           <div className="loom-need__acts" role="group" aria-label="Your answer">
             {yesNo && <><Button size="sm" disabled={busy} onClick={() => void say('yes')}>Yes</Button>
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void say('no')}>No</Button></>}
-            {words && <Button size="sm" variant="outline" onClick={() => open(i)}>{i.reply!.label || 'Answer'}…</Button>}
+            {words && <Button size="sm" variant="outline" onClick={(e) => open(i, e)}>{i.reply!.label || 'Answer'}…</Button>}
             {acts.length > 0 && !lined && <As source={i.source}>{acts.map((b) => <ActButton key={b.action + b.label} b={b} />)}</As>}
           </div>
         )}
@@ -111,17 +116,24 @@ function Need({ i }: { i: InboxItem }) {
   );
 }
 
-/** Needs you. Compact (a rail taller than the screen, docs/specs/desk-tiling.md rule 1): its first ask and "N more". */
+/** Needs you: the Inbox shrunk (Jonathan, 2026-11-07). On the tiled desktop its Expand grows it into the Inbox's tile, on
+ * its Needs you folder, as an agent's card grows into its window (tiling/morph.ts); it stands aside while that tile is
+ * open, and the tile's Shrink to widget folds it back. Compact (a rail taller than the screen, docs/specs/desk-tiling.md
+ * rule 1): its first ask and "N more". */
 export function Needs({ d, compact }: { d: DeskHomeData; compact?: boolean }) {
   const { go } = useEnv();
+  const ops = useContext(WidgetOpsContext);
   const all = d.stack ?? (d.need ? [d.need] : []);
   const stack = compact ? all.slice(0, 1) : all;
   const rest = d.needs - stack.length;
+  const inbox = (e: React.MouseEvent) => { e.preventDefault(); if (ops) ops.expand('needs', (e.currentTarget as Element).closest('.loom-w')); else go('/inbox'); };
+  const act = ops ? <button type="button" className="loom-w__more loom-w__grow" onClick={inbox} aria-label="Expand Needs you into the Inbox" title="Expand into the Inbox">
+    <AnimatedIcon name={iconFor('maximize-2')} size="sm" /><span>Expand</span></button> : undefined;
   return (
-    <Widget tint="pink" title={d.needs ? `Needs you · ${d.needs}` : 'Needs you'} className="loom-w--needs" more={{ label: 'Inbox', href: '/inbox' }}>
+    <Widget tint="pink" title={d.needs ? `Needs you · ${d.needs}` : 'Needs you'} className="loom-w--needs" more={{ label: 'Inbox', href: '/inbox' }} act={act}>
       {stack.length ? <ul className="loom-needs">{stack.map((i) => <Need key={i.key} i={i} />)}</ul>
         : <p className="loom-w__quiet">Nothing needs you.</p>}
-      {rest > 0 && <a href="/inbox" className="loom-w__foot" onClick={(e) => { e.preventDefault(); go('/inbox'); }}>{rest} more in the Inbox</a>}
+      {rest > 0 && <a href="/inbox?f=needs" className="loom-w__foot" onClick={inbox}>{rest} more in the Inbox</a>}
     </Widget>
   );
 }
@@ -151,7 +163,7 @@ export function Agent({ c, chat, compact }: { c: Card; chat?: () => void; compac
   const label = `${c.label}: ${EYEBROW(c)}${line ? `. ${line}` : ''}`;
   // On the tiled desktop the card and its window are one app at two sizes (t-1925 D): opening it grows the card into
   // the window beside it (tiling/morph.ts), and the window's Shrink folds it back.
-  const ops = useContext(AgentOpsContext);
+  const ops = useContext(WidgetOpsContext);
   const grow = (from: Element | null) => (ops ? ops.expand(c.id, from) : go(`/a/${c.id}`));
   const open = (e: React.MouseEvent) => { e.preventDefault(); grow((e.currentTarget as Element).closest('.loom-w')); };
   const inner = (<>
@@ -248,7 +260,7 @@ export function WidgetBody({ id, kind, d, compact, chat }: { id: string; kind: K
 /** Where a widget's own app is: its key in the strip opens it. */
 export function widgetHref(id: string, kind: Kind, d: WidgetData): string {
   if (kind === 'agent') return `/a/${id}`;
-  if (kind === 'needs') return '/inbox';
+  if (kind === 'needs') return '/inbox?f=needs';
   if (kind === 'backup') return d.shell.backup?.href ?? '/setup';
   if (kind === 'vitals') return d.shell.pieces.find((p) => p.label === 'Boxes')?.href ?? '/places';
   return '/places';

@@ -1,17 +1,19 @@
-// An agent's widget and its window are one app at two sizes (t-1925 D; the app mockups, 2026-11-06): Expand grows the
-// card into the window, Shrink folds the window back into the card. A lit outline in the agent's colour travels from
-// one box to the other while the real one appears; reduced motion: no travel, the change is instant.
+// A widget and its app are one app at two sizes (t-1925 D; the app mockups, 2026-11-06): an agent's card and its window,
+// Needs you and the Inbox (widgets.ts pairOf). Expand grows the widget into its app's tile, Shrink folds the tile back
+// into the widget. A lit outline in the widget's colour travels from one box to the other while the real one appears;
+// reduced motion: no travel, the change is instant.
 import { createContext } from 'react';
 import { reducedMotion } from '../access';
 
-/** What an agent's window and its card can ask of the desktop (tiles.tsx provides it). */
-export type AgentOps = {
-  /** Grow an agent's card into its window, beside it (from the card's box). */
-  expand: (agent: string, from?: Element | null) => void;
-  /** Fold an agent's window back into its card (added to the desktop when it isn't there). */
-  shrink: (agent: string) => void;
+/** What a widget and its app's tile can ask of the desktop (tiles.tsx provides it), by the widget's id. */
+export type WidgetOps = {
+  /** Grow a widget into its app's tile, beside the rest (from the widget's box); `href`, a page of that app to open on
+   * (an item of the Inbox's), else the widget's own (widgets.ts pairOf). */
+  expand: (widget: string, from?: Element | null, href?: string) => void;
+  /** Fold an app's tile back into its widget (added to the desktop when it isn't there). */
+  shrink: (widget: string) => void;
 };
-export const AgentOpsContext = createContext<AgentOps | null>(null);
+export const WidgetOpsContext = createContext<WidgetOps | null>(null);
 
 const MS = 280;
 

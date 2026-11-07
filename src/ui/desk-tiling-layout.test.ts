@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { admit, capFor, columnWidth, GUTTER, layout, place, promote, swap, underMinimum, type AppTile, type Rect, type WidgetTile } from '../../web/src/tiling/layout';
 import { AGENT_FIT, fitFor } from '../../web/src/tiling/fit';
-import { addable, AGENTS, freshSet, SEED, widgetRef } from '../../web/src/tiling/widgets';
+import { addable, AGENTS, freshSet, pairOf, SEED, widgetOfApp, widgetRef } from '../../web/src/tiling/widgets';
 
 const app = (name: string, pinned = false): AppTile => ({ id: name.toLowerCase(), name, fit: fitFor(name), ...(pinned ? { pinned } : {}) });
 const area = (w: number, h: number): Rect => ({ x: 0, y: 0, w, h });
@@ -214,5 +214,17 @@ describe('the widgets the desktop can show (tiling/widgets.ts)', () => {
     expect(widgetRef('gabe', agents, { backup: true })).toBeNull();
     expect(widgetRef('backup', agents, { backup: false })).toBeNull();
     expect(widgetRef('art', agents, { backup: false })).toEqual({ id: 'art', name: 'Art', kind: 'agent', label: 'Art’s card' });
+  });  it('a widget and its app are one app at two sizes: an agent\'s card and its window, Needs you and the Inbox on its Needs you folder', () => {
+    expect(pairOf('needs')).toEqual({ key: '/inbox', href: '/inbox?f=needs' });
+    expect(pairOf('art')).toEqual({ key: '/a/art', href: '/a/art' });
+    expect(pairOf('vitals')).toBeNull();
+    expect(pairOf('backup')).toBeNull();
+    const o = { backup: true };
+    expect(widgetOfApp('/inbox', agents, o)).toBe('needs');
+    expect(widgetOfApp('/a/art', agents, o)).toBe('art');
+    // an agent that's gone, and any other app: nothing to fold back into
+    expect(widgetOfApp('/a/gabe', agents, o)).toBeNull();
+    expect(widgetOfApp('/comms', agents, o)).toBeNull();
+    expect(widgetOfApp('/p/tasks', agents, o)).toBeNull();
   });
 });

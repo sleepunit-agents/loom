@@ -27,6 +27,25 @@ export function widgetRef(id: string, agents: Agent[], o: { backup: boolean }): 
   return a ? { id, name: a.label, kind: 'agent', label: `${a.label}’s card` } : null;
 }
 
+/**
+ * A widget and the app it's a small copy of: one app at two sizes (t-1925 D). An agent's card and its window; Needs you
+ * and the Inbox, opened on its Needs you folder (Jonathan, 2026-11-07: "the needs you view is definitely the inbox
+ * shrunk"). While its app's tile is on the desktop the widget stands aside (tiles.tsx shownW); Expand grows the widget
+ * into the tile and the tile's Shrink to widget folds it back. `key` is the app's tile, `href` the page it opens on.
+ * Vitals and Backup have none: their links open an app beside them.
+ */
+export function pairOf(id: string): { key: string; href: string } | null {
+  if (id === 'needs') return { key: '/inbox', href: '/inbox?f=needs' };
+  if (FIXED[id]) return null;
+  return { key: `/a/${id}`, href: `/a/${id}` };
+}
+
+/** The widget an app's tile folds back into (pairOf's other way), or null: none, or an agent that's gone. */
+export function widgetOfApp(key: string, agents: Agent[], o: { backup: boolean }): string | null {
+  const id = key === '/inbox' ? 'needs' : key.startsWith('/a/') && !key.slice(3).includes('/') ? key.slice(3) : null;
+  return id && widgetRef(id, agents, o) && pairOf(id)?.key === key ? id : null;
+}
+
 /** Everything that can go on the desktop, in the menu's order: Needs you, each agent's card, Vitals, Backup. */
 export function addable(agents: Agent[], o: { backup: boolean }): WidgetRef[] {
   return ['needs', ...agents.map((a) => a.id), 'vitals', 'backup'].map((id) => widgetRef(id, agents, o)).filter((w): w is WidgetRef => !!w);

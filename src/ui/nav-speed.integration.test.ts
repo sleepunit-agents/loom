@@ -293,20 +293,27 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
 
   it('an ask answered in one tile leaves the others by the live stream', async () => {
     setState({ count: 1, asks: [{ id: 'a-1', text: 'OK to ship the speed work tonight?', at: new Date().toISOString() }] });
-    const { p, close } = await desk('/inbox');
+    const { p, close } = await desk('/inbox?t=*inbox&w=needs');
     try {
-      // Needs you (a widget, drawn from Home's page) and the Inbox both show it.
+      // Needs you (a widget, drawn from Home's page) and the Inbox both show it. Needs you is the Inbox shrunk: it stands
+      // aside while the Inbox's tile is open, and is back once that tile goes to the dock.
       const needs = p.locator('[data-widget="needs"]');
-      await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count()).toBeGreaterThan(0);
       const inbox = p.locator(tile('Inbox'));
+      await inbox.locator('button[aria-label="Minimize Inbox to the dock"]').click();
+      await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count()).toBeGreaterThan(0);
+      await p.locator('.loom-dock-bar [data-part="item"][aria-label="Inbox"]').click();
+      await expect.poll(() => needs.count()).toBe(0);
       await inbox.getByText('OK to ship the speed work tonight?').first().click();
       // Allow, in the Inbox tile's reader (enabled once loom has said the ask is still open).
       const allow = inbox.getByRole('button', { name: 'Allow once' }).first();
       await expect.poll(() => allow.isEnabled()).toBe(true);
       await allow.click();
-      await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count(), { timeout: 15_000 }).toBe(0);
       // The Inbox keeps it under Done now: Allow once is gone from it.
       await expect.poll(() => inbox.getByRole('button', { name: 'Allow once' }).count(), { timeout: 15_000 }).toBe(0);
+      // Back on the desktop, Needs you has it no more.
+      await inbox.locator('button[aria-label="Minimize Inbox to the dock"]').click();
+      await needs.waitFor();
+      await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count(), { timeout: 15_000 }).toBe(0);
     } finally { await close(); }
   });
 });

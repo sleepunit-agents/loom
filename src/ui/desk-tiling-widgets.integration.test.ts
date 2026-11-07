@@ -160,7 +160,7 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
   }, 60_000);
 
   it('13. every widget is live: a new ask shows in Needs you without a reload', async () => {
-    const p = await screen(1920, 1080, '/inbox?t=*inbox&w=needs,art');
+    const p = await screen(1920, 1080, '/comms?t=*comms&w=needs,art');
     await p.locator('[data-widget="needs"]').waitFor();
     expect(await p.locator('[data-widget="needs"]').textContent()).not.toMatch(/recycle bin/);
     const art = agentDir(h, 'art');
@@ -171,14 +171,14 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
   }, 60_000);
 
   for (const [w, hgt] of [[1280, 800], [1920, 1080]]) it(`14. a reload restores the widgets in their order, at ${w}×${hgt}`, async () => {
-    const p = await screen(w, hgt, '/comms?t=inbox!,*comms&w=art,needs');
-    await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
+    const p = await screen(w, hgt, '/comms?t=people!,*comms&w=art,needs');
+    await expect.poll(() => labels(p)).toEqual(['People', 'Comms']);
     // two apps leave room for a rail: it stacks them in the order added
     const drawn = ['art', 'needs'];
     await expect.poll(() => widgets(p)).toEqual(drawn);
     await p.reload(); await p.locator('.loom-tile').first().waitFor();
     await expect.poll(() => widgets(p)).toEqual(drawn);
-    expect(decodeURIComponent(new URL(p.url()).search)).toBe('?t=inbox!,*comms&w=art,needs');
+    expect(decodeURIComponent(new URL(p.url()).search)).toBe('?t=people!,*comms&w=art,needs');
     await p.context().close();
   }, 60_000);
 
@@ -233,13 +233,14 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
       // DOM order: the apps in `t` order, then the widgets
       const order = await p.$$eval('.loom-tile, .loom-wrail [data-widget]', (es) => es.map((e) => e.getAttribute('data-tile') ?? `w:${e.getAttribute('data-widget')}`));
       const n = (await labels(p)).length;
-      expect(order.slice(n)).toEqual(['w:needs', 'w:art', 'w:mark']);
+      // (Needs you stands aside while the Inbox is open: one app at two sizes, desk-needs-inbox.integration.test.ts)
+      expect(order.slice(n)).toEqual([...((await labels(p)).includes('Inbox') ? [] : ['w:needs']), 'w:art', 'w:mark']);
     }
     await p.context().close();
   }, 60_000);
 
   it('the strip: no room for a rail beside the apps folds the widgets to 64 px keys that open their app', async () => {
-    const p = await screen(1024, 768, '/comms?t=inbox,*comms&w=needs,art,mark');
+    const p = await screen(1024, 768, '/comms?t=people,*comms&w=needs,art,mark');
     await expect.poll(() => p.locator('.loom-tiles').getAttribute('data-widgets')).toBe('strip');
     const keys = await boxes(p, '.loom-wrail [data-widget]', 'data-widget');
     expect(keys.map((k) => [k.id, Math.round(k.w), Math.round(k.h)])).toEqual([['needs', 64, 64], ['art', 64, 64], ['mark', 64, 64]]);

@@ -209,7 +209,7 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
   }, 60_000);
 
   it('15. the arrows reach a widget too, a key in the strip included, and say which', async () => {
-    const p = await screen(1024, 768, '/inbox?t=*inbox,comms&w=needs,art');
+    const p = await screen(1024, 768, '/people?t=*people,comms&w=needs,art');
     await expect.poll(() => p.locator('.loom-tiles').getAttribute('data-widgets')).toBe('strip');
     await p.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar h2').focus();
     // the key whose centre is nearest Comms's (Art's, the lower of the two), then up to Needs you
