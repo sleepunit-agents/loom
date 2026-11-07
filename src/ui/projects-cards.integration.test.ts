@@ -10,7 +10,7 @@
 import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 60_000 });
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright-core';
@@ -36,6 +36,17 @@ const FEED = { groups: [
   { title: 'Waiting on its author', items: [{ title: 'app#11 Wake drift under load', status: 'CI red', when: hoursAgo(5), who: ['Mark'], page: 'c/github/acme/app/11' }] },
   { title: 'Lately', items: [{ title: 'app#9 Tiling is the only desktop', status: 'Merged', when: hoursAgo(30), who: ['Art'], page: 'c/github/acme/app/9' }] },
 ] };
+
+describe.runIf(built)('the Projects cards\' code', () => {
+  it('is in its own chunk, not the first page', () => {
+    const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
+    const first = [...index.matchAll(/(?:<script[^>]+src|<link rel="modulepreload"[^>]+href|<link rel="stylesheet"[^>]+href)="\/app\/([^"]+\.(?:js|css))"/g)].map((m) => m[1]);
+    expect(first.length).toBeGreaterThan(0);
+    for (const f of first) expect(readFileSync(`${root}dist/web/${f}`, 'utf-8').includes('pj-card'), `${f} carries the cards`).toBe(false);
+    const own = readdirSync(`${root}dist/web/assets`).filter((f) => /^projects-.*\.js$/.test(f));
+    expect(own.some((f) => readFileSync(`${root}dist/web/assets/${f}`, 'utf-8').includes('pj-card'))).toBe(true);
+  });
+});
 
 describe.runIf(built && chrome)('the Projects index: a card per project', () => {
   let h: Household;
@@ -128,7 +139,7 @@ describe.runIf(built && chrome)('the Projects index: a card per project', () => 
       expect(await app.locator('.pj-acts li').allInnerTexts()).toEqual([
         expect.stringMatching(/^app#11 Wake drift under load · CI red\s+5h$/),
         expect.stringMatching(/^app#9 Tiling is the only desktop · Merged\s+30h$/)]);
-      expect(await app.locator('.pj-spark').getAttribute('aria-label')).toMatch(/^3 things happened in the last 7 days/);
+      expect(await app.locator('.pj-spark').getAttribute('aria-label')).toMatch(/^3 dated things in this project's sections in the last 7 days/);
       expect(await app.locator('.pj-chg').innerText()).toMatch(/2 open · 1 failing/);
       expect(await app.locator('.pj-repos li').allInnerTexts()).toEqual(['acme/app', 'acme/app-clock', 'acme/app-box', 'acme/app-secrets', 'acme/app-approvals', 'acme/app-changes', '+2']);
       expect(await app.locator('.pj-faces').getAttribute('aria-label')).toMatch(/^People: art, mark$/i);
@@ -138,8 +149,10 @@ describe.runIf(built && chrome)('the Projects index: a card per project', () => 
       expect(await pond.locator('.pj-wait').innerText()).toBe('Nothing waiting on you');
       expect(await pond.locator('.pj-spark').count()).toBe(0);
       expect(await pond.locator('.pj-chg').innerText()).toMatch(/0 open/);
-      // Paused and done, folded.
+      // Paused and done, folded; a paused or done card has no waiting row (its feeds aren't run).
       expect(await p.locator('.pj-quiet').getAttribute('open')).toBeNull();
+      expect(await p.locator('.pj-quiet .pj-card[data-slug="old"]').count()).toBe(1);
+      expect(await p.locator('.pj-quiet .pj-card .pj-wait').count()).toBe(0);
       expect(await noSideScroll(p)).toBe(true);
       if (SHOTS) await p.screenshot({ path: join(SHOTS, `projects-${w}.png`) });
       await p.context().close();
@@ -153,6 +166,9 @@ describe.runIf(built && chrome)('the Projects index: a card per project', () => 
     expect(tw).toBeLessThan(640);
     await expect.poll(() => columns(p)).toBe(1);
     expect(await tile.locator('.pj-card[data-slug="app"] .pj-wait').innerText()).toMatch(/^1 for you/);
+    // Nothing in the tile scrolls sideways.
+    expect(await tile.locator('.loom-projects').evaluate((v) => v.scrollWidth <= v.clientWidth + 1)).toBe(true);
+    expect(await noSideScroll(p)).toBe(true);
     if (SHOTS) await p.screenshot({ path: join(SHOTS, `projects-tile-${tw}.png`) });
     await p.context().close();
   });

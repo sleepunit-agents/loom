@@ -310,18 +310,19 @@ working in a project's repo or conversation passes it, the way a bridge passes `
   3. **what's waiting on you**, the loudest thing on the card: the count and the items' words ("1 for you · app#12
      Launcher replaces More"), or a quiet "Nothing waiting on you", or "Couldn't count…" (below);
   4. **Lately**: the three newest dated things in its hub, with their ages: feed items with a `when` (with their
-     `status`), conversations (`last`), memories (`created`) and notes (`updated`). Waiting items are said once, above,
-     not again here;
+     `status`), conversations (`last`), memories (`created`) and notes (`updated`). Waiting items (a `waiting` group's,
+     a conversation with an open ask) are said once, above, not again here;
   5. **an activity line**: those dated things counted a day a point over the last 7 days (the index's `since`),
      waiting ones included; its label says what it counts. A card with none in the window has no line;
   6. **the Changes piece's section**, counted, when it has one (`piece:changes`): items whose `status` isn't
      Merged or Closed are open; a `status` starting "CI red" is failing, "CI running" checking: "2 open · 1 failing".
      loom says nothing about CI it wasn't told;
-  7. **its people**: the project's agent, then the people section's cards, then the names in feed items' `who` and
-     conversations' `people` (one each, by name); a name that is one of the household's agents wears its face;
+  7. **its people**: the project's agent, then the people section's cards, then the names in feed items' `who`, then
+     conversations' `people` (one each, by name; the first four shown, then "+N"); a name that is one of the household's agents wears its face;
   8. **its repos**, from `links.repos` (a bare `github:` dropped), six chips then "+N".
   The whole card opens the hub, inside the app. Paused and done projects are cards too, in a folded "Paused and done";
-  their feeds aren't run, so they have no waiting row, Lately or counts. With no projects: one line saying what a
+  their feeds aren't run, so they have no waiting row, Lately or counts (the fold opens by itself when there's no active
+  project, so the page is never just a closed fold). With no projects: one line saying what a
   project is and that an agent makes one with `project_write`.
 - **Where the cards live.** The index stays a core page (`view: 'page'`): its `page` is the same index in loom's
   blocks (a `stats` summary, one `list` row per project with its waiting count and age, the folded paused and done),
@@ -435,11 +436,13 @@ them or rolls back. Cards belong to the database, as people do.
 22. In a household, `/projects/<agent>/<slug>` reaches that agent's project; `/projects/<slug>` reaches it when only
     one agent has the slug and is a 404 when two do; an unknown slug is a 404.
 23. The web app gains no block type, and its budget test still passes.
-24. The index's cards (`src/ui/projects-cards.integration.test.ts`, real Chrome): two columns at 1280 and 1920, one
-    in a narrow tile beside others and on a 390 px phone with nothing scrolling sideways; a card shows the waiting
+24. The index's cards. In real Chrome (`src/ui/projects-cards.integration.test.ts`): two columns at 1280 and 1920,
+    one in a narrow tile beside others and on a 390 px phone, nothing scrolling sideways; a card shows the waiting
     item from a feed's `waiting` group, Lately without it, the Changes count ("2 open · 1 failing"), six repo chips
-    and "+2", and the agents' faces; a card opens its hub with no page load. A slow project's card says it couldn't
-    count; a paused one has no waiting row; the activity line counts only the last 7 days.
+    and "+2", and the agents' faces; a done project's card, folded, has no waiting row; a card opens its hub with no
+    page load; and the cards' code is in their own chunk, in none of the first page's files. Without a browser
+    (`src/ui/projects-app.integration.test.ts`): a slow project's card says it couldn't count; a conversation's open
+    ask is said once; a piece after Changes is never counted as changes; the activity line counts only the last 7 days.
 
 ## First slice
 

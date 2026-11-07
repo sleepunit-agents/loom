@@ -28,14 +28,14 @@ export interface ProjectsOwner {
 }
 
 /** What a card shows from a project's hub, kept with its count (60 s): raw times, so ages are drawn at render. */
-interface Facts {
+interface Gist {
   waitingItems: string[];
   /** Dated things that happened: feed items with a `when`, conversations, memories, notes. Newest first. */
   dated: Array<{ text: string; when: string; status?: string; waiting?: true }>;
   changes?: { open: number; failing: number; running: number };
   people: CardPerson[];
 }
-interface Count { at: number; waiting: number; error?: string; facts?: Facts }
+interface Count { at: number; waiting: number; error?: string; gist?: Gist }
 
 /** The sparkline's window: the index's `since`, a day a point. */
 export const SPARK_DAYS = 7;
@@ -75,26 +75,26 @@ const defaultHub = (env: NodeJS.ProcessEnv): Hub => (dir, slug, since) =>
 const CHANGES = 'piece:changes';
 const DONE_WORDS = /^(merged|closed)$/i;
 
-/** A card's facts from a project's hub sections (what's waiting, what happened, the Changes piece's counts, who). */
-export function factsOf(sections: HubSection[], agent?: string): Facts {
+/** A card's gist from a project's hub sections (what's waiting, what happened, the Changes piece's counts, who). */
+export function gistOf(sections: HubSection[], agent?: string): Gist {
   const waitingItems: string[] = [];
-  const dated: Facts['dated'] = [];
-  const people = new Map<string, CardPerson>();
-  const addPerson = (p: CardPerson) => { const k = p.name.trim().toLowerCase(); if (k && !people.has(k)) people.set(k, p); };
-  let changes: Facts['changes'];
+  const dated: Gist['dated'] = [];
+  // Who, in the card's order: the people section's cards, then feed items' `who`, then conversations' `people`.
+  const byKind: [CardPerson[], CardPerson[], CardPerson[]] = [[], [], []];
+  let changes: Gist['changes'];
   for (const s of sections as Array<PieceSection & { items?: unknown[] }>) {
     if (s.key === 'conversations' && !s.error) {
       for (const c of (s.items ?? []) as Array<{ needs_owner: string | null; summary: string | null; label: string | null; venue: string; last: string; people: string[] }>) {
         if (c.needs_owner) waitingItems.push(c.needs_owner);
-        dated.push({ text: c.summary ?? c.label ?? c.venue, when: c.last });
-        for (const n of c.people ?? []) addPerson({ name: n });
+        dated.push({ text: c.summary ?? c.label ?? c.venue, when: c.last, ...(c.needs_owner ? { waiting: true as const } : {}) });
+        for (const n of c.people ?? []) byKind[2].push({ name: n });
       }
     } else if (s.key === 'memories' && !s.error) {
       for (const m of (s.items ?? []) as Array<{ snippet: string; created: string }>) dated.push({ text: m.snippet, when: m.created });
     } else if (s.key === 'notes' && !s.error) {
       for (const n of (s.items ?? []) as Array<{ path: string; updated: string }>) dated.push({ text: `Note ${n.path}`, when: n.updated });
     } else if (s.key === 'people' && !s.error) {
-      for (const p of (s.items ?? []) as Array<{ slug: string; name: string }>) addPerson({ name: p.name, person: p.slug });
+      for (const p of (s.items ?? []) as Array<{ slug: string; name: string }>) byKind[0].push({ name: p.name, person: p.slug });
     } else if (s.key.startsWith('piece:') && !s.error) {
       const isChanges = s.key === CHANGES;
       if (isChanges) changes = { open: 0, failing: 0, running: 0 };
@@ -102,8 +102,8 @@ export function factsOf(sections: HubSection[], agent?: string): Facts {
         for (const it of g.items) {
           if (g.waiting) waitingItems.push(it.title);
           if (it.when) dated.push({ text: it.title, when: it.when, ...(it.status ? { status: it.status } : {}), ...(g.waiting ? { waiting: true as const } : {}) });
-          for (const n of it.who ?? []) addPerson({ name: n });
-          if (changes && !DONE_WORDS.test(it.status ?? '')) {
+          for (const n of it.who ?? []) byKind[1].push({ name: n });
+          if (isChanges && changes && !DONE_WORDS.test(it.status ?? '')) {
             changes.open++;
             if (/^CI red/i.test(it.status ?? '')) changes.failing++;
             else if (/^CI running/i.test(it.status ?? '')) changes.running++;
@@ -113,9 +113,13 @@ export function factsOf(sections: HubSection[], agent?: string): Facts {
     }
   }
   dated.sort((a, b) => Date.parse(b.when) - Date.parse(a.when));
-  const ppl = [...people.values()];
-  return { waitingItems, dated: dated.filter((d) => !Number.isNaN(Date.parse(d.when))).slice(0, 60), ...(changes ? { changes } : {}),
-    people: agent ? [{ name: agent, agent }, ...ppl.filter((p) => p.name.toLowerCase() !== agent)] : ppl };
+  const people = new Map<string, CardPerson>();
+  for (const p of [...(agent ? [{ name: agent, agent }] : []), ...byKind.flat()]) {
+    const k = p.name.trim().toLowerCase();
+    if (k && !people.has(k)) people.set(k, p);
+  }
+  // Every dated thing is kept (the sections' own caps bound them): the activity line counts all of them in its window.
+  return { waitingItems, dated: dated.filter((d) => !Number.isNaN(Date.parse(d.when))), ...(changes ? { changes } : {}), people: [...people.values()] };
 }
 
 async function countOf(o: ProjectsOwner, p: ProjectListEntry, hub: Hub, nowMs: number): Promise<Count> {
@@ -125,7 +129,7 @@ async function countOf(o: ProjectsOwner, p: ProjectListEntry, hub: Hub, nowMs: n
   let result: Count;
   try {
     const h = await hub(o.dir, p.slug, new Date(nowMs - 7 * 86_400_000).toISOString());
-    result = h.found && 'sections' in h ? { at: nowMs, ...waitingIn(h.sections), facts: factsOf(h.sections, o.agent) } : { at: nowMs, waiting: 0 };
+    result = h.found && 'sections' in h ? { at: nowMs, ...waitingIn(h.sections), gist: gistOf(h.sections, o.agent) } : { at: nowMs, waiting: 0 };
   } catch (e) {
     result = { at: nowMs, waiting: 0, error: (e as Error).message ?? 'failed' };
   }
@@ -139,7 +143,7 @@ export function hubHref(o: ProjectsOwner, slug: string): string {
 
 /** The summary's first sentence (what it is), ≤ 200 chars. */
 export function whatOf(summary: string | undefined): string | undefined {
-  const t = (summary ?? '').trim().split(/\n/)[0].trim();
+  const t = (summary ?? '').trim().split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim();
   if (!t) return undefined;
   const m = /^.+?[.!?](?=\s|$)/.exec(t);
   const first = (m ? m[0] : t);
@@ -162,35 +166,37 @@ const repoChip = (r: string) => r.replace(/^github:/, '');
 
 /** A card: the project's list entry, its summary, and what its hub said (active projects only). */
 function cardOf(o: ProjectsOwner, p: ProjectListEntry, summary: string | undefined, c: Count | 'late' | undefined, nowMs: number): ProjectCardView {
-  const facts = c && c !== 'late' ? c.facts : undefined;
+  const gist = c && c !== 'late' ? c.gist : undefined;
+  const what = whatOf(summary);
   const card: ProjectCardView = {
     slug: p.slug, name: p.name, page: hubHref(o, p.slug), ...(o.agent ? { agent: o.agent } : {}), status: p.status,
-    ...(whatOf(summary) ? { what: whatOf(summary) } : {}),
+    ...(what ? { what } : {}),
     // What's waiting is said once, above; lately is the rest (the sparkline still counts it).
-    lately: (facts?.dated ?? []).filter((d) => !d.waiting).slice(0, 3).map((d) => ({ text: d.text.slice(0, 200), ago: age(d.when, nowMs) || 'now', ...(d.status ? { status: d.status } : {}) })),
+    lately: (gist?.dated ?? []).filter((d) => !d.waiting).slice(0, 3).map((d) => ({ text: d.text.slice(0, 200), ago: age(d.when, nowMs), ...(d.status ? { status: d.status } : {}) })),
     repos: (p.links.repos ?? []).map(repoChip),
-    people: (facts?.people ?? (o.agent ? [{ name: o.agent, agent: o.agent }] : [])).slice(0, 12),
+    people: (gist?.people ?? (o.agent ? [{ name: o.agent, agent: o.agent }] : [])).slice(0, 12),
     activity: p.activity,
   };
   if (c !== undefined) {
     card.waiting = c === 'late' ? { unknown: "Couldn't count what's waiting: its sections are slow to answer." }
       : c.error ? { unknown: `Couldn't count what's waiting: ${c.error}.` }
-        : { count: c.waiting, items: (facts?.waitingItems ?? []).slice(0, 4).map((t) => t.slice(0, 200)) };
+        // The count and the words come from the same walk of the same sections (waitingIn, gistOf).
+        : { count: c.waiting, items: (gist?.waitingItems ?? []).slice(0, Math.min(4, c.waiting)).map((t) => t.slice(0, 200)) };
   }
-  if (facts?.changes) {
-    const ch = facts.changes;
+  if (gist?.changes) {
+    const ch = gist.changes;
     const state = ch.failing ? `${ch.failing} failing` : ch.running ? `${ch.running} checking` : '';
     card.changes = { ...ch, line: [`${ch.open} open`, state].filter(Boolean).join(' · ') };
   }
-  if (facts) {
+  if (gist) {
     const day = 86_400_000;
     const days = Array.from({ length: SPARK_DAYS }, () => 0);
-    for (const d of facts.dated) {
+    for (const d of gist.dated) {
       const back = Math.floor((nowMs - Date.parse(d.when)) / day);
       if (back >= 0 && back < SPARK_DAYS) days[SPARK_DAYS - 1 - back]++;
     }
     const total = days.reduce((a, b) => a + b, 0);
-    if (total) card.spark = { days, label: `${total} things happened in the last ${SPARK_DAYS} days (changes, tasks, conversations, notes and memories), from ${days[0]} a week ago to ${days[SPARK_DAYS - 1]} today` };
+    if (total) card.spark = { days, label: `${total} dated things in this project's sections in the last ${SPARK_DAYS} days (its pieces' items, conversations, notes and memories), from ${days[0]} a week ago to ${days[SPARK_DAYS - 1]} today` };
   }
   return card;
 }

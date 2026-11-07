@@ -6,7 +6,7 @@
 // width of the view itself, not the screen's). A card opens the project's hub inside the app.
 import './projects.css';
 import { Link, Who, useEnv } from './blocks';
-import { AppIcon } from './app-icon';
+import { AnimatedIcon } from '@/components/ui/animated-icon';
 import type { CardPerson, ProjectCardView, ProjectCards } from '../../src/ui/project-cards';
 
 const TINTS = ['pink', 'blue', 'yellow', 'olive'] as const;
@@ -81,7 +81,7 @@ function Card({ c }: { c: ProjectCardView }) {
         <div className="pj-foot">
           {c.changes && (
             <span className="pj-chg loom-data" data-failing={c.changes.failing > 0 || undefined}>
-              <AppIcon label="Changes" name="git-pull-request" size="sm" />
+              <AnimatedIcon name="git-pull-request" size="sm" />
               <span><span className="sr-only">Changes: </span>{c.changes.line}</span>
             </span>
           )}

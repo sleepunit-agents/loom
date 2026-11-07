@@ -493,7 +493,7 @@ export default function App() {
             )}
             {!pg.waiting && !pg.error && data && env && (
               <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
-                {own(data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects as never} /></Suspense>
+                {own(data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects} /></Suspense>
                   : data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
                   : data.view === 'house-home' && desk ? <Skeleton />
