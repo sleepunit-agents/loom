@@ -339,7 +339,10 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     expect(await p.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
     expect(await pinchStopped(p)).toEqual([false, false]);
     expect(await p.evaluate(() => getComputedStyle(document.documentElement).touchAction)).toBe('auto');
-    const ev = await p.locator('main').evaluate((e) => { const x = new PointerEvent('contextmenu', { bubbles: true, cancelable: true, pointerType: 'mouse' }); e.dispatchEvent(x); return x.defaultPrevented; });
+    // A right click on a page is the browser's; on the desktop's own ground it's the desktop's menu (t-1925 E,
+    // desk-chrome.integration.test.ts), so it's asked of a page in a tile.
+    await open(p, '/setup');
+    const ev = await p.locator('.loom-tile__page').evaluate((e) => { const x = new PointerEvent('contextmenu', { bubbles: true, cancelable: true, pointerType: 'mouse' }); e.dispatchEvent(x); return x.defaultPrevented; });
     expect(ev).toBe(false);
     await p.context().close();
   }, 60_000);
