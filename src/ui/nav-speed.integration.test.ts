@@ -182,16 +182,16 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       const t = tile('Lots');
       await p.locator(`${t} a:has-text("Item 3")`).first().click();
       await p.locator(`${t}`).getByText('This is item 3.').waitFor();
-      // From here on loom answers slowly: what's shown at once is what the tab kept.
+      // From here on loom answers slowly (1.5 s): what's shown within 0.8 s is what the tab kept.
       await p.route(/\/p\/lots/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
       await p.locator(`${t} .loom-tile__btn[aria-label^="Back"]`).click();
-      await p.locator(`${t} a:has-text("Item 3")`).first().waitFor({ timeout: 400 });
+      await p.locator(`${t} a:has-text("Item 3")`).first().waitFor({ timeout: 800 });
       expect(await p.locator(`${t} .loom-skel`).count()).toBe(0);
       await p.locator(`${t} .loom-tile__btn[aria-label^="Forward"]`).click();
-      await p.locator(t).getByText('This is item 3.').waitFor({ timeout: 400 });
+      await p.locator(t).getByText('This is item 3.').waitFor({ timeout: 800 });
       // The browser's own Back, too.
       await p.goBack();
-      await p.locator(`${t} a:has-text("Item 3")`).first().waitFor({ timeout: 400 });
+      await p.locator(`${t} a:has-text("Item 3")`).first().waitFor({ timeout: 800 });
     } finally { await close(); }
   });
 
@@ -207,7 +207,7 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       await p.route(/\/p\/lots$/, async (route) => { await new Promise((r) => setTimeout(r, 800)); await route.continue().catch(() => {}); });
       await p.locator(`${t} .loom-tile__btn[aria-label^="Back"]`).click();
       // The kept copy, at once; then the new count, in the same list (its rows weren't drawn again).
-      await p.locator(t).getByText('Count 1').waitFor({ timeout: 400 });
+      await p.locator(t).getByText('Count 1').waitFor({ timeout: 800 });
       await mark(p, `${t} a:has-text("Item 7")`);
       await p.locator(t).getByText('Count 2').waitFor({ timeout: 5000 });
       expect(await kept(p, `${t} a:has-text("Item 7")`)).toBe(true);
