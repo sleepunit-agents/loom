@@ -164,8 +164,9 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
         new MutationObserver((ms) => { if (ms.some((m) => [...m.addedNodes].some((n) => (n as Element).classList?.contains('loom-morph')))) w.trip = true; }).observe(document.body, { childList: true }); });
       await p.locator('[data-widget="art"] button[aria-label="Expand Art E Fish into its window"]').click();
       await win(p).waitFor();
-      await p.waitForTimeout(600);
-      expect(await p.evaluate(() => (window as unknown as { trip: boolean }).trip)).toBe(motion === 'no-preference');
+      const tripped = () => p.evaluate(() => (window as unknown as { trip: boolean }).trip);
+      if (motion === 'no-preference') await expect.poll(tripped, { timeout: 4000 }).toBe(true);
+      else { await p.waitForTimeout(800); expect(await tripped()).toBe(false); }
       await win(p).waitFor();
       expect(await labels(p)).toEqual(['Art E Fish']);
       // The card stands aside while its window is open (one app at two sizes); Mark's stays.

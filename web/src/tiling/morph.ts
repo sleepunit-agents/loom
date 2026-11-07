@@ -18,12 +18,12 @@ const MS = 280;
 /** The outline's trip from `from` to whatever `to` finds once it's drawn (tried for a few frames). */
 export function morph(from: DOMRect | null, to: () => Element | null, color: string): void {
   if (!from || reducedMotion() || typeof document === 'undefined') return;
-  let tries = 0;
+  // The box it travels to may only be drawn after a transition or a page load: looked for until it is, up to 2 s.
+  const until = performance.now() + 2000;
   const go = () => {
     const el = to();
-    if (!el) { if (++tries < 20) requestAnimationFrame(go); return; }
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) { if (++tries < 20) requestAnimationFrame(go); return; }
+    const r = el?.getBoundingClientRect();
+    if (!el || !r || !r.width || !r.height) { if (performance.now() < until) requestAnimationFrame(go); return; }
     const g = document.createElement('div');
     g.className = 'loom-morph';
     g.setAttribute('aria-hidden', 'true');
