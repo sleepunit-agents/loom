@@ -19,6 +19,7 @@ import { agentDir, createToken, loadHousehold, type Household } from '../househo
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { openThread } from '../comms.js';
+import { knowledgeWrite } from '../tools/knowledge-write.js';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
@@ -54,6 +55,9 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     const conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:making', label: 't-738: sonarr', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Checked.', needs_owner: { ask: 'Can you check the Sonarr disk when you get a minute?', why: 'It is nearly full.', refs: ['t-738'] } } as never);
     thread = openThread(h, process.env, h.members[0], { agent: 'art', id: 'cccccccccccccccc', text: 'A thread with Art' }).thread.id;
+    // A page with a long name, for the bar's name cut short.
+    await knowledgeWrite(art, { slug: 'long-name', title: 'The nightly backup of every household machine runs at three and keeps fourteen days of copies offsite',
+      domain: 'ours/homelab', body: 'A body.', citations: [{ claim: 'x', source_kind: 'docs', source_locator: 'https://example.com', excerpt: 'x' }] } as never, 'art');
     handle = await startHttpServer({ contextDir: join(home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -106,6 +110,51 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
       expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(w);
       await p.context().close();
     });
+  }
+
+  // The bar's two dividers (Jonathan, 2026-11-06): a quiet dot between the clock and the name, and between LOOM//OS and
+  // the glyphs, the bar's gap on both sides; and the ticker in the room between the two groups, its words in the middle.
+  const bar = (p: Page) => p.evaluate(() => {
+    const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
+    const tick = document.querySelector('.loom-pbar--one .loom-tick')!;
+    const words = document.createRange(); words.selectNodeContents(tick.querySelector('.loom-tick__line')!);
+    const seps = [...document.querySelectorAll('.loom-pbar--one .loom-pbar__sep')];
+    return { clock: r('.loom-pbar--one .loom-sys__clock'), name: r('.loom-pbar__name'), tick: r('.loom-pbar--one .loom-tick'), brand: r('.loom-pbar__brand'),
+      icons: r('.loom-pbar--one .loom-sys__icons'), words: words.getBoundingClientRect(), run: tick.hasAttribute('data-run'),
+      seps: seps.map((e) => ({ box: e.getBoundingClientRect(), text: e.textContent, hidden: e.getAttribute('aria-hidden'), color: getComputedStyle(e).color })),
+      quiet: getComputedStyle(document.querySelector('.loom-tick__part')!, '::before').color };
+  });
+  for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
+    for (const [what, path] of [['a short name', '/inbox?t=*inbox'], ['a long name', '/knowledge/long-name?t=*knowledge']]) {
+      it(`at ${w}, ${what}: a dot after the clock and before the glyphs, spaced alike; the ticker's words in the middle of the room, or the room all its own`, async () => {
+        for (const motion of ['reduce', 'no-preference'] as const) {
+          const p = await screen(w, hgt, { path, motion });
+          await p.evaluate(() => document.fonts.ready);
+          await p.waitForTimeout(300);
+          const b = await bar(p);
+          // two dots, hidden from a screen reader, in the quiet colour, each with the same room on both sides
+          expect(b.seps.map((x) => [x.text, x.hidden])).toEqual([['·', 'true'], ['·', 'true']]);
+          for (const x of b.seps) expect(x.color).toBe(b.quiet);
+          const [one, two] = b.seps.map((x) => x.box);
+          expect(one.x).toBeGreaterThan(b.clock.x + b.clock.width); expect(one.x + one.width).toBeLessThan(b.name.x);
+          expect(Math.abs((one.x - (b.clock.x + b.clock.width)) - (b.name.x - (one.x + one.width)))).toBeLessThanOrEqual(1);
+          expect(two.x).toBeGreaterThan(b.brand.x + b.brand.width); expect(two.x + two.width).toBeLessThan(b.icons.x + 4);
+          expect(Math.abs((two.x - (b.brand.x + b.brand.width)) - (b.icons.x - (two.x + two.width)))).toBeLessThanOrEqual(4);
+          // the ticker is the room between the name and LOOM//OS, the bar's gap from each
+          const left = b.name.x + b.name.width, right = b.brand.x;
+          expect(Math.abs((b.tick.x - left) - (right - (b.tick.x + b.tick.width)))).toBeLessThanOrEqual(1);
+          if (!b.run && b.words.width < b.tick.width - 2) {
+            // its words fit: they stand in its middle
+            expect(Math.abs((b.words.x + b.words.width / 2) - (left + right) / 2), `${w} ${what} ${motion}`).toBeLessThanOrEqual(3);
+          } else {
+            // they don't: they run (or, with reduced motion, are cut) across the whole of it
+            expect(b.run).toBe(motion === 'no-preference');
+            expect(b.tick.width).toBeGreaterThan(right - left - 2 * 14 - 2);
+          }
+          await p.context().close();
+        }
+      });
+    }
   }
 
   it('under 1024 px, two bars as before (at 1023): loom\'s status bar over the phone\'s', async () => {

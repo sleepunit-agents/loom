@@ -146,6 +146,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
   return (
     <div className={clock || status ? 'loom-pbar loom-pbar--one' : 'loom-pbar'}>
       {clock}
+      {clock && <span className="loom-pbar__sep loom-pbar__sep--clock" aria-hidden>·</span>}
       <div className="loom-pbar__name" style={{ color }}>
         {crumb && (
           <button type="button" className="loom-pbar__back" aria-label={`Back to ${crumb.label}`} onClick={() => (onBack ? onBack() : go(crumb.href))}>
@@ -156,6 +157,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
       </div>
       <Ticker live={!offline} parts={tickerParts(shell)} />
       <span className="loom-pbar__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
+      {status && <span className="loom-pbar__sep loom-pbar__sep--status" aria-hidden>·</span>}
       {status}
       {asks > 0 && (
         <a href="/inbox" className="loom-pbar__needs loom-data" aria-label={`${asks} need${asks === 1 ? 's' : ''} you`}

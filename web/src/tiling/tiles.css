@@ -5,10 +5,18 @@
 :root[data-look] .loom-desk main.loom-tiles-main{padding-bottom:var(--desk-dock)}
 :root[data-look] .loom-tiles{position:relative;flex:1 1 auto;min-height:0;width:100%}
 :root[data-look] .loom-tiles>.loom-desk-home{height:100%}
-:root[data-look] .loom-tile{--cut:10px;position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+:root[data-look] .loom-tile{--cut:10px;--frame:1px;--ring:var(--v-border);position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
   background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);
-  box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
-:root[data-look] .loom-tile[data-focused]{box-shadow:inset 0 0 0 1px var(--t),inset 0 0 0 2px color-mix(in srgb,var(--t) 30%,transparent)}
+  clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
+:root[data-look] .loom-tile[data-focused]{--ring:var(--t)}
+/* The frame's ring (its edge in the app's tint when focused, and the cut corner's diagonal) is drawn over everything
+   in the tile, its page and its sheets alike: an inset shadow on the tile itself paints under its children, so a page's
+   panel ran over the bottom edge (Jonathan, 2026-11-06: Activity). The page sits inside the ring (.loom-tile__body's
+   margin), so nothing it draws is under it either; desk-window-overflow.integration.test.ts holds both. */
+:root[data-look] .loom-tile::after{content:"";position:absolute;inset:0;z-index:21;pointer-events:none;
+  box-shadow:inset 0 0 0 var(--frame) var(--ring);
+  background:linear-gradient(135deg,transparent calc(50% - .75px),var(--ring) calc(50% - .75px) calc(50% + .75px),transparent calc(50% + .75px)) right bottom/var(--cut) var(--cut) no-repeat}
+:root[data-look] .loom-tile[data-focused]::after{box-shadow:inset 0 0 0 var(--frame) var(--ring),inset 0 0 0 calc(var(--frame) + 1px) color-mix(in srgb,var(--t) 30%,transparent)}
 :root[data-look] .loom-tile__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:6px;height:32px;padding-right:4px;
   border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
 :root[data-look] .loom-tile[data-focused] .loom-tile__bar{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}
@@ -29,7 +37,7 @@
 :root[data-look] .loom-tile__btn:disabled{color:var(--v-text-3);opacity:.45}
 :root[data-look] .loom-tile__btn:not(:disabled):is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
 /* The page: its own scroll, its own width (an app's narrow layout asks the tile, not the screen: container queries). */
-:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:size;container-name:tile}
+:root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;margin:0 var(--frame) var(--frame);overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:size;container-name:tile}
 :root[data-look] .loom-tile__page{padding:16px 18px 28px;display:flex;flex-direction:column;gap:16px}
 :root[data-look] .loom-tile__page>*{width:100%;max-width:72rem;margin-inline:auto}
 /* A wide tile's side column (SIDE_WIDE): Recent here, as the window has it, beside the page; it stays as the page scrolls. */
@@ -108,7 +116,7 @@
 /* ---- phase 5: a tile's own pop-ups (components/ui/portal-container.ts). Its layer covers the tile and lets presses
    through until a dialog opens in it; then a scrim covers this tile only, and the dialog sits in the tile's middle (the
    tile is the containing block for its fixed children: its backdrop-filter), never wider or taller than the tile. ---- */
-:root[data-look] .loom-tile__layer{position:absolute;inset:0;z-index:20;pointer-events:none}
+:root[data-look] .loom-tile__layer{position:absolute;inset:var(--frame);z-index:20;pointer-events:none}
 :root[data-look] .loom-tile__layer>*{pointer-events:auto}
 :root[data-look] .loom-tile[data-blocked] .loom-tile__layer{pointer-events:auto;background:var(--v-scrim)}
 :root[data-look] .loom-tile__layer :is([role="dialog"],[role="alertdialog"]){max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto}
