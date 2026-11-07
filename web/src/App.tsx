@@ -669,7 +669,7 @@ export default function App() {
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(tiled ? [{ value: '#widgets', label: 'Add a widget', icon: <AnimatedIcon name={iconFor('plus')} /> }] : []), ...(me ? [me] : []),
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(me ? [me] : []),
                   // A desktop's last key: every app (launcher.tsx).
                   ...(desk && !agentDock ? [{ value: '#apps', label: 'All apps', tint: 'olive', icon: <span className="loom-apps-dots" aria-hidden>{Array.from({ length: 9 }, (_, n) => <i key={n} />)}</span> }] : [])]}
                 value={lit} onValueChange={pick}

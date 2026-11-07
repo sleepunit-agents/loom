@@ -343,6 +343,7 @@ export function Dock({
                     type="button"
                     data-part="item"
                     data-dock-index={index}
+                    data-value={item.value}
                     disabled={item.disabled}
                     aria-label={item.label}
                     aria-pressed={item.value === activeValue}

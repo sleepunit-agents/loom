@@ -84,14 +84,18 @@
 :root[data-look] .loom-strip-key:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
 :root[data-look] .loom-strip-key__n{position:absolute;right:4px;top:4px;min-width:18px;padding:0 4px;font-size:11px;line-height:18px;text-align:center;
   color:var(--v-on-accent);background:var(--v-pink)}
-/* the + key's list, over the dock */
-:root[data-look] .loom-wlaunch{position:absolute;left:50%;bottom:6px;translate:-50% 0;z-index:40;width:min(340px,calc(100% - 32px));padding:12px;
-  background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border),var(--shadow-float)}
-:root[data-look] .loom-wlaunch h2{padding:2px 6px 8px;font-family:var(--loom-font-data);font-size:11px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
-:root[data-look] .loom-wlaunch ul{display:grid;gap:2px}
-:root[data-look] .loom-wlaunch button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;padding:6px 10px;text-align:left;font-size:14px;color:var(--v-text)}
-:root[data-look] .loom-wlaunch button:is(:hover,:focus-visible){background:color-mix(in srgb,var(--v-pink) 10%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
-:root[data-look] .loom-wlaunch__on{margin-left:auto;font-size:12px;color:var(--v-text-3)}
+/* a context menu (menu.tsx): a small dark panel at the pointer, a lit edge in Neon's pink, its title in the data face;
+   the item under focus or the pointer lit as a dock key is. Above the tiles and the dock, under Find. */
+:root[data-look] .loom-cmenu{position:fixed;z-index:60;min-width:200px;max-width:min(320px,calc(100vw - 16px));padding:6px;
+  background:color-mix(in srgb,var(--v-paper) 96%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  box-shadow:inset 0 0 0 1px var(--v-border),0 0 0 1px color-mix(in srgb,var(--v-pink) 22%,transparent),var(--shadow-float);
+  clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,0 100%)}
+:root[data-look] .loom-cmenu__title{padding:4px 8px 6px;font-family:var(--loom-font-data);font-size:10.5px;font-weight:500;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-3);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-cmenu [role="menuitem"]{display:flex;align-items:center;gap:12px;width:100%;min-height:32px;padding:5px 10px;text-align:left;font-size:13.5px;color:var(--v-text);outline:none}
+:root[data-look] .loom-cmenu [role="menuitem"]:is(:hover,:focus-visible,:focus){background:color-mix(in srgb,var(--v-pink) 12%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
+:root[data-look] .loom-cmenu__hint{margin-left:auto;font-family:var(--loom-font-data);font-size:11px;color:var(--v-text-3)}
+@media (prefers-contrast:more){:root[data-look] .loom-cmenu{box-shadow:inset 0 0 0 2px var(--v-text)}}
 /* a card in a 280-340 px column: a smaller face, so its name has the room */
 :root[data-look] .loom-wrail .loom-w--agent:not([data-compact]){column-gap:12px}
 :root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__face{width:80px;height:80px;margin:14px 0 4px 14px}
