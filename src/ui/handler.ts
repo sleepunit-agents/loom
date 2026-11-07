@@ -68,7 +68,7 @@ import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
-import { owns, threadsOf } from '../comms.js';
+import { owns, threadPath, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -579,7 +579,7 @@ export function commsAnnouncements(h: Household, now = Date.now()): Announce[] {
       if (!t.unread || (t.in_front !== null && now - t.in_front < COMMS_IN_FRONT_MS)) continue;
       const name = agentName(agentDir(h, t.agent));
       out.push({ key: `comms-${t.id}-${t.last_reply}`, title: t.title ? `${name} replied` : `${name} replied in a new thread`, body: t.title ?? '',
-        agent: t.agent, open: true, member: m.person, url: `/comms/${t.id}` });
+        agent: t.agent, open: true, member: m.person, url: threadPath(t.id) });
     }
   }
   return out;
@@ -1290,6 +1290,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method === 'GET' && wantsPage(req)) {
       const no = pageRefused(pathname, full, who.member);
       if (no) return send(res, no.startsWith('not-found') ? 404 : 403, 'text/plain', no);
+      // An old thread link (comms/th:…) reloads at its colon-free address (t-1918): the app's paths have no colon.
+      const old = /^\/comms\/th:([a-z2-7]{10})$/.exec(pathname);
+      if (old) return redirect(res, `/comms/${old[1]}${new URL(req.url ?? '/', 'http://loom.invalid').search}`);
     }
   }
   if (full && (pathname === '/comms' || pathname.startsWith('/comms/')) && !(req.method === 'GET' && wantsPage(req))) {

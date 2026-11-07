@@ -108,7 +108,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       expect(await noSideways(page)).toBe(true);
       await page.locator('.comms-row__btn').first().click();
       await page.locator('.comms-screen').waitFor();
-      expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · CH 01 · LINK (OK|LOST)/);
+      // The channel line says what the agent is doing (t-1918): its last turn done, here.
+      expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · DONE/);
       expect(await page.locator('.comms-steps__line').textContent()).toMatch(/2 steps · Ran the tests/);
       expect(await page.locator('.comms-reply').innerHTML()).toContain('href="/p/tasks/task/t-12"');
       // Each agent message carries the agent's face.
@@ -167,7 +168,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       // A switched body's reply names its harness on the channel line; one from the agent's own clears it.
       adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'On Codex for now.', on: 'Codex' });
       await page.waitForFunction(() => /· ON CODEX$/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });
-      expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · CH 01 · LINK (OK|LOST) · ON CODEX/);
+      expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · (TALKING|DONE) · ON CODEX/);
       adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'Back on Claude.' });
       await page.waitForFunction(() => !/ON CODEX/.test(document.querySelector('.comms-screen__label')?.textContent ?? ''), undefined, { timeout: 5000 });
       await page.waitForFunction(() => document.querySelector('.comms-screen')?.getAttribute('data-face') === 'idle', undefined, { timeout: 12000 });
@@ -222,28 +223,49 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await hold(560);
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-thread, .comms-blank').count()).toBe(0);
-      // The list's faces are the agents' own (Art here has no pixel sheet: his drawn face), never their letters.
+      // The list's agents are their letters (t-1925 D): the pixel face is the comm screen's.
       const rows = await page.locator('.comms-row').count();
       expect(rows).toBeGreaterThan(0);
-      expect(await page.locator('.comms-row .comms-row__avatar :is([data-slot="agent-face"], .loom-pixel-avatar)').count()).toBe(rows);
-      expect(await page.locator('.comms-row .comms-row__face').count()).toBe(0);
-      // A thread: the list makes way, and the thread has its way back.
+      expect(await page.locator('.comms-row .loom-letter').count()).toBe(rows);
+      // A thread: the list makes way, and the threads fold out from the menu button in its header (t-1925 C).
+      const menu = page.locator('.comms-thread .comms-drawer-btn');
       await page.locator('.comms-row__btn').first().click();
       await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-list').count()).toBe(0);
-      expect(await back.isVisible()).toBe(true);
-      await back.click();
-      await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
-      expect(await page.locator('.comms-thread').count()).toBe(0);
-      // New thread: the same, with its own way back.
-      await page.locator('.comms-new').click();
+      expect(await back.count()).toBe(0);
+      expect(await menu.getAttribute('aria-expanded')).toBe('false');
+      await menu.click();
+      const drawer = page.locator('.comms-drawer[role="dialog"]');
+      await drawer.waitFor();
+      expect(await menu.getAttribute('aria-expanded')).toBe('true');
+      // Focus goes in (the open thread's row), Tab stays in, Esc closes and gives focus back to the menu button.
+      expect(await page.evaluate(() => !!document.activeElement?.closest('.comms-drawer'))).toBe(true);
+      for (let n = 0; n < 12; n++) await page.keyboard.press('Tab');
+      expect(await page.evaluate(() => !!document.activeElement?.closest('.comms-drawer'))).toBe(true);
+      await page.keyboard.press('Escape');
+      await expect.poll(() => drawer.count()).toBe(0);
+      expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Threads');
+      // The scrim closes it too; New thread from it opens in the pane, with the menu button.
+      await menu.click(); await drawer.waitFor();
+      await page.locator('.comms-drawer__scrim').click();
+      await expect.poll(() => drawer.count()).toBe(0);
+      await menu.click(); await drawer.waitFor();
+      await drawer.locator('.comms-new').click();
       await page.locator('.comms[data-one] .comms-new-thread').waitFor({ timeout: 8000 });
-      expect(await page.locator('.comms-list').count()).toBe(0);
-      expect(await page.locator('.comms-new-thread .comms-back').isVisible()).toBe(true);
-      await page.locator('.comms-new-thread .comms-back').click();
+      expect(await page.locator('.comms-new-thread .comms-drawer-btn').isVisible()).toBe(true);
+      // Picking a thread in it opens that thread and closes it.
+      await page.locator('.comms-new-thread .comms-drawer-btn').click(); await drawer.waitFor();
+      await drawer.locator('.comms-row__btn').first().click();
+      await page.locator('.comms[data-one] .comms-thread:not(.comms-new-thread)').waitFor({ timeout: 8000 });
+      await expect.poll(() => drawer.count()).toBe(0);
+      // /comms itself, one pane: the list, as before.
+      await page.goto(`${base}/comms`);
+      await page.locator('.comms-list').waitFor();
+      await hold(560);
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
       // The edge: 619 px is one pane, 620 two, side by side with no way back. A thread open across it stays mounted.
       await page.locator('.comms-row__btn').first().click();
+      await page.locator('.comms-thread:not(.comms-thread--opening) .comms-screen').waitFor();
       await page.locator('.comms-composer textarea').fill('a draft kept across the width');
       await hold(619);
       await page.waitForFunction(() => document.querySelector('.comms')?.hasAttribute('data-one'));

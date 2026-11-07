@@ -17,7 +17,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  addMemberMessage, askStop, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
+  addMemberMessage, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
   deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { deliverAsOwner } from '../delivery.js';
@@ -166,7 +166,7 @@ async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
 export function pageRefused(pathname: string, household: Household, member: Member | undefined): string | null {
   const m = /^\/comms\/([^/]+)/.exec(pathname);
   if (!m || m[1] === 'new') return null;
-  try { threadFor(household, member, decodeURIComponent(m[1])); return null; } catch (e) { return e instanceof CommsError ? e.message : 'forbidden'; }
+  try { threadFor(household, member, threadIdOf(decodeURIComponent(m[1]))); return null; } catch (e) { return e instanceof CommsError ? e.message : 'forbidden'; }
 }
 
 /** Answer a /comms route, or false when the path isn't one. */
@@ -210,7 +210,7 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
     const mm = /^\/comms\/(th:[a-z2-7]{10}|[^/]+)(?:\/(since|before)\/(\d{1,12})|\/([a-z]+))?$/.exec(pathname);
     if (!mm) return send(404, { error: 'not-found' }), true;
     const [, id, dir, seqRaw, verb] = mm;
-    let t = threadFor(h, m, decodeURIComponent(id));
+    let t = threadFor(h, m, threadIdOf(decodeURIComponent(id)));
     if (req.method === 'GET') {
       // What's recorded made true of now first: a send cut off is not delivered, a body long silent isn't working.
       if (verb !== 'events' && settleThread(h.home, t.id)) t = threadFor(h, m, t.id);

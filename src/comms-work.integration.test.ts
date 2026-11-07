@@ -297,7 +297,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
         return { json: r.text, blocks: ((r.body as { page: { sections: Array<{ blocks: Array<Record<string, unknown>> }> } }).page.sections).map((s) => s.blocks[0]) };
       };
       const j = await blocks('jonathan');
-      expect(j.blocks[0]).toEqual({ type: 'link', text: 'From: Comm screen frame', page: `loom:comms/${t.id}` });
+      expect(j.blocks[0]).toEqual({ type: 'link', text: 'From: Comm screen frame', page: `loom:comms/${t.id.replace(/^th:/, '')}` });
       expect(j.blocks[1]).toMatchObject({ type: 'text', text: 'From a conversation' });
       const s = await blocks('sam');
       expect(s.blocks[0]).toMatchObject({ type: 'text', text: 'From a Comms thread' });

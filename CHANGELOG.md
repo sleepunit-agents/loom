@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tile or on a phone the folders are chips and the ask slides over the list. Its buttons are live only once loom says
   the ask is still open (`GET /inbox/open`), and loom is asked again before any is sent. Old `?f=` folder addresses land
   on the new folders. The master/detail layout (`web/src/split.tsx`) is generic.
+- **Comms polish** (t-1918, t-1925 C; `docs/specs/comms.md`). A thread's address has no colon (`/comms/<id>`), so a
+  reload works; old `comms/th:…` links redirect. The comm screen's channel line says what the agent is doing
+  (THINKING, WORKING, TALKING, WAITING ON YOU, DONE, NO CARRIER, plus ON CODEX), and the separate thinking blob is
+  gone. A body that couldn't start says "couldn't start; retrying" with What happened, not "busy". The thread follows
+  the bottom only while you're there; scrolled up, a New messages pill counts what's new, and a working line shows the
+  step the agent is on. The Enter hint is faint and only on focus; in a narrow tile the threads are a drawer; the list
+  wears the agents' letters.
 - **The launcher** (t-1925 G; `docs/specs/desk-tiling.md`, "The launcher"). On a desktop the dock's last key, All apps, or
   Ctrl+Shift+Space opens every app in one grid, grouped as Work, People & agents, Library, System, Look & feel and
   Pieces, each tile with its live state. Search is focused at once and filters as you type; Enter opens the first match

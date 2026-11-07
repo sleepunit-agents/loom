@@ -92,6 +92,10 @@ a new design. It doesn't widen rule 1.
 Every route below is checked by rule 3 (page routes) or takes only the runtime's token (`/api/loom/comms/…`). JSON
 in and out.
 
+**A thread's address** is `/comms/<its id without th:>` (t-1918): a page's path has no colon (`vocab.ts` PATH_CHARS),
+so `comms/th:…` broke a reload, as `login:<id>` once did. Every route takes either form; a page load of the old one is
+redirected to the new; links loom draws (From, push) use the new.
+
 | Route | What it does |
 |---|---|
 | `GET /comms` | the member's threads (rule 3), with each one's unread state |
@@ -350,6 +354,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | The runtime refused (a `4xx` with an error) | "Art didn't get that: <the error's words>." |
 | `body: "failed"` | "Art couldn't start: <reason>." |
 | `body: "queued"`, and no `status: working` within 2 minutes | "Art is busy with other work; this is waiting its turn." |
+| The same, when that delivery's result was a start failure (`start-failed`): the runtime is retrying, not busy (t-1918) | "Art couldn't start; retrying." With **What happened**, the trace |
 | A loop pause (the runtime's `deferred` note turn) | "Paused: Art was repeating itself." The Inbox's Resume and Dismiss are on it |
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |
@@ -585,15 +590,31 @@ A real chat, with a terminal's flavour:
 Each thread gets a framed panel with the agent's animated pixel portrait: the classic space-sim comms screen, drawn as
 Neon OS's own, not copied from any game.
 
+- **Scrolling** is a chat app's (t-1918, `web/src/comms-follow.ts`): the thread follows its newest message only while
+  you're within 80 px of the bottom; scrolled up, nothing moves you, and a **New messages ↓** pill counts what came in
+  below (it takes you down). Your own message always brings you down. Content growing above you (a run's steps opened,
+  an image) leaves you where you were (the browser's scroll anchoring). Each step's card and the **working line** under
+  the messages ("Art is working · Ran the tests · 0:12", or "is thinking…") show as they arrive.
+- **The composer's hint** (Enter to send · Shift+Enter for a new line) is faint, shows only while the composer has
+  focus, and takes no line of its own (t-1925 C).
+- **In a box too narrow for two panes** (under 620 px: a narrow tile), the threads fold out as a drawer over the
+  thread from the menu button in its header (t-1925 C): focus goes into it, Tab stays in it, Esc or the scrim closes it
+  and gives focus back to the button, picking a thread closes it. With no thread open the list fills the pane. A phone
+  keeps its list, then the thread with its way back.
+- **The list's agents** are their letters (t-1925 D): the pixel face is the comm screen's one big picture.
 - **The portrait** is the agent's pixel face (`web/src/pixel-face.tsx`), at 2× or larger, at whole-pixel scales only.
   An agent with no sprite gets its drawn face (`face.tsx`) in the same frame.
 - **The frame** has chassis edges in the agent's tint, a scanline overlay, a small signal meter, and a mono label with
-  the agent's name and the channel: `ART E FISH · CH 03 · LINK OK`.
+  the agent's name and what it's doing now (t-1918): `ART E FISH · WORKING`. The word is the face's state, said as a
+  radio would: `THINKING` (your message is with it, nothing back yet), `WORKING`, `TALKING` (a reply landing), `WAITING
+  ON YOU` (an ask), `DONE`, or `NO CARRIER` (it can't be reached: the last delivery failed). The thread's header draws no
+  separate state blob: this line, the face and the working line under the messages say it. The channel number is the
+  screen's accessible name ("Art's comm screen, channel 03") and the list's line.
   - The channel number is given when the thread opens: one more than the highest number among that member's threads
     with that agent, deleted ones included (the tombstone keeps it), from 1. It's never reused or changed, and it's
     shown with at least two digits (`CH 03`, `CH 112`).
-  - The link word is `LINK OK` while the thread's stream is open, `LINK LOST` while it reconnects, and `NO CARRIER`
-    when the last delivery failed. The signal meter goes with it: full, flickering low, empty.
+  - The signal meter is the link's: full while the thread's stream is open, one bar while it reconnects (the thread says
+    Reconnecting), empty with no carrier.
   - `· ON CODEX` follows it while the thread's latest reply came from a body on another harness than the agent's own,
     because that account was out of quota. The runtime's `post` names the harness (`on: "Codex"`), and core keeps it
     on the reply's card. (loom-box t-1907.) It's read from the messages the app has loaded: a thread whose newest 100

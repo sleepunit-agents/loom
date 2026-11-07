@@ -157,3 +157,35 @@
 .comms-opening__line:nth-child(even) { justify-items: end; }
 .comms-opening__line .loom-skel-line { display: block; height: 12px; width: 60%; border-radius: 999px; }
 .comms-opening__line .loom-skel-line + .loom-skel-line { width: 40%; }
+
+/* ---- t-1918 / t-1925 C ---- */
+/* A row's agent: its letter (the pixel face is the comm screen's). */
+.comms-row__letter { justify-self: center; }
+/* The working line: under the thread, what the agent's on as it happens. */
+.comms-live { display: flex; align-items: center; gap: 8px; padding: 2px 4px 2px 40px; font-size: 12px; color: var(--v-text-2); min-width: 0; }
+.comms-live i { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--c, var(--v-blue)); box-shadow: 0 0 8px var(--c, var(--v-blue)); animation: comms-live-beat 1.4s ease-in-out infinite; }
+.comms-live__step { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 46ch; display: inline-block; vertical-align: bottom; color: var(--v-text); }
+@keyframes comms-live-beat { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .comms-live i { animation: none; } }
+/* The thread's own "Latest" button gives way to the pill, which counts what came in below. */
+.comms .v-agent-chat__jump { display: none !important; }
+.comms-chat { position: relative; }
+.comms-newpill { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 5; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px;
+  border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--v-on-accent); background: var(--c, var(--v-pink)); box-shadow: 0 6px 18px -6px rgba(0, 0, 0, .6), 0 0 16px -4px var(--c, var(--v-pink)); }
+.comms[data-phone] .comms-newpill { position: fixed; bottom: calc(var(--dock-h) + 96px + env(safe-area-inset-bottom)); }
+/* Enter to send: faint, and only while you're typing (t-1925 C), over the composer's top edge so it takes no line. */
+.comms .comms-composer { position: relative; }
+.comms .comms-composer .v-agent-chat__hint { position: absolute; right: 16px; top: -20px; margin: 0; padding: 0; font-size: 11px; color: var(--v-text-3); opacity: 0; pointer-events: none; transition: opacity .15s; }
+.comms .comms-composer:focus-within .v-agent-chat__hint { opacity: .8; }
+@media (prefers-reduced-motion: reduce) { .comms .comms-composer .v-agent-chat__hint { transition: none; } }
+/* The threads' drawer: one pane in a narrow box (t-1925 C), the list folding out over the thread. */
+.comms[data-wide][data-one] { position: relative; }
+.comms-drawer-btn { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: var(--v-text-2); flex: none; }
+.comms-drawer-btn:hover, .comms-drawer-btn[aria-expanded="true"] { background: color-mix(in srgb, var(--v-text) 8%, transparent); color: var(--v-text); }
+.comms-drawer { position: absolute; inset: 0; z-index: 40; display: grid; grid-template-columns: min(300px, 85%) 1fr; }
+.comms-drawer__panel { min-height: 0; overflow-y: auto; display: flex; background: var(--v-paper); box-shadow: 1px 0 0 var(--comms-line), 12px 0 32px -12px rgba(0, 0, 0, .6); animation: comms-drawer-in .18s ease-out; }
+.comms-drawer__panel .comms-list { flex: 1; }
+.comms-drawer__scrim { background: var(--v-scrim, rgba(4, 3, 10, .6)); animation: comms-drawer-fade .18s ease-out; }
+@keyframes comms-drawer-in { from { transform: translateX(-24px); opacity: .4; } }
+@keyframes comms-drawer-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .comms-drawer__panel, .comms-drawer__scrim { animation: none; } }
