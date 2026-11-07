@@ -34,7 +34,9 @@ export interface Field {
 /** A button: posts its action (with fields) to the piece; danger asks first, with confirm. */
 export interface Button { action: string; label: string; tone?: 'primary' | 'danger'; confirm?: string; fields?: Record<string, string> }
 
-export type Block =
+/** Every block: `cut` when loom cut one of its texts short to fit LIMITS (parsePage), so the page says so beside it. */
+export type Block = BlockShape & { cut?: true };
+type BlockShape =
   // A tile may carry a small trend (`spark`, up to 30 numbers, oldest first) or how full something is (`meter`, 0 to 1).
   | { type: 'stats'; items: Array<{ label: string; value: string; detail?: string; tone?: Tone; page?: string; spark?: number[]; meter?: number }> }
   // A status screen's headline: how things are, in plain words, at a glance ("All good", "One bridge is down").
@@ -303,6 +305,28 @@ function plainOf(a: Record<string, unknown>): Pick<Ask, 'why' | 'if_yes' | 'if_n
   return out;
 }
 
+/**
+ * A block's own words (a code block's text, a list row's, a cell): over `max` they're cut short, not refused, ending
+ * in "…", and the block says so (`cut`, block()). One long record shouldn't blank a whole page (t-1861: Approvals went
+ * blank when its record passed 2000 characters). Names, labels, actions and paths stay strict (str).
+ */
+function long(v: unknown, what: string, max: number = LIMITS.string): string {
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  if (typeof v !== 'string') throw new Invalid(`${what} must be a string`);
+  if (v.length <= max) return v;
+  cuts.all.push(`${what} (${v.length} characters, at most ${max})`);
+  cuts.open++;
+  let kept = v.slice(0, max - 1);
+  // Not half of a surrogate pair.
+  if (/[\uD800-\uDBFF]$/.test(kept)) kept = kept.slice(0, -1);
+  return `${kept}…`;
+}
+function optLong(v: unknown, what: string): string | undefined {
+  return v === undefined || v === null ? undefined : long(v, what);
+}
+/** What this parse cut short (`all`, for the caller to log), and how many cuts no block has claimed yet (`open`). */
+let cuts: { all: string[]; open: number } = { all: [], open: 0 };
+
 function optStr(v: unknown, what: string): string | undefined {
   return v === undefined || v === null ? undefined : str(v, what);
 }
@@ -559,7 +583,16 @@ function pages(v: unknown): Pages {
   return { param, at, count, ...(total !== undefined ? { total } : {}) };
 }
 
+/** A block, marked `cut` when one of its own texts was cut short (a block inside it marks itself, not this one). */
 function block(v: unknown, depth = 0): Block {
+  const before = cuts.open;
+  const out = blockShape(v, depth);
+  if (cuts.open === before) return out;
+  cuts.open = before;
+  return { ...out, cut: true };
+}
+
+function blockShape(v: unknown, depth: number): BlockShape {
   const b = obj(v, 'block');
   switch (b.type) {
     case 'stats':
@@ -610,7 +643,7 @@ function block(v: unknown, depth = 0): Block {
         items: arr(b.items, 'list.items', LIMITS.items).map((i) => {
           const o = obj(i, 'list item');
           return {
-            text: str(o.text, 'list.text'), meta: optStr(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
+            text: long(o.text, 'list.text'), meta: optLong(o.meta, 'list.meta'), badge: optStr(o.badge, 'list.badge'),
             tone: tone(o.tone), agent: agentId(o.agent, 'list.agent'), ...(o.person !== undefined ? { person: personSlug(o.person, 'list.person') } : {}),
             avatar: avatarOf(o.avatar), ...target(o, 'list item'),
             ...(o.act !== undefined ? { act: button(o.act) } : {}),
@@ -622,10 +655,10 @@ function block(v: unknown, depth = 0): Block {
       const columns = arr(b.columns, 'table.columns', LIMITS.columns).map((c) => str(c, 'table column'));
       const rows = arr(b.rows, 'table.rows', LIMITS.items).map((r) =>
         arr(r, 'table row', columns.length).map((c): Cell => {
-          if (typeof c === 'string' || typeof c === 'number') return str(c, 'table cell');
+          if (typeof c === 'string' || typeof c === 'number') return long(c, 'table cell');
           const o = obj(c, 'table cell');
           const p = page(o.page, 'table cell.page');
-          return p !== undefined ? { text: str(o.text, 'table cell.text'), page: p } : str(o.text, 'table cell.text');
+          return p !== undefined ? { text: long(o.text, 'table cell.text'), page: p } : long(o.text, 'table cell.text');
         }));
       return { type: 'table', columns, rows, ...(b.pages !== undefined ? { pages: pages(b.pages) } : {}) };
     }
@@ -634,19 +667,18 @@ function block(v: unknown, depth = 0): Block {
         type: 'kv',
         items: arr(b.items, 'kv.items', LIMITS.items).map((i) => {
           const o = obj(i, 'kv item');
-          return { label: str(o.label, 'kv.label'), value: str(o.value, 'kv.value'), page: page(o.page, 'kv.page') };
+          return { label: str(o.label, 'kv.label'), value: long(o.value, 'kv.value'), page: page(o.page, 'kv.page') };
         }),
       };
     case 'text':
-      return { type: 'text', text: str(b.text, 'text'), tone: tone(b.tone) };
+      return { type: 'text', text: long(b.text, 'text'), tone: tone(b.tone) };
     case 'prose': {
       if (typeof b.text !== 'string') throw new Invalid('prose.text must be a string');
-      if (b.text.length > LIMITS.prose) throw new Invalid(`prose.text is longer than ${LIMITS.prose}`);
-      return { type: 'prose', text: b.text };
+      return { type: 'prose', text: long(b.text, 'prose.text', LIMITS.prose) };
     }
     case 'callout':
       if (b.busy !== undefined && typeof b.busy !== 'boolean') throw new Invalid('callout.busy must be true or false');
-      return { type: 'callout', text: str(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
+      return { type: 'callout', text: long(b.text, 'callout.text'), title: optStr(b.title, 'callout.title'), tone: tone(b.tone), ...(b.busy ? { busy: true } : {}) };
     case 'from': {
       if (typeof b.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(b.conversation)) throw new Invalid('from.conversation is a conversation id (cv- and 12 hex digits)');
       return { type: 'from', conversation: b.conversation };
@@ -726,14 +758,14 @@ function block(v: unknown, depth = 0): Block {
         }),
       };
     case 'code':
-      return { type: 'code', text: str(b.text, 'code.text'), label: optStr(b.label, 'code.label') };
+      return { type: 'code', text: long(b.text, 'code.text'), label: optStr(b.label, 'code.label') };
     case 'status':
       return {
         type: 'status',
         items: arr(b.items, 'status.items', LIMITS.items).map((i) => {
           const o = obj(i, 'status item');
           return {
-            label: str(o.label, 'status.label'), tone: tone(o.tone), text: optStr(o.text, 'status.text'),
+            label: str(o.label, 'status.label'), tone: tone(o.tone), text: optLong(o.text, 'status.text'),
             meta: optStr(o.meta, 'status.meta'), page: page(o.page, 'status.page'),
           };
         }),
@@ -743,7 +775,7 @@ function block(v: unknown, depth = 0): Block {
     case 'health': {
       const t = tone(b.tone);
       if (!t) throw new Invalid('health.tone is ok, warn, bad or muted');
-      return { type: 'health', tone: t, text: str(b.text, 'health.text'), ...(b.detail !== undefined ? { detail: str(b.detail, 'health.detail') } : {}) };
+      return { type: 'health', tone: t, text: str(b.text, 'health.text'), ...(b.detail !== undefined ? { detail: long(b.detail, 'health.detail') } : {}) };
     }
     case 'panel':
       return {
@@ -882,6 +914,8 @@ function sections(v: unknown): Section[] {
 }
 
 function attempt<T>(f: () => T): T | string {
+  // Each parse counts its own cuts (long()).
+  cuts = { all: [], open: 0 };
   try { return f(); } catch (err) {
     if (err instanceof Invalid) return err.message;
     throw err;
@@ -1012,9 +1046,13 @@ export function parseManifest(value: unknown): Manifest | string {
   });
 }
 
-/** Validate a piece's `ui page --json` answer. */
-export function parsePage(value: unknown): Page | string {
-  return attempt(() => {
+/**
+ * Validate a piece's `ui page --json` answer. A block's own words over their limit are cut short and the block marked
+ * (long()); `onCut` hears which, to log. Anything else out of bounds (too many sections, blocks or rows; a bad name or
+ * path) still refuses the page.
+ */
+export function parsePage(value: unknown, onCut?: (fields: string[]) => void): Page | string {
+  const out = attempt(() => {
     const top = obj(value, 'page');
     const r = top.refresh;
     if (r !== undefined && (typeof r !== 'number' || !Number.isInteger(r) || r < 2 || r > 300)) throw new Invalid('refresh must be whole seconds from 2 to 300');
@@ -1022,6 +1060,10 @@ export function parsePage(value: unknown): Page | string {
     return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections), ...(r !== undefined ? { refresh: r } : {}),
       ...(add ? { add: { page: page(add.page, 'add.page') ?? '', label: str(add.label, 'add.label') } } : {}) };
   });
+  const cut = cuts.all;
+  cuts = { all: [], open: 0 };
+  if (cut.length && typeof out !== 'string') onCut?.(cut);
+  return out;
 }
 
 /** Validate a piece's `ui act --json` answer. */

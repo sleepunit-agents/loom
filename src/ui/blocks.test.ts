@@ -267,3 +267,59 @@ describe('app panels and status screens (Jonathan, 2026-11-03: "app panels, not 
     expect(typeof page([{ type: 'stats', items: [{ label: 'x', value: '1', spark: Array(31).fill(1) }] }])).toBe('string');
   });
 });
+
+describe('one block too long is cut short, not the whole page refused (t-1861)', () => {
+  const over = 'r'.repeat(3332);
+
+  it('a code block over 2000 characters (Approvals\' record, 2026-11-05) draws cut short, ends in "…", and says so', () => {
+    const cut: string[][] = [];
+    const p = ok(parsePage({ title: 'Approvals', sections: [{ id: 's', blocks: [{ type: 'text', text: 'Before' }, { type: 'code', text: over, label: 'The record' }] }] }, (c) => cut.push(c)));
+    const [before, code] = p.sections[0].blocks as [Block, Extract<Block, { type: 'code' }>];
+    expect(before).toEqual({ type: 'text', text: 'Before', tone: undefined });
+    expect(code.text).toHaveLength(2000);
+    expect(code.text.endsWith('r…')).toBe(true);
+    expect(code).toMatchObject({ label: 'The record', cut: true });
+    expect(cut).toEqual([['code.text (3332 characters, at most 2000)']]);
+  });
+
+  it('a page with nothing too long says nothing and marks nothing', () => {
+    const cut: string[][] = [];
+    const p = ok(parsePage({ title: 'T', sections: [{ id: 's', blocks: [{ type: 'code', text: 'x'.repeat(2000) }] }] }, (c) => cut.push(c)));
+    expect(p.sections[0].blocks[0]).not.toHaveProperty('cut');
+    expect(cut).toEqual([]);
+  });
+
+  it('each text-like field is cut: text, callout, a list row\'s text and meta, a cell, a kv value, a status text, a health detail', () => {
+    const p = ok(page([
+      { type: 'text', text: over },
+      { type: 'callout', text: over },
+      { type: 'list', items: [{ text: over, meta: over }] },
+      { type: 'table', columns: ['a', 'b'], rows: [[over, { text: over, page: 'x' }]] },
+      { type: 'kv', items: [{ label: 'k', value: over }] },
+      { type: 'status', items: [{ label: 's', text: over }] },
+      { type: 'health', tone: 'ok', text: 'fine', detail: over },
+    ]));
+    const blocks = p.sections[0].blocks;
+    expect(blocks.every((b) => b.cut)).toBe(true);
+    expect(JSON.stringify(blocks)).not.toContain('r'.repeat(2000));
+  });
+
+  it('a block inside a details marks itself, not the details too', () => {
+    const p = ok(page([{ type: 'details', summary: 'More', blocks: [{ type: 'code', text: over }] }]));
+    const d = p.sections[0].blocks[0] as Extract<Block, { type: 'details' }>;
+    expect(d).not.toHaveProperty('cut');
+    expect(d.blocks[0]).toMatchObject({ type: 'code', cut: true });
+  });
+
+  it('never splits a character made of two halves (an emoji at the cut)', () => {
+    const p = ok(page([{ type: 'text', text: `${'x'.repeat(1998)}😀😀` }]));
+    const t = (p.sections[0].blocks[0] as Extract<Block, { type: 'text' }>).text;
+    expect(t).toBe(`${'x'.repeat(1998)}…`);
+  });
+
+  it('a name, a label or a count over its limit still refuses the page', () => {
+    expect(page([{ type: 'kv', items: [{ label: over, value: 'v' }] }])).toMatch(/kv.label is longer than 2000/);
+    expect(page([{ type: 'code', text: 'x', label: over }])).toMatch(/code.label is longer than 2000/);
+    expect(page(Array.from({ length: 21 }, () => ({ type: 'text', text: 'x' })))).toMatch(/section.blocks/);
+  });
+});
