@@ -349,8 +349,9 @@ button, or the Menu key or Shift+F10 on what has focus, opens one at it:
 - **A dock key:** Open; Minimize while it's open; Close while it's open or in the dock. Home, More and your own key (Account) have
   none.
 - **A list row that says what it offers** (`data-row-menu="id:Label|…"`, answered by a `loom-menu` event on the row): an
-  Inbox item has Open, and Mark done when it has a plain Done and no unsent reply (a kept draft: Open only, so the
-  sheet's Done sends it first).
+  Inbox item has Open (in the reader), and Mark done when it has a plain Done and no unsent reply (a kept draft: Open
+  only, so the reader's Done sends it first); Mark done asks loom first whether it's still open, as the reader's own
+  buttons do, and opens it in the reader when it isn't.
 - Anywhere else (a tile's page, a link, a field), the browser's own menu.
 
 A menu is `role="menu"` with its items `role="menuitem"`, named for what it's about. Focus goes to its first item; ↑ ↓
@@ -634,7 +635,7 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     gives focus back to it. A second tile's strip: Minimize, Make it the big one, Close; the big one's: Minimize,
     Close; an agent's: Minimize, Pin its card to the desktop, Close, and Pin adds the card, then Take its card off
     removes it. An agent's card: Chat, Open, Unpin from the desktop. A dock key: Open; then Open, Minimize, Close; then
-    Open, Close; Home and your own key none. An Inbox row: Open (its sheet) and Mark done (posts `needs-done`, the row leaves); with
+    Open, Close; Home and your own key none. An Inbox row: Open (picks it in the reader) and Mark done (posts `needs-done`, the row leaves); with
     a reply kept unsent, Open only. On a tile's page and on a link in it, a `contextmenu` is left to the browser
     (`defaultPrevented` false).
 

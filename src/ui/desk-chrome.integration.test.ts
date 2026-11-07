@@ -438,7 +438,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.context().close();
   });
 
-  it('an Inbox row: Open, Mark done', async () => {
+  it('an Inbox row: Open (in the reader), Mark done (once loom says it\'s open), never over an unsent reply', async () => {
     // its own ask, so nothing an earlier test pressed can have answered it
     const art = agentDir(h, 'art');
     const conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:making', label: 't-739: drive', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
@@ -464,10 +464,10 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await row.click({ button: 'right' });
     await menu(p).waitFor();
     expect(await items(p)).toEqual(['Open', 'Mark done']);
+    // (another item first in the reader, so Open is seen to pick this one)
     await menu(p).locator('[role="menuitem"]', { hasText: 'Open' }).click();
-    await p.locator('.loom-tile [role="dialog"]').waitFor();
-    await p.keyboard.press('Escape');
-    await expect.poll(() => p.locator('.loom-tile [role="dialog"][data-state="open"]').count()).toBe(0);
+    await expect.poll(() => row.getAttribute('aria-current')).toBe('true');
+    await expect.poll(() => p.locator('.loom-tile .loom-inbox__read h2').textContent()).toMatch(/swap the Sonarr disk/);
     const posted: string[] = [];
     p.on('request', (r) => { if (r.method() === 'POST') posted.push(new URL(r.url()).pathname + ' ' + (r.postData() ?? '')); });
     await row.click({ button: 'right' });

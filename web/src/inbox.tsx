@@ -17,7 +17,7 @@ import { ApprovalBox, As, KIND, Mark, type InboxItem, Fine } from './views';
 import { Arrive } from './arrive';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
-import { draftOf, guardFooter, keepDraft } from './drafts';
+import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
 import { Split, type SplitFolder } from './split';
 import './inbox.css';
 
@@ -86,6 +86,16 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
     setAnswered((a) => ({ ...a, [i.key]: said }));
     setSel(nx?.key ?? null);
   };
+  // Mark done from a row's right-click (the desktop's; t-1925 E): only an item with a plain Done, nothing typed and not
+  // sent (drafts.ts: Done must never drop his words: the reader sends them first), and only once loom says, now, that
+  // it's still open, as the reader's own buttons are. Otherwise the item opens in the reader, which says why.
+  const doneOf = (i: InboxItem) => (boxOf(i) === 'done' || i.approval || (i.reply && hasDraft(i.key)) ? undefined
+    : (i.actions ?? []).find((b) => /^(mark )?done$/i.test(b.label.trim()) && b.tone !== 'danger' && !b.confirm));
+  const markDone = async (i: InboxItem) => {
+    const b = doneOf(i);
+    if (!b || (i.reply && hasDraft(i.key)) || (await stillOpen(i.key)) !== 'live') { pick(i); return; }
+    if (await env.withSource(i.source).send(b.action, b.fields ?? {})) onAnswered(i, 'Done');
+  };
   void chrome;
   const label = FOLDERS.find(([k]) => k === f)?.[1] ?? (f.startsWith('from:') ? `From ${name(f.slice(5))}` : 'Inbox');
   const search = (
@@ -95,7 +105,8 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
   return (
     <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { setF(id); setSel(null); }} search={search}
       listTitle={label} listMeta={shown.length || undefined}
-      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick} />)
+      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick}
+        done={doneOf(i) ? () => void markDone(i) : undefined} />)
         : <div className="loom-split__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
           text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} /></div>}
       reader={went ? <p className="loom-split__note" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
@@ -106,14 +117,26 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
 }
 
 /** A row: what it is (its folder's mark), its words, when; unread is bold with a dot. */
-function Row({ i, who, mark, current, onPick }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; current: boolean; onPick: (i: InboxItem) => void }) {
+function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; current: boolean; onPick: (i: InboxItem) => void;
+  /** Mark done, from the desktop's right-click (tiling/tiles.tsx data-row-menu): there when the item has a plain Done. */
+  done?: () => void }) {
   const p = plain(i, who);
+  const el = useRef<HTMLButtonElement>(null);
+  const act = useRef<(id: string) => void>(() => {});
+  act.current = (id) => { if (id === 'open') onPick(i); else if (id === 'done') done?.(); };
+  useEffect(() => {
+    const b = el.current;
+    const f = (e: Event) => act.current((e as CustomEvent<string>).detail);
+    b?.addEventListener('loom-menu', f);
+    return () => b?.removeEventListener('loom-menu', f);
+  }, []);
   const box = boxOf(i);
   const sub = tidy(p.why ?? i.outcome ?? i.meta ?? '') || [who, i.sourceLabel].filter(Boolean).join(' · ');
   return (
     // What's new arrives (arrive.tsx; docs/specs/ui-app.md): a row that wasn't there at the last answer glows once.
     <Arrive k={`in:${i.key}\0${i.kind}`}>
-      <button type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}>
+      <button ref={el} type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}
+        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)}>
         {i.unread && <span className="loom-inbox__dot" aria-label="Unread" />}
         {/* Who asks, by their face (pixel or drawn), with what it is as a badge on it; nobody's is its kind alone. */}
         {mark ? <span className="loom-inbox__face"><Mark a={mark} size={28} /><span className="loom-inbox__badge" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span></span>

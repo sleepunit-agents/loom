@@ -1,6 +1,6 @@
 // The kinds of page that aren't a piece's Page (src/ui/handler.ts views): the household's home, an agent's
 // Today, the Inbox, and the Places, Setup, Find and Scope sheets. Same data the classic page draws.
-import { useContext, useEffect, useRef, lazy, Suspense } from 'react';
+import { useContext, lazy, Suspense } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { iconFor } from './safe';
@@ -249,31 +249,13 @@ export function useOpenItem(sheet?: (i: InboxItem) => void) {
 
 /** An item in a line: who (their mark, or loom's), what, why, and its kind. */
 export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
-  const env = useEnv();
-  const agents = env.ctx.agents ?? {};
+  const { ctx } = useEnv();
+  const agents = ctx.agents ?? {};
   const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
   const p = plain(i, name(i.agent));
-  // The desktop's right-click (tiling/tiles.tsx, data-row-menu): Open, and Mark done when the item has a plain Done and
-  // no reply typed and not sent (drafts.ts: Done must never drop his words; the sheet sends them first).
-  const drafted = !!(i.reply && i.attention && hasDraft(i.key));
-  const done = drafted ? undefined : (i.actions ?? []).find((b) => /^(mark )?done$/i.test(b.label.trim()) && b.tone !== 'danger' && !b.confirm);
-  const el = useRef<HTMLButtonElement>(null);
-  const act = useRef<(id: string) => void>(() => {});
-  act.current = (id) => {
-    // A draft kept since the menu opened: the sheet, where Done sends it first.
-    if (id === 'open' || (id === 'done' && hasDraft(i.key))) onOpen(i);
-    else if (id === 'done' && done) void env.withSource(i.source).send(done.action, done.fields ?? {});
-  };
-  useEffect(() => {
-    const b = el.current;
-    const f = (e: Event) => act.current((e as CustomEvent<string>).detail);
-    b?.addEventListener('loom-menu', f);
-    return () => b?.removeEventListener('loom-menu', f);
-  }, []);
   return (
     <Arrive as="li" k={`in:${i.key}\0${i.kind}`} className="min-w-0">
-      <button ref={el} className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => onOpen(i)}
-        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)}>
+      <button className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => onOpen(i)}>
         {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
         <span className="min-w-0 flex-1">
