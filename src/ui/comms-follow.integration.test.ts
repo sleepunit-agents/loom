@@ -168,8 +168,11 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     expect(said.indexOf('ART E FISH · TALKING')).toBeGreaterThan(said.indexOf('ART E FISH · WORKING'));
     expect(await p.locator('.comms-live').count()).toBe(0);
     // An ask waiting on you (as loom adds it from the approvals piece's manifest).
+    // route.fetch reuses the keep-alive socket of the login at the top, and can land here 6 s later, just as the
+    // server closes it (keepAliveTimeout 5 s + Node's 1 s buffer). A browser retries a GET on that reset; Playwright
+    // doesn't unless asked, and a failed fetch leaves the page's read hanging, so the line stayed DONE.
     await p.route(`**/comms/${t.id}/since/**`, async (route) => {
-      const r = await route.fetch();
+      const r = await route.fetch({ maxRetries: 2 });
       const j = await r.json() as Record<string, unknown>;
       await route.fulfill({ json: { ...j, asks: [{ id: 'a-0001', piece: 'approvals', text: 'OK to merge?', actions: [{ action: 'allow', label: 'Allow once', fields: { id: 'a-0001' } }] }] } });
     });
