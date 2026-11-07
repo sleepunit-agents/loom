@@ -56,6 +56,10 @@ export type Focused = { key: string; label: string; title: string; /** what its 
 export type Accent = { name?: string; style?: React.CSSProperties };
 
 const SAVED = 'loom-tiles';
+/** A tile's own move (transition, below): which, and whose. */
+type Fx = { kind: 'open' | 'close' | 'min' | 'max' | 'restore'; key: string };
+/** The view-transition name the one tile with an effect wears for it (tiles.css). */
+const FX = 'loom-fx';
 /** A tile this wide or wider has the page's side column beside it (docs/specs/desk-tiling.md, "The frame"). */
 const SIDE_WIDE = 1100;
 const keepSet = (set: TileSet) => { try { localStorage.setItem(SAVED, JSON.stringify(set)); } catch { /* private window */ } };
@@ -190,14 +194,14 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const addressOf = (s: State) => writeSet(s.apps.find((a) => a.key === s.focus)?.url ?? '/', set(s));
   /** The new state, and the address for it: a page change in a tile is a new entry (Back walks it); opening, closing,
    * swapping and promoting replace the one there is, so Back never closes a tile. */
-  const commit = (next: State, how: 'push' | 'replace' = 'replace', move = false) => {
+  const commit = (next: State, how: 'push' | 'replace' = 'replace', move = false, fx?: Fx) => {
     const before = S.current;
     S.current = next;
     const to = addressOf(next);
     if (how === 'push') history.pushState({ tile: next.focus }, '', to);
     else if (to !== location.pathname + location.search) history.replaceState({ tile: next.focus }, '', to);
     keepSet(set(next));
-    if (move) reflow(before); else bump();
+    if (move) reflow(before, fx); else bump();
   };
   // A reflow (a tile added, closed, minimized, swapped or made the big one; a widget added or taken off): one document
   // View Transition morphs every tile from its old box to its new one, each named for itself (tiles.css). The screen
@@ -206,27 +210,39 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const drawn = useRef<State | null>(null);
   const moving = useRef(false);
   const canMove = () => !moving.current && !reducedMotion() && typeof (document as Doc).startViewTransition === 'function';
-  const transition = (kind: 'reflow' | 'page', update: () => void, tile?: string) => {
+  // A tile's own move (t-1925 B; Jonathan, 2026-11-06: "nothing reads as a page refresh"): the one tile opened,
+  // closed, minimized, made the big one or brought back from the dock is named `loom-fx` for the transition, in its
+  // old picture, its new one or both, and <html data-tile-fx> says which effect it wears (tiles.css): a CRT's power-on
+  // and power-off, a scanline wiping it down to the dock and back up, a glitch as it takes the big slot. The rest of
+  // the tiles morph as ever, by their own names. Reduced motion, or no View Transitions: none of it (canMove).
+  const fxEl = (key: string) => box.current?.querySelector<HTMLElement>(`.loom-tile[data-tile="${CSS.escape(key)}"]`) ?? null;
+  const transition = (kind: 'reflow' | 'page', update: () => void, tile?: string, fx?: Fx) => {
     const root = document.documentElement;
     moving.current = true;
     root.dataset.tileMove = kind;
     if (tile) box.current?.querySelector(`[data-tile="${CSS.escape(tile)}"]`)?.setAttribute('data-moving', '');
+    // The old picture: a tile that leaves, or changes slot, wears the effect's name as it's captured.
+    if (fx) { root.dataset.tileFx = fx.kind; if (fx.kind !== 'open' && fx.kind !== 'restore') fxEl(fx.key)?.style.setProperty('--vt', FX); }
     const done = () => {
       moving.current = false;
       if (root.dataset.tileMove === kind) delete root.dataset.tileMove;
+      if (fx && root.dataset.tileFx === fx.kind) delete root.dataset.tileFx;
+      if (fx) fxEl(fx.key)?.style.setProperty('--vt', vtName('tile', fx.key));
       box.current?.querySelectorAll('[data-moving]').forEach((e) => e.removeAttribute('data-moving'));
     };
+    // The new picture: a tile that arrives, or changes slot, wears it as it's drawn.
+    const run = () => { update(); if (fx && fx.kind !== 'close' && fx.kind !== 'min') fxEl(fx.key)?.style.setProperty('--vt', FX); };
     try {
-      (document as Doc).startViewTransition!(update).finished.then(done, done);
+      (document as Doc).startViewTransition!(run).finished.then(done, done);
     } catch {
       // The browser refused to start one: the change simply applies.
       done(); update();
     }
   };
-  const reflow = (before: State) => {
+  const reflow = (before: State, fx?: Fx) => {
     if (!canMove()) { drawn.current = null; bump(); return; }
     drawn.current = before;
-    transition('reflow', () => { drawn.current = null; flushSync(bump); });
+    transition('reflow', () => { drawn.current = null; flushSync(bump); }, undefined, fx);
   };
   const tiles = (apps: Open[]): AppTile[] => apps.map((a) => ({ id: a.key, name: a.label, fit: a.fit, ...(a.pinned ? { pinned: true } : {}) }));
   // Each widget's height as drawn at the column's width (measured), for the rule; until then its default (fit.ts).
@@ -254,7 +270,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const cap = () => (oneWindow ? 1 : capFor(innerWidth));
   /** An app into the layout: placed by the rule, and whatever doesn't fit then goes to the dock, said in a toast. With
    * One window at a time, the app there goes to the dock first, kept where it was, said the same way. */
-  const add = (o: Open, from?: string) => {
+  const add = (o: Open, from?: string, back = false) => {
     let s = S.current;
     const swapped = oneWindow ? s.apps : [];
     for (const a of swapped) s = toDock(s, a);
@@ -269,7 +285,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     for (const m of why) say({ ok: true, message: m });
     usedAt.current[o.key] = Date.now();
     next.focus = o.key;
-    commit(next, 'replace', true);
+    commit(next, 'replace', true, { kind: back ? 'restore' : 'open', key: o.key });
     const i = next.apps.findIndex((a) => a.key === o.key);
     announce([`${o.label} opened, tile ${i + 1} of ${next.apps.length}`, ...why].join('. '));
   };
@@ -293,13 +309,13 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     }
     const was = s.min.find((a) => a.key === r.key);
     const back = was ? trail.restore(r.key) : undefined;
-    add({ ...r, url: was && (to === r.key || to === was.url) ? back?.url ?? was.url : to, ...(back ? { restoreTop: back.top } : {}) } as Open, from);
+    add({ ...r, url: was && (to === r.key || to === was.url) ? back?.url ?? was.url : to, ...(back ? { restoreTop: back.top } : {}) } as Open, from, !!was);
     return true;
   };
   const minimize = (key: string) => {
     const o = S.current.apps.find((a) => a.key === key);
     if (!o) return;
-    commit(toDock(S.current, o), 'replace', true);
+    commit(toDock(S.current, o), 'replace', true, { kind: 'min', key });
     announce(`${o.label} minimized to the dock`);
   };
   const close = (key: string) => {
@@ -308,7 +324,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (!o) return;
     trail.forget(key);
     const apps = s.apps.filter((a) => a.key !== key);
-    commit({ ...s, apps, focus: s.focus === key ? apps[apps.length - 1]?.key ?? null : s.focus }, 'replace', true);
+    commit({ ...s, apps, focus: s.focus === key ? apps[apps.length - 1]?.key ?? null : s.focus }, 'replace', true, { kind: 'close', key });
     announce(`${o.label} closed`);
   };
   /** While there are more apps than the cap, or one is under its minimum, the least recently used (never the focused,
@@ -329,7 +345,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const makeBig = (key: string) => {
     const s = S.current;
     const order = promote(tiles(s.apps), key);
-    commit(shed({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'it didn’t fit beside the big one'), 'replace', true);
+    commit(shed({ ...s, apps: order.map((t) => ({ ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned })), focus: key }, 'it didn’t fit beside the big one'), 'replace', true, { kind: 'max', key });
     announce(`${s.apps.find((a) => a.key === key)?.label ?? 'It'} is the big one, tile 1 of ${S.current.apps.length}`);
   };
   /** Swap with the tile before (-1) or after (1): its place in the order; a pinned tile swapped out of the big slot isn't
@@ -723,23 +739,30 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   // The trail: the app, as its start was last left, when this page is under it.
   const up = path !== o.key && !p.waiting ? { url: trail.lastAt(o.key, o.key)?.url ?? o.key } : undefined;
   const label = `tile ${n + 1} of ${of}, ${o.label}`;
-  // A wide tile has the side column: the page's own side sections, or, when it has none, Recent here.
+  /** The page is called what its app is (a Comms thread before it has a title, an app's own page). */
+  const named = title.trim().toLowerCase() === o.label.trim().toLowerCase();
+  // A wide tile has the side column: the page's own side sections, or, when it has none, Recent here; but the only app
+  // tile on the desktop (widgets don't count) with no side of its own keeps the room (Jonathan, 2026-11-06).
   const wide = (rect?.w ?? 0) >= SIDE_WIDE;
   const pageSide = !!(p.data as { page?: { sections?: { place?: string; side?: unknown }[] } } | null)?.page?.sections?.some((x) => x.place === 'side' || !!x.side);
-  const recent = useMemo(() => (wide && !pageSide && !p.waiting ? recentHere(p.url, o.key) : []), [wide, pageSide, p.url, p.waiting, o.key]);
+  const recent = useMemo(() => (wide && of > 1 && !pageSide && !p.waiting ? recentHere(p.url, o.key) : []), [wide, of, pageSide, p.url, p.waiting, o.key]);
   return (
     <section className="loom-tile" role="region" aria-roledescription="tile" aria-label={label} data-tile={o.key} data-focused={focused || undefined}
       data-blocked={blocked || undefined} data-accent={accent.name}
       style={Object.assign({ '--t': tint, '--vt': vtName('tile', o.key) }, accent.style, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
       onPointerDownCapture={onFocus} onFocusCapture={onFocus}>
       <div className="loom-tile__bar" inert={blocked || undefined} onDoubleClick={(e) => {
-        if (e.button !== 0 || (e.target as Element).closest('button, a, input, select, textarea, [role="button"]')) return;
+        // The title is the way up on a page named as its app (.loom-tile__up): a double-click there still minimizes.
+        if (e.button !== 0 || (e.target as Element).closest('button, a:not(.loom-tile__up), input, select, textarea, [role="button"]')) return;
         e.preventDefault(); minimize();
       }}>
         <span className="loom-tile__key" aria-hidden>{lead}</span>
         <span className="loom-tile__steps">{arrow(-1)}{arrow(1)}</span>
-        {up && <a className="loom-tile__crumb" href={up.url} onClick={(e) => { e.preventDefault(); go(up.url); }}>{o.label}</a>}
-        <h2 tabIndex={-1} title={title}>{title}</h2>
+        {/* The app, then the page: never the app's name twice ("COMMS › COMMS"). A page named as its app is the way up
+            itself; the app's own start is its name alone. */}
+        {up && !named && <a className="loom-tile__crumb" href={up.url} onClick={(e) => { e.preventDefault(); go(up.url); }}>{o.label}</a>}
+        <h2 tabIndex={-1} title={title}>{up && named ? <a className="loom-tile__up" href={up.url} aria-label={`${title}: back to its start`}
+          onClick={(e) => { e.preventDefault(); go(up.url); }}>{title}</a> : title}</h2>
         <span className="loom-tile__path loom-data" aria-hidden>loom{path}</span>
         <span className="loom-tile__acts">
           {pin && <button type="button" className="loom-tile__btn" aria-pressed={pin.on} onClick={pin.toggle}

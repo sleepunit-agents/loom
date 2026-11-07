@@ -18,6 +18,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { createToken, loadHousehold, type Household } from '../household.js';
 import { createConversationTables } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
+import { openThread } from '../comms.js';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
@@ -31,6 +32,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   let browser: Browser;
   let base: string;
   let token: string;
+  let thread: string;
   const saved: Record<string, string | undefined> = {};
   const errors: string[] = [];
 
@@ -47,7 +49,8 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     process.env.LOOM_HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     h = loadHousehold(home)!;
-    token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
+    thread = openThread(h, process.env, h.members[0], { agent: 'art', id: 'cccccccccccccccc', text: 'A thread with Art' }).thread.id;
     handle = await startHttpServer({ contextDir: join(home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -74,6 +77,8 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   }
   const widgets = (p: Page) => p.$$eval('[data-widget]', (ws) => ws.map((w) => w.getAttribute('data-widget')));
   const box = async (p: Page, sel: string) => (await p.locator(sel).first().boundingBox())!;
+  const KEY = (label: string) => `.loom-dock-bar [data-part="item"][aria-label="${label}"]`;
+  const labels = (p: Page) => p.$$eval('.loom-tile', (ts) => ts.map((t) => (t.getAttribute('aria-label') ?? '').replace(/^tile \d+ of \d+, /, '')));
 
   // ---- A. the bar ----
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
@@ -151,6 +156,131 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.locator('input[aria-label="Find anything"]').fill('ticker');
     await p.waitForTimeout(300);
     expect(await p.locator('[role="option"]', { hasText: 'Add widget' }).count()).toBe(0);
+    await p.context().close();
+  });
+
+  // ---- B. tiles ----
+  it('a page named as its app never repeats it: no "COMMS › COMMS"; the name is the way up', async () => {
+    const p = await screen(1280, 800, { path: `/comms/${thread}?t=*comms` });
+    const bar = p.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar');
+    await bar.locator('h2').waitFor();
+    // the thread itself (not an error page, which is named as its app too)
+    await expect.poll(() => p.locator('.loom-tile[data-tile="/comms"] .loom-tile__page').getByText('A thread with Art').count()).toBeGreaterThan(0);
+    await expect.poll(() => bar.locator('h2').textContent()).toBe('Comms');
+    expect(await bar.locator('.loom-tile__crumb').count()).toBe(0);
+    // one "Comms" in the strip's words (the path chip is loom's address, aria-hidden)
+    expect((await bar.locator(':is(.loom-tile__crumb, h2)').allTextContents()).join(' ')).toBe('Comms');
+    await bar.locator('h2 a').click();
+    await expect.poll(() => new URL(p.url()).pathname).toBe('/comms');
+    // at the app's start there's no way up: the name alone
+    expect(await bar.locator('h2 a').count()).toBe(0);
+    await p.context().close();
+    // a double-click on the name that's the way up still minimizes the tile, as on the rest of the strip
+    const q = await screen(1280, 800, { path: `/comms/${thread}?t=*comms` });
+    const up = q.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar h2 a');
+    await up.waitFor();
+    await up.dblclick();
+    await expect.poll(() => labels(q)).toEqual([]);
+    expect(new URL(q.url()).searchParams.get('m')).toBe('comms');
+    await q.context().close();
+  });
+
+  it('a page named otherwise keeps the app before it: Setup › Appearance', async () => {
+    const p = await screen(1280, 800, { path: '/setup?t=*setup' });
+    const t = p.locator('.loom-tile[data-tile="/setup"]');
+    await t.locator('a, button', { hasText: 'Appearance' }).first().click();
+    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
+    expect(await t.locator('.loom-tile__crumb').textContent()).toBe('Setup');
+    await p.context().close();
+  });
+
+  it('Recent here: not beside the only app tile (it gets the room), widgets or not; still beside a wide one sharing the screen', async () => {
+    const p = await screen(1920, 1080, { path: '/setup?t=*setup&w=vitals' });
+    const t = p.locator('.loom-tile[data-tile="/setup"]');
+    await t.locator('a, button', { hasText: 'Appearance' }).first().click();
+    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
+    await t.locator('.loom-tile__btn[aria-label^="Back"]').click();
+    await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toMatch(/setup/i);
+    expect((await box(p, '.loom-tile')).width).toBeGreaterThan(1100);
+    await p.waitForTimeout(300);
+    expect(await t.locator('.loom-tile__side').count()).toBe(0);
+    // the page has the tile's whole width
+    const [body, page] = [await box(p, '.loom-tile__body'), await box(p, '.loom-tile__page')];
+    expect(page.width).toBeGreaterThan(body.width - 40);
+    await p.context().close();
+    // 3000 px with two: the big tile is still wide, and shares the screen: Recent here is beside it
+    const q = await screen(3000, 1440, { path: '/setup?t=*setup&w=' });
+    const u = q.locator('.loom-tile[data-tile="/setup"]');
+    await u.locator('a, button', { hasText: 'Appearance' }).first().click();
+    await expect.poll(() => u.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
+    await u.locator('.loom-tile__btn[aria-label^="Back"]').click();
+    await q.click(KEY('Inbox'));
+    await expect.poll(() => labels(q)).toEqual(['Setup', 'Inbox']);
+    expect((await box(q, '.loom-tile[data-tile="/setup"]')).width).toBeGreaterThanOrEqual(1100);
+    await expect.poll(() => u.locator('.loom-tile__side', { hasText: 'Recent here' }).count()).toBe(1);
+    await q.context().close();
+  });
+
+  it('one loader: its three sizes in px, whatever the text around it (spinner.test.ts: the component and the built assets)', async () => {
+    const p = await screen(1280, 800);
+    const sizes = await p.evaluate(() => [12, 40].flatMap((fs) => ['sm', 'md', 'lg'].map((size) => {
+      const host = document.createElement('div');
+      host.style.fontSize = `${fs}px`;
+      host.innerHTML = `<span class="loom-load" data-slot="spinner" data-size="${size}"><i></i><i></i><i></i><i></i></span>`;
+      document.body.append(host);
+      const r = host.firstElementChild!.getBoundingClientRect();
+      host.remove();
+      return `${fs}:${size}:${r.width}x${r.height}`;
+    })));
+    expect(sizes).toEqual(['12:sm:16x16', '12:md:24x24', '12:lg:40x40', '40:sm:16x16', '40:md:24x24', '40:lg:40x40']);
+    await p.context().close();
+  });
+
+  /** Every tile effect <html data-tile-fx> wore, and the loom-fx animations that ran under each. */
+  const watchFx = (p: Page) => p.evaluate(() => {
+    const w = window as unknown as { fx: string[]; fxAnims: string[] };
+    w.fx = []; w.fxAnims = [];
+    new MutationObserver(() => {
+      const k = document.documentElement.dataset.tileFx;
+      if (!k) return;
+      w.fx.push(k);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        for (const a of document.getAnimations()) { const n = (a as CSSAnimation).animationName; if (n?.startsWith('loom-fx')) w.fxAnims.push(`${k}:${n}`); }
+      }));
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-tile-fx'] });
+  });
+  const fxSeen = (p: Page) => p.evaluate(() => { const w = window as unknown as { fx: string[]; fxAnims: string[] }; return { fx: w.fx, anims: [...new Set(w.fxAnims)] }; });
+  /** Open, open, make big, minimize, bring back, close: each waits for the last to settle. */
+  async function tileMoves(p: Page) {
+    const settle = () => p.waitForFunction(() => !document.documentElement.dataset.tileMove);
+    await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual(['Inbox']); await settle();
+    await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']); await settle();
+    await p.locator('button[aria-label="Make Comms the big one"]').click(); await expect.poll(() => labels(p)).toEqual(['Comms', 'Inbox']); await settle();
+    await p.locator('button[aria-label="Minimize Comms to the dock"]').click(); await expect.poll(() => labels(p)).toEqual(['Inbox']); await settle();
+    await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toContain('Comms'); await settle();
+    await p.locator('button[aria-label="Close Comms"]').click(); await expect.poll(() => labels(p)).toEqual(['Inbox']); await settle();
+  }
+
+  it('each tile move has its own effect: open, make big, minimize, bring back, close', async () => {
+    const p = await screen(1280, 800, { motion: 'no-preference', path: '/?w=needs' });
+    await watchFx(p);
+    await tileMoves(p);
+    const seen = await fxSeen(p);
+    expect(seen.fx).toEqual(['open', 'open', 'max', 'min', 'restore', 'close']);
+    for (const a of ['open:loom-fx-on', 'max:loom-fx-glitch', 'min:loom-fx-wipe-out', 'restore:loom-fx-wipe-in', 'close:loom-fx-off']) expect(seen.anims, a).toContain(a);
+    // each short: none over 350 ms
+    const long = await p.evaluate(() => [...document.styleSheets].flatMap((s) => { try { return [...s.cssRules]; } catch { return []; } })
+      .map((r) => r.cssText).filter((t) => /loom-fx-/.test(t) && /animation:/.test(t)).map((t) => /(\.\d+|\d+(\.\d+)?)s/.exec(t)?.[0]).filter((d) => d && parseFloat(d) > 0.35));
+    expect(long).toEqual([]);
+    expect(await p.evaluate(() => document.documentElement.dataset.tileFx ?? null)).toBeNull();
+    await p.context().close();
+  });
+
+  it('under reduced motion none of them run, and the tiles still open, move and close', async () => {
+    const p = await screen(1280, 800, { motion: 'reduce', path: '/?w=needs' });
+    await watchFx(p);
+    await tileMoves(p);
+    expect(await fxSeen(p)).toEqual({ fx: [], anims: [] });
     await p.context().close();
   });
 

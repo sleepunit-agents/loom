@@ -462,14 +462,14 @@ export default function App() {
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
-                  : data.view === 'comms' ? <Suspense fallback={<Spinner appearance="orbit" />}><CommsView data={data as never} /></Suspense>
-                  : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
-                  : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                  : data.view === 'comms' ? <Suspense fallback={<Spinner size="lg" />}><CommsView data={data as never} /></Suspense>
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner size="lg" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
+                  : data.view === 'passkeys' ? <Suspense fallback={<Spinner size="lg" />}>
                     <AccountView me={(data.me as Me | undefined) ?? { name: data.chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
                       add={data.add as never} reload={() => void pg.load(pg.url, false, true)} page={data.page as Page} /></Suspense>
-                  : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
+                  : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner size="lg" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
-                  : data.view === 'sheet' ? <Suspense fallback={<Spinner appearance="orbit" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} oneWindow={oneWindow} setOneWindow={setOneWindow} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
+                  : data.view === 'sheet' ? <Suspense fallback={<Spinner size="lg" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} oneWindow={oneWindow} setOneWindow={setOneWindow} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
                   : <NotYet kind={data.view} url={pg.url} />}
               </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
             )}

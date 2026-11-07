@@ -137,6 +137,7 @@ function ButtonIndicator({
 }: React.ComponentProps<"span">) {
   return (
     <Spinner
+      size="sm"
       data-slot="button-indicator"
       data-part="indicator"
       data-label=""
