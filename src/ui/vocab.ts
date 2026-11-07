@@ -251,6 +251,8 @@ export const LIMITS = {
   /** A filters block's chip rows, and the chips in one. */
   chipRows: 3,
   chips: 12,
+  /** A chip's value: a row of LIMITS.chips of them, joined with commas, stays inside queryValue. */
+  chipValue: 15,
   query: 10,
   queryValue: 200,
   path: 200,
@@ -674,7 +676,7 @@ function block(v: unknown, depth = 0): Block {
         const ops = arr(r.options, 'chips.options', LIMITS.chips).map((y) => {
           const o = obj(y, 'chip');
           const value = str(o.value, 'chip.value');
-          if (value === '' || value.includes(',') || value.length > 15) throw new Invalid('chip.value is 1 to 15 characters, no comma');
+          if (value === '' || value.includes(',') || value.length > LIMITS.chipValue) throw new Invalid(`chip.value is 1 to ${LIMITS.chipValue} characters, no comma`);
           return { value, label: str(o.label, 'chip.label') };
         });
         if (!ops.length) throw new Invalid('a chip row needs a chip');

@@ -2,7 +2,7 @@
 // (`more`), and a filters block whose sort is one switch with rows of chips under it (`switch`, `chips`).
 // docs/extensions.md, "Blocks".
 import { describe, it, expect } from 'vitest';
-import { parsePage, type Page } from './vocab.js';
+import { LIMITS, parsePage, type Page } from './vocab.js';
 
 const page = (b: Record<string, unknown>) => parsePage({ title: 'T', sections: [{ id: 's', blocks: [b] }] });
 const blockOf = (r: Page | string) => (typeof r === 'string' ? r : r.sections[0].blocks[0]);
@@ -13,6 +13,11 @@ describe('a list row that opens in place', () => {
   it('keeps its label and value pairs and what its link is called', () => {
     const b = blockOf(row({ items: [{ label: 'Goal', value: 'It works' }, { label: 'Why', value: 'It broke' }], open: 'Open task' }));
     expect(b).toMatchObject({ type: 'list', items: [{ text: 'Fix it', page: 'task/t-1', more: { items: [{ label: 'Goal', value: 'It works' }, { label: 'Why', value: 'It broke' }], open: 'Open task' } }] });
+  });
+
+  it('takes up to 6 pairs, and a row with no link may still say what it would open', () => {
+    const six = Array.from({ length: 6 }, (_, i) => ({ label: `L${i}`, value: 'v' }));
+    expect(blockOf(row({ items: six }))).toMatchObject({ items: [{ more: { items: six } }] });
   });
 
   it('a row without more is as it was', () => {
@@ -44,6 +49,10 @@ describe('a filters block with a switch and chips', () => {
   });
 
   it('a switch is 2 to 4 options', () => {
+    for (const n of [2, 4]) {
+      const options = Array.from({ length: n }, (_, i) => ({ value: i ? `o${i}` : '', label: `O${i}` }));
+      expect(blockOf(page({ type: 'filters', param: 'sort', switch: true, options }))).toMatchObject({ switch: true });
+    }
     expect(page({ type: 'filters', param: 'sort', switch: true, options: sort.slice(0, 1) })).toMatch(/2 to 4/);
     expect(page({ type: 'filters', param: 'sort', switch: true, options: [...sort, ...sort.map((o) => ({ ...o, value: `${o.value}x` }))] })).toMatch(/2 to 4/);
     expect(page({ type: 'filters', param: 'sort', switch: 'yes', options: sort })).toMatch(/switch must be true or false/);
@@ -62,9 +71,14 @@ describe('a filters block with a switch and chips', () => {
     expect(f([status, { ...status, param: 'b' }, { ...status, param: 'c' }, { ...status, param: 'd' }])).toMatch(/filters\.chips/);
   });
 
-  it('every chip of a full row, joined, still fits in one query value', () => {
+  it('a chip value is at most 15 characters, so a full row of them, all on, fits in one query value', () => {
+    const f = (value: string) => page({ type: 'filters', param: 'sort', options: sort, chips: [{ param: 'tag', label: 'Tag', options: [{ value, label: 'V' }] }] });
+    expect(f('x'.repeat(16))).toMatch(/1 to 15 characters/);
+    expect(blockOf(f('x'.repeat(15)))).toMatchObject({ chips: [{ options: [{ value: 'x'.repeat(15) }] }] });
+    // Twelve of the longest, joined as a click on every one would send them, against the query value limit.
     const options = Array.from({ length: 12 }, (_, i) => ({ value: `chip-value-${String(i).padStart(4, '0')}`, label: `C${i}` }));
     const b = blockOf(page({ type: 'filters', param: 'sort', options: sort, chips: [{ param: 'tag', label: 'Tag', options }] })) as { chips: Array<{ options: Array<{ value: string }> }> };
-    expect(b.chips[0].options.map((o) => o.value).join(',').length).toBeLessThanOrEqual(200);
+    expect(b.chips[0].options.map((o) => o.value).join(',').length).toBeLessThanOrEqual(LIMITS.queryValue);
+    expect(page({ type: 'filters', param: 'sort', options: sort, chips: [{ param: 'tag', label: 'Tag', options: [...options, { value: 'one-more', label: 'M' }] }] })).toMatch(/chips\.options/);
   });
 });

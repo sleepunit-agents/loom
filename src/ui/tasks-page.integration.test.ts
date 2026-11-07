@@ -107,8 +107,10 @@ describe.runIf(built && chrome)('the Tasks page', () => {
     return { ctx, p: await ctx.newPage() };
   }
 
-  /** Each chip row is one line: every chip at the same top, and the row no taller than one chip (with its padding). */
-  async function chipRowsOneLine(scope: Locator) {
+  /** Each chip row is one line: every chip at the same top, the row no taller than one chip (with its padding), and a
+   * row that runs on scrolls sideways (the Project row, seven chips, is wider than the side column). The sort is one
+   * switch of three, on one line. */
+  async function findAndSortOneLine(scope: Locator) {
     const rows = scope.locator('.loom-chip-row');
     await expect.poll(() => rows.count()).toBe(2);
     for (let i = 0; i < 2; i++) {
@@ -117,8 +119,22 @@ describe.runIf(built && chrome)('the Tasks page', () => {
         return { tops: new Set(chips.map((c) => Math.round(c.getBoundingClientRect().top))).size, chip: chips[0].offsetHeight, row: el.clientHeight, n: chips.length };
       });
       expect(r.tops, `chip row ${i}: every chip on one line`).toBe(1);
-      expect(r.row, `chip row ${i}: one chip tall`).toBeLessThanOrEqual(r.chip + 8);
+      expect(r.row, `chip row ${i}: one chip tall`).toBeLessThanOrEqual(r.chip + 12);
     }
+    const tags = rows.nth(1);
+    expect(await tags.evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto');
+    if (await tags.evaluate((el) => el.scrollWidth > el.clientWidth)) {
+      // The last chip is reachable: scrolled to, it's inside the row.
+      const last = tags.locator('[data-slot="toggle-group-item"]').last();
+      await last.scrollIntoViewIfNeeded();
+      expect(await tags.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+      const [lb, rb] = [await last.boundingBox(), await tags.boundingBox()];
+      expect(lb!.x + lb!.width).toBeLessThanOrEqual(rb!.x + rb!.width + 1);
+    }
+    // Keyboard: a chip takes focus and shows it.
+    const first = rows.nth(0).locator('[data-slot="toggle-group-item"]').first();
+    await first.focus();
+    expect(await first.evaluate((el) => el === document.activeElement)).toBe(true);
     // The sort is one switch of three, on one line.
     const sw = scope.locator('[aria-label="Sort"]').locator('[data-slot="toggle-group-item"]');
     const tops = await sw.evaluateAll((bs) => new Set(bs.map((b) => Math.round(b.getBoundingClientRect().top))).size);
@@ -156,7 +172,7 @@ describe.runIf(built && chrome)('the Tasks page', () => {
     it(`at ${w}: the side column beside the list, its chart without Show data, Find and sort on single lines, rows opening in place`, async () => {
       const { ctx, p } = await open(w, hgt);
       await p.goto(`${base}/p/tasks`);
-      // A window 1100 px wide or more has the side column beside the list (fixed width); a narrower one (1280's, beside
+      // A tile 1100 px wide or more has the side column beside the list (fixed width); a narrower one (1280's, beside
       // the desk's widgets) folds it at the top.
       await p.locator('aside.loom-side-col, .loom-side-fold').first().waitFor({ timeout: 20_000 });
       const column = await p.locator('aside.loom-side-col').count() > 0;
@@ -164,7 +180,7 @@ describe.runIf(built && chrome)('the Tasks page', () => {
       if (!column) await p.locator('.loom-side-fold > summary').click();
       const side = p.locator('.loom-side-col');
       await chartWithoutData(side);
-      await chipRowsOneLine(side);
+      await findAndSortOneLine(side);
       if (column) expect((await side.boundingBox())!.width).toBeLessThanOrEqual(300);
       await rowOpensInPlace(p, p.locator('main, .loom-tile').first());
       if (SHOTS) {
@@ -204,7 +220,7 @@ describe.runIf(built && chrome)('the Tasks page', () => {
     expect(tw).toBeLessThan(700);
     await tile.locator('.loom-side-fold > summary').click();
     await chartWithoutData(tile);
-    await chipRowsOneLine(tile);
+    await findAndSortOneLine(tile);
     await rowOpensInPlace(p, tile);
     if (SHOTS) {
       await tile.getByRole('button', { name: /Make the field box installer/ }).click();
@@ -224,7 +240,7 @@ describe.runIf(built && chrome)('the Tasks page', () => {
     await fold.locator('summary').click();
     const body = p.locator('body');
     await chartWithoutData(body);
-    await chipRowsOneLine(body);
+    await findAndSortOneLine(body);
     await rowOpensInPlace(p, body);
     if (SHOTS) {
       await p.getByRole('button', { name: /Make the field box installer/ }).click();

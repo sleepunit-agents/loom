@@ -36,7 +36,7 @@ const RowMore = lazy(() => import('./row-more'));
 
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { createContext, useContext, useState, type ReactNode, lazy, Suspense } from 'react';
-import { AnimatedIcon } from '@/components/ui/animated-icon';
+import { AnimatedIcon, StateChevron } from '@/components/ui/animated-icon';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DOT } from './tones';
@@ -105,12 +105,12 @@ function Row({ i, wrap, marked }: { i: ListItem; wrap?: boolean; marked?: boolea
     </ItemContent>
   );
   return (
-    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0" data-open={i.more && open ? '' : undefined}>
+    <Arrive as="li" k={`li:${i.text}\0${i.badge ?? ''}\0${i.tone ?? ''}`} className="min-w-0">
       <Item as="div" className="flex min-h-11 w-full min-w-0 items-center gap-3 py-2.5">
         {linked ? <Link page={i.page} href={i.href} className="flex min-w-0 flex-1 items-center gap-2 no-underline">{body}{i.act ? null : <AnimatedIcon name="chevron-right" size="sm" />}</Link>
           : wrap && !i.more ? body
             : <button type="button" className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-              {body}{i.more && !i.act && <AnimatedIcon name="chevron-down" size="sm" className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />}</button>}
+              {body}{i.more && !i.act && <StateChevron open={open} className="shrink-0" />}</button>}
         {i.act && <ItemTrailing><ActButton b={i.act} /></ItemTrailing>}
       </Item>
       {i.more && open && <Suspense fallback={<div className="min-h-16" />}><RowMore more={i.more} page={i.page} href={i.href} indent={marked || !!i.tone} /></Suspense>}

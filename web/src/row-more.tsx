@@ -12,8 +12,8 @@ export default function RowMore({ more, page, href, indent }: { more: NonNullabl
   const to = href ?? (page !== undefined ? pageHref(page, ctx.source) : undefined);
   return (
     <div className="loom-row-more" data-indent={indent ? '' : undefined}>
-      <dl>{more.items.map((m) => (
-        <div key={m.label}><dt>{m.label}</dt><dd>{tidy(m.value)}</dd></div>))}</dl>
+      <dl>{more.items.map((m, n) => (
+        <div key={n}><dt>{m.label}</dt><dd>{tidy(m.value)}</dd></div>))}</dl>
       {to && (
         <Button asChild size="sm" variant="outline">
           <a href={to} {...(href ? { target: '_blank', rel: 'noopener noreferrer' } : {
