@@ -388,7 +388,7 @@ export default function App() {
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
   const title = error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
-    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
@@ -421,7 +421,7 @@ export default function App() {
   const place = placeAt(path);
   const shownTitle = title || ((error || waiting) && place ? place.label : '');
   // A sheet (Accessibility) can carry an intro too, as a page does.
-  const intro = error ? undefined : data?.view === 'page' ? (data.page as Page).intro : data?.view === 'sheet' ? (data.intro as string | undefined) : undefined;
+  const intro = error ? undefined : data?.view === 'page' ? (data.page as Page).intro : data?.view === 'sheet' || data?.view === 'knowledge' ? (data.intro as string | undefined) : undefined;
   const context = error || waiting ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
     ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
   const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'

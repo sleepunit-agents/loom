@@ -168,7 +168,9 @@ const CHECK_DAYS = 30;
 /** How fresh a page is: checked lately (fresh), getting on (aging, two thirds of the way to a check), or due a check
  * (unchecked for CHECK_DAYS, or its last check found it stale: Check again asks for one). */
 export type Freshness = 'fresh' | 'aging' | 'due';
-export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; fresh: Freshness; by?: string }
+export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; fresh: Freshness; by?: string;
+  /** Confirmed in the last RECENT_DAYS: Knowledge's Recently verified. */
+  recent?: true }
 export interface KnowledgeOpen extends KnowledgeRow {
   body: string; sourcing?: string;
   sources: Array<{ claim: string; kind: string; locator?: string; href?: string }>;
@@ -207,9 +209,10 @@ export function knowledgeView(h: Household, open?: string, opts: CoreOptions = {
       if (last.get(r.id)?.outcome === 'stale' || !(age < CHECK_DAYS)) return 'due';
       return age >= (CHECK_DAYS * 2) / 3 ? 'aging' : 'fresh';
     };
+    const recent = (r: { verified_at?: string | null }) => !!r.verified_at && nowMs - Date.parse(r.verified_at) < RECENT_DAYS * day;
     const line = (r: PageRow & { id: number }): KnowledgeRow => ({ slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
-      ...(r.verified_at ? { verified_at: r.verified_at } : {}), fresh: fresh(r), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
-    const out: KnowledgeView = { total: rows.length, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
+      ...(r.verified_at ? { verified_at: r.verified_at } : {}), fresh: fresh(r), ...(recent(r) ? { recent: true as const } : {}), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
+    const out: KnowledgeView = { total: count(path, "SELECT COUNT(*) AS n FROM pages WHERE status = 'active'"), checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
     if (open) {
       const r = db.prepare("SELECT id, slug, title, domain, body, updated, sourcing, created_by, author, verified_at FROM pages WHERE slug = ? AND status = 'active'").get(open) as (PageRow & { id: number }) | undefined;
       if (r) {
@@ -589,7 +592,6 @@ const VOICES: Record<string, string> = {
 // ─── The boards' "+": a person, a fact ───────────────────────────────────────
 
 const NEW_PERSON = { page: 'loom:new-person', label: 'Add a person' };
-const NEW_FACT = { page: 'loom:new-fact', label: 'Add a fact' };
 const CHANNELS = ['slack', 'discord', 'email', 'phone', 'github'];
 
 export function newPersonPage(): Page {
@@ -708,7 +710,7 @@ export async function householdAct(h: Household, action: string, fields: Record<
       const slug = fields.slug ?? '';
       if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
       const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'confirmed', note: 'confirmed from loom\'s page' }, h.owner ?? 'owner');
-      return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge/${slug}` } : { ok: false, message: out };
+      return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge?p=${slug}` } : { ok: false, message: out };
     }
     // Check again (t-1925): a check that found it stale, so the page is due one (Knowledge's "Due a check"), and the
     // nightly freshness pass and any agent reading it see it needs one. Its verified date doesn't move.

@@ -218,10 +218,10 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     expect(r!.x).toBeGreaterThanOrEqual(l!.x + l!.width - 1);
     await p.locator('[data-split-row]').first().focus();
     await p.keyboard.press('ArrowDown');
-    const second = await p.locator('[data-split-row]').nth(1).locator('.loom-inbox__title').textContent();
+    const second = await p.locator('[data-split-row]').nth(1).locator('.loom-split__title').textContent();
     await expect.poll(() => p.locator(`${reader} h2`).textContent()).toBe(second);
     await p.keyboard.press('ArrowUp');
-    const first = await p.locator('[data-split-row]').first().locator('.loom-inbox__title').textContent();
+    const first = await p.locator('[data-split-row]').first().locator('.loom-split__title').textContent();
     await expect.poll(() => p.locator(`${reader} h2`).textContent()).toBe(first);
     expect(await kept(p)).toBe(1);
     await p.context().close();

@@ -113,6 +113,8 @@ describe.runIf(built && chrome)('Knowledge, a reader', () => {
       // Still true puts it back.
       await p.locator(`${reader} button:text-is("Still true")`).click();
       await expect.poll(() => p.locator(`${reader} .loom-kn__pill`).textContent()).toMatch(/Fresh/);
+      // The folder it was read in is where it was left.
+      expect(await p.locator('.loom-split__folder[aria-current="true"]').textContent()).toMatch(/^norns/);
       expect(await kept(p)).toBe(1);
       expect(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
       await p.context().close();
@@ -145,6 +147,30 @@ describe.runIf(built && chrome)('Knowledge, a reader', () => {
     await p.keyboard.press('ArrowDown');
     await expect.poll(() => p.locator(`${reader} h2`).textContent()).not.toBe(first);
     await p.context().close();
+  });
+
+  it('a copied desk address on a phone keeps its list (the tiles\' t is not a topic), and Add a fact is there', async () => {
+    const p = await screen(390, 844, '/knowledge?t=*knowledge,comms', true);
+    await expect.poll(() => p.locator('[data-split-row]').count()).toBe(4);
+    expect(await p.locator('.loom-split__list-head h2').textContent()).toBe('All pages');
+    expect(await p.locator('.loom-kn__add').textContent()).toBe('Add a fact');
+    await p.context().close();
+  });
+
+  it('every look draws it from its tokens: no row, dot or pill colour is the same in all three', async () => {
+    const seen: string[] = [];
+    for (const look of ['neon', 'lowlight', 'daylight']) {
+      const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      await ctx.addInitScript(`localStorage.setItem('loom-look', '${look}'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const p = await ctx.newPage();
+      await p.goto(`${base}/knowledge?t=*knowledge`);
+      await p.locator('[data-split-row]').first().click();
+      await p.locator(`${reader} .loom-kn__pill`).waitFor();
+      seen.push(await p.locator(`${reader}`).evaluate((r) => [getComputedStyle(r.querySelector('.loom-split__head')!).color, getComputedStyle(r.querySelector('.loom-kn__pill')!).color].join(' ')));
+      await ctx.close();
+    }
+    expect(new Set(seen).size).toBe(3);
   });
 
   it('a phone (390): one pane, the page with Back', async () => {

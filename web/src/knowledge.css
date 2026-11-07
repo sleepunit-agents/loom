@@ -1,7 +1,7 @@
 /* Knowledge (knowledge.tsx; t-1925): freshness dots, the reader's crumb, pill and sources. Its tint is the tile's (cyan).
    Fresh green, getting old amber, due a check red: each also said in words (the dot's label, the pill). */
 .loom-kn__row { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px 14px; }
-.loom-kn__dot { display: inline-block; width: 8px; height: 8px; margin-top: 6px; border-radius: 99px; background: var(--loom-ok, #3ddc84); flex: none; }
+.loom-kn__dot { display: inline-block; width: 8px; height: 8px; margin-top: 6px; border-radius: 99px; background: var(--loom-ok); flex: none; }
 .loom-kn__dot[data-fresh="aging"] { background: var(--v-yellow); }
 .loom-kn__dot[data-fresh="due"] { background: var(--v-danger); }
 .loom-kn__meta { font-size: 11.5px; color: var(--v-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -10,7 +10,7 @@
 .loom-kn__crumb span + span::before { content: "/"; margin-right: 6px; opacity: .6; }
 .loom-kn__fresh { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 12px; color: var(--v-text-2); }
 .loom-kn__pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; font-family: var(--loom-font-data); font-size: 11px; letter-spacing: .1em;
-  text-transform: uppercase; border: 1px solid currentColor; color: var(--loom-ok, #3ddc84); }
+  text-transform: uppercase; border: 1px solid currentColor; color: var(--loom-ok-ink, var(--loom-ok)); }
 .loom-kn__pill .loom-kn__dot { margin-top: 0; }
 .loom-kn__pill[data-fresh="aging"] { color: var(--v-yellow); }
 .loom-kn__pill[data-fresh="due"] { color: var(--v-danger-ink, var(--v-danger)); }
@@ -23,3 +23,4 @@
 .loom-kn__sources dt { color: var(--v-text-3); font-size: 12px; }
 .loom-kn__sources dd { overflow-wrap: anywhere; color: var(--v-text-2); }
 @media (prefers-contrast: more) { .loom-kn__meta, .loom-kn__quiet { color: var(--v-text-2); } }
+.loom-kn__add { color: var(--v-blue); text-decoration: underline; text-underline-offset: 3px; }

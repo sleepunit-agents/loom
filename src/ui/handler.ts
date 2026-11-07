@@ -76,6 +76,8 @@ import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Agent
 import { resolveFrom } from '../comms-work.js';
 
 const COOKIE = 'loom_ui';
+/** Knowledge's Add a fact (its reader draws it over the list). */
+const NEW_FACT_LINK = { page: 'loom:new-fact', label: 'Add a fact' };
 const LOGIN_MAX_BYTES = 4096;
 const PASSKEY_MAX_BYTES = 16 * 1024;
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
@@ -1761,7 +1763,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const k = knowledgeView(hh, slug);
       if (own !== undefined && !k.open) return send200(notFound, 'knowledge', ctxOf('knowledge'));
       const ch = chrome(req, opts, pieces, skippedNames, 'knowledge', csrf, flash);
-      return view('knowledge', { knowledge: k, topic: query.t ?? '', q: query.q ?? '', ctx: ctxOf('knowledge'), chrome: ch });
+      // `t` is the desktop's (its tiles, docs/specs/desk-tiling.md): a topic is `?topic=`.
+      const title = k.open?.title ?? 'Knowledge';
+      const intro = k.open ? (k.open.verified_at ? `Verified ${k.open.verified_at.slice(0, 10)}` : 'Not verified yet') + (k.open.by ? ` · written by ${k.open.by}` : '')
+        : 'Facts about the world, shared by every agent in the household.';
+      return view('knowledge', { knowledge: k, title, intro, add: NEW_FACT_LINK, topic: query.topic ?? '', q: query.q ?? '', ctx: ctxOf('knowledge'), chrome: ch });
     }
     if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
     // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the
