@@ -18,7 +18,10 @@ import { runtimePieces, parseLoomBlock } from './cli/pieces-managed.js';
 import {
   conversationId, createConversationTables, digestId, digestsOf, dueToProgressSeconds, foldConversations, getConversation, listConversations,
   parseDigest, parseTurn, recordTurn, turnsOf, turnWriter, daysOf, writeDigest, ConversationError, type TurnInput,
+  answerNeeds, NEEDS_VERDICTS, openNeeds,
 } from './backends/conversations.js';
+import { projectHubPage } from './ui/projects-pages.js';
+import { askKey } from './ui/push.js';
 import { conversationsSection, conversationView, genericRender, householdConversations, ScopeError, writeTurn } from './conversations.js';
 import { listVenues, syncVenues, venueOf } from './household-store.js';
 import { coreAsks, conversationAsks } from './ui/handler.js';
@@ -650,12 +653,47 @@ describe('criterion 12: the projects hub\'s conversations section', () => {
     expect(s.items.map((i) => i.label)).toEqual(Array.from({ length: 20 }, (_, k) => `Pond ${25 - k}`));
     expect(s.items[0]).toEqual({
       id: conversationId('art', 'slack', 'p25'), venue: 'slack', label: 'Pond 25', people: ['person-25'], last: at(25 * 60),
-      summary: 'pond 25', needs_owner: 'answer Loren', new: true,
+      summary: 'pond 25', needs_owner: 'answer Loren', needs_digest: digestId(conversationId('art', 'slack', 'p25'), 'new'), needs_legacy: true, new: true,
     });
     expect(s.items.filter((i) => i.new).map((i) => i.label)).toEqual(['Pond 25', 'Pond 24', 'Pond 23', 'Pond 22', 'Pond 21', 'Pond 20']);
     expect(s.items[1].needs_owner).toBeNull();
     expect(conversationsSection(dir, 'hockey', since).items).toHaveLength(3);
     expect(conversationsSection(dir, 'mud', since).items).toEqual([]);
+  });
+});
+
+describe('criterion 12: the hub shows needs_owner exactly when the Inbox does (2026-11-07)', () => {
+  let h: Household;
+  beforeEach(() => { h = household('loom-conv-hub-needs-'); process.env.LOOM_HOME = h.home; });
+  afterEach(() => { restoreEnv(); rmSync(h.home, { recursive: true, force: true }); });
+
+  // Jonathan marked "Review/merge art#68" done in his Inbox on 2026-11-03; the Projects page still had it waiting on him.
+  it.each(NEEDS_VERDICTS)('an ask answered %s is gone from the hub, the conversation list and the Inbox alike', (verdict) => {
+    const art = agentDir(h, 'art');
+    const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Merge art#68' }, 'runtime:shuttle').conversation;
+    const d = writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'PR up.', projects: ['loom'], needs_owner: 'Review/merge art#68' }, new Date(T0));
+    const hubNeeds = () => conversationsSection(art, 'loom', at(0))!.items.map((i) => i.needs_owner);
+    expect(hubNeeds()).toEqual(['Review/merge art#68']);
+    expect(openNeeds(art)).toHaveLength(1);
+
+    answerNeeds(art, { conversation: conv, digest: d.id, verdict, by: verdict === 'resolved' ? 'loom' : 'jonathan' }, new Date(T0 + 1000));
+    expect(openNeeds(art)).toEqual([]);
+    expect(conversationAsks(h)).toEqual([]);
+    expect(hubNeeds()).toEqual([null]);
+    expect(conversationsSection(art, 'loom', at(0))!.items[0]).toMatchObject({ needs_digest: null, summary: 'PR up.' });
+    expect(listConversations(art).map((c) => c.needs_owner)).toEqual([null]);
+  });
+
+  it('a still-open ask on the Projects page opens that ask in the Inbox, by the Inbox\'s own key', async () => {
+    const art = agentDir(h, 'art');
+    const conv = recordTurn(art, 'art', { ...msg('dm:U1', 0), label: 'Pond' }, 'runtime:shuttle').conversation;
+    writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Asked.', projects: ['loom'], needs_owner: { ask: 'OK to merge the fix for the hub?', why: 'It fixes the hub.', refs: ['sleepunit-agents/art#70'] } } as never, new Date(T0));
+    const [inboxAsk] = conversationAsks(h);
+    const hub = await projectHubPage({ agent: 'art', dir: art }, 'loom', {
+      hub: async () => ({ found: true, card: { slug: 'loom' }, sections: [conversationsSection(art, 'loom', at(0))!] }) as never,
+    });
+    const waiting = hub!.sections.find((x) => x.id === 'waiting')!.blocks[0] as { items: Array<{ text: string; page: string }> };
+    expect(waiting.items).toEqual([expect.objectContaining({ text: 'OK to merge the fix for the hub?', page: `loom:inbox?i=${askKey(inboxAsk)}` })]);
   });
 });
 

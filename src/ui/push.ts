@@ -34,6 +34,19 @@ export function askKey(a: { source: { id: string }; text: string; page?: string 
   return createHash('sha256').update(`${a.source.id}\0${a.text}\0${a.page ?? ''}`).digest('hex').slice(0, 16);
 }
 
+/**
+ * A conversation's open Needs you as the Inbox words it: its ask, or, written as a plain string, "<agent> needs you: …".
+ * With needsAskKey, how any page (the Projects page) links to that very ask in the Inbox (/inbox?i=<key>).
+ */
+export function needsAskText(agentName: string, ask: string, legacy: boolean): string {
+  return legacy ? `${agentName} needs you: ${ask}` : ask;
+}
+
+/** The Inbox key of a conversation's open Needs you: askKey of the Inbox's own item (its source is loom's). */
+export function needsAskKey(text: string, conversation: string): string {
+  return askKey({ source: { id: 'loom' }, text, page: `loom:conversation/${conversation}` });
+}
+
 const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/, /(^|\.)push\.apple\.com$/, /(^|\.)notify\.windows\.com$/];
 
 /** A subscription a browser hands over, if it's one loom will send to. */

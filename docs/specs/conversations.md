@@ -435,7 +435,9 @@ projects.md and follows projects.md's core-section rule: `since` marks `new`, it
 - **What's in it:** the 20 conversations with the newest `last` whose `projects` include the project, or whose Comms
   thread is filed under it ([comms.md](comms.md)), digest or not.
 - **Each item:** id, venue label, label, people, last, the newest digest's summary, any open `needs_owner`, and `new`
-  (`last` after `since`).
+  (`last` after `since`). Open is the Inbox's own test (`openNeeds`, one function): an ask answered (done, dismissed,
+  replied, yes, no) or resolved by what it waits on is `null` here, as it's gone from the Inbox. `needs_digest` names
+  the digest that asks it, while it's open, and `needs_legacy` says it was written as a plain string.
 
 ## Edits this forces elsewhere
 

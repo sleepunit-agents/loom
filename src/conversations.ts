@@ -6,7 +6,7 @@
 import { createHash } from 'node:crypto';
 import { agentDir, householdOf, roleString, type Household, type Member, type Role } from './household.js';
 import {
-  ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, parseTurn, recordTurn, turnStats,
+  ConversationError, conversationId, openConversationsReadonly, digestsOf, findingsOf, getConversation, hubConversations, isConversationId, listConversations, openNeedDigest, parseTurn, recordTurn, turnStats,
   type TurnInput, type Conversation, type ConversationListItem, type Digest, type HubConversation, type ListFilter,
 } from './backends/conversations.js';
 import { COMMS_VENUE, filedThreads, noteLoopPause } from './comms.js';
@@ -113,7 +113,7 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
  * the page draws both alike): the conversation, its digests newest first, and its turn counts
  * and outcomes. It needs nothing but core's records, so it works after the venue is gone.
  */
-export function genericRender(c: Conversation, digests: readonly Digest[], stats: { counts: Record<string, number>; outcomes: Record<string, number> }, label: string): Feed {
+export function genericRender(c: Conversation, digests: readonly Digest[], stats: { counts: Record<string, number>; outcomes: Record<string, number> }, label: string, openDigest?: string): Feed {
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const head: FeedItem = {
     title: (c.label ?? c.place).slice(0, 200),
@@ -130,7 +130,8 @@ export function genericRender(c: Conversation, digests: readonly Digest[], stats
       // At most 50 items in a feed: the head, then up to 40 digests and the counts.
       items: digests.slice(0, 40).map((d) => ({
         title: d.summary.replace(/\s+/g, ' ').slice(0, 200), when: d.at, ref: d.id, body: d.summary,
-        ...(d.needs_owner ? { status: 'needs you' } : {}),
+        // Only the ask the Inbox still shows needs you; one answered or cleared was asked, and is history.
+        ...(d.needs_owner ? { status: d.id === openDigest ? 'needs you' : 'asked' } : {}),
       })),
     });
   }
@@ -161,7 +162,7 @@ export async function conversationView(contextDir: string, agent: string, id: st
   const stats = turnStats(contextDir, id);
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
   const label = venueLabel(home, c.venue);
-  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label) };
+  let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label, openNeedDigest(contextDir, id)) };
   let v;
   try { v = coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
