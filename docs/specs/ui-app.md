@@ -167,6 +167,13 @@ information as it updates, limited page refresh based on what needs to change, a
   and carries a fingerprint (`ETag`): asked again with it, an unchanged page is a 304.
 - **Instant back and forth.** The app keeps the last copy of each page it showed and opens it at once on a tap,
   asking loom behind it.
+- **Only what changes is replaced** (t-1925 F; Jonathan, 2026-11-06: "if I'm on comms and I click a conversation
+  the whole app page reloads"). A page with no copy kept yet is asked for while the one shown stays, mounted: an
+  app's list, its scroll and a draft hold, and the new page's answer patches in what differs. After 150 ms a line
+  along the top says it's on its way. Only with nothing on screen (a first page, an error) is there a skeleton, and
+  that too waits 150 ms. Comms opens a pressed thread in its pane at once from what the list knows of it, the list
+  lit and kept beside it; a draft in a thread's composer is kept for the tab, by thread. `scripts/nav-bench.ts`
+  times the flows.
 - **Live.** One stream per open app (`GET /events`, server-sent events, `src/ui/live.ts`) says `change` when an
   agent's memory, knowledge or people, or the household file, is written; when a piece's manifest answers
   differently (asked every 15s while an app is open); and after any action. The app asks again for the page it

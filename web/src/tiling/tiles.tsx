@@ -875,7 +875,7 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
         </span>
       </div>
       <div className="loom-tile__body" ref={body} inert={blocked || undefined}>
-        <div className="loom-tile__page" aria-busy={p.waiting || undefined}><PortalContainer.Provider value={layer}>{render(p, go, wide)}</PortalContainer.Provider></div>
+        <div className="loom-tile__page" aria-busy={p.waiting || !!p.pending || undefined} data-pending={p.pending && !p.waiting ? '' : undefined}><PortalContainer.Provider value={layer}>{render(p, go, wide)}</PortalContainer.Provider></div>
         {recent.length > 0 && (
           <nav className="loom-tile__side" aria-label="Recent here">
             <div className="loom-side-col">

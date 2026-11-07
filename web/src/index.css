@@ -238,6 +238,11 @@ body { background: var(--v-canvas); }
 .loom-skel-line { background: color-mix(in oklab, var(--v-text) 9%, transparent); }
 @keyframes loom-skel { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .loom-skel { animation: none; } }
+/* Nothing at all for the first 150 ms, then the shape (t-1925 F): a page that lands quickly never flashes one. */
+.loom-skel-wait { animation: loom-skel-wait 0s 150ms both; }
+@keyframes loom-skel-wait { from { visibility: hidden; } to { visibility: visible; } }
+/* A page on its way while the one shown stays (page.ts pending): after 150 ms, a line along the top says so. */
+main[data-pending]::before { content: ''; position: fixed; inset: 0 0 auto; height: 2px; z-index: 60; background: var(--v-pink); animation: loom-skel-wait 0s 150ms both; }
 
 /* The arrival, once a session (arrive.tsx arriveOnce): the ground first, then the header and the cards in turn, the
    dock or the side last; under a second. arriveOnce never sets it under reduced motion. */

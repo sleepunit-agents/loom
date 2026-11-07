@@ -28,7 +28,7 @@ export function StateCard({ icon, tint, app, title, text, action, quiet }: {
 /** A page on its way: its shape, breathing, where the last page used to sit dimmed under a spinner. */
 export function Skeleton() {
   return (
-    <div aria-hidden className="grid gap-4">
+    <div aria-hidden className="loom-skel-wait grid gap-4">
       {[0, 1, 2].map((n) => (
         <div key={n} className="loom-skel grid gap-3 rounded-[var(--r-card,24px)] p-6" style={{ animationDelay: `${n * 120}ms` }}>
           <span className="loom-skel-line h-4 w-1/3 rounded-full" />
