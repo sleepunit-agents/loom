@@ -9,7 +9,7 @@ type ShellLike = { core: Place[]; pieces: Place[]; tab: string; admin?: boolean 
 
 /** The member's own: their account (who they are, their passkeys, signing out), not in Setup. The avatar on a phone's
  * dock and the side's account menu open it. */
-export const ACCOUNT = [{ label: 'Account', href: '/account' }] as const;
+export const ACCOUNT = [{ label: 'Profile', href: '/account' }] as const;
 
 /** Appearance (light or dark, the background): this device's own, an app in Setup's grid like the others, changed
  * seldom (Jonathan, 2026-11-03). */

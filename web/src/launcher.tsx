@@ -95,7 +95,7 @@ export default function Launcher({ open, onOpenChange, shell, icon, launch, look
             </label>
             <button type="button" className="loom-launcher__me" onClick={() => go('/account')}>
               <span className="loom-letter" aria-hidden>{(nameOf(shell.owner) || '?')[0]}</span>
-              <span className="grid text-left leading-tight"><span>{nameOf(shell.owner)}</span><span className="loom-data loom-launcher__me-sub">Account</span></span>
+              <span className="grid text-left leading-tight"><span>{nameOf(shell.owner)}</span><span className="loom-data loom-launcher__me-sub">Profile</span></span>
             </button>
           </div>
           <div ref={body} id="loom-launcher-apps" className="loom-launcher__body">

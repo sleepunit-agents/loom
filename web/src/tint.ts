@@ -23,7 +23,7 @@ export type Tint = typeof TINTS[number];
 export const APP_TINTS: Readonly<Record<string, Tint>> = {
   // The shell
   Home: 'pink', Today: 'pink', Inbox: 'blue', Places: 'yellow', Setup: 'olive', More: 'olive', Find: 'blue',
-  Account: 'pink', Passkeys: 'olive',
+  Account: 'pink', Profile: 'pink', Passkeys: 'olive',
   // loom's own places
   Activity: 'pink', Knowledge: 'blue', People: 'yellow', Mind: 'blue', Projects: 'olive',
   // Setup's own

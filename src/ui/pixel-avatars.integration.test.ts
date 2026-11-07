@@ -19,7 +19,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, manifestFromPixelLab, setSprite, type Household } from '../household.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
-import { AVATAR_SIDE, avatarCrop, avatarScale } from '../../web/src/pixel-face';
+import { AVATAR_SIDE, avatarCrop, avatarFit, avatarHalf } from '../../web/src/pixel-face';
 import { checkSpriteManifest, HouseholdError } from '../household.js';
 import { sheet } from './pixel-sheet.fixture.js';
 import { openThread } from '../comms.js';
@@ -31,11 +31,14 @@ const built = existsSync(`${root}dist/web/index.html`);
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
 
 describe('a small pixel avatar', () => {
-  it('is cut over the top of what\'s drawn in the rest frame, 24 pixels square, unless the manifest names its crop', () => {
+  it('is the head: 32 pixels square over the top of what\'s drawn, centred on its head, unless the manifest names its crop', () => {
     const m = { cell: [56, 84] as [number, number], states: { idle: { south: [{ row: 7, frames: 17, weight: 1 }] } } };
     // The fixture's figure: x 10 to 45, y 20 to 63.
-    expect(avatarCrop(m, (x, y) => x >= 10 && x < 46 && y >= 20 && y < 64)).toEqual({ x: 16, y: 20, w: 24, h: 24 });
-    expect(avatarCrop(m, () => false)).toEqual({ x: 16, y: 0, w: 24, h: 24 });
+    expect(avatarCrop(m, (x, y) => x >= 10 && x < 46 && y >= 20 && y < 64)).toEqual({ x: 12, y: 20, w: 32, h: 32 });
+    // A head narrower than the shoulders under it (x 20 to 35 for 16 rows, then x 4 to 51): centred on the head.
+    expect(avatarCrop(m, (x, y) => y >= 20 && y < 64 && (y < 36 ? x >= 20 && x < 36 : x >= 4 && x < 52))).toEqual({ x: 12, y: 20, w: 32, h: 32 });
+    expect(avatarCrop(m, (x, y) => y >= 20 && y < 64 && (y < 36 ? x >= 30 && x < 46 : x >= 4 && x < 52))).toEqual({ x: 22, y: 20, w: 32, h: 32 });
+    expect(avatarCrop(m, () => false)).toEqual({ x: 12, y: 0, w: 32, h: 32 });
     expect(avatarCrop({ ...m, avatar: { x: 4, y: 6, w: 32, h: 32 } }, () => true)).toEqual({ x: 4, y: 6, w: 32, h: 32 });
   });
   it('a manifest\'s crop is kept, checked: whole pixels inside the cell, 8 or more across', () => {
@@ -45,8 +48,17 @@ describe('a small pixel avatar', () => {
     for (const avatar of [{ x: 40, y: 0, w: 24, h: 24 }, { x: 0, y: 0, w: 4, h: 24 }, { x: 0.5, y: 0, w: 24, h: 24 }, { x: 0, y: 0, w: 24 }, 'top'])
       expect(() => checkSpriteManifest({ ...m, avatar }), JSON.stringify(avatar)).toThrow(HouseholdError);
   });
-  it('is drawn at a whole-pixel scale: the nearest whole number, never under 1', () => {
-    expect([22, 24, 28, 32, 35, 48].map((s) => avatarScale(s, 24))).toEqual([1, 1, 1, 1, 1, 2]);
+  it('is drawn at a whole-pixel scale: the head itself from 28 px, at half its resolution below (t-1925: never its middle)', () => {
+    expect([20, 24, 27, 28, 32, 35, 48, 64].map((s) => avatarFit(s, 32))).toEqual([
+      { half: true, k: 1 }, { half: true, k: 1 }, { half: true, k: 1 }, { half: false, k: 1 }, { half: false, k: 1 }, { half: false, k: 1 },
+      { half: false, k: 1 }, { half: false, k: 2 }]);
+  });
+  it('at half resolution, each 2x2 is one pixel: its drawn pixels\' average when two or more are drawn, else nothing', () => {
+    const px = (...c: number[][]) => new Uint8ClampedArray(c.flat());
+    const A = [200, 0, 0, 255], B = [0, 100, 0, 255], _ = [0, 0, 0, 0];
+    // 4x2: a block of two drawn (A, B) and two empty, then a block of one drawn.
+    const h = avatarHalf(px(A, _, A, _, B, _, _, _), 4, 2);
+    expect([h.w, h.h, [...h.data]]).toEqual([2, 1, [100, 50, 0, 255, 0, 0, 0, 0]]);
   });
 });
 
@@ -143,7 +155,8 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     if (o.drawnArt && !art('[data-slot="agent-face"]').length) return false;
     return small.every((c) => c.dataset.scale) && ![...small, ...faces].some(moving);
   }, o, { timeout: 15_000 });
-  /** Art in pixels, never drawn; Mark drawn, never in pixels; each small one a 24-pixel crop at a whole-pixel scale. */
+  /** Art in pixels, never drawn; Mark drawn, never in pixels; each small one his whole head (32 pixels, or 16 at half
+   * resolution in a box under 28) at a whole-pixel scale. */
   function check(at: string, f: Awaited<ReturnType<typeof faces>>, o: { art?: boolean; small?: boolean } = {}) {
     if (f.wide !== undefined && at !== 'the desktop' && at !== 'a tile') expect(f.wide, `${at}: wider than 390`).toBeLessThanOrEqual(390);
     expect(f.drawn.filter((w) => w === 'Art E Fish'), `${at}: Art drawn`).toEqual([]);
@@ -151,10 +164,10 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     if (o.art !== false) expect(f.pixels.filter((w) => w === 'Art E Fish').length, `${at}: Art in pixels`).toBeGreaterThan(0);
     if (o.small) expect(f.small.length, `${at}: a small one`).toBeGreaterThan(0);
     for (const s of f.small) {
-      expect([s.w, s.h, s.render], at).toEqual([AVATAR_SIDE, AVATAR_SIDE, 'pixelated']);
-      expect(Number.isInteger(s.scale) && s.scale >= 1, at).toBe(true);
-      expect(s.shown, at).toBeCloseTo(AVATAR_SIDE * s.scale, 0);
-      expect(s.scale, at).toBe(Math.max(1, Math.round(s.box / 24)));
+      const fit = avatarFit(s.box, AVATAR_SIDE), side = fit.half ? AVATAR_SIDE / 2 : AVATAR_SIDE;
+      expect([s.w, s.h, s.render], at).toEqual([side, side, 'pixelated']);
+      expect(s.scale, at).toBe(fit.k);
+      expect(s.shown, at).toBeCloseTo(side * s.scale, 0);
     }
   }
 
@@ -194,10 +207,10 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     const p = await device(390);
     await p.goto(`${base}/inbox`);
     await settle(p, { small: true });
-    // The crop (x 16, y 20, 24 square) of the rest frame: cyan, with the rest frame's own magenta mark at (4, 1); a
-    // squashed whole cell would have the cell's empty margin at its corners, another frame no mark.
-    const px = await p.evaluate(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-pixel-avatar canvas')!; const g = c.getContext('2d')!;
-      const at = (x: number, y: number) => [...g.getImageData(x, y, 1, 1).data].join(','); return { tl: at(0, 0), mark: at(4, 1), off: at(6, 1), br: at(23, 23), draws: c.dataset.draws }; });
+    // The crop (x 12, y 20, 32 square) of the rest frame, whole (a 28 px row): cyan, with the rest frame's own magenta
+    // mark at (8, 1); a squashed whole cell would have the cell's empty margin at its corners, another frame no mark.
+    const px = await p.evaluate(() => { const c = [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].find((x) => x.width === 32)!; const g = c.getContext('2d')!;
+      const at = (x: number, y: number) => [...g.getImageData(x, y, 1, 1).data].join(','); return { tl: at(0, 0), mark: at(8, 1), off: at(10, 1), br: at(31, 31), draws: c.dataset.draws }; });
     expect(px).toEqual({ tl: '46,230,240,255', mark: '255,61,168,255', off: '46,230,240,255', br: '46,230,240,255', draws: '1' });
     await p.waitForTimeout(3000);
     expect(await p.evaluate(() => [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].map((c) => c.dataset.draws))).toEqual(expect.arrayContaining(['1']));

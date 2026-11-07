@@ -191,7 +191,7 @@ drop the detail pane, and under 600 px drop their extra columns.
 | an agent's pages | 420×360 | 760 | 1000 | no | a page about one agent |
 | Boxes | 420×300 | 820 | 1200 | no | cards with meters |
 | Knowledge, People, Activity | 420×300 | 760 | 1100 | no | reading |
-| Setup, Appearance, Accessibility, Account, Passkeys, Secrets | 360×280 | 560 | 680 | no | settings |
+| Setup, Appearance, Accessibility, Profile, Passkeys, Secrets | 360×280 | 560 | 680 | no | settings |
 | **no fit (the default)** | 420×300 | 720 | none | no | |
 
 | widget | min (w×h) | default height, until measured | compact height |

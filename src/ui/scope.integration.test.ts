@@ -203,7 +203,7 @@ describe('scope', () => {
     expect(((await (await fetch(`${base}/passkeys`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { view: string }).view).toBe('passkeys');
     // The account (the avatar on a phone's dock opens it): the same page, with who's signed in and what they are.
     const account = (await (await fetch(`${base}/account`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { view: string; me: { name: string; role: string }; page: { title: string } };
-    expect([account.view, account.page.title, account.me.role]).toEqual(['passkeys', 'Account', 'Owner of the household']);
+    expect([account.view, account.page.title, account.me.role]).toEqual(['passkeys', 'Profile', 'Owner of the household']);
     expect(account.me.name).toBeTruthy();
     // Find with nothing typed answers its suggestions (the household's people), and nothing found.
     const find = (await (await fetch(`${base}/find`, { headers: { cookie: owner, accept: 'application/json' } })).json()) as { suggest?: { people: unknown[] }; found?: unknown };

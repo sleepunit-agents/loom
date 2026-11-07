@@ -73,7 +73,7 @@ const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
   Knowledge: 'book-open', Bridges: 'messages-square', Clock: 'alarm-clock', Fuel: 'fuel', Houses: 'container', Secrets: 'key-round',
   Boxes: 'server', Subscriptions: 'credit-card', Tasks: 'list-checks', More: 'ellipsis', Activity: 'activity', Machine: 'cpu', Approvals: 'shield-check',
-  Appearance: 'palette', Accessibility: 'accessibility', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round', Projects: 'folder-kanban', Comms: 'radio-tower',
+  Appearance: 'palette', Accessibility: 'accessibility', Passkeys: 'fingerprint-pattern', Members: 'users-round', Pieces: 'puzzle', Account: 'circle-user-round', Profile: 'circle-user-round', Projects: 'folder-kanban', Comms: 'radio-tower',
 };
 // A piece's own icon (its manifest's tab.icon) first, then loom's for that name.
 const iconsOf = (chrome?: Chrome) => {
@@ -429,7 +429,7 @@ export default function App() {
     if (agent) { const a = chrome.shell.agents.find((x) => x.id === agent); return a ? { key: `/a/${a.id}`, label: a.label } : null; }
     const tab = [...nav.tabs, ...nav.more].find((t) => !t.href.startsWith('#') && t.href !== '/' && (at === t.href || at.startsWith(`${t.href}/`)));
     if (tab) return { key: tab.href, label: tab.label };
-    if (at === '/account' || at === '/passkeys') return { key: '/account', label: 'Account' };
+    if (at === '/account' || at === '/passkeys') return { key: '/account', label: 'Profile' };
     // Setup and Places (More) are the launcher's on a desktop (t-1925 G), not tiles: each of their apps is its own.
     if (at === '/setup' || at === '/places') return null;
     const set = settingsOf(chrome.shell).find((p) => at === p.href || at.startsWith(`${p.href}/`));
@@ -454,7 +454,7 @@ export default function App() {
   const intro = error ? undefined : data?.view === 'page' ? (data.page as Page).intro : data?.view === 'sheet' || data?.view === 'knowledge' ? (data.intro as string | undefined) : undefined;
   const context = error || waiting ? undefined : head?.sub ?? (place && path === place.href ? (place as { stat?: string }).stat : undefined) ?? oneLine(intro)
     ?? (data?.view === 'inbox' && chrome?.shell?.asks ? `${chrome.shell.asks} need${chrome.shell.asks === 1 ? 's' : ''} you` : undefined);
-  const tileLabel = data?.view === 'passkeys' ? 'Account' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
+  const tileLabel = data?.view === 'passkeys' ? 'Profile' : data?.view === 'sheet' && data.which === 'setup' ? 'Setup' : data?.view === 'inbox' ? 'Inbox'
     : path === '/' ? 'Home' : place?.label ?? chrome?.shell?.back?.label ?? title;
   // An app's page wears its colour (tint.ts) past its tile: the header's and the page's accents (buttons, switches,
   // selection: 000h's --v-pink) take it, as an agent's pages take the agent's. Not the dock or the side: they're the shell's.
@@ -716,6 +716,7 @@ const accentOf = (bg: string) => ACCENT[bg.toLowerCase()] ?? 'pink';
 
 
 const FoldCard = lazy(() => import('./fold'));
+const ChartLine = lazy(() => import('./chart-line'));
 
 /** Where a page's side sections go (App's sideAt): folded at its top, or a column beside it. */
 type SideAt = 'fold' | 'column';
@@ -756,6 +757,9 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
     // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
     <div className={`grid gap-4 ${column ? 'grid-cols-[minmax(0,1fr)_17.5rem]' : 'grid-cols-[minmax(0,1fr)]'}`}>
       <div className="grid min-w-0 content-start gap-4">
+        {/* Folded, a side chart is a line over the fold (t-1925: Tasks in a narrow window), the whole chart in it. */}
+        {at === 'fold' && side.flatMap((s) => s.blocks.filter((b) => b.type === 'chart').map((b, n) => (
+          <Suspense key={`${s.id}:${n}`} fallback={<div className="min-h-10" />}><ChartLine b={b as never} title={s.title} /></Suspense>)))}
         {side.length > 0 && at === 'fold' && <SideFold side={side}>{sideCards}</SideFold>}
         {unscoped && <p className="text-sm opacity-70">This piece shows the whole household, not only {unscoped}.</p>}
         {page.sections.length === 0 && (page.title === 'Not found'

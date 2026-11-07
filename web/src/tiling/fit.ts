@@ -20,7 +20,7 @@ export const FIT: Readonly<Record<string, Fit>> = {
   Inbox: { min: [420, 320], ideal: 760, max: 980, big: false, why: 'one column of asks' },
   Boxes: { min: [420, 300], ideal: 820, max: 1200, big: false, why: 'cards with meters' },
   Knowledge: reading, People: reading, Activity: reading,
-  Setup: settings, Appearance: settings, Accessibility: settings, Account: settings, Passkeys: settings, Secrets: settings,
+  Setup: settings, Appearance: settings, Accessibility: settings, Account: settings, Profile: settings, Passkeys: settings, Secrets: settings,
 };
 /** An agent's pages (/a/<agent>/…). */
 export const AGENT_FIT: Fit = { min: [420, 360], ideal: 760, max: 1000, big: false, why: 'a page about one agent' };

@@ -326,7 +326,8 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
         <Arrive k={`tile:${t.source.id}\0${t.label}\0${t.value}`} className="rounded-[var(--r-card)]"><Card lift className="gap-0 p-0"><Link page={t.page} className="grid gap-0.5 p-4 no-underline">
           <span className="flex items-center gap-2 text-xs opacity-60">{t.tone && <span className={`size-2 rounded-full ${DOT[t.tone]}`} />}{t.label}</span>
           <span className="loom-data text-xl font-semibold">{t.value}</span>
-          {t.detail && <span className="line-clamp-3 break-words text-xs opacity-60">{t.detail}</span>}
+          {/* A tile's lines (an agent's Clock: its next wake, then its last) each start their own; four at most. */}
+          {t.detail && <span className="line-clamp-4 whitespace-pre-line break-words text-xs opacity-60">{t.detail}</span>}
         </Link></Card></Arrive>
       </As>))}
     </div>

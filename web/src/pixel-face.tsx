@@ -308,38 +308,74 @@ const STATE_WORDS: Record<FaceState, string> = { idle: 'quiet', thinking: 'think
 
 /** The rest frame a face shows at idle, facing south: its usual animation, on its rest frame (the manifest's, else 0). */
 const restOf = (m: Manifest): { v: Variant; frame: number } | undefined => { const v = usualOf(m.states.idle?.south ?? []); return v && { v, frame: v.rest ?? 0 }; };
-/** The side of a small avatar's square when the manifest names no crop: 24 sheet pixels, 1x at 24 px, 2x at 48. */
-export const AVATAR_SIDE = 24;
+/** The side of a small avatar's square when the manifest names no crop: 32 sheet pixels, about a whole head (Art's is
+ * 30 across, Mark's 25), so a small avatar is the agent's head, not the top of it (t-1925: "crops of the big heads"). */
+export const AVATAR_SIDE = 32;
+/** How many rows under the top of what's drawn are its head, for centring the crop across (the shoulders are wider). */
+const HEAD_ROWS = 16;
 
 /**
  * Where a small avatar is cut from the rest frame: the manifest's crop, else a square of AVATAR_SIDE over the top of
- * what's drawn (centred on it across, from its top down: the head, and the shoulders where they fit). `opaque` says
- * whether a cell pixel has anything drawn.
+ * what's drawn, centred across on its head (the top HEAD_ROWS rows of it). `opaque` says whether a cell pixel has
+ * anything drawn.
  */
 export function avatarCrop(m: Manifest, opaque: (x: number, y: number) => boolean): Crop {
   if (m.avatar) return m.avatar;
   const [cw, ch] = m.cell;
-  let left = cw, right = -1, top = ch;
-  for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (opaque(x, y)) { left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); }
+  let top = ch;
+  for (let y = 0; y < ch && top === ch; y++) for (let x = 0; x < cw; x++) if (opaque(x, y)) { top = y; break; }
   const side = Math.min(AVATAR_SIDE, cw, ch);
-  if (right < 0) return { x: Math.round((cw - side) / 2), y: 0, w: side, h: side };
+  if (top === ch) return { x: Math.round((cw - side) / 2), y: 0, w: side, h: side };
+  let left = cw, right = -1;
+  for (let y = top; y < Math.min(ch, top + HEAD_ROWS); y++) for (let x = 0; x < cw; x++) if (opaque(x, y)) { left = Math.min(left, x); right = Math.max(right, x); }
   const x = Math.max(0, Math.min(cw - side, Math.round((left + right + 1) / 2 - side / 2)));
   return { x, y: Math.max(0, Math.min(ch - side, top)), w: side, h: side };
 }
-/** A whole-pixel scale for a crop in a box: the nearest whole number of screen pixels per sheet pixel, never under 1. */
-export const avatarScale = (size: number, side: number) => Math.max(1, Math.round(size / side));
+
+/**
+ * How a crop is drawn in a box of `size`: whole screen pixels per sheet pixel, never smoothed. A box about as big as
+ * the crop or bigger (28 px and up for a 32-pixel head: a pixel or two of its margin clipped at most): the crop itself,
+ * at the largest whole scale that fits (1x under 64). A smaller box (a list's 20 or 24): the crop at half its
+ * resolution (each 2x2 of it one pixel, avatarHalf), at a whole scale that fits, so the whole head shows, not its middle.
+ */
+export function avatarFit(size: number, side: number): { half: boolean; k: number } {
+  if (size >= side * 0.85) return { half: false, k: Math.max(1, Math.floor(size / side)) };
+  return { half: true, k: Math.max(1, Math.floor(size / Math.ceil(side / 2))) };
+}
+
+/**
+ * A crop at half its resolution: each 2x2 block one pixel, the average colour of its drawn pixels when at least two of
+ * the four are drawn (else nothing), fully opaque: a smaller head with crisp edges, never a blur.
+ */
+export function avatarHalf(src: Uint8ClampedArray, w: number, h: number): { data: Uint8ClampedArray<ArrayBuffer>; w: number; h: number } {
+  const hw = Math.ceil(w / 2), hh = Math.ceil(h / 2);
+  const out = new Uint8ClampedArray(hw * hh * 4);
+  for (let y = 0; y < hh; y++) for (let x = 0; x < hw; x++) {
+    let n = 0, r = 0, g = 0, b = 0;
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+      const sx = x * 2 + dx, sy = y * 2 + dy;
+      if (sx >= w || sy >= h) continue;
+      const i = (sy * w + sx) * 4;
+      if (src[i + 3] > 0) { n++; r += src[i]; g += src[i + 1]; b += src[i + 2]; }
+    }
+    if (n < 2) continue;
+    const o = (y * hw + x) * 4;
+    out[o] = Math.round(r / n); out[o + 1] = Math.round(g / n); out[o + 2] = Math.round(b / n); out[o + 3] = 255;
+  }
+  return { data: out, w: hw, h: hh };
+}
 
 /**
  * An agent's small pixel avatar (under 36 px, where a whole 48-pixel sprite would swamp the words beside it; Jonathan,
- * 2026-11-05: "anywhere we currently have the 0000h face should be the pixel art guy now"): a still crop of its rest
- * frame (avatarCrop), drawn at a whole-pixel scale (avatarScale: 24 at 1x, 48 at 2x), never smoothed, centred in its
- * box; a crop bigger than its box shows its middle. It's drawn once and doesn't move: quieter in a list, and cheaper.
- * A sheet that can't be had: its drawn face.
+ * 2026-11-05: "anywhere we currently have the 0000h face should be the pixel art guy now"): its head, from its rest
+ * frame (avatarCrop), drawn at a whole-pixel scale (avatarFit: the head itself from 32 px, at half resolution below),
+ * never smoothed, centred in its box. It's drawn once and doesn't move: quieter in a list, and cheaper. A sheet that
+ * can't be had: its drawn face.
  */
 export function PixelAvatar({ sprite, size, label, fallback }: { sprite: Sprite; size: number; label?: string; fallback: React.ReactNode }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const { sheet, failed } = useSheet(sprite);
-  const [crop, setCrop] = useState<Crop | null>(null);
+  const [drawn, setDrawn] = useState<{ w: number; h: number; k: number } | null>(null);
   const rest = sheet && restOf(sheet.m);
   useEffect(() => {
     const cv = canvas.current;
@@ -353,21 +389,28 @@ export function PixelAvatar({ sprite, size, label, fallback }: { sprite: Sprite;
     const cg = cell.getContext('2d', { willReadFrequently: true })!;
     cg.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
     let data: Uint8ClampedArray | null = null;
-    try { data = cg.getImageData(0, 0, cw, ch).data; } catch { /* a tainted sheet: the default square */ }
+    try { data = cg.getImageData(0, 0, cw, ch).data; } catch { /* a tainted sheet: the default square, never halved */ }
     const c = avatarCrop(sheet.m, (x, y) => !!data && data[(y * cw + x) * 4 + 3] > 0);
-    cv.width = c.w; cv.height = c.h;
+    const fit = avatarFit(size, Math.max(c.w, c.h));
     const g = cv.getContext('2d')!;
     g.imageSmoothingEnabled = false;
-    g.clearRect(0, 0, c.w, c.h);
-    g.drawImage(img, sx + c.x, sy + c.y, c.w, c.h, 0, 0, c.w, c.h);
-    setCrop(c);
-  }, [sheet]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (fit.half && data) {
+      const half = avatarHalf(cg.getImageData(c.x, c.y, c.w, c.h).data, c.w, c.h);
+      cv.width = half.w; cv.height = half.h;
+      g.putImageData(new ImageData(half.data, half.w, half.h), 0, 0);
+      setDrawn({ w: half.w, h: half.h, k: fit.k });
+    } else {
+      cv.width = c.w; cv.height = c.h;
+      g.clearRect(0, 0, c.w, c.h);
+      g.drawImage(img, sx + c.x, sy + c.y, c.w, c.h, 0, 0, c.w, c.h);
+      setDrawn({ w: c.w, h: c.h, k: fit.half ? 1 : fit.k });
+    }
+  }, [sheet, size]); // eslint-disable-line react-hooks/exhaustive-deps
   if (failed || (sheet && !rest)) return <>{fallback}</>;
-  const k = crop ? avatarScale(size, Math.max(crop.w, crop.h)) : 1;
   return (
     <span className="loom-pixel-face loom-pixel-avatar" style={{ width: size, height: size }}>
-      <canvas ref={canvas} role="img" aria-label={label} data-scale={crop ? k : undefined}
-        style={crop ? { width: crop.w * k, height: crop.h * k } : { width: 0, height: 0 }} />
+      <canvas ref={canvas} role="img" aria-label={label} data-scale={drawn ? drawn.k : undefined}
+        style={drawn ? { width: drawn.w * drawn.k, height: drawn.h * drawn.k } : { width: 0, height: 0 }} />
     </span>
   );
 }

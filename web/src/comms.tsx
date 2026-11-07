@@ -412,7 +412,7 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
   const mark = marks[m.from];
   const avatar = mine
     ? <Avatar variant="blue" className="v-agent-chat__avatar" aria-hidden="true"><AvatarFallback>{(you[0] ?? 'Y').toUpperCase()}</AvatarFallback></Avatar>
-    : mark ? <AgentAvatar a={mark} size={28} className="v-agent-chat__avatar comms-msg__face" /> : undefined;
+    : mark ? <AgentAvatar a={mark} size={32} className="v-agent-chat__avatar comms-msg__face" /> : undefined;
   return (
     <AgentChatMessage from={mine ? 'user' : 'agent'} author={mine ? 'You' : m.from === 'loom' ? 'loom' : agentName(m.from, marks)} avatar={avatar}
       className={mine ? 'comms-msg--mine' : 'comms-msg--agent'} data-delivery={delivery} data-undelivered={delivery === 'failed' ? '' : undefined}
