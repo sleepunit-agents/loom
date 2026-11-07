@@ -365,6 +365,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |
 | No `age` program (the send is refused with `503`, nothing delivered, nothing stored but the error) | "loom can't keep messages safely right now: the age program is missing." |
+| A read with no way to decrypt: `comms.key` missing or not a plain file, or neither the age library nor the program can take it (the read is refused with `503` and its reason, as before t-1926; nothing is shown as swept) | Not yet in words: the app keeps what it already shows, and the reason is in the answer and loom's log |
 | The stream dropped | "Reconnecting…" while it's down, then the missed messages, fetched by `seq` |
 
 A refused action that isn't a delivery (a `400` or `409` from a route: a ninth pin, a send to an archived thread)
@@ -530,7 +531,8 @@ reader is the member who said half of it.
   in loom's own process with the age library (`age-encryption`, t-1926; the owner's ruling of 2026-11-07), with the
   `age` program as the fallback for a message the library can't read (logged, without its words). The decrypted words
   live only for that request: no cache of them in memory. Writing stays with the `age` program (one process a send,
-  from the synchronous write path), and each reads the other's files (`src/comms-age.integration.test.ts`). The audit
+  from the synchronous write path), and each reads the other's files (`src/comms-age.integration.test.ts`). A `comms.key` the library can't take at all (not
+  an X25519 identity) still reads, one `age` process a message as before t-1926, after one log line. The audit
   log (`src/audit.ts`) and bundles (`src/bundle.ts`) keep the program too: the audit log's decrypt is pinned to one
   function by its own criterion, and a bundle is restored with the `age` CLI.
 - **The window** is household.json's `comms_days` (1–14, default 14), tied to the slot's window (section 1).

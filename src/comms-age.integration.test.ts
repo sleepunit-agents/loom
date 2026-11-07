@@ -116,11 +116,15 @@ describe.skipIf(!hasAge)('Comms decrypts a thread\'s words in-process (t-1926)',
     e.addRecipient(recipient);
     const armored = armor.encode(await e.encrypt('the secret words'));
     storeBlob(h.home, o.thread.id, 1, Buffer.from(armored, 'utf-8'));
+    // And two more like it: the log says it once a read, not once a message.
+    for (let i = 0; i < 2; i++) adapterCall(h, process.env, { op: 'post', place: o.thread.id, agent: 'art', text: 'x' });
+    storeBlob(h.home, o.thread.id, 2, Buffer.from(armored, 'utf-8'));
+    storeBlob(h.home, o.thread.id, 3, Buffer.from(armored, 'utf-8'));
     const lines: string[] = [];
     const said = vi.spyOn(process.stderr, 'write').mockImplementation((c: string | Uint8Array) => { lines.push(String(c)); return true; });
     try {
       const msgs = await messagesOf(h, process.env, o.thread);
-      expect(msgs[0].text).toBe('the secret words');
+      expect(msgs.map((m) => m.text)).toEqual(['the secret words', 'the secret words', 'the secret words']);
     } finally { said.mockRestore(); }
     expect(lines.join('')).toMatch(/age library couldn't read th:[a-z2-7]{10} #1 .*trying the age program/);
     expect(lines).toHaveLength(1);

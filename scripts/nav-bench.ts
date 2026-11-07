@@ -115,7 +115,9 @@ if (SERVER_ONLY) {
   await handle.close();
   await closeAllBackends();
   rmSync(home, { recursive: true, force: true });
-  // The target (t-1926): a 40-message thread answers in under 300 ms. Over it, the run fails.
+  // The target (t-1926): a 40-message thread answers in under 300 ms. The run fails on the median, not the max: the
+  // first thread read after the server starts carries its warm-up, and loom's machine is shared, so a single slow
+  // read is load; the printed p90, max and per-thread times are the rest of the picture.
   process.exit(median < 300 ? 0 : 1);
 }
 if (process.argv.includes('--serve')) {
