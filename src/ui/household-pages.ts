@@ -162,96 +162,70 @@ interface PageRow { slug: string; title: string; domain: string; updated: string
 
 /** A knowledge page not checked (or, never checked, not written) in this many days needs a check. */
 const CHECK_DAYS = 30;
-const CHECK = 'needs-check';
 
-export function knowledgePage(h: Household, query: Record<string, string>, opts: CoreOptions = {}): Page {
-  const tz = opts.timeZone ?? uiTimeZone();
+// ─── Knowledge as a reader (t-1925, Jonathan's approved mock 2026-11-06) ─────────────────────────────
+
+/** How fresh a page is: checked lately (fresh), getting on (aging, two thirds of the way to a check), or due a check
+ * (unchecked for CHECK_DAYS, or its last check found it stale: Check again asks for one). */
+export type Freshness = 'fresh' | 'aging' | 'due';
+export interface KnowledgeRow { slug: string; title: string; domain: string; updated: string; verified_at?: string; fresh: Freshness; by?: string }
+export interface KnowledgeOpen extends KnowledgeRow {
+  body: string; sourcing?: string;
+  sources: Array<{ claim: string; kind: string; locator?: string; href?: string }>;
+  /** Other pages that link to this one ([[slug]], knowledge:slug, /knowledge/slug). */
+  citedBy: Array<{ slug: string; title: string }>;
+  /** Its last check's outcome, when there was one. */
+  checked?: { at: string; outcome: string; by?: string };
+}
+export interface KnowledgeView { total: number; checkDays: number; recentDays: number; pages: KnowledgeRow[]; open?: KnowledgeOpen }
+
+/** How many days back "Recently verified" reaches. */
+const RECENT_DAYS = 7;
+/** The most pages the reader lists (the whole commons, today 188). */
+const READER_MAX = 2000;
+
+/** Every active page's line (title, domain, freshness), and the one asked for whole: Knowledge's own view. */
+export function knowledgeView(h: Household, open?: string, opts: CoreOptions = {}): KnowledgeView {
   const nowMs = opts.nowMs ?? Date.now();
   const path = commonsKnowledgePath(h);
-  if (!existsSync(path)) return { title: 'Knowledge', intro: 'The commons has no knowledge yet.', sections: [], add: NEW_FACT };
+  const empty: KnowledgeView = { total: 0, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: [] };
+  if (!existsSync(path)) return empty;
   const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
   try {
-    const domains = (db.prepare("SELECT substr(domain, 1, instr(domain || '/', '/') - 1) AS top, COUNT(*) AS n FROM pages WHERE status = 'active' GROUP BY top ORDER BY n DESC LIMIT 11").all() as Array<{ top: string; n: number }>);
-    // "Needs a check": last verified (or, never verified, last written) more than CHECK_DAYS ago.
-    const cutoff = new Date(nowMs - CHECK_DAYS * 86_400_000).toISOString();
-    const STALE = 'COALESCE(verified_at, updated) < ?';
-    const stale = (db.prepare(`SELECT COUNT(*) AS n FROM pages WHERE status = 'active' AND ${STALE}`).get(cutoff) as { n: number }).n;
-    const pick = query.domain === CHECK || domains.some((d) => d.top === query.domain) ? query.domain : '';
-    const q = (query.q ?? '').trim().toLowerCase().slice(0, 100);
-    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const where = ["status = 'active'"];
-    const args: unknown[] = [];
-    if (pick === CHECK) { where.push(STALE); args.push(cutoff); }
-    else if (pick) { where.push("(domain = ? OR domain LIKE ? || '/%')"); args.push(pick, pick); }
-    if (q) { where.push("(lower(title) LIKE ? ESCAPE '\\' OR lower(domain) LIKE ? ESCAPE '\\')"); args.push(like, like); }
-    const rows = db.prepare(
-      `SELECT slug, title, domain, updated, sourcing, verified_at FROM pages WHERE ${where.join(' AND ')} ORDER BY ${pick === CHECK ? 'COALESCE(verified_at, updated) ASC' : 'updated DESC'} LIMIT 60`,
-    ).all(...args) as PageRow[];
-    const total = count(path, "SELECT COUNT(*) AS n FROM pages WHERE status = 'active'");
-    const freshness = (r: PageRow): { meta: string; tone?: 'warn' } => {
-      const at = r.verified_at ?? r.updated;
-      const days = Math.floor((nowMs - Date.parse(at)) / 86_400_000);
-      if (at < cutoff) return { meta: `unchecked for ${days} days`, tone: 'warn' };
-      return { meta: r.verified_at ? `verified ${ago(r.verified_at, tz, nowMs)}` : `written ${ago(r.updated, tz, nowMs)}` };
+    // Each page's last check's outcome (a stale one means "check again").
+    let last = new Map<number, { at: string; outcome: string; by?: string }>();
+    try {
+      last = new Map((db.prepare('SELECT v.page_id AS id, v.verified_at AS at, v.outcome AS outcome, v.verifier AS by FROM verifications v JOIN (SELECT page_id, MAX(id) AS m FROM verifications GROUP BY page_id) x ON x.m = v.id').all() as Array<{ id: number; at: string; outcome: string; by: string | null }>)
+        .map((r) => [r.id, { at: r.at, outcome: r.outcome, ...(r.by ? { by: r.by } : {}) }]));
+    } catch { /* an older store: no verifications table */ }
+    const rows = db.prepare(`SELECT id, slug, title, domain, updated, verified_at, created_by, author FROM pages WHERE status = 'active' ORDER BY updated DESC LIMIT ${READER_MAX}`)
+      .all() as Array<PageRow & { id: number }>;
+    const day = 86_400_000;
+    const fresh = (r: { id: number; updated: string; verified_at?: string | null }): Freshness => {
+      const at = Date.parse(r.verified_at ?? r.updated);
+      const age = (nowMs - at) / day;
+      if (last.get(r.id)?.outcome === 'stale' || !(age < CHECK_DAYS)) return 'due';
+      return age >= (CHECK_DAYS * 2) / 3 ? 'aging' : 'fresh';
     };
-    return {
-      title: 'Knowledge',
-      add: NEW_FACT,
-      intro: 'Facts about the world, shared by every agent in the household. Newest first.',
-      sections: [
-        { id: 'filter', blocks: [
-          { type: 'filters', param: 'domain', search: `Search ${total.toLocaleString('en-US')} facts`, options: [{ value: '', label: 'All' },
-            ...(stale ? [{ value: CHECK, label: `Needs a check · ${stale}` }] : []), ...domains.map((d) => ({ value: d.top, label: `${d.top} · ${d.n}` }))] },
-          ...(q || pick ? [{ type: 'text' as const, text: `${rows.length}${rows.length === 60 ? '+' : ''} of ${total.toLocaleString('en-US')} pages${q ? ` matching “${query.q!.trim()}”` : ''}`, tone: 'muted' as const }] : []),
-        ] },
-        { id: 'pages', blocks: [{
-          type: 'list',
-          items: rows.map((r) => {
-            const f = freshness(r);
-            return { text: r.title, meta: `${f.meta} · ${r.domain}`, tone: f.tone, page: validPath(`knowledge/${r.slug}`) ? `loom:knowledge/${r.slug}` : undefined };
-          }),
-        }] },
-      ],
-    };
-  } finally {
-    db.close();
-  }
-}
-
-export function knowledgeEntry(h: Household, slug: string, opts: CoreOptions = {}): Page {
-  const tz = opts.timeZone ?? uiTimeZone();
-  const path = commonsKnowledgePath(h);
-  if (!existsSync(path)) return { title: 'Not found', sections: [] };
-  const db = new BetterSqlite3(path, { readonly: true, fileMustExist: true });
-  try {
-    const r = db.prepare("SELECT slug, title, domain, body, updated, sourcing, created_by, author, verified_at FROM pages WHERE slug = ? AND status = 'active'").get(slug) as PageRow | undefined;
-    if (!r) return { title: 'Not found', sections: [] };
-    const cites = (() => {
-      try {
-        return db.prepare('SELECT claim, source_kind, source_locator FROM citations c JOIN pages p ON p.id = c.page_id WHERE p.slug = ? LIMIT 40').all(slug) as Array<{ claim: string; source_kind: string; source_locator: string | null }>;
-      } catch { return []; }
-    })();
-    const body = r.body ?? '';
-    const by = r.created_by ?? r.author;
-    return {
-      title: r.title,
-      // The board's line under the title: when it was last confirmed, and by whom.
-      intro: r.verified_at ? `Verified ${ago(r.verified_at, tz, opts.nowMs ?? Date.now())}${by ? ` · written by ${by}` : ''}` : `Not verified yet${by ? ` · written by ${by}` : ''}`,
-      sections: [
-        { id: 'body', blocks: [{ type: 'prose' as const, text: body.slice(0, 20000) }] },
-        ...(cites.length ? [{ id: 'citations', title: 'Sources', blocks: [{ type: 'list' as const, items: cites.map((c) => ({ text: c.claim, meta: `${c.source_kind}${c.source_locator ? ` · ${c.source_locator}` : ''}`, ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) })) }] }] : []),
-        // The board's "Still true", after the sources: a verification (the clock the nightly freshness pass reads), as the owner.
-        { id: 'verify', blocks: [{ type: 'buttons' as const, items: [{ action: 'knowledge-verify', label: 'Still true', tone: 'primary' as const, fields: { slug: r.slug } }] }] },
-        { id: 'record', place: 'side' as const, blocks: [{ type: 'kv', items: [
-          { label: 'domain', value: r.domain },
-          { label: 'sourcing', value: r.sourcing ?? 'unknown' },
-          { label: 'updated', value: when(r.updated, tz) },
-          { label: 'verified', value: when(r.verified_at ?? null, tz) },
-          { label: 'written by', value: r.created_by ?? r.author ?? 'unknown' },
-          { label: 'slug', value: r.slug },
-        ] }] },
-      ],
-    };
+    const line = (r: PageRow & { id: number }): KnowledgeRow => ({ slug: r.slug, title: r.title, domain: r.domain, updated: r.updated,
+      ...(r.verified_at ? { verified_at: r.verified_at } : {}), fresh: fresh(r), ...((r.created_by ?? r.author) ? { by: (r.created_by ?? r.author)! } : {}) });
+    const out: KnowledgeView = { total: rows.length, checkDays: CHECK_DAYS, recentDays: RECENT_DAYS, pages: rows.map(line) };
+    if (open) {
+      const r = db.prepare("SELECT id, slug, title, domain, body, updated, sourcing, created_by, author, verified_at FROM pages WHERE slug = ? AND status = 'active'").get(open) as (PageRow & { id: number }) | undefined;
+      if (r) {
+        let sources: KnowledgeOpen['sources'] = [];
+        try {
+          sources = (db.prepare('SELECT claim, source_kind, source_locator FROM citations WHERE page_id = ? LIMIT 40').all(r.id) as Array<{ claim: string; source_kind: string; source_locator: string | null }>)
+            .map((c) => ({ claim: c.claim, kind: c.source_kind, ...(c.source_locator ? { locator: c.source_locator } : {}), ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) }));
+        } catch { /* no citations table */ }
+        const esc = (x: string) => x.replace(/[\\%_]/g, (c) => `\\${c}`);
+        const citedBy = db.prepare("SELECT slug, title FROM pages WHERE status = 'active' AND slug != ? AND (body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ORDER BY title LIMIT 20")
+          .all(r.slug, `%[[${esc(r.slug)}]]%`, `%knowledge:${esc(r.slug)}%`, `%/knowledge/${esc(r.slug)}%`) as Array<{ slug: string; title: string }>;
+        const checked = last.get(r.id);
+        out.open = { ...line(r), body: (r.body ?? '').slice(0, 20000), ...(r.sourcing ? { sourcing: r.sourcing } : {}), sources, citedBy, ...(checked ? { checked } : {}) };
+      }
+    }
+    return out;
   } finally {
     db.close();
   }
@@ -735,6 +709,14 @@ export async function householdAct(h: Household, action: string, fields: Record<
       if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
       const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'confirmed', note: 'confirmed from loom\'s page' }, h.owner ?? 'owner');
       return /verified_at stamped/.test(out) ? { ok: true, message: 'Marked as still true.', page: `loom:knowledge/${slug}` } : { ok: false, message: out };
+    }
+    // Check again (t-1925): a check that found it stale, so the page is due one (Knowledge's "Due a check"), and the
+    // nightly freshness pass and any agent reading it see it needs one. Its verified date doesn't move.
+    if (action === 'knowledge-recheck') {
+      const slug = fields.slug ?? '';
+      if (!validPath(`knowledge/${slug}`)) return { ok: false, message: 'No page named.' };
+      const out = await knowledgeVerify(agentDir(h, h.default), { slug, outcome: 'stale', note: 'asked to be checked again from loom\'s page' }, h.owner ?? 'owner');
+      return /outcome: stale/.test(out) ? { ok: true, message: 'Asked for a check: it’s in Due a check until an agent confirms it.', page: `loom:knowledge?p=${slug}` } : { ok: false, message: out };
     }
     if (action === 'backup-set') {
       const split = (v?: string) => (v ?? '').split(/[\s,]+/).filter(Boolean);

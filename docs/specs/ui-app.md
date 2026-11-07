@@ -107,7 +107,7 @@ dropped, so an old app and a new piece can't lose data between them.
 ### Master/detail (t-1925)
 
 An app whose page is "pick one of many, then read it" is drawn as a mail client (`web/src/split.tsx`, `Split`): folders,
-a list, and the open item beside it. The Inbox uses it (Jonathan's approved mock, 2026-11-06), and Knowledge next. It is
+a list, and the open item beside it. The Inbox and Knowledge use it (Jonathan's approved mocks, 2026-11-06). It is
 one generic piece of the app, not an app's own: other apps use it the same way.
 
 - **Its own width, not the screen's.** A `ResizeObserver` on its box picks the panes: **three** from 900 px (folders |
@@ -122,6 +122,14 @@ one generic piece of the app, not an app's own: other apps use it the same way.
   drops the slide; higher contrast (`data-contrast`) draws the lines and the open row's edge in the stronger edge colour.
 - **Folders** are `{id, label, count?, icon?, loud?}` or a `{heading}` between groups ("From", "Topics"); `loud` puts the
   count in a filled pill (Needs you).
+
+**Knowledge** (`view: 'knowledge'`, `/knowledge`, `/knowledge?p=<slug>`, `/knowledge/<slug>`): every active page's line
+(title, domain, freshness) comes in one answer and the app filters it (All pages, Recently verified: a check in the last
+7 days, Due a check, and the topic tree from the domains: each first part, then each whole domain under it); the page
+picked is fetched whole (body, sources, the pages that cite it, its last check). Freshness: **fresh**, **getting old**
+(two thirds of the 30 days), **due a check** (30 days unchecked, or its last check found it stale). **Still true** is a
+confirmed check (moves its verified date); **Check again** is a stale one (`knowledge-recheck`): the date stays and the
+page is due a check until someone confirms it.
 
 **The Inbox's asks are live only when loom says so.** The list may be a copy kept on the device (the last answer of the
 page, `page.ts`; the service worker's when offline). So the reader asks `GET /inbox/open?k=<key>` (`{open}`, `no-store`)
