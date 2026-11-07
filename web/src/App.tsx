@@ -653,7 +653,7 @@ export default function App() {
             </main>
           ) : (
           // A phone's page, or a desktop's for the moment before the desk's chunk is here.
-          <main aria-busy={waiting || undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
+          <main aria-busy={waiting || !!pending || undefined} data-pending={pending && !waiting && !tiled ? '' : undefined} className={desk ? 'loom-desk-main' : 'mx-auto max-w-5xl px-4 pb-44 pt-5 lg:pb-10'} data-accent={appAccent}>
             {pageBody(mainPage, env, sideAt, arrivals)}
           </main>
           )}

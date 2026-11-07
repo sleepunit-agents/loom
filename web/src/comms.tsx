@@ -312,9 +312,15 @@ const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: c
 /** What a message to Comms may carry: the server's MAX_TEXT (src/comms.ts). The composer's own default is 12,000. */
 const MAX_TEXT = 40_000;
 
+/** What's typed in each thread's composer and not sent, by thread, for this tab (t-1925 F): opening another thread and
+ * coming back finds it as it was. Memory only, never storage: it's gone with the tab, so nobody after you sees it. */
+const drafts = new Map<string, string>();
+
 /** The 000h agent chat composer (components/ui/agent-chat.tsx), with loom's keys and its phone's focus kept. */
-function Composer({ onSend, disabled, accent, placeholder, label }: { onSend: (text: string) => Promise<boolean>; disabled?: boolean; accent?: string; placeholder: string; label: string }) {
-  const [text, setText] = useState('');
+function Composer({ onSend, disabled, accent, placeholder, label, draft }: { onSend: (text: string) => Promise<boolean>; disabled?: boolean; accent?: string; placeholder: string; label: string;
+  /** Whose draft it keeps (a thread's id). */ draft: string }) {
+  const [text, setTextNow] = useState(() => drafts.get(draft) ?? '');
+  const setText = (t: string) => { setTextNow(t); if (t) drafts.set(draft, t); else drafts.delete(draft); };
   const busy = useRef(false);
   const touch = useMemo(coarse, []);
   const send = async () => {
@@ -585,7 +591,27 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         </AgentChat>
         {wide && <aside className="comms-thread__side">{screen}<WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} /></aside>}
       </div>
-      <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} />
+      <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
+    </article>
+  );
+}
+
+/** A thread on its way (t-1925 F): what the list knows of it (its name, who with), at once, until its page lands and
+ * the thread itself takes this place. Only the pane changes: the list beside it stays as it was. */
+function ThreadOpening({ t, marks, wide, back, onBack }: { t: Thread; marks: Record<string, Mark>; wide: boolean; back: boolean; onBack: () => void }) {
+  const mark = marks[t.agent] ?? { label: agentName(t.agent, marks), bg: 'pink', fg: '#000' };
+  return (
+    <article className="comms-thread comms-thread--opening" data-wide={wide || undefined} aria-busy="true">
+      <header className="comms-thread__head">
+        {back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
+        <span className="comms-thread__title">{t.title ?? `New thread with ${mark.label}`}</span>
+      </header>
+      <div className="comms-thread__body">
+        <div className="comms-chat loom-skel-wait" aria-hidden>
+          {[0, 1, 2].map((n) => <div key={n} className="comms-opening__line"><span className="loom-skel-line" /><span className="loom-skel-line" /></div>)}
+        </div>
+      </div>
+      <Composer onSend={async () => false} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={`Message ${mark.label}`} draft={t.id} />
     </article>
   );
 }
@@ -656,7 +682,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agen
         ))}
       </div>
       {error && <p className="comms-msg comms-msg--error" role="alert">{error}</p>}
-      <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} />
+      <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} draft={`new:${agent}`} />
     </article>
   );
 }
@@ -676,9 +702,14 @@ export function CommsView({ data }: { data: CommsData }) {
   const reload = useCallback(() => { void getJson<{ threads: Thread[]; agents: string[] }>('/comms').then((r) => { if (r) { setThreads(r.threads); setAgents(r.agents); } }); }, []);
   // A thread's view doesn't carry the list: on a desktop (two panes) or for New thread, it's fetched beside it.
   useEffect(() => { if (data.which === 'thread' || !data.threads) reload(); }, [data.which, data.threads, reload]);
-  useEffect(() => { setMaking(false); }, [data.thread?.id]);
-  const open = (id: string) => go(`/comms/${id}`);
-  const back = () => { setMaking(false); go('/comms'); };
+  // The list's own view carries it: the newest copy wins (this view stays mounted from page to page).
+  useEffect(() => { if (data.threads) setThreads(data.threads); }, [data.threads]);
+  // The thread asked for, from the moment it's pressed (t-1925 F): it's the one lit in the list, and its pane opens with
+  // what the list knows, until its page lands. Only the pane is replaced; the list stays mounted, scrolled where it was.
+  const [opening, setOpening] = useState<string | null>(null);
+  useEffect(() => { setMaking(false); setOpening(null); }, [data.thread?.id, data.which]);
+  const open = (id: string) => { setMaking(false); setOpening(id === data.thread?.id ? null : id); go(`/comms/${id}`); };
+  const back = () => { setMaking(false); setOpening(null); go('/comms'); };
   // A desktop's Comms in a box narrower than two panes fit (a narrow window, a tile): one pane at a time, the list, then
   // the thread with a way back. Measured on the box, not the screen; before the first paint, so two never flash.
   const box = useRef<HTMLDivElement>(null);
@@ -693,10 +724,12 @@ export function CommsView({ data }: { data: CommsData }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [wide]);
+  const asked = opening && opening !== (data.which === 'thread' ? data.thread?.id : undefined) ? threads.find((t) => t.id === opening) : undefined;
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} />
+    : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} />
     : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} />
       : null;
-  const list = <ThreadList threads={threads} marks={marks} current={data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
+  const list = <ThreadList threads={threads} marks={marks} current={opening ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
   // The same two places in both, the list's and the pane's: crossing the width keeps an open thread mounted (its
   // draft, its live messages), only the list comes and goes.

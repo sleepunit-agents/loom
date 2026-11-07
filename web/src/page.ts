@@ -70,9 +70,11 @@ export interface PageState {
   url: string;
   data: View | null;
   error: string | null;
-  /** A page with no copy kept yet: its header and its shape (states.tsx Skeleton) until it lands. */
+  /** Nothing to show while a page with no copy kept yet is asked for (the first page, or after an error): its header
+   * and its shape (states.tsx Skeleton) until it lands. */
   waiting: boolean;
-  /** Where a page that's waiting is going. */
+  /** Where a page that's on its way is going. The page shown stays, mounted, until it lands (t-1925 F: only what
+   * changes is replaced, so an app's list, its scroll and a draft hold across a click). */
   pending: string | null;
   /** When the copy shown was saved, while loom can't be reached. */
   savedAt: string | undefined;
@@ -97,6 +99,9 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   const showing = useRef(start);
   const navNow = useRef(nav);
   navNow.current = nav;
+  // Whether there's a page on screen to keep while the next is asked for (not an error's card, not nothing).
+  const shown = useRef(false);
+  shown.current = !!data && !error;
 
   const load = useCallback<Load>(async (to, push, quiet = false) => {
     const n = navNow.current;
@@ -107,10 +112,10 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
         if (push && to !== n.here()) n.push(to);
         setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); n.top();
       }
-      setWaiting(!have); setPending(have ? null : to);
+      setWaiting(!have && !shown.current); setPending(have ? null : to);
     }
     const r: Answer = await fetchView(to, have?.etag).catch(() => ({ status: 0 }));
-    if (!quiet && showing.current === to) setWaiting(false);
+    if (!quiet && showing.current === to) { setWaiting(false); setPending(null); }
     if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
       if (!r.redirect) keep(to, r);
       return;
