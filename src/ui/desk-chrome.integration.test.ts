@@ -445,7 +445,11 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'Checked.', needs_owner: { ask: 'Can you swap the Sonarr disk for the spare this week?', why: 'It is nearly full.', refs: ['t-739'] } } as never);
     const p = await screen(1280, 800, { path: '/inbox?t=*inbox&w=' });
     const row = p.locator('.loom-tile button[data-row-menu]', { hasText: 'swap the Sonarr disk' });
-    await row.waitFor();
+    // what the tile shows, should the row not come (said in the failure)
+    await row.waitFor({ timeout: 20_000 }).catch(async (e: Error) => {
+      const what = await p.evaluate(() => ({ text: document.querySelector('.loom-tile')?.textContent?.slice(0, 600), rows: [...document.querySelectorAll('.loom-tile button')].map((b) => `${b.getAttribute('data-row-menu') ?? '-'}:${b.textContent?.slice(0, 50)}`).slice(0, 20) }));
+      throw new Error(`${e.message}\n${JSON.stringify(what)}`);
+    });
     // a reply typed and not sent: Open only (the sheet's Done sends it first), never Mark done
     const key = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: { key: string; text: string }[] })
       .items.find((i) => /swap the Sonarr disk/.test(i.text))!.key);
