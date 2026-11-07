@@ -27,7 +27,7 @@
 :root[data-look] .loom-tile__steps{flex:none;display:flex}
 :root[data-look] .loom-tile__crumb{flex:none;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:600;
   font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--v-text-2);text-decoration:none}
-:root[data-look] .loom-tile__crumb::after{content:" ›";color:var(--v-text-3)}
+:root[data-look] .loom-tile__crumb::after{content:"›";display:inline-block;margin-left:.35em;color:var(--v-text-3);text-decoration:none}
 :root[data-look] .loom-tile__crumb:is(:hover,:focus-visible){color:var(--v-text);text-decoration:underline;text-underline-offset:3px}
 :root[data-look] .loom-tile__bar h2{flex:0 1 auto;min-width:3em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;
   font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text);outline:none}
