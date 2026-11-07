@@ -101,7 +101,8 @@ function prefetch(to: string): void {
 }
 let aheadTimer = 0;
 const aheadOf = (e: Event) => {
-  const el = (e.target as Element | null)?.closest?.('[data-prefetch], a[href]');
+  // Not a link in a conversation's log (its words link anywhere, a page loom may not have) nor one that leaves.
+  const el = (e.target as Element | null)?.closest?.('[data-prefetch], a[href]:not([target],[download],[role="log"] a)');
   const href = el?.getAttribute('data-prefetch') ?? el?.getAttribute('href');
   clearTimeout(aheadTimer);
   if (!href || href[0] === '#' || (e.type === 'pointerover' && (e as PointerEvent).pointerType !== 'mouse')) return;
