@@ -210,6 +210,11 @@ Where it comes from:
   - it has 15 s, and answers `{ok, id?}`;
   - it's sent first, then the agent's turn is recorded with outcome `answered` (`failed` if `send` failed after one
     retry), and the body is told of a failure.
+  - **As built** (loom-box `src/delivery.mjs`, t-1920): an adapter that refuses only because it's in shadow says
+    `{ok: false, permanent: true, shadow: true}`. A body's `loom runtime send` waits for the post's outcome and
+    answers `posted: true` only once the venue took it, never "accepted". A DM (`--person --via`) to a venue whose
+    adapter answers `shadow` while its old bridge still posts there (Slack) goes to that bridge's relay, as the agent,
+    and is answered `posted: false, relay`: on its way, not sent.
   - **Two more adapter calls, as built** (loom-box `src/delivery.mjs`, `src/policy.mjs`), on the same argv and
     limits. `send --describe` answers `{ok: true, guest?, peer?, venue?, readers?, notes?}`: the place's rules for
     the brief. It's asked before a body starts, and if it fails no body starts. `send --status working|done
