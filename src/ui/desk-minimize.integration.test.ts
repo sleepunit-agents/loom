@@ -107,6 +107,8 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     await expect.poll(() => p.locator('.loom-tile').count()).toBe(0); await p.locator('.loom-desk-home').waitFor();
     await expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
   };
+  /** Any tile's move over (its effect, t-1925 B, runs up to 0.3 s): during one the page is a picture, and a click lands on nothing. */
+  const still = (p: Page) => expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
   /** A key at rest: drawn at its own size, not engaged. */
   const atRest = (p: Page, label: string) => p.locator(KEY(label)).evaluate((el) => {
     const v = el.querySelector('[data-part="visual"]')!.getBoundingClientRect();
@@ -143,7 +145,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     const key = p.locator(KEY('Inbox'));
     // Open it from its key, then the pointer goes away.
     await key.click();
-    await p.locator('.loom-tile').waitFor();
+    await p.locator('.loom-tile').waitFor(); await still(p);
     await away(p);
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // Minimize from the same key, and away.
@@ -153,7 +155,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     // Close, by the mouse, does the same (it stayed grown here before: 1.65x and engaged, the pointer far away).
     await key.click();
-    await p.locator('.loom-tile').waitFor();
+    await p.locator('.loom-tile').waitFor(); await still(p);
     await p.locator('.loom-tile button[aria-label="Close Inbox"]').click();
     await onDesktop(p);
     await away(p);
@@ -174,7 +176,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     const p = await screen(1280, { touch: true });
     await p.locator('.loom-desk-home').waitFor();
     await p.locator(KEY('Inbox')).tap();
-    await p.locator('.loom-tile').waitFor();
+    await p.locator('.loom-tile').waitFor(); await still(p);
     await p.waitForTimeout(450);
     await expect.poll(() => atRest(p, 'Inbox'), { timeout: 4000 }).toEqual({ ratio: 1, engaged: false });
     await p.context().close();
@@ -247,7 +249,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
         expect(await bars(p), `hovering key ${i}`).toEqual([]);
       }
       await p.locator(KEY('Inbox')).click();
-      await p.locator('.loom-tile').waitFor();
+      await p.locator('.loom-tile').waitFor(); await still(p);
       await p.locator(KEY('Inbox')).click();
       await onDesktop(p);
       await p.waitForTimeout(3000);
