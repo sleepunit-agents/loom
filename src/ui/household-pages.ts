@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import {
-  aboutOf, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
+  aboutOf, setAboutAsk, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
   setMember, type Household, type Member,
   markIndexOf,
 } from '../household.js';
@@ -753,6 +753,21 @@ export async function householdAct(h: Household, action: string, fields: Record<
       if (!h.agents.includes(agent) || !mark) return { ok: false, message: 'Pick an agent and one of the colors.' };
       setMark(h, agent, mark);
       return { ok: true, message: `${agentName(agentDir(h, agent))} wears ${mark.name}.`, page: `loom:a/${agent}/setup` };
+    }
+    // Its description (the agent window's header, t-1925 D): what the household sees, in plain words. The owner's own
+    // words, or, asked for (about-ask, the window's Regenerate), the agent's (describe_self). Never its creed.
+    if (action === 'about-set') {
+      const agent = fields.agent ?? '';
+      if (!h.agents.includes(agent)) return { ok: false, message: 'No such agent.' };
+      try { setAbout(h, agent, fields.about ?? ''); } catch (e) { return { ok: false, message: e instanceof HouseholdError ? e.message : 'That didn\'t save.' }; }
+      setAboutAsk(h, agent, null);
+      return { ok: true, message: (fields.about ?? '').trim() ? `Saved ${agentName(agentDir(h, agent))}'s description.` : `Cleared ${agentName(agentDir(h, agent))}'s description.` };
+    }
+    if (action === 'about-ask') {
+      const agent = fields.agent ?? '';
+      if (!h.agents.includes(agent)) return { ok: false, message: 'No such agent.' };
+      setAboutAsk(h, agent, new Date().toISOString());
+      return { ok: true, message: `Asked ${agentName(agentDir(h, agent))} to write its description.` };
     }
     // Its creed, a part at a time (Setup's "Who it is" and "Its creed"); every write keeps a backup.
     if (action === 'identity-set' || action === 'identity-section-set' || action === 'identity-section-add') {

@@ -940,6 +940,30 @@ export function setAbout(h: Household, agent: string, text: string): void {
   });
 }
 
+/** How long an owner's "write your description" (aboutAsk) stays open for the agent to answer (describe_self). */
+export const ABOUT_ASK_MS = 24 * 3_600_000;
+
+/** When the household's owner last asked an agent to write its own description (the agent window's Regenerate), while
+ * that ask is open: an agent may write its description itself (describe_self) only then, once. */
+export function aboutAskOf(h: Household, agent: string, now = Date.now()): string | undefined {
+  const a = rawHousehold(h.home).aboutAsk;
+  const v = a && typeof a === 'object' && !Array.isArray(a) ? (a as Record<string, unknown>)[agent] : undefined;
+  return typeof v === 'string' && now - Date.parse(v) < ABOUT_ASK_MS && now >= Date.parse(v) ? v : undefined;
+}
+
+/** Open (at `at`) or close (null) the owner's ask for an agent's own description. */
+export function setAboutAsk(h: Household, agent: string, at: string | null): void {
+  if (!AGENT_NAME.test(agent)) throw new HouseholdError(`${agent} isn't an agent name`);
+  withLock(h.home, () => {
+    const raw = rawHousehold(h.home);
+    const ask = raw.aboutAsk && typeof raw.aboutAsk === 'object' && !Array.isArray(raw.aboutAsk) ? { ...(raw.aboutAsk as Record<string, unknown>) } : {};
+    if (at) ask[agent] = at; else delete ask[agent];
+    const next: Record<string, unknown> = { ...raw, aboutAsk: ask };
+    if (!Object.keys(ask).length) delete next.aboutAsk;
+    writePrivate(join(h.home, HOUSEHOLD_FILE), JSON.stringify(next, null, 2) + '\n');
+  });
+}
+
 /**
  * The context dir a household names when nothing else does: with LOOM_HOME
  * set and a household.json there, `agents/<LOOM_AGENT or the default>`.

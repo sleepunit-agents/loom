@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **An agent's window** (t-1925 D; `docs/specs/desk-tiling.md`, "An agent's window"). An agent's pages wear one header:
+  its face in a Neon frame (no 000h shapes, no clock element), its name with a working pill, and a plain description
+  of what it does (household.json `about`, never its creed) that a household owner edits in place or asks the agent to
+  rewrite (the new `describe_self` MCP tool, refused unless asked). Its sections are a sidebar inside its window (an
+  icon rail when narrow), so the desktop's dock no longer swaps; its window's corner wears its letter. Its desk card
+  and its window are one app: Expand grows the card into the window, Shrink to widget folds it back. Phones keep the
+  dock's swap, with the new header.
 - **The Inbox is a mail client** (t-1925; `docs/specs/ui-app.md`, "Master/detail"). Folders (Needs you, Questions,
   Approvals, Alerts, Memory reviews, Done, and who it's from), the list, and the open ask beside it whole: why, if yes /
   if no, its buttons, a reply, where it lives and its trail. Answering moves it to Done and opens the next. In a narrow

@@ -333,7 +333,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   );
 }
 
-export function DashboardView({ d, now }: { d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
+export function DashboardView({ d, now, bare }: { /** in the agent's window: its header is the window's, not a profile card */ bare?: boolean; d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
   const { go } = useEnv();
   return (
     <div className="grid gap-4">
@@ -343,7 +343,7 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
       {d.filters && <BlockView b={{ type: 'filters', ...d.filters }} />}
       {/* An agent's Today opens on its profile (Jonathan, 2026-10-29: "lets do this to the agent pages too. we can merge
           the memory and clock and shit into it"): its colour, its identity's opening, how it is, and its tiles as stats. */}
-      {d.agent?.id ? (
+      {d.agent?.id && !bare ? (
         <Suspense fallback={<div className="min-h-64" />}><Profile p={{
           type: 'profile', name: d.agent.label, agent: d.agent.id, ...(d.agent.bio ? { summary: d.agent.bio } : {}),
           badges: [d.agent.waiting ? `${d.agent.waiting} waiting on you` : 'Ready', ...(d.agent.active ? [d.agent.active] : [])],

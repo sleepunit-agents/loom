@@ -286,6 +286,31 @@ without it.
 app tiles a dock key away, like a phone's home screen, and they read the same list (`nav.ts` placesOf, settingsOf). A
 dialog over a phone's one page would add a step to reach the same tiles, and swiping between dock pages already works.
 
+## An agent's window (t-1925 D)
+
+An agent's pages are one window (`web/src/agent-window.tsx`), the mockups' (2026-11-06):
+
+- **The header:** the agent's face (its pixel face where it has one) in a Neon frame (a cut corner, a lit top edge, faint
+  scanlines; no 000h shapes), its name with a **working** pill (or "N waiting on you"), its **description**, and a line
+  of facts (today's count, its memories, when it was last active). No clock element: the Clock is a section. Message
+  opens Comms. The window's corner (its title strip) wears the agent's **letter**, not a cropped face: the pixel face is
+  the one big picture, and small places use the letter.
+- **The description** is the household's word for what the agent does, for whom, in a sentence or two: household.json
+  `about` (`setAbout`), never its creed (an agent with none shows "No description yet." to its owner, and nothing to
+  anyone else). A household owner writes it in place (Edit, `about-set`), or asks the agent to write its own (`about-ask`:
+  a Comms thread from them asks, and the agent saves its answer with the `describe_self` MCP tool, which is refused
+  unless an ask is open (24 hours), writes once, at most 300 characters and one or two sentences, and is told to keep its
+  memories out of it). An agent owner (not the household's) reads it and can't change it.
+- **Its sections** (its own tabs: Today, Mind, Setup, and every piece's agent tab, Clock, Bridges, Houses, Secrets…) are
+  a sidebar inside the window; under 640 px wide an icon rail, each still named for a screen reader. The desktop's dock
+  never swaps to an agent's. On a **phone** the same header, and the dock still swaps to the agent's sections: a sidebar
+  would take a third of a 390 px screen, and the swap is how a phone already reaches them.
+- **The card and the window are one app at two sizes.** On the desktop an agent's card has Expand (and the card itself
+  opens it): its window opens beside the widgets and the card stands aside while it's open (its place in the widgets is
+  kept, `w` unchanged); a lit outline in the agent's colour travels from the card to the window (`tiling/morph.ts`). The
+  window's **Shrink to widget** closes it and the card comes back where it was (added to the desktop when it wasn't
+  there), the outline travelling back. Reduced motion: no outline, the change is instant.
+
 ## One window at a time
 
 An Accessibility choice, per person, off unless turned on (`oneWindow` in `/appearance/prefs`; this device's copy is

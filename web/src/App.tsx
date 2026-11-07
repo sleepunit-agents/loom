@@ -39,6 +39,8 @@ import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 // Knowledge, a reader (knowledge.tsx): its own chunk.
 const KnowledgeView = lazy(() => import('./knowledge').then((m) => ({ default: m.KnowledgeView })));
+// An agent's window (agent-window.tsx): its header and its sections, around its pages. Its own chunk.
+const AgentWindow = lazy(() => import('./agent-window'));
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
 // Comms (docs/specs/comms.md): its own chunk, loaded only when it opens.
 const CommsView = lazy(() => import('./comms').then((m) => ({ default: m.CommsView })));
@@ -468,8 +470,13 @@ export default function App() {
     : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
-  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals) => {
+  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
     const data = pg.data;
+    // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
+    const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
+    const inAgent = !!agentHead?.id && !!data?.chrome?.shell?.household;
+    const own = (body: React.ReactNode) => (inAgent && agentHead ? <Suspense fallback={body}>
+      <AgentWindow head={agentHead} chrome={data?.chrome} icon={icon} rail={inTile}>{body}</AgentWindow></Suspense> : body);
     return (<>
             {pg.waiting && <Skeleton />}
             {pg.savedAt && <Callout tone="warn" icon="cloud-off" role="status" className="mb-4" title="Can’t reach loom">
@@ -485,11 +492,11 @@ export default function App() {
             )}
             {!pg.waiting && !pg.error && data && env && (
               <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
-                {data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
+                {own(data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
                   : data.view === 'house-home' && desk ? <Skeleton />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
-                  : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
+                  : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} bare={inAgent} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
                   : data.view === 'comms' ? <Suspense fallback={<Spinner size="lg" />}><CommsView data={data as never} /></Suspense>
                   : data.view === 'knowledge' ? <Suspense fallback={<Spinner size="lg" />}><KnowledgeView data={data as never} /></Suspense>
@@ -500,7 +507,7 @@ export default function App() {
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner size="lg" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
                   : data.view === 'sheet' ? <Suspense fallback={<Spinner size="lg" />}><SheetView which={data.which as string} chrome={data.chrome} icon={icon} ground={ground} setGround={setGround} look={look} setLook={setLook} sound={sound} setSound={setSound} pixel={pixel} setPixel={setPixel} pixIcons={pixIcons} setPixIcons={setPixIcons} oneWindow={oneWindow} setOneWindow={setOneWindow} haptics={haptics} setHaptics={setHaptics} zoom={zoom} setZoom={setZoom} motion={motion} setMotion={setMotion} contrast={contrast} setContrast={setContrast} /></Suspense>
-                  : <NotYet kind={data.view} url={pg.url} />}
+                  : <NotYet kind={data.view} url={pg.url} />)}
               </Boundary></SideAtContext.Provider></EnvContext.Provider></ArrivalContext.Provider>
             )}
             {!pg.waiting && !pg.error && data && !env && <NotYet kind={data.view} url={pg.url} />}
@@ -642,9 +649,10 @@ export default function App() {
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
                 shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} live={!savedAt} widgetEnv={(g) => pageEnv(mainPage, g)}
-                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() })}
+                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
-                lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <AgentAvatar a={agentOf(o.key)!} size={20} /> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
+                // An agent's window wears its letter in the corner (t-1925 D): a cropped pixel head there read wrong.
+                lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <span className="loom-letter" aria-hidden style={{ '--c': markColor(agentOf(o.key)!.bg), '--ls': '22px' } as React.CSSProperties}>{agentOf(o.key)!.label[0]}</span> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
                 tint={(o) => (agentOf(o.key) ? markColor(agentOf(o.key)!.bg) : `var(--loom-tint-${tint(o.label)})`)}
                 // A tile's page wears its app's colour (tint.ts), or its agent's, as the page did before tiles: its
                 // buttons, switches and selection (000h's --v-pink). Not the account's.

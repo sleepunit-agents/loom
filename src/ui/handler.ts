@@ -67,7 +67,7 @@ import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
-import { agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
+import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
@@ -1805,6 +1805,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const rest = decode(a[2] ?? '') ?? '\0';
       const dir = agentDir(hh, agent);
       const src = agentSource(agent);
+      // Its window's header (t-1925 D): its description as the household wrote it (never its creed), whether this viewer
+      // may change it (a household owner), whether it's been asked to write one, and whether it's working now.
+      const windowFacts = (id: string) => ({ ...(aboutOf(hh, id) ? { about: aboutOf(hh, id) } : {}), ...(!opts.ownerScope ? { edit: true } : {}),
+        ...(aboutAskOf(hh, id) ? { asked: true } : {}), ...(workingOf(pieces, id).working ? { working: true } : {}) });
       if (rest === '' ) {
         // The agent's Today: its asks, Memories and its pieces' tiles (scope-aware ones), its own thread.
         const nowMs = Date.now();
@@ -1816,7 +1820,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           agent: { ...agents[agent], sub: `${t.items.length} today · ${t.memories[agent].toLocaleString('en-US')} memories`, tabs: agentTabs(agent, '', pieces),
             id: agent, today: t.items.length, active: lastActive(agentDir(hh, agent)),
             waiting: pendingProposals(hh, agent) + needsCount(hh, agent) + pieces.reduce((n, p) => n + p.manifest.asks.filter((x) => x.agent === agent && x.attention !== false).length, 0) - absorbedCount(hh, pieces, opts.env, agent),
-            ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })() },
+            ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })(), ...windowFacts(agent) },
           asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
             ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
@@ -1826,7 +1830,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
           return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
       }
       // Its Mind, People and Setup wear its head and tabs, like Today; a page under them keeps its own title.
-      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces) });
+      const head = (tab: string): AgentHead => ({ ...agentsOf(hh)![agent], tabs: agentTabs(agent, tab, pieces), id: agent, ...windowFacts(agent) });
       // A piece's tab for this agent: its pages, called with LOOM_SCOPE=<agent>, links and actions kept here.
       const pp = /^p\/([a-z][a-z0-9-]{0,39})(?:\/(.*))?$/.exec(rest);
       if (pp) {

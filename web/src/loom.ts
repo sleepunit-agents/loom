@@ -68,7 +68,9 @@ export interface Chrome { agent: string; nav: { label: string; href: string; cur
   /** The signed-in person's Appearance (look.ts), as loom keeps it. */
   prefs?: Prefs }
 export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];
-  id?: string; bio?: string; today?: number; waiting?: number; active?: string }
+  id?: string; bio?: string; today?: number; waiting?: number; active?: string;
+  /** Its window's (t-1925 D): the household's description (never its creed), may this viewer edit it, asked to write one, working now. */
+  about?: string; edit?: boolean; asked?: boolean; working?: boolean }
 
 export type View =
   | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string }

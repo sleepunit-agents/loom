@@ -4,7 +4,7 @@
 // keys. Never a number loom doesn't have.
 //
 // In the desk's own chunk (desk.tsx and the tiles import it): a phone never fetches it.
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, LoomMark, Nothing, useEnv, type Mark } from './blocks';
@@ -17,6 +17,7 @@ import { markColor } from './look';
 import { DOT } from './tones';
 import type { Shell } from './loom';
 import type { WidgetKind } from './tiling/fit';
+import { AgentOpsContext } from './tiling/morph';
 
 type Doing = { text: string; kind?: string; where?: string; since?: string };
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
@@ -135,7 +136,11 @@ export function Agent({ c, chat, compact }: { c: Card; chat?: () => void; compac
   const line = problems[0]?.text ?? doing[0]?.text ?? c.reason;
   const where = problems.length ? undefined : doing[0] ? [doing[0].where, doing[0].since && ago(doing[0].since)].filter(Boolean).join(' · ') : undefined;
   const label = `${c.label}: ${EYEBROW(c)}${line ? `. ${line}` : ''}`;
-  const open = (e: React.MouseEvent) => { e.preventDefault(); go(`/a/${c.id}`); };
+  // On the tiled desktop the card and its window are one app at two sizes (t-1925 D): opening it grows the card into
+  // the window beside it (tiling/morph.ts), and the window's Shrink folds it back.
+  const ops = useContext(AgentOpsContext);
+  const grow = (from: Element | null) => (ops ? ops.expand(c.id, from) : go(`/a/${c.id}`));
+  const open = (e: React.MouseEvent) => { e.preventDefault(); grow((e.currentTarget as Element).closest('.loom-w')); };
   const inner = (<>
       <span className="loom-agent__face"><AgentAvatar a={c} size={96} state={state} /></span>
       <span className="loom-agent__who">
@@ -151,13 +156,16 @@ export function Agent({ c, chat, compact }: { c: Card; chat?: () => void; compac
       </span>
   </>);
   const style = { '--acc': lit } as React.CSSProperties;
-  if (!chat && !compact) return <a href={`/a/${c.id}`} className="loom-w loom-w--agent" style={style} data-state={state} onClick={open} aria-label={label}>{inner}</a>;
+  if (!chat && !compact && !ops) return <a href={`/a/${c.id}`} className="loom-w loom-w--agent" style={style} data-state={state} onClick={open} aria-label={label}>{inner}</a>;
   return (
     <div className="loom-w loom-w--agent" style={style} data-state={state} data-compact={compact || undefined}>
       <a href={`/a/${c.id}`} className="loom-agent__open" onClick={open} aria-label={label} />
       {inner}
       {chat && <button type="button" className="loom-agent__chat" onClick={chat} aria-label={`Chat with ${c.label}`}>
         <AnimatedIcon name={iconFor('message-circle')} size="sm" /><span>Chat</span></button>}
+      {ops && !compact && <button type="button" className="loom-agent__chat loom-agent__grow" data-chat={chat ? '' : undefined} onClick={(e) => grow(e.currentTarget.closest('.loom-w'))}
+        aria-label={`Expand ${c.label} into its window`} title="Expand into its window">
+        <AnimatedIcon name={iconFor('maximize-2')} size="sm" /><span>Expand</span></button>}
     </div>
   );
 }
