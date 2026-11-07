@@ -1,5 +1,5 @@
 // The launcher (t-1925 G; the app mockups Jonathan approved 2026-11-06): every app in one grid, grouped as loom's own
-// list is (nav.ts launcherOf): Work, People & agents, Library, System, Look & feel, Pieces. It replaces More and Setup
+// list is (launch-list.ts launcherOf): Work, People & agents, Library, System, Look & feel, Pieces. It replaces More and Setup
 // on a desktop. The dock's last key opens it, and so does Ctrl+Shift+Space (⌘⇧Space on a Mac): ⌘Space is Spotlight's
 // on a Mac and Ctrl+Space switches the input language on Windows, Linux and a Mac with two keyboards, so the browser
 // never sees either reliably. Search has focus at once and filters as you type; Enter opens the first match, Esc
@@ -13,6 +13,7 @@ import { AgentAvatar } from './blocks';
 import { AppIcon } from './app-icon';
 import { useTint } from './tint';
 import { markColor } from './look';
+import { nameOf } from './account-button';
 import './faceframe.css';
 import { firstMatch, launcherOf, launchFilter, type LaunchApp } from './launch-list';
 import type { Shell } from './loom';
@@ -31,7 +32,8 @@ export default function Launcher({ open, onOpenChange, shell, icon, launch, look
   const all = useMemo(() => launcherOf(shell, { look, motion }), [shell, look, motion]);
   const shown = useMemo(() => launchFilter(all, q), [all, q]);
   const flat = shown.flatMap((s) => s.apps);
-  const first = q.trim() ? firstMatch(flat, q) : undefined;
+  // Enter's pick, marked: the first app until something's typed, then the best match.
+  const first = firstMatch(flat, q);
   const body = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   const go = (href: string) => { onOpenChange(false); launch(href); };
@@ -92,8 +94,8 @@ export default function Launcher({ open, onOpenChange, shell, icon, launch, look
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const f = firstMatch(flat, q); if (f) go(f.href); } }} />
             </label>
             <button type="button" className="loom-launcher__me" onClick={() => go('/account')}>
-              <span className="loom-letter" aria-hidden>{(shell.owner || '?')[0].toUpperCase()}</span>
-              <span className="grid text-left leading-tight"><span>{shell.owner[0].toUpperCase() + shell.owner.slice(1)}</span><span className="loom-data loom-launcher__me-sub">Account</span></span>
+              <span className="loom-letter" aria-hidden>{(nameOf(shell.owner) || '?')[0]}</span>
+              <span className="grid text-left leading-tight"><span>{nameOf(shell.owner)}</span><span className="loom-data loom-launcher__me-sub">Account</span></span>
             </button>
           </div>
           <div ref={body} id="loom-launcher-apps" className="loom-launcher__body">

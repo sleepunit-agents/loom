@@ -34,6 +34,18 @@ let input = ''; process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => { process.stdout.write(JSON.stringify({ title: ${JSON.stringify(label)}, sections: [{ id: 'a', blocks: [{ type: 'text', text: 'Here.' }] }] })); });
 `;
 
+describe.runIf(built)('the launcher\'s chunk', () => {
+  it('is its own: the first page carries none of it', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const assets = readdirSync(`${root}dist/web/assets`);
+    expect(assets.some((f) => /^launcher-.*\.js$/.test(f))).toBe(true);
+    const index = readFileSync(`${root}dist/web/index.html`, 'utf-8');
+    const first = assets.filter((x) => /\.(js|css)$/.test(x) && index.includes(x));
+    expect(first.length).toBeGreaterThan(0);
+    for (const f of first) expect(readFileSync(`${root}dist/web/assets/${f}`, 'utf-8'), f).not.toMatch(/loom-launcher__foot|loom-lsec__name/);
+  });
+});
+
 describe.runIf(built && chrome)('the launcher', () => {
   let h: Household;
   let handle: HttpServeHandle;
@@ -112,7 +124,10 @@ describe.runIf(built && chrome)('the launcher', () => {
       expect(await p.locator(`${LAUNCHER} .loom-lsec[aria-label="Work"] .loom-lapp[aria-label^="Tasks"]`).count()).toBe(1);
       // Live state under each name: the agents', the look's.
       expect(await p.locator(`${LAUNCHER} .loom-lapp[aria-label^="Appearance"] .loom-lapp__sub`).textContent()).toBe('Neon Noir');
-      expect(await p.locator(`${LAUNCHER} .loom-lapp[aria-label^="Inbox"] .loom-lapp__sub`).textContent()).toMatch(/need|Nothing waiting/);
+      expect(await p.locator(`${LAUNCHER} .loom-lapp[aria-label^="Inbox"] .loom-lapp__sub`).textContent()).toBe('Nothing waiting');
+      expect(await p.locator(`${LAUNCHER} .loom-lapp[aria-label^="Accessibility"] .loom-lapp__sub`).textContent()).toBe('As this device');
+      // Enter's pick is marked before anything's typed too: the first app.
+      expect(await p.locator(`${LAUNCHER} .loom-lapp[data-first] .loom-lapp__nm`).textContent()).toBe('Inbox');
       // It filters as you type; the first match is marked; Enter opens it as a tile.
       await p.keyboard.type('acc');
       await expect.poll(() => apps(p)).toEqual(['Accessibility']);
@@ -132,17 +147,20 @@ describe.runIf(built && chrome)('the launcher', () => {
       expect(await labels(p)).toEqual(['Accessibility']);
       // An agent opens as its own tile; a second app goes beside the first.
       await p.click(KEY('All apps'));
+      await p.locator(LAUNCHER).waitFor();
       await p.keyboard.type('art e');
       await p.keyboard.press('Enter');
       await expect.poll(() => labels(p)).toEqual(['Accessibility', 'Art E Fish']);
       // Opening one already open focuses it: no second tile.
       await p.click(KEY('All apps'));
+      await p.locator(LAUNCHER).waitFor();
       await p.keyboard.type('accessi');
       await p.keyboard.press('Enter');
       await expect.poll(() => p.evaluate(() => document.querySelector('.loom-tile[data-focused], .loom-tile[aria-current="true"]')?.getAttribute('aria-label') ?? '')).toMatch(/Accessibility/);
       expect(await labels(p)).toEqual(['Accessibility', 'Art E Fish']);
       // A setting piece opens in a tile of its own.
       await p.click(KEY('All apps'));
+      await p.locator(LAUNCHER).waitFor();
       await p.keyboard.type('secr');
       await p.keyboard.press('Enter');
       await expect.poll(() => labels(p)).toContain('Secrets');
@@ -185,7 +203,7 @@ describe.runIf(built && chrome)('the launcher', () => {
   });
 
   it('an old link to Setup or More opens the launcher over the desktop, not a tile', async () => {
-    for (const path of ['/setup', '/places']) {
+    for (const path of ['/setup', '/places', '/setup?from=an-old-link']) {
       const p = await screen(1280, 800, { path });
       await p.locator(LAUNCHER).waitFor();
       expect(await labels(p)).toEqual([]);
@@ -207,6 +225,18 @@ describe.runIf(built && chrome)('the launcher', () => {
         return (a + 0.05) / (b + 0.05);
       });
       expect(ratio).toBeGreaterThan(4.5);
+      await p.context().close();
+    });
+  }
+
+  for (const motion of ['reduce', 'no-preference'] as const) {
+    it(`its rise and fade follow Reduce motion (${motion})`, async () => {
+      const p = await screen(1280, 800, { motion });
+      await p.click(KEY('All apps'));
+      await p.locator(LAUNCHER).waitFor();
+      const names = await p.evaluate(() => ['.loom-launcher', '.loom-lscrim'].map((s) => getComputedStyle(document.querySelector(s)!).animationName));
+      if (motion === 'reduce') expect(names).toEqual(['none', 'none']);
+      else expect(names.every((n) => n !== 'none')).toBe(true);
       await p.context().close();
     });
   }

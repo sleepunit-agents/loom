@@ -9,9 +9,12 @@ type ShellLike = { core: Place[]; pieces: Place[]; tab: string; admin?: boolean 
 export type LaunchApp = { label: string; href: string; sub?: string; count?: number; tone?: Tone; icon?: string; agent?: string };
 export type LaunchSection = { name: string; apps: LaunchApp[] };
 type AgentLike = { id: string; label: string; href: string; asks?: number; sub?: string; working?: true };
-type LaunchShell = ShellLike & { owner?: string; asks?: number; agents?: AgentLike[] };
+type LaunchShell = ShellLike & { agents?: AgentLike[] };
 
-/** The sections, in order. A piece with no section of its own is Work's unless it runs the household (System's). */
+/** The sections, in order. A piece is System's when its kind is a setting, or when it's one of loom's own first-party
+ * pieces that run the household while being a place (SYSTEM, by its tab's label: a manifest has no section field yet);
+ * any other piece, a third party's too, is Work's. Apps with no number of their own to say (Activity, People, Projects,
+ * Knowledge, Members) show no line under their name rather than a made-up one. */
 export const LAUNCH_SECTIONS = ['Work', 'People & agents', 'Library', 'System', 'Look & feel', 'Pieces'] as const;
 /** Pieces that run the household rather than hold its work: System's, whatever their kind says. */
 const SYSTEM = new Set(['Boxes', 'Machine', 'Clock', 'Bridges', 'Houses', 'Runtime', 'Secrets', 'Subscriptions', 'Fuel', 'Discord', 'Slack', 'Packages', 'Shuttle', 'Deploys']);
@@ -50,7 +53,7 @@ export function launcherOf(s: LaunchShell, own: { look?: string; motion?: string
   return LAUNCH_SECTIONS.map((name) => ({ name, apps: by.get(name)! })).filter((x) => x.apps.length > 0);
 }
 
-/** The apps a search matches, in the launcher's order: by the app's name, its section's, or its live line. */
+/** The apps a search matches, in the launcher's order: by the app's name or its section's. */
 export function launchFilter(sections: LaunchSection[], q: string): LaunchSection[] {
   const n = q.trim().toLowerCase();
   if (!n) return sections;

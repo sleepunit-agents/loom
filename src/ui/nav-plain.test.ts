@@ -36,7 +36,7 @@ describe('each destination has one home (web/src/nav.ts)', () => {
 });
 
 describe('the launcher\'s list (web/src/launch-list.ts, t-1925 G)', () => {
-  const full = () => ({ ...shell(), owner: 'jonathan', asks: 3,
+  const full = () => ({ ...shell(),
     core: [...shell().core, { label: 'Projects', href: '/projects', current: false }, { label: 'Comms', href: '/comms', current: false, count: 2 }],
     pieces: [...shell().pieces, { label: 'Changes', href: '/p/changes', current: false, kind: 'place' as const, stat: '7 open' },
       { label: 'Clock', href: '/p/clock', current: false, kind: 'place' as const, stat: '4 wakes today', tone: 'warn' as const }],
@@ -69,6 +69,17 @@ describe('the launcher\'s list (web/src/launch-list.ts, t-1925 G)', () => {
     expect([at('Clock').sub, at('Clock').tone]).toEqual(['4 wakes today', 'warn']);
     expect(at('Appearance').sub).toBe('Neon Noir');
     expect(at('Pieces').sub).toBe('5 installed');
+  });
+
+  it('says nothing is waiting, and all read, when nothing is', () => {
+    const quiet = { ...full(), core: full().core.map((p) => ({ ...p, count: 0 })) };
+    const at = (label: string) => launcherOf(quiet).flatMap((s) => s.apps).find((a) => a.label === label)!;
+    expect([at('Inbox').sub, at('Inbox').count]).toEqual(['Nothing waiting', undefined]);
+    expect([at('Comms').sub, at('Comms').count]).toEqual(['All read', undefined]);
+    expect(launcherOf(quiet, { motion: 'Less motion' }).flatMap((s) => s.apps).find((a) => a.label === 'Accessibility')!.sub).toBe('Less motion');
+    // A third party's place piece is Work's; only a setting (or one of loom's own that runs the house) is System's.
+    const third = launcherOf({ ...quiet, pieces: [{ label: 'Gardening', href: '/p/garden', current: false, kind: 'place' as const }] });
+    expect(third.find((s) => s.name === 'Work')!.apps.map((a) => a.label)).toContain('Gardening');
   });
 
   it('an agent owner (admin false) gets no Members and no Pieces', () => {

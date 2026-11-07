@@ -1,7 +1,7 @@
-/* The launcher (launcher.tsx): the app mockups' (2026-11-06) grid over a dimmed desktop, in every look. */
+/* (34px: the desktop's one bar, looks.css .loom-top--one.) The launcher (launcher.tsx): the app mockups' (2026-11-06) grid over a dimmed desktop, in every look. */
 .loom-lscrim{position:fixed;inset:0;z-index:70;background:var(--v-scrim,rgba(4,3,10,.7));backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);animation:loom-l-fade .16s ease-out}
-.loom-launcher{--c:var(--v-pink);position:fixed;z-index:71;left:50%;top:calc(var(--loom-bar-h,34px) + 24px);transform:translateX(-50%);
-  width:min(1060px,calc(100vw - 32px));max-height:calc(100dvh - var(--loom-bar-h,34px) - 24px - var(--dock-h,64px) - 40px);display:flex;flex-direction:column;
+.loom-launcher{--c:var(--v-pink);position:fixed;z-index:71;left:50%;top:calc(env(safe-area-inset-top) + 34px + 24px);transform:translateX(-50%);
+  width:min(1060px,calc(100vw - 32px));max-height:calc(100dvh - env(safe-area-inset-top) - 34px - 24px - var(--dock-h,64px) - 40px);display:flex;flex-direction:column;
   background:var(--v-paper);color:var(--v-text);
   clip-path:polygon(0 0,calc(100% - 16px) 0,100% 16px,100% 100%,0 100%);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 55%,transparent);
   animation:loom-l-rise .2s ease-out}

@@ -202,6 +202,8 @@ export default function App() {
   // The page (page.ts): what's shown, loaded and kept current, its address the browser's.
   // Tiled (tiling/tiles.tsx), the screen's page is the desktop's (Home), and the address is the tiles': it stands aside.
   const tiledNow = useRef(false);
+  // A desktop in a household (desk, below), for the launcher's shortcut: the same rule as its dock key.
+  const deskNow = useRef(false);
   const appNav = useMemo<PageNav>(() => ({
     here: () => (tiledNow.current ? '/' : screenNav.here()), push: (to) => { if (!tiledNow.current) screenNav.push(to); },
     replace: (to) => { if (!tiledNow.current) screenNav.replace(to); }, top: () => { if (!tiledNow.current) screenNav.top(); },
@@ -260,7 +262,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); }
       // The launcher, a desktop's: Ctrl+Shift+Space (⌘⇧Space). Not ⌘Space (Spotlight's) or Ctrl+Space (the input
       // language's, on every desktop OS): the browser doesn't get those reliably (launcher.tsx).
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.code === 'Space' || e.key === ' ') && tiledNow.current) { e.preventDefault(); setLaunching((o) => !o); }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.code === 'Space' || e.key === ' ') && deskNow.current) { e.preventDefault(); setLaunching((o) => !o); }
     };
     addEventListener('keydown', f); return () => removeEventListener('keydown', f);
   }, []);
@@ -270,7 +272,7 @@ export default function App() {
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
     // Tiled, More (Places) and Setup are the launcher's now (t-1925 G): an old link to either opens it.
-    if (tiledNow.current && u.origin === location.origin && (u.pathname === '/setup' || u.pathname === '/places') && !u.search) { setLaunching(true); return; }
+    if (tiledNow.current && u.origin === location.origin && (u.pathname === '/setup' || u.pathname === '/places')) { setLaunching(true); return; }
     // Tiled: a page opens in its app's tile; the desktop sends the apps to the dock.
     if (tiledNow.current && tilesApi.current) { if (href[0] === '#') tilesApi.current.open(href); else if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
     // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
@@ -314,7 +316,7 @@ export default function App() {
     wasTiled.current = tiled;
     if (tiled) {
       // An old link to Setup or More (Places): the launcher, over the desktop.
-      if (url === '/setup' || url === '/places') setLaunching(true);
+      if (['/setup', '/places'].includes(url.split('?')[0])) setLaunching(true);
       if (url !== '/') void load('/', false);
       return;
     }
@@ -537,6 +539,7 @@ export default function App() {
   // rail). 1024 is where the rail took over from the phone's dock before: below it the phone's layout (its dock, its
   // gestures) is unchanged.
   const desk = wide && !!chrome?.shell?.household;
+  useLayoutEffect(() => { deskNow.current = desk; });
 
   // The app the page shown is in, for its own history (trail.ts): an agent's pages are that agent's; else the place it's
   // under. (A desktop's tiles keep their own: tiles.tsx.)
