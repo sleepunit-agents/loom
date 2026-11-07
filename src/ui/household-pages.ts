@@ -883,6 +883,13 @@ export function householdSuggestPeople(h: Household, n = 8): Array<{ name: strin
   } finally { dir.close(); }
 }
 
+/** A person's name as People has it (Jonathan Barket), or none when People doesn't know the slug or can't be read
+ * (Profile's head: an unreadable people.db must not stop the page you sign out from). */
+export function householdPersonName(h: Household, slug: string): string | undefined {
+  let dir: PeopleStore | null = null;
+  try { dir = directory(h); return dir?.getRow(slug)?.card.name?.trim() || undefined; } catch { return undefined; } finally { dir?.close(); }
+}
+
 export function householdFind(h: Household, q: string, agents: string[] = h.agents): FindMatches {
   const out: FindMatches = { knowledge: [], people: [], memories: [] };
   const needle = q.trim().toLowerCase();

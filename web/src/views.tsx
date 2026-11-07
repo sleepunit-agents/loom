@@ -166,7 +166,8 @@ export type Mode = 'auto' | 'light' | 'dark';
 export type Ground = 'contours' | 'depth' | 'wash';
 
 const useEnv = () => useContext(EnvContext)!;
-const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'error'; word: string }> = {
+/** An agent's state as a person reads it, and its face's expression (also Profile's agents, account.tsx). */
+export const STATE: Record<string, { status: 'working' | 'idle' | 'needs-input' | 'error'; word: string }> = {
   working: { status: 'working', word: 'Working' }, available: { status: 'idle', word: 'Available' },
   unavailable: { status: 'needs-input', word: 'Unavailable' }, broken: { status: 'error', word: 'Broken' },
 };

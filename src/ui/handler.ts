@@ -61,13 +61,13 @@ import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { resolvePieceName } from '../cli/pieces.js';
-import { householdFind, householdSuggestPeople, householdThread } from './household-pages.js';
+import { householdFind, householdPersonName, householdSuggestPeople, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
-import { agentDir, faceOf, firstOwner, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
+import { agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
@@ -949,6 +949,29 @@ function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
   return worst?.state ?? (reports.some((r) => (r.doing?.length ?? 0) > 0) ? 'working' : 'available');
 }
 
+/**
+ * The Profile app's head and its "Your agents" (web/src/account.tsx; t-1925): the member's name as People has it, when
+ * they became a member (their oldest owner token: the household keeps no other date for a member), and each agent they
+ * own with its mark and its state (agentStateOf). Nothing here is a secret: only names, a month and states.
+ */
+function profileOf(h: Household, m: Member, pieces: PieceInfo[], tz: string): { full?: string; since?: string; agents: Array<{ id: string; label: string; bg: string; fg: string; face: unknown; state: AgentState }> } {
+  const first = firstOwner(h).person === m.person;
+  let oldest: number | undefined;
+  try {
+    for (const t of loadTokens(h.home)) {
+      if (t.role !== 'owner' || !(t.member === m.person || (first && !t.member))) continue;
+      const at = Date.parse(t.created);
+      if (Number.isFinite(at) && (oldest === undefined || at < oldest)) oldest = at;
+    }
+  } catch { /* no tokens file readable: no date */ }
+  const since = oldest === undefined ? undefined : new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', year: 'numeric' }).format(new Date(oldest));
+  const full = householdPersonName(h, m.person);
+  const marks = agentMarks(h);
+  const owned = m.agents === '*' ? h.agents : h.agents.filter((a) => (m.agents as string[]).includes(a));
+  const agents = owned.map((a) => ({ id: a, label: agentName(agentDir(h, a)), ...marks[a], state: agentStateOf(pieces, a) }));
+  return { ...(full ? { full } : {}), ...(since ? { since } : {}), agents };
+}
+
 /** An agent at work, as its Home card would say it (agentStateOf). */
 function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
   return agentStateOf(pieces, agent) === 'working' ? { working: true } : {};
@@ -1615,8 +1638,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const ch = chrome(req, opts, pieces, skippedNames, 'account', csrf, flash);
     // Who this is, as the account's head says it: their name, and what they are in the household.
     const member = who?.member;
-    const named = hh && member ? (member.agents === '*' ? 'Household owner' : `Owns ${member.agents.map((a) => agentName(agentDir(hh, a))).join(', ')}`) : hh ? 'Household owner' : 'Signed in';
-    const me = { name: ch.shell?.owner ?? 'owner', role: named };
+    const named = hh && member ? (member.agents === '*' ? 'Owner of the household' : `Owns ${member.agents.map((a) => agentName(agentDir(hh, a))).join(', ')}`) : hh ? 'Owner of the household' : 'Signed in';
+    const me = { name: ch.shell?.owner ?? 'owner', role: named, ...(hh ? profileOf(hh, member ?? firstOwner(hh), pieces, tz) : {}) };
     const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
       : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
       : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
