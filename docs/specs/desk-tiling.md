@@ -230,9 +230,8 @@ you's first ask and "N more"; it's `min(height, compact height)`.
     widget": Needs you, each agent's card, Vitals and Backup. One already on the desktop shows "on the desktop" and
     focuses it. (It was the dock's + key until 2026-11-06, t-1925 E.)
   - **Find** lists the same as "Add widget: …".
-  - An agent's pages have **Pin card to the desktop**: the agent's tile strip carries it (an agent's pages are its
-    tile). The dock's agent key menu would have it too, but the household's dock has no agent keys yet (an agent's own
-    dock does, on its pages): that half waits for one (phase 4, 2026-11-06).
+  - An agent's window has **Shrink to widget** in its strip (it was Pin card to the desktop, before the card and the
+    window were one app: "An agent's window", below): its card goes on the desktop and the window closes.
 - **Linked:** a widget's actions open its app beside it. On an agent's card, **Chat** opens that agent's latest Comms
   thread and **Open** opens their pages. On Needs you, an ask opens in the Inbox. An app opened this way goes last, next
   to the rail. A widget is live: it draws from the same live data its app does (`/events`), so it never goes stale.
@@ -285,6 +284,36 @@ without it.
 **A phone keeps its More and Places.** On a phone they're already what the launcher is on a desktop: whole screens of
 app tiles a dock key away, like a phone's home screen, and they read the same list (`nav.ts` placesOf, settingsOf). A
 dialog over a phone's one page would add a step to reach the same tiles, and swiping between dock pages already works.
+
+## An agent's window (t-1925 D)
+
+An agent's pages are one window (`web/src/agent-window.tsx`), the mockups' (2026-11-06). "Window" here is the
+mockups' word for the agent's **tile** (the glossary's): the frame inside it, not the old single window.
+
+- **The header:** the agent's face (its pixel face where it has one) in a Neon frame (a cut corner, a lit top edge, faint
+  scanlines; no 000h shapes), its name with a **working** pill (or "N waiting on you"), its **description**, and a line
+  of facts (today's count, its memories, when it was last active). No clock element: the Clock is a section. Message
+  opens Comms. The window's corner (its title strip) and Comms' thread list wear the agent's **letter**, not a cropped
+  face: the pixel face is the one big picture. (A place with room for the whole face, 36 px and up, such as Find's
+  rows, keeps the face: it's a crop only below that.) The page under the header keeps the agent's tiles (Memories, its
+  pieces'), each a link into its sections.
+- **The description** is the household's word for what the agent does, for whom, in a sentence or two: household.json
+  `about` (`setAbout`), never its creed (an agent with none shows "No description yet." to its owner, and nothing to
+  anyone else). A household owner writes it in place (Edit, `about-set`; Setup's Description too), or asks the agent to write its own
+  (**Regenerate**, or "Ask Art to write it" while there's none; `about-ask`:
+  a Comms thread from them asks, and the agent saves its answer with the `describe_self` MCP tool, which is refused
+  unless an ask is open (24 hours; the owner's own words close it), writes once, at most 300 characters and one or two sentences, and is told to keep its
+  memories out of it). An agent owner (not the household's) reads it and can't change it.
+- **Its sections** (its own tabs: Today, Mind, Setup, and every piece's agent tab, Clock, Bridges, Houses, Secrets…) are
+  a sidebar inside the window; under 640 px wide an icon rail, each still named for a screen reader. The desktop's dock
+  never swaps to an agent's. On a **phone** the same header, and the dock still swaps to the agent's sections: a sidebar
+  would take a third of a 390 px screen, and the swap is how a phone already reaches them.
+- **The card and the window are one app at two sizes.** On the desktop an agent's card has Expand (and the card itself
+  opens it): its window opens beside the widgets and the card stands aside while it's open (its place in the widgets is
+  kept, `w` unchanged); a lit outline in the agent's colour travels from the card to the window (`tiling/morph.ts`). The
+  window's **Shrink to widget** (its strip's button, where Pin card was, and its strip's right-click menu; the card's
+  menu has **Expand**) closes it and the card comes back where it was (added to the desktop when it wasn't
+  there), the outline travelling back. Reduced motion: no outline, the change is instant.
 
 ## One window at a time
 
@@ -567,7 +596,7 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     1. A link between two Inbox pages stays in its tile.
 13. **Widgets.**
     - Chat on Art's card opens Comms beside the rail on Art's latest thread.
-    - Pin card to the desktop on Mark's pages adds Mark's card.
+    - Shrink to widget on Mark's window adds Mark's card and closes the window.
     - × removes a widget.
     - Every widget updates from `/events` without a reload: a new ask shows in Needs you.
 14. **Reload.** A reload of `/comms?t=tasks!,*comms&m=inbox&w=art,needs` draws Tasks (pinned, first), then Comms,

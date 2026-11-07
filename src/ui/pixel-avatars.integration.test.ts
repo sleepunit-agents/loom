@@ -169,6 +169,8 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
       check(path, f, { small: path === '/inbox', art: path !== '/people' });
       expect(f.wide, path).toBeLessThanOrEqual(390);
       if (path === '/') expect(f.drawn, 'Mark on Home').toContain('Visual Mark');
+      // Art's window: his whole pixel face, alive, in its Neon frame (t-1925 D).
+      if (path === '/a/art') expect(await p.locator('.loom-aghead .loom-faceframe canvas').count(), 'Art\'s window').toBeGreaterThan(0);
     }
     // An ask's sheet.
     await p.goto(`${base}/inbox`);

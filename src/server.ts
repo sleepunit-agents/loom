@@ -71,7 +71,7 @@ import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
 import { conversationsList, conversationView, homeFor } from './conversations.js';
 import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
-import { householdOf } from './household.js';
+import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
 function agentOfDir(contextDir: string): string {
@@ -1453,6 +1453,32 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
       return writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
     }),
+  );
+
+  server.registerTool(
+    'describe_self',
+    {
+      description:
+      'Write your own description on your loom profile, when your household\'s owner has asked you to (their agent ' +
+      'window\'s Regenerate; refused otherwise, and the ask closes once you write it). One or two short sentences in plain ' +
+      'words, for the household: what you do and for whom. Not your creed, nothing from your private memories, no ids.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(300).describe('The description: one or two plain sentences, at most 300 characters.'),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ text }) => {
+      // Whose body this is: the server's own agent dir, never anything the caller sends.
+      const mine = householdOf(contextDir);
+      const fail = (error: string) => ({ content: [{ type: 'text' as const, text: JSON.stringify({ error }) }], isError: true });
+      if (!mine) return fail('only an agent in a household has a profile description');
+      if (!aboutAskOf(mine.household, mine.agent)) return fail('nobody asked: your owner asks for this from your window in loom (Regenerate)');
+      const t = text.replace(/\s+/g, ' ').trim();
+      if ((t.match(/[.!?](\s|$)/g) ?? []).length > 2) return fail('keep it to one or two sentences');
+      setAbout(mine.household, mine.agent, t);
+      setAboutAsk(mine.household, mine.agent, null);
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, description: t }) }] };
+    },
   );
 
   server.registerTool(

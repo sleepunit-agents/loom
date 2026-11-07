@@ -140,6 +140,9 @@ an agent's persistent state:
 - **`comms_thread`** — read, read only, a Comms thread of the agent's own: its
   messages as the owner sees them (words for the household's `comms_days`, 14 at most), its replies, tool cards and
   error cards. This body's own thread, or one named by id; never another agent's.
+- **`describe_self`** — write the agent's own description on its loom profile (its
+  window's header), one or two plain sentences, only when the household's owner has
+  asked for it from the agent's window (Regenerate); never its creed or its memories.
 - **`knowledge_archive`** — soft-retire a knowledge page (sets `status='archived'`
   with an optional tombstone note). Archived pages are excluded from recall and
   maintain but remain recoverable via `knowledge_restore`.

@@ -7,7 +7,7 @@
 // Home's widgets are tiles too (phase 4): with no app open they are the desktop, laid out as Home is; with apps open
 // they move to the right edge, in columns, a rail or the strip, as the rule says (layout.ts rule 1). A widget is live
 // (it draws from Home's own page, which the live stream keeps current), its × removes it, and what it links to opens
-// beside it, last, next to the rail. The desktop's menu (a right-click on it, menu.tsx) and Find add them; an agent's tile can pin its card.
+// beside it, last, next to the rail. The desktop's menu (a right-click on it, menu.tsx) and Find add them; an agent's window shrinks back into its card.
 //
 // The only desktop there is (App.tsx; Jonathan, 2026-11-06). Accessibility's One window at a time is this desktop with
 // one app tile at most: opening another sends the one there to the dock, as the rule sends one that doesn't fit. A fresh
@@ -22,6 +22,8 @@ import type { Shell } from '../loom';
 import { noteRecent, readRecent } from '../recent';
 import { StripKey, WidgetBody, WidgetDesk, type DeskHomeData, type WidgetData } from '../desk-widgets';
 import { addable, freshSet, widgetRef, type WidgetRef } from './widgets';
+import { AgentOpsContext, morph, type AgentOps } from './morph';
+import { markColor } from '../look';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { ahead, hasKept, keepAhead, usePage, type Answer, type PageNav, type PageState } from '../page';
 import { fetchView } from '../loom';
@@ -278,7 +280,10 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   hs.current = heights;
   const wok = { backup: !!shell.backup };
   const wrefs = (ids: string[]): WidgetRef[] => ids.map((id) => widgetRef(id, shell.agents, wok)).filter((w): w is WidgetRef => !!w);
-  const wtiles = (ids = S.current.w): WidgetTile[] => wrefs(ids).map((w) => ({ id: w.id, name: w.name, kind: w.kind, ...(hs.current[w.id] ? { h: hs.current[w.id] } : {}) }));
+  /** The widgets drawn: an agent's card stands aside while its window is open (they're one app at two sizes, t-1925 D),
+   * and comes back where it was when the window closes or shrinks. `also`: a window about to open. */
+  const shownW = (st: { apps: Open[]; w: string[] }, also?: string) => st.w.filter((id) => !st.apps.some((a) => a.key === `/a/${id}`) && also !== `/a/${id}`);
+  const wtiles = (ids = shownW(S.current)): WidgetTile[] => wrefs(ids).map((w) => ({ id: w.id, name: w.name, kind: w.kind, ...(hs.current[w.id] ? { h: hs.current[w.id] } : {}) }));
   const scrollOf = (key: string) => bodies.current.get(key)?.scrollTop ?? 0;
   const announce = (m: string) => { setSaid(''); requestAnimationFrame(() => setSaid(m)); };
 
@@ -301,7 +306,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     let s = S.current;
     const swapped = oneWindow ? s.apps : [];
     for (const a of swapped) s = toDock(s, a);
-    const r = admit(tiles(s.apps), tiles([o])[0], wtiles(), area, innerWidth, { from: from === FROM_WIDGET ? { widget: true } : from ? { tile: from } : undefined, usedAt: usedAt.current });
+    const r = admit(tiles(s.apps), tiles([o])[0], wtiles(shownW(S.current, o.key)), area, innerWidth, { from: from === FROM_WIDGET ? { widget: true } : from ? { tile: from } : undefined, usedAt: usedAt.current });
     let next: State = { ...s, min: s.min.filter((a) => a.key !== o.key), home: null };
     next.apps = r.apps.map((t) => (t.id === o.key ? o : { ...s.apps.find((a) => a.key === t.id)!, pinned: t.pinned }));
     const why = [...swapped.map((a) => `${a.label} went to the dock to make room for ${o.label}: one window at a time is on`), ...r.docked.map((d) => d.why)];
@@ -359,7 +364,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
    * `admit` does): the screen resized, Home again, make this the big one. */
   const shed = (s: State, why: string): State => {
     for (;;) {
-      const over = s.apps.length > cap() || underMinimum(tiles(s.apps), wtiles(s.w), area, innerWidth);
+      const over = s.apps.length > cap() || underMinimum(tiles(s.apps), wtiles(shownW(s)), area, innerWidth);
       // With One window at a time, a pinned app goes too: one is the most there is.
       const may = s.apps.filter((a) => a.key !== s.focus && (oneWindow || !a.pinned));
       if (!over || !may.length || !area.w) return s;
@@ -444,8 +449,32 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       });
   } : undefined;
 
+  // An agent's card and its window, one app at two sizes (t-1925 D; morph.ts): Expand, Shrink to widget.
+  const agentColor = (agent: string) => { const a = shell.agents.find((x) => x.id === agent); return a ? markColor(a.bg) : 'var(--v-pink)'; };
+  const agentOps: AgentOps = {
+    expand: (agent, from) => {
+      const r = from?.getBoundingClientRect() ?? null;
+      open(`/a/${agent}`, FROM_WIDGET);
+      morph(r, () => box.current?.querySelector(`.loom-tile[data-tile="/a/${CSS.escape(agent)}"]`) ?? null, agentColor(agent));
+    },
+    shrink: (agent) => {
+      const key = `/a/${agent}`;
+      const s = S.current;
+      const o = s.apps.find((a) => a.key === key);
+      if (!o) return;
+      const r = box.current?.querySelector(`.loom-tile[data-tile="${CSS.escape(key)}"]`)?.getBoundingClientRect() ?? null;
+      trail.forget(key);
+      const apps = s.apps.filter((a) => a.key !== key);
+      const ok = !!widgetRef(agent, shell.agents, wok);
+      commit(shed({ ...s, apps, focus: s.focus === key ? apps[apps.length - 1]?.key ?? null : s.focus, w: ok && !s.w.includes(agent) ? [...s.w, agent] : s.w }, `${o.label} needed the room`), 'replace', true);
+      announce(`${o.label} folded back into its card`);
+      morph(r, () => box.current?.querySelector(`[data-widget="${CSS.escape(agent)}"]`) ?? null, agentColor(agent));
+    },
+  };
+
   api.current = {
-    addable: () => addable(shell.agents, wok).map((w) => ({ ...w, on: S.current.w.includes(w.id) })),
+    // A card standing aside while its window is open isn't on the desktop to focus: it's offered (and added back).
+    addable: () => addable(shell.agents, wok).map((w) => ({ ...w, on: shownW(S.current).includes(w.id) })),
     open,
     desktop: () => { if (S.current.apps.length) homeKey(); },
     pick: (href) => {
@@ -609,11 +638,12 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       if (!t.closest('.loom-tile__bar')) return null;
       const s = S.current, key = tile.dataset.tile!, i = s.apps.findIndex((a) => a.key === key), o = s.apps[i];
       if (!o) return null;
-      const id = nameOf(key), pinnable = key.startsWith('/a/') && !!widgetRef(id, shell.agents, wok), on = s.w.includes(id);
+      // An agent's window folds back into its card (t-1925 D: one app at two sizes), as its strip's button does.
+      const id = nameOf(key), shrinkable = key.startsWith('/a/') && !!widgetRef(id, shell.agents, wok);
       return { title: o.label, items: [
         item('min', 'Minimize', () => minimize(key), 'Alt+Shift+M'),
         ...(i > 0 ? [item('big', 'Make it the big one', () => makeBig(key), 'Alt+Shift+Enter')] : []),
-        ...(pinnable ? [item('pin', on ? 'Take its card off the desktop' : 'Pin its card to the desktop', () => (on ? removeWidget : addWidget)(id))] : []),
+        ...(shrinkable ? [item('shrink', 'Shrink to widget', () => agentOps.shrink(id))] : []),
         item('close', 'Close', () => close(key), 'Alt+Shift+W'),
       ] };
     }
@@ -624,7 +654,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       const where = w.kind === 'agent' ? `/a/${id}` : w.kind === 'needs' ? '/inbox' : w.kind === 'backup' ? shell.backup?.href ?? '/setup' : '/places';
       return { title: w.kind === 'agent' ? w.name : w.label, items: [
         ...(w.kind === 'agent' && chat ? [item('chat', 'Chat', () => chat(id))] : []),
-        item('open', 'Open', () => goWidget(where)),
+        item('open', w.kind === 'agent' ? 'Expand' : 'Open', () => (w.kind === 'agent' ? agentOps.expand(id, wEl) : goWidget(where))),
         item('unpin', w.kind === 'agent' ? 'Unpin from the desktop' : 'Remove from the desktop', () => removeWidget(id)),
       ] };
     }
@@ -708,8 +738,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
 
   // What's drawn: the state before a reflow until its transition has the picture of it, else the state.
   const s = drawn.current ?? S.current;
-  const ws = wrefs(s.w);
-  const l = useMemo(() => layout(tiles(s.apps), wtiles(s.w), area, innerWidth), [s.apps, s.w, area, heights]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const ws = wrefs(shownW(s));
+  const l = useMemo(() => layout(tiles(s.apps), wtiles(shownW(s)), area, innerWidth), [s.apps, s.w, area, heights]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Taller widgets than were allowed for (measured): what no longer fits beside them goes to the dock.
   useEffect(() => {
     const n = shed(S.current, 'the widgets needed the room');
@@ -762,17 +792,19 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   });
 
   return (
+    <AgentOpsContext.Provider value={agentOps}>
     <div className="loom-tiles" ref={box} data-count={s.apps.length} data-widgets={l.mode}>
       {s.apps.length === 0 ? (wd && wenv ? <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider> : home) : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)} accent={accent(o)}
           landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)}
-          pin={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? { on: s.w.includes(nameOf(o.key)), toggle: () => (s.w.includes(nameOf(o.key)) ? removeWidget : addWidget)(nameOf(o.key)) } : undefined} />
+          shrink={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? () => agentOps.shrink(nameOf(o.key)) : undefined} />
       ))}
       {s.apps.length > 0 && wenv && <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider>}
       {menu && <ContextMenu at={menu} close={() => setMenu(null)} />}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>
+    </AgentOpsContext.Provider>
   );
 }
 
@@ -789,7 +821,7 @@ function holdScroll(el: HTMLElement, top: number) {
   el.addEventListener('wheel', stop, { passive: true }); el.addEventListener('pointerdown', stop);
 }
 
-function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, accent, landed, onFocus, minimize, close, makeBig, pin, steps }: {
+function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, accent, landed, onFocus, minimize, close, makeBig, shrink, steps }: {
   o: Open & { restoreTop?: number }; n: number; of: number; rect: Rect | undefined; focused: boolean;
   say: (n: Omit<Note, 'id'>) => void; nav: (key: string) => PageNav;
   pages: React.MutableRefObject<Map<string, PageState>>; bodies: React.MutableRefObject<Map<string, HTMLElement>>;
@@ -798,7 +830,7 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   render: (p: PageState, go: (href: string) => void, wide: boolean) => React.ReactNode;
   lead: React.ReactNode; tint: string; accent: Accent; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
   /** An agent's tile: its card on the desktop, or not. */
-  pin?: { on: boolean; toggle: () => void };
+  /** an agent's window: fold it back into its card */ shrink?: () => void;
   /** Back and Forward for the keys (Alt+← →): true when there was somewhere to go. */
   steps: React.MutableRefObject<Map<string, (by: -1 | 1) => boolean>>;
 }) {
@@ -889,9 +921,9 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
           onClick={(e) => { e.preventDefault(); go(up.url); }}>{title}</a> : title}</h2>
         <span className="loom-tile__path loom-data" aria-hidden>loom{path}</span>
         <span className="loom-tile__acts">
-          {pin && <button type="button" className="loom-tile__btn" aria-pressed={pin.on} onClick={pin.toggle}
-            aria-label={pin.on ? `${o.label}’s card is on the desktop. Take it off` : `Pin ${o.label}’s card to the desktop`}
-            title={pin.on ? 'On the desktop' : 'Pin card to the desktop'}><AnimatedIcon name={iconFor('pin')} size="sm" /></button>}
+          {/* An agent's window folds back into its card (t-1925 D; it was Pin card to the desktop): one app, two sizes. */}
+          {shrink && <button type="button" className="loom-tile__btn" onClick={shrink} aria-label={`Shrink ${o.label} to its card`} title="Shrink to widget">
+            <AnimatedIcon name={iconFor('minimize-2')} size="sm" /></button>}
           {n > 0 && <button type="button" className="loom-tile__btn" aria-label={`Make ${o.label} the big one`} title="Make this the big one" onClick={makeBig}>
             <AnimatedIcon name={iconFor('maximize-2')} size="sm" /></button>}
           <button type="button" className="loom-tile__btn" aria-label={`Minimize ${o.label} to the dock`} title="Minimize to the dock" onClick={minimize}>
