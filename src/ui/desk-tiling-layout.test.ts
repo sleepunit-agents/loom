@@ -195,17 +195,20 @@ describe('the tiling rule', () => {
 
 describe('the widgets the desktop can show (tiling/widgets.ts)', () => {
   const agents = [{ id: 'art', label: 'Art' }, { id: 'mark', label: 'Mark' }];
-  it('a fresh device starts with the seed: Needs you, each agent\'s card, Vitals, Backup and the ticker', () => {
-    expect(SEED).toEqual(['needs', AGENTS, 'vitals', 'backup', 'ticker']);
-    expect(freshSet(agents, { backup: true })).toEqual(['needs', 'art', 'mark', 'vitals', 'backup', 'ticker']);
+  it('a fresh device starts with the seed: Needs you, each agent\'s card, Vitals and Backup (no ticker: the bar has it)', () => {
+    expect(SEED).toEqual(['needs', AGENTS, 'vitals', 'backup']);
+    expect(freshSet(agents, { backup: true })).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
     // what isn't here is left out: no backup set up, no agents yet
-    expect(freshSet(agents, { backup: false })).toEqual(['needs', 'art', 'mark', 'vitals', 'ticker']);
-    expect(freshSet([], { backup: false })).toEqual(['needs', 'vitals', 'ticker']);
+    expect(freshSet(agents, { backup: false })).toEqual(['needs', 'art', 'mark', 'vitals']);
+    expect(freshSet([], { backup: false })).toEqual(['needs', 'vitals']);
   });
-  it('the + key offers every widget there can be, the ticker last', () => {
+  it('the desktop\'s menu offers every widget there can be, and no ticker', () => {
     expect(addable(agents, { backup: true }).map((w) => [w.id, w.kind, w.label])).toEqual([
       ['needs', 'needs', 'Needs you'], ['art', 'agent', 'Art’s card'], ['mark', 'agent', 'Mark’s card'],
-      ['vitals', 'vitals', 'Vitals'], ['backup', 'backup', 'Backup'], ['ticker', 'ticker', 'Ticker']]);
+      ['vitals', 'vitals', 'Vitals'], ['backup', 'backup', 'Backup']]);
+  });
+  it('the retired ticker is no widget: a saved layout that has it loads without it (2026-11-06)', () => {
+    expect(widgetRef('ticker', agents, { backup: true })).toBeNull();
   });
   it('an id that names nothing here is no widget (an agent gone, a backup not set up)', () => {
     expect(widgetRef('gabe', agents, { backup: true })).toBeNull();

@@ -332,8 +332,8 @@ dock. Kept per person (`oneWindow`).
 _Avoid_: plain mode, single-window mode
 
 **Widget**:
-A small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup) or the ticker. It is live, never gets a
-split of its own, and opens its app beside it.
+A small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup). It is live, never gets a split of its
+own, and opens its app beside it.
 _Avoid_: gadget, applet
 
 **Fit**:

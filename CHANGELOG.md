@@ -362,6 +362,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The desktop's bar is one line** (t-1925 A; `docs/specs/desk-tiling.md`, "The bar"). At 1024 px and wider: loom's
+  clock and the page's name on the left, LOOM//OS and the status glyphs on the right, the ticker scrolling between, 34
+  px tall, where there were two bars. The ticker widget is gone (the bar has the same feed): a layout or an address
+  that has it loads without it, and the device's copy is written again without it. The desktop draws no headline
+  ("Everyone's fine"): just widgets and tiles. Phones and screens under 1024 px keep their bars.
+
 - **Desktop Home: the three columns line up, and no Moving strip** (t-1884). How everyone is ("Everyone's fine")
   reads across the top, above all three columns, so Needs you, the first agent card and Vitals share a top edge; it
   used to sit in the middle column and push the agents down. The Moving strip under the agent cards is gone: each

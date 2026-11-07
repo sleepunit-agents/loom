@@ -1,6 +1,8 @@
 // Neon Noir's system bar on a screen that has none of its own (Jonathan, 2026-11-05: "since we don't have the built in
 // top bar from the phone, let's add one here where we put clock and some kind of status icons"): a thin bar over the
-// phone's bar (phone-bar.tsx), where a phone's own status bar would be, across the page's column (App.tsx).
+// phone's bar (phone-bar.tsx), where a phone's own status bar would be, across the page's column (App.tsx). On a
+// desktop (1024 px and wider) there's no bar of its own: its clock and glyphs (SysClock, SysIcons) sit in the phone's
+// bar, made one line (Jonathan, 2026-11-06: "one line, like a real desktop OS").
 //
 // loom's clock on the left, small and bold: loom's time (its latest answer's Date, carried forward a minute at a time)
 // in loom's zone (uiTimeZone, the one every page says a time in), not the device's. On the right a few monochrome
@@ -9,7 +11,7 @@
 // hover or keyboard focus (looks/looks.css .loom-sys__tip). Dimmed means "look at this", and the words say why.
 // Up to four; fewer when loom has nothing to say: no Boxes glyph without the Boxes piece, and the backup only to a
 // household owner (an agent owner never sees its target or errors). Not on iOS's home-screen app (an iPad draws its own
-// status bar there, clock and all).
+// status bar there, clock and all), in either layout (looks/looks.css).
 // Trade-offs, chosen: a glyph's words are in its tooltip and its name, not printed beside it (a phone's status icons
 // carry none, and printed words would make it the old status line again); what's wrong is said in words elsewhere too:
 // offline in the ticker, a box's alert and a failed backup as asks in the Inbox, counted by the bar's own count. And
@@ -119,24 +121,33 @@ export function statusItems(shell: Shell, offline: boolean): Item[] {
   return items;
 }
 
-export function SystemBar({ shell, clock, offline, go }: { shell: Shell; clock: { text: string; tz?: string }; offline: boolean; go: (href: string) => void }) {
+/** loom's clock: the time alone, said whole for a screen reader and on hover. */
+export function SysClock({ clock }: { clock: { text: string; tz?: string } }) {
   // Turned over each minute; and each answer from loom re-renders the bar, so the time is read again with its latest Date.
   useLoomMinute();
   const at = loomNow(), time = clockText(at, clock.tz, clock.text), said = clockWords(at, clock.tz, clock.text);
+  return <span className="loom-sys__clock" title={said}><span aria-hidden>{time}</span><span className="sr-only">{said}</span></span>;
+}
+
+/** The status glyphs, each with its words. */
+export function SysIcons({ shell, offline, go }: { shell: Shell; offline: boolean; go: (href: string) => void }) {
   return (
-    <div className="loom-sys">
-      <span className="loom-sys__clock" title={said}><span aria-hidden>{time}</span><span className="sr-only">{said}</span></span>
-      <span className="loom-sys__icons" role="group" aria-label="Status">
-        {statusItems(shell, offline).map((it) => {
-          const inner = <>{it.glyph}{it.count && <span className="loom-sys__n loom-data" aria-hidden>{it.count}</span>}<span className="loom-sys__tip" aria-hidden>{it.label}</span></>;
-          return it.href ? (
-            <a key={it.key} href={it.href} className="loom-sys__icon" data-k={it.key} data-dim={it.dim ? '' : undefined} aria-label={it.label}
-              onClick={(e) => { e.preventDefault(); go(it.href!); }}>{inner}</a>
-          ) : (
-            <span key={it.key} role="img" tabIndex={0} className="loom-sys__icon" data-k={it.key} data-dim={it.dim ? '' : undefined} aria-label={it.label}>{inner}</span>
-          );
-        })}
-      </span>
-    </div>
+    <span className="loom-sys__icons" role="group" aria-label="Status">
+      {statusItems(shell, offline).map((it) => {
+        const inner = <>{it.glyph}{it.count && <span className="loom-sys__n loom-data" aria-hidden>{it.count}</span>}<span className="loom-sys__tip" aria-hidden>{it.label}</span></>;
+        return it.href ? (
+          <a key={it.key} href={it.href} className="loom-sys__icon" data-k={it.key} data-dim={it.dim ? '' : undefined} aria-label={it.label}
+            onClick={(e) => { e.preventDefault(); go(it.href!); }}>{inner}</a>
+        ) : (
+          <span key={it.key} role="img" tabIndex={0} className="loom-sys__icon" data-k={it.key} data-dim={it.dim ? '' : undefined} aria-label={it.label}>{inner}</span>
+        );
+      })}
+    </span>
   );
+}
+
+/** Between a phone and a desktop (640 to 1023 px): the clock and the glyphs on a bar of their own, over the phone's bar.
+ * A desktop has one line (phone-bar.tsx PhoneBar's clock and status). */
+export function SystemBar({ shell, clock, offline, go }: { shell: Shell; clock: { text: string; tz?: string }; offline: boolean; go: (href: string) => void }) {
+  return <div className="loom-sys"><SysClock clock={clock} /><SysIcons shell={shell} offline={offline} go={go} /></div>;
 }

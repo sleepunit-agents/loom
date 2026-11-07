@@ -134,7 +134,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   }
 
   for (const [w, ht] of SIZES) {
-    it(`${w}x${ht}: the three columns' first widgets share a top edge, the headline above them all, and no Moving strip`, async () => {
+    it(`${w}x${ht}: the three columns' first widgets share a top edge, no headline, and no Moving strip`, async () => {
       const p = await screen('neon', w, ht);
       await home(p);
       // Each column's first widget: Needs you, the first agent, Vitals (Jonathan, 2026-11-05: the headline sat in the
@@ -147,13 +147,9 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       expect(firsts.every(Boolean), JSON.stringify(firsts)).toBe(true);
       const tops = firsts.map((f) => f!.top);
       expect(Math.max(...tops) - Math.min(...tops), JSON.stringify(firsts)).toBeLessThanOrEqual(1);
-      // The headline: across the top, its bottom above every column's first widget, wider than any one column.
-      const head = (await p.locator('.loom-desk-headline').boundingBox())!;
-      expect((await p.locator('.loom-desk-headline').innerText()).trim()).toBe('Everyone\u2019s fine');
-      expect(head.y + head.height).toBeLessThanOrEqual(Math.min(...tops));
-      expect(await p.locator('.loom-desk-col .loom-desk-headline').count()).toBe(0);
-      const mid = (await p.locator('.loom-desk-col--mid').boundingBox())!;
-      expect(head.width).toBeGreaterThan(mid.width);
+      // No headline or status line (Jonathan, 2026-11-06: "just cards, widgets and windows").
+      expect(await p.locator('.loom-desk-headline').count()).toBe(0);
+      expect(await p.getByText('Everyone\u2019s fine').count()).toBe(0);
       // What each agent is on is its card's: nothing repeats it in a strip.
       expect(await p.locator('.loom-w--tape').count()).toBe(0);
       expect(await p.getByText('Moving', { exact: true }).count()).toBe(0);

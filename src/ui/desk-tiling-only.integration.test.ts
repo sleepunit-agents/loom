@@ -82,10 +82,10 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
   for (const [w, hgt] of [[1280, 800], [1920, 1080]]) {
     it(`18. a fresh session lands on the seeded widgets with no setting chosen; Appearance has no Desktop choice, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt, 'jonathan');
-      // The seed (widgets.ts SEED), the whole desktop: Needs you, each agent's card (its face), Vitals, Backup, the ticker.
-      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup', 'ticker']);
-      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup,ticker');
-      expect(await p.locator('.loom-desk-home .loom-desk-headline').count()).toBe(1);
+      // The seed (widgets.ts SEED), the whole desktop: Needs you, each agent's card (its face), Vitals, Backup; no headline.
+      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
+      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup');
+      expect(await p.locator('.loom-desk-home .loom-desk-headline').count()).toBe(0);
       expect(await p.locator('[data-widget="art"] .loom-agent__face').count()).toBe(1);
       expect(await p.locator('.loom-tile').count()).toBe(0);
       // No old window, ever: an app is a tile.

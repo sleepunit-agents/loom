@@ -31,7 +31,7 @@ import { type Ground, DashboardView, HouseHomeView } from './views';
 import { placesOf, settingsOf } from './nav';
 import { AppHeader, AppTile, oneLine } from './app-header';
 import { PhoneBar } from './phone-bar';
-import { SystemBar } from './system-bar';
+import { SysClock, SysIcons, SystemBar } from './system-bar';
 import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
@@ -583,12 +583,15 @@ export default function App() {
             // Neon: one small bar right under the phone's own (phone-bar.tsx), the page's name in it, and nothing under
             // it: the page's line and its intro are behind the name (Jonathan, 2026-11-05). The Inbox's "N need you" is
             // the bar's own count already, so it isn't info there. Wider than a phone, loom's system bar over it.
-            <header className={`loom-top loom-top--bar${deskBar ? ' loom-top--desk' : ''}`} data-accent={appAccent}>
+            <header className={`loom-top loom-top--bar${desk ? ' loom-top--one' : deskBar ? ' loom-top--desk' : ''}`} data-accent={appAccent}>
               <div className="mx-auto max-w-5xl px-4">
                 {/* Wider than a phone: loom's own status bar over it, across the page's column, so its clock sits over
                     the page's name and its glyphs over LOOM//OS and the count, as a phone's do (system-bar.tsx). */}
-                {deskBar && <SystemBar shell={chrome.shell} clock={{ text: chrome.clock, tz: chrome.tz }} offline={!!savedAt} go={go} />}
-                <PhoneBar title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={tiled && tileFocus ? `${tileFocus.key}\0${tileFocus.title}` : url}
+                {deskBar && !desk && <SystemBar shell={chrome.shell} clock={{ text: chrome.clock, tz: chrome.tz }} offline={!!savedAt} go={go} />}
+                {/* A desktop's is one line, as a desktop's own is (Jonathan, 2026-11-06): the clock and the page's name on
+                    the left, LOOM//OS and the glyphs on the right, the ticker between. */}
+                <PhoneBar clock={desk ? <SysClock clock={{ text: chrome.clock, tz: chrome.tz }} /> : undefined}
+                  status={desk ? <SysIcons shell={chrome.shell} offline={!!savedAt} go={go} /> : undefined} title={(tiled && tileFocus ? tileFocus.title : shownTitle) ?? ''} go={go} crumb={phoneCrumb} onBack={prevHere ? () => move(-1) : undefined} shell={chrome.shell} offline={!!savedAt} where={tiled && tileFocus ? `${tileFocus.key}\0${tileFocus.title}` : url}
                   info={tiled ? { more: tileFocus?.intro } : { line: profileLeads || data?.view === 'inbox' ? undefined : context, more: intro }}
                   color={accent ? markColor(accent.bg) : `var(--loom-tint-${tint(tileLabel || 'Home')})`} />
               </div>

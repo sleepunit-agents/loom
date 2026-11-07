@@ -218,16 +218,16 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     await p.context().close();
   }, 60_000);
 
-  it('a wide screen under Neon wears the same bar, under loom\'s system bar (desk-bar.integration.test.ts); a phone has none of that', async () => {
+  it('a desktop under Neon wears the same bar as one line, its clock and glyphs in it (desk-chrome.integration.test.ts); a phone has none of that', async () => {
     const p = await device('neon', 'reduce', 1280);
     await open(p, '/');
     expect(await p.locator('.loom-pbar').count()).toBe(1);
-    expect(await p.locator('.loom-sys').count()).toBe(1);
+    expect(await p.locator('.loom-pbar--one .loom-sys__clock').count()).toBe(1);
     expect(await p.locator('.loom-top h1').count()).toBe(1);
     await p.context().close();
     const q = await device('neon', 'reduce');
     await open(q, '/');
-    expect(await q.locator('.loom-sys').count()).toBe(0);
+    expect(await q.locator('.loom-sys, .loom-sys__clock').count()).toBe(0);
     await q.context().close();
   }, 60_000);
 });

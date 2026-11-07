@@ -1,8 +1,9 @@
 // Neon Noir's bar on a phone (Jonathan, 2026-11-04, t-1849): the phone's own status bar is right above it, so it reads
 // as part of it. The page's name, small, under the phone's clock on the left (it replaces the big icon-and-title header
 // there); LOOM//OS and the needs-you count under the status icons on the right; between them a slow ticker of what's
-// going on. No clock of its own: the phone shows one. Wider screens wear the same bar, under loom's own system bar
-// (system-bar.tsx, Jonathan 2026-11-05), where the ticker has more room.
+// going on. No clock of its own: the phone shows one. From 640 px the same bar sits under loom's own system bar
+// (system-bar.tsx, Jonathan 2026-11-05); on a desktop (1024 px and wider) it's one line with loom's clock and glyphs in
+// it (its `clock` and `status`; Jonathan, 2026-11-06), where the ticker has the most room.
 //
 // The ticker (his rules): only its middle moves, the needs-you count never scrolls away; it moves only when its words
 // don't fit, slowly (TICK_PX_S); it stops while it's touched and while the tab is hidden; under reduced motion it stands
@@ -132,15 +133,19 @@ function PageName({ title, info, where }: { title: string; info?: PageInfo; wher
 
 /** The bar itself: the page's name (in its app's colour, or its agent's; the way to its info when it has some), the
  * ticker, LOOM//OS, and the count. */
-export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info, where }: {
+export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info, where, clock, status }: {
   title: string; color: string; crumb?: { label: string; href: string }; go: (href: string) => void; shell: Shell; offline: boolean;
   info?: PageInfo; where: string;
   /** The chevron goes back in the app's history (App.tsx, trail.ts) rather than to `crumb.href` as a new page. */
   onBack?: () => void;
+  /** A desktop's one line (Jonathan, 2026-11-06): loom's clock before the name, the status glyphs after LOOM//OS
+   * (system-bar.tsx SysClock, SysIcons). A phone's own bar has neither: the phone shows its own. */
+  clock?: React.ReactNode; status?: React.ReactNode;
 }) {
   const asks = shell.asks;
   return (
-    <div className="loom-pbar">
+    <div className={clock || status ? 'loom-pbar loom-pbar--one' : 'loom-pbar'}>
+      {clock}
       <div className="loom-pbar__name" style={{ color }}>
         {crumb && (
           <button type="button" className="loom-pbar__back" aria-label={`Back to ${crumb.label}`} onClick={() => (onBack ? onBack() : go(crumb.href))}>
@@ -151,6 +156,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
       </div>
       <Ticker live={!offline} parts={tickerParts(shell)} />
       <span className="loom-pbar__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
+      {status}
       {asks > 0 && (
         <a href="/inbox" className="loom-pbar__needs loom-data" aria-label={`${asks} need${asks === 1 ? 's' : ''} you`}
           onClick={(e) => { e.preventDefault(); go('/inbox'); }}>{asks}</a>

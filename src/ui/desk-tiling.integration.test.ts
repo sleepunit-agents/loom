@@ -99,7 +99,7 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       // and back, on the page it was on
       await open(p, 'Comms', 2);
       // (a fresh device's widgets, the seed, ride in the address too: desk-tiling-widgets.integration.test.ts)
-      expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup,ticker');
+      expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup');
       // a page scrolled down comes back scrolled where it was: Setup's Appearance, in a short screen
       await p.click(KEY('Setup')); await expect.poll(() => p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
       const setup = tile(p, 'Setup');
@@ -160,14 +160,15 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     }, 60_000);
   }
 
-  for (const [w, hgt] of [[1280, 800], [1920, 1080]]) {
+  // 776, not 800: the desktop's one bar (2026-11-06) gave the tiles 24 px more, and at 800 three now fit.
+  for (const [w, hgt] of [[1280, 776], [1920, 1080]]) {
     it(`12. a link to another app opens it right after its tile; one within the app stays, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt, { path: '/places?t=*places' });
       await expect.poll(() => labels(p)).toEqual(['Places']);
       await open(p, 'Inbox', 2);
       expect(await labels(p)).toEqual(['Places', 'Inbox']);
       await tile(p, 'Places').locator('button', { hasText: 'People' }).first().click();
-      // At 1280×800 three of these don't fit (two stacked would be under the Inbox's 320 px minimum height): the one used
+      // At 1280×776 three of these don't fit (two stacked would be under the Inbox's 320 px minimum height): the one used
       // least recently that isn't the one opened or the one it came from, the Inbox, goes to the dock, and a toast says so.
       if (w >= 1920) {
         await expect.poll(() => labels(p)).toEqual(['Places', 'People', 'Inbox']);

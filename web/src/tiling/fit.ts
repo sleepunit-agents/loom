@@ -37,13 +37,12 @@ export function fitFor(label: string, own?: Partial<Omit<Fit, 'why'>>): Fit {
 }
 
 /** The kinds of widget, and the room each takes (`h`: its height when the widget doesn't say; a measured one wins). */
-export type WidgetKind = 'agent' | 'needs' | 'vitals' | 'backup' | 'ticker' | 'box';
+export type WidgetKind = 'agent' | 'needs' | 'vitals' | 'backup' | 'box';
 export type WidgetFit = { min: [number, number]; ideal: [number, number] };
 export const WIDGET_FIT: Readonly<Record<WidgetKind, WidgetFit>> = {
   agent: { min: [260, 108], ideal: [320, 236] },
   needs: { min: [260, 130], ideal: [320, 240] },
   vitals: { min: [260, 110], ideal: [320, 180] },
   backup: { min: [260, 90], ideal: [320, 110] },
-  ticker: { min: [260, 44], ideal: [320, 44] },
   box: { min: [260, 110], ideal: [320, 180] },
 };

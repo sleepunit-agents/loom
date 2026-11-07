@@ -15,12 +15,11 @@
 /* ---- the desktop's layout: what needs you on the left, the agents in the middle, vitals on the right. The side columns
    keep a readable width from 1024 to 2560; the middle takes the rest, and its agents fill it two or three across. ---- */
 :root[data-look] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
-  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px);grid-template-rows:auto minmax(0,1fr)}
+  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px);grid-template-rows:minmax(0,1fr)}
 @media (min-width:1600px){:root[data-look] .loom-desk-home{grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(300px,380px);gap:20px}}
 :root[data-look] .loom-desk-col{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;scrollbar-width:thin;
   padding:2px 4px 8px;margin:-2px -4px 0}
 :root[data-look] .loom-desk-agents{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
-:root[data-look] .loom-desk-headline{grid-column:1/-1;font-family:var(--font-display);font-weight:600;font-size:22px;letter-spacing:.01em;line-height:1.2;color:var(--v-text)}
 
 /* ---- a widget: a dark panel over the ground, a hairline edge, a lit tick in its tint on the top edge, a cut corner ---- */
 :root[data-look] .loom-w{--t:var(--v-pink);position:relative;display:flex;flex-direction:column;min-width:0;flex:none;
