@@ -182,13 +182,19 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, compact 
   useEffect(() => {
     if (!talk || reducedMotion()) return;
     setSignal(true);
+  }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The 250 ms count from when the signal is on the screen, not from when it was asked for: this effect runs after the
+  // render that shows it. Timed from the ask, a busy render ate into it, and a slow machine saw the static for 30 ms
+  // before the talking began (t-1925, loom#589's CI).
+  useEffect(() => {
+    if (!signal || !talk) return;
     const t = setTimeout(() => {
       setSignal(false); setTalkNow(talk);
       // A drawn face has no beats to follow: its run is timed, a beat about 1.5 s and a breath about 0.8 s, then done.
       if (!sprite) setPhase('talking');
     }, 250);
     return () => clearTimeout(t);
-  }, [talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signal, talk?.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (sprite || !phase || !talkNow) return;
     const ms = phase === 'talking' ? talkNow.n * 1530 + (talkNow.n - 1) * 800 : 900;

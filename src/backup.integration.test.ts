@@ -73,6 +73,18 @@ describe.skipIf(!hasTools)('loom backup', () => {
   const settings = (target: string, extra: Record<string, unknown> = {}) =>
     setSettings(h, validateSettings({ target, recipients: [owner.recipient], at: '02:55', tz: 'America/Chicago', ...extra }), env);
 
+  /**
+   * Noon in Chicago, well clear of the 02:55 slot. The tick tests count from setAt, and setAt is the wall clock when
+   * settings were set: left there, a run in a ten-minute window each day (02:45-02:55 in Chicago for the first tick
+   * test, 20:45-20:55 for the miss) put the slot between two of its ticks, and the tick ran a backup the test didn't
+   * expect (t-1925: loom#589's 22.x job ran at 02:40-03:01 UTC, twice).
+   */
+  const NOON_CHICAGO = '2026-11-04T18:00:00.000Z';
+  const pinSetAt = (iso: string): number => {
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), setAt: iso }));
+    return Date.parse(iso);
+  };
+
   /** An export that writes `bytes` random bytes and says these pieces were in; a drill that answers from `drills`. */
   function fakes(o: { bytes?: number; pieces?: string[]; drills?: boolean[]; exported?: { n: number } } = {}): RunDeps {
     const drills = [...(o.drills ?? [true, true, true])];
@@ -418,7 +430,7 @@ describe.skipIf(!hasTools)('loom backup', () => {
   it('the tick runs a due backup once, says a miss once, again after 6 hours, and an OK when it\'s over', async () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`);
-    const set = Date.parse(readState(h.home).setAt!);
+    const set = pinSetAt(NOON_CHICAGO);
     // Two days on with no run: a miss is said (the tick also runs the one that's due, and here it fails).
     const deps = fakes({ drills: [false, false, false, false] });
     const t1 = set + 2 * 86_400_000;
@@ -437,17 +449,16 @@ describe.skipIf(!hasTools)('loom backup', () => {
     const dir = join(work, 'stick'); mkdirSync(dir);
     settings(`path:${dir}`, { at: '02:55' });
     // A run that's started counts as the day's: lastStart is now, so the tick only says the miss.
-    const set = Date.parse(readState(h.home).setAt!);
-    const st = join(h.home, 'backup', 'state.json');
+    const set = pinSetAt(NOON_CHICAGO);
     const t = set + 30 * 3600_000;
-    writeFileSync(st, JSON.stringify({ ...readState(h.home), lastStart: new Date(t).toISOString() }));
+    writeFileSync(join(h.home, 'backup', 'state.json'), JSON.stringify({ ...readState(h.home), lastStart: new Date(t).toISOString() }));
     const deps = fakes();
     await tickBackup({ home: h.home, env, nowMs: t, deps });
     await tickBackup({ home: h.home, env, nowMs: t + 10 * 60_000, deps });
     expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet"]);
+    // 6 hours on (midnight in Chicago, before the 02:55 slot): said again, and nothing ran.
     await tickBackup({ home: h.home, env, nowMs: t + 6 * 3600_000, deps });
-    // (6 hours on, a night's slot may have come round too: its good run then says OK again after these.)
-    expect(alerts.map((a) => a.summary).slice(0, 2)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
+    expect(alerts.map((a) => a.summary)).toEqual(["The nightly backup hasn't run yet", "The nightly backup hasn't run yet (still)"]);
   });
 
   it('the real alert command: a failed run reaches LOOM_ALERT_COMMAND, with source loom-backup; a planted household command never runs', async () => {

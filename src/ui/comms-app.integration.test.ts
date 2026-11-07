@@ -163,8 +163,9 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       }, steps, { timeout }).then((h) => h.jsonValue() as Promise<number[]>);
       adapterCall(h, process.env, { op: 'post', place: thread.id, agent: 'art', text: 'And a scanline roll when a reply lands.' });
       const [signalAt, talkingAt] = await whenEach([{ signal: 'on' }, { face: 'talking' }], 8000);
-      // The signal plays first, for its 250 ms: talking never starts with it.
-      expect(talkingAt - signalAt).toBeGreaterThanOrEqual(150);
+      // The signal plays first, for its whole 250 ms counted from when it showed: talking never starts with it, and a
+      // busy render doesn't shorten it (it did when the 250 ms counted from the ask: 33-115 ms on CI, t-1925).
+      expect(talkingAt - signalAt).toBeGreaterThanOrEqual(240);
       expect(await page.locator('.comms-msg--agent').last().textContent()).toContain('scanline roll');
       // Then done, then back to the thread's own state.
       await whenEach([{ signal: 'on' }, { face: 'talking' }, { face: 'complete' }, { face: 'idle' }], 9000);
