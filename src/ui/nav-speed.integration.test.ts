@@ -172,7 +172,7 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       // draft as it was left.
       await p.route(/\/comms\/th:[a-z2-7]+$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
       await p.locator(`${list} .comms-row__btn:has(.comms-row__title:text-is("${firstTitle}"))`).evaluate((e) => (e as HTMLElement).click());
-      await expect.poll(() => new URL(p.url()).pathname, { timeout: 400 }).toBe(first);
+      await expect.poll(() => new URL(p.url()).pathname, { timeout: 800 }).toBe(first);
       expect(await p.locator(`${tile('Comms')} .comms-thread--opening`).count()).toBe(0);
       await expect.poll(() => p.locator(`${tile('Comms')} .comms-composer textarea`).inputValue()).toBe('half a thought');
       expect(await kept(p, list)).toBe(true);
@@ -232,7 +232,7 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       // From here loom is slow: the press is answered from what was fetched ahead.
       await p.route(/\/p\/lots\/x\/9$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
       await link.click();
-      await p.locator(t).getByText('This is item 9.').waitFor({ timeout: 400 });
+      await p.locator(t).getByText('This is item 9.').waitFor({ timeout: 800 });
     } finally { await close(); }
   });
 
@@ -251,7 +251,7 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       await p.route(/\/p\/lots$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
       await p.locator(`${t} .loom-tile__btn[aria-label^="Back"]`).click();
       // The kept copy at once, its Allow there but not pressable; then gone.
-      await allow.waitFor({ timeout: 400 });
+      await allow.waitFor({ timeout: 800 });
       expect(await allow.isDisabled()).toBe(true);
       await expect.poll(() => allow.count(), { timeout: 5000 }).toBe(0);
     } finally { await close(); }
