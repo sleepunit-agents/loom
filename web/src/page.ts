@@ -31,7 +31,7 @@ export const screenNav: PageNav = {
   top: () => window.scrollTo({ top: 0 }),
 };
 
-type Answer = { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string };
+export type Answer = { status: number; data?: View; redirect?: string; savedAt?: string; etag?: string };
 
 /** The last copy of each page this tab has seen, and its fingerprint: a page opens at once from it while loom is asked
  * behind it, and a 304 ("nothing new") leaves it as it is (Jonathan, 2026-10-29: "this site is sloooow"). One for the
@@ -39,10 +39,16 @@ type Answer = { status: number; data?: View; redirect?: string; savedAt?: string
 const kept = new Map<string, { etag?: string; data: View }>();
 
 const keep = (to: string, r: Answer) => {
-  if (r.data && r.etag && !r.savedAt) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
+  // One without a fingerprint too (a Comms thread's): shown at once all the same, then asked for whole behind it.
+  if (r.data && !r.savedAt && r.status < 400) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
 };
 /** Whether this tab has a copy of a page (a swipe's next page is fetched ahead only when it hasn't). */
 export const hasKept = (to: string): boolean => kept.has(to);
+
+/** Pages asked for ahead (tiles.tsx prefetch): a load of one meanwhile waits on its answer instead of asking again. */
+export const ahead = new Map<string, Promise<Answer>>();
+/** An answer kept as this tab's copy of its page, unless loom moved it. */
+export const keepAhead = (to: string, r: Answer) => { if (!r.redirect) keep(to, r); };
 
 export type Load = (to: string, push: boolean, quiet?: boolean) => Promise<void>;
 
@@ -73,6 +79,10 @@ export interface PageState {
   /** Nothing to show while a page with no copy kept yet is asked for (the first page, or after an error): its header
    * and its shape (states.tsx Skeleton) until it lands. */
   waiting: boolean;
+  /** Whether what's shown has been checked with loom since it was drawn from the tab's copy or the live stream said
+   * something moved. Until it is, a page's actions wait (blocks.tsx ActButton): an ask answered elsewhere never offers
+   * its Allow from an old copy. */
+  fresh: boolean;
   /** Where a page that's on its way is going. The page shown stays, mounted, until it lands (t-1925 F: only what
    * changes is replaced, so an app's list, its scroll and a draft hold across a click). */
   pending: string | null;
@@ -96,6 +106,7 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
   const [waiting, setWaiting] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | undefined>();
+  const [fresh, setFresh] = useState(true);
   const showing = useRef(start);
   const navNow = useRef(nav);
   navNow.current = nav;
@@ -110,11 +121,16 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
       showing.current = to;
       if (have) {
         if (push && to !== n.here()) n.push(to);
-        setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); n.top();
+        setError(null); setData(have.data); setUrl(to); setSavedAt(undefined); setFresh(false); n.top();
       }
       setWaiting(!have && !shown.current); setPending(have ? null : to);
     }
-    const r: Answer = await fetchView(to, have?.etag).catch(() => ({ status: 0 }));
+    // A refresh (quiet) never takes an answer asked for before whatever it's refreshing for.
+    const r: Answer = await (have ? fetchView(to, have.etag) : (!quiet && ahead.get(to)) || fetchView(to)).catch(() => ({ status: 0 }));
+    // Fresh only on loom's own word: nothing new, a page, or a move; not an error, nor the worker's saved copy.
+    if (showing.current === to && (r.status === 304 || r.redirect || (r.data && !r.savedAt && r.status < 400))) setFresh(true);
+    // Not reached: once more in a moment, so a blip doesn't leave its actions waiting until the next refresh.
+    else if (!r.status && showing.current === to && !quiet) setTimeout(() => { if (showing.current === to) void load(to, false, true); }, 3000);
     if (!quiet && showing.current === to) { setWaiting(false); setPending(null); }
     if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
       if (!r.redirect) keep(to, r);
@@ -146,7 +162,8 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
 
   const [live, setLive] = useState(false);
   useEffect(() => {
-    const again = () => { if (!document.hidden) void load(showing.current, false, true); };
+    // Something moved: what's shown is checked again, and waits to be acted on until it has been.
+    const again = () => { if (!document.hidden) { setFresh(false); void load(showing.current, false, true); } };
     const stop = listen({ change: again, open: setLive });
     document.addEventListener('visibilitychange', again);
     return () => { stop(); document.removeEventListener('visibilitychange', again); };
@@ -166,5 +183,5 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
 
   useEffect(() => { const f = () => void load(navNow.current.here(), false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
 
-  return { url, data, error, waiting, pending, savedAt, showing, load };
+  return { url, data, error, waiting, fresh, pending, savedAt, showing, load };
 }

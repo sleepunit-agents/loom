@@ -344,6 +344,7 @@ export function Dock({
                     data-part="item"
                     data-dock-index={index}
                     data-value={item.value}
+                    data-prefetch={item.value.startsWith("/") ? item.value : undefined}
                     disabled={item.disabled}
                     aria-label={item.label}
                     aria-pressed={item.value === activeValue}

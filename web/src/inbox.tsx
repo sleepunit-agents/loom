@@ -299,7 +299,7 @@ function shortHref(href: string): string {
   } catch { return href; }
 }
 
-type Answer = { draft: string; setDraft: (s: string) => void; drafted: boolean; busy: boolean; reply: () => Promise<void>; say: (a: 'yes' | 'no') => Promise<void>; label: string };
+type Answer = { draft: string; setDraft: (s: string) => void; drafted: boolean; busy: boolean; /** what's shown is being checked with loom (page.ts fresh): answers wait */ stale: boolean; reply: () => Promise<void>; say: (a: 'yes' | 'no') => Promise<void>; label: string };
 
 /** A Needs you's answer, as its sheet holds it: the words in its box (kept on this device until they're sent, so
  * closing the sheet loses nothing), and sending them, or a Yes or a No. One at a time: while one is on its way, the
@@ -319,13 +319,13 @@ function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env): Answ
     return ok;
   };
   return {
-    draft, setDraft, busy, drafted: !!draft.trim(), label: r.label,
+    draft, setDraft, busy, stale: !!env.stale, drafted: !!draft.trim(), label: r.label,
     reply: async () => {
-      if (!draft.trim() || busy) return;
+      if (!draft.trim() || busy || env.stale) return;
       if (await post({ text: draft })) { keepDraft(key, ''); setDraft(''); onDone(); }
     },
     say: async (a) => {
-      if (busy) return;
+      if (busy || env.stale) return;
       if (await post({ answer: a }, 'needs-answer')) { keepDraft(key, ''); setDraft(''); onDone(); }
     },
   };
@@ -340,8 +340,8 @@ export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
     <section className="grid gap-3">
       {yesNo && (
         <div className="grid grid-cols-2 gap-2" role="group" aria-label="Your answer">
-          <Button className="relative" disabled={a.busy} onClick={() => answer('yes')}>Yes<HapticLabel on={haptics && !a.busy} /></Button>
-          <Button className="relative" disabled={a.busy} onClick={() => answer('no')}>No<HapticLabel on={haptics && !a.busy} /></Button>
+          <Button className="relative" disabled={a.busy || a.stale} onClick={() => answer('yes')}>Yes<HapticLabel on={haptics && !a.busy} /></Button>
+          <Button className="relative" disabled={a.busy || a.stale} onClick={() => answer('no')}>No<HapticLabel on={haptics && !a.busy} /></Button>
         </div>
       )}
       <label htmlFor="loom-reply" className="text-xs font-semibold uppercase tracking-wide opacity-60">{yesNo ? 'Or answer in your own words' : a.label}</label>
@@ -351,7 +351,7 @@ export function AnswerBox({ a, yesNo }: { a: Answer; yesNo: boolean }) {
         {a.drafted && !a.busy && <span className="text-sm opacity-70">Not sent yet</span>}
         {/* A press on Send leaves the reply box focused, as Comms' composer does: a phone's keyboard doesn't start
             closing (and the sheet move under the finger) before the click lands. */}
-        <Button variant={yesNo ? 'outline' : 'default'} disabled={a.busy || !a.drafted} onClick={() => void a.reply()}
+        <Button variant={yesNo ? 'outline' : 'default'} disabled={a.busy || a.stale || !a.drafted} onClick={() => void a.reply()}
           onMouseDown={(e) => e.preventDefault()}>{a.busy ? 'Sending…' : 'Send'}</Button>
       </div>
     </section>

@@ -23,7 +23,8 @@ import { noteRecent, readRecent } from '../recent';
 import { StripKey, WidgetBody, WidgetDesk, type DeskHomeData, type WidgetData } from '../desk-widgets';
 import { addable, freshSet, widgetRef, type WidgetRef } from './widgets';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
-import { hasKept, usePage, type PageNav, type PageState } from '../page';
+import { ahead, hasKept, keepAhead, usePage, type Answer, type PageNav, type PageState } from '../page';
+import { fetchView } from '../loom';
 import * as trail from '../trail';
 import { iconFor } from '../safe';
 import type { Note } from '../toasts';
@@ -87,6 +88,31 @@ type VT = { finished: Promise<void> };
 type Doc = Document & { startViewTransition?: (update: () => void) => VT };
 /** A view-transition name for a tile's key or a widget's id (one per element, letters, digits and dashes). */
 const vtName = (prefix: string, id: string) => `${prefix}-${id.replace(/[^a-z0-9]/gi, (c) => `_${c.charCodeAt(0).toString(16)}`)}`;
+// Asking ahead (page.ts prefetch; t-1925 F): a row, a link or a dock key the pointer rests on, or focus reaches, is
+// fetched then. A desktop's alone: a phone has no pointer to rest. Never the sign-in, an asset, an action, Find, a
+// one-time message, an Inbox item (opening one reads it), or Activity (looking moves its "new since").
+// A mouse's only: a finger's touch starting a scroll isn't a rest.
+/** Two at a time at most, and never a page this tab has a copy of. */
+function prefetch(to: string): void {
+  if (hasKept(to) || ahead.has(to) || ahead.size > 1) return;
+  const r = fetchView(to).catch((): Answer => ({ status: 0 }));
+  ahead.set(to, r);
+  void r.then((a) => { keepAhead(to, a); ahead.delete(to); });
+}
+let aheadTimer = 0;
+const aheadOf = (e: Event) => {
+  // Not a link in a conversation's log (its words link anywhere, a page loom may not have) nor one that leaves.
+  const el = (e.target as Element | null)?.closest?.('[data-prefetch], a[href]:not([target],[download],[role="log"] a)');
+  const href = el?.getAttribute('data-prefetch') ?? el?.getAttribute('href');
+  clearTimeout(aheadTimer);
+  if (!href || href[0] === '#' || (e.type === 'pointerover' && (e as PointerEvent).pointerType !== 'mouse')) return;
+  const u = new URL(href, location.href);
+  if (!sameOrigin(u) || u.hash || /^\/(login|logout|app\/|act\/|find$|activity$)/.test(u.pathname) || u.searchParams.has('i') || u.searchParams.has('_flash')) return;
+  // A short rest first: a pointer crossing a list on its way elsewhere asks for nothing.
+  aheadTimer = window.setTimeout(() => prefetch(u.pathname + u.search), e.type === 'focusin' ? 0 : 70);
+};
+addEventListener('pointerover', aheadOf, { passive: true });
+addEventListener('focusin', aheadOf);
 /** Tabbable elements inside `el`, in order. */
 const tabbables = (el: Element) => [...el.querySelectorAll<HTMLElement>('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')]
   .filter((x) => x.offsetParent !== null || x === document.activeElement);
