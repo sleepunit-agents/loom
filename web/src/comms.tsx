@@ -654,7 +654,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
                   <li><span className="loom-letter" aria-hidden style={{ '--c': markColor(mark.bg), '--ls': '24px' } as React.CSSProperties}>{mark.label[0]}</span>
                     <span className="comms-people__name">{mark.label}</span><span className="comms-people__what loom-data">{channelWord(face, link).toLowerCase()}</span></li>
                   <li><span className="loom-letter" aria-hidden style={{ '--c': 'var(--v-blue)', '--ls': '24px' } as React.CSSProperties}>{(member[0] ?? 'Y').toUpperCase()}</span>
-                    <span className="comms-people__name">{member[0]?.toUpperCase()}{member.slice(1)}</span><span className="comms-people__what loom-data">you</span></li>
+                    <span className="comms-people__name">{member.split('-').map((w) => (w[0]?.toUpperCase() ?? '') + w.slice(1)).join(' ')}</span><span className="comms-people__what loom-data">you</span></li>
                 </ul>
               </section>
               <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />
