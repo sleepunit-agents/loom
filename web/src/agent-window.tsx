@@ -108,7 +108,7 @@ function Description({ head, send, csrf, go }: { head: AgentHead; send: (action:
           body: JSON.stringify({ agent: id, id: newId(), text: DESCRIBE_ASK, _csrf: csrf }) });
         const j = await r.json().catch(() => ({})) as { thread?: { id: string } };
         setAsked(true);
-        if (r.ok && j.thread) go(`/comms/${j.thread.id}`);
+        if (r.ok && j.thread) go(`/comms/${j.thread.id.replace(/^th:/, '')}`);
       } catch { /* the ask stands; Comms says what happened */ }
     }
     setBusy(false);
