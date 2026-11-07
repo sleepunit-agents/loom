@@ -168,7 +168,11 @@ export interface Reading { label: string; value: string; detail?: string; tone?:
  * body is in, a lane or a wake running, a task, a remote session. The card lists them, simply; the details are a
  * tap away (`page`). `since` is when it started (ISO 8601).
  */
-export interface Doing { text: string; kind?: DoingKind; where?: string; since?: string; page?: string }
+export interface Doing { text: string; kind?: DoingKind; where?: string; since?: string; page?: string;
+  /** The conversation a delivered body is in (cv-…; the runtime's): loom says which one, and links it, for whoever may see it. */
+  conversation?: string;
+  /** Where loom links it (loom's own, never a piece's): a Comms thread's page, for its member (handler.ts, atWorkFor). */
+  href?: string }
 export type DoingKind = 'talk' | 'lane' | 'task' | 'session' | 'other';
 export const DOING_KINDS: ReadonlySet<string> = new Set(['talk', 'lane', 'task', 'session', 'other']);
 export interface AgentReport { state?: AgentState; reason?: string; readings: Reading[]; doing?: Doing[] }
@@ -326,6 +330,12 @@ function optLong(v: unknown, what: string): string | undefined {
 }
 /** What this parse cut short (`all`, for the caller to log), and how many cuts no block has claimed yet (`open`). */
 let cuts: { all: string[]; open: number } = { all: [], open: 0 };
+
+/** A conversation's id as a piece names it (docs/specs/conversations.md): cv- and twelve hex. */
+function conversationRef(v: unknown): string {
+  if (typeof v !== 'string' || !/^cv-[0-9a-f]{12}$/.test(v)) throw new Invalid('doing.conversation is a conversation id (cv- and 12 hex)');
+  return v;
+}
 
 function optStr(v: unknown, what: string): string | undefined {
   return v === undefined || v === null ? undefined : str(v, what);
@@ -1037,7 +1047,8 @@ export function parseManifest(value: unknown): Manifest | string {
             const since = optStr(d.since, 'doing.since');
             if (since !== undefined && !Number.isFinite(Date.parse(since))) throw new Invalid('doing.since is a time (ISO 8601)');
             return { text: str(d.text, 'doing.text'), ...(d.kind ? { kind: d.kind as DoingKind } : {}), ...(d.where !== undefined ? { where: str(d.where, 'doing.where') } : {}),
-              ...(since ? { since } : {}), ...(d.page !== undefined ? { page: page(d.page, 'doing.page') } : {}) };
+              ...(since ? { since } : {}), ...(d.page !== undefined ? { page: page(d.page, 'doing.page') } : {}),
+              ...(d.conversation !== undefined ? { conversation: conversationRef(d.conversation) } : {}) };
           }) } : {}),
         };
       }
