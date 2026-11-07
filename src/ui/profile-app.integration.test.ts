@@ -137,12 +137,14 @@ describe.runIf(built && chrome)('Profile', () => {
       const title = await box(p, '.loom-acct__keys .loom-acct__title');
       expect(a.y, 'the button is on the header\'s line').toBeLessThan(title.y + title.height);
       // The passkeys, each with Remove; the right column: your agents, then Sign out.
-      expect(await p.locator('.loom-acct__keys .loom-acct__row-title').allInnerTexts()).toEqual(['MacBook Pro', 'iPhone']);
-      expect(await p.locator('.loom-acct__keys button', { hasText: 'Remove' }).count()).toBe(2);
+      // A household owner sees every passkey in the household (as before); an agent owner, their own (below).
+      expect(await p.locator('.loom-acct__keys .loom-acct__row-title').allInnerTexts()).toEqual(['MacBook Pro', 'iPhone', 'Sam laptop']);
+      expect(await p.locator('.loom-acct__keys button', { hasText: 'Remove' }).count()).toBe(3);
       const agents = p.locator('.loom-acct__col:nth-child(2) [aria-label="Your agents"]');
       expect(await agents.locator('.loom-acct__row-title').allInnerTexts()).toEqual(['art', 'mark']);
       expect(await agents.locator('[data-slot="badge"]').allInnerTexts()).toEqual(['Available', 'Available']);
-      expect(await agents.locator('[aria-label="art"], [aria-label="mark"]').count()).toBeGreaterThanOrEqual(2);
+      // Each row leads with the agent's face, drawn at 36 px.
+      for (const f of await agents.locator('.loom-acct__row > :first-child').all()) expect(Math.round((await f.boundingBox())!.width)).toBe(36);
       expect(await p.locator('.loom-acct__col:nth-child(2) button', { hasText: 'Sign out' }).count()).toBe(1);
       // Adding opens a name field in the panel; Cancel puts the button back.
       await add.click();
