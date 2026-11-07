@@ -604,14 +604,16 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     }
     const key = t.closest<HTMLElement>('.loom-dock-bar [data-part="item"][data-value]');
     if (key) {
-      const href = key.dataset.value!;
-      // Home, More and your own key (Account) have none: they aren't apps you'd minimize or close.
-      if (href[0] === '#' || href === '/account') return null;
-      const r = appOf(new URL(href, location.href).pathname);
+      // Only an app's own path (never a link to elsewhere, never markup): what the key opens is that app's key, from
+      // loom's own table, not the attribute. Home, More and your own key (Account) have none: they aren't apps you'd
+      // minimize or close.
+      const path = /^\/[\w\-/]*$/.exec(key.dataset.value ?? '')?.[0];
+      if (!path || path === '/' || path === '/account') return null;
+      const r = appOf(path);
       if (!r) return null;
       const s = S.current, isOpen = s.apps.some((a) => a.key === r.key), docked = s.min.some((a) => a.key === r.key);
       return { title: r.label, items: [
-        item('open', 'Open', () => { open(href); }),
+        item('open', 'Open', () => { open(r.key); }),
         ...(isOpen ? [item('min', 'Minimize', () => minimize(r.key))] : []),
         ...(isOpen || docked ? [item('close', 'Close', () => (isOpen ? close(r.key) : closeDocked(r.key)))] : []),
       ] };

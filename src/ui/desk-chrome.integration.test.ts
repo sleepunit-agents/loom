@@ -439,12 +439,16 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   });
 
   it('an Inbox row: Open, Mark done', async () => {
+    // its own ask, so nothing an earlier test pressed can have answered it
+    const art = agentDir(h, 'art');
+    const conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:making', label: 't-739: drive', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
+    writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'Checked.', needs_owner: { ask: 'Can you swap the Sonarr disk for the spare this week?', why: 'It is nearly full.', refs: ['t-739'] } } as never);
     const p = await screen(1280, 800, { path: '/inbox?t=*inbox&w=' });
-    const row = p.locator('.loom-tile button[data-row-menu]', { hasText: 'Sonarr disk' });
+    const row = p.locator('.loom-tile button[data-row-menu]', { hasText: 'swap the Sonarr disk' });
     await row.waitFor();
     // a reply typed and not sent: Open only (the sheet's Done sends it first), never Mark done
     const key = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: { key: string; text: string }[] })
-      .items.find((i) => /Sonarr disk/.test(i.text))!.key);
+      .items.find((i) => /swap the Sonarr disk/.test(i.text))!.key);
     await p.evaluate((k) => localStorage.setItem(`loom.draft.${k}`, 'On it tonight'), key);
     await p.reload(); await row.waitFor();
     await row.click({ button: 'right' });
@@ -465,7 +469,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await row.click({ button: 'right' });
     await menu(p).locator('[role="menuitem"]', { hasText: 'Mark done' }).click();
     await expect.poll(() => posted.some((x) => /needs-done/.test(x))).toBe(true);
-    await expect.poll(() => p.locator('.loom-tile button[data-row-menu]', { hasText: 'Sonarr disk' }).count()).toBe(0);
+    await expect.poll(() => p.locator('.loom-tile button[data-row-menu]', { hasText: 'swap the Sonarr disk' }).count()).toBe(0);
     await p.context().close();
   });
 
