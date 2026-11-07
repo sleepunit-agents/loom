@@ -152,10 +152,20 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     postActivity(h, process.env, { conversation: t.conversation, run: 'run-a', cards: [{ id: 'c2', at: new Date().toISOString(), tool: 'Read', summary: 'Read comms.tsx', state: 'running' }] });
     await expect.poll(() => p.locator('.comms-live').textContent()).toMatch(/Read comms\.tsx/);
     await expect.poll(() => p.locator('.comms-steps__line').textContent()).toMatch(/2 steps/);
+    await p.evaluate(() => {
+      const w = window as unknown as { words: string[] }; w.words = [];
+      const note = () => { const t = document.querySelector('.comms-screen__label > span')?.textContent ?? ''; if (t && w.words.at(-1) !== t) w.words.push(t); };
+      note();
+      new MutationObserver(note).observe(document.querySelector('.comms-screen')!, { subtree: true, childList: true, characterData: true });
+    });
     adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'art', text: 'All green.' });
     adapterCall(h, process.env, { op: 'status', place: t.id, agent: 'art', status: 'done' });
-    await expect.poll(() => label(p), { timeout: 8000 }).toBe('ART E FISH · TALKING');
+    // TALKING lasts only while the reply plays (a beat or so after the signal's 250 ms): a poll from here can miss it on a
+    // loaded runner, so the page logs every word the line shows, and the order is checked from that log.
+    await expect.poll(() => p.evaluate(() => (window as unknown as { words?: string[] }).words ?? []), { timeout: 12000 }).toEqual(expect.arrayContaining(['ART E FISH · TALKING']));
     await expect.poll(() => label(p), { timeout: 12000 }).toBe('ART E FISH · DONE');
+    const said = await p.evaluate(() => (window as unknown as { words: string[] }).words);
+    expect(said.indexOf('ART E FISH · TALKING')).toBeGreaterThan(said.indexOf('ART E FISH · WORKING'));
     expect(await p.locator('.comms-live').count()).toBe(0);
     // An ask waiting on you (as loom adds it from the approvals piece's manifest).
     await p.route(`**/comms/${t.id}/since/**`, async (route) => {
