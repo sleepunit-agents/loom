@@ -557,7 +557,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   // ---- context menus (menu.tsx; docs/specs/desk-tiling.md, "Context menus"): what you can do with the thing under the
   // pointer, or under focus with the Menu key or Shift+F10. The desktop's ground adds a widget (the + key's job, gone);
   // a tile's strip, a dock key and an agent's card each have a short list; a list row in a page offers what it declares
-  // (`data-menu`, answered by a `loom-menu` event on the row: the Inbox's Open and Mark done). Anything else, the
+  // (`data-row-menu`, answered by a `loom-menu` event on the row: the Inbox's Open and Mark done). Anything else, the
   // browser's own menu (text to copy, a link, a field).
   const [menu, setMenu] = useState<MenuAt | null>(null);
   /** An app minimized to the dock, closed from there: gone from the dock and its history forgotten. */
@@ -572,11 +572,11 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (t.closest('input, textarea, select, [contenteditable="true"], .loom-cmenu')) return null;
     const item = (id: string, label: string, run: () => void, hint?: string): MenuItem => ({ id, label, run, ...(hint ? { hint } : {}) });
     // a row that says what it offers
-    const row = t.closest<HTMLElement>('[data-menu]');
+    const row = t.closest<HTMLElement>('[data-row-menu]');
     if (row && box.current?.contains(row)) {
-      const items = (row.dataset.menu ?? '').split('|').map((x) => x.split(':')).filter((x) => x.length === 2 && x[0] && x[1])
+      const items = (row.dataset.rowMenu ?? '').split('|').map((x) => x.split(':')).filter((x) => x.length === 2 && x[0] && x[1])
         .map(([id, label]) => item(id, label, () => row.dispatchEvent(new CustomEvent('loom-menu', { detail: id }))));
-      return items.length ? { title: row.dataset.menuTitle || 'This item', items } : null;
+      return items.length ? { title: row.dataset.rowMenuTitle || 'This item', items } : null;
     }
     const tile = t.closest<HTMLElement>('.loom-tile');
     if (tile) {
@@ -605,7 +605,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     const key = t.closest<HTMLElement>('.loom-dock-bar [data-part="item"][data-value]');
     if (key) {
       const href = key.dataset.value!;
-      if (href[0] === '#') return null;
+      // Home, More and your own key (Account) have none: they aren't apps you'd minimize or close.
+      if (href[0] === '#' || href === '/account') return null;
       const r = appOf(new URL(href, location.href).pathname);
       if (!r) return null;
       const s = S.current, isOpen = s.apps.some((a) => a.key === r.key), docked = s.min.some((a) => a.key === r.key);

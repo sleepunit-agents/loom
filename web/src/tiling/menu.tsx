@@ -41,6 +41,8 @@ export function ContextMenu({ at, close }: { at: MenuAt; close: () => void }) {
     else if (e.key === 'ArrowUp') to(i - 1);
     else if (e.key === 'Home') to(0);
     else if (e.key === 'End') to(all.length - 1);
+    // Space chooses, as Enter does (a button's own Enter is the browser's)
+    else if (e.key === ' ') { e.preventDefault(); (document.activeElement as HTMLElement | null)?.click(); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); at.back?.focus({ preventScroll: true }); }
     // Tab never stays: the menu closes and focus moves on from where it was.
     else if (e.key === 'Tab') { close(); at.back?.focus({ preventScroll: true }); }

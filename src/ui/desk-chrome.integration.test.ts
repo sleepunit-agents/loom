@@ -304,10 +304,25 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await menu(p).locator('[role="menuitem"]', { hasText: 'Vitals' }).click();
     await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals']);
     expect(await menu(p).count()).toBe(0);
-    // on a tile's page, the browser's own menu: none of ours
+    // on a tile's page, and on a link in it, the browser's own menu: none of ours, and nothing stops the browser's
     await p.click(KEY('Setup')); await expect.poll(() => labels(p)).toEqual(['Setup']);
     await p.locator('.loom-tile__body').click({ button: 'right', position: { x: 300, y: 300 } });
     expect(await menu(p).count()).toBe(0);
+    const native = (sel: string) => p.locator(sel).first().evaluate((el) => {
+      const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+      el.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    expect(await native('.loom-tile__page')).toBe(false);
+    // a link in a page (one put there: Setup's are buttons)
+    await p.locator('.loom-tile__page').evaluate((pg) => { const l = document.createElement('a'); l.href = '/people'; l.textContent = 'People'; l.id = 'a-link'; pg.prepend(l); });
+    expect(await native('#a-link')).toBe(false);
+    expect(await native('.loom-tile__page button')).toBe(false);
+    // and the desktop's ground is ours
+    await p.click(KEY('Home'));
+    await expect.poll(() => labels(p)).toEqual([]);
+    expect(await native('.loom-desk-col--right')).toBe(true);
+    await p.keyboard.press('Escape');
     await p.context().close();
   });
 
@@ -323,6 +338,10 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     expect(await focused(p)).toMatch(/^Backup/);
     await p.keyboard.press('ArrowDown');   // round to the top
     expect(await focused(p)).toMatch(/^Needs you/);
+    await p.keyboard.press('ArrowUp');   // and round to the bottom
+    expect(await focused(p)).toMatch(/^Backup/);
+    await p.keyboard.press('Home');
+    expect(await focused(p)).toMatch(/^Needs you/);
     await p.keyboard.press('Escape');
     expect(await menu(p).count()).toBe(0);
     // Tab: the menu closes, focus moves on
@@ -337,6 +356,13 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.keyboard.press('End'); await p.keyboard.press('ArrowUp');   // Vitals
     await p.keyboard.press('Enter');
     await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals']);
+    // Space chooses too
+    await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await p.keyboard.press('Shift+F10');
+    await menu(p).waitFor();
+    await p.keyboard.press('End');   // Backup
+    await p.keyboard.press(' ');
+    await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals', 'backup']);
     // the Menu key on a focused dock key: the dock key's menu, at it
     await p.locator(KEY('Inbox')).focus();
     await p.keyboard.press('ContextMenu');
@@ -360,6 +386,19 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await menu(p).locator('[role="menuitem"]', { hasText: 'Minimize' }).click();
     await expect.poll(() => labels(p)).toEqual(['Inbox']);
     expect(new URL(p.url()).searchParams.get('m')).toBe('comms');
+    // an agent's tile: its card, pinned and taken off from the strip
+    await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual([]);
+    await p.goto(`${base}/a/art?t=*art&w=`);
+    await expect.poll(() => labels(p)).toEqual(['art']);
+    const strip = p.locator('.loom-tile[data-tile="/a/art"] .loom-tile__bar h2');
+    await strip.click({ button: 'right' });
+    expect(await items(p)).toEqual(['Minimize', 'Pin its card to the desktop', 'Close']);
+    await menu(p).locator('[role="menuitem"]', { hasText: 'Pin' }).click();
+    await expect.poll(() => widgets(p)).toEqual(['art']);
+    await strip.click({ button: 'right' });
+    expect(await items(p)).toEqual(['Minimize', 'Take its card off the desktop', 'Close']);
+    await menu(p).locator('[role="menuitem"]', { hasText: 'Take' }).click();
+    await expect.poll(() => widgets(p)).toEqual([]);
     await p.context().close();
   });
 
@@ -391,16 +430,29 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     expect(await items(p)).toEqual(['Open', 'Close']);
     await menu(p).locator('[role="menuitem"]', { hasText: 'Close' }).click();
     await expect.poll(() => new URL(p.url()).searchParams.get('m')).toBeNull();
-    // Home has none of ours
+    // Home and your own key have none of ours
     await p.locator(KEY('Home')).click({ button: 'right' });
+    expect(await menu(p).count()).toBe(0);
+    await p.locator('.loom-dock-bar [data-part="item"][data-value="/account"]').click({ button: 'right' });
     expect(await menu(p).count()).toBe(0);
     await p.context().close();
   });
 
   it('an Inbox row: Open, Mark done', async () => {
     const p = await screen(1280, 800, { path: '/inbox?t=*inbox&w=' });
-    const row = p.locator('.loom-tile button[data-menu]', { hasText: 'Sonarr disk' });
+    const row = p.locator('.loom-tile button[data-row-menu]', { hasText: 'Sonarr disk' });
     await row.waitFor();
+    // a reply typed and not sent: Open only (the sheet's Done sends it first), never Mark done
+    const key = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: { key: string; text: string }[] })
+      .items.find((i) => /Sonarr disk/.test(i.text))!.key);
+    await p.evaluate((k) => localStorage.setItem(`loom.draft.${k}`, 'On it tonight'), key);
+    await p.reload(); await row.waitFor();
+    await row.click({ button: 'right' });
+    await menu(p).waitFor();
+    expect(await items(p)).toEqual(['Open']);
+    await p.keyboard.press('Escape');
+    await p.evaluate((k) => localStorage.removeItem(`loom.draft.${k}`), key);
+    await p.reload(); await row.waitFor();
     await row.click({ button: 'right' });
     await menu(p).waitFor();
     expect(await items(p)).toEqual(['Open', 'Mark done']);
@@ -413,7 +465,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await row.click({ button: 'right' });
     await menu(p).locator('[role="menuitem"]', { hasText: 'Mark done' }).click();
     await expect.poll(() => posted.some((x) => /needs-done/.test(x))).toBe(true);
-    await expect.poll(() => p.locator('.loom-tile button[data-menu]', { hasText: 'Sonarr disk' }).count()).toBe(0);
+    await expect.poll(() => p.locator('.loom-tile button[data-row-menu]', { hasText: 'Sonarr disk' }).count()).toBe(0);
     await p.context().close();
   });
 

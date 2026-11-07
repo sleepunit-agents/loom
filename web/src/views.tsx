@@ -253,11 +253,17 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
   const agents = env.ctx.agents ?? {};
   const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
   const p = plain(i, name(i.agent));
-  // The desktop's right-click (tiling/tiles.tsx, data-menu): Open, and Mark done when the item has a plain Done.
-  const done = (i.actions ?? []).find((b) => /^(mark )?done$/i.test(b.label.trim()) && b.tone !== 'danger' && !b.confirm);
+  // The desktop's right-click (tiling/tiles.tsx, data-row-menu): Open, and Mark done when the item has a plain Done and
+  // no reply typed and not sent (drafts.ts: Done must never drop his words; the sheet sends them first).
+  const drafted = !!(i.reply && i.attention && hasDraft(i.key));
+  const done = drafted ? undefined : (i.actions ?? []).find((b) => /^(mark )?done$/i.test(b.label.trim()) && b.tone !== 'danger' && !b.confirm);
   const el = useRef<HTMLButtonElement>(null);
   const act = useRef<(id: string) => void>(() => {});
-  act.current = (id) => { if (id === 'open') onOpen(i); else if (id === 'done' && done) void env.withSource(i.source).send(done.action, done.fields ?? {}); };
+  act.current = (id) => {
+    // A draft kept since the menu opened: the sheet, where Done sends it first.
+    if (id === 'open' || (id === 'done' && hasDraft(i.key))) onOpen(i);
+    else if (id === 'done' && done) void env.withSource(i.source).send(done.action, done.fields ?? {});
+  };
   useEffect(() => {
     const b = el.current;
     const f = (e: Event) => act.current((e as CustomEvent<string>).detail);
@@ -267,7 +273,7 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
   return (
     <Arrive as="li" k={`in:${i.key}\0${i.kind}`} className="min-w-0">
       <button ref={el} className="flex w-full min-w-0 items-start gap-3 py-3 text-left" onClick={() => onOpen(i)}
-        data-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-menu-title={p.title.slice(0, 60)}>
+        data-row-menu={done ? 'open:Open|done:Mark done' : 'open:Open'} data-row-menu-title={p.title.slice(0, 60)}>
         {/* No agent behind it (an alert, a piece's own): loom's, said with its mark, never a gap. */}
         {i.agent && agents[i.agent] ? <Mark a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
         <span className="min-w-0 flex-1">

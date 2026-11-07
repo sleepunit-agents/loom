@@ -346,10 +346,11 @@ button, or the Menu key or Shift+F10 on what has focus, opens one at it:
   desktop (an agent's tile), Close. A tile has no window of its own to open it in, so no such item.
 - **A widget:** an agent's card has Chat, Open and Unpin from the desktop; another widget Open and Remove from the
   desktop.
-- **A dock key:** Open; Minimize while it's open; Close while it's open or in the dock. Home, More and your own key have
+- **A dock key:** Open; Minimize while it's open; Close while it's open or in the dock. Home, More and your own key (Account) have
   none.
-- **A list row that says what it offers** (`data-menu="id:Label|…"`, answered by a `loom-menu` event on the row): an
-  Inbox item has Open, and Mark done when it has a plain Done.
+- **A list row that says what it offers** (`data-row-menu="id:Label|…"`, answered by a `loom-menu` event on the row): an
+  Inbox item has Open, and Mark done when it has a plain Done and no unsent reply (a kept draft: Open only, so the
+  sheet's Done sends it first).
 - Anywhere else (a tile's page, a link, a field), the browser's own menu.
 
 A menu is `role="menu"` with its items `role="menuitem"`, named for what it's about. Focus goes to its first item; ↑ ↓
@@ -628,10 +629,14 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
 24. **Context menus** (`src/ui/desk-chrome.integration.test.ts`). No + key in the dock. A right-click on the ground
     lists Needs you (on the desktop), each card, Vitals and Backup, and Vitals adds it; on a tile's page, none of
     ours. With nothing focused, Shift+F10 opens it with focus on the first item; ↓ and End move, ↓ from the last goes
-    round, Esc closes, Tab closes, Enter on Vitals adds it; the Menu key on the Inbox's dock key opens its menu and Esc
+    round, Home goes to the first, ↑ from the first goes round, Esc closes, Tab closes, Enter on Vitals adds it, Space
+    on Backup adds it; the Menu key on the Inbox's dock key opens its menu and Esc
     gives focus back to it. A second tile's strip: Minimize, Make it the big one, Close; the big one's: Minimize,
-    Close. An agent's card: Chat, Open, Unpin from the desktop. A dock key: Open; then Open, Minimize, Close; then
-    Open, Close; Home none. An Inbox row: Open (its sheet) and Mark done (posts `needs-done`, the row leaves).
+    Close; an agent's: Minimize, Pin its card to the desktop, Close, and Pin adds the card, then Take its card off
+    removes it. An agent's card: Chat, Open, Unpin from the desktop. A dock key: Open; then Open, Minimize, Close; then
+    Open, Close; Home and your own key none. An Inbox row: Open (its sheet) and Mark done (posts `needs-done`, the row leaves); with
+    a reply kept unsent, Open only. On a tile's page and on a link in it, a `contextmenu` is left to the browser
+    (`defaultPrevented` false).
 
 ## Build, in phases
 

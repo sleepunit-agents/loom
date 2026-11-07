@@ -376,7 +376,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - **Desktop right-click** (t-1925 E; `docs/specs/desk-tiling.md`, "Context menus"). Adding a widget moves from the
   dock's + key (gone) to a right-click on the desktop, or the Menu key or Shift+F10. Short menus on a tile's strip
-  (Minimize, Make it the big one, Close), an agent's card (Chat, Open, Unpin), a dock key (Open, Minimize, Close) and
+  (Minimize, Make it the big one, Pin its card on an agent's, Close), an agent's card (Chat, Open, Unpin), a dock key (Open, Minimize, Close) and
   an Inbox row (Open, Mark done). Keyboard-operable, Esc and Tab close, focus never trapped.
 
 - **Desktop tiles: strip, room, loader, moves** (t-1925 B; `docs/specs/desk-tiling.md`, "The frame", "Transitions"). A tile's strip never says its
