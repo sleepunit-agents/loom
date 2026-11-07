@@ -119,8 +119,12 @@ export async function fetchView(url: string, etag?: string): Promise<{ status: n
   const landed = r.redirected ? new URL(r.url) : null;
   const redirect = landed && landed.origin === location.origin ? landed.pathname + landed.search : undefined;
   if (!(r.headers.get('content-type') ?? '').startsWith('application/json')) return { status: r.status, redirect: redirect ?? (landed ? r.url : undefined) };
-  if (redirect) return { status: r.status, data: (await r.json()) as View, redirect, savedAt: r.headers.get('x-loom-saved-at') ?? undefined };
-  return { status: r.status, data: (await r.json()) as View, savedAt: r.headers.get('x-loom-saved-at') ?? undefined, etag: r.headers.get('etag') ?? undefined };
+  const body = await r.json() as View;
+  // A refusal ({error}, no view: a Comms thread loom can't decrypt answers 503) is not a page: it never replaces the
+  // one shown, nor is drawn as one (t-1937).
+  if (r.status >= 400 && !body?.view) return { status: r.status, redirect };
+  if (redirect) return { status: r.status, data: body, redirect, savedAt: r.headers.get('x-loom-saved-at') ?? undefined };
+  return { status: r.status, data: body, savedAt: r.headers.get('x-loom-saved-at') ?? undefined, etag: r.headers.get('etag') ?? undefined };
 }
 
 export interface ActResult { ok: boolean; message: string; from?: string; keep?: boolean; undo?: Flash['undo']; go?: string }
