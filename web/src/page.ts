@@ -40,7 +40,7 @@ const kept = new Map<string, { etag?: string; data: View }>();
 
 const keep = (to: string, r: Answer) => {
   // One without a fingerprint too (a Comms thread's): shown at once all the same, then asked for whole behind it.
-  if (r.data && !r.savedAt) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
+  if (r.data && !r.savedAt && r.status < 400) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
 };
 /** Whether this tab has a copy of a page (a swipe's next page is fetched ahead only when it hasn't). */
 export const hasKept = (to: string): boolean => kept.has(to);
@@ -125,8 +125,12 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
       }
       setWaiting(!have && !shown.current); setPending(have ? null : to);
     }
-    const r: Answer = await (have ? fetchView(to, have.etag) : ahead.get(to) ?? fetchView(to)).catch(() => ({ status: 0 }));
-    if (r.status && showing.current === to) setFresh(true);
+    // A refresh (quiet) never takes an answer asked for before whatever it's refreshing for.
+    const r: Answer = await (have ? fetchView(to, have.etag) : (!quiet && ahead.get(to)) || fetchView(to)).catch(() => ({ status: 0 }));
+    // Fresh only on loom's own word: nothing new, a page, or a move; not an error, nor the worker's saved copy.
+    if (showing.current === to && (r.status === 304 || r.redirect || (r.data && !r.savedAt && r.status < 400))) setFresh(true);
+    // Not reached: once more in a moment, so a blip doesn't leave its actions waiting until the next refresh.
+    else if (!r.status && showing.current === to && !quiet) setTimeout(() => { if (showing.current === to) void load(to, false, true); }, 3000);
     if (!quiet && showing.current === to) { setWaiting(false); setPending(null); }
     if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
       if (!r.redirect) keep(to, r);

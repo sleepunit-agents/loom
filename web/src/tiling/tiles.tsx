@@ -90,7 +90,8 @@ type Doc = Document & { startViewTransition?: (update: () => void) => VT };
 const vtName = (prefix: string, id: string) => `${prefix}-${id.replace(/[^a-z0-9]/gi, (c) => `_${c.charCodeAt(0).toString(16)}`)}`;
 // Asking ahead (page.ts prefetch; t-1925 F): a row, a link or a dock key the pointer rests on, or focus reaches, is
 // fetched then. A desktop's alone: a phone has no pointer to rest. Never the sign-in, an asset, an action, Find, a
-// one-time message, or an Inbox item (opening one reads it).
+// one-time message, an Inbox item (opening one reads it), or Activity (looking moves its "new since").
+// A mouse's only: a finger's touch starting a scroll isn't a rest.
 /** Two at a time at most, and never a page this tab has a copy of. */
 function prefetch(to: string): void {
   if (hasKept(to) || ahead.has(to) || ahead.size > 1) return;
@@ -103,9 +104,9 @@ const aheadOf = (e: Event) => {
   const el = (e.target as Element | null)?.closest?.('[data-prefetch], a[href]');
   const href = el?.getAttribute('data-prefetch') ?? el?.getAttribute('href');
   clearTimeout(aheadTimer);
-  if (!href || href[0] === '#') return;
+  if (!href || href[0] === '#' || (e.type === 'pointerover' && (e as PointerEvent).pointerType !== 'mouse')) return;
   const u = new URL(href, location.href);
-  if (!sameOrigin(u) || u.hash || /^\/(login|logout|app\/|act\/|find$)/.test(u.pathname) || u.searchParams.has('i') || u.searchParams.has('_flash')) return;
+  if (!sameOrigin(u) || u.hash || /^\/(login|logout|app\/|act\/|find$|activity$)/.test(u.pathname) || u.searchParams.has('i') || u.searchParams.has('_flash')) return;
   // A short rest first: a pointer crossing a list on its way elsewhere asks for nothing.
   aheadTimer = window.setTimeout(() => prefetch(u.pathname + u.search), e.type === 'focusin' ? 0 : 70);
 };
