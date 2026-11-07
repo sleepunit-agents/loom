@@ -148,7 +148,9 @@ export interface Dashboard {
     /** Its Today opens on a profile (Jonathan, 2026-10-29): its id, the identity's opening paragraph, today's count. */
     id?: string; bio?: string; today?: number; waiting?: number; active?: string;
     /** Its window's (t-1925 D): the household's description of it, may this viewer edit it, asked to write one, working now. */
-    about?: string; edit?: boolean; asked?: boolean; working?: boolean };
+    about?: string; edit?: boolean; asked?: boolean; working?: boolean;
+    /** What it is on, while working (t-1945): its newest doing row, and a link where loom has one (a Comms thread, for its member). */
+    on?: { text: string; href?: string } };
   asks: HomeAsk[];
   /** A household's Home: what needs the owner is in the Inbox; Home says how much, and links there, instead of the cards. */
   inbox?: { count: number; first?: string };

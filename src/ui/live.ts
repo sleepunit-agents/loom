@@ -9,7 +9,8 @@
  * - an agent's memory, knowledge or people, or the household file, written (a watch on loom's data folder; not
  *   the sessions file or SQLite's read index, which a page load itself touches, or a piece's store, which its
  *   own page load may write);
- * - a piece's manifest answering differently (asked every WATCH_MS while an app is open, per scope that's open);
+ * - a piece's manifest answering differently (asked every WATCH_MS while an app is open, per scope that's open,
+ *   and at once when a piece says it moved: POST /api/loom/pieces/changed writes PIECES_TICK, t-1945);
  *   its kept pages are dropped then too;
  * - any action, through loom (`changed()`, from the handler).
  * Changes close together go out as one, at most every GAP_MS. A comment every BEAT_MS keeps proxies from
@@ -21,9 +22,10 @@
  * household file) goes to household owners. And the pieces are asked one round at a time, at most every
  * TICK_MIN_MS however many apps open, with at most STREAMS_PER_SESSION streams per signed-in browser.
  */
-import { watch, type FSWatcher } from 'node:fs';
+import { watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { join } from 'node:path';
 import type { ServerResponse } from 'node:http';
-import { clearPiecePages, refreshPieceManifests } from './pieces.js';
+import { clearPiecePages, expirePieceManifests, refreshPieceManifests } from './pieces.js';
 
 export const WATCH_MS = 15_000;
 const BEAT_MS = 25_000;
@@ -32,6 +34,8 @@ const TICK_MIN_MS = 5_000;
 export const STREAMS_PER_SESSION = 6;
 /** What a change looks like in loom's data folder: an agent's stores and the household file. */
 const DATA = /(^|\/)(memories|knowledge|people)\.db(-wal)?$|(^|\/)household\.json$/;
+/** The file a piece's word that its manifest moved is left in (a time only), in loom's data folder: every listener sees it. */
+export const PIECES_TICK = 'pieces.tick';
 
 /** What an app's owner may see: every agent (`*`, a household owner), or theirs. */
 export type Sees = '*' | readonly string[];
@@ -44,6 +48,7 @@ const pending = new Map<Client, NodeJS.Timeout>();
 const lastSent = new WeakMap<Client, number>();
 let ticked = 0;
 let tickRunning: Promise<void> | undefined;
+let tickAgain = false;
 let whose: (file: string) => Sees = () => '*';
 const seen = new Map<string, Map<string, string>>();
 
@@ -88,9 +93,13 @@ function drop(c: Client): void {
 const scopeOf = (env: NodeJS.ProcessEnv) => `${env.LOOM_SCOPE ?? ''}\0${env.LOOM_OWNER_SCOPE ?? ''}`;
 
 /** Ask each open scope's pieces again (one round at a time); a piece that answers differently is that scope's change. */
-function tick(): Promise<void> {
-  if (tickRunning || Date.now() - ticked < TICK_MIN_MS) return tickRunning ?? Promise.resolve();
+function tick(now = false): Promise<void> {
+  // A piece's own word (now): asked at once, or straight after the round under way, whatever the last round's time.
+  if (now && tickRunning) { tickAgain = true; return tickRunning; }
+  if (tickRunning || (!now && Date.now() - ticked < TICK_MIN_MS)) return tickRunning ?? Promise.resolve();
   ticked = Date.now();
+  // A piece's own word: every scope's kept answer goes (the open ones are asked again just below).
+  if (now) expirePieceManifests();
   tickRunning = (async () => {
     const scopes = new Map<string, NodeJS.ProcessEnv>();
     for (const c of clients) scopes.set(scopeOf(c.env), c.env);
@@ -103,7 +112,7 @@ function tick(): Promise<void> {
       seen.set(scope, now);
       if (moved) for (const c of clients) if (scopeOf(c.env) === scope) nudge(c);
     }
-  })().finally(() => { tickRunning = undefined; });
+  })().finally(() => { tickRunning = undefined; if (tickAgain) { tickAgain = false; void tick(true); } });
   return tickRunning;
 }
 
@@ -123,7 +132,12 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
   clients.add(c);
   res.on('close', () => drop(c));
   if (!watcher) {
-    try { watcher = watch(home, { recursive: true }, (_e, file) => { if (file && DATA.test(String(file))) changed(whose(String(file))); }); } catch { /* no watch here: the pieces' tick and actions still tell */ }
+    try {
+      watcher = watch(home, { recursive: true }, (_e, file) => {
+        if (String(file) === PIECES_TICK) void tick(true);
+        else if (file && DATA.test(String(file))) changed(whose(String(file)));
+      });
+    } catch { /* no watch here: the pieces' tick and actions still tell */ }
   }
   ticking ??= setInterval(() => void tick(), WATCH_MS);
   beating ??= setInterval(() => { for (const x of clients) send(x, ': beat\n\n'); }, BEAT_MS);
@@ -132,3 +146,8 @@ export function openStream(res: ServerResponse, env: NodeJS.ProcessEnv, home: st
 
 /** How many apps are listening (for tests). */
 export const listening = () => clients.size;
+
+/** A piece's word that its manifest moved (POST /api/loom/pieces/changed): every listener's open apps ask it again now. */
+export function piecesMoved(home: string): void {
+  try { writeFileSync(join(home, PIECES_TICK), String(Date.now())); } catch { /* the pieces' own tick finds it */ }
+}

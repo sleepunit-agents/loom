@@ -69,6 +69,8 @@
   background:color-mix(in srgb,var(--t) 7%,var(--v-beige-2));box-shadow:inset 2px 0 0 var(--t);font-size:14px;line-height:1.35;color:var(--v-text)}
 :root[data-look] .loom-agent__line[data-tone="bad"]{--t:var(--loom-bad)} :root[data-look] .loom-agent__line[data-tone="warn"]{--t:var(--loom-warn)}
 :root[data-look] .loom-agent__line>span{display:grid;gap:2px;min-width:0}
+:root[data-look] .loom-agent__thread{pointer-events:auto;position:relative;z-index:1;color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:3px}
+:root[data-look] .loom-agent__thread:is(:hover,:focus-visible){text-decoration-color:currentColor}
 :root[data-look] .loom-agent__text{overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 :root[data-look] .loom-agent__where{font-size:12px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 :root[data-look] .loom-agent__foot{grid-area:foot;display:flex;align-items:center;gap:12px;min-width:0;padding:10px 18px;border-top:1px solid var(--v-border);

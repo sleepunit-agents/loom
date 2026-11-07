@@ -86,6 +86,14 @@ type ManifestResult = PieceInfo | PieceSkip;
 interface CacheEntry { at: number; result: Promise<ManifestResult>; refreshing?: boolean }
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Forget every scope's manifests, not their pages (live.ts, on a piece's own word that it moved): an agent's window
+ * asks with its own scope, which no open stream may be refreshing, and its next look must not be a minute old.
+ */
+export function expirePieceManifests(): void {
+  cache.clear();
+}
+
 export function clearPieceCache(path?: string): void {
   if (path === undefined) { cache.clear(); pages.clear(); return; }
   // Every scope's answer for that piece, and every page of it.

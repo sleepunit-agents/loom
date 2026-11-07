@@ -20,7 +20,8 @@ import type { Shell } from './loom';
 import type { WidgetKind } from './tiling/fit';
 import { WidgetOpsContext } from './tiling/morph';
 
-type Doing = { text: string; kind?: string; where?: string; since?: string };
+/** One thing it has going; `href` is loom's link to it (a Comms thread, only for its member: handler.ts atWorkFor). */
+type Doing = { text: string; kind?: string; where?: string; since?: string; href?: string };
 export type Card = Mark & { id: string; state?: 'working' | 'available' | 'unavailable' | 'broken'; reason?: string;
   doing?: Doing[]; problems?: { text: string; tone: 'bad' | 'warn' }[]; seen?: { at: string; where: string } };
 export type DeskHomeData = { headline: string; needs: number; need?: InboxItem; stack?: InboxItem[]; cards: Card[] };
@@ -161,6 +162,8 @@ export function Agent({ c, chat, compact }: { c: Card; chat?: () => void; compac
   const line = problems[0]?.text ?? doing[0]?.text ?? c.reason;
   const where = problems.length ? undefined : doing[0] ? [doing[0].where, doing[0].since && ago(doing[0].since)].filter(Boolean).join(' · ') : undefined;
   const label = `${c.label}: ${EYEBROW(c)}${line ? `. ${line}` : ''}`;
+  // What it's on, a tap away: the thread it's working in (t-1945).
+  const thread = problems.length ? undefined : doing[0]?.href;
   // On the tiled desktop the card and its window are one app at two sizes (t-1925 D): opening it grows the card into
   // the window beside it (tiling/morph.ts), and the window's Shrink folds it back.
   const ops = useContext(WidgetOpsContext);
@@ -174,14 +177,17 @@ export function Agent({ c, chat, compact }: { c: Card; chat?: () => void; compac
       </span>
       {line && <Arrive as="span" k={`line:${c.id}\0${line}`} className="loom-agent__line" {...(problems[0] ? { 'data-tone': problems[0].tone } : {})}>
         <AnimatedIcon name={iconFor(problems.length ? 'triangle-alert' : doing.length ? 'activity' : 'moon')} size="sm" />
-        <span><span className="loom-agent__text">{line}</span>{where && <span className="loom-agent__where">{where}</span>}</span></Arrive>}
+        <span><span className="loom-agent__text">{thread
+          ? <a href={thread} className="loom-agent__thread" onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); e.stopPropagation(); go(thread); }}>{line}</a>
+          : line}</span>{where && <span className="loom-agent__where">{where}</span>}</span></Arrive>}
       <span className="loom-agent__foot">
         <span>Open {c.label}</span>
         {c.seen && <span className="loom-data">seen {ago(c.seen.at)}{c.seen.where ? ` · ${c.seen.where}` : ''}</span>}
       </span>
   </>);
   const style = { '--acc': lit } as React.CSSProperties;
-  if (!chat && !compact && !ops) return <a href={`/a/${c.id}`} className="loom-w loom-w--agent" style={style} data-state={state} onClick={open} aria-label={label}>{inner}</a>;
+  // A link can't sit inside a link: with its thread's, the card is a panel under its own (as a tile's is).
+  if (!chat && !compact && !ops && !thread) return <a href={`/a/${c.id}`} className="loom-w loom-w--agent" style={style} data-state={state} onClick={open} aria-label={label}>{inner}</a>;
   return (
     <div className="loom-w loom-w--agent" style={style} data-state={state} data-compact={compact || undefined}>
       <a href={`/a/${c.id}`} className="loom-agent__open" onClick={open} aria-label={label} />

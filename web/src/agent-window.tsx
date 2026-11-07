@@ -71,6 +71,9 @@ export default function AgentWindow({ head, chrome, icon, rail, children }: {
               {working ? <span className="loom-agentwin__pill" data-tone="live"><i aria-hidden />working</span>
                 : waiting ? <span className="loom-agentwin__pill" data-tone="warn"><i aria-hidden />{waiting} waiting on you</span> : null}
             </div>
+            {working && head.on && <p className="loom-aghead__on">
+              {head.on.href ? <a href={head.on.href} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); env.go(head.on!.href!); }}>{head.on.text}</a> : head.on.text}
+            </p>}
             <Description head={head} send={(a, f) => loom.send(a, f)} csrf={chrome?.csrf ?? ''} go={env.go} />
             {facts && <p className="loom-aghead__facts loom-data">{facts}</p>}
           </div>
