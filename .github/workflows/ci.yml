@@ -5,11 +5,15 @@ on:
     branches: [main, 'hat-v*']
   pull_request:
     branches: [main, 'hat-v*']
+  # The merge queue (t-1935) tests each group before it lands on main.
+  merge_group:
 
 permissions:
   contents: read
 
 jobs:
+  # PR-only: it reads the PR's head and base. In the merge queue it is
+  # skipped (a skip counts as passing), since the PR was checked already.
   signoff:
     name: DCO sign-off
     if: github.event_name == 'pull_request'
