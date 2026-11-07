@@ -19,6 +19,7 @@ import { agentDir, createToken, loadHousehold, type Household } from '../househo
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { openThread } from '../comms.js';
+import { knowledgeWrite } from '../tools/knowledge-write.js';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
@@ -54,6 +55,9 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     const conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:making', label: 't-738: sonarr', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
     writeDigest(art, { conversation: conv, run: 'r1' }, { summary: 'Checked.', needs_owner: { ask: 'Can you check the Sonarr disk when you get a minute?', why: 'It is nearly full.', refs: ['t-738'] } } as never);
     thread = openThread(h, process.env, h.members[0], { agent: 'art', id: 'cccccccccccccccc', text: 'A thread with Art' }).thread.id;
+    // A page with a long name, for the bar's name cut short.
+    await knowledgeWrite(art, { slug: 'long-name', title: 'The nightly backup of every household machine runs at three and keeps fourteen days of copies offsite',
+      domain: 'ours/homelab', body: 'A body.', citations: [{ claim: 'x', source_kind: 'docs', source_locator: 'https://example.com', excerpt: 'x' }] } as never, 'art');
     handle = await startHttpServer({ contextDir: join(home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -105,6 +109,68 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
       expect(bar.width).toBeGreaterThan(w - 60);
       expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(w);
       await p.context().close();
+    });
+  }
+
+  // The bar's two dividers (Jonathan, 2026-11-06): a quiet dot between the clock and the name, and between LOOM//OS and
+  // the glyphs, the bar's gap on both sides; and the ticker in the room between the two groups, its words in the middle
+  // when they fit; when they don't, running across the whole room (or, under reduced motion, cut short from its left).
+  const bar = (p: Page) => p.evaluate(() => {
+    const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
+    const tick = document.querySelector('.loom-pbar--one .loom-tick')!;
+    const words = document.createRange(); words.selectNodeContents(tick.querySelector('.loom-tick__line')!);
+    const seps = [...document.querySelectorAll('.loom-pbar--one .loom-pbar__sep')];
+    // the first glyph's own box (the icons' row starts with the icon's padding)
+    const icon = document.querySelector('.loom-pbar--one .loom-sys__icons > *')!;
+    return { clock: r('.loom-pbar--one .loom-sys__clock'), name: r('.loom-pbar__name'), tick: r('.loom-pbar--one .loom-tick'), brand: r('.loom-pbar__brand'),
+      icon: icon.getBoundingClientRect(), gap: parseFloat(getComputedStyle(document.querySelector('.loom-pbar--one')!).columnGap),
+      words: words.getBoundingClientRect(), run: tick.hasAttribute('data-run'), fits: tick.hasAttribute('data-fits'),
+      seps: seps.map((e) => ({ box: e.getBoundingClientRect(), text: e.textContent, hidden: e.getAttribute('aria-hidden'), color: getComputedStyle(e).color })),
+      quiet: getComputedStyle(document.querySelector('.loom-tick__part')!, '::before').color };
+  });
+  const checkBar = async (p: Page, why: string) => {
+    const b = await bar(p);
+    // two dots, hidden from a screen reader, in the quiet colour, each the bar's gap from what's either side
+    expect(b.seps.map((x) => [x.text, x.hidden])).toEqual([['·', 'true'], ['·', 'true']]);
+    for (const x of b.seps) expect(x.color).toBe(b.quiet);
+    const [one, two] = b.seps.map((x) => x.box);
+    expect(b.gap).toBeGreaterThan(0);
+    for (const [before, dot, after] of [[b.clock, one, b.name], [b.brand, two, b.icon]]) {
+      expect(Math.abs(dot.x - (before.x + before.width) - b.gap), why).toBeLessThanOrEqual(1);
+      expect(Math.abs(after.x - (dot.x + dot.width) - b.gap), why).toBeLessThanOrEqual(1);
+    }
+    // the ticker is the room between the name and LOOM//OS, the bar's gap from each
+    const left = b.name.x + b.name.width, right = b.brand.x;
+    expect(Math.abs(b.tick.x - left - b.gap), why).toBeLessThanOrEqual(1);
+    expect(Math.abs(right - (b.tick.x + b.tick.width) - b.gap), why).toBeLessThanOrEqual(1);
+    return { ...b, left, right };
+  };
+  for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
+    for (const [what, path] of [['a short name', '/inbox?t=*inbox'], ['a long name', '/knowledge/long-name?t=*knowledge']]) {
+      it(`at ${w}, ${what}: a dot after the clock and before the glyphs, spaced alike; the ticker's words in the middle of the room`, async () => {
+        const p = await screen(w, hgt, { path });
+        await p.evaluate(() => document.fonts.ready);
+        await p.waitForTimeout(300);
+        const b = await checkBar(p, `${w} ${what}`);
+        // its words fit at every size here (2 agents): they stand in the middle of the room
+        expect(b.fits).toBe(true);
+        expect(Math.abs((b.words.x + b.words.width / 2) - (b.left + b.right) / 2)).toBeLessThanOrEqual(3);
+        await p.context().close();
+      });
+    }
+    it(`at ${w}, a ticker too long for its room: it runs across the whole room, or under reduced motion starts at its left`, async () => {
+      // its words made wide before the first paint (the ticker measures them when it's drawn)
+      const init = `document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style'); s.textContent = '.loom-tick__part{letter-spacing:4em}'; document.head.appendChild(s); });`;
+      for (const motion of ['no-preference', 'reduce'] as const) {
+        const p = await screen(w, hgt, { path: '/inbox?t=*inbox', motion, init });
+        await p.evaluate(() => document.fonts.ready);
+        await p.waitForTimeout(300);
+        const b = await checkBar(p, `${w} ${motion}`);
+        expect(b.fits).toBe(false);
+        expect(b.run).toBe(motion === 'no-preference');
+        if (motion === 'reduce') expect(Math.abs(b.words.x - b.tick.x)).toBeLessThanOrEqual(1);
+        await p.context().close();
+      }
     });
   }
 

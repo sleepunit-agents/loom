@@ -338,7 +338,10 @@ gets no error.
 
 One line across the top, as a desktop OS has (Jonathan, 2026-11-06): loom's clock and the focused page's name on the
 left; LOOM//OS, the status glyphs (`system-bar.tsx`) and the needs-you count on the right; the ticker scrolls between
-them (`phone-bar.tsx` `PhoneBar` with its `clock` and `status`, drawn as one line by `desk.css` `.loom-pbar--one`).
+them (`phone-bar.tsx` `PhoneBar` with its `clock` and `status`, drawn as one line by `desk.css` `.loom-pbar--one`). A
+quiet dot (`·`, hidden from screen readers) stands between the clock and the name, and between LOOM//OS and the glyphs.
+The ticker fills the room between the two groups: when its words fit they stand in its middle; when they don't they run
+across all of it (or, under reduced motion, are cut short from its left).
 Narrower than a desktop, a screen keeps two (loom's status bar over the phone's), and a phone its own one.
 
 ## Interaction
@@ -640,7 +643,9 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
 
 22. **One bar** (`src/ui/desk-chrome.integration.test.ts`). At 1024, 1280 and 1920 the bar is one line, 34 px tall: the
     clock, then the name, on the left; LOOM//OS, then the glyphs, on the right; the ticker between, wider than either
-    side's gap. No second bar; at 1023, two. iOS's home-screen app shows neither loom's clock nor its glyphs. A saved
+    side's gap; a dot after the clock and one before the glyphs, `aria-hidden`, in the quiet colour, the bar's gap on
+    both sides; the ticker's words, when they fit, within 3 px of the room's middle, and when they're too long, running
+    (or under reduced motion starting at its left). No second bar; at 1023, two. iOS's home-screen app shows neither loom's clock nor its glyphs. A saved
     layout or an address with `ticker` in its widgets loads without it, and the
     device's copy is written again without it; the seed has no ticker; the desktop draws no headline. 390 px: the
     phone's bar, no clock, no glyphs.
@@ -667,6 +672,12 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     Open, Close; Home, All apps and your own key none. An Inbox row: Open (picks it in the reader) and Mark done (posts `needs-done`, the row leaves); with
     a reply kept unsent, Open only. On a tile's page and on a link in it, a `contextmenu` is left to the browser
     (`defaultPrevented` false).
+25. **A page inside its frame** (`src/ui/desk-window-overflow.integration.test.ts`). For every app a test household has
+    and a piece's long page, one window at 1280×800, 1920×1080 and 1280×600, and each as one of three tiles at 1280:
+    nothing in a tile's body or its sheet layer is seen past the frame's ring (each box clipped as it's shown), at the
+    body's top, middle and bottom; neither the frame nor the page ever scrolls, after focus too. The ring is drawn over
+    the page, the frame's width, in the app's tint when focused, and a control keeps the look's focus outline. A sheet
+    in a narrow tile on a short screen; Home's widgets and the launcher held to their own boxes.
 
 ## Build, in phases
 
