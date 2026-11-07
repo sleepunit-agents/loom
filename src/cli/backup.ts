@@ -7,6 +7,7 @@ import {
   tickBackup, validateSettings,
 } from '../backup.js';
 import type { IOStreams } from './io.js';
+import { parseVerb, type VerbOptions } from './args.js';
 
 const USAGE = `Usage: loom backup set --target git:<url>|path:<dir> --recipient <age1…> [--recipient …] [--at HH:MM] [--tz Zone] [--keep N] [--require piece]…
        loom backup run            export, drill and write one now
@@ -27,27 +28,32 @@ A target that holds anything loom didn't write is refused. --require names a pie
 whose part every bundle must hold (a fresh machine has no last good bundle to go by).
 `;
 
-function flag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i >= 0 ? args[i + 1] : undefined;
-}
-
-function all(args: string[], name: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < args.length; i++) if (args[i] === name && args[i + 1] !== undefined) out.push(args[++i]);
-  return out;
-}
+const OPTIONS: Record<string, VerbOptions> = {
+  set: {
+    target: { type: 'string' }, recipient: { type: 'string', multiple: true }, at: { type: 'string' }, tz: { type: 'string' },
+    keep: { type: 'string' }, require: { type: 'string', multiple: true },
+  },
+  off: {}, run: {}, tick: {}, status: {},
+};
 
 export async function runBackupCli(argv: string[], io: IOStreams): Promise<number> {
   const [verb, ...rest] = argv;
-  if (!verb || verb === '--help' || verb === '-h' || rest.includes('--help')) { io.stdout(USAGE); return verb ? 0 : 2; }
+  if (!verb || verb === '--help' || verb === '-h') { io.stdout(USAGE); return verb ? 0 : 2; }
+  if (!Object.hasOwn(OPTIONS, verb)) { io.stderr(USAGE); return 2; }
+  // Every flag parsed, and --help answered, before anything is set, cleared or run (t-1950).
+  const p = parseVerb(rest, OPTIONS[verb], USAGE, io, { keepJson: verb === 'run' || verb === 'status' });
+  if (typeof p === 'number') return p;
+  if (p.positionals.length) { io.stderr(`loom backup: unexpected argument ${p.positionals[0]}\n${USAGE}`); return 2; }
+  const one = (k: string) => (typeof p.values[k] === 'string' ? p.values[k] as string : undefined);
+  const all = (k: string) => (p.values[k] as string[] | undefined) ?? [];
+  const json = p.values.json === true;
   const home = householdHome(io.env);
   const h = loadHousehold(home);
   if (!h) { io.stderr(`loom backup: there's no household at ${home} (household.json)\n`); return 1; }
   try {
     switch (verb) {
       case 'set': {
-        const s = validateSettings({ target: flag(rest, '--target'), recipients: all(rest, '--recipient'), at: flag(rest, '--at'), tz: flag(rest, '--tz'), keep: flag(rest, '--keep'), required: all(rest, '--require') },
+        const s = validateSettings({ target: one('target'), recipients: all('recipient'), at: one('at'), tz: one('tz'), keep: one('keep'), required: all('require') },
           Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
         const { drillRecipient } = setSettings(h, s, io.env);
         io.stdout(`The nightly backup is set: ${targetString(s.target)}, each day at ${s.at} (${s.tz}), keeping ${s.keep} nights and each month's first.\n`
@@ -64,7 +70,7 @@ export async function runBackupCli(argv: string[], io: IOStreams): Promise<numbe
         if (!lock) { io.stderr('loom backup: a backup is running already\n'); return 1; }
         try {
           const r = await runBackup({ home, env: io.env });
-          if (rest.includes('--json')) { io.stdout(JSON.stringify(r, null, 2) + '\n'); return r.ok ? 0 : 1; }
+          if (json) { io.stdout(JSON.stringify(r, null, 2) + '\n'); return r.ok ? 0 : 1; }
           if (r.ok) io.stdout(`Backed up: ${r.name} (${((r.bytes ?? 0) / 1048576).toFixed(1)} MB${r.parts && r.parts > 1 ? `, in ${r.parts} parts` : ''}), drill passed${r.drill && r.drill.tries > 1 ? ' on its second try' : ''}${r.commit ? `, pushed ${r.commit.slice(0, 12)}` : ''}.\n`);
           else io.stderr(`The backup failed: ${r.why}\n`);
           return r.ok ? 0 : 1;
@@ -79,7 +85,7 @@ export async function runBackupCli(argv: string[], io: IOStreams): Promise<numbe
         const { settings: s, problem } = readSettings(h);
         const st = readState(home);
         const p = backupProblem(h);
-        if (rest.includes('--json')) {
+        if (json) {
           io.stdout(JSON.stringify({ settings: s ? { ...s, target: targetString(s.target) } : null, problem: problem ?? null, now: p, lastGood: st.lastGood ?? null, runs: st.runs.slice(0, 5),
             due: s ? isDue(s, st, Date.now()) : false, lastSlot: s ? new Date(lastSlot(s, Date.now())).toISOString() : null }, null, 2) + '\n');
           return 0;

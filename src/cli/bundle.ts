@@ -4,7 +4,7 @@
  */
 import { householdHome } from '../household.js';
 import { BundleError, drillBundle, exportBundle, restoreBundle, sizeOf } from '../bundle.js';
-import { extractGlobalFlags, resolveEnv } from './args.js';
+import { extractGlobalFlags, parseVerb, resolveEnv } from './args.js';
 import type { IOStreams } from './io.js';
 
 const EXPORT_USAGE = `Usage: loom export --to <file> --recipient <age1…> [--recipient …]
@@ -36,18 +36,14 @@ A restore trusts what's in the bundle: age encrypts but doesn't prove who made
 the file, so only restore bundles you made.
 `;
 
-function flags(args: string[], name: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i < args.length; i++) if (args[i] === name && args[i + 1]) out.push(args[++i]);
-  return out;
-}
-
 export async function runExport(rawArgv: string[], io: IOStreams): Promise<number> {
-  const { flags: global, rest: argv } = extractGlobalFlags(rawArgv);
-  if (argv.includes('--help') || argv.includes('-h')) { io.stdout(EXPORT_USAGE); return 0; }
-  const to = flags(argv, '--to')[0];
-  const recipients = flags(argv, '--recipient');
-  if (!to || recipients.length === 0) { io.stderr(EXPORT_USAGE); return 2; }
+  const { flags: global } = extractGlobalFlags(rawArgv);
+  // Every flag parsed, and --help answered, before anything is written (t-1950).
+  const p = parseVerb(rawArgv, { to: { type: 'string' }, recipient: { type: 'string', multiple: true } }, EXPORT_USAGE, io);
+  if (typeof p === 'number') return p;
+  const to = p.values.to as string | undefined;
+  const recipients = (p.values.recipient as string[] | undefined) ?? [];
+  if (!to || recipients.length === 0 || p.positionals.length) { io.stderr(EXPORT_USAGE); return 2; }
   const { contextDir } = resolveEnv(global, io.env);
   try {
     const m = await exportBundle({ contextDir, to, recipients, env: io.env });
@@ -63,13 +59,17 @@ export async function runExport(rawArgv: string[], io: IOStreams): Promise<numbe
 }
 
 export async function runRestore(rawArgv: string[], io: IOStreams): Promise<number> {
-  const { flags: global, rest: argv } = extractGlobalFlags(rawArgv);
-  if (argv.includes('--help') || argv.includes('-h')) { io.stdout(RESTORE_USAGE); return 0; }
-  const file = argv.find((a, i) => !a.startsWith('--') && (i === 0 || !argv[i - 1].startsWith('--')));
-  const identity = flags(argv, '--identity')[0];
-  if (!file || !identity) { io.stderr(RESTORE_USAGE); return 2; }
+  const { flags: global } = extractGlobalFlags(rawArgv);
+  // Every flag parsed, and --help answered, before anything is laid down (t-1950).
+  const p = parseVerb(rawArgv, {
+    identity: { type: 'string' }, to: { type: 'string' }, drill: { type: 'boolean' }, 'no-install': { type: 'boolean' }, 'allow-outside': { type: 'boolean' },
+  }, RESTORE_USAGE, io);
+  if (typeof p === 'number') return p;
+  const [file, ...extra] = p.positionals;
+  const identity = p.values.identity as string | undefined;
+  if (!file || !identity || extra.length) { io.stderr(RESTORE_USAGE); return 2; }
   try {
-    if (argv.includes('--drill')) {
+    if (p.values.drill) {
       const { contextDir } = resolveEnv(global, io.env);
       const r = await drillBundle({ file, identity, contextDir, env: io.env });
       if (r.ok) {
@@ -80,8 +80,8 @@ export async function runRestore(rawArgv: string[], io: IOStreams): Promise<numb
       for (const d of r.differences) io.stdout(`  ${d.what}: live ${JSON.stringify(d.live)}, restored ${JSON.stringify(d.restored)}\n`);
       return 1;
     }
-    const home = flags(argv, '--to')[0] ?? householdHome(io.env);
-    const r = await restoreBundle({ file, identity, home, env: io.env, ...(argv.includes('--no-install') ? { install: false as const } : {}), allowOutside: argv.includes('--allow-outside') });
+    const home = (p.values.to as string | undefined) ?? householdHome(io.env);
+    const r = await restoreBundle({ file, identity, home, env: io.env, ...(p.values['no-install'] ? { install: false as const } : {}), allowOutside: p.values['allow-outside'] === true });
     io.stdout(`Restored the household (${r.manifest.household.agents.join(', ')}, bundle from ${r.manifest.created}) to ${r.home}.\n`);
     for (const p of r.installs) io.stdout(`  installed ${p.name} at ${p.commit.slice(0, 7)}: ${p.installed ? 'yes' : `no (${p.reason})`}\n`);
     for (const p of r.pieces) io.stdout(`  piece ${p.name}: ${p.restored ? 'restored' : `not restored (${p.reason})`}\n`);
