@@ -1779,13 +1779,15 @@ esac
       return r.json();
     };
 
-    // Jonathan's phone sees every session, itself first, each its own row with its own Sign out.
+    // Jonathan's phone sees every session, itself first (signed out with the page's own Sign out), each other one its
+    // own row with its own Sign out.
     const seen = await rows(phone);
-    expect(seen[0]).toMatchObject({ text: 'Chrome on Android (this device)', meta: expect.stringMatching(/^signed in .* · as page sign-in links$/),
-      act: { action: 'session-revoke', label: 'Sign out', tone: 'danger', confirm: 'This signs you out here.' } });
+    expect(seen[0]).toMatchObject({ text: 'Chrome on Android (this device)', meta: expect.stringMatching(/^signed in .* · with a sign-in link as page sign-in links$/) });
+    expect(seen[0].act).toBeUndefined();
     const shot = seen.find((r) => r.text.includes('screenshots t-1871'))!;
-    expect(shot).toMatchObject({ text: 'HeadlessChrome on Linux “screenshots t-1871”', act: { fields: { ref: expect.stringMatching(/^[0-9a-f]{16}$/) } } });
-    expect(seen.some((r) => r.meta.endsWith('as loren · page'))).toBe(true);
+    expect(shot).toMatchObject({ text: 'HeadlessChrome on Linux “screenshots t-1871”',
+      act: { action: 'session-revoke', label: 'Sign out', tone: 'danger', confirm: expect.stringMatching(/stays signed in/), fields: { ref: expect.stringMatching(/^[0-9a-f]{16}$/) } } });
+    expect(seen.some((r) => r.meta.endsWith('with a token as loren · page'))).toBe(true);
     // Its ref is no cookie: the session's id is nowhere on the page.
     expect(JSON.stringify(await data(phone, '/account'))).not.toContain(shots.split('=')[1]);
 
@@ -1797,6 +1799,10 @@ esac
     const forged = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
       body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
     expect(forged.status).toBe(403);
+    // Nor anyone signed out.
+    const nobody = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
+    expect(nobody.status).toBe(401);
     expect(await signedIn(shots)).toBe(true);
     // Nor a ref that's not a session's, or too short to name one.
     expect(await act(phone, { ref: '0'.repeat(16) })).toMatchObject({ ok: false });
@@ -1816,7 +1822,7 @@ esac
     const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } } as unknown as Parameters<typeof runSessions>[1];
     expect(await runSessions(['list'], io)).toBe(0);
     const line = out.join('').split('\n').find((l) => l.includes('loren · page'))!;
-    expect(line).toMatch(/^[0-9a-f]{16}  a browser/);
+    expect(line).toMatch(/^[0-9a-f]{16}  a browser .* by token, signed in .* UTC  \(loren · page\)$/);
     expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(0);
     expect(await signedIn(lorens)).toBe(false);
     expect(await signedIn(phone)).toBe(true);

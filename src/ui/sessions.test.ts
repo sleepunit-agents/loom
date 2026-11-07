@@ -138,6 +138,41 @@ describe('one session ended alone (t-1871)', () => {
     expect(s.get(id)).not.toBeNull();
   });
 
+  it('a ref two sessions share ends neither', () => {
+    const s = new SessionStore(dir);
+    s.create(links);
+    // Two stored sessions whose hashes start alike (a collision in 64 bits: written by hand, as no real pair would be).
+    const f = JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8'));
+    const ref = 'ab'.repeat(8);
+    f.sessions = { [`${ref}${'0'.repeat(48)}`]: { issuedAt: 1, secret: links.toString('hex') }, [`${ref}${'1'.repeat(48)}`]: { issuedAt: 2, secret: links.toString('hex') } };
+    writeFileSync(join(dir, 'ui-sessions.json'), JSON.stringify(f));
+    expect(s.revoke(ref)).toBe(false);
+    expect(s.list()).toHaveLength(2);
+  });
+
+  it('noting last use never waits on the lock nor fails, and never writes outside it', () => {
+    const s = new SessionStore(dir);
+    const id = s.create(links, 1000);
+    // Another process holds the lock: the page's request goes on at once, and last use waits for a later one.
+    writeFileSync(join(dir, 'ui-sessions.lock'), '1', { flag: 'wx' });
+    const t0 = Date.now();
+    expect(() => s.touch(id, 2000)).not.toThrow();
+    expect(Date.now() - t0).toBeLessThan(200);
+    expect(s.list()[0].seenAt).toBeUndefined();
+    rmSync(join(dir, 'ui-sessions.lock'));
+    // Under the lock it keeps what others wrote (a preference set between).
+    s.setPrefs({ look: 'daylight' });
+    s.touch(id, 2000);
+    expect(s.list()[0].seenAt).toBe(2000);
+    expect(s.prefs().look).toBe('daylight');
+  });
+
+  it('how it signed in is its own field: a link labelled "passkey" is still a link', () => {
+    const s = new SessionStore(dir);
+    s.create(links, 1000, { label: 'passkey', via: 'link' });
+    expect(s.list()[0]).toMatchObject({ label: 'passkey', via: 'link' });
+  });
+
   it('revoking one stops its notifications, and only its', () => {
     const s = new SessionStore(dir);
     const a = s.create(links), b = s.create(links);
@@ -152,6 +187,8 @@ describe('one session ended alone (t-1871)', () => {
     const code = s.createLink(links, 600, 1000, '  screenshots\nt-1871\u0007  ');
     expect(s.spendLink(code, 1001)).toEqual({ secret: links, label: 'screenshots t-1871' });
     expect(s.spendLink(code, 1001)).toBeNull();
+    const bidi = s.createLink(links, 600, 1000, 'ok\u202Eevil\u200B\u2066x');
+    expect(s.spendLink(bidi, 1001)!.label).toBe('ok evil x');
     const id = s.create(links, 1000, { label: 'x'.repeat(200) });
     expect(s.list().find((x) => x.ref === s.refOf(id))!.label).toHaveLength(60);
   });

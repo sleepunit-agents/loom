@@ -1,6 +1,6 @@
 /**
- * `loom household` and `loom token` (docs/specs/household.md). Local only:
- * neither is a remote verb, so they never run through /cli. They read and
+ * `loom household`, `loom token` and `loom sessions` (docs/specs/household.md,
+ * docs/specs/passkeys.md). Local only: none is a remote verb, so they never run through /cli. They read and
  * write $LOOM_HOME (default ~/.config/loom) directly.
  */
 import { readFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { iconSetName, iconSetOf, installedIconSets, installIconSet, setIcon, use
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
-import { REF, sessionStore, signinLink } from '../ui/sessions.js';
+import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -236,8 +236,9 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
 
 const SESSIONS_USAGE = `Usage: loom sessions <command>
 
-  list                     Every browser signed in to the page: its ref, what it is, the label its
-                           sign-in link had, when it signed in and was last used, and its token
+  list                     Every browser session on file: its ref, what it is, the label its sign-in
+                           link had, how it signed in, when it signed in and was last used (UTC), its
+                           token, and "(ended)" for one past its 30 days or whose token is revoked
   revoke <ref>             Sign that one browser out at once (and stop its notifications); every
                            other session, its token's too, stays signed in
 
@@ -247,6 +248,15 @@ browser before it closes; \`loom sessions revoke\` is for one that didn't.
 
 /** \`loom sessions\` (t-1871): the page's browser sessions, each ended alone. Local only, like \`loom token\`. */
 export async function runSessions(argv: string[], io: IOStreams): Promise<number> {
+  try {
+    return sessionsCommand(argv, io);
+  } catch (err) {
+    if (err instanceof HouseholdError) { io.stderr(`${err.message}\n`); return 1; }
+    throw err;
+  }
+}
+
+function sessionsCommand(argv: string[], io: IOStreams): number {
   const [sub, ...rest] = argv;
   if (sub === 'list') {
     const h = need(io);
@@ -254,11 +264,13 @@ export async function runSessions(argv: string[], io: IOStreams): Promise<number
     const tokens = loadTokens(h.home);
     const all = sessionStore(h.home).list();
     if (!all.length) { io.stdout('No browser is signed in.\n'); return 0; }
-    const at = (s: number) => new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' ');
+    const at = (s: number) => `${new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' ')}`;
+    const nowS = Math.floor(Date.now() / 1000);
     for (const x of all) {
       const t = tokens.find((k) => k.sha256 === x.secret.toString('hex'));
       const token = !t ? 'no token' : `${t.label}${t.revoked ? ' (revoked)' : expired(t) ? ' (expired)' : ''}`;
-      io.stdout(`${x.ref}  ${(x.device ?? 'a browser').padEnd(24)}  ${x.label ? `"${x.label}"  ` : ''}signed in ${at(x.issuedAt)}${x.seenAt ? `, last used ${at(x.seenAt)}` : ''}  (${token})\n`);
+      const ended = nowS - x.issuedAt > SESSION_MAX_AGE_S || !t || !!t.revoked || expired(t);
+      io.stdout(`${x.ref}  ${(x.device ?? 'a browser').padEnd(24)}  ${x.label ? `"${x.label}"  ` : ''}${x.via ? `by ${x.via}, ` : ''}signed in ${at(x.issuedAt)}${x.seenAt ? `, last used ${at(x.seenAt)}` : ''} UTC  (${token})${ended ? '  (ended)' : ''}\n`);
     }
     return 0;
   }

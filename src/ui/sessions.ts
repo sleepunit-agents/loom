@@ -29,22 +29,26 @@ import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, 
 
 export interface Session { issuedAt: number; secret: Buffer }
 
-interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string }
+/** How a session signed in: a token pasted, a one-time link, a passkey. */
+export type Via = 'token' | 'link' | 'passkey';
+interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string; via?: Via }
 interface Link { expires: number; secret: string; label?: string }
 
 /** A session as the owner sees it (the Account page, `loom sessions`): never its id, only its ref. */
-export interface SessionInfo { ref: string; issuedAt: number; seenAt?: number; device?: string; label?: string; secret: Buffer }
-/** How it was opened, beside its token: what the browser said it was, and the label its sign-in link carried. */
-export interface SessionMeta { device?: string; label?: string }
+export interface SessionInfo { ref: string; issuedAt: number; seenAt?: number; device?: string; label?: string; via?: Via; secret: Buffer }
+/** How it was opened, beside its token: what the browser said it was, how it signed in, and the label its sign-in link carried. */
+interface SessionMeta { device?: string; label?: string; via?: Via }
 /** A session's ref: the start of its id's hash, enough to name one among MAX_SESSIONS, useless as a cookie. */
 export const REF = /^[0-9a-f]{16}$/;
 /** A session's last use is written at most this often (each write is a locked rewrite of the file). */
 export const SEEN_EVERY_S = 5 * 60;
 /** A sign-in link's label: a few plain words, kept with the session it opens. */
-export const LABEL_MAX = 60;
+const LABEL_MAX = 60;
+/** A label or a device name, as kept: plain words, at most LABEL_MAX characters. */
 const cleanLabel = (l: string | undefined) => {
-  // Printable words only: no control characters, so a label can't break a terminal's line or the file.
-  const t = (l ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, LABEL_MAX);
+  // Printable words only: no control characters, so a label can't break a terminal's line or the file, and no invisible
+  // or direction-changing ones (zero-width, bidi overrides), so it can't pass itself off as another row's words.
+  const t = (l ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX).trim();
   return t || undefined;
 };
 
@@ -194,6 +198,8 @@ export const OPENED_MAX = 500;
 export const MAX_PASSKEYS = 20;
 
 export const MAX_SESSIONS = 50;
+/** How long a session lasts from sign-in (its cookie's Max-Age; handler.ts ends it past this). */
+export const SESSION_MAX_AGE_S = 30 * 24 * 3600;
 const LOCK_WAIT_MS = 2000;
 const LOCK_STALE_MS = 10_000;
 
@@ -234,8 +240,9 @@ export class SessionStore {
     return { v: 1, sessions: {} };
   }
 
-  private withLock<T>(fn: (f: File) => T): T {
-    const deadline = Date.now() + LOCK_WAIT_MS;
+  /** Read, change and write the file under its lock, waiting up to `waitMs` for it (0: one try, no wait). */
+  private withLock<T>(fn: (f: File) => T, waitMs = LOCK_WAIT_MS): T {
+    const deadline = Date.now() + waitMs;
     let fd: number | undefined;
     while (fd === undefined) {
       try {
@@ -243,7 +250,7 @@ export class SessionStore {
       } catch {
         // A holder that died leaves its lock; one this old is gone.
         try { if (Date.now() - statSync(this.lockFile).mtimeMs > LOCK_STALE_MS) rmSync(this.lockFile, { force: true }); } catch { /* raced */ }
-        if (Date.now() > deadline) throw new Error('ui sessions are locked');
+        if (Date.now() >= deadline) throw new Error('ui sessions are locked');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
     }
@@ -266,8 +273,9 @@ export class SessionStore {
     const id = randomBytes(32).toString('hex');
     const device = cleanLabel(meta.device);
     const label = cleanLabel(meta.label);
+    const via = meta.via && ['token', 'link', 'passkey'].includes(meta.via) ? meta.via : undefined;
     this.withLock((f) => {
-      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}) };
+      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}), ...(via ? { via } : {}) };
       const keys = Object.keys(f.sessions).sort((a, b) => f.sessions[a].issuedAt - f.sessions[b].issuedAt);
       for (const k of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) delete f.sessions[k];
     });
@@ -307,12 +315,12 @@ export class SessionStore {
     });
   }
 
-  /** Every session, newest first, as the owner sees them: refs, never ids. */
+  /** Every session, the most recently used first (else the most recently signed in), as the owner sees them: refs, never ids. */
   list(): SessionInfo[] {
     if (!existsSync(this.file)) return [];
     return Object.entries(this.read().sessions)
       .map(([k, s]) => ({ ref: k.slice(0, 16), issuedAt: s.issuedAt, ...(s.seenAt ? { seenAt: s.seenAt } : {}), ...(s.device ? { device: s.device } : {}),
-        ...(s.label ? { label: s.label } : {}), secret: Buffer.from(s.secret, 'hex') }))
+        ...(s.label ? { label: s.label } : {}), ...(s.via ? { via: s.via } : {}), secret: Buffer.from(s.secret, 'hex') }))
       .sort((a, b) => (b.seenAt ?? b.issuedAt) - (a.seenAt ?? a.issuedAt));
   }
 
@@ -321,14 +329,19 @@ export class SessionStore {
     return hashId(id).slice(0, 16);
   }
 
-  /** The session was used now: noted at most every SEEN_EVERY_S, so a busy page doesn't rewrite the file each request. */
+  /**
+   * The session was used now: noted at most every SEEN_EVERY_S, so a busy page doesn't rewrite the file each request.
+   * Under the lock like every write (a write outside it would lose another process's), but one try and no wait: when
+   * another process holds it, this request goes on and a later one notes it. Last used is a nicety; a page never
+   * waits or fails for it.
+   */
   touch(id: string, nowS = Math.floor(Date.now() / 1000)): void {
     const key = hashId(id);
     const s = this.read().sessions[key];
     if (!s || (s.seenAt !== undefined && nowS - s.seenAt < SEEN_EVERY_S)) return;
     try {
-      this.withLock((f) => { if (f.sessions[key]) f.sessions[key].seenAt = nowS; });
-    } catch { /* locked: next time */ }
+      this.withLock((f) => { if (f.sessions[key]) f.sessions[key].seenAt = nowS; }, 0);
+    } catch { /* locked: a later request notes it */ }
   }
 
   /**
@@ -340,9 +353,7 @@ export class SessionStore {
     return this.withLock((f) => {
       const keys = Object.keys(f.sessions).filter((k) => k.startsWith(ref));
       if (keys.length !== 1) return false;
-      const [key] = keys;
-      delete f.sessions[key];
-      for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
+      drop(f, keys[0]);
       return true;
     });
   }
@@ -557,12 +568,14 @@ export class SessionStore {
   delete(id: string): void {
     if (!existsSync(this.file)) return;
     const key = hashId(id);
-    this.withLock((f) => {
-      delete f.sessions[key];
-      // Signing out stops this browser's notifications too.
-      for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
-    });
+    this.withLock((f) => drop(f, key));
   }
+}
+
+/** A session gone (signed out, or revoked by its ref), and with it this browser's notifications, and no one else's. */
+function drop(f: File, key: string): void {
+  delete f.sessions[key];
+  for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
 }
 
 const stores = new Map<string, SessionStore>();

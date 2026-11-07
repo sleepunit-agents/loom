@@ -45,7 +45,7 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { deviceOf, prefsOf, REF, sessionStore, signinLink, type Done, type SessionInfo } from './sessions.js';
+import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionStore, signinLink, type Done, type SessionInfo } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, swJs } from './pwa.js';
@@ -83,7 +83,7 @@ const PASSKEY_MAX_BYTES = 16 * 1024;
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
 const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
 const ACT_MAX_BYTES = 64 * 1024;
-const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
+const COOKIE_MAX_AGE_S = SESSION_MAX_AGE_S;
 const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
@@ -1162,7 +1162,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send(res, 401, 'text/html; charset=utf-8', renderLoginLink(code, 'That link is used up, expired, or its token was revoked.'));
     }
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(spent.secret, undefined, { device: deviceOf(req.headers['user-agent']), label: spent.label })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(spent.secret, undefined, { device: deviceOf(req.headers['user-agent']), label: spent.label, via: 'link' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1170,7 +1170,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // Passkeys work only on the page at LOOM_PUBLIC_URL (their origin): offer one there.
   const onRp = !!rp && req.headers.host === new URL(rp.origin).host;
   const sessionCookie = (secret: Buffer) =>
-    `${COOKIE}=${storeFor(opts).create(secret, undefined, { device: deviceOf(req.headers['user-agent']), label: 'passkey' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
+    `${COOKIE}=${storeFor(opts).create(secret, undefined, { device: deviceOf(req.headers['user-agent']), via: 'passkey' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
 
   // loom's own fonts (OFL, assets/fonts): the two the page uses, nothing else.
   const font = /^\/fonts\/(instrument-sans-latin-wght-normal|jetbrains-mono-latin-wght-normal)\.woff2$/.exec(pathname);
@@ -1251,7 +1251,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']) })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1519,9 +1519,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = CORE;
       const ref = fields.ref ?? '';
       const mine = REF.test(ref) && sessionsOf(opts, who?.member).some((x) => x.ref === ref);
-      const here = who?.kind === 'session' && storeFor(opts).refOf(who.cookie) === ref;
       result = mine && storeFor(opts).revoke(ref)
-        ? { ok: true, message: here ? 'Signed out here.' : 'Signed out. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
+        ? { ok: true, message: 'Signed out. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such session: it may have ended already.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
       source = CORE;
@@ -1667,16 +1666,18 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const all = sessionsOf(opts, who?.member);
       const list = [...all.filter((x) => x.ref === here), ...all.filter((x) => x.ref !== here)];
       const tokens = hh ? loadTokens(hh.home) : [];
-      const via = (x: SessionInfo) => tokens.find((t) => t.sha256 === x.secret.toString('hex'))?.label;
+      const tokenOf = (x: SessionInfo) => tokens.find((t) => t.sha256 === x.secret.toString('hex'))?.label;
       return { id: 'sessions', title: 'Signed in', blocks: list.length ? [
         { type: 'list', items: list.slice(0, 200).map((x) => {
           const isHere = x.ref === here;
-          const name = [x.device ?? 'A browser', x.label && x.label !== 'passkey' ? `“${x.label}”` : ''].filter(Boolean).join(' ');
-          const how = x.label === 'passkey' ? 'with a passkey' : via(x) ? `as ${via(x)}` : '';
+          const name = [x.device ?? 'A browser', x.label ? `“${x.label}”` : ''].filter(Boolean).join(' ');
+          const token = tokenOf(x);
+          const how = [x.via === 'passkey' ? 'with a passkey' : x.via === 'link' ? 'with a sign-in link' : x.via === 'token' ? 'with a token' : '', token ? `as ${token}` : ''].filter(Boolean).join(' ');
           return { text: isHere ? `${name} (this device)` : name,
             meta: [`signed in ${when(x.issuedAt)}`, x.seenAt ? `last used ${when(x.seenAt)}` : '', how].filter(Boolean).join(' · '),
-            act: { action: 'session-revoke', label: 'Sign out', tone: 'danger' as const,
-              confirm: isHere ? 'This signs you out here.' : 'That browser is signed out at once. Every other session, yours here too, stays signed in.', fields: { ref: x.ref } } };
+            // This device signs out with the page's own Sign out, which also clears what it kept for offline (/logout).
+            ...(isHere ? {} : { act: { action: 'session-revoke', label: 'Sign out', tone: 'danger' as const,
+              confirm: 'That browser is signed out at once. Every other session, yours here too, stays signed in.', fields: { ref: x.ref } } }) };
         }) },
         { type: 'text', text: 'Each browser signed in to this page. Signing one out ends only that one.', tone: 'muted' },
       ] : [{ type: 'text', text: 'Only a script with a token is signed in.', tone: 'muted' }] };

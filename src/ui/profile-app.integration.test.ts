@@ -1,8 +1,8 @@
 /**
  * Profile (t-1925 G; web/src/account.tsx): who you are and how you sign in. Jonathan approved the mock with one change,
  * the name top LEFT: in a big window two columns, the left starting with the name card then the passkeys, whose header
- * carries a normal-size "Add a passkey" (never a full-width bar); the right their agents, notifications, another device
- * and Sign out. In a ~480 px tile and on a 390 px phone, one column, the name first. Measured, not eyeballed: bounding
+ * carries a normal-size "Add a passkey" (never a full-width bar); the right their agents, notifications, the browsers
+ * signed in (t-1871), another device and Sign out. In a ~480 px tile and on a 390 px phone, one column, the name first. Measured, not eyeballed: bounding
  * boxes in real Chrome, Neon Noir. The head is real data: People's name, the month of the oldest owner token; an agent
  * owner sees only their agents and passkeys.
  *
@@ -210,13 +210,17 @@ describe.runIf(built && chrome)('Profile', () => {
     const titles = await pane.locator('.loom-acct__row-title').allInnerTexts();
     expect(titles[0]).toMatch(/\(this device\)$/);
     expect(titles).toContain('HeadlessChrome on Linux “screenshots t-1871”');
-    // Every row's Sign out is inside the phone's width, on its own row; nothing scrolls sideways.
+    // This device has no Sign out of its own (the page's Sign out is that); every other row's is inside its row and the
+    // phone's width, a tap's size; nothing scrolls sideways.
     const rows = pane.locator('.loom-acct__row');
-    expect(await rows.count()).toBe(titles.length);
-    for (const r of await rows.all()) {
+    expect(await rows.first().locator('button').count()).toBe(0);
+    for (const r of (await rows.all()).slice(1)) {
       const b = (await r.locator('button', { hasText: 'Sign out' }).boundingBox())!;
       const rb = (await r.boundingBox())!;
+      expect(b.x).toBeGreaterThanOrEqual(rb.x);
       expect(b.x + b.width).toBeLessThanOrEqual(Math.min(rb.x + rb.width, 390) + 0.5);
+      expect(b.y).toBeGreaterThanOrEqual(rb.y);
+      expect(b.y + b.height).toBeLessThanOrEqual(rb.y + rb.height + 0.5);
       expect(b.height).toBeGreaterThanOrEqual(28);
     }
     expect(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
