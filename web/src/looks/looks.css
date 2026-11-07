@@ -248,8 +248,9 @@ html.loom-ios-app:root[data-look] .loom-top--one :is(.loom-sys__clock,.loom-sys_
 /* a quiet dot between the clock and the name, and between LOOM//OS and the glyphs (Jonathan, 2026-11-06); the bar's
    gap on both sides of it */
 :root[data-look] .loom-top--one .loom-pbar__sep{flex:none;color:var(--v-text-3)}
-/* the ticker fills the room between the two groups: its words, when they fit, stand in its middle */
-:root[data-look] .loom-top--one .loom-tick:not([data-run]) .loom-tick__line{text-align:center}
+/* the ticker fills the room between the two groups: its words, when they fit, stand in its middle (cut short under
+   reduced motion, they start at its left, so the ellipsis is where they end) */
+:root[data-look] .loom-top--one .loom-tick[data-fits] .loom-tick__line{text-align:center}
 /* the ticker: its words fit, they stand still (cut with an ellipsis if they must be); they don't, they loop, slowly */
 :root[data-look] .loom-tick{position:relative;flex:1 1 0;min-width:24px;overflow:hidden;letter-spacing:.02em}
 :root[data-look] .loom-tick__track{display:block;width:100%}

@@ -5,18 +5,20 @@
 :root[data-look] .loom-desk main.loom-tiles-main{padding-bottom:var(--desk-dock)}
 :root[data-look] .loom-tiles{position:relative;flex:1 1 auto;min-height:0;width:100%}
 :root[data-look] .loom-tiles>.loom-desk-home{height:100%}
-:root[data-look] .loom-tile{--cut:10px;--frame:1px;--ring:var(--v-border);position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
+:root[data-look] .loom-tile{--cut:10px;--frame:1px;--tile-ring:var(--v-border);position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
   background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);
   clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
-:root[data-look] .loom-tile[data-focused]{--ring:var(--t)}
+:root[data-look] .loom-tile[data-focused]{--tile-ring:var(--t)}
 /* The frame's ring (its edge in the app's tint when focused, and the cut corner's diagonal) is drawn over everything
    in the tile, its page and its sheets alike: an inset shadow on the tile itself paints under its children, so a page's
    panel ran over the bottom edge (Jonathan, 2026-11-06: Activity). The page sits inside the ring (.loom-tile__body's
-   margin), so nothing it draws is under it either; desk-window-overflow.integration.test.ts holds both. */
+   margin), so nothing it draws is under it either; desk-window-overflow.integration.test.ts holds both. Only the
+   bottom-right cut gets a diagonal: the top-left one is the strip's key, filled in the tint. Its own name: --ring is
+   the focus outline's (tokens.css). */
 :root[data-look] .loom-tile::after{content:"";position:absolute;inset:0;z-index:21;pointer-events:none;
-  box-shadow:inset 0 0 0 var(--frame) var(--ring);
-  background:linear-gradient(135deg,transparent calc(50% - .75px),var(--ring) calc(50% - .75px) calc(50% + .75px),transparent calc(50% + .75px)) right bottom/var(--cut) var(--cut) no-repeat}
-:root[data-look] .loom-tile[data-focused]::after{box-shadow:inset 0 0 0 var(--frame) var(--ring),inset 0 0 0 calc(var(--frame) + 1px) color-mix(in srgb,var(--t) 30%,transparent)}
+  box-shadow:inset 0 0 0 var(--frame) var(--tile-ring);
+  background:linear-gradient(135deg,transparent calc(50% - .75px),var(--tile-ring) calc(50% - .75px) calc(50% + .75px),transparent calc(50% + .75px)) right bottom/var(--cut) var(--cut) no-repeat}
+:root[data-look] .loom-tile[data-focused]::after{box-shadow:inset 0 0 0 var(--frame) var(--tile-ring),inset 0 0 0 calc(var(--frame) + 1px) color-mix(in srgb,var(--t) 30%,transparent)}
 :root[data-look] .loom-tile__bar{-webkit-user-select:none;user-select:none;flex:none;display:flex;align-items:center;gap:6px;height:32px;padding-right:4px;
   border-bottom:1px solid color-mix(in srgb,var(--t) 35%,var(--v-border));background:color-mix(in srgb,var(--t) 5%,var(--loom-bar,var(--v-structure)))}
 :root[data-look] .loom-tile[data-focused] .loom-tile__bar{background:color-mix(in srgb,var(--t) 14%,var(--loom-bar,var(--v-structure)))}

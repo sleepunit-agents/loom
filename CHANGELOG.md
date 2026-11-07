@@ -485,6 +485,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A window's page ran over its frame** (t-1925; Jonathan, 2026-11-06). A tile's ring was a shadow under its page, and
+  the page reached the tile's edge, so a page with a background (Activity's feed) covered the bottom edge, and every
+  page sat a pixel over the sides. The ring is drawn over the page and its sheets now (the cut corner's diagonal too),
+  and the page sits inside it; `src/ui/desk-window-overflow.integration.test.ts` holds every app to it.
+- **The desktop's bar** (Jonathan, 2026-11-06): a quiet dot between the clock and the page's name, and between LOOM//OS
+  and the status glyphs; the ticker's words stand in the middle of the room between them when they fit.
 - **A restore could write into the live machine's piece stores** (t-1846). The backup drill (loom#488) restored
   into a throwaway home and handed taskstore its part with the caller's environment, which named the live store;
   it didn't write there only by luck. A restore now hands a part only to a piece it installed into the home it

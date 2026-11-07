@@ -6,6 +6,11 @@
  * (what's scrolled away is clipped, so each box is measured as it's seen); the page scrolls inside its body, never the
  * frame and never the page. The widgets' cards and the launcher are held to their own boxes the same way.
  *
+ * What it holds, plainly: a tile's body clips what's in it, so a page's own boxes are measured as the body shows them;
+ * what fails is the body (or the sheet layer) reaching past the ring, something that escapes the body's clip (a fixed
+ * box, a sheet), or a frame or page that scrolls. Take the body's clip away and every app's own boxes are measured
+ * against the ring too. The ring itself (drawn over the page, in the tint, the frame's width) has its own check.
+ *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
 import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest';
@@ -151,7 +156,12 @@ describe.runIf(built && chrome)('a tile\'s page stays inside its frame', () => {
     await p.evaluate(() => document.fonts.ready);
     await p.waitForTimeout(400);
   };
-  const frames = (p: Page) => p.evaluate(outside, ['.loom-tile', '.loom-tile__body, .loom-tile__layer', 1] as const) as unknown as Promise<string[]>;
+  /** The frame's ring, as the CSS says it (--frame): the inner edge is that far in. */
+  const frames = async (p: Page) => {
+    const inset = await p.locator('.loom-tile').first().evaluate((t) => parseFloat(getComputedStyle(t).getPropertyValue('--frame')));
+    vexpect(inset).toBeGreaterThan(0);
+    return p.evaluate(outside, ['.loom-tile', '.loom-tile__body, .loom-tile__layer', inset] as const) as unknown as Promise<string[]>;
+  };
   /** Neither the page nor any frame scrolls; only a tile's body does. */
   const still = (p: Page) => p.evaluate(() => {
     const d = document.scrollingElement!;
@@ -194,28 +204,32 @@ describe.runIf(built && chrome)('a tile\'s page stays inside its frame', () => {
       const p = await screen(1280, 800, '/activity?t=*activity', look);
       await settled(p, 1);
       expect(await audit(p), look).toEqual([]);
-      // and its frame's ring is drawn over its page: the overlay sits above the body
-      const z = await p.locator('.loom-tile').evaluate((t) => getComputedStyle(t, '::after').zIndex);
-      expect(Number(z)).toBeGreaterThan(20);
+      // its frame's ring is drawn over its page and its sheets (an overlay above both), the frame's width, in the app's
+      // tint while it's focused; a control inside keeps the look's own focus outline (--ring is the outline's, not the frame's)
+      const ring = await p.locator('.loom-tile').evaluate((t) => {
+        const tint = document.createElement('i'); tint.style.color = 'var(--t)'; t.appendChild(tint);
+        const c = getComputedStyle(tint).color; tint.remove();
+        const a = getComputedStyle(t, '::after');
+        const ctl = t.querySelector('.loom-tile__body button, .loom-tile__body a[href]')!;
+        return { z: Number(a.zIndex), shadow: a.boxShadow, tint: c, focused: t.hasAttribute('data-focused'), frame: getComputedStyle(t).getPropertyValue('--frame').trim(),
+          outline: getComputedStyle(ctl).getPropertyValue('--ring').trim(), rootOutline: getComputedStyle(document.documentElement).getPropertyValue('--ring').trim() };
+      });
+      expect(ring.focused).toBe(true);
+      expect(ring.z).toBeGreaterThan(20); // the tile's sheet layer is 20
+      expect(ring.shadow).toContain(`${ring.tint} 0px 0px 0px ${ring.frame} inset`);
+      expect(ring.outline).toBe(ring.rootOutline);
       await p.context().close();
     }
   });
 
-  // ---- narrow tiles: three apps and the widgets' rail at 1280 ----
-  const NARROW: Array<[string, string]> = [
-    ['/activity?t=*activity,knowledge,people&w=needs,art', 'Activity, Knowledge, People'],
-    ['/inbox?t=*inbox,comms,lots&w=needs,art', 'Inbox, Comms, a piece'],
-    ['/projects?t=*projects,members,art&w=needs,art', 'Projects, Members, Art'],
-    ['/pieces?t=*pieces,appearance,accessibility&w=needs,art', 'Pieces, Appearance, Accessibility'],
-  ];
-  for (const [path, what] of NARROW) {
-    it(`three apps at 1280×800 (${what}): the narrow tiles keep inside their frames`, async () => {
-      const p = await screen(1280, 800, path);
-      await settled(p);
-      // as many as fit (an app too wide for what's left goes to the dock), at least two
-      expect(await p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
-      const widths = await p.$$eval('.loom-tile', (ts) => ts.map((t) => t.getBoundingClientRect().width));
-      expect(Math.min(...widths)).toBeLessThan(560);
+  // ---- narrow tiles: each app beside two others and the widgets' rail at 1280, three tiles of 395 to 537 px ----
+  for (const [label, path, name] of APPS) {
+    const others = name === 'people' || name === 'knowledge' ? 'activity,pieces' : 'people,knowledge';
+    it(`${label}, one of three tiles at 1280×800: the narrow tile keeps inside its frame`, async () => {
+      const p = await screen(1280, 800, `${path}?t=*${name},${others}&w=needs,art`);
+      await settled(p, 3);
+      const own = await p.locator('.loom-tile[data-focused]').evaluate((t) => t.getBoundingClientRect().width);
+      expect(own).toBeLessThan(560);
       expect(await audit(p)).toEqual([]);
       await p.context().close();
     });

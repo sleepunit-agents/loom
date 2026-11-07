@@ -113,48 +113,65 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   }
 
   // The bar's two dividers (Jonathan, 2026-11-06): a quiet dot between the clock and the name, and between LOOM//OS and
-  // the glyphs, the bar's gap on both sides; and the ticker in the room between the two groups, its words in the middle.
+  // the glyphs, the bar's gap on both sides; and the ticker in the room between the two groups, its words in the middle
+  // when they fit; when they don't, running across the whole room (or, under reduced motion, cut short from its left).
   const bar = (p: Page) => p.evaluate(() => {
     const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
     const tick = document.querySelector('.loom-pbar--one .loom-tick')!;
     const words = document.createRange(); words.selectNodeContents(tick.querySelector('.loom-tick__line')!);
     const seps = [...document.querySelectorAll('.loom-pbar--one .loom-pbar__sep')];
+    // the first glyph's own box (the icons' row starts with the icon's padding)
+    const icon = document.querySelector('.loom-pbar--one .loom-sys__icons > *')!;
     return { clock: r('.loom-pbar--one .loom-sys__clock'), name: r('.loom-pbar__name'), tick: r('.loom-pbar--one .loom-tick'), brand: r('.loom-pbar__brand'),
-      icons: r('.loom-pbar--one .loom-sys__icons'), words: words.getBoundingClientRect(), run: tick.hasAttribute('data-run'),
+      icon: icon.getBoundingClientRect(), gap: parseFloat(getComputedStyle(document.querySelector('.loom-pbar--one')!).columnGap),
+      words: words.getBoundingClientRect(), run: tick.hasAttribute('data-run'), fits: tick.hasAttribute('data-fits'),
       seps: seps.map((e) => ({ box: e.getBoundingClientRect(), text: e.textContent, hidden: e.getAttribute('aria-hidden'), color: getComputedStyle(e).color })),
       quiet: getComputedStyle(document.querySelector('.loom-tick__part')!, '::before').color };
   });
+  const checkBar = async (p: Page, why: string) => {
+    const b = await bar(p);
+    // two dots, hidden from a screen reader, in the quiet colour, each the bar's gap from what's either side
+    expect(b.seps.map((x) => [x.text, x.hidden])).toEqual([['·', 'true'], ['·', 'true']]);
+    for (const x of b.seps) expect(x.color).toBe(b.quiet);
+    const [one, two] = b.seps.map((x) => x.box);
+    expect(b.gap).toBeGreaterThan(0);
+    for (const [before, dot, after] of [[b.clock, one, b.name], [b.brand, two, b.icon]]) {
+      expect(Math.abs(dot.x - (before.x + before.width) - b.gap), why).toBeLessThanOrEqual(1);
+      expect(Math.abs(after.x - (dot.x + dot.width) - b.gap), why).toBeLessThanOrEqual(1);
+    }
+    // the ticker is the room between the name and LOOM//OS, the bar's gap from each
+    const left = b.name.x + b.name.width, right = b.brand.x;
+    expect(Math.abs(b.tick.x - left - b.gap), why).toBeLessThanOrEqual(1);
+    expect(Math.abs(right - (b.tick.x + b.tick.width) - b.gap), why).toBeLessThanOrEqual(1);
+    return { ...b, left, right };
+  };
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     for (const [what, path] of [['a short name', '/inbox?t=*inbox'], ['a long name', '/knowledge/long-name?t=*knowledge']]) {
-      it(`at ${w}, ${what}: a dot after the clock and before the glyphs, spaced alike; the ticker's words in the middle of the room, or the room all its own`, async () => {
-        for (const motion of ['reduce', 'no-preference'] as const) {
-          const p = await screen(w, hgt, { path, motion });
-          await p.evaluate(() => document.fonts.ready);
-          await p.waitForTimeout(300);
-          const b = await bar(p);
-          // two dots, hidden from a screen reader, in the quiet colour, each with the same room on both sides
-          expect(b.seps.map((x) => [x.text, x.hidden])).toEqual([['·', 'true'], ['·', 'true']]);
-          for (const x of b.seps) expect(x.color).toBe(b.quiet);
-          const [one, two] = b.seps.map((x) => x.box);
-          expect(one.x).toBeGreaterThan(b.clock.x + b.clock.width); expect(one.x + one.width).toBeLessThan(b.name.x);
-          expect(Math.abs((one.x - (b.clock.x + b.clock.width)) - (b.name.x - (one.x + one.width)))).toBeLessThanOrEqual(1);
-          expect(two.x).toBeGreaterThan(b.brand.x + b.brand.width); expect(two.x + two.width).toBeLessThan(b.icons.x + 4);
-          expect(Math.abs((two.x - (b.brand.x + b.brand.width)) - (b.icons.x - (two.x + two.width)))).toBeLessThanOrEqual(4);
-          // the ticker is the room between the name and LOOM//OS, the bar's gap from each
-          const left = b.name.x + b.name.width, right = b.brand.x;
-          expect(Math.abs((b.tick.x - left) - (right - (b.tick.x + b.tick.width)))).toBeLessThanOrEqual(1);
-          if (!b.run && b.words.width < b.tick.width - 2) {
-            // its words fit: they stand in its middle
-            expect(Math.abs((b.words.x + b.words.width / 2) - (left + right) / 2), `${w} ${what} ${motion}`).toBeLessThanOrEqual(3);
-          } else {
-            // they don't: they run (or, with reduced motion, are cut) across the whole of it
-            expect(b.run).toBe(motion === 'no-preference');
-            expect(b.tick.width).toBeGreaterThan(right - left - 2 * 14 - 2);
-          }
-          await p.context().close();
-        }
+      it(`at ${w}, ${what}: a dot after the clock and before the glyphs, spaced alike; the ticker's words in the middle of the room`, async () => {
+        const p = await screen(w, hgt, { path });
+        await p.evaluate(() => document.fonts.ready);
+        await p.waitForTimeout(300);
+        const b = await checkBar(p, `${w} ${what}`);
+        // its words fit at every size here (2 agents): they stand in the middle of the room
+        expect(b.fits).toBe(true);
+        expect(Math.abs((b.words.x + b.words.width / 2) - (b.left + b.right) / 2)).toBeLessThanOrEqual(3);
+        await p.context().close();
       });
     }
+    it(`at ${w}, a ticker too long for its room: it runs across the whole room, or under reduced motion starts at its left`, async () => {
+      // its words made wide before the first paint (the ticker measures them when it's drawn)
+      const init = `document.addEventListener('DOMContentLoaded', () => { const s = document.createElement('style'); s.textContent = '.loom-tick__part{letter-spacing:4em}'; document.head.appendChild(s); });`;
+      for (const motion of ['no-preference', 'reduce'] as const) {
+        const p = await screen(w, hgt, { path: '/inbox?t=*inbox', motion, init });
+        await p.evaluate(() => document.fonts.ready);
+        await p.waitForTimeout(300);
+        const b = await checkBar(p, `${w} ${motion}`);
+        expect(b.fits).toBe(false);
+        expect(b.run).toBe(motion === 'no-preference');
+        if (motion === 'reduce') expect(Math.abs(b.words.x - b.tick.x)).toBeLessThanOrEqual(1);
+        await p.context().close();
+      }
+    });
   }
 
   it('under 1024 px, two bars as before (at 1023): loom\'s status bar over the phone\'s', async () => {

@@ -51,6 +51,8 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
   const reduced = useReduced();
   // The loop's length in seconds while it runs; 0 while its words fit (or it mustn't move).
   const [run, setRun] = useState(0);
+  // Its words fit the room (they stand in its middle, on a desktop's one bar); not while they run or are cut short.
+  const [fits, setFits] = useState(true);
   const running = useRef(false);
   running.current = run > 0;
   const [held, setHeld] = useState(false);
@@ -62,6 +64,7 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
     const measure = () => {
       // The words' own width: while it runs, a line carries the gap after it.
       const words = l.scrollWidth - (running.current ? TICK_GAP : 0);
+      setFits(words <= b.clientWidth + 1);
       setRun(!reduced && words > b.clientWidth + 1 ? Math.round(((words + TICK_GAP) / TICK_PX_S) * 10) / 10 : 0);
     };
     measure();
@@ -85,7 +88,7 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
   );
   const release = () => setHeld(false);
   return (
-    <div ref={box} className="loom-tick loom-data" data-run={run ? '' : undefined} data-paused={held || hidden ? '' : undefined}
+    <div ref={box} className="loom-tick loom-data" data-run={run ? '' : undefined} data-fits={fits && !run ? '' : undefined} data-paused={held || hidden ? '' : undefined}
       style={run ? ({ '--tick-s': `${run}s`, '--tick-gap': `${TICK_GAP}px` } as React.CSSProperties) : undefined}
       onPointerDown={() => setHeld(true)} onPointerUp={release} onPointerCancel={release} onPointerLeave={release}>
       <span className="loom-tick__track">{words(false)}{run > 0 && words(true)}</span>
