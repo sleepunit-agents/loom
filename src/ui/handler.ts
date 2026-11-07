@@ -48,7 +48,7 @@ import { resolveRepoRoot } from '../config.js';
 import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
-import { MANIFEST, SW_JS } from './pwa.js';
+import { MANIFEST, swJs } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
 import { agentName, coreAct, conversationPage, corePage, homePage, uiTimeZone } from './core.js';
@@ -184,12 +184,29 @@ const WEB_DIR = [new URL('../web/', import.meta.url), new URL('../../dist/web/',
   .map((u) => fileURLToPath(u)).find((d) => existsSync(join(d, 'index.html'))) ?? fileURLToPath(new URL('../web/', import.meta.url));
 const WEB_TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+/** The service worker for the app as built (pwa.ts swJs): its files under /app/assets/, read once per start. */
+let worker: string | undefined;
+function workerJs(): string {
+  if (worker === undefined) {
+    let built: string[] = [];
+    try { built = readdirSync(join(WEB_DIR, 'assets')).filter((f) => /\.(js|css|woff2)$/.test(f)).sort().map((f) => `/app/assets/${f}`); } catch { /* no build: nothing kept ahead */ }
+    worker = swJs(built);
+  }
+  return worker;
+}
+
 /** A file of the built app, or null: never outside its folder. */
 function webFile(rel: string): string | null {
   if (!rel || rel.includes('\0')) return null;
   const p = normalize(join(WEB_DIR, rel));
   if (!p.startsWith(WEB_DIR.endsWith(sep) ? WEB_DIR : WEB_DIR + sep)) return null;
   try { return existsSync(p) && statSync(p).isFile() ? p : null; } catch { return null; }
+}
+
+/** Whose a page's data is, for the service worker (pwa.ts): a hash of the session, never the session. A copy kept under
+ * another tag is another person's, and the worker drops every copy when the tag changes. */
+function whoTag(who: Who): Record<string, string> {
+  return who?.kind === 'session' ? { 'x-loom-who': createHash('sha256').update(`loom-who\0${who.cookie}`).digest('base64url').slice(0, 16) } : {};
 }
 
 /** Whose a live stream is, for its per-browser cap: the session, else the very credential presented (never a bucket two principals share). */
@@ -1163,7 +1180,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   }
   if (pathname === '/sw.js') {
     if (req.method !== 'GET') return send(res, 405, 'text/plain', 'method not allowed');
-    return send(res, 200, 'text/javascript; charset=utf-8', SW_JS, { 'cache-control': 'no-cache' });
+    return send(res, 200, 'text/javascript; charset=utf-8', workerJs(), { 'cache-control': 'no-cache' });
   }
   // The app (docs/specs/ui-app.md): its built files, public like /app.js (no data in them).
   if (pathname.startsWith('/app/')) {
@@ -1310,7 +1327,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
       agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
       // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
-      pieces: async () => forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope), session: streamOwner(req, who), headers: SECURITY_HEADERS, guard });
+      pieces: async () => forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope), session: streamOwner(req, who), headers: { ...SECURITY_HEADERS, ...whoTag(who) }, guard });
     return;
   }
 
@@ -1595,7 +1612,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return void res.end();
     }
     const out = encoded(req, Buffer.from(text));
-    res.writeHead(status, { 'content-type': 'application/json', ...SECURITY_HEADERS, etag, ...out.headers });
+    res.writeHead(status, { 'content-type': 'application/json', ...SECURITY_HEADERS, etag, ...whoTag(who), ...out.headers });
     res.end(out.body);
   };
 

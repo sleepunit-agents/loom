@@ -174,6 +174,13 @@ information as it updates, limited page refresh based on what needs to change, a
   that too waits 150 ms. Comms opens a pressed thread in its pane at once from what the list knows of it, the list
   lit and kept beside it; a draft in a thread's composer is kept for the tab, by thread. `scripts/nav-bench.ts`
   times the flows.
+- **Asked ahead, never acted on stale.** On a desktop a link, row or dock key the pointer rests on (70 ms) or
+  focus reaches is fetched into the tab's copy, two at a time (never an Inbox item: opening one reads it). A page
+  drawn from the tab's copy, or told by the live stream that something moved, offers its actions only once loom
+  has answered again, so an ask answered elsewhere never shows a live Allow.
+- **The worker keeps the app ahead** (`src/ui/pwa.ts`): every built script, stylesheet and font when it installs,
+  answered from the worker after that; pixel faces and icons by version. Kept pages are per session (`x-loom-who`)
+  and go at sign-out or when another session's answer arrives.
 - **Live.** One stream per open app (`GET /events`, server-sent events, `src/ui/live.ts`) says `change` when an
   agent's memory, knowledge or people, or the household file, is written; when a piece's manifest answers
   differently (asked every 15s while an app is open); and after any action. The app asks again for the page it

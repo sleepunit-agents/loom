@@ -257,6 +257,39 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
     } finally { await close(); }
   });
 
+  it('the worker keeps the built app ahead, keeps pages by session, and drops them at sign-out or another session', async () => {
+    const { p, close } = await desk('/inbox', { sw: true });
+    try {
+      await p.evaluate(() => navigator.serviceWorker.ready);
+      // The worker controls the page from its next load; then pages it answers are kept.
+      await p.reload();
+      await p.locator('.loom-tiles').waitFor();
+      await expect.poll(() => p.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+      const names = () => p.evaluate(() => caches.keys());
+      const count = (suffix: string) => p.evaluate(async (s) => {
+        const k = (await caches.keys()).find((n) => n.endsWith(s));
+        return k ? (await (await caches.open(k)).keys()).length : 0;
+      }, suffix);
+      // Every built script and stylesheet, kept before anything asked for them (Comms' chunk among them).
+      await expect.poll(async () => (await names()).some((n) => /-built-/.test(n))).toBe(true);
+      const builtUrls = () => p.evaluate(async () => (await (await caches.open((await caches.keys()).find((n) => /-built-/.test(n))!)).keys()).map((r) => new URL(r.url).pathname));
+      await expect.poll(async () => (await builtUrls()).some((u) => /^\/app\/assets\/comms-.*\.js$/.test(u))).toBe(true);
+      await expect.poll(() => count('-views')).toBeGreaterThan(0);
+      // Another session on this browser (signed in again, without signing out): the last one's copies go first.
+      const savedTimes = () => p.evaluate(async () => {
+        const c = await caches.open((await caches.keys()).find((n) => n.endsWith('-views'))!);
+        return Promise.all((await c.keys()).map(async (r) => Date.parse((await c.match(r))!.headers.get('x-loom-saved-at') ?? '0')));
+      });
+      const switched = Date.now();
+      await p.context().request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      await p.evaluate(() => fetch('/p/lots', { headers: { accept: 'application/json' } }).then((r) => r.text()));
+      await expect.poll(async () => { const t = await savedTimes(); return t.length > 0 && t.every((x) => x >= switched - 1000); }).toBe(true);
+      // Signing out: nothing of the session is left.
+      await p.goto(`${base}/login`);
+      await expect.poll(async () => (await names()).filter((n) => /-(pages|views|media)$/.test(n))).toEqual([]);
+    } finally { await close(); }
+  });
+
   it('an ask answered in one tile leaves the others by the live stream', async () => {
     setState({ count: 1, asks: [{ id: 'a-1', text: 'OK to ship the speed work tonight?', at: new Date().toISOString() }] });
     const { p, close } = await desk('/inbox');
