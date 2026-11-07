@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * loom's page as an installable app: the manifest, and a service worker
  * (served at /sw.js, so its scope is the whole page).
@@ -10,6 +11,11 @@
  * the time it was saved (x-loom-saved-at), which the app shows. Everything
  * else goes to the network untouched: actions (POST), MCP. A service worker
  * needs a secure context, so on a plain-http address there is none.
+ *
+ * The app's built files are kept the moment the worker installs (the server names them in the worker it sends,
+ * so a new build is a new worker) and answered from the worker after that; the household's pixel faces and icons
+ * (asked with ?v=) are kept by version. Copies of pages belong to a session: loom's answers carry a hash of it
+ * (x-loom-who), and an answer under another one drops every copy before it's kept (t-1925 F).
  *
  * What it never keeps: the sign-in pages, a page carrying a one-time message
  * (?_flash=, which can hold a token shown once), and anything that isn't a
@@ -39,20 +45,46 @@ export const MANIFEST = JSON.stringify({
 
 /** Bumped when what the worker keeps changes shape; an old cache is dropped on activate. */
 // loom-4 (t-1881): drops the copies of Comms threads' live reads the worker kept before it stopped keeping them.
-const VERSION = 'loom-4';
+// loom-5 (t-1925 F): the built app's files are kept ahead (BUILT) and answered from the worker; the household's pixel
+// art (faces, icons) is kept by version (MEDIA); and every copy of a page belongs to the session it came with.
+const VERSION = 'loom-5';
 
-export const SW_JS = `'use strict';
-const PAGES = '${VERSION}-pages', VIEWS = '${VERSION}-views', STATIC = '${VERSION}-static';
+/**
+ * The worker, for a build: `built` is the app's own files (/app/assets/…, named by their content), kept the moment the
+ * worker installs, so an app opened the first time opens without asking for them, and a new build is a new worker.
+ */
+export function swJs(built: readonly string[] = []): string {
+  const tag = createHash('sha256').update(built.join('\n')).digest('base64url').slice(0, 10);
+  return SW_JS.replace("'__BUILT__'", JSON.stringify(built)).replace('__TAG__', tag);
+}
+
+const SW_JS = `'use strict';
+const PAGES = '${VERSION}-pages', VIEWS = '${VERSION}-views', MEDIA = '${VERSION}-media', STATIC = '${VERSION}-static', BUILT = '${VERSION}-built-__TAG__';
 const SHELL = ['/app.js', '/fonts/instrument-sans-latin-wght-normal.woff2', '/fonts/jetbrains-mono-latin-wght-normal.woff2', '/icons/loom-32.png'];
+const AHEAD = '__BUILT__';
 const NEVER = /^\\/(login|logout)(\\/|$)/;
 self.addEventListener('install', (e) => {
   self.skipWaiting();
-  e.waitUntil(caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}));
+  e.waitUntil(Promise.all([caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}),
+    // One by one, so a file that's gone (a build replaced mid-install) doesn't keep the rest out.
+    caches.open(BUILT).then((c) => Promise.all(AHEAD.map((u) => c.match(u).then((hit) => hit || c.add(u)).catch(() => {}))))]));
 });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== PAGES && k !== VIEWS && k !== STATIC).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => ![PAGES, VIEWS, MEDIA, STATIC, BUILT].includes(k)).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
-const forget = () => Promise.all([caches.delete(PAGES), caches.delete(VIEWS)]);
+// What's a session's (its pages, the household's pictures) goes when it ends, or when another one shows up.
+const forget = () => Promise.all([caches.delete(PAGES), caches.delete(VIEWS), caches.delete(MEDIA)]);
+// Whose the kept copies are: the session tag loom's last answer carried (x-loom-who, a hash of the session, never it).
+const WHO = new URL('/__who', location.origin).href;
+async function whose(res) {
+  const tag = res.headers.get('x-loom-who');
+  if (!tag) return;
+  const c = await caches.open(STATIC);
+  const was = await c.match(WHO);
+  if (was && (await was.text()) === tag) return;
+  if (was) await forget();
+  await c.put(WHO, new Response(tag));
+}
 self.addEventListener('message', (e) => { if (e.data === 'forget') e.waitUntil(forget()); });
 // A page's key: its address without the one-time message.
 const keyOf = (u) => { const k = new URL(u); k.searchParams.delete('_flash'); return k.href; };
@@ -98,12 +130,22 @@ async function view(req) {
     return hit;
   }
   clearTimeout(slow);
+  await whose(res);
   if (res.status === 200 && res.type === 'basic' && (res.headers.get('content-type') || '').startsWith('application/json') && !NEVER.test(url.pathname) && !url.searchParams.has('_flash') && !res.redirected) {
     const body = await res.clone().arrayBuffer();
     const h = new Headers(res.headers);
     h.set('x-loom-saved-at', new Date().toISOString());
     caches.open(VIEWS).then((c) => c.put(keyOf(req.url), new Response(body, { status: 200, headers: h }))).catch(() => {});
   }
+  return res;
+}
+// The app's built files and the household's versioned pictures never change under their name: the kept copy, at once.
+async function built(req, name) {
+  const c = await caches.open(name);
+  const hit = await c.match(req);
+  if (hit) return hit;
+  const res = await fetch(req);
+  if (res.ok && res.type === 'basic') c.put(req, res.clone()).catch(() => {});
   return res;
 }
 async function shell(req) {
@@ -141,7 +183,9 @@ self.addEventListener('fetch', (e) => {
   if (/^\\/comms\\/[^/]+\\/(since|before)\\//.test(url.pathname)) return;
   // Whether an Inbox ask is still open (t-1925) is asked of loom, never answered from a kept copy.
   if (url.pathname === '/inbox/open') return;
-  if (SHELL.includes(url.pathname) || url.pathname.startsWith('/icons/') || url.pathname.startsWith('/app/assets/')) return e.respondWith(shell(req));
+  if (url.pathname.startsWith('/app/assets/')) return e.respondWith(built(req, BUILT));
+  if (/^\\/(faces|pixel-icons)\\//.test(url.pathname) && url.searchParams.has('v')) return e.respondWith(built(req, MEDIA));
+  if (SHELL.includes(url.pathname) || url.pathname.startsWith('/icons/')) return e.respondWith(shell(req));
   if ((req.headers.get('accept') || '').startsWith('application/json') && !NEVER.test(url.pathname)) return e.respondWith(view(req));
 });
 `;
