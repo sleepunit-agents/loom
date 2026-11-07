@@ -261,7 +261,7 @@ export function WidgetDesk({ ws, d, chat, frame }: {
 }) {
   if (!ws.length) return (
     <div className="loom-desk-home loom-desk-home--empty">
-      <Nothing title="No tiles" text="Open an app from the dock, or add a widget with the + key." />
+      <Nothing title="No tiles" text="Open an app from the dock, or right-click the desktop (or press Shift+F10) to add a widget." />
     </div>
   );
   const draw = (k: (w: (typeof ws)[number]) => boolean) => ws.filter(k).map((w) => frame(w, <WidgetBody id={w.id} kind={w.kind} d={d} chat={chat} />));

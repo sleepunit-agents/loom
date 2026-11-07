@@ -2,7 +2,7 @@
  * Desk tiling, phase 4 (docs/specs/desk-tiling.md, criteria 13, 14's widgets and 17 with widgets): Home's
  * widgets are tiles. A fresh device starts with the seed (widgets.ts SEED); with no app open they are the desktop, and with
  * apps open they move to the right edge (columns, a rail, or the strip). Chat on an agent's card opens its latest Comms
- * thread beside the rail; an agent's tile pins its card; × removes one; the + key and Find add them; they update live.
+ * thread beside the rail; an agent's tile pins its card; × removes one; the desktop's menu (right-click or Shift+F10) and Find add them; they update live.
  * Real Chrome, Neon Noir.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
@@ -132,9 +132,11 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.locator('[data-widget="needs"] .loom-wtile__x').click();
     await expect.poll(() => widgets(p)).toEqual(['mark']);
     expect(query(p, 'w')).toBe('mark');
-    // the + key: what can go on the desktop; one already there says so
-    await p.click(KEY('Add a widget'));
-    const list = p.locator('[role="dialog"][aria-label="Add a widget"]');
+    // the desktop's menu (Shift+F10 with nothing focused; a right-click on its ground): what can go on the desktop; one
+    // already there says so
+    const ask = async () => { await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur()); await p.keyboard.press('Shift+F10'); };
+    await ask();
+    const list = p.locator('[role="menu"][aria-label="Add a widget"]');
     await list.waitFor();
     expect(await list.locator('button', { hasText: 'Mark' }).textContent()).toMatch(/on the desktop/);
     await list.locator('button', { hasText: 'Vitals' }).click();
@@ -145,14 +147,14 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.locator('input[aria-label="Find anything"]').fill('backup');
     await p.locator('[role="option"]', { hasText: 'Add widget: Backup' }).click();
     await expect.poll(() => widgets(p)).toEqual(['mark', 'vitals', 'backup']);
-    // one that's on the desktop already: the + key focuses it
-    await p.click(KEY('Add a widget'));
+    // one that's on the desktop already: choosing it focuses it
+    await ask();
     await list.locator('button', { hasText: 'Vitals' }).click();
     await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('vitals');
     // with no app and no widget: how to get some
     for (const id of ['mark', 'vitals', 'backup']) await p.locator(`[data-widget="${id}"] .loom-wtile__x`).click();
     await p.click(KEY('Home'));
-    await expect.poll(() => p.getByText('Open an app from the dock, or add a widget with the + key.').count()).toBe(1);
+    await expect.poll(() => p.getByText('Open an app from the dock, or right-click the desktop (or press Shift+F10) to add a widget.').count()).toBe(1);
     await p.context().close();
   }, 60_000);
 

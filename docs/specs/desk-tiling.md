@@ -226,8 +226,9 @@ you's first ask and "N more"; it's `min(height, compact height)`.
 ## Widgets: adding, linking, removing
 
 - **Adding:**
-  - A **+ key** in the dock (the widget launcher) lists what can go on the desktop: Needs you, each agent's card,
-    Vitals and Backup. One already on the desktop shows "on the desktop" and focuses it.
+  - A **right-click on the desktop's ground** (or the Menu key or Shift+F10 with nothing focused) opens "Add a
+    widget": Needs you, each agent's card, Vitals and Backup. One already on the desktop shows "on the desktop" and
+    focuses it. (It was the dock's + key until 2026-11-06, t-1925 E.)
   - **Find** lists the same as "Add widget: …".
   - An agent's pages have **Pin card to the desktop**: the agent's tile strip carries it (an agent's pages are its
     tile). The dock's agent key menu would have it too, but the household's dock has no agent keys yet (an agent's own
@@ -236,7 +237,8 @@ you's first ask and "N more"; it's `min(height, compact height)`.
   thread and **Open** opens their pages. On Needs you, an ask opens in the Inbox. An app opened this way goes last, next
   to the rail. A widget is live: it draws from the same live data its app does (`/events`), so it never goes stale.
 - **Removing:** a widget's × removes it, like any tile. Removing the last widget leaves the ground. With no app and no
-  widget, the desktop says "No tiles. Open an app from the dock, or add a widget with the + key."
+  widget, the desktop says "No tiles. Open an app from the dock, or right-click the desktop (or press Shift+F10) to add a
+  widget."
 - **Order:** widgets keep the order they were added in. Drag one onto another to swap them. In the desktop layout (no
   apps) they group by kind, as Home does.
 
@@ -333,6 +335,28 @@ Narrower than a desktop, a screen keeps two (loom's status bar over the phone's)
   minimizes the tile, as it minimized the old window.
 - **Resizable gutters:** not built (decided 2026-11-06). The split ratios come from fit, and a dragged ratio would need
   saving per pair of apps per screen width. If the owner misses it after use, it's a phase of its own.
+
+### Context menus
+
+Short, and only where they help (t-1925 E; `web/src/tiling/menu.tsx`, `tiles.tsx` `menuFor`). The pointer's right
+button, or the Menu key or Shift+F10 on what has focus, opens one at it:
+
+- **The desktop's ground:** Add a widget (above).
+- **A tile's strip:** Minimize, Make it the big one (not the big one already), Pin its card / Take its card off the
+  desktop (an agent's tile), Close. A tile has no window of its own to open it in, so no such item.
+- **A widget:** an agent's card has Chat, Open and Unpin from the desktop; another widget Open and Remove from the
+  desktop.
+- **A dock key:** Open; Minimize while it's open; Close while it's open or in the dock. Home, All apps (the launcher), More and your own key
+  (Account) have none.
+- **A list row that says what it offers** (`data-row-menu="id:Label|…"`, answered by a `loom-menu` event on the row): an
+  Inbox item has Open (in the reader), and Mark done when it has a plain Done and no unsent reply (a kept draft: Open
+  only, so the reader's Done sends it first); Mark done asks loom first whether it's still open, as the reader's own
+  buttons do, and opens it in the reader when it isn't.
+- Anywhere else (a tile's page, a link, a field), the browser's own menu.
+
+A menu is `role="menu"` with its items `role="menuitem"`, named for what it's about. Focus goes to its first item; ↑ ↓
+Home End move (round the ends), Enter or Space chooses, Esc closes and gives focus back, Tab closes and lets focus
+move on (it never traps focus), and a press outside, a wheel, a resize or leaving the window closes it.
 
 ### Keys
 
@@ -602,6 +626,18 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     bringing it back and closing it wear `open, open, max, min, restore, close` and run `loom-fx-on`, `-glitch`,
     `-wipe-out`, `-wipe-in` and `-off`, none longer than 350 ms; under reduced motion the same steps wear none and run
     none.
+
+24. **Context menus** (`src/ui/desk-chrome.integration.test.ts`). No + key in the dock. A right-click on the ground
+    lists Needs you (on the desktop), each card, Vitals and Backup, and Vitals adds it; on a tile's page, none of
+    ours. With nothing focused, Shift+F10 opens it with focus on the first item; ↓ and End move, ↓ from the last goes
+    round, Home goes to the first, ↑ from the first goes round, Esc closes, Tab closes, Enter on Vitals adds it, Space
+    on Backup adds it; the Menu key on the Inbox's dock key opens its menu and Esc
+    gives focus back to it. A second tile's strip: Minimize, Make it the big one, Close; the big one's: Minimize,
+    Close; an agent's: Minimize, Pin its card to the desktop, Close, and Pin adds the card, then Take its card off
+    removes it. An agent's card: Chat, Open, Unpin from the desktop. A dock key: Open; then Open, Minimize, Close; then
+    Open, Close; Home, All apps and your own key none. An Inbox row: Open (picks it in the reader) and Mark done (posts `needs-done`, the row leaves); with
+    a reply kept unsent, Open only. On a tile's page and on a link in it, a `contextmenu` is left to the browser
+    (`defaultPrevented` false).
 
 ## Build, in phases
 

@@ -7,7 +7,7 @@
 // Home's widgets are tiles too (phase 4): with no app open they are the desktop, laid out as Home is; with apps open
 // they move to the right edge, in columns, a rail or the strip, as the rule says (layout.ts rule 1). A widget is live
 // (it draws from Home's own page, which the live stream keeps current), its × removes it, and what it links to opens
-// beside it, last, next to the rail. The + key in the dock and Find add them; an agent's tile can pin its card.
+// beside it, last, next to the rail. The desktop's menu (a right-click on it, menu.tsx) and Find add them; an agent's tile can pin its card.
 //
 // The only desktop there is (App.tsx; Jonathan, 2026-11-06). Accessibility's One window at a time is this desktop with
 // one app tile at most: opening another sends the one there to the dock, as the rule sends one that doesn't fit. A fresh
@@ -30,6 +30,7 @@ import type { Note } from '../toasts';
 import { admit, capFor, layout, promote, swap, underMinimum, type AppTile, type Rect, type WidgetTile } from './layout';
 import { nameOf, readSet, writeSet, type TileSet } from './address';
 import { AGENT_FIT, fitFor, type Fit } from './fit';
+import { ContextMenu, type MenuAt, type MenuItem } from './menu';
 import './tiles.css';
 
 /** An app as a tile knows it: its key (the dock key it's open under, as trail.ts keys it), its label and its fit. */
@@ -79,7 +80,7 @@ const sameOrigin = (u: URL) => u.origin === location.origin;
 /** A field has the keys. */
 const typing = () => { const a = document.activeElement as HTMLElement | null; return !!a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable); };
 const POP_UP = ':is([role="dialog"],[role="alertdialog"],[role="listbox"],[role="menu"]):not([data-state="closed"])';
-/** A pop-up that takes the keys from this tile: one of its own, or one of the screen's (Find, the + key's list); never
+/** A pop-up that takes the keys from this tile: one of its own, or one of the screen's (Find, a context menu); never
  * another tile's, which is modal to that tile only. */
 const popUpFor = (tile: Element | null) => [...document.querySelectorAll(POP_UP)].some((e) => { const t = e.closest('.loom-tile'); return !t || t === tile; });
 type VT = { finished: Promise<void> };
@@ -384,12 +385,10 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   };
 
   // ---- widgets ----
-  const [launching, setLaunching] = useState(false);
   const addWidget = (id: string) => {
     const s = S.current;
     const w = widgetRef(id, shell.agents, wok);
     if (!w) return;
-    setLaunching(false);
     if (s.w.includes(id)) {
       // On the desktop already: focus it.
       requestAnimationFrame(() => box.current?.querySelector<HTMLElement>(`[data-widget="${CSS.escape(id)}"] :is(a, button)`)?.focus());
@@ -424,7 +423,6 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     open,
     desktop: () => { if (S.current.apps.length) homeKey(); },
     pick: (href) => {
-      if (href === '#widgets') { setLaunching((o) => !o); return; }
       const u = new URL(href, location.href);
       if (u.pathname === '/') { homeKey(); return; }
       const r = appOf(u.pathname);
@@ -556,6 +554,106 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     return () => removeEventListener('keydown', f);
   }, []);
 
+  // ---- context menus (menu.tsx; docs/specs/desk-tiling.md, "Context menus"): what you can do with the thing under the
+  // pointer, or under focus with the Menu key or Shift+F10. The desktop's ground adds a widget (the + key's job, gone);
+  // a tile's strip, a dock key and an agent's card each have a short list; a list row in a page offers what it declares
+  // (`data-row-menu`, answered by a `loom-menu` event on the row: the Inbox's Open and Mark done). Anything else, the
+  // browser's own menu (text to copy, a link, a field).
+  const [menu, setMenu] = useState<MenuAt | null>(null);
+  /** An app minimized to the dock, closed from there: gone from the dock and its history forgotten. */
+  const closeDocked = (key: string) => {
+    const s = S.current, o = s.min.find((a) => a.key === key);
+    if (!o) return;
+    trail.forget(key);
+    commit({ ...s, min: s.min.filter((a) => a.key !== key) });
+    announce(`${o.label} closed`);
+  };
+  const menuFor = (t: Element): Omit<MenuAt, 'x' | 'y' | 'back'> | null => {
+    if (t.closest('input, textarea, select, [contenteditable="true"], .loom-cmenu')) return null;
+    const item = (id: string, label: string, run: () => void, hint?: string): MenuItem => ({ id, label, run, ...(hint ? { hint } : {}) });
+    // a row that says what it offers
+    const row = t.closest<HTMLElement>('[data-row-menu]');
+    if (row && box.current?.contains(row)) {
+      const items = (row.dataset.rowMenu ?? '').split('|').map((x) => x.split(':')).filter((x) => x.length === 2 && x[0] && x[1])
+        .map(([id, label]) => item(id, label, () => row.dispatchEvent(new CustomEvent('loom-menu', { detail: id }))));
+      return items.length ? { title: row.dataset.rowMenuTitle || 'This item', items } : null;
+    }
+    const tile = t.closest<HTMLElement>('.loom-tile');
+    if (tile) {
+      if (!t.closest('.loom-tile__bar')) return null;
+      const s = S.current, key = tile.dataset.tile!, i = s.apps.findIndex((a) => a.key === key), o = s.apps[i];
+      if (!o) return null;
+      const id = nameOf(key), pinnable = key.startsWith('/a/') && !!widgetRef(id, shell.agents, wok), on = s.w.includes(id);
+      return { title: o.label, items: [
+        item('min', 'Minimize', () => minimize(key), 'Alt+Shift+M'),
+        ...(i > 0 ? [item('big', 'Make it the big one', () => makeBig(key), 'Alt+Shift+Enter')] : []),
+        ...(pinnable ? [item('pin', on ? 'Take its card off the desktop' : 'Pin its card to the desktop', () => (on ? removeWidget : addWidget)(id))] : []),
+        item('close', 'Close', () => close(key), 'Alt+Shift+W'),
+      ] };
+    }
+    const wEl = t.closest<HTMLElement>('[data-widget]');
+    if (wEl && box.current?.contains(wEl)) {
+      const id = wEl.dataset.widget!, w = widgetRef(id, shell.agents, wok);
+      if (!w) return null;
+      const where = w.kind === 'agent' ? `/a/${id}` : w.kind === 'needs' ? '/inbox' : w.kind === 'backup' ? shell.backup?.href ?? '/setup' : '/places';
+      return { title: w.kind === 'agent' ? w.name : w.label, items: [
+        ...(w.kind === 'agent' && chat ? [item('chat', 'Chat', () => chat(id))] : []),
+        item('open', 'Open', () => goWidget(where)),
+        item('unpin', w.kind === 'agent' ? 'Unpin from the desktop' : 'Remove from the desktop', () => removeWidget(id)),
+      ] };
+    }
+    const key = t.closest<HTMLElement>('.loom-dock-bar [data-part="item"][data-value]');
+    if (key) {
+      // Only an app's own path (never a link to elsewhere, never markup): what the key opens is that app's key, from
+      // loom's own table, not the attribute. Home, All apps, More and your own key (Account) have none: they aren't apps
+      // you'd minimize or close.
+      const path = /^\/[\w\-/]*$/.exec(key.dataset.value ?? '')?.[0];
+      if (!path || path === '/' || path === '/account') return null;
+      const r = appOf(path);
+      if (!r) return null;
+      const s = S.current, isOpen = s.apps.some((a) => a.key === r.key), docked = s.min.some((a) => a.key === r.key);
+      return { title: r.label, items: [
+        item('open', 'Open', () => { open(r.key); }),
+        ...(isOpen ? [item('min', 'Minimize', () => minimize(r.key))] : []),
+        ...(isOpen || docked ? [item('close', 'Close', () => (isOpen ? close(r.key) : closeDocked(r.key)))] : []),
+      ] };
+    }
+    // the desktop's own ground: between and around the tiles and widgets
+    if (t === document.body || t === document.documentElement || (t.closest('.loom-desk-main') && !t.closest('a, button, .loom-w'))) {
+      return { title: 'Add a widget', items: addable(shell.agents, wok).map((w) => item(`w:${w.id}`, w.label, () => addWidget(w.id), S.current.w.includes(w.id) ? 'on the desktop' : undefined)) };
+    }
+    return null;
+  };
+  const menuRef = useRef(menuFor);
+  menuRef.current = menuFor;
+  useEffect(() => {
+    let keyed = 0;
+    const show = (t: Element, x: number, y: number, back: HTMLElement | null) => {
+      const m = menuRef.current(t);
+      if (!m || !m.items.length) return false;
+      setMenu({ ...m, x, y, back });
+      return true;
+    };
+    const onMenu = (e: MouseEvent) => {
+      if (Date.now() - keyed < 600) { e.preventDefault(); return; }
+      const t = e.target as Element;
+      // From the keyboard, some browsers send it with no pointer: at the element, as the keys do.
+      const r = (e.clientX || e.clientY) ? null : t.getBoundingClientRect();
+      const back = (t.closest('a, button, [tabindex]') as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
+      if (show(t, r ? r.left + 8 : e.clientX, r ? r.bottom : e.clientY, back)) e.preventDefault();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) || e.ctrlKey || e.altKey || e.metaKey) return;
+      const a = document.activeElement as HTMLElement | null;
+      const t = a && a !== document.body ? a : document.body;
+      const r = t === document.body ? { left: innerWidth / 2 - 120, bottom: innerHeight / 3 } : t.getBoundingClientRect();
+      if (show(t, r.left + 8, r.bottom, t === document.body ? null : t)) { e.preventDefault(); keyed = Date.now(); }
+    };
+    addEventListener('contextmenu', onMenu);
+    addEventListener('keydown', onKey);
+    return () => { removeEventListener('contextmenu', onMenu); removeEventListener('keydown', onKey); };
+  }, []);
+
   // The room the tiles share, as it changes.
   useLayoutEffect(() => {
     const b = box.current;
@@ -646,7 +744,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
           pin={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? { on: s.w.includes(nameOf(o.key)), toggle: () => (s.w.includes(nameOf(o.key)) ? removeWidget : addWidget)(nameOf(o.key)) } : undefined} />
       ))}
       {s.apps.length > 0 && wenv && <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider>}
-      {launching && <Launcher items={api.current.addable()} pick={addWidget} close={() => setLaunching(false)} />}
+      {menu && <ContextMenu at={menu} close={() => setMenu(null)} />}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>
   );
@@ -816,33 +914,6 @@ function WidgetFrame({ id, name, named, rect, compact, measure, remove, children
       <div className="loom-wtile__in" ref={inner}>{children}</div>
       <button type="button" className="loom-wtile__x" aria-label={`Remove ${name} from the desktop`} title="Remove from the desktop" onClick={remove}>
         <AnimatedIcon name={iconFor('x')} size="sm" /></button>
-    </div>
-  );
-}
-
-/** The + key's list (docs/specs/desk-tiling.md, "Adding"): what can go on the desktop; one already there says so, and
- * choosing it focuses it. Over the dock, not modal: Esc, a click outside or a choice closes it. */
-function Launcher({ items, pick, close }: { items: (WidgetRef & { on: boolean })[]; pick: (id: string) => void; close: () => void }) {
-  const box = useRef<HTMLDivElement>(null);
-  const shut = useRef(close);
-  shut.current = close;
-  useEffect(() => {
-    box.current?.querySelector<HTMLElement>('button')?.focus();
-    const out = (e: PointerEvent) => {
-      const t = e.target as Element;
-      if (!box.current?.contains(t) && !t.closest?.('.loom-dock-bar')) shut.current();
-    };
-    addEventListener('pointerdown', out, true);
-    return () => removeEventListener('pointerdown', out, true);
-  }, []);
-  return (
-    <div className="loom-wlaunch" ref={box} role="dialog" aria-label="Add a widget"
-      onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } }}>
-      <h2>Add a widget</h2>
-      <ul>{items.map((w) => (
-        <li key={w.id}><button type="button" onClick={() => pick(w.id)} data-on={w.on || undefined}>
-          <span>{w.label}</span>{w.on && <span className="loom-wlaunch__on">on the desktop</span>}</button></li>
-      ))}</ul>
     </div>
   );
 }

@@ -11,7 +11,7 @@
 import type { WidgetTile } from './layout';
 
 type Agent = { id: string; label: string };
-export type WidgetRef = WidgetTile & { /** what the + key and Find call it */ label: string };
+export type WidgetRef = WidgetTile & { /** what the desktop's menu and Find call it */ label: string };
 
 const FIXED: Record<string, { name: string; kind: WidgetTile['kind'] }> = {
   needs: { name: 'Needs you', kind: 'needs' },
