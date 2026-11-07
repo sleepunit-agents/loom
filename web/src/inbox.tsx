@@ -25,10 +25,12 @@ const useEnv = () => useContext(EnvContext)!;
 type Box = NonNullable<InboxItem['box']>;
 /** The folders, in the mock's order; each one's icon. */
 const FOLDERS: Array<[string, string, string]> = [
-  ['needs', 'Needs you', 'inbox'], ['question', 'Questions', 'message-circle-question'], ['approval', 'Approvals', 'lock'],
+  ['needs', 'Needs you', 'inbox'], ['question', 'Questions', 'message-circle-question-mark'], ['approval', 'Approvals', 'lock'],
   ['alert', 'Alerts', 'triangle-alert'], ['memory', 'Memory reviews', 'brain'], ['done', 'Done', 'circle-check'],
 ];
-const BOX_ICON: Record<Box, string> = { question: 'message-circle-question', approval: 'lock', alert: 'triangle-alert', memory: 'brain', done: 'circle-check' };
+/** What an open item is, as its reader's first line says it. */
+const BOX_WORD: Record<Box, string> = { question: 'Question', approval: 'Approval', alert: 'Alert', memory: 'Memory review', done: 'Done' };
+const BOX_ICON: Record<Box, string> = { question: 'message-circle-question-mark', approval: 'lock', alert: 'triangle-alert', memory: 'brain', done: 'circle-check' };
 /** An item's folder: the server's, else worked out as it does (an older loom's answer, a test's fixture). */
 const boxOf = (i: InboxItem): Box => i.box ?? (i.kind === 'answered' || i.kind === 'fyi' ? 'done' : i.kind === 'permission' || i.approval ? 'approval'
   : i.kind === 'decision' || i.kind === 'reply' || i.kind === 'todo' || i.reply || i.needs ? 'question' : 'alert');
@@ -170,7 +172,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
     <article className="loom-inbox__read" data-box={boxOf(i)} aria-labelledby={`ib-${i.key}`}>
       <header className="loom-inbox__from">
         {mark ? <Mark a={mark} size={28} /> : <LoomMark size={28} />}
-        <span><b>{who || from}</b> · {p.ended ?? KIND[i.kind]}</span>
+        <span><b>{who || from}</b> · {p.ended ?? (boxOf(i) === 'done' ? KIND[i.kind] : BOX_WORD[boxOf(i)])}</span>
         <span className="loom-data loom-inbox__at">{short(i.at)}</span>
       </header>
       <h2 id={`ib-${i.key}`} className="loom-inbox__head">{p.head === i.text ? words(p.head) : p.head}</h2>

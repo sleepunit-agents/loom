@@ -85,6 +85,8 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
   const kept = (p: Page) => p.evaluate(() => (window as unknown as { kept?: number }).kept);
   const row = (p: Page, words: string) => p.locator('[data-split-row]', { hasText: words });
   const reader = '.loom-split__reader';
+  /** Screenshots for a PR's evidence, when LOOM_SHOTS names a directory. */
+  const shot = async (p: Page, name: string) => { if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `${name}.png`) }); };
 
   for (const [w, hgt] of [[1280, 800], [1920, 1080]] as const) {
     it(`a big Inbox tile is three panes; picking an item reads it without a reload; Done moves it out of Needs you, at ${w}×${hgt}`, async () => {
@@ -106,6 +108,7 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
       expect(await kept(p)).toBe(1);
       // Live once loom says it's open: Yes, No, Done.
       await p.locator(`${reader} button:text-is("Done")`).waitFor();
+      await shot(p, `after-inbox-${w}`);
       expect(await p.locator(`${reader} button:text-is("Yes")`).count()).toBe(1);
       // Done answers it: out of Needs you, and loom says it's answered.
       await p.locator(`${reader} button:text-is("Done")`).click();
@@ -159,10 +162,12 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     const width = await p.locator('.loom-inbox').evaluate((e) => e.getBoundingClientRect().width);
     expect(width).toBeLessThan(640);
     await expect.poll(() => mode(p)).toBe('one');
+    await shot(p, 'after-inbox-narrow');
     expect(await p.locator('.loom-split__chips button').first().textContent()).toMatch(/Needs you/);
     expect(await p.locator(reader).count()).toBe(0);
     await row(p, 'Sign Claude Code in again?').click();
     await expect.poll(() => p.locator(`${reader} h2`).textContent()).toBe('Sign Claude Code in again?');
+    await shot(p, 'after-inbox-narrow-open');
     // Over the list, in the tile: its box is the list's.
     const [r, l] = await Promise.all([p.locator(reader).boundingBox(), p.locator('.loom-split__list').boundingBox()]);
     expect(Math.abs(r!.x - l!.x)).toBeLessThan(2);
@@ -180,6 +185,7 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     await row(p, 'Keep the old notes tree?').tap();
     await expect.poll(() => p.locator(`${reader} h2`).textContent()).toBe('Keep the old notes tree?');
     await p.locator('#loom-reply').waitFor();
+    await shot(p, 'after-inbox-390');
     expect(await p.locator('.loom-split__list').isVisible()).toBe(false);
     await p.locator('.loom-split__back').tap();
     await expect.poll(() => p.locator('.loom-split__list').isVisible()).toBe(true);
