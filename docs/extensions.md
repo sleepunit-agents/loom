@@ -483,8 +483,10 @@ On a desktop window 1280 px wide or more, the side column is the window's own
 right-hand column, a fixed width, scrolling down on its own beside the page.
 Narrower, and on a phone, the side sections fold together into one block at the
 top of the page, closed until it's opened ("Filters & more" when one of them
-holds a `filters` block, else "Details & more"). A chart there is drawn shorter.
-Nothing in the side column scrolls sideways: words wrap and long ones break. A
+holds a `filters` block, else "Details & more"). A chart there is drawn shorter,
+without a Show data button: there the chart is the point (its numbers stay in a
+visually hidden table for a screen reader). Nothing in the side column scrolls
+sideways but a filters block's chip rows: words wrap and long ones break. A
 side section is only a placement: it's checked, gated and drawn block by block
 exactly as a main one is. A page that puts nothing in its side column gets
 Recent here in a desktop window instead: the pages of the same app opened lately
@@ -514,7 +516,7 @@ outside the page).
 | `stats` | `items`: `label`, `value`, optional `detail`, `tone`, `page`, `spark` (up to 30 numbers, oldest first: a small trend line under the value), `meter` (0 to 1: a bar under the value, like a disk's use). One item alone is the page's hero (its number at the top size) |
 | `health` | `tone` (required), `text`, optional `detail`. A status screen's headline: how things are in a word or two ("All good", "One bridge is down"), big, with an icon for its tone (never colour alone). Put it first, tiles (`stats`) under it, and the engineering proof in a `details` |
 | `panel` | `rows`, optional `title`, `action` (one `buttons` item: the panel's primary action, at its foot). Settings as an app's panel; see Panels below |
-| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first) |
+| `list` | optional `numbered` (true: a rank before each row), `wrap` (true: a row's text wraps instead of being cut to a line), `items`: `text`, optional `meta`, `badge`, `tone`, `agent` (an agent's id: the row carries its mark), `avatar` (one or two letters, a person's initials, in a plain circle), `person` (a People slug: that person's avatar, round, in their colour), `page` or `href`, `act` (one button on the row, at its right: a `buttons` item, e.g. a Revoke that asks first), `more` (`{items, open?}`: up to 6 `label`/`value` pairs the row opens to in place, such as a task's goal, why and done-when; its `page` or `href` is then a button inside what opened, named `open`, "Open" by default) |
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
@@ -522,7 +524,7 @@ outside the page).
 | `callout` | `text`, optional `title`, `tone`, `busy` (true: something is under way, drawn with a spinner). A boxed note |
 | `profile` | `name`, optional `initials` (one or two letters), `agent` (an agent's id: its mark and colour) or `tone` (`pink`, `yellow`, `olive`, `blue`), `summary`, `badges` (up to 6 words), `stats` (up to 4 `label`/`value`), `links` (up to 4 `text` with `page` or `href`). Someone, as a profile card: a cover in their colour, their avatar, name and summary; when it leads a page, the page's own title gives way to it |
 | `link` | `text`, and `page` or `href` |
-| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=` |
+| `filters` | `param`, `options`: `value`, `label`. Links to this page with `?<param>=<value>`; `""` means all. Optional `search` (its placeholder) adds a search field above the pills that comes back as `?q=`; `switch` (true, with 2 to 4 options: a sort) draws the options as one segmented switch instead; `chips` (up to 3 rows of `param`, `label` (for a screen reader), `options` of up to 12 `value`/`label`, a value 1 to 15 characters with no comma) adds rows of chips under it, each row its own query key (not `q` nor `param`), any number on at once as `?<param>=a,b` (none on means all). Each chip row is one line, sliding sideways when it doesn't fit, never wrapping |
 | `details` | `summary`, optional `meta`, `blocks`. Folded until clicked; can't contain another `details` |
 | `from` | `conversation` (a `cv-` id). Where a task or change came from: loom draws it for each viewer, as a link "From: <thread title>" for the Comms thread's own member, "From a Comms thread" for another owner of its agent, and "From a conversation" for everyone else ([specs/comms.md](specs/comms.md), "From"). The piece never sees which |
 | `form` | `action`, `submit`, `fields`, optional `title`, `note`, `hidden` (name → value), `submits` (up to 3 more ways to send it, beside `submit`: `label`, optional `fields` (name → value, sent with the form's) and `tone`; a task's Yes and No over a box of words). Words typed in a `textarea` are kept on the device until the form is sent, and the form says "Not sent yet" meanwhile, so leaving the page or pressing another button loses nothing |
@@ -563,6 +565,8 @@ or fewer, like the days of a week) is drawn as a row of chips.
 
 A row in a `list` runs to two lines; a row that goes nowhere opens to its whole text when tapped, and
 `wrap` shows it whole from the start (comments, notes). A row that goes somewhere shows it all there.
+A row with `more` opens in place instead, to its whole text and its pairs, with its link (`page` or
+`href`) as a button under them: read the gist without leaving the list, then open it.
 
 A `list` or `table` longer than a page can send one page at a time and say so with
 `pages`: `{param, at, count, total?}`, the query key it reads (`"page"`), this
