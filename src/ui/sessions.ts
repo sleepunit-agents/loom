@@ -48,7 +48,7 @@ const LABEL_MAX = 60;
 const cleanLabel = (l: string | undefined) => {
   // Printable words only: no control characters, so a label can't break a terminal's line or the file, and no invisible
   // or direction-changing ones (zero-width, bidi overrides), so it can't pass itself off as another row's words.
-  const t = (l ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX).trim();
+  const t = (l ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u061c\u180e]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX).trim();
   return t || undefined;
 };
 

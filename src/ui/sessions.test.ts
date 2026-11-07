@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, onTestFinished } from 'vit
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { MAX_SESSIONS, SEEN_EVERY_S, SEEN_GAP_S, SessionStore, deviceOf, prefsOf } from './sessions.js';
 
 describe('the page\'s sessions on disk', () => {
@@ -125,6 +126,9 @@ describe('one session ended alone (t-1871)', () => {
     expect(all[0]).toMatchObject({ ref: s.refOf(shots), label: 'screenshots t-1871', issuedAt: 1001 });
     expect(all[0].secret.equals(links)).toBe(true);
     expect(JSON.stringify(all)).not.toContain(shots);
+    // A ref is the start of the id's hash, never of the id: nothing of a live cookie is shown.
+    expect(all[0].ref).toBe(createHash('sha256').update(shots).digest('hex').slice(0, 16));
+    expect(all[0].ref).not.toBe(shots.slice(0, 16));
     expect(s.revoke(s.refOf(shots))).toBe(true);
     expect(s.get(shots)).toBeNull();
     expect(s.get(phone)).not.toBeNull();

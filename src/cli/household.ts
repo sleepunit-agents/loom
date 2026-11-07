@@ -268,8 +268,10 @@ function sessionsCommand(argv: string[], io: IOStreams): number {
     const nowS = Math.floor(Date.now() / 1000);
     for (const x of all) {
       const t = tokens.find((k) => k.sha256 === x.secret.toString('hex'));
-      const token = !t ? 'no token' : `${t.label}${t.revoked ? ' (revoked)' : expired(t) ? ' (expired)' : ''}`;
-      const ended = nowS - x.issuedAt > SESSION_MAX_AGE_S || !t || !!t.revoked || expired(t);
+      const token = !t ? 'no token on file' : `${t.label}${t.revoked ? ' (revoked)' : expired(t) ? ' (expired)' : ''}`;
+      // Ended: past its 30 days, or its token revoked or expired. A session with no token on file (the owner's bearer
+      // from loom-http's environment, LOOM_BEARER_TOKEN) is as live as the page says it is.
+      const ended = nowS - x.issuedAt > SESSION_MAX_AGE_S || (!!t && (!!t.revoked || expired(t)));
       io.stdout(`${x.ref}  ${(x.device ?? 'a browser').padEnd(24)}  ${x.label ? `"${x.label}"  ` : ''}${x.via ? `by ${x.via}, ` : ''}signed in ${at(x.issuedAt)}${x.seenAt ? `, last used ${at(x.seenAt)}` : ''} UTC  (${token})${ended ? '  (ended)' : ''}\n`);
     }
     return 0;

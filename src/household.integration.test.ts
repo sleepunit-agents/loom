@@ -1799,6 +1799,11 @@ esac
     const forged = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
       body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
     expect(forged.status).toBe(403);
+    // Nor a request from another site, with the right form token.
+    const csrfNow = (await data(phone, '/account')).ctx.csrf as string;
+    const crossSite = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: phone, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site', origin: 'https://evil.invalid' },
+      body: new URLSearchParams({ _csrf: csrfNow, _action: 'session-revoke', _path: 'passkeys', ref: shot.act.fields.ref }).toString() });
+    expect(crossSite.status).toBe(403);
     // Nor anyone signed out.
     const nobody = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' },
       body: new URLSearchParams({ _action: 'session-revoke', ref: shot.act.fields.ref }).toString() });
@@ -1820,7 +1825,11 @@ esac
     // And from the command line: `loom sessions list`, then revoke one by its ref.
     const out: string[] = [];
     const io = { stdout: (s: string) => out.push(s), stderr: (s: string) => out.push(s), env: { ...process.env, LOOM_HOME: h.home } } as unknown as Parameters<typeof runSessions>[1];
+    // A session whose token isn't on file (the owner's bearer from loom-http's environment) is listed, not as ended.
+    const bearerOnly = sessionStore(h.home).create(Buffer.alloc(32, 5));
     expect(await runSessions(['list'], io)).toBe(0);
+    const bearerLine = out.join('').split('\n').find((l) => l.startsWith(sessionStore(h.home).refOf(bearerOnly)))!;
+    expect(bearerLine).toMatch(/\(no token on file\)$/);
     const line = out.join('').split('\n').find((l) => l.includes('loren · page'))!;
     expect(line).toMatch(/^[0-9a-f]{16}  a browser .* by token, signed in .* UTC  \(loren · page\)$/);
     expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(0);
