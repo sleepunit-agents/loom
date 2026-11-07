@@ -84,6 +84,12 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
   const labels = async (p: Page) => (await tiles(p)).map((t) => t.label);
   const open = async (p: Page, label: string, n: number) => { await p.click(KEY(label)); await expect.poll(() => p.locator('.loom-tile').count()).toBe(n); };
   const tile = (p: Page, label: string) => p.locator(`.loom-tile[aria-label$=", ${label}"]`);
+  /** An app with no dock key, from the launcher (t-1925 G): its search, then Enter. */
+  const launch = async (p: Page, name: string) => {
+    await p.click(KEY('All apps')); await p.locator('.loom-launcher').waitFor();
+    await p.keyboard.type(name); await p.keyboard.press('Enter');
+    await expect.poll(() => p.locator('.loom-launcher').count()).toBe(0);
+  };
 
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     it(`10. open, focus, minimize and back, at ${w}×${hgt}`, async () => {
@@ -100,10 +106,9 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await open(p, 'Comms', 2);
       // (a fresh device's widgets, the seed, ride in the address too: desk-tiling-widgets.integration.test.ts)
       expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup');
-      // a page scrolled down comes back scrolled where it was: Setup's Appearance, in a short screen
-      await p.click(KEY('Setup')); await expect.poll(() => p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
-      const setup = tile(p, 'Setup');
-      await setup.locator('a, button', { hasText: 'Appearance' }).first().click();
+      // a page scrolled down comes back scrolled where it was: Appearance (the launcher's), in a short screen
+      await launch(p, 'Appearance'); await expect.poll(() => p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
+      const setup = tile(p, 'Appearance');
       await expect.poll(() => where(p)).toMatch(/^\/appearance\?/);
       await setup.locator('[aria-label="Look"]').waitFor();
       // a short screen, so Appearance scrolls in its tile
@@ -112,10 +117,10 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await expect.poll(() => body.evaluate((b) => b.scrollHeight - b.clientHeight)).toBeGreaterThan(100);
       const top = await body.evaluate((b) => { b.scrollTop = 100; return b.scrollTop; });
       expect(top).toBe(100);
-      await p.click(KEY('Setup')); await expect.poll(() => tile(p, 'Setup').count()).toBe(0);
-      await p.click(KEY('Setup')); await tile(p, 'Setup').locator('[aria-label="Look"]').waitFor();
+      await setup.locator('button[aria-label="Minimize Appearance to the dock"]').click(); await expect.poll(() => tile(p, 'Appearance').count()).toBe(0);
+      await launch(p, 'Appearance'); await tile(p, 'Appearance').locator('[aria-label="Look"]').waitFor();
       expect(new URL(p.url()).pathname).toBe('/appearance');
-      await expect.poll(() => tile(p, 'Setup').locator('.loom-tile__body').evaluate((b) => b.scrollTop)).toBe(top);
+      await expect.poll(() => tile(p, 'Appearance').locator('.loom-tile__body').evaluate((b) => b.scrollTop)).toBe(top);
       await p.context().close();
     }, 60_000);
   }
@@ -124,38 +129,37 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     it(`11. history per tile, and the browser's Back, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);
       const before = await p.evaluate(() => history.length);
-      await open(p, 'Setup', 1);
+      await open(p, 'Activity', 1);
       await open(p, 'Inbox', 2);
       // opening adds no browser history; closing neither
       expect(await p.evaluate(() => history.length)).toBe(before);
       await tile(p, 'Inbox').locator('button[aria-label="Close Inbox"]').click();
       await expect.poll(() => p.locator('.loom-tile').count()).toBe(1);
       expect(await p.evaluate(() => history.length)).toBe(before);
-      await p.click(KEY('People')); await expect.poll(() => labels(p)).toEqual(['Setup', 'People']);
-      // a page change in each tile: People to a person, Setup to Accessibility; then Setup's own Back: only Setup moves
+      await p.click(KEY('People')); await expect.poll(() => labels(p)).toEqual(['Activity', 'People']);
+      // a page change in each tile: People to a person, Activity to Mark's; then Activity's own Back: only Activity moves
       await tile(p, 'People').locator('main a[href^="/people/"], a[href^="/people/"]').first().click();
       await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/people\/./);
       const person = new URL(p.url()).pathname;
-      const setup = tile(p, 'Setup');
-      await setup.locator('a, button', { hasText: 'Accessibility' }).first().click();
-      await expect.poll(() => new URL(p.url()).pathname).toBe('/accessibility');
+      const setup = tile(p, 'Activity');
+      await setup.locator('[aria-label="Filter"] button, [aria-label="Filter"] [role="radio"]', { hasText: 'mark' }).first().click();
+      await expect.poll(() => query(p, 'who')).toBe('mark');
       expect(await p.evaluate(() => history.length)).toBe(before + 2);
       await setup.locator('.loom-tile__btn[aria-label^="Back"]').click();
-      await expect.poll(() => new URL(p.url()).pathname).toBe('/setup');
+      await expect.poll(() => [new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);
       // People stayed on its person
       expect(await tile(p, 'People').locator('.loom-tile__path').textContent()).toBe(`loom${person}`);
       // the browser's Back and Forward walk the focused tile's history
-      await setup.locator('a, button', { hasText: 'Appearance' }).first().click();
-      await expect.poll(() => new URL(p.url()).pathname).toBe('/appearance');
+      await setup.locator('[aria-label="Filter"] button, [aria-label="Filter"] [role="radio"]', { hasText: 'art' }).first().click();
+      await expect.poll(() => query(p, 'who')).toBe('art');
       await p.goBack();
-      await expect.poll(() => new URL(p.url()).pathname).toBe('/setup');
-      await expect.poll(() => setup.locator('h2').textContent()).toMatch(/setup/i);
+      await expect.poll(() => [new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);
       expect(await p.locator('.loom-tile').count()).toBe(2);
-      // what the browser's Back landed on is the tile's page now: minimized and back, it's Setup's start, not Appearance
-      await p.click(KEY('Setup')); await expect.poll(() => tile(p, 'Setup').count()).toBe(0);
-      expect(query(p, 'm')).toBe('setup');
-      await p.click(KEY('Setup')); await tile(p, 'Setup').waitFor();
-      await expect.poll(() => new URL(p.url()).pathname).toBe('/setup');
+      // what the browser's Back landed on is the tile's page now: minimized and back, it's Activity's start, not Art's
+      await p.click(KEY('Activity')); await expect.poll(() => tile(p, 'Activity').count()).toBe(0);
+      expect(query(p, 'm')).toBe('activity');
+      await p.click(KEY('Activity')); await tile(p, 'Activity').waitFor();
+      await expect.poll(() => [new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);
       await p.context().close();
     }, 60_000);
   }
@@ -163,43 +167,40 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
   // 776, not 800: the desktop's one bar (2026-11-06) gave the tiles 24 px more, and at 800 three now fit.
   for (const [w, hgt] of [[1280, 776], [1920, 1080]]) {
     it(`12. a link to another app opens it right after its tile; one within the app stays, at ${w}×${hgt}`, async () => {
-      const p = await screen(w, hgt, { path: '/places?t=*places' });
-      await expect.poll(() => labels(p)).toEqual(['Places']);
+      // A person's page links to their agent's: another app.
+      const p = await screen(w, hgt, { path: '/people?t=*people' });
+      await expect.poll(() => labels(p)).toEqual(['People']);
       await open(p, 'Inbox', 2);
-      expect(await labels(p)).toEqual(['Places', 'Inbox']);
-      await tile(p, 'Places').locator('button', { hasText: 'People' }).first().click();
-      // At 1280×776 three of these don't fit (two stacked would be under the Inbox's 320 px minimum height): the one used
-      // least recently that isn't the one opened or the one it came from, the Inbox, goes to the dock, and a toast says so.
+      expect(await labels(p)).toEqual(['People', 'Inbox']);
+      // within People: a person is People's own page, so it stays in People's tile
+      await tile(p, 'People').locator('a[href="/people/art"]').first().click();
+      await expect.poll(() => new URL(p.url()).pathname).toBe('/people/art');
+      expect(await labels(p)).toEqual(['People', 'Inbox']);
+      await tile(p, 'People').locator('a[href="/a/art"]').first().click();
+      // At 1280×776 three of these don't fit: the one used least recently that isn't the one opened or the one it came
+      // from, the Inbox, goes to the dock, and a toast says so.
       if (w >= 1920) {
-        await expect.poll(() => labels(p)).toEqual(['Places', 'People', 'Inbox']);
-        expect(query(p, 't')).toBe('places,*people,inbox');
+        await expect.poll(() => labels(p)).toEqual(['People', 'art', 'Inbox']);
+        expect(query(p, 't')).toBe('people,*art,inbox');
       } else {
-        await expect.poll(() => labels(p)).toEqual(['Places', 'People']);
-        expect([query(p, 't'), query(p, 'm')]).toEqual(['places,*people', 'inbox']);
-        await expect.poll(() => p.getByText('Inbox went to the dock to make room for People').count()).toBeGreaterThan(0);
+        await expect.poll(() => labels(p)).toEqual(['People', 'art']);
+        expect([query(p, 't'), query(p, 'm')]).toEqual(['people,*art', 'inbox']);
+        await expect.poll(() => p.getByText('Inbox went to the dock to make room for art').count()).toBeGreaterThan(0);
       }
-      // within Setup: Appearance is Setup's own page, so it stays in Setup's tile
-      await p.click(KEY('Inbox'));   // focus, so Setup isn't placed after a tile it came from
-      await p.click(KEY('Setup'));
-      await expect.poll(() => labels(p)).toContain('Setup');
-      const n = (await labels(p)).length;
-      await tile(p, 'Setup').locator('a, button', { hasText: 'Appearance' }).first().click();
-      await expect.poll(() => new URL(p.url()).pathname).toBe('/appearance');
-      expect((await labels(p)).length).toBe(n);
       await p.context().close();
     });
 
     it(`14. a reload restores the set: the pinned first, the focused, the dock, at ${w}×${hgt}`, async () => {
-      const p = await screen(w, hgt, { path: '/comms?t=inbox!,*comms&m=setup' });
+      const p = await screen(w, hgt, { path: '/comms?t=inbox!,*comms&m=people' });
       await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
       expect((await tiles(p)).find((t) => t.focused)?.label).toBe('Comms');
-      expect(where(p)).toBe('/comms?t=inbox!,*comms&m=setup');
+      expect(where(p)).toBe('/comms?t=inbox!,*comms&m=people');
       await p.reload(); await p.locator('.loom-tile').first().waitFor();
       await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
-      expect(where(p)).toBe('/comms?t=inbox!,*comms&m=setup');
-      // Setup comes back from the dock with its key (at 1280×800, Comms goes to the dock for it: Inbox is pinned)
-      await p.click(KEY('Setup'));
-      await expect.poll(() => labels(p)).toEqual(w >= 1920 ? ['Inbox', 'Comms', 'Setup'] : ['Inbox', 'Setup']);
+      expect(where(p)).toBe('/comms?t=inbox!,*comms&m=people');
+      // People comes back from the dock with its key (at 1280×800, Comms goes to the dock for it: Inbox is pinned)
+      await p.click(KEY('People'));
+      await expect.poll(() => labels(p)).toEqual(w >= 1920 ? ['Inbox', 'Comms', 'People'] : ['Inbox', 'People']);
       expect(query(p, 'm')).toBe(w >= 1920 ? null : 'comms');
       // an address with no set restores this device's last one, the address's page focused
       await p.goto(`${base}/people`); await p.locator('.loom-tile').first().waitFor();

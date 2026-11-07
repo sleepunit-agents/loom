@@ -77,6 +77,12 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
   const query = (p: Page, k: string) => new URL(p.url()).searchParams.get(k);
   const labels = (p: Page) => p.$$eval('.loom-tile', (ts) => ts.map((t) => (t.getAttribute('aria-label') ?? '').replace(/^tile \d+ of \d+, /, '')));
   const widgets = (p: Page) => p.$$eval('[data-widget]', (ws) => ws.map((w) => w.getAttribute('data-widget')));
+  /** An app with no dock key, from the launcher (t-1925 G). */
+  const launch = async (p: Page, name: string) => {
+    await p.click(KEY('All apps')); await p.locator('.loom-launcher').waitFor();
+    await p.keyboard.type(name); await p.keyboard.press('Enter');
+    await expect.poll(() => p.locator('.loom-launcher').count()).toBe(0);
+  };
   const toast = (p: Page, words: string) => p.getByText(words, { exact: false }).count();
 
   for (const [w, hgt] of [[1280, 800], [1920, 1080]]) {
@@ -89,11 +95,10 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
       expect(await p.locator('[data-widget="art"] .loom-agent__face').count()).toBe(1);
       expect(await p.locator('.loom-tile').count()).toBe(0);
       // No old window, ever: an app is a tile.
-      await p.click(KEY('Setup'));
-      await expect.poll(() => labels(p)).toEqual(['Setup']);
+      await launch(p, 'Appearance');
+      await expect.poll(() => labels(p)).toEqual(['Appearance']);
       expect(await p.locator('.loom-window').count()).toBe(0);
       const setup = p.locator('.loom-tile');
-      await setup.locator('a, button', { hasText: 'Appearance' }).first().click();
       await setup.locator('[aria-label="Look"]').waitFor();
       expect(await setup.locator('[aria-label="Desktop"]').count()).toBe(0);
       expect(await setup.getByText('One window at a time').count()).toBe(0);
@@ -105,34 +110,33 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
     it(`18. One window at a time, in Accessibility: one app tile, the next sends it to the dock with a toast; on with two open, the focused one stays, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt, who);
       await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual(['Inbox']);
-      await p.click(KEY('Setup')); await expect.poll(() => labels(p)).toEqual(['Inbox', 'Setup']);
-      // Accessibility, in the Setup tile (focused): turned on, the Inbox goes to the dock, at once and with no reload.
-      const setup = p.locator('.loom-tile[aria-label$=", Setup"]');
-      await setup.locator('a, button', { hasText: 'Accessibility' }).first().click();
+      await launch(p, 'Accessibility'); await expect.poll(() => labels(p)).toEqual(['Inbox', 'Accessibility']);
+      // Accessibility, in its tile (focused): turned on, the Inbox goes to the dock, at once and with no reload.
+      const setup = p.locator('.loom-tile[aria-label$=", Accessibility"]');
       const choice = setup.locator('[aria-label="One window at a time"]');
       await choice.waitFor();
       await choice.locator('[role="radio"]', { hasText: 'On' }).click();
-      await expect.poll(() => labels(p)).toEqual(['Setup']);
+      await expect.poll(() => labels(p)).toEqual(['Accessibility']);
       expect(query(p, 'm')).toBe('inbox');
       // The widgets stay, beside the one app.
       expect((await widgets(p)).length).toBeGreaterThan(0);
       // Opening another: the one there goes to the dock, kept where it was, said in a toast.
       await p.click(KEY('Comms'));
       await expect.poll(() => labels(p)).toEqual(['Comms']);
-      await expect.poll(() => toast(p, 'Setup went to the dock to make room for Comms: one window at a time is on')).toBeGreaterThan(0);
-      expect(query(p, 'm')).toBe('inbox,setup');
-      // Back from the dock: on the page it was on.
-      await p.click(KEY('Setup'));
-      await expect.poll(() => labels(p)).toEqual(['Setup']);
+      await expect.poll(() => toast(p, 'Accessibility went to the dock to make room for Comms: one window at a time is on')).toBeGreaterThan(0);
+      expect(query(p, 'm')).toBe('inbox,accessibility');
+      // Back from the dock (the launcher's: it has no key): on the page it was on.
+      await launch(p, 'Accessibility');
+      await expect.poll(() => labels(p)).toEqual(['Accessibility']);
       await expect.poll(() => new URL(p.url()).pathname).toBe('/accessibility');
-      await expect.poll(() => toast(p, 'Comms went to the dock to make room for Setup')).toBeGreaterThan(0);
+      await expect.poll(() => toast(p, 'Comms went to the dock to make room for Accessibility')).toBeGreaterThan(0);
       // It's the person's: a reload keeps it.
       await p.reload(); await p.locator('.loom-tiles').waitFor();
       await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual(['Inbox']);
       // Off again: two tiles.
-      await p.click(KEY('Setup')); await expect.poll(() => labels(p)).toEqual(['Setup']);
+      await launch(p, 'Accessibility'); await expect.poll(() => labels(p)).toEqual(['Accessibility']);
       await p.locator('[aria-label="One window at a time"] [role="radio"]', { hasText: 'Off' }).click();
-      await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toEqual(['Setup', 'Comms']);
+      await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toEqual(['Accessibility', 'Comms']);
       await p.context().close();
     }, 60_000);
   }

@@ -573,3 +573,7 @@ img { -webkit-user-drag: none; }
 .loom-side-fold__what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--v-text-3); }
 .loom-side-fold > .loom-side-col { padding: 0 8px 8px; }
 @media (prefers-reduced-motion: reduce) { .loom-side-fold > summary::before { transition: none; } }
+
+/* The dock's last key: nine lit dots (the mockups' "All apps"). */
+.loom-apps-dots{display:grid;grid-template-columns:repeat(3,5px);gap:4px}
+.loom-apps-dots i{width:5px;height:5px;background:currentColor;box-shadow:var(--glow-key,0 0 0 0) currentColor}

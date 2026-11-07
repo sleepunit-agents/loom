@@ -212,15 +212,15 @@ describe('the household\'s pixel icons', () => {
       // The title strip of the tile an app opens in.
       await p.goto(`${base}/activity`);
       await p.locator('.loom-tile__key img.loom-pix[data-app="activity"][data-lit]').waitFor();
-      // Setup's tiles (a phone's More), and Find's.
+      // The launcher's tiles (Setup's and Places' on a desktop: an old link to either opens it), and Find's.
       await p.goto(`${base}/setup`);
-      await p.locator('.loom-launch-tile img.loom-pix[data-app="members"]').waitFor();
-      expect(await p.locator('.loom-launch-tile', { has: p.locator('[data-app]') }).count()).toBe(1);
-      // Places' tiles: People wears its (yellow) icon, Knowledge its line icon.
-      await p.goto(`${base}/places`);
-      await p.locator('.loom-launch-tile img.loom-pix[data-app="people"][data-tint="yellow"]').waitFor();
-      expect(await p.locator('.loom-launch-tile img.loom-pix[data-app="activity"]').count()).toBe(1);
-      expect(await p.locator('.loom-launch-tile', { has: p.locator('svg') }).count()).toBeGreaterThan(0);
+      const apps = p.locator('.loom-launcher');
+      await apps.locator('.loom-launch-tile img.loom-pix[data-app="members"]').waitFor();
+      // People wears its (yellow) icon; Knowledge, with none in this set, its line icon.
+      await apps.locator('.loom-launch-tile img.loom-pix[data-app="people"][data-tint="yellow"]').waitFor();
+      expect(await apps.locator('.loom-launch-tile img.loom-pix[data-app="activity"]').count()).toBe(1);
+      expect(await apps.locator('.loom-lapp[aria-label^="Knowledge"] .loom-launch-tile svg').count()).toBeGreaterThan(0);
+      await p.keyboard.press('Escape');
       await p.goto(`${base}/find`);
       await p.getByRole('combobox').or(p.getByRole('searchbox')).or(p.locator('input')).first().fill('activ');
       await p.locator('.loom-app-tile img.loom-pix[data-app="activity"]').first().waitFor();

@@ -115,14 +115,14 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   const away = async (p: Page) => { await p.mouse.move(640, 300); await p.waitForTimeout(450); };
 
   it('double-clicking a tile\'s title strip minimizes it to the dock; double-clicking its Close doesn\'t', async () => {
-    const p = await screen(1280, { path: '/appearance?from=strip' });
+    const p = await screen(1280, { path: '/people?from=strip' });
     const tile = p.locator('.loom-tile');
     await tile.locator('.loom-tile__page > *').first().waitFor();
     // A double-click that lands on Close alone (no clicks before it): the tile stays.
-    await tile.locator('button[aria-label="Close Setup"]').dispatchEvent('dblclick');
+    await tile.locator('button[aria-label="Close People"]').dispatchEvent('dblclick');
     await p.waitForTimeout(400);
     expect(await tile.count()).toBe(1);
-    expect(where(p)).toMatch(/^\/appearance\?from=strip/);
+    expect(where(p)).toMatch(/^\/people\?from=strip/);
     // The strip itself, by its title and by its empty middle: to the dock, and its key brings it back where it was.
     for (const at of ['.loom-tile__bar h2', '.loom-tile__path']) {
       // the tile's own move in (restore, t-1925 B) over first: during one the page is its picture, and a double-click
@@ -130,8 +130,8 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
       await expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
       await tile.locator(at).dblclick();
       await onDesktop(p);
-      await p.locator(KEY('Setup')).click();
-      await expect.poll(() => where(p), at).toMatch(/^\/appearance\?from=strip/);
+      await p.locator(KEY('People')).click();
+      await expect.poll(() => where(p), at).toMatch(/^\/people\?from=strip/);
       await tile.locator('.loom-tile__page > *').first().waitFor();
     }
     await p.context().close();

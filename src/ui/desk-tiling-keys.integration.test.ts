@@ -100,22 +100,22 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     it(`16. a sheet in one tile is that tile's: its scrim inside, Tab stays, the other tile answers, nothing else hidden, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt, '/members?t=*members,people');
-      // Members is Setup's page, its tile named Setup.
-      await expect.poll(async () => (await labels(p)).sort()).toEqual(['People', 'Setup']);
-      const inbox = p.locator('.loom-tile[data-tile="/setup"]');
-      const hiddenOutside = () => p.evaluate(() => [...document.querySelectorAll('[aria-hidden="true"]')].filter((e) => !e.closest('.loom-tile[data-tile="/setup"]')).length);
+      // Members is a tile of its own (the launcher's, t-1925 G: Setup is no tile).
+      await expect.poll(async () => (await labels(p)).sort()).toEqual(['Members', 'People']);
+      const inbox = p.locator('.loom-tile[data-tile="/members"]');
+      const hiddenOutside = () => p.evaluate(() => [...document.querySelectorAll('[aria-hidden="true"]')].filter((e) => !e.closest('.loom-tile[data-tile="/members"]')).length);
       // People's filters come in their own lazy chunk (with its stylesheet): count once they're drawn, or a late chunk
       // adds its icons' aria-hidden between the two counts.
       await p.locator('.loom-tile[data-tile="/people"] [data-slot="toggle-group"]').first().waitFor();
       const before = await hiddenOutside();
-      // A member's row on Members (Setup's page): its sheet (the Inbox's ask was one, until it became a reader: t-1925).
+      // A member's row on Members: its sheet (the Inbox's ask was one, until it became a reader: t-1925).
       await inbox.getByText('Owns every agent').first().click();
       const sheet = inbox.locator('.loom-tile__layer [role="dialog"][data-state="open"]');
       await sheet.waitFor();
       // its scrim covers its tile, and only its tile; the sheet is inside the tile's box
       const box = await inbox.boundingBox(), s = await sheet.boundingBox();
       const scrimOf = (t: string) => p.locator(`.loom-tile[data-tile="${t}"] .loom-tile__layer`).evaluate((e) => getComputedStyle(e).backgroundColor);
-      expect(await scrimOf('/setup')).not.toMatch(/^rgba\(0, 0, 0, 0\)$|transparent/);
+      expect(await scrimOf('/members')).not.toMatch(/^rgba\(0, 0, 0, 0\)$|transparent/);
       expect(await scrimOf('/people')).toMatch(/^rgba\(0, 0, 0, 0\)$|transparent/);
       for (const b of [s!]) {
         expect(b.x).toBeGreaterThanOrEqual(box!.x - 0.5); expect(b.y).toBeGreaterThanOrEqual(box!.y - 0.5);
@@ -123,8 +123,8 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
       }
       expect(await inbox.getAttribute('data-blocked')).not.toBeNull();
       // Tab goes round inside the tile
-      for (let i = 0; i < 12; i++) { await p.keyboard.press('Tab'); expect(await focusedTile(p), `Tab ${i + 1}`).toBe('/setup'); }
-      for (let i = 0; i < 4; i++) { await p.keyboard.press('Shift+Tab'); expect(await focusedTile(p), `Shift+Tab ${i + 1}`).toBe('/setup'); }
+      for (let i = 0; i < 12; i++) { await p.keyboard.press('Tab'); expect(await focusedTile(p), `Tab ${i + 1}`).toBe('/members'); }
+      for (let i = 0; i < 4; i++) { await p.keyboard.press('Shift+Tab'); expect(await focusedTile(p), `Shift+Tab ${i + 1}`).toBe('/members'); }
       // nothing outside the tile was hidden from a screen reader
       expect(await hiddenOutside()).toBe(before);
       // the other tile still answers a click, and the sheet stays open in its own tile
@@ -135,7 +135,7 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
       await inbox.locator('.loom-tile__layer [role="dialog"] button').first().focus();
       await p.keyboard.press('Escape');
       await expect.poll(() => sheet.count()).toBe(0);
-      expect((await labels(p)).sort()).toEqual(['People', 'Setup']);
+      expect((await labels(p)).sort()).toEqual(['Members', 'People']);
       expect(await inbox.getAttribute('data-blocked')).toBeNull();
       await p.context().close();
     }, 60_000);

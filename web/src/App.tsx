@@ -10,6 +10,8 @@ const Depth = lazy(() => import('./ground').then((m) => ({ default: m.Depth })))
 // The More drawer's menu (000h's navigation menu) loads when it opens.
 // The More drawer (its menu, 000h's drawer) loads the first time it opens; it stays mounted for its closing motion.
 const MoreSheet = lazy(() => import('./more-sheet'));
+// The launcher (launcher.tsx): a desktop's every app, from the dock's last key; loads the first time it opens.
+const Launcher = lazy(() => import('./launcher'));
 // The rail is a desktop's alone: a phone never draws it, so never loads it.
 const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
 // The account's page (passkeys' controls: WebAuthn, push) loads with that page only.
@@ -62,7 +64,7 @@ import { DockSwap } from './dock-swap';
 import { buzz, HapticLabel, HapticsContext, warmHaptics } from './haptic';
 import { allowZoom } from './immersion';
 import { keptFollow, wearContrast, wearMotion, type Follow } from './access';
-import { keep, lookOf, markColor, modeOf, oneWindowKept, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
+import { keep, LOOKS, lookOf, markColor, modeOf, oneWindowKept, PixelContext, savePrefs, shownLook, wearLook, type Look, type Prefs } from './look';
 
 const ICON: Record<string, string> = {
   Today: 'house', Home: 'house', Inbox: 'inbox', Places: 'layout-grid', Find: 'search', Setup: 'settings', Mind: 'brain', People: 'users',
@@ -109,8 +111,10 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
   const phone: Tab[] = [home, inbox, { label: 'Places', href: '/places', current: s.tab === 'places' || places.some((p) => p.current && p.href !== '/comms') },
     ...(comms ? [{ ...comms, current: location.pathname.startsWith('/comms') }] : []),
     { label: 'More', href: '/setup', current: setup.current }];
+  // A desktop in a household: Setup isn't a key (t-1925 G): its apps are in the launcher, the dock's last key (App).
   return matchMedia('(min-width: 1024px)').matches
-    ? { tabs: [home, inbox, ...places, setup], more: settings }
+    // (and no More key for the setting pieces: they're the launcher's too).
+    ? s.household ? { tabs: [home, inbox, ...places], more: [] } : { tabs: [home, inbox, ...places, setup], more: settings }
     : { tabs: phone, more: [] };
 }
 
@@ -123,6 +127,10 @@ export default function App() {
   const [more, setMore] = useState(false);
   const [moreAsked, setMoreAsked] = useState(false);
   const [finding, setFinding] = useState(false);
+  // The launcher (launcher.tsx), a desktop's: open, and whether it has opened yet (its chunk stays for its next time).
+  const [launching, setLaunchingState] = useState(false);
+  const [launchAsked, setLaunchAsked] = useState(false);
+  const setLaunching = useCallback((o: boolean | ((was: boolean) => boolean)) => { setLaunchAsked(true); setLaunchingState(o); }, []);
   // The ground: the depth background's contours by default (Jonathan: "its rad"); the contour field or the plain wash
   // are a choice in the Appearance app, kept by loom for the person.
   const [ground, setGroundState] = useState<Ground>(() => { try { const g = localStorage.getItem('loom-ground'); return g === 'wash' || g === 'contours' ? g : 'depth'; } catch { return 'depth'; } });
@@ -194,6 +202,8 @@ export default function App() {
   // The page (page.ts): what's shown, loaded and kept current, its address the browser's.
   // Tiled (tiling/tiles.tsx), the screen's page is the desktop's (Home), and the address is the tiles': it stands aside.
   const tiledNow = useRef(false);
+  // A desktop in a household (desk, below), for the launcher's shortcut: the same rule as its dock key.
+  const deskNow = useRef(false);
   const appNav = useMemo<PageNav>(() => ({
     here: () => (tiledNow.current ? '/' : screenNav.here()), push: (to) => { if (!tiledNow.current) screenNav.push(to); },
     replace: (to) => { if (!tiledNow.current) screenNav.replace(to); }, top: () => { if (!tiledNow.current) screenNav.top(); },
@@ -248,7 +258,12 @@ export default function App() {
 
   // ⌘K / Ctrl-K: Find, from anywhere.
   useEffect(() => {
-    const f = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); } };
+    const f = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setFinding((o) => !o); }
+      // The launcher, a desktop's: Ctrl+Shift+Space (⌘⇧Space). Not ⌘Space (Spotlight's) or Ctrl+Space (the input
+      // language's, on every desktop OS): the browser doesn't get those reliably (launcher.tsx).
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.code === 'Space' || e.key === ' ') && deskNow.current) { e.preventDefault(); setLaunching((o) => !o); }
+    };
     addEventListener('keydown', f); return () => removeEventListener('keydown', f);
   }, []);
   const go = useCallback((href: string, o?: { how?: 'back' | 'forward' }) => {
@@ -256,6 +271,8 @@ export default function App() {
     // Find is an overlay over the page you're in, not a page of its own (find.tsx).
     if (u.origin === location.origin && u.pathname === '/find' && !u.search) { setFinding(true); return; }
     if (u.origin !== location.origin || u.pathname.startsWith('/app/') || /^\/(login|logout)/.test(u.pathname)) { location.href = href; return; }
+    // Tiled, More (Places) and Setup are the launcher's now (t-1925 G): an old link to either opens it.
+    if (tiledNow.current && u.origin === location.origin && (u.pathname === '/setup' || u.pathname === '/places')) { setLaunching(true); return; }
     // Tiled: a page opens in its app's tile; the desktop sends the apps to the dock.
     if (tiledNow.current && tilesApi.current) { if (href[0] === '#') tilesApi.current.open(href); else if (u.pathname === '/') tilesApi.current.desktop(); else tilesApi.current.open(u.pathname + u.search); return; }
     // Leaving a page: how far down it was, for Back to come back to; and how the next one is reached (trail.ts).
@@ -297,7 +314,12 @@ export default function App() {
   useEffect(() => {
     if (tiled === wasTiled.current) return;
     wasTiled.current = tiled;
-    if (tiled) { if (url !== '/') void load('/', false); return; }
+    if (tiled) {
+      // An old link to Setup or More (Places): the launcher, over the desktop.
+      if (['/setup', '/places'].includes(url.split('?')[0])) setLaunching(true);
+      if (url !== '/') void load('/', false);
+      return;
+    }
     const u = new URL(location.href);
     for (const k of ['t', 'm', 'w']) u.searchParams.delete(k);
     history.replaceState(null, '', u.pathname + u.search);
@@ -347,7 +369,8 @@ export default function App() {
   const agentDock = !!head && !!accent;
   // The household's dock ends with who's signed in (Jonathan, 2026-11-03): their avatar, past a divider, opens their
   // account. It isn't a page among the others, so it takes its own place and never folds into More.
-  const meTile = !agentDock && chrome?.shell ? chrome.shell.owner : null;
+  // A desktop's account is the launcher's (its corner: the mockups), so its dock ends with the launcher's key instead.
+  const meTile = !agentDock && chrome?.shell && !(wide && chrome.shell.household) ? chrome.shell.owner : null;
   const room = agentDock ? Math.max(3, Math.floor((vw - 52) / 60) - 1) : Math.max(4, Math.floor((vw - 40 - (meTile ? 58 : 0)) / 60));
   const onPhone = (() => {
     if (nav.tabs.length <= room && !nav.more.length) return nav.tabs;
@@ -370,10 +393,11 @@ export default function App() {
   const current = (list: Tab[]) => list.find((t) => t.current)?.href ?? '';
   const me: DockItem | null = meTile ? { value: '/account', label: nameOf(meTile), icon: <span className="loom-back-mark" aria-hidden>{nameOf(meTile)[0]}</span> } : null;
   const accountOpen = data?.view === 'passkeys';
-  const lit = tiled && tileFocus ? tileFocus.key : accountOpen && me ? '/account' : current(phoneTabs);
+  const lit = launching && wide && chrome?.shell?.household ? '#apps' : tiled && tileFocus ? tileFocus.key : accountOpen && me ? '/account' : current(phoneTabs);
   const pick = (href: string) => {
     buzz(haptics, true);
     if (href === '#more') { setMoreAsked(true); setMore(true); return; }
+    if (href === '#apps') { setLaunching(true); return; }
     if (tiledNow.current && tilesApi.current) { tilesApi.current.pick(href); return; }
     if (href === '#back') { go('/'); return; }
     go(href);
@@ -403,7 +427,10 @@ export default function App() {
     const tab = [...nav.tabs, ...nav.more].find((t) => !t.href.startsWith('#') && t.href !== '/' && (at === t.href || at.startsWith(`${t.href}/`)));
     if (tab) return { key: tab.href, label: tab.label };
     if (at === '/account' || at === '/passkeys') return { key: '/account', label: 'Account' };
-    if (settingsOf(chrome.shell).some((p) => at === p.href || at.startsWith(`${p.href}/`))) return { key: '/setup', label: 'Setup' };
+    // Setup and Places (More) are the launcher's on a desktop (t-1925 G), not tiles: each of their apps is its own.
+    if (at === '/setup' || at === '/places') return null;
+    const set = settingsOf(chrome.shell).find((p) => at === p.href || at.startsWith(`${p.href}/`));
+    if (set) return { key: set.href, label: set.label };
     const p = placeAt(at);
     if (p) return { key: p.href, label: p.label };
     const seg = at.split('/')[1] ?? '';
@@ -412,7 +439,7 @@ export default function App() {
   /** An app by its name in the tiles' address (the last part of its key): a household app's first, then an agent's. */
   const tileNamed = (name: string) => {
     const hrefs = [...nav.tabs, ...nav.more].map((t) => t.href).filter((h) => !h.startsWith('#') && h !== '/')
-      .concat('/setup', '/account', ...shellPlaces.map((p) => p.href), ...(chrome?.shell?.agents ?? []).map((a) => `/a/${a.id}`));
+      .concat('/account', ...shellPlaces.map((p) => p.href), ...(chrome?.shell?.agents ?? []).map((a) => `/a/${a.id}`));
     for (const h of hrefs) { const r = tileOf(h); if (r && tileName(r.key) === name) return { ...r, href: h }; }
     return null;
   };
@@ -512,6 +539,7 @@ export default function App() {
   // rail). 1024 is where the rail took over from the phone's dock before: below it the phone's layout (its dock, its
   // gestures) is unchanged.
   const desk = wide && !!chrome?.shell?.household;
+  useLayoutEffect(() => { deskNow.current = desk; });
 
   // The app the page shown is in, for its own history (trail.ts): an agent's pages are that agent's; else the place it's
   // under. (A desktop's tiles keep their own: tiles.tsx.)
@@ -641,7 +669,9 @@ export default function App() {
             <nav className="loom-dock-bar fixed inset-x-0 bottom-0 z-30 flex justify-center px-3 [padding-bottom:calc(env(safe-area-inset-bottom)_+_8px)]">
               <DockSwap id={agentDock ? `agent:${accent?.id}` : head ? `head:${head.label}` : 'household'}>
               <Dock variant="shelf" className={agentDock ? 'loom-agent-dock' : me ? 'loom-me-dock' : undefined}
-                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(tiled ? [{ value: '#widgets', label: 'Add a widget', icon: <AnimatedIcon name={iconFor('plus')} /> }] : []), ...(me ? [me] : [])]}
+                items={backTile ? [backTile, ...dockItems(phoneTabs)] : [...dockItems(phoneTabs), ...(tiled ? [{ value: '#widgets', label: 'Add a widget', icon: <AnimatedIcon name={iconFor('plus')} /> }] : []), ...(me ? [me] : []),
+                  // A desktop's last key: every app (launcher.tsx).
+                  ...(desk && !agentDock ? [{ value: '#apps', label: 'All apps', tint: 'olive', icon: <span className="loom-apps-dots" aria-hidden>{Array.from({ length: 9 }, (_, n) => <i key={n} />)}</span> }] : [])]}
                 value={lit} onValueChange={pick}
                 aria-label={agentDock ? `${accent?.label}'s pages` : 'Pages'} />
               </DockSwap>
@@ -657,6 +687,10 @@ export default function App() {
 
       {moreAsked && <Suspense fallback={null}><MoreSheet open={more} onOpenChange={setMore} here={head?.label} pages={moreTabs} agents={chrome?.shell?.agents ?? []} icon={icon}
         go={(href) => { setMore(false); go(href); }} /></Suspense>}
+
+      {launchAsked && desk && chrome?.shell && <Suspense fallback={null}><Launcher open={launching} onOpenChange={setLaunching} shell={chrome.shell} icon={icon}
+        look={LOOKS.find((l) => l.look === look)?.name} motion={motion === 'on' ? 'Less motion' : motion === 'off' ? 'Full motion' : 'As this device'}
+        launch={(href) => { if (!(tiledNow.current && tilesApi.current?.open(href))) go(href); }} /></Suspense>}
 
       {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} widgets={tiled ? tilesApi.current?.addable() : undefined} /></Suspense>}
 

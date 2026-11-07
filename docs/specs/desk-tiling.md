@@ -252,6 +252,38 @@ The seed opens **no app tile**. An Inbox tile when something needs you was weigh
 those asks and answers them where they stand, and an open app moves every widget to the rail, so the first screen would
 be busier and say the same thing twice.
 
+## The launcher (t-1925 G)
+
+Every app in one grid, the desktop's own app list (`web/src/launcher.tsx`, its list in `web/src/launch-list.ts`): the
+dock's last key (All apps, nine lit dots) opens it, and so does **Ctrl+Shift+Space** (⌘⇧Space on a Mac). Not ⌘Space or
+Ctrl+Space, the mockup's first pick: ⌘Space is Spotlight's on a Mac and Ctrl+Space switches the input language on
+Windows, Linux and any Mac with two keyboards, so the browser doesn't reliably get either.
+
+- Sections come from loom's own list: **Work** (the Inbox, Activity, Projects, then each piece that's a place), **People
+  & agents** (Comms, each agent, People), **Library** (Knowledge), **System** (pieces whose kind is a setting, and loom's
+  own first-party pieces that run the household while being places: Boxes, Bridges, Clock, Machine, Secrets…, by their
+  tab's label, since a manifest has no section field yet; then Members), **Look & feel** (Appearance, Accessibility),
+  **Pieces**. A third party's place piece is Work's. Each app is in one section only; an empty section isn't drawn.
+- Each tile says its live state under its name: "3 need you" or "Nothing waiting", "2 unread" or "All read", an agent's
+  "Working" or "1 waiting on you", a piece's own tile value, the look's name, Accessibility's motion choice ("As this
+  device", "Less motion", "Full motion"), how many pieces are installed. An app with no number of its own to say
+  (Activity, People, Projects, Knowledge, Members) shows no line rather than a made-up one.
+- Search has focus when it opens and filters as you type (an app's name or its section's). Enter opens the best match,
+  marked on its tile (the first app before anything's typed; then a name that starts with what's typed, else the first
+  shown); Esc closes; the arrow keys move between apps (up from the
+  first row is the search again); Tab stays inside it.
+- Opening an app adds it to the tiling, or focuses it when it's open, or brings it back from the dock.
+- The account is the launcher's corner (your name), not a dock key, on a desktop.
+
+**More and Setup aren't desktop destinations.** The dock has no Setup key and no More key, and neither page is a tile: each of their apps
+(Appearance, Accessibility, Members, Pieces, each setting piece) is its own tile, keyed by its own address. An old link
+to `/setup` or `/places` (with or without a query) opens the launcher over the desktop, and a saved layout with a Setup or Places tile loads
+without it.
+
+**A phone keeps its More and Places.** On a phone they're already what the launcher is on a desktop: whole screens of
+app tiles a dock key away, like a phone's home screen, and they read the same list (`nav.ts` placesOf, settingsOf). A
+dialog over a phone's one page would add a step to reach the same tiles, and swiping between dock pages already works.
+
 ## One window at a time
 
 An Accessibility choice, per person, off unless turned on (`oneWindow` in `/appearance/prefs`; this device's copy is
