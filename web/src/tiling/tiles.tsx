@@ -445,7 +445,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     void fetch('/comms', { credentials: 'same-origin', headers: { accept: 'application/json' } }).then((r) => (r.ok ? r.json() : null)).catch(() => null)
       .then((d: { threads?: { id: string; agent: string; last: string }[] } | null) => {
         const t = (d?.threads ?? []).filter((x) => x.agent === agent).sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0))[0];
-        open(t ? `/comms/${t.id}` : '/comms', FROM_WIDGET);
+        open(t ? `/comms/${t.id.replace(/^th:/, '')}` : '/comms', FROM_WIDGET);
       });
   } : undefined;
 

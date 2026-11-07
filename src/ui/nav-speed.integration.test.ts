@@ -142,12 +142,12 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       await p.locator(`${list} .comms-row__btn`).nth(0).click();
       await p.locator(`${tile('Comms')} .comms-msg--agent`).first().waitFor();
       const first = new URL(p.url()).pathname;
-      expect(first).toMatch(/^\/comms\/th:/);
+      expect(first).toMatch(/^\/comms\/[a-z2-7]{10}$/);
       await p.locator(`${tile('Comms')} .comms-composer textarea`).fill('half a thought');
       // Another thread, with its page held back: the pane says which at once, before its page lands.
       let release!: () => void;
       const held = new Promise<void>((r) => { release = r; });
-      await p.route(/\/comms\/th:[a-z2-7]+$/, async (route) => { await held; await route.continue().catch(() => {}); });
+      await p.route(/\/comms\/(th:)?[a-z2-7]{10}$/, async (route) => { await held; await route.continue().catch(() => {}); });
       // Pressed where it is (a test's click would scroll the list to it first).
       await p.locator(`${list} .comms-row__btn`).nth(12).evaluate((e) => { e.scrollIntoView({ block: 'nearest' }); });
       const before = await p.locator(list).evaluate((e) => e.scrollTop);
@@ -157,11 +157,11 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       expect(await p.locator(`${list} .comms-row`).nth(12).getAttribute('data-current')).not.toBeNull();
       expect(await kept(p, list)).toBe(true);
       release();
-      await p.unroute(/\/comms\/th:[a-z2-7]+$/);
+      await p.unroute(/\/comms\/(th:)?[a-z2-7]{10}$/);
       await expect.poll(() => p.locator(`${tile('Comms')} .comms-thread--opening`).count()).toBe(0);
       await p.locator(`${tile('Comms')} .comms-msg--agent`).first().waitFor();
       const second = new URL(p.url()).pathname;
-      expect(second).toMatch(/^\/comms\/th:/);
+      expect(second).toMatch(/^\/comms\/[a-z2-7]{10}$/);
       expect(second).not.toBe(first);
       // The list: the same element, scrolled where it was, the pressed thread lit.
       expect(await kept(p, list)).toBe(true);

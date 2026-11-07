@@ -109,11 +109,11 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
       // Chat on Art's card: Comms opens last (next to the rail) on Art's latest thread.
       await p.locator('[data-widget="art"] button', { hasText: /chat/i }).or(p.locator('[data-widget="art"] button[aria-label="Chat with art"]')).first().click();
       await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
-      await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${artLatest}`);
+      await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${artLatest.replace(/^th:/, '')}`);
       expect(query(p, 't')).toBe('inbox,*comms');
       // and Mark's card: Mark's thread, in the Comms tile that's open
       await p.locator('[data-widget="mark"] button[aria-label^="Chat with"]').click();
-      await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${markLatest}`);
+      await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${markLatest.replace(/^th:/, '')}`);
       expect(await labels(p)).toEqual(['Inbox', 'Comms']);
       await p.context().close();
     }, 60_000);
@@ -249,7 +249,7 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
   }, 60_000);
 
 
-  it('Comms in a tile under 620 px is one pane (loom#565 measures its own box): the list, then the thread with its way back', async () => {
+  it('Comms in a tile under 620 px is one pane (loom#565 measures its own box): the list, then the thread with its threads in a drawer', async () => {
     const p = await screen(1280, 800, '/comms?t=people,*comms&w=needs');
     const comms = p.locator('.loom-tile[data-tile="/comms"]');
     await comms.locator('.comms-list').waitFor();
@@ -260,18 +260,22 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     expect(await shown('.comms-blank')).toBe(false);
     // a thread: only the thread, filling the tile, with Back to the list
     await comms.locator('.comms-row__btn').first().click();
-    await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/comms\/th/);
+    await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/comms\/[a-z2-7]{10}$/);
     await comms.locator('.comms-thread').waitFor();
     expect(await shown('.comms-list')).toBe(false);
     const [tw, th] = await Promise.all([comms.locator('.comms-thread').evaluate((e) => e.getBoundingClientRect().width), comms.locator('.comms').evaluate((e) => e.getBoundingClientRect().width)]);
     expect(tw).toBeGreaterThan(th - 4);
-    await comms.locator('button[aria-label="Back to threads"]').click();
-    await expect.poll(() => new URL(p.url()).pathname).toBe('/comms');
-    expect(await shown('.comms-list')).toBe(true);
+    // the threads fold out from its menu button (t-1925 C), over the thread, and Esc folds them back
+    await comms.locator('button.comms-drawer-btn[aria-label="Threads"]').click();
+    await comms.locator('.comms-drawer .comms-list').waitFor();
+    await p.keyboard.press('Escape');
+    await expect.poll(() => comms.locator('.comms-drawer').count()).toBe(0);
+    expect(await shown('.comms-thread')).toBe(true);
     // wide again (Comms alone): two panes, the list beside the thread, and no Back
     await p.locator('.loom-tile[data-tile="/people"] button[aria-label="Close People"]').click();
     await expect.poll(() => comms.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThan(620);
-    await expect.poll(() => shown('.comms-blank')).toBe(true);
+    // (the thread stays open across the width: the list comes back beside it)
+    await expect.poll(() => shown('.comms-list')).toBe(true);
     await comms.locator('.comms-row__btn').first().click();
     await comms.locator('.comms-thread').waitFor();
     const two = async (page: Page, sel: string) => page.locator(sel).evaluate((c) => {

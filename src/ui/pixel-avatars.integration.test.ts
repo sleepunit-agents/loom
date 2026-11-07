@@ -218,14 +218,14 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     await p.context().close();
   }, 60_000);
 
-  it.runIf(hasAge)('Comms\' thread list: each thread wears its agent\'s small face, not a letter', async () => {
+  // A small place wears the agent's letter (t-1925 D, the app mockups): the pixel face is the one big picture.
+  it.runIf(hasAge)('Comms\' thread list: each thread wears its agent\'s letter, not a cropped face', async () => {
     const p = await device(1280);
     await p.goto(`${base}/comms`);
     await p.locator('.comms-row').first().waitFor();
-    await settle(p, { small: true, art: false });
-    check('Comms', { ...await faces(p), wide: undefined }, { small: true, art: false });
-    expect(await p.locator('.comms-row .comms-row__avatar .loom-pixel-avatar canvas').count()).toBeGreaterThan(0);
-    expect(await p.locator('.comms-row .comms-row__face').count()).toBe(0);
+    const rows = await p.locator('.comms-row').count();
+    expect(await p.locator('.comms-row .loom-letter').count()).toBe(rows);
+    expect(await p.locator('.comms-row .loom-pixel-avatar').count()).toBe(0);
     await p.context().close();
   }, 60_000);
 

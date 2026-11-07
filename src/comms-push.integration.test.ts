@@ -44,7 +44,7 @@ describe.skipIf(!hasAge)('Comms push', () => {
     adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'art', text: 'the secret words of the reply' });
     const a = commsAnnouncements(h);
     expect(a).toHaveLength(1);
-    expect(a[0]).toMatchObject({ member: 'jonathan', title: 'Art E Fish replied in a new thread', url: `/comms/${t.id}` });
+    expect(a[0]).toMatchObject({ member: 'jonathan', title: 'Art E Fish replied in a new thread', url: `/comms/${t.id.replace(/^th:/, '')}` });
     expect(JSON.stringify(a)).not.toMatch(/secret words/);
     setTitle(h, threadFor(h, h.members[0], t.id), 'The comm screen', 'agent');
     expect(commsAnnouncements(h)[0]).toMatchObject({ title: 'Art E Fish replied', body: 'The comm screen' });
@@ -81,8 +81,8 @@ describe.skipIf(!hasAge)('Comms push', () => {
     adapterCall(h, process.env, { op: 'post', place: lt.id, agent: 'pond-bot', text: 'pond words' });
     await minute(sent);
     const to = (who: string) => sent.filter((x) => x.to.endsWith(who)).map((x) => x.payload.url);
-    expect(to('jon')).toEqual([`/comms/${t.id}`]);
-    expect(to('loren')).toEqual([`/comms/${lt.id}`]);
+    expect(to('jon')).toEqual([`/comms/${t.id.replace(/^th:/, '')}`]);
+    expect(to('loren')).toEqual([`/comms/${lt.id.replace(/^th:/, '')}`]);
     expect(JSON.stringify(sent)).not.toMatch(/never go|pond words/);
   });
 
@@ -92,7 +92,7 @@ describe.skipIf(!hasAge)('Comms push', () => {
     adapterCall(h, process.env, { op: 'post', place: a.id, agent: 'art', text: 'x' });
     adapterCall(h, process.env, { op: 'post', place: b.id, agent: 'art', text: 'y' });
     markRead(h, threadFor(h, h.members[0], a.id), 0);
-    expect(commsAnnouncements(h).map((x) => x.url)).toEqual([`/comms/${b.id}`]);
+    expect(commsAnnouncements(h).map((x) => x.url)).toEqual([`/comms/${b.id.replace(/^th:/, '')}`]);
   });
 
   it('past five in a minute, the rest wait for the next minute: none is dropped', async () => {

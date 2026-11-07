@@ -64,6 +64,11 @@ const DAY_MS = 86_400_000;
 export const CLIENT_ID = /^[a-z2-7]{16}$/;
 /** A thread's id, which is its place. */
 export const THREAD_ID = /^th:[a-z2-7]{10}$/;
+/** A thread's page address (t-1918): its id without the `th:`, since a page's path has no colon (vocab.ts PATH_CHARS),
+ * as `login/<id>` went (loom-box#50). `/comms/th:…` still works, and a page load of one is sent here. */
+export const threadPath = (id: string): string => `/comms/${id.replace(/^th:/, '')}`;
+/** The thread id an address names: its bare 10 characters, or the old `th:` form. */
+export const threadIdOf = (seg: string): string => (/^[a-z2-7]{10}$/.test(seg) ? `th:${seg}` : seg);
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
 export type MessageKind = 'message' | 'reply' | 'card' | 'ask' | 'error';
@@ -386,6 +391,7 @@ export function errorWords(code: string, agentName: string, reason: string | und
     case 'refused': return `${agentName} didn't get that: ${r || 'the runtime refused it'}.`;
     case 'start-failed': return `${agentName} couldn't start: ${r || 'no reason given'}.`;
     case 'busy': return `${agentName} is busy with other work; this is waiting its turn.`;
+    case 'start-retry': return `${agentName} couldn't start; retrying.`;
     case 'loop': return `Paused: ${agentName} was repeating itself.`;
     case 'post-failed': return `${agentName}'s reply couldn't be shown: ${r || 'no reason given'}.`;
     case 'no-reply': return `${agentName} finished without replying.`;
@@ -647,7 +653,9 @@ export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { 
   }
   withThreadsAt(h.home, (db) => touch(h.home, db, t.id, {
     last_failed: outcome.error ? 1 : 0,
-    queued_since: outcome.delivered && outcome.body === 'queued' ? nowIso(now) : null,
+    // Queued because no body could start (start-retry): the runtime is trying again, and the thread says so; it's not
+    // waiting its turn, so no busy line follows (t-1918).
+    queued_since: outcome.delivered && outcome.body === 'queued' && outcome.error?.code !== 'start-retry' ? nowIso(now) : null,
   }, now));
 }
 

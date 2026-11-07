@@ -19,8 +19,8 @@ import { bits, githubUrl } from './plain';
 import { prose } from '../../src/ui/prose';
 import { act, type Chrome } from './loom';
 import type { FaceState } from './face';
+import { useFollow } from './comms-follow';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatPermission, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
-import { AgentState, type AgentStatus } from '@/components/ui/agent-state';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const PixelFace = lazy(() => import('./pixel-face'));
@@ -149,12 +149,19 @@ export function faceOf(s: { failed: boolean; asking: boolean; talking: boolean; 
   return 'idle';
 }
 
-/** The 000h agent state a face shows (a reply landing reads as done). */
-export const statusOf = (f: FaceState): AgentStatus => (f === 'talking' ? 'complete' : f);
-const STATUS_WORDS: Partial<Record<AgentStatus, string>> = { thinking: 'Thinking', 'needs-input': 'Waiting on you', error: 'Can\'t reach it' };
 
 type Link = 'ok' | 'lost' | 'none';
-const LINK_WORDS: Record<Link, string> = { ok: 'LINK OK', lost: 'LINK LOST', none: 'NO CARRIER' };
+
+/** The comm screen's channel line (t-1918): what the agent is doing now, said as a radio would. No carrier when the
+ * agent can't be reached; waiting on you while it asks; else its face's state. A stream reconnecting doesn't change what
+ * the agent is doing: the meter drops to one bar and the thread says Reconnecting. */
+export function channelWord(face: FaceState | 'complete', link: Link): string {
+  if (link === 'none' || face === 'error') return 'NO CARRIER';
+  return face === 'needs-input' ? 'WAITING ON YOU' : face === 'talking' ? 'TALKING' : face === 'working' ? 'WORKING' : face === 'thinking' ? 'THINKING' : 'DONE';
+}
+
+/** A thread's page address (t-1918): its id without the `th:` (a page's path has no colon; src/comms.ts threadPath). */
+export const threadPath = (id: string) => `/comms/${id.replace(/^th:/, '')}`;
 
 /** The harness the thread's latest reply came from, when it was a switch (its card's `on`, comms.md): "Codex", or null. */
 export const onOf = (messages: Msg[]): string | null => {
@@ -204,7 +211,7 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, you, com
   const meter = link === 'ok' ? 4 : link === 'lost' ? 1 : 0;
   return (
     <section className="comms-screen" data-compact={compact || undefined} data-face={face} data-anim={sprite ? anim : undefined} data-signal={signal ? 'on' : undefined}
-      style={{ '--c': markColor(mark.bg) } as React.CSSProperties} aria-label={`${mark.label}'s comm screen`}>
+      style={{ '--c': markColor(mark.bg) } as React.CSSProperties} aria-label={`${mark.label}'s comm screen, channel ${String(channel).padStart(2, '0')}`}>
       <div className="comms-screen__frame">
         <div className="comms-screen__glass">
           {compact ? small : sprite ? (
@@ -216,7 +223,7 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, you, com
           {signal && <span className="comms-screen__static" aria-hidden />}
         </div>
         <footer className="comms-screen__label loom-data">
-          <span>{name} · CH {String(channel).padStart(2, '0')} · {LINK_WORDS[link]}{on ? ` · ON ${on.toUpperCase()}` : ''}</span>
+          <span>{name} · {channelWord(phase ?? face, link)}{on ? ` · ON ${on.toUpperCase()}` : ''}</span>
           <span className="comms-screen__meter" aria-label={`signal ${meter} of 4`}>{[1, 2, 3, 4].map((i) => <i key={i} data-on={i <= meter || undefined} />)}</span>
         </footer>
       </div>
@@ -248,9 +255,10 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
         const s = touch.current; touch.current = null;
         if (s && s.x - e.changedTouches[0].clientX > 80 && Math.abs(s.y - e.changedTouches[0].clientY) < 40) { acted.current = true; onArchive(); }
       }}>
-      <button type="button" className="comms-row__btn" data-prefetch={`/comms/${t.id}`} onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
-        {mark ? <AgentAvatar a={mark} size={32} className="comms-row__avatar" />
-          : <span className="comms-row__face">{t.agent[0]}</span>}
+      <button type="button" className="comms-row__btn" data-prefetch={threadPath(t.id)} onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
+        {/* A letter, the agents' small mark (t-1925 D): the pixel face is the comm screen's. */}
+        <span className="loom-letter comms-row__letter" aria-hidden style={{ '--c': mark ? markColor(mark.bg) : 'var(--v-pink)', '--ls': '30px' } as React.CSSProperties}>
+          {(mark?.label ?? t.agent)[0].toUpperCase()}</span>
         <span className="comms-row__main">
           <span className="comms-row__title">{t.title ?? `New thread with ${agentName(t.agent, marks)}`}</span>
           <span className="comms-row__sub loom-data">{t.state.working ? 'working…' : `CH ${String(t.channel).padStart(2, '0')}${t.project ? ` · ${t.project}` : ''}`}</span>
@@ -347,6 +355,46 @@ function Composer({ onSend, disabled, accent, placeholder, label, draft }: { onS
   );
 }
 
+// ---- the threads' drawer (t-1925 C) ------------------------------------------------------------
+
+/** In a box too narrow for two panes, the threads fold out over the thread from a menu button, as chat apps do. */
+type Drawer = { open: boolean; toggle: () => void };
+function DrawerButton({ open, toggle }: Drawer) {
+  return (
+    <button type="button" className="comms-drawer-btn" onClick={toggle} aria-label="Threads" aria-expanded={open} aria-controls="comms-drawer" data-drawer-btn="">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+    </button>
+  );
+}
+
+/** The drawer itself: the list over the pane, a scrim beside it. Focus goes in when it opens and back to the menu
+ * button when it closes; Tab stays inside it; Esc and the scrim close it. */
+function ThreadsDrawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const panel = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const first = panel.current?.querySelector<HTMLElement>('.comms-row[data-current] .comms-row__btn') ?? panel.current?.querySelector<HTMLElement>('.comms-row__btn, button');
+    first?.focus();
+    // Back to this Comms' own menu button (the panel's box holds both).
+    const box = panel.current?.closest('.comms');
+    return () => { box?.querySelector<HTMLElement>('[data-drawer-btn]')?.focus(); };
+  }, []);
+  const keys = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
+    if (e.key !== 'Tab' || !panel.current) return;
+    const all = [...panel.current.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,[tabindex]:not([tabindex="-1"])')];
+    if (!all.length) return;
+    const i = all.indexOf(document.activeElement as HTMLElement);
+    if (i < 0) { e.preventDefault(); all[0].focus(); return; }
+    if (e.shiftKey && i <= 0) { e.preventDefault(); all[all.length - 1].focus(); } else if (!e.shiftKey && i === all.length - 1) { e.preventDefault(); all[0].focus(); }
+  };
+  return (
+    <div className="comms-drawer" id="comms-drawer" role="dialog" aria-modal="true" aria-label="Threads" onKeyDown={keys}>
+      <div ref={panel} className="comms-drawer__panel">{children}</div>
+      <button type="button" className="comms-drawer__scrim" aria-label="Close threads" tabIndex={-1} onClick={onClose} />
+    </div>
+  );
+}
+
 // ---- one thread ----------------------------------------------------------------------------------
 
 /** The runtime's trace of a thread's replies (comms.md, "Tracing a reply"): its page, for the owner, by conversation. */
@@ -404,7 +452,9 @@ function grouped(messages: Msg[]): Array<{ key: string; msg?: Msg; cards?: Msg[]
   return out;
 }
 
-function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChanged, github }: {
+function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChanged, github, drawer }: {
+  /** One pane in a narrow box (t-1925 C): the threads fold out from a menu button, not a way back. */
+  drawer?: Drawer;
   initial: { thread: Thread; messages: Msg[]; earlier?: { at: string; summary: string }[]; asks?: ThreadAsk[] }; marks: Record<string, Mark>; member: string; csrf: string; wide: boolean; github?: string;
   /** Whether it shows its own way back to the list: a phone's, or one pane at a time in a narrow window or tile. */
   back: boolean;
@@ -490,7 +540,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', read); };
   }, [thread.id, csrf, messages.length, pull]);
 
-  useEffect(() => { bottom.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
+  // Follow the bottom only while the reader's there (comms-follow.ts); their own message always brings them down.
+  // What the pill counts: messages and asks, never a run's step cards (they fold into one line).
+  const { unread, down } = useFollow(bottom, messages.filter((m) => m.kind !== 'card').length + asks.length, messages.filter((m) => m.kind === 'message').at(-1)?.seq ?? 0);
   // The phone's strip collapses to the small avatar once the messages scroll under it.
   useEffect(() => {
     if (wide || !top.current) return;
@@ -549,16 +601,19 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
+  // The step it's on now: the newest card of the newest run still running, else the newest card since your message.
+  const running = (() => {
+    const cards = messages.filter((m) => m.kind === 'card' && (!lastMine || m.seq > lastMine.seq));
+    return (cards.filter((c) => String(c.card?.state ?? '') === 'running').at(-1) ?? cards.at(-1))?.text ?? null;
+  })();
   const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} you={member} compact={!wide && compact} wide={wide} />;
 
   return (
     <article className="comms-thread" data-wide={wide || undefined}>
       <header className="comms-thread__head">
-        {back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
+        {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
         {thread.project && <span className="comms-thread__project loom-data">{thread.project}</span>}
-        {face !== 'idle' && <AgentState className="comms-state" status={statusOf(face)} size="sm"
-          label={face === 'working' ? `Working · ${Math.floor(since / 60)}:${String(since % 60).padStart(2, '0')}` : STATUS_WORDS[statusOf(face)]} />}
         {thread.state.working && <button type="button" className="comms-stop" onClick={() => void verb('stop')}>Stop</button>}
         <button type="button" className="comms-menu" onClick={() => setMenu(!menu)} aria-expanded={menu} aria-label="Thread menu">⋯</button>
         {menu && (
@@ -590,8 +645,17 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             {asksRead && asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
             {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
-            <div ref={bottom} />
+            {/* The working line (t-1918): what the agent is on as it happens, the newest step and how long, under the thread. */}
+            {(face === 'working' || face === 'thinking') && (
+              <div className="comms-live loom-data" role="status" data-face={face}>
+                <i aria-hidden />{face === 'working'
+                  ? <>{mark.label} is working{running ? <> · <span className="comms-live__step">{running}</span></> : null} · {Math.floor(since / 60)}:{String(since % 60).padStart(2, '0')}</>
+                  : <>{mark.label} is thinking…</>}
+              </div>
+            )}
+            <div ref={bottom} className="comms-end" />
           </AgentChatThread>
+          {unread > 0 && <button type="button" className="comms-newpill" onClick={down}>{unread === 1 ? 'New message' : `${unread} new messages`} ↓</button>}
         </AgentChat>
         {wide && <aside className="comms-thread__side">{screen}<WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} /></aside>}
       </div>
@@ -602,12 +666,12 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
 
 /** A thread on its way (t-1925 F): what the list knows of it (its name, who with), at once, until its page lands and
  * the thread itself takes this place. Only the pane changes: the list beside it stays as it was. */
-function ThreadOpening({ t, marks, wide, back, onBack }: { t: Thread; marks: Record<string, Mark>; wide: boolean; back: boolean; onBack: () => void }) {
+function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; marks: Record<string, Mark>; wide: boolean; back: boolean; onBack: () => void; drawer?: Drawer }) {
   const mark = marks[t.agent] ?? { label: agentName(t.agent, marks), bg: 'pink', fg: '#000' };
   return (
     <article className="comms-thread comms-thread--opening" data-wide={wide || undefined} aria-busy="true">
       <header className="comms-thread__head">
-        {back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
+        {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <span className="comms-thread__title">{t.title ?? `New thread with ${mark.label}`}</span>
       </header>
       <div className="comms-thread__body">
@@ -660,7 +724,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
 
 // ---- a new thread ------------------------------------------------------------------------------
 
-function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (t: Thread) => void; onBack: () => void; wide: boolean; back: boolean }) {
+function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (t: Thread) => void; onBack: () => void; wide: boolean; back: boolean; drawer?: Drawer }) {
   const [agent, setAgent] = useState(agents[0]);
   const [error, setError] = useState<string | null>(null);
   const id = useRef(newId());
@@ -674,7 +738,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agen
   return (
     <article className="comms-thread comms-new-thread" data-wide={wide || undefined}>
       <header className="comms-thread__head">
-        {back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
+        {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <span className="comms-thread__title">New thread</span>
       </header>
       <div className="comms-pick" role="radiogroup" aria-label="Who with">
@@ -713,7 +777,7 @@ export function CommsView({ data }: { data: CommsData }) {
   const [opening, setOpening] = useState<Thread | null>(null);
   useEffect(() => { setMaking(false); setOpening(null); }, [data.thread?.id, data.which]);
   // The thread itself, not its id: one just started, or an archived one, isn't in the list's threads.
-  const open = (t: Thread) => { setMaking(false); setOpening(t.id === data.thread?.id ? null : t); go(`/comms/${t.id}`); };
+  const open = (t: Thread) => { setMaking(false); setDrawerOpen(false); setOpening(t.id === data.thread?.id ? null : t); go(threadPath(t.id)); };
   const back = () => { setMaking(false); setOpening(null); go('/comms'); };
   // A desktop's Comms in a box narrower than two panes fit (a narrow window, a tile): one pane at a time, the list, then
   // the thread with a way back. Measured on the box, not the screen; before the first paint, so two never flash.
@@ -730,9 +794,13 @@ export function CommsView({ data }: { data: CommsData }) {
     return () => ro.disconnect();
   }, [wide]);
   const asked = opening && opening.id !== (data.which === 'thread' ? data.thread?.id : undefined) ? opening : undefined;
-  const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} />
-    : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} />
-    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} />
+  // One pane (t-1925 C): the threads are a drawer over it, from the menu button in its header; picking one closes it.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => { setDrawerOpen(false); }, [data.thread?.id, data.which, making, one]);
+  const drawer: Drawer | undefined = wide && one ? { open: drawerOpen, toggle: () => setDrawerOpen((o) => !o) } : undefined;
+  const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} drawer={drawer} />
+    : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} drawer={drawer} />
+    : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} drawer={drawer} />
       : null;
   const list = <ThreadList threads={threads} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
@@ -742,6 +810,7 @@ export function CommsView({ data }: { data: CommsData }) {
     <div ref={box} className="comms" data-wide="" data-one={one ? '' : undefined}>
       {one && pane ? null : list}
       {pane ?? (one ? null : <div className="comms-blank"><p className="loom-data">PICK A THREAD, OR START ONE</p></div>)}
+      {one && pane && drawerOpen && <ThreadsDrawer onClose={() => setDrawerOpen(false)}>{list}</ThreadsDrawer>}
     </div>
   );
 }

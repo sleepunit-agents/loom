@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import type { Database } from 'better-sqlite3';
 import { withHouseholdDb } from './household-store.js';
 import { loadHousehold, type Household, type Member } from './household.js';
-import { COMMS_DB, SINCE_MAX, messagesOf, owns, threadOfConversation, threadsOf, type Thread } from './comms.js';
+import { COMMS_DB, SINCE_MAX, messagesOf, owns, threadOfConversation, threadPath, threadsOf, type Thread } from './comms.js';
 import { piecesOffering, runOffer } from './offers-registry.js';
 import { splitPage, type Block, type Page } from './ui/vocab.js';
 import { ownersAwarePieces, type ApiCaller } from './ui/pieces.js';
@@ -277,7 +277,7 @@ export function fromBlock(home: string | undefined, member: Member | undefined, 
   // anyone else reads what an unknown conversation reads.
   if (!t || !member || !owns(member, t.agent)) return { type: 'text', text: 'From a conversation', tone: 'muted' };
   if (t.member === member.person) {
-    return { type: 'link', text: `From: ${t.title ?? `New thread with ${agentWord(t.agent)}`}`, page: `loom:comms/${t.id}` };
+    return { type: 'link', text: `From: ${t.title ?? `New thread with ${agentWord(t.agent)}`}`, page: `loom:${threadPath(t.id).slice(1)}` };
   }
   return { type: 'text', text: 'From a Comms thread', tone: 'muted' };
 }
