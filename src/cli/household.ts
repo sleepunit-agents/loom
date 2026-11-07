@@ -13,6 +13,7 @@ import { iconSetName, iconSetOf, installedIconSets, installIconSet, setIcon, use
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
+import { extractGlobalFlags, parseVerb, type VerbOptions } from './args.js';
 import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
@@ -68,10 +69,20 @@ token (review:<piece>) isn't made here: the runtime mints one per run, through
 POST /api/loom/review/token, and it expires in two hours.
 `;
 
-function flag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i === -1 ? undefined : args[i + 1];
+/**
+ * The verb, and the argv after it, or the exit code when there's nothing to run: no verb or --help prints
+ * usage (0), an unknown verb is refused (2). Each verb then parses its own flags with parseVerb before it
+ * touches anything (t-1950: \`loom token link --help\` minted a live sign-in link).
+ */
+function verbOf(argv: string[], verbs: readonly string[], usage: string, io: IOStreams): { sub: string; rest: string[] } | number {
+  const { rest: args } = extractGlobalFlags(argv);
+  const [sub, ...rest] = args;
+  if (sub === undefined || sub === '--help' || sub === '-h') { io.stdout(usage); return 0; }
+  if (!verbs.includes(sub)) { io.stderr(`Unknown command: ${sub}\n${usage}`); return 2; }
+  return { sub, rest };
 }
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
 function need(io: IOStreams): Household | null {
   const home = householdHome(io.env);
@@ -81,7 +92,17 @@ function need(io: IOStreams): Household | null {
 }
 
 export async function runHousehold(argv: string[], io: IOStreams): Promise<number> {
-  const [sub, ...rest] = argv;
+  const verb = verbOf(argv, ['show', 'init', 'commons', 'add', 'sprite', 'icons'], HOUSEHOLD_USAGE, io);
+  if (typeof verb === 'number') return verb;
+  const { sub } = verb;
+  const p = parseVerb(verb.rest, sub === 'init' ? { owner: { type: 'string' } }
+    : sub === 'sprite' ? { weight: { type: 'string', multiple: true }, variant: { type: 'string', multiple: true }, manifest: { type: 'string' } }
+    : sub === 'icons' ? { name: { type: 'string' } }
+    : {}, HOUSEHOLD_USAGE, io);
+  if (typeof p === 'number') return p;
+  const rest = p.positionals;
+  const many = (k: string) => (p.values[k] as string[] | undefined) ?? [];
+  if ((sub === 'show' || sub === 'commons') && rest.length) { io.stderr(HOUSEHOLD_USAGE); return 2; }
   try {
     if (sub === 'show') {
       const h = need(io);
@@ -91,8 +112,8 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
     }
     if (sub === 'init') {
       const agent = rest[0];
-      if (!agent || agent.startsWith('-')) { io.stderr(HOUSEHOLD_USAGE); return 2; }
-      const h = initHousehold(householdHome(io.env), agent, { owner: flag(rest, '--owner') });
+      if (!agent || rest.length !== 1) { io.stderr(HOUSEHOLD_USAGE); return 2; }
+      const h = initHousehold(householdHome(io.env), agent, { owner: str(p.values.owner) });
       const cards = splitPeopleIntoCommons(h, agent, agentDir(h, agent));
       io.stdout(`Household at ${h.home}: ${agent} moved to agents/${agent}; ${h.home}/${agent} is now a symlink to it. ${cards} person card${cards === 1 ? '' : 's'} split into the commons directory.\n`);
       return 0;
@@ -114,7 +135,7 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       const h = need(io);
       if (!h) return 1;
       const agent = rest[0];
-      if (!agent) { io.stderr(HOUSEHOLD_USAGE); return 2; }
+      if (!agent || rest.length !== 1) { io.stderr(HOUSEHOLD_USAGE); return 2; }
       const next = addAgent(h, agent);
       io.stdout(`Agents: ${next.agents.join(', ')}\n`);
       return 0;
@@ -122,18 +143,14 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
     if (sub === 'sprite') {
       const h = need(io);
       if (!h) return 1;
-      const pairs = (name: string) => rest.flatMap((a, i) => (a === name && rest[i + 1] ? [rest[i + 1]] : []));
-      const weights = Object.fromEntries(pairs('--weight').map((w) => { const [k, n] = w.split('='); return [k, Number(n)]; }));
-      const variants = Object.fromEntries(pairs('--variant').map((v) => { const at = v.lastIndexOf('='); const [state, weight, rare] = v.slice(at + 1).split(':'); return [v.slice(0, at), { state, weight: Number(weight), rare: rare === 'rare' }]; }));
-      const [agent, ...files] = rest.filter((a, i) => !['--weight', '--variant'].includes(a) && !['--weight', '--variant'].includes(rest[i - 1]));
-      const at = files.indexOf('--manifest');
-      if (!agent || (at === -1 && files.length !== 2) || (at !== -1 && !files[at + 1])) { io.stderr(HOUSEHOLD_USAGE); return 2; }
+      const weights = Object.fromEntries(many('weight').map((w) => { const [k, n] = w.split('='); return [k, Number(n)]; }));
+      const variants = Object.fromEntries(many('variant').map((v) => { const at = v.lastIndexOf('='); const [state, weight, rare] = v.slice(at + 1).split(':'); return [v.slice(0, at), { state, weight: Number(weight), rare: rare === 'rare' }]; }));
+      const [agent, ...files] = rest;
+      const manifest = str(p.values.manifest);
+      if (!agent || (manifest === undefined && files.length !== 2)) { io.stderr(HOUSEHOLD_USAGE); return 2; }
       const read = (f: string) => { try { return JSON.parse(readFileSync(f, 'utf-8')) as unknown; } catch { throw new HouseholdError(`${f} isn't JSON`); } };
-      if (at === -1) setSprite(h, agent, manifestFromPixelLab(read(files[1]), { weights, variants }), { 'sheet.png': readFileSync(files[0]) });
-      else {
-        const pngs = files.filter((_, i) => i !== at && i !== at + 1);
-        setSprite(h, agent, checkSpriteManifest(read(files[at + 1])), Object.fromEntries(pngs.map((f) => [basename(f), readFileSync(f)])));
-      }
+      if (manifest === undefined) setSprite(h, agent, manifestFromPixelLab(read(files[1]), { weights, variants }), { 'sheet.png': readFileSync(files[0]) });
+      else setSprite(h, agent, checkSpriteManifest(read(manifest)), Object.fromEntries(files.map((f) => [basename(f), readFileSync(f)])));
       io.stdout(`${agent}: a pixel face, facing ${spriteOf(h, agent)?.facings.join(', ')}.\n`);
       return 0;
     }
@@ -141,23 +158,23 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       const h = need(io);
       if (!h) return 1;
       const [verb, ...args] = rest;
-      if (verb === 'install' && args[0]) {
-        const r = installIconSet(h, args[0], flag(args, '--name'));
+      if (verb === 'install' && args[0] && args.length === 1) {
+        const r = installIconSet(h, args[0], str(p.values.name));
         io.stdout(`Icon set ${r.set}: ${r.apps.length} icons (${r.apps.join(', ')}), in use.\n`
           + (r.line.length ? `Line-only, inverted on a dark key: ${r.line.join(', ')}.\n` : ''));
         return 0;
       }
-      if (verb === 'set' && args[0] && args[1]) {
+      if (verb === 'set' && args[0] && args[1] && args.length === 2) {
         const r = setIcon(h, args[0], readFileSync(args[1]));
         io.stdout(`${args[0]}: a new icon in ${r.set}${r.line ? ' (line-only)' : ''}.\n`);
         return 0;
       }
-      if (verb === 'use' && args[0]) {
+      if (verb === 'use' && args[0] && args.length === 1) {
         useIconSet(h, args[0] === 'none' ? null : args[0]);
         io.stdout(args[0] === 'none' ? 'No icon set in use.\n' : `Icon set ${args[0]} in use.\n`);
         return 0;
       }
-      if (verb === 'list') {
+      if (verb === 'list' && args.length === 0) {
         const using = iconSetName(h);
         const sets = installedIconSets(h);
         io.stdout(sets.length ? sets.map((s) => `${s}${s === using ? ` (in use: ${Object.keys(iconSetOf(h)?.apps ?? {}).length} icons)` : ''}\n`).join('') : 'No icon sets installed.\n');
@@ -167,7 +184,7 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
       return 2;
     }
     io.stderr(HOUSEHOLD_USAGE);
-    return sub === undefined || sub === '--help' || sub === '-h' ? 0 : 2;
+    return 2;
   } catch (err) {
     if (err instanceof HouseholdError) { io.stderr(`${err.message}\n`); return 1; }
     throw err;
@@ -176,17 +193,35 @@ export async function runHousehold(argv: string[], io: IOStreams): Promise<numbe
 
 /** The owner token behind every session a sign-in link opens. */
 
+const TOKEN_OPTIONS: Record<string, VerbOptions> = {
+  create: {
+    agent: { type: 'string' }, service: { type: 'string' }, house: { type: 'string' }, owner: { type: 'boolean' },
+    peer: { type: 'string' }, piece: { type: 'string' }, runtime: { type: 'string' }, label: { type: 'string' },
+  },
+  list: {},
+  revoke: {},
+  link: { minutes: { type: 'string' }, 'page-url': { type: 'string' }, label: { type: 'string' } },
+};
+
 export async function runToken(argv: string[], io: IOStreams): Promise<number> {
-  const [sub, ...rest] = argv;
+  const verb = verbOf(argv, Object.keys(TOKEN_OPTIONS), TOKEN_USAGE, io);
+  if (typeof verb === 'number') return verb;
+  const { sub } = verb;
+  // Every flag is parsed, and --help answered, before anything is minted or revoked.
+  const p = parseVerb(verb.rest, TOKEN_OPTIONS[sub], TOKEN_USAGE, io);
+  if (typeof p === 'number') return p;
+  const rest = p.positionals;
+  const v = (k: string) => str(p.values[k]);
+  if (sub !== 'revoke' && rest.length) { io.stderr(`Unexpected argument: ${rest[0]}\n${TOKEN_USAGE}`); return 2; }
   try {
     if (sub === 'create') {
       const h = need(io);
       if (!h) return 1;
-      const label = flag(rest, '--label');
-      const service = flag(rest, '--service');
-      const house = flag(rest, '--house');
-      if ((service !== undefined || house !== undefined) && !flag(rest, '--agent')) { io.stderr(TOKEN_USAGE); return 2; }
-      const picked = [flag(rest, '--agent') && `agent:${flag(rest, '--agent')}${service !== undefined ? `/${service}` : ''}${house !== undefined ? `@${house}` : ''}`, rest.includes('--owner') && 'owner', flag(rest, '--peer') && `peer:${flag(rest, '--peer')}`, flag(rest, '--piece') && `piece:${flag(rest, '--piece')}`, flag(rest, '--runtime') && `runtime:${flag(rest, '--runtime')}`].filter(Boolean) as string[];
+      const label = v('label');
+      const service = v('service');
+      const house = v('house');
+      if ((service !== undefined || house !== undefined) && !v('agent')) { io.stderr(TOKEN_USAGE); return 2; }
+      const picked = [v('agent') && `agent:${v('agent')}${service !== undefined ? `/${service}` : ''}${house !== undefined ? `@${house}` : ''}`, p.values.owner === true && 'owner', v('peer') && `peer:${v('peer')}`, v('piece') && `piece:${v('piece')}`, v('runtime') && `runtime:${v('runtime')}`].filter(Boolean) as string[];
       const role = picked.length === 1 ? parseRole(picked[0]) : null;
       if (!label || !role) { io.stderr(TOKEN_USAGE); return 2; }
       const { token, record } = createToken(h, { role, label, ...(role.kind === 'runtime' ? { runtimePieces: runtimePieces(io.env) } : {}) });
@@ -209,10 +244,10 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
     if (sub === 'link') {
       const h = need(io);
       if (!h) return 1;
-      const minutes = Number(flag(rest, '--minutes') ?? 10);
+      const minutes = Number(v('minutes') ?? 10);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) { io.stderr('--minutes is 1 to 1440\n'); return 2; }
-      const code = signinLink(h, minutes * 60, undefined, flag(rest, '--label'));
-      const base = (flag(rest, '--page-url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
+      const code = signinLink(h, minutes * 60, undefined, v('label'));
+      const base = (v('page-url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
       io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --page-url or set LOOM_PUBLIC_URL.)'}\n`);
       io.stdout(`${base}/login/${code}\n`);
       return 0;
@@ -227,7 +262,7 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       return 0;
     }
     io.stderr(TOKEN_USAGE);
-    return sub === undefined || sub === '--help' || sub === '-h' ? 0 : 2;
+    return 2;
   } catch (err) {
     if (err instanceof HouseholdError) { io.stderr(`${err.message}\n`); return 1; }
     throw err;
@@ -259,7 +294,13 @@ export async function runSessions(argv: string[], io: IOStreams): Promise<number
 }
 
 function sessionsCommand(argv: string[], io: IOStreams): number {
-  const [sub, ...rest] = argv;
+  const verb = verbOf(argv, ['list', 'revoke'], SESSIONS_USAGE, io);
+  if (typeof verb === 'number') return verb;
+  const { sub } = verb;
+  const p = parseVerb(verb.rest, {}, SESSIONS_USAGE, io);
+  if (typeof p === 'number') return p;
+  const rest = p.positionals;
+  if (sub === 'list' && rest.length) { io.stderr(SESSIONS_USAGE); return 2; }
   if (sub === 'list') {
     const h = need(io);
     if (!h) return 1;
@@ -288,5 +329,5 @@ function sessionsCommand(argv: string[], io: IOStreams): number {
     return 0;
   }
   io.stderr(SESSIONS_USAGE);
-  return sub === undefined || sub === '--help' || sub === '-h' ? 0 : 2;
+  return 2;
 }
