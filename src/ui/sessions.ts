@@ -412,8 +412,13 @@ export class SessionStore {
 
   /** The items this reader's Inbox has opened. */
   openedKeys(reader?: string): Set<string> {
-    if (!existsSync(this.file)) return new Set();
-    return this.withLock((f) => new Set(Object.keys(readerOf(f, reader).opened ?? {})));
+    return new Set(this.openedAt(reader).keys());
+  }
+
+  /** The items this reader's Inbox has opened, and when (epoch seconds): an item's trail says when it was seen. */
+  openedAt(reader?: string): Map<string, number> {
+    if (!existsSync(this.file)) return new Map();
+    return this.withLock((f) => new Map(Object.entries(readerOf(f, reader).opened ?? {})));
   }
 
   /** The VAPID key pair, made the first time it's asked for (`make` is web-push's generator). */

@@ -209,11 +209,13 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     const it = items.find((x) => /lane prompts on loom again/.test(x.text))!;
     expect(it).toMatchObject({ kind: 'permission', fine: expect.stringContaining('A GitHub write'),
       needs: { why: expect.any(String), if_yes: 'Lane prompt changes go live again.', if_no: 'Lane prompts stay as they are until you look.' } });
-    // In its sheet: the whole ask as its title, "If you allow" and "If you deny", the small print, then the buttons.
+    // In the Inbox's reader (t-1925; it was a sheet): the whole ask as its title, "If you allow" and "If you deny",
+    // the small print, then the buttons once loom says it's still open.
     await card.locator('.loom-need__title').click();
-    const sheet = p.getByRole('dialog');
-    await sheet.waitFor();
-    for (const t of ['OK to start updating lane prompts on loom again?', 'If you allow', 'If you deny', 'Exactly what this allows']) expect(await sheet.textContent()).toContain(t);
+    const sheet = p.locator('.loom-split__reader');
+    await expect.poll(() => sheet.locator('h2').textContent()).toContain('OK to start updating lane prompts on loom again?');
+    for (const t of ['If you allow', 'If you deny', 'Exactly what this allows']) expect(await sheet.textContent()).toContain(t);
+    await sheet.getByRole('button', { name: 'Allow once' }).waitFor();
     await p.context().close();
   }, 90_000);
 

@@ -302,9 +302,10 @@ describe('the household\'s pixel icons', () => {
           await p.goto(`${base}${at}`);
           await p.locator('.loom-dock-bar img.loom-pix').first().waitFor();
           // Every key, every icon and the page's own content inside the screen. (The dock's scroller itself reaches 18 px past
-          // each edge, clipped, with or without pixel icons: room for a key magnified under a pointer.)
+          // each edge, clipped, with or without pixel icons: room for a key magnified under a pointer. A row of chips scrolls
+          // sideways in its own box, clipped: the row is inside the screen, the chips past its edge aren't drawn there.)
           const { scroll, over } = await p.evaluate(() => ({ scroll: document.documentElement.scrollWidth,
-            over: [...document.querySelectorAll('.loom-dock-bar [data-part="item"], .loom-dock-bar [data-part="visual"], .loom-pix, main *')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > innerWidth + 0.5; })
+            over: [...document.querySelectorAll('.loom-dock-bar [data-part="item"], .loom-dock-bar [data-part="visual"], .loom-pix, main *')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > innerWidth + 0.5 && !e.parentElement?.closest('.loom-split__chips'); })
               .map((e) => `${e.tagName.toLowerCase()}.${String((e as HTMLElement).className).split(' ')[0]}`) }));
           expect(scroll, `${look} ${at}: the page`).toBeLessThanOrEqual(390);
           expect(over, `${look} ${at}: past the right edge`).toEqual([]);

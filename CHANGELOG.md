@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The Inbox is a mail client** (t-1925; `docs/specs/ui-app.md`, "Master/detail"). Folders (Needs you, Questions,
+  Approvals, Alerts, Memory reviews, Done, and who it's from), the list, and the open ask beside it whole: why, if yes /
+  if no, its buttons, a reply, where it lives and its trail. Answering moves it to Done and opens the next. In a narrow
+  tile or on a phone the folders are chips and the ask slides over the list. Its buttons are live only once loom says
+  the ask is still open (`GET /inbox/open`), and loom is asked again before any is sent. Old `?f=` folder addresses land
+  on the new folders. The master/detail layout (`web/src/split.tsx`) is generic.
 - **Tiling is the only desktop** (t-1884; `docs/specs/desk-tiling.md`, "A fresh desktop", "One window at a time"). At
   1024 px and wider, apps share the screen as tiles for everyone: Appearance's Desktop choice and the old single window
   are gone. A device with no saved layout starts with Needs you, each agent's card, Vitals, Backup and the ticker

@@ -71,7 +71,7 @@ import { agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, s
 import { owns, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
-import { agentSource, agoText, CORE, INBOX_FOLDERS, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
+import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
 import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type AgentState, type AskKind, type Page, type Section } from './vocab.js';
 import { resolveFrom } from '../comms-work.js';
 
@@ -125,7 +125,7 @@ const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/inbox/open' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
@@ -598,12 +598,12 @@ function proposalAsks(h: Household, proposals: Record<string, number>): HomeAsk[
     const one = n === 1 ? listProposals(agentDir(h, a)).find((p) => p.status === 'pending') : undefined;
     const said = (one?.content ?? '').replace(/\s+/g, ' ').trim();
     if (one && said && said.length <= CARD_QUOTE) {
-      return { text: `${name} wants to remember something`, meta: `“${said}”`,
+      return { text: `${name} wants to remember something`, meta: `“${said}”`, memory: true,
         page: `loom:a/${a}/mind`, agent: a, source: agentSource(a), sourceLabel: 'Mind', ...(one.created ? { at: one.created } : {}),
         actions: [{ action: 'ratify', label: 'Ratify', tone: 'primary', fields: { id: String(one.id) } },
           { action: 'reject', label: 'Reject', fields: { id: String(one.id) } }] };
     }
-    return { text: `${name} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.',
+    return { text: `${name} wants to remember ${n === 1 ? 'something' : `${n} things`}`, meta: 'Ratify or reject what it proposed.', memory: true,
       page: `loom:a/${a}/mind`, label: 'Review', agent: a, source: CORE, sourceLabel: 'Mind' };
   });
 }
@@ -672,11 +672,11 @@ function answeredAsks(h: Household, nowMs = Date.now()): InboxItem[] {
       const text = d.needs && !d.needs.legacy ? d.needs.ask : `${name} needs you: ${d.needs_owner}`;
       // One that cleared itself (what it waited on was resolved) is a quiet FYI that says how.
       if (answer.verdict === 'resolved') {
-        return { key: askKey({ source, text, page: `resolved:${answer.at}` }), kind: 'fyi', attention: false, unread: false, text,
+        return { key: askKey({ source, text, page: `resolved:${answer.at}` }), kind: 'fyi', box: 'done', attention: false, unread: false, text,
           meta: `Cleared itself: ${answer.reason ?? 'what it waited on was resolved'}`, at: answer.at, agent: a, source, sourceLabel: 'Conversations',
           page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
       }
-      return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', attention: false, unread: false, text,
+      return { key: askKey({ source, text, page: `answered:${answer.at}` }), kind: 'answered', box: 'done', attention: false, unread: false, text,
         outcome: ANSWERED[answer.verdict] ?? 'Done', meta: `${c.label ?? c.place} · ${venueLabel(h.home, c.venue)}`,
         at: answer.at, agent: a, source, sourceLabel: 'Conversations', page: `loom:conversation/${c.id}`, ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}) };
     });
@@ -807,7 +807,7 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
   const asks = absorbApprovals([...coreAsks(h, { householdOwner }), ...pieceAsks(pieces, env)], env);
   const items: InboxItem[] = [
     // An ask with no kind is a decision only if it has something to choose with (its buttons); else it's an alert.
-    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), attention: a.attention !== false, unread: false,
+    ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), box: inboxBox({ ...a, kind: askKind(a), attention: a.attention !== false }), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
       ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}),
       ...(a.fine ? { fine: a.fine } : {}) })),
@@ -815,17 +815,17 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
       const source = pieceSource(p.piece);
       const sourceLabel = p.manifest.tab?.label ?? p.piece;
       return [
-        ...(p.manifest.notices ?? []).map((n): InboxItem => ({ key: askKey({ source, text: n.text, page: `fyi:${n.at}` }), kind: 'fyi', attention: false, unread: false,
+        ...(p.manifest.notices ?? []).map((n): InboxItem => ({ key: askKey({ source, text: n.text, page: `fyi:${n.at}` }), kind: 'fyi', box: 'done', attention: false, unread: false,
           text: n.text, meta: n.meta, at: n.at, agent: n.agent, source, sourceLabel, page: n.page })),
-        ...(p.manifest.answered ?? []).map((a): InboxItem => ({ key: askKey({ source, text: a.text, page: `answered:${a.at}` }), kind: 'answered', attention: false, unread: false,
+        ...(p.manifest.answered ?? []).map((a): InboxItem => ({ key: askKey({ source, text: a.text, page: `answered:${a.at}` }), kind: 'answered', box: 'done', attention: false, unread: false,
           text: a.text, outcome: a.outcome, at: a.at, agent: a.agent, source, sourceLabel, page: a.page })),
       ];
     }),
     ...answeredAsks(h),
     // The backup back to good (src/backup.ts): an FYI, the household owner's.
-    ...(() => { if (!householdOwner) return []; const f = backupFyi(h); return f ? [{ key: askKey({ source: CORE, text: f.text, page: `fyi:${f.at}` }), kind: 'fyi' as const, attention: false, unread: false,
+    ...(() => { if (!householdOwner) return []; const f = backupFyi(h); return f ? [{ key: askKey({ source: CORE, text: f.text, page: `fyi:${f.at}` }), kind: 'fyi' as const, box: 'done' as const, attention: false, unread: false,
       text: f.text, meta: f.meta, at: f.at, source: CORE, sourceLabel: 'Backup', page: `loom:a/${h.default}/setup` } satisfies InboxItem] : []; })(),
-    ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', attention: false, unread: false,
+    ...done.map((d): InboxItem => ({ key: askKey({ source: d.source, text: d.text, page: `done:${d.at}` }), kind: 'fyi', box: 'done', attention: false, unread: false,
       text: d.text, meta: d.ok ? 'You did this' : 'You tried this; it wasn’t done', at: new Date(d.at * 1000).toISOString(),
       source: d.source, sourceLabel: d.sourceLabel ?? 'loom', ...(d.page ? { page: d.page } : {}) })),
   ];
@@ -1707,17 +1707,31 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       { const ctx = { ...ctxOf(at), agents }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
         return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
     }
+    // Is this ask still open (t-1925)? The Inbox asks it, fresh, before it shows an ask's buttons as live and again
+    // before it sends one: a copy kept on the device (page.ts, the service worker) may be of an ask answered since.
+    // Never a cached answer: no-store, and the app treats one stamped x-loom-saved-at as "can't tell".
+    if (pathname === '/inbox/open') {
+      const key = query.k ?? '';
+      if (!/^[0-9a-f]{16}$/.test(key)) return sendJson(res, 400, { error: 'bad item' });
+      const it = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((x) => x.key === key);
+      // Open: still there and not history, whether it's counted in Needs you or only filed (attention: false).
+      return sendJson(res, 200, { open: !!it && it.box !== 'done' }, { 'cache-control': 'no-store' });
+    }
     if (pathname === '/inbox') {
       const nowMs = Date.now();
       const store = storeFor(opts);
       const reader = readerFor(opts, who);
       const items = inboxItems(hh, pieces, opts.env, store.doneItems(reader), !opts.ownerScope);
-      const folder = (INBOX_FOLDERS.find((f) => f.id === query.f)?.id ?? 'needs') as InboxFolder;
+      const folder: InboxFolder = folderOf(query.f);
       const open = query.i && /^[0-9a-f]{16}$/.test(query.i) ? items.find((it) => it.key === query.i) : undefined;
       // Opening an attention item reads it; nothing else is ever unread.
       if (open?.attention) store.markOpened(open.key, Math.floor(nowMs / 1000), reader);
-      const opened = store.openedKeys(reader);
-      for (const it of items) it.unread = it.attention && !opened.has(it.key);
+      const opened = store.openedAt(reader);
+      for (const it of items) {
+        it.unread = it.attention && !opened.has(it.key);
+        const at = opened.get(it.key);
+        if (at) it.seen = new Date(at * 1000).toISOString();
+      }
       // The open item's own page (a task's, for a task), drawn in the Inbox: only a piece's ask that links to
       // one of its pages (not its main page) and has no buttons of its own.
       // The open item as the page draws it: the one asked for when it's in this folder, else the folder's first.
@@ -1736,7 +1750,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
-        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
+        return view('inbox', { items, folder, folders: INBOX_FOLDERS, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {

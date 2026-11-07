@@ -1,0 +1,80 @@
+/* A master/detail app (split.tsx; docs/specs/ui-app.md, "Master/detail"): folders | list | reader, two panes, or one
+   with the reader over the list. Loaded with the apps that use it (the Inbox, Knowledge), never on the first page.
+   Every colour is a look's token, so Neon Noir, Low Light and Daylight each draw it in their own; the app's tint is
+   its tile's (--t), else magenta. */
+
+.loom-split {
+  --sp-tint: var(--t, var(--v-pink));
+  --sp-line: var(--v-border);
+  --sp-hover: color-mix(in srgb, var(--v-text) 6%, transparent);
+  --sp-current: color-mix(in srgb, var(--sp-tint) 14%, transparent);
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  color: var(--v-text);
+}
+.loom-split[data-mode="three"] { grid-template-columns: 210px minmax(260px, 380px) minmax(0, 1fr); }
+.loom-split[data-mode="two"] { grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); }
+.loom-split[data-mode="one"] { grid-template-columns: minmax(0, 1fr); }
+
+/* In a tile it fills the tile, edge to edge, and each pane scrolls on its own (the tile's body is a size container). */
+:root[data-look] .loom-tile__page > .loom-split { height: 100cqh; width: auto; max-width: none; margin: -16px -18px -28px; }
+:root[data-look] .loom-tile__page > .loom-split > * { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+:root[data-look] .loom-tile__page > .loom-split[data-mode="one"] > .loom-split__reader { position: absolute; inset: 0; }
+/* On a phone's page (no tile) it's the page's own height: the list scrolls with the page, the reader replaces it. */
+.loom-split[data-mode="one"][data-open] > .loom-split__list { visibility: hidden; }
+:root[data-look] .loom-split[data-mode="one"][data-open]:not(.loom-tile__page > .loom-split) > .loom-split__list { display: none; }
+
+/* ---- folders ---- */
+.loom-split__nav { padding: 12px 10px; border-right: 1px solid var(--sp-line); display: flex; flex-direction: column; gap: 10px; }
+.loom-split__nav ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.loom-split__heading { padding: 14px 8px 4px; font-family: var(--loom-font-data); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--v-text-3); }
+.loom-split__folder { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 10px; border-radius: 10px; text-align: left;
+  font-size: 14px; color: var(--v-text-2); border: 1px solid transparent; }
+.loom-split__folder[data-sub] { padding-left: 28px; font-size: 13.5px; }
+.loom-split__folder:hover { background: var(--sp-hover); color: var(--v-text); }
+.loom-split__folder[aria-current="true"] { background: var(--sp-current); color: var(--v-text); border-color: color-mix(in srgb, var(--sp-tint) 55%, transparent); }
+.loom-split__folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-split__count { font-family: var(--loom-font-data); font-size: 11px; color: var(--v-text-3); }
+.loom-split__count[data-loud] { min-width: 20px; padding: 1px 6px; border-radius: 99px; text-align: center; background: var(--sp-tint); color: var(--v-on-accent); font-weight: 600; }
+
+/* ---- chips (two and one pane) ---- */
+.loom-split__top { display: grid; gap: 10px; padding: 10px 12px 4px; }
+.loom-split__chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
+.loom-split__chips::-webkit-scrollbar { display: none; }
+.loom-split__chips button { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 12px; border-radius: 99px; font-size: 13.5px;
+  color: var(--v-text-2); border: 1px solid var(--v-edge); white-space: nowrap; }
+.loom-split__chips button[aria-pressed="true"] { color: var(--v-text); background: var(--sp-current); border-color: var(--sp-tint); }
+
+/* ---- the list ---- */
+.loom-split__list { display: flex; flex-direction: column; min-width: 0; }
+.loom-split[data-mode="three"] > .loom-split__list, .loom-split[data-mode="two"] > .loom-split__list { border-right: 1px solid var(--sp-line); }
+.loom-split__list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 14px 14px 10px; }
+.loom-split__list-head h2 { font-size: 16px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-split__list-head span { font-family: var(--loom-font-data); font-size: 11px; color: var(--v-text-3); white-space: nowrap; }
+.loom-split__rows { display: flex; flex-direction: column; border-top: 1px solid var(--sp-line); }
+.loom-split__rows > [data-split-row], .loom-split__rows > * > [data-split-row] { width: 100%; text-align: left; border-bottom: 1px solid var(--sp-line); position: relative; }
+.loom-split [data-split-row]:hover { background: var(--sp-hover); }
+.loom-split [data-split-row][aria-current="true"] { background: var(--sp-current); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sp-tint) 60%, transparent); }
+/* One pane with nothing open: no row is lit as if it were (the reader beside it is the one shown). */
+.loom-split[data-mode="one"]:not([data-open]) [data-split-row][aria-current="true"] { background: none; box-shadow: none; }
+.loom-split [data-split-row]:focus-visible, .loom-split__folder:focus-visible, .loom-split__chips button:focus-visible, .loom-split__back:focus-visible {
+  outline: 2px solid var(--sp-tint); outline-offset: -2px; }
+
+/* ---- the reader ---- */
+.loom-split__reader { min-width: 0; padding: 18px 24px 28px; background: var(--v-canvas, transparent); outline: none; }
+.loom-split[data-mode="three"] > .loom-split__reader, .loom-split[data-mode="two"] > .loom-split__reader { background: transparent; }
+.loom-split[data-mode="one"] > .loom-split__reader { padding: 10px 16px 24px; animation: loom-split-in .22s cubic-bezier(.2, .8, .2, 1); }
+.loom-split__back { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 4px 8px 4px 2px; margin-bottom: 6px; border-radius: 10px; color: var(--v-text-2); font-size: 14px; }
+.loom-split__back:hover { color: var(--v-text); background: var(--sp-hover); }
+.loom-split__blank { height: 100%; min-height: 200px; display: grid; place-items: center; color: var(--v-text-3); font-family: var(--loom-font-data); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; text-align: center; }
+@keyframes loom-split-in { from { transform: translateX(28px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .loom-split[data-mode="one"] > .loom-split__reader { animation: none; } }
+@media (prefers-contrast: more) {
+  .loom-split { --sp-line: var(--v-edge); }
+  .loom-split [data-split-row][aria-current="true"] { box-shadow: inset 0 0 0 2px var(--sp-tint); }
+}
+
+/* A phone's page: the reader clears the dock. */
+@media (max-width: 1023px) { .loom-split[data-mode="one"] > .loom-split__reader { padding-bottom: calc(var(--dock-h, 72px) + 84px + env(safe-area-inset-bottom)); } }

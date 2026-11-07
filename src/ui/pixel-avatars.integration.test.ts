@@ -173,9 +173,10 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     // An ask's sheet.
     await p.goto(`${base}/inbox`);
     await p.getByText('OK to turn off the recycle bin').first().click();
-    await p.getByRole('dialog').waitFor();
+    // The open item (t-1925: the reader, over the list): who asks, by their face.
+    await p.locator('.loom-split__reader .loom-inbox__from').waitFor();
     await settle(p);
-    check('the ask\'s sheet', await faces(p));
+    check('the open ask', await faces(p));
     await p.keyboard.press('Escape');
     // Find, asked for an agent.
     await p.goto(`${base}/`);

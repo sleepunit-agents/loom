@@ -204,7 +204,7 @@ describe.runIf(built && chrome && hasAge)('Comms\' phone composer under a finger
       await tap(f, await centre(f, '#loom-reply'));
       expect(await focused(f)).toBe('textarea');
       await f.p.keyboard.type('Rename it first.');
-      const send = f.p.locator('section:has(#loom-reply) button', { hasText: 'Send' });
+      const send = f.p.locator('section:has(#loom-reply) button', { hasText: /^Send$/ });
       const b = (await send.boundingBox())!;
       const at: [number, number] = [b.x + b.width / 2, b.y + b.height / 2];
       expect(await f.p.evaluate(([cx, cy]) => document.elementFromPoint(cx, cy)?.closest('button')?.textContent, at)).toBe('Send');
