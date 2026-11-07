@@ -64,7 +64,7 @@ function Need({ i }: { i: InboxItem }) {
   // Its buttons are live only once loom says, now, it's still open, and it's asked again right before a send (ask-open.ts,
   // the Inbox's rule): a copy of the desktop kept on this device may be of an ask answered since.
   const answerable = !!approval || yesNo || !!i.actions?.length;
-  const { live, check } = useAskLive(answerable ? i.key : undefined);
+  const { live, check } = useAskLive(answerable ? { k: i.key } : null);
   const env = useMemo(() => guardedEnv(outer, check), [outer, i.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const off = answerable && live !== 'live';
   // A yes or a no, posted as its own source's, as its sheet does (inbox.tsx useAnswer).
@@ -92,6 +92,8 @@ function Need({ i }: { i: InboxItem }) {
         {/* Not yet confirmed open (or can't be): its words, and why its buttons wait; none of them. */}
         {off && <p className="loom-need__live" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<typeof live, 'live'>]}</p>}
         {!off && approval && <ApprovalBox a={approval} />}
+        {/* Answering in words opens its sheet (the Inbox's reader), which checks for itself: always offered. */}
+        {off && words && <div className="loom-need__acts"><Button size="sm" variant="outline" onClick={() => open(i)}>{i.reply!.label || 'Answer'}…</Button></div>}
         {!off && (yesNo || words || (acts.length > 0 && !lined)) && (
           <div className="loom-need__acts" role="group" aria-label="Your answer">
             {yesNo && <><Button size="sm" disabled={busy} onClick={() => void say('yes')}>Yes</Button>

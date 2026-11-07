@@ -169,4 +169,3 @@
 :root[data-look] .loom-tile__body:has(>.loom-tile__page[data-pending]){box-shadow:inset 0 2px 0 var(--t,var(--v-pink));transition:box-shadow 0s 150ms}
 /* An agent's card grows into its window (t-1925 D): Expand, beside Chat. */
 :root[data-look] .loom-w--agent>.loom-agent__grow[data-chat]{right:96px}
-.loom-need__live { margin: 6px 0 0; font-size: 12.5px; color: var(--v-text-3); }

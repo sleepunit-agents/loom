@@ -18,7 +18,7 @@ import { Arrive } from './arrive';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
-import { LIVE_SAYS, stillOpen, type Live } from './ask-open';
+import { LIVE_SAYS, stillOpen, useAskLive, type Live } from './ask-open';
 import { Split, type SplitFolder } from './split';
 import './inbox.css';
 
@@ -94,7 +94,7 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
     : (i.actions ?? []).find((b) => /^(mark )?done$/i.test(b.label.trim()) && b.tone !== 'danger' && !b.confirm));
   const markDone = async (i: InboxItem) => {
     const b = doneOf(i);
-    if (!b || (i.reply && hasDraft(i.key)) || (await stillOpen(i.key)) !== 'live') { pick(i); return; }
+    if (!b || (i.reply && hasDraft(i.key)) || (await stillOpen({ k: i.key })) !== 'live') { pick(i); return; }
     if (await env.withSource(i.source).send(b.action, b.fields ?? {})) onAnswered(i, 'Done');
   };
   void chrome;
@@ -156,9 +156,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
   const from = cap(i.sourceLabel ?? i.source.id);
   // Anything still open with a way to answer it: counted in Needs you or only filed (attention: false), the same.
   const acts = boxOf(i) !== 'done' && (!!i.actions?.length || !!i.reply || !!i.approval);
-  const [live, setLive] = useState<Live>(acts ? 'checking' : 'live');
-  const check = async () => { const l = await stillOpen(i.key); setLive(l); return l === 'live'; };
-  useEffect(() => { if (!acts) return; setLive('checking'); void check(); }, [i.key, picks]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const { live, check } = useAskLive(acts ? { k: i.key } : null, picks);
   // Every button here goes through this: asked again right before it's sent; answered, it's Done here at once.
   const lastSaid = useRef('Answered');
   const guard = (e: Env): Env => ({ ...e,
@@ -198,7 +196,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
         </dl>
       )}
       {acts && !ok && <p className="loom-split__note" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<Live, 'live'>]}
-        {live === 'unknown' && <Button size="sm" variant="outline" onClick={() => { setLive('checking'); void check(); }}>Check again</Button>}</p>}
+        {live === 'unknown' && <Button size="sm" variant="outline" onClick={() => void check()}>Check again</Button>}</p>}
       {/* The buttons only once loom says it's open: a stale ask never shows live ones (t-1925). */}
       {acts && ok && (
         <EnvContext.Provider value={guarded}>

@@ -8,10 +8,14 @@ import type { Env } from './blocks';
 
 export type Live = 'checking' | 'live' | 'gone' | 'unknown';
 
-/** Whether loom says, now, that the ask with this Inbox key is still open. Never from a copy. */
-export async function stillOpen(key: string): Promise<Live> {
+/** Which ask: its Inbox key (k), or, for an approval asked from a Comms thread, the approval's id (a). */
+export type AskRef = { k: string } | { a: string };
+
+/** Whether loom says, now, that the ask is still open. Never from a copy: a stamped one (x-loom-saved-at) can't tell. */
+export async function stillOpen(ref: AskRef): Promise<Live> {
   try {
-    const r = await fetch(`/inbox/open?k=${encodeURIComponent(key)}`, { headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
+    const q = 'k' in ref ? `k=${encodeURIComponent(ref.k)}` : `a=${encodeURIComponent(ref.a)}`;
+    const r = await fetch(`/inbox/open?${q}`, { headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
     if (!r.ok || r.headers.has('x-loom-saved-at') || !(r.headers.get('content-type') ?? '').startsWith('application/json')) return 'unknown';
     return ((await r.json()) as { open?: boolean }).open ? 'live' : 'gone';
   } catch { return 'unknown'; }
@@ -23,18 +27,20 @@ export const LIVE_SAYS: Record<Exclude<Live, 'live'>, string> = {
   unknown: 'Can’t check with loom right now, so its buttons wait. Try again in a moment.',
 };
 
-/** An ask's liveness, checked when it's shown (and again whenever `again` changes), and a check to run before a send. */
-export function useAskLive(key: string | undefined, again: unknown = 0): { live: Live; check: () => Promise<boolean> } {
-  const [live, setLive] = useState<Live>(key ? 'checking' : 'live');
-  const check = async () => { if (!key) return true; const l = await stillOpen(key); setLive(l); return l === 'live'; };
-  useEffect(() => { if (!key) { setLive('live'); return; } setLive('checking'); void check(); }, [key, again]);   // eslint-disable-line react-hooks/exhaustive-deps
+/** An ask's liveness, checked when it's shown and again when `recheck` changes (the Inbox's pick), and a check to run
+ * right before a send. `null`: nothing to answer, so nothing to check. */
+export function useAskLive(ref: AskRef | null, recheck: unknown = 0): { live: Live; check: () => Promise<boolean> } {
+  const id = ref ? ('k' in ref ? `k:${ref.k}` : `a:${ref.a}`) : '';
+  const [live, setLive] = useState<Live>(ref ? 'checking' : 'live');
+  const check = async () => { if (!ref) return true; const l = await stillOpen(ref); setLive(l); return l === 'live'; };
+  useEffect(() => { if (!ref) { setLive('live'); return; } setLive('checking'); void check(); }, [id, recheck]);   // eslint-disable-line react-hooks/exhaustive-deps
   return { live, check };
 }
 
 /** An Env whose every send asks loom first that the ask is still open (and sends nothing when it isn't). */
-export function guardedEnv(env: Env, check: () => Promise<boolean>, after?: (ok: boolean) => void): Env {
+export function guardedEnv(env: Env, check: () => Promise<boolean>): Env {
   const g = (e: Env): Env => ({ ...e,
-    send: async (a, fields) => { if (!(await check())) return false; const ok = await e.send(a, fields); after?.(ok); return ok; },
+    send: async (a, fields) => ((await check()) ? e.send(a, fields) : false),
     withSource: (s) => g(e.withSource(s)) });
   return g(env);
 }

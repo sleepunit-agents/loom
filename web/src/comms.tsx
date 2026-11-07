@@ -46,7 +46,7 @@ const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? '
  */
 const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) === 'sending') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
 /** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
-export type ThreadAsk = { id: string; /** its Inbox key: /inbox/open says whether it's still open (ask-open.ts) */ key?: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
+export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
   actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> };
 export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string; asks?: ThreadAsk[];
   threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
@@ -726,7 +726,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
   const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
   const no = a.actions.find((b) => b.tone === 'danger');
   // Live only once loom says, now, it's still open; asked again right before a send (ask-open.ts, the Inbox's rule).
-  const { live, check } = useAskLive(a.key);
+  const { live, check } = useAskLive({ a: a.id });
   const answer = async (d: 'allowed' | 'denied') => {
     const b = d === 'allowed' ? yes : no;
     if (!b) return;
@@ -754,7 +754,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
           </>
         ) : undefined} />
       {said && <p className="comms-ask__said" role="status">{said}</p>}
-      {decision === 'pending' && live !== 'live' && <p className="comms-ask__said" role="status" data-live={live}>{LIVE_SAYS[live]}</p>}
+      {decision === 'pending' && live !== 'live' && <p className="comms-ask__live" role="status" data-live={live}>{LIVE_SAYS[live]}</p>}
     </div>
   );
 }

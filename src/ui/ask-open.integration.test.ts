@@ -63,13 +63,14 @@ describe.runIf(built && chrome)('Needs you answers only an ask loom says is open
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
-  async function desk(open: 'yes' | 'no' | 'offline'): Promise<{ p: Page; asked: string[]; posted: () => number }> {
+  async function desk(open: 'yes' | 'no' | 'offline' | 'cached'): Promise<{ p: Page; asked: string[]; posted: () => number }> {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
     await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     const asked: string[] = [];
-    await p.route('**/inbox/open?k=*', (r) => { asked.push(new URL(r.request().url()).searchParams.get('k')!); return open === 'offline' ? r.abort('internetdisconnected') : r.fulfill({ json: { open: open === 'yes' } }); });
+    await p.route('**/inbox/open?*', (r) => { asked.push(new URL(r.request().url()).searchParams.get('k')!); return open === 'offline' ? r.abort('internetdisconnected')
+      : open === 'cached' ? r.fulfill({ json: { open: true }, headers: { 'x-loom-saved-at': String(Date.now() - 3_600_000) } }) : r.fulfill({ json: { open: open === 'yes' } }); });
     let n = 0;
     await p.route('**/act/**', (r) => { n++; return r.fulfill({ json: { ok: true, message: 'Answered.' } }); });
     await p.goto(`${base}/?w=needs`);
@@ -78,8 +79,8 @@ describe.runIf(built && chrome)('Needs you answers only an ask loom says is open
   }
   const need = (p: Page) => p.locator('[data-widget="needs"] .loom-need').first();
 
-  for (const how of ['no', 'offline'] as const) {
-    it(`${how === 'no' ? 'answered since (loom says it isn\'t open)' : 'loom can\'t be reached'}: no Yes, no No, nothing sent`, async () => {
+  for (const how of ['no', 'offline', 'cached'] as const) {
+    it(`${how === 'no' ? 'answered since (loom says it isn\'t open)' : how === 'offline' ? 'loom can\'t be reached' : 'the answer is this device\'s copy (x-loom-saved-at)'}: no Yes, no No, nothing sent`, async () => {
       const { p, asked, posted } = await desk(how);
       await expect.poll(() => need(p).locator('[data-live]').getAttribute('data-live')).toBe(how === 'no' ? 'gone' : 'unknown');
       expect(asked.length).toBeGreaterThan(0);

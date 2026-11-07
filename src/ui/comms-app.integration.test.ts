@@ -294,7 +294,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       const opened = openThread(h, process.env, h.members[0], { agent: 'art', id: 'dddddddddddddddd', text: 'Ship it when it\'s green?' });
       const thread = opened.thread;
       recordDelivery(h, thread, opened.seq, { delivered: true, body: 'started' });
-      const ask = { id: 'a-00c0ffee', key: '00c0ffee00c0ffee', piece: 'approvals', text: 'OK to merge the comm screen PR?', why: 'CI is green.', if_yes: 'I merge it.', if_no: 'It waits.',
+      const ask = { id: 'a-00c0ffee', piece: 'approvals', text: 'OK to merge the comm screen PR?', why: 'CI is green.', if_yes: 'I merge it.', if_no: 'It waits.',
         fine: 'merge · github:acme/app#3@abc', actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00c0ffee' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00c0ffee' } }] };
       // The thread's answers carry the ask (as loom adds it from the approvals piece's manifest).
       await page.route(`**/comms/${thread.id}**`, async (route) => {
@@ -306,7 +306,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       });
       // loom says it's open (ask-open.ts): asked when it's shown, and again right before Allow is sent.
       const asked: string[] = [];
-      await page.route('**/inbox/open?k=*', (route) => { asked.push(new URL(route.request().url()).searchParams.get('k')!); return route.fulfill({ json: { open: true } }); });
+      await page.route('**/inbox/open?*', (route) => { asked.push(new URL(route.request().url()).searchParams.get('a')!); return route.fulfill({ json: { open: true } }); });
       const posted: string[] = [];
       await page.route('**/act/approvals', async (route) => {
         posted.push(route.request().postData() ?? '');
@@ -321,7 +321,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.getByRole('button', { name: 'Allow once' }).click();
       await page.locator('.comms-ask__said').waitFor();
       expect(posted).toHaveLength(1);
-      expect(asked.filter((k) => k === '00c0ffee00c0ffee').length).toBeGreaterThanOrEqual(2);
+      expect(asked.filter((a) => a === 'a-00c0ffee').length).toBeGreaterThanOrEqual(2);
       const sent = new URLSearchParams(posted[0]);
       expect([sent.get('_action'), sent.get('id')]).toEqual(['allow', 'a-00c0ffee']);
       expect(sent.get('_csrf')).toMatch(/^[0-9a-f]{64}$/);
@@ -329,20 +329,22 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     } finally { await ctx.close(); }
   }, 30_000);
 
-  for (const how of ['closed', 'offline'] as const) {
-    it(`an ask shown from a copy that loom says is ${how === 'closed' ? 'answered' : 'unreachable'}: no live Allow, and nothing sent`, async () => {
+  for (const how of ['closed', 'offline', 'cached'] as const) {
+    it(`an ask shown from a copy, loom ${how === 'closed' ? 'saying it\'s answered' : how === 'offline' ? 'unreachable' : 'answering from this device\'s copy'}: no live Allow, and nothing sent`, async () => {
       const { ctx, page } = await open(false);
       try {
-        const opened = openThread(h, process.env, h.members[0], { agent: 'art', id: how === 'closed' ? 'eeeeeeeeeeeeeeef' : 'eeeeeeeeeeeeeeeg', text: 'Ship it?' });
+        const opened = openThread(h, process.env, h.members[0], { agent: 'art', id: { closed: 'eeeeeeeeeeeeeeef', offline: 'eeeeeeeeeeeeeeeg', cached: 'eeeeeeeeeeeeeeeh' }[how], text: 'Ship it?' });
         recordDelivery(h, opened.thread, opened.seq, { delivered: true, body: 'started' });
-        const ask = { id: 'a-0000dead', key: '0000dead0000dead', piece: 'approvals', text: 'OK to merge it?', actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-0000dead' } }] };
+        const ask = { id: 'a-0000dead', piece: 'approvals', text: 'OK to merge it?', actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-0000dead' } }] };
         await page.route(`**/comms/${opened.thread.id}**`, async (route) => {
           const r = route.request();
           if (r.method() !== 'GET' || !(r.headers().accept ?? '').includes('json')) return route.continue();
           const res = await route.fetch();
           return route.fulfill({ response: res, json: { ...(await res.json()), asks: [ask] } });
         });
-        await page.route('**/inbox/open?k=*', (route) => (how === 'closed' ? route.fulfill({ json: { open: false } }) : route.abort('internetdisconnected')));
+        // A copy (the service worker's, stamped x-loom-saved-at) can't tell, even one that says open.
+        await page.route('**/inbox/open?*', (route) => (how === 'closed' ? route.fulfill({ json: { open: false } }) : how === 'cached'
+          ? route.fulfill({ json: { open: true }, headers: { 'x-loom-saved-at': String(Date.now() - 3_600_000) } }) : route.abort('internetdisconnected')));
         let posted = 0;
         await page.route('**/act/approvals', (route) => { posted++; return route.fulfill({ json: { ok: true } }); });
         await page.goto(`${base}/comms/${opened.thread.id}`);
