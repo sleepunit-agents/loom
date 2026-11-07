@@ -122,7 +122,7 @@ async function screen(browser: Browser, width: number, path: string): Promise<{ 
 type Done = { has?: string[]; not?: string[]; url?: string; notUrl?: string; path?: string; text?: string; title?: string; count?: [string, number]; or?: Done };
 
 /** Times one step: `act` (a click) until `done` holds in the page; marks `keep` first, to see if it survived. */
-async function step(p: Page, cdp: CDPSession, act: () => Promise<unknown>, done: Done, keep?: string, scope = 'body'): Promise<Sample> {
+async function step(p: Page, cdp: CDPSession, act: () => Promise<unknown>, done: Done, keep?: string, scope = 'body'): Promise<Sample | null> {
   let bytes = 0, requests = 0;
   const onReq = () => { requests++; };
   // What reached the page, decoded (a service worker's answer has no wire size of its own).
@@ -153,7 +153,8 @@ async function step(p: Page, cdp: CDPSession, act: () => Promise<unknown>, done:
     console.error('not done:', done, await p.evaluate(() => ({ url: location.href, busy: [...document.querySelectorAll('[aria-busy="true"]')].map((e) => e.outerHTML.slice(0, 160)),
       titles: [...document.querySelectorAll('.comms-thread__title')].map((e) => e.textContent), msgs: document.querySelectorAll('.comms-msg--agent').length })));
     throw e;
-  });
+  }).catch(() => null);
+  if (end === null) { cdp.off('Network.requestWillBeSent', onReq); cdp.off('Network.dataReceived', onDone); return null; }
   await p.waitForTimeout(400);
   const r = await p.evaluate((keep) => {
     const w = window as unknown as { __b: { t0: number; first: number | null; mo?: MutationObserver } };
@@ -167,7 +168,8 @@ async function step(p: Page, cdp: CDPSession, act: () => Promise<unknown>, done:
 }
 
 const flows: Flow[] = [];
-const record = (name: string, width: number, s: Sample) => {
+const record = (name: string, width: number, s: Sample | null) => {
+  if (!s) { console.error(`skipped a sample of ${name} at ${width}: it never finished`); return; }
   let f = flows.find((x) => x.name === name && x.width === width);
   if (!f) flows.push(f = { name, width, samples: [] });
   f.samples.push(s);
@@ -224,7 +226,7 @@ try {
         const href = await link.nth(run).getAttribute('href');
         const id = /task\/(t-\d+)/.exec(href ?? '')?.[1] ?? '';
         const words = ((await link.nth(run).textContent()) ?? '').trim().slice(0, 24);
-        const s1 = await step(p, cdp, () => link.nth(run).click(), { url: `task/${id}`, not: [`a[href*="/p/tasks/task/"]:not([href$="${id}"])`], text: words }, desk ? tileSel('Tasks') : undefined);
+        const s1 = await step(p, cdp, () => link.nth(run).click(), { url: `task/${id}`, not: ['[aria-busy="true"]'], text: words }, desk ? tileSel('Tasks') : undefined);
         record('Tasks: list → task', width, s1);
         if (desk) {
           // And a second, the pointer resting on it 400 ms first.
