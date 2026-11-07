@@ -952,7 +952,7 @@ function agentStateOf(pieces: PieceInfo[], agent: string): AgentState {
 /**
  * The Profile app's head and its "Your agents" (web/src/account.tsx; t-1925): the member's name as People has it, when
  * they became a member (their oldest owner token: the household keeps no other date for a member), and each agent they
- * own with its mark and its state as its Home card says it. Nothing here is a secret: only names, a month and states.
+ * own with its mark and its state (agentStateOf). Nothing here is a secret: only names, a month and states.
  */
 function profileOf(h: Household, m: Member, pieces: PieceInfo[], tz: string): { full?: string; since?: string; agents: Array<{ id: string; label: string; bg: string; fg: string; face: unknown; state: AgentState }> } {
   const first = firstOwner(h).person === m.person;

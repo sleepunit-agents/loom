@@ -14,6 +14,7 @@ import { iconFor } from './safe';
 import { ActButton, AgentAvatar, BlockView, Link, type Mark } from './blocks';
 import { PasskeyAdd, usePush } from './passkeys';
 import { MeAvatar, nameOf } from './account-button';
+import { STATE } from './views';
 import type { ListItem, Page, Section } from './loom';
 import './account.css';
 
@@ -27,24 +28,22 @@ export interface Me {
   agents?: Array<Mark & { id: string; state: AgentState }>;
 }
 
-const STATE: Record<AgentState, { word: string; badge: 'blue' | 'default' | 'yellow' | 'danger' }> = {
-  working: { word: 'Working', badge: 'blue' }, available: { word: 'Quiet', badge: 'default' },
-  unavailable: { word: 'Unavailable', badge: 'yellow' }, broken: { word: 'Broken', badge: 'danger' },
-};
+/** The badge's colour for a state; the word and the face's expression are the agent pages' own (views.tsx STATE). */
+const BADGE: Record<AgentState, 'blue' | 'default' | 'yellow' | 'danger'> = { working: 'blue', available: 'default', unavailable: 'yellow', broken: 'danger' };
 
-function Panel({ label, title, action, intro, children, className }: { label?: string; title?: string; action?: React.ReactNode; intro?: string; children?: React.ReactNode; className?: string }) {
+function Pane({ label, title, action, intro, children, className }: { label?: string; title?: string; action?: React.ReactNode; intro?: string; children?: React.ReactNode; className?: string }) {
   return (
-    <section className={`loom-profile__panel ${className ?? ''}`} aria-label={title ?? label}>
+    <section className={`loom-acct__panel ${className ?? ''}`} aria-label={title ?? label}>
       {(label || title || action) && (
-        <header className="loom-profile__head">
+        <header className="loom-acct__head">
           <span className="grid min-w-0">
-            {label && <span className="loom-profile__eyebrow">{label}</span>}
-            {title && <h2 className="loom-profile__title">{title}</h2>}
+            {label && <span className="loom-acct__eyebrow">{label}</span>}
+            {title && <h2 className="loom-acct__title">{title}</h2>}
           </span>
           {action}
         </header>
       )}
-      {intro && <p className="loom-profile__intro">{intro}</p>}
+      {intro && <p className="loom-acct__intro">{intro}</p>}
       {children}
     </section>
   );
@@ -53,11 +52,11 @@ function Panel({ label, title, action, intro, children, className }: { label?: s
 /** A passkey, as loom lists it: its name, when it was used and added, and Remove (asking first). */
 function KeyRow({ k }: { k: ListItem }) {
   return (
-    <li className="loom-profile__row" data-tone={k.tone}>
-      <span className="loom-profile__glyph" aria-hidden><AnimatedIcon name={iconFor('fingerprint-pattern')} size="sm" /></span>
+    <li className="loom-acct__row" data-tone={k.tone}>
+      <span className="loom-acct__glyph" aria-hidden><AnimatedIcon name={iconFor('fingerprint-pattern')} size="sm" /></span>
       <span className="grid min-w-0">
-        <span className="loom-profile__row-title">{k.text}</span>
-        {k.meta && <span className="loom-profile__row-meta">{k.meta}</span>}
+        <span className="loom-acct__row-title">{k.text}</span>
+        {k.meta && <span className="loom-acct__row-meta">{k.meta}</span>}
       </span>
       {k.act && <ActButton b={k.act} />}
     </li>
@@ -68,15 +67,15 @@ function KeyRow({ k }: { k: ListItem }) {
 function Push({ csrf }: { csrf: string }) {
   const { can, sub, msg, busy, flip } = usePush(csrf);
   return (
-    <Panel label="Notifications" intro="Your call, on this device: a notification when something new needs you; a tap opens it on Home.">
-      {!can ? <p className="loom-profile__row-meta">Needs loom over https; on an iPhone, loom added to the Home Screen first.</p> : (
+    <Pane label="Notifications" intro="Your call, on this device: a notification when something new needs you; a tap opens it on Home.">
+      {!can ? <p className="loom-acct__row-meta">Needs loom over https; on an iPhone, loom added to the Home Screen first.</p> : (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="loom-profile__row-meta">{sub === undefined ? '…' : sub ? 'On: Your call reaches this device.' : 'Off on this device.'}</span>
+          <span className="loom-acct__row-meta">{sub === undefined ? '…' : sub ? 'On: Your call reaches this device.' : 'Off on this device.'}</span>
           <Button size="sm" variant={sub ? 'outline' : 'default'} disabled={busy || sub === undefined} onClick={() => void flip()}>{sub ? 'Turn off on this device' : 'Turn on for this device'}</Button>
         </div>
       )}
-      {msg && <p role="status" className="loom-profile__row-meta mt-2">{msg}</p>}
-    </Panel>
+      {msg && <p role="status" className="loom-acct__row-meta mt-2">{msg}</p>}
+    </Pane>
   );
 }
 
@@ -84,6 +83,7 @@ export function AccountView({ me, csrf, add, reload, page }: {
   me: Me; csrf: string; add: { csrf: string } | { note: string }; reload: () => void; page: Page;
 }) {
   const [adding, setAdding] = useState(false);
+  const [added, setAdded] = useState(false);
   const keys = page.sections.find((s) => s.id === 'passkeys');
   const rest = page.sections.filter((s) => s.id !== 'passkeys');
   const listed: ListItem[] = keys?.blocks.flatMap((b) => (b.type === 'list' ? (b.items as ListItem[]) : [])) ?? [];
@@ -91,47 +91,48 @@ export function AccountView({ me, csrf, add, reload, page }: {
   const canAdd = 'csrf' in add;
   const display = me.full ?? nameOf(me.name);
   return (
-    <div className="loom-profile">
-      <div className="loom-profile__grid">
-        <div className="loom-profile__col">
-          <section className="loom-profile__panel loom-profile__me" aria-label="You">
-            <MeAvatar name={display} size={64} className="loom-profile__avatar shrink-0" />
+    <div className="loom-acct">
+      <div className="loom-acct__grid">
+        <div className="loom-acct__col">
+          <section className="loom-acct__panel loom-acct__me" aria-label="You">
+            <MeAvatar name={display} size={64} className="loom-acct__avatar shrink-0" />
             <span className="grid min-w-0 leading-tight">
-              <h1 className="loom-profile__name" data-profile-name>{display}</h1>
-              <span className="loom-profile__role">{me.role}{me.since ? ` · member since ${me.since}` : ''}</span>
+              <h1 className="loom-acct__name" data-profile-name>{display}</h1>
+              <span className="loom-acct__role">{me.role}{me.since ? ` · member since ${me.since}` : ''}</span>
             </span>
           </section>
-          <Panel className="loom-profile__keys" label="Sign in" title="Passkeys" intro="Keep at least two, on different devices, so losing one never locks you out."
-            action={canAdd && !adding ? <Button size="sm" variant="outline" className="loom-profile__add" onClick={() => setAdding(true)}>
+          <Pane className="loom-acct__keys" label="Sign in" title={keys?.title ?? 'Passkeys'} intro="Keep at least two, on different devices, so losing one never locks you out."
+            action={canAdd && !adding ? <Button size="sm" variant="outline" className="loom-acct__add" onClick={() => { setAdded(false); setAdding(true); }}>
               <AnimatedIcon name={iconFor('plus')} size="sm" />Add a passkey</Button> : undefined}>
-            {(adding || !canAdd) && <div className="loom-profile__adding"><PasskeyAdd add={add} reload={() => { setAdding(false); reload(); }} onCancel={() => setAdding(false)} /></div>}
-            {listed.length ? <ul className="loom-profile__rows">{listed.map((k) => <KeyRow key={`${k.text}\0${k.act?.fields?.id ?? ''}`} k={k} />)}</ul> : null}
+            {(adding || !canAdd) && <div className="loom-acct__adding"><PasskeyAdd add={add} reload={() => { setAdding(false); setAdded(true); reload(); }} onCancel={() => setAdding(false)} /></div>}
+            {added && !adding && <p role="status" className="loom-acct__row-meta">Added.</p>}
+            {listed.length ? <ul className="loom-acct__rows">{listed.map((k) => <KeyRow key={`${k.text}\0${k.act?.fields?.id ?? ''}`} k={k} />)}</ul> : null}
             {other.map((b, i) => <BlockView key={i} b={b} />)}
-          </Panel>
+          </Pane>
         </div>
-        <div className="loom-profile__col">
+        <div className="loom-acct__col">
           {me.agents && me.agents.length > 0 && (
-            <Panel label="Your agents">
-              <ul className="loom-profile__rows">
+            <Pane label="Your agents">
+              <ul className="loom-acct__rows">
                 {me.agents.map((a) => (
-                  <li key={a.id} className="loom-profile__row">
-                    <AgentAvatar a={a} size={36} state={a.state === 'working' ? 'working' : a.state === 'broken' ? 'error' : 'idle'} />
+                  <li key={a.id} className="loom-acct__row">
+                    <AgentAvatar a={a} size={36} state={STATE[a.state].status} />
                     <Link page={`loom:a/${a.id}`} className="grid min-w-0 no-underline">
-                      <span className="loom-profile__row-title">{a.label}</span>
-                      <span className="loom-profile__row-meta">You own this agent</span>
+                      <span className="loom-acct__row-title">{a.label}</span>
+                      <span className="loom-acct__row-meta">You own this agent</span>
                     </Link>
-                    <Badge variant={STATE[a.state].badge as never}>{STATE[a.state].word}</Badge>
+                    <Badge variant={BADGE[a.state]}>{STATE[a.state].word}</Badge>
                   </li>
                 ))}
               </ul>
-            </Panel>
+            </Pane>
           )}
           <Push csrf={csrf} />
           {rest.map((s: Section) => (
-            <Panel key={s.id} label={s.title}>{s.blocks.map((b, i) => <BlockView key={i} b={b} />)}</Panel>
+            <Pane key={s.id} label={s.title}>{s.blocks.map((b, i) => <BlockView key={i} b={b} />)}</Pane>
           ))}
-          <form method="post" action="/logout" className="loom-profile__out"><input type="hidden" name="_csrf" value={csrf} />
-            <Button type="submit" variant="danger" size="sm" className="gap-2"><AnimatedIcon name={iconFor('log-out')} size="sm" />Sign out</Button>
+          <form method="post" action="/logout" className="loom-acct__out"><input type="hidden" name="_csrf" value={csrf} />
+            <Button type="submit" variant="danger" className="gap-2"><AnimatedIcon name={iconFor('log-out')} size="sm" />Sign out</Button>
           </form>
         </div>
       </div>

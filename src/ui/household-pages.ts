@@ -875,18 +875,19 @@ const FIND_EACH = 5;
 /** Plain text matches for Find: knowledge titles, people's names, and each given agent's memories (titles first). */
 /** Find's suggestions before anything is typed: the household's people (not its agents, which the app has already),
  * as the People page lists them. */
-/** A person's name as People has it (Jonathan Barket), or none when People doesn't know the slug. */
-export function householdPersonName(h: Household, slug: string): string | undefined {
-  const dir = directory(h);
-  try { return dir?.getRow(slug)?.card.name?.trim() || undefined; } catch { return undefined; } finally { dir?.close(); }
-}
-
 export function householdSuggestPeople(h: Household, n = 8): Array<{ name: string; slug: string }> {
   const dir = directory(h);
   if (!dir) return [];
   try {
     return dir.list().filter((p) => kindOf(dir.getRow(p.slug)?.card ?? { how: {} }) !== 'agent').slice(0, n).map((p) => ({ name: p.name, slug: p.slug }));
   } finally { dir.close(); }
+}
+
+/** A person's name as People has it (Jonathan Barket), or none when People doesn't know the slug or can't be read
+ * (Profile's head: an unreadable people.db must not stop the page you sign out from). */
+export function householdPersonName(h: Household, slug: string): string | undefined {
+  let dir: PeopleStore | null = null;
+  try { dir = directory(h); return dir?.getRow(slug)?.card.name?.trim() || undefined; } catch { return undefined; } finally { dir?.close(); }
 }
 
 export function householdFind(h: Household, q: string, agents: string[] = h.agents): FindMatches {

@@ -1,5 +1,5 @@
-// The Passkeys page's own controls, beside its list (src/ui/handler.ts /passkeys): adding a passkey on this
-// device (WebAuthn, the same calls loom's sign-in uses: src/ui/passkeys.ts) and push for Your call (src/ui/push.ts).
+// Profile's own controls (account.tsx; src/ui/handler.ts /account, /passkeys): adding a passkey on this device
+// (WebAuthn, the same calls loom's sign-in uses: src/ui/passkeys.ts) and push for Your call (src/ui/push.ts).
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';

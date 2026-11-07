@@ -14,6 +14,7 @@ const MoreSheet = lazy(() => import('./more-sheet'));
 const LoomSidebar = lazy(() => import('./sidebar').then((m) => ({ default: m.LoomSidebar })));
 // The account's page (passkeys' controls: WebAuthn, push) loads with that page only.
 const AccountView = lazy(() => import('./account').then((m) => ({ default: m.AccountView })));
+import type { Me } from './account';
 const PushAsk = lazy(() => import('./passkeys').then((m) => ({ default: m.PushAsk })));
 import { ArrivalContext, arriveOnce, type Arrivals } from './arrive';
 import { Boundary, Callout, iconFor } from './safe';
@@ -464,7 +465,7 @@ export default function App() {
                   : data.view === 'comms' ? <Suspense fallback={<Spinner appearance="orbit" />}><CommsView data={data as never} /></Suspense>
                   : data.view === 'inbox' ? <Suspense fallback={<Spinner appearance="orbit" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
                   : data.view === 'passkeys' ? <Suspense fallback={<Spinner appearance="orbit" />}>
-                    <AccountView me={(data.me as never) ?? { name: data.chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
+                    <AccountView me={(data.me as Me | undefined) ?? { name: data.chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
                       add={data.add as never} reload={() => void pg.load(pg.url, false, true)} page={data.page as Page} /></Suspense>
                   : data.view === 'sheet' && data.which === 'find' ? <Suspense fallback={<Spinner appearance="orbit" />}>
                     <div className="loom-find loom-find-page grid h-[min(70dvh,640px)] overflow-hidden"><FindPanel chrome={data.chrome} icon={icon} go={go} /></div></Suspense>
