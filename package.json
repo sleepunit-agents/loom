@@ -53,6 +53,7 @@
     "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@modelcontextprotocol/server": "^2.2.0",
+    "age-encryption": "0.3.1",
     "better-sqlite3": "^13.0.3",
     "markdown-it": "^14.3.3",
     "onnxruntime-node": "1.21.0",

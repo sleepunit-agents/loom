@@ -760,6 +760,10 @@ describe('criterion 9: one decrypt path', () => {
     // key; and the audit module's, inside decryptAuditText only.
     const decrypting = all.filter((f) => /['"](?:-d|--decrypt)['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
     expect(decrypting).toEqual(['audit.ts', 'bundle.ts', 'comms.ts']);
+    // And the in-process way (t-1926): only Comms imports the age library, so nothing decrypts with the review key
+    // that way either.
+    const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
+    expect(library).toEqual(['comms.ts']);
     expect(code(join(srcDir, 'bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|AUDIT_FILES\s*\[/);
     expect(code(join(srcDir, 'comms.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
     const audit = code(join(srcDir, 'audit.ts'));

@@ -365,6 +365,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |
 | No `age` program (the send is refused with `503`, nothing delivered, nothing stored but the error) | "loom can't keep messages safely right now: the age program is missing." |
+| A read with no way to decrypt: `comms.key` missing or not a plain file, or neither the age library nor the program can take it (the read is refused with `503` and its reason, as before t-1926; nothing is shown as swept) | Not yet in words: the app keeps what it already shows, and the reason is in the answer and loom's log |
 | The stream dropped | "Reconnecting…" while it's down, then the missed messages, fetched by `seq` |
 
 A refused action that isn't a delivery (a `400` or `409` from a route: a ninth pin, a send to an archived thread)
@@ -526,7 +527,14 @@ reader is the member who said half of it.
 **The rules for the kept words:**
 - **Encryption.** They're encrypted at rest with age, one blob per message as audit.db does it, to a key of their own
   (`$LOOM_HOME/comms.key`, made at first use, mode 0600). That protects copies and backups, not the owner from himself:
-  conversations.md rule 3 already says the owner of a loom instance can read what it stores.
+  conversations.md rule 3 already says the owner of a loom instance can read what it stores. Reading a thread decrypts
+  in loom's own process with the age library (`age-encryption`, t-1926; the owner's ruling of 2026-11-07), with the
+  `age` program as the fallback for a message the library can't read (logged, without its words). The decrypted words
+  live only for that request: no cache of them in memory. Writing stays with the `age` program (one process a send,
+  from the synchronous write path), and each reads the other's files (`src/comms-age.integration.test.ts`). A `comms.key` the library can't take at all (not
+  an X25519 identity) still reads, one `age` process a message as before t-1926, after one log line. The audit
+  log (`src/audit.ts`) and bundles (`src/bundle.ts`) keep the program too: the audit log's decrypt is pinned to one
+  function by its own criterion, and a bundle is restored with the `age` CLI.
 - **The window** is household.json's `comms_days` (1–14, default 14), tied to the slot's window (section 1).
 - **A sweep** runs hourly and at daemon start, like the audit log's. It sets `text` to null on every message older
   than `comms_days`, in `secure_delete` mode, so the deleted pages are zeroed. Rows stay, with their `seq`, `at`,
@@ -1004,6 +1012,11 @@ A thread filed under a project already feeds its hub (section "Project" above). 
    - `comms.key` and `comms.salt` are made with mode 0600.
    - `GET /comms/<thread>` shows the thread's digests in place of the swept words.
    - Text decrypts with `comms.key`, and not with another age identity.
+   - A thread reads in loom's own process, with no age program installed; a message the library can't read is read by
+     the program, logged once a read without its words or the key; a message changed under it, or a new `comms.key`,
+     reads as it is now (nothing decrypted is kept between reads); with neither a key the library takes nor the
+     program, a read is `503 no-age`, and with a `comms.key` missing or not a plain file, a `503`. What the library writes, `age -d` reads, and the reverse
+     (`src/comms-age.integration.test.ts`, t-1926).
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**

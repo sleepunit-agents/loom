@@ -400,6 +400,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **A Comms thread opens without an age process per message** (t-1926). Reading a thread decrypts its words in
+  loom's own process with the age library (`age-encryption`, BSD-3-Clause), not one `age` process per message, so
+  GET /comms/<thread> for 40 messages drops from over a second to well under 300 ms. The `age` program stays the
+  fallback for a message the library can't read, and is logged without its words. Nothing decrypted is cached.
+  `scripts/nav-bench.ts --server-only` times it, and fails at a median of 300 ms or more (`docs/specs/comms.md`,
+  "The rules for the kept words").
+
 - **Desktop right-click** (t-1925 E; `docs/specs/desk-tiling.md`, "Context menus"). Adding a widget moves from the
   dock's + key (gone) to a right-click on the desktop, or the Menu key or Shift+F10. Short menus on a tile's strip
   (Minimize, Make it the big one, Pin its card on an agent's, Close), an agent's card (Chat, Open, Unpin), a dock key (Open, Minimize, Close) and
