@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -176,5 +176,34 @@ describe.skipIf(!hasAge)('Comms decrypts a thread\'s words in-process (t-1926)',
       expect(err).toBeInstanceOf(CommsError);
       expect(err).toMatchObject({ status: 503, message: expect.stringMatching(/^no-age:/) });
     } finally { writeFileSync(keyPath, saved); }
+  });
+  it('a comms.key that is missing or a link is refused with a 503, not read as swept words', async () => {
+    const o = openThread(h, process.env, h.members[0], { agent: 'art', id: 'gaaaaaaaaaaaaaaa', text: 'guarded' });
+    const keyPath = join(h.home, COMMS_KEY);
+    const aside = join(h.home, 'key-aside');
+    renameSync(keyPath, aside);
+    try {
+      await expect(messagesOf(h, process.env, o.thread)).rejects.toMatchObject({ status: 503, message: expect.stringMatching(/comms\.key is missing or isn't a plain file/) });
+      symlinkSync(aside, keyPath);
+      await expect(messagesOf(h, process.env, o.thread)).rejects.toMatchObject({ status: 503 });
+      await expect(memberWords(h, process.env, o.thread, 1)).rejects.toMatchObject({ status: 503 });
+    } finally { rmSync(keyPath, { force: true }); renameSync(aside, keyPath); }
+    expect((await messagesOf(h, process.env, o.thread))[0].text).toBe('guarded');
+  });
+  it('reads with every identity in comms.key, as age -i does', async () => {
+    const o = openThread(h, process.env, h.members[0], { agent: 'art', id: 'haaaaaaaaaaaaaaa', text: 'first key' });
+    adapterCall(h, process.env, { op: 'post', place: o.thread.id, agent: 'art', text: 'placeholder' });
+    const keyPath = join(h.home, COMMS_KEY);
+    const saved = readFileSync(keyPath, 'utf-8');
+    const second = await generateX25519Identity();
+    const e = new Encrypter();
+    e.addRecipient(await identityToRecipient(second));
+    storeBlob(h.home, o.thread.id, 2, await e.encrypt('second key'));
+    const said = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      writeFileSync(keyPath, `${saved}${second}\n`);
+      expect((await messagesOf(h, noAge(), o.thread)).map((m) => m.text)).toEqual(['first key', 'second key']);
+      expect(said).not.toHaveBeenCalled();
+    } finally { said.mockRestore(); writeFileSync(keyPath, saved); }
   });
 });

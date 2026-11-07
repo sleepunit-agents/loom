@@ -1013,7 +1013,7 @@ A thread filed under a project already feeds its hub (section "Project" above). 
    - A thread reads in loom's own process, with no age program installed; a message the library can't read is read by
      the program, logged once a read without its words or the key; a message changed under it, or a new `comms.key`,
      reads as it is now (nothing decrypted is kept between reads); with neither a key the library takes nor the
-     program, a read is `503 no-age`. What the library writes, `age -d` reads, and the reverse
+     program, a read is `503 no-age`, and with a `comms.key` missing or not a plain file, a `503`. What the library writes, `age -d` reads, and the reverse
      (`src/comms-age.integration.test.ts`, t-1926).
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.

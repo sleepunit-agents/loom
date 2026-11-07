@@ -231,18 +231,20 @@ function encrypt(home: string, env: NodeJS.ProcessEnv, text: string): Buffer {
  * What decrypts one request's messages, made per request and dropped with it: the comms identity read from comms.key
  * into the age library (null when the library can't take it), and the age program for the fallback (null when it isn't
  * installed). Neither the key nor any words are logged or kept: no plaintext cache, and no identity kept between
- * requests (the owner's ruling of 2026-11-07, t-1926). With neither, a read is the 503 a send is.
+ * requests (the owner's ruling of 2026-11-07, t-1926). With neither, or with no comms.key that is a plain file, a read
+ * is a 503.
  */
 type Opener = { lib: Decrypter | null; age: string | null; key: string; logged: boolean };
 function openerFor(home: string, env: NodeJS.ProcessEnv): Opener {
   const key = join(home, COMMS_KEY);
+  // As firstUse refuses it: a key that's missing, or a link someone left there, is a refusal, never swept-looking words.
+  if (!regularFile(key)) return fail(`${COMMS_KEY} is missing or isn't a plain file; refusing to use it`, 503);
   let lib: Decrypter | null = null;
   try {
-    if (regularFile(key)) {
-      // age-keygen's file: `# created` and `# public key` comment lines, then the identity.
-      const line = readFileSync(key, 'utf-8').split('\n').map((l) => l.trim()).find((l) => l.startsWith('AGE-SECRET-KEY-'));
-      if (line) { const d = new Decrypter(); d.addIdentity(line); lib = d; }
-    }
+    // age-keygen's file: `# created` and `# public key` comment lines, then the identity.
+    // Every identity in it, as `age -i` takes them all.
+    const lines = readFileSync(key, 'utf-8').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('AGE-SECRET-KEY-'));
+    if (lines.length) { const d = new Decrypter(); for (const l of lines) d.addIdentity(l); lib = d; }
   } catch { lib = null; }
   let age: string | null = null;
   try { age = findProgram('age', env); } catch { age = null; }
@@ -456,11 +458,11 @@ function householdAt(home: string): Household {
   return h;
 }
 
-async function messageOf(o: Opener, agent: string, thread: string, r: MsgRow): Promise<Message> {
+async function messageOf(o: Opener | null, agent: string, thread: string, r: MsgRow): Promise<Message> {
   const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
   let text: string | null = null;
   if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined);
-  else if (r.text) text = await decrypt(o, r.text, `${thread} #${r.seq}`);
+  else if (r.text && o) text = await decrypt(o, r.text, `${thread} #${r.seq}`);
   return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1,
     ...(r.kind === 'message' ? { delivery: deliveryOf(r.delivered) } : {}) };
 }
@@ -472,8 +474,8 @@ export async function messagesOf(h: Household, env: NodeJS.ProcessEnv, t: Thread
     if (at.before !== undefined) return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(t.id, at.before, PAGE) as MsgRow[]).reverse();
     return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? ORDER BY seq DESC LIMIT ?').all(t.id, PAGE) as MsgRow[]).reverse();
   });
-  if (!rows.length) return [];
-  const o = openerFor(h.home, env);
+  // A page with no words to decrypt (none, or all swept) needs no key and no age.
+  const o = rows.some((r) => r.text && r.kind !== 'error') ? openerFor(h.home, env) : null;
   return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(o, t.agent, t.id, r));
 }
 
