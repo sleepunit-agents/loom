@@ -335,7 +335,7 @@ describe('loadIdentity — recorder health warning (t-562)', () => {
     };
     await writeFile(
       join(tempDir, 'recorder-health.json'),
-      JSON.stringify(health),
+      JSON.stringify({ episodes: health }),
       'utf-8',
     );
     const result = await loadIdentity(tempDir);
@@ -351,7 +351,7 @@ describe('loadIdentity — recorder health warning (t-562)', () => {
     };
     await writeFile(
       join(tempDir, 'recorder-health.json'),
-      JSON.stringify(health),
+      JSON.stringify({ episodes: health }),
       'utf-8',
     );
     const result = await loadIdentity(tempDir);
@@ -370,7 +370,7 @@ describe('loadIdentity — recorder health warning (t-562)', () => {
     };
     await writeFile(
       join(tempDir, 'recorder-health.json'),
-      JSON.stringify(health),
+      JSON.stringify({ episodes: health }),
       'utf-8',
     );
     const result = await loadIdentity(tempDir);
@@ -386,5 +386,48 @@ describe('loadIdentity — recorder health warning (t-562)', () => {
     // Malformed ledger → treated as healthy → no warning
     expect(result).toContain('I am Art.');
     expect(result).not.toContain('Recorder Health Warning');
+  });
+
+  it('a failing cards component and a failing episodes component both warn, independently', async () => {
+    const failing = {
+      consecutiveFailures: FAILURE_THRESHOLD,
+      failingSince: '2026-09-10T01:00:00.000Z',
+      lastError: 'boom',
+      lastSuccess: null,
+    };
+    await writeFile(
+      join(tempDir, 'recorder-health.json'),
+      JSON.stringify({ episodes: failing, cards: failing }),
+      'utf-8',
+    );
+    const result = await loadIdentity(tempDir);
+    expect(result).toContain('Recorder Health Warning: episode recorder');
+    expect(result).toContain('Recorder Health Warning: person-card reader');
+  });
+
+  it('a cards failure streak is not reset by an unrelated episodes success (t-1382)', async () => {
+    // The scenario from Mark's loom#143 review: an unreadable person card
+    // fails under the 'cards' component, but a later successful episode
+    // write must not reset that streak — the two components are independent.
+    const cardsFailing = {
+      consecutiveFailures: FAILURE_THRESHOLD,
+      failingSince: '2026-09-10T01:00:00.000Z',
+      lastError: 'card unreadable',
+      lastSuccess: null,
+    };
+    const episodesHealthy = {
+      consecutiveFailures: 0,
+      failingSince: null,
+      lastError: null,
+      lastSuccess: '2026-09-10T02:00:00.000Z',
+    };
+    await writeFile(
+      join(tempDir, 'recorder-health.json'),
+      JSON.stringify({ cards: cardsFailing, episodes: episodesHealthy }),
+      'utf-8',
+    );
+    const result = await loadIdentity(tempDir);
+    expect(result).toContain('Recorder Health Warning: person-card reader');
+    expect(result).not.toContain('Recorder Health Warning: episode recorder');
   });
 });

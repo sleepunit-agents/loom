@@ -52,11 +52,12 @@ export async function remember(
   }
   try {
     const ref = await backend.remember(input);
-    // Record health only for episode writes — that's the path identity.ts monitors.
-    if (isEpisode) recordSuccess(contextDir);
+    // Record health only for episode writes, under the 'episodes' component
+    // (t-1382) — that's the path identity.ts monitors.
+    if (isEpisode) recordSuccess(contextDir, 'episodes');
     return ref;
   } catch (err) {
-    if (isEpisode) recordFailure(contextDir, err);
+    if (isEpisode) recordFailure(contextDir, 'episodes', err);
     throw err;
   }
 }
