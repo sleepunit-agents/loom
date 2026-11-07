@@ -434,14 +434,22 @@ interface MsgRow { seq: number; at: string; kind: string; sender: string; id: st
 const deliveryOf = (delivered: number | null): Delivery => (delivered === 1 ? 'delivered' : delivered === 0 ? 'failed' : 'sending');
 
 /** An error message's words: a fixed table, never stored (comms.md, section 7). */
-export function errorWords(code: string, agentName: string, reason: string | undefined, attempt?: number): string {
+/**
+ * `start` is a runtime start notice's card (t-1946): its attempt, and whether the body got going since. Such a card's
+ * words are fixed; its reason is for the trace only, never the headline.
+ */
+export function errorWords(code: string, agentName: string, reason: string | undefined, start?: { attempt?: number; settled?: boolean }): string {
   const r = reason ? reason.replace(/^[a-z-]+: /, '') : '';
   switch (code) {
     case 'no-runtime': return 'loom can\'t reach any agent: the runtime isn\'t installed.';
     case 'refused': return `${agentName} didn't get that: ${r || 'the runtime refused it'}.`;
-    case 'start-failed': return `${agentName} couldn't start: ${r || 'no reason given'}.`;
+    case 'start-failed':
+      if (start?.attempt !== undefined) return start.attempt > 1 ? `${agentName} couldn't start after ${start.attempt} tries.` : `${agentName} couldn't start.`;
+      return `${agentName} couldn't start: ${r || 'no reason given'}.`;
     case 'busy': return `${agentName} is busy with other work; this is waiting its turn.`;
-    case 'start-retry': return attempt && attempt > 1 ? `${agentName} couldn't start (${attempt} tries so far); retrying.` : `${agentName} couldn't start; retrying.`;
+    case 'start-retry':
+      if (start?.settled) return `${agentName} couldn't start at first.`;
+      return start?.attempt && start.attempt > 1 ? `${agentName} couldn't start (${start.attempt} tries so far); retrying.` : `${agentName} couldn't start; retrying.`;
     case 'loop': return `Paused: ${agentName} was repeating itself.`;
     case 'post-failed': return `${agentName}'s reply couldn't be shown: ${r || 'no reason given'}.`;
     case 'no-reply': return `${agentName} finished without replying.`;
@@ -452,6 +460,11 @@ export function errorWords(code: string, agentName: string, reason: string | und
 
 const label = (agent: string) => agent[0].toUpperCase() + agent.slice(1);
 
+/** An error card's words (errorWords), read from the card as stored. */
+const cardWords = (card: Record<string, unknown> | null, agent: string) => errorWords(String(card?.error ?? ''), label(agent),
+  typeof card?.reason === 'string' ? card.reason : undefined,
+  typeof card?.attempt === 'number' ? { attempt: card.attempt, settled: card.settled === true } : undefined);
+
 function householdAt(home: string): Household {
   const h = loadHousehold(home);
   if (!h) return fail('no household here', 503);
@@ -461,7 +474,7 @@ function householdAt(home: string): Household {
 async function messageOf(o: Opener | null, agent: string, thread: string, r: MsgRow): Promise<Message> {
   const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
   let text: string | null = null;
-  if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined, typeof card?.attempt === 'number' ? card.attempt : undefined);
+  if (r.kind === 'error') text = cardWords(card, agent);
   else if (r.text && o) text = await decrypt(o, r.text, `${thread} #${r.seq}`);
   return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1,
     ...(r.kind === 'message' ? { delivery: deliveryOf(r.delivered) } : {}) };
@@ -787,7 +800,7 @@ export interface TraceMessage {
   /** A member's message: delivered, failed (core recorded a failure) or still sending. */
   delivery?: Delivery;
   /** An error card: its code and its words from the fixed table (comms.md, section 7). */
-  error?: { code: string; words: string };
+  error?: { code: string; words: string; reason?: string };
   /** A tool card: its tool and state. */
   card?: { tool: string; state: string };
 }
@@ -815,7 +828,11 @@ export function traceOf(home: string, r: ThreadRow): ThreadTrace {
     const card = m.card_json ? JSON.parse(m.card_json) as Record<string, unknown> : null;
     const out: TraceMessage = { seq: m.seq, at: m.at, kind: m.kind as MessageKind, from: m.sender, run: m.run };
     if (m.kind === 'message') out.delivery = deliveryOf(m.delivered);
-    if (m.kind === 'error') { const code = String(card?.error ?? ''); out.error = { code, words: errorWords(code, label(r.agent), typeof card?.reason === 'string' ? card.reason : undefined, typeof card?.attempt === 'number' ? card.attempt : undefined) }; }
+    if (m.kind === 'error') {
+      out.error = { code: String(card?.error ?? ''), words: cardWords(card, r.agent) };
+      // A start notice's reason is the runtime's own line: here, never in the headline (t-1946).
+      if (typeof card?.attempt === 'number' && typeof card.reason === 'string') out.error.reason = card.reason;
+    }
     if (m.kind === 'card') out.card = { tool: String(card?.tool ?? ''), state: String(card?.state ?? '') };
     return out;
   });

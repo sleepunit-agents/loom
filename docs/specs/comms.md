@@ -382,7 +382,8 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | `body: "queued"`, and no `status: working` within 2 minutes | "Art is busy with other work; this is waiting its turn." |
 | `body: "queued"` because no body could start (the runtime's reason "no body could start (…): trying again in N s"): it's retrying, not busy, and no busy line follows (t-1918) | "Art couldn't start; retrying." With **What happened**, the trace |
 | `status: start-retry` after a `queued` answer (t-1946) | "Art couldn't start; retrying.", or "Art couldn't start (N tries so far); retrying." from the second attempt, and "Next try at HH:MM." in the reader's time |
-| `status: start-failed` after a `queued` answer (t-1946) | "Art couldn't start: <reason>." on the same line, with Send again |
+| `status: start-failed` after a `queued` answer (t-1946) | "Art couldn't start.", or "Art couldn't start after N tries.", on the same line, with Send again; the reason is in the trace only |
+| a `start-retry` line once the body got going (t-1946) | "Art couldn't start at first." |
 | A loop pause (the runtime's `deferred` note turn) | "Paused: Art was repeating itself." The Inbox's Resume and Dismiss are on it |
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |

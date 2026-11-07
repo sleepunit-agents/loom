@@ -14,7 +14,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
-import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, WORKING_STALE_MS, type Thread } from './comms.js';
+import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { stopCommsWatch } from './ui/comms-live.js';
@@ -883,9 +883,12 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
         await notice(t, { status: 'start-failed', messages: [delivery], attempt: 2, reason: 'no house would start' });
         e = await errs(t);
         expect(e).toHaveLength(1);
-        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start: no house would start.', card: { error: 'start-failed', attempt: 2 } });
+        // Fixed words: the runtime's reason is the trace's, never the headline.
+        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start after 2 tries.', card: { error: 'start-failed', attempt: 2, reason: 'no house would start' } });
         expect(e[0].card?.retry_at).toBeUndefined();
         expect(row(t).last_failed).toBe(1);
+        const traced = (() => { const db = new BetterSqlite3(join(h.home, 'household.db'), { readonly: true }); try { return traceOf(h.home, db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as Parameters<typeof traceOf>[1]); } finally { db.close(); } })();
+        expect(traced.messages.filter((m) => m.error).at(-1)?.error).toEqual({ code: 'start-failed', words: 'Art couldn\'t start after 2 tries.', reason: 'no house would start' });
         // After a start-failed, a delayed retry never brings the line back.
         await notice(t, { status: 'start-retry', messages: [delivery], attempt: 3, retry_at: at(10) });
         expect((await errs(t))[0].card).toMatchObject({ error: 'start-failed' });
@@ -909,7 +912,7 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
         await notice(t, { status: 'start-failed', messages: [delivery], attempt: 3 });
         const e = await errs(t);
         expect(e).toHaveLength(1);
-        expect(e[0].card).toMatchObject({ error: 'start-retry', attempt: 1, settled: true });
+        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start at first.', card: { error: 'start-retry', attempt: 1, settled: true } });
         expect(row(t).last_failed).toBe(0);
         // A message already answered: its first notice, arriving late, adds no line.
         const second = await queued();
