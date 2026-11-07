@@ -525,7 +525,7 @@ outside the page).
 | `table` | `columns`, `rows`; a cell is a string or `{text, page}` |
 | `kv` | `items`: `label`, `value`, optional `page`. A record, like a task's details |
 | `text` | `text`, optional `tone` |
-| `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters. Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
+| `prose` | `text`: markdown (CommonMark plus tables), up to 20,000 characters (more is cut short). Any HTML in it is shown as text, never run; links go only to `http(s)`; no images |
 | `callout` | `text`, optional `title`, `tone`, `busy` (true: something is under way, drawn with a spinner). A boxed note |
 | `profile` | `name`, optional `initials` (one or two letters), `agent` (an agent's id: its mark and colour) or `tone` (`pink`, `yellow`, `olive`, `blue`), `summary`, `badges` (up to 6 words), `stats` (up to 4 `label`/`value`), `links` (up to 4 `text` with `page` or `href`). Someone, as a profile card: a cover in their colour, their avatar, name and summary; when it leads a page, the page's own title gives way to it |
 | `link` | `text`, and `page` or `href` |
@@ -630,7 +630,12 @@ short.
   in the footer as "no page"; a page that doesn't validate shows an error in
   its place.
 - **Limits:** 10 sections a page, 20 blocks a section, 200 items or rows, 12
-  columns, 2000 characters a string. 512 KB per answer. 3 seconds for the
+  columns, 2000 characters a string. A page's text over its limit (a `text`,
+  `code`, `callout` or `prose` block's text, a `list` row's text or meta, a
+  table cell, a `kv` value, a `status` text, a `health` detail) is cut short
+  with "…" and its block says it was cut, and loom logs the piece and the field;
+  a name, label, action or path over it still refuses the page, and so does any
+  count over its limit. 512 KB per answer. 3 seconds for the
   manifest and a page, 15 for an action. After every run, the piece's whole
   process group is killed, so nothing it started outlives its answer (a piece
   that calls `setsid` on purpose escapes that). At most 6 pieces run at

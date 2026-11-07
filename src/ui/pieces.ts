@@ -366,6 +366,9 @@ export async function pieceManifests(
   };
 }
 
+/** The cuts already logged (piece, page, fields): a page asked for again doesn't say it again. */
+const cutSaid = new Set<string>();
+
 /** One page from a piece, or why it couldn't be had. */
 export async function piecePage(
   info: PieceInfo,
@@ -385,7 +388,14 @@ export async function piecePage(
     if (!r.ok) return r.reason;
     const parsed = json(r.stdout);
     if (parsed === undefined) return 'not JSON';
-    return parsePage(parsed);
+    // A block's words over loom's limit are cut short, not the page refused (t-1861); the log says which piece and field.
+    return parsePage(parsed, (cut) => {
+      const said = `${info.piece}\0${path}\0${cut.join('; ')}`;
+      if (cutSaid.has(said)) return;
+      if (cutSaid.size > 200) cutSaid.clear();
+      cutSaid.add(said);
+      process.stderr.write(`loom: piece ${info.piece} page "${path}": cut short ${cut.join('; ')}\n`);
+    });
   };
   const key = `${info.path}\0${env.LOOM_SCOPE ?? ''}\0${resolved(info.path)}\0${path}\0${JSON.stringify(query)}\0${JSON.stringify(caller ?? null)}`;
   const hit = pages.get(key);

@@ -257,6 +257,12 @@ export function Nothing({ title, text, children }: { title: string; text?: strin
 }
 
 export function BlockView({ b }: { b: Block }) {
+  if (!b.cut) return <BlockBody b={b} />;
+  // Cut short to fit loom's limits (src/ui/vocab.ts long()): the block, then a word that it isn't whole (t-1861).
+  return <div className="grid gap-1" data-cut><BlockBody b={b} /><p className="text-xs opacity-70">Cut short: too long to show whole here.</p></div>;
+}
+
+function BlockBody({ b }: { b: Block }) {
   switch (b.type) {
     case 'text': { const t = b as Extract<Block, { type: 'text' }>; return <p className={t.tone === 'muted' ? 'text-sm opacity-70' : ''}>{tidy(t.text)}</p>; }
     case 'prose': { const text = (b as { text: string }).text;
