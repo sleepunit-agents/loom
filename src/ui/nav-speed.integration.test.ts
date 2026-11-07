@@ -223,7 +223,8 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count()).toBeGreaterThan(0);
       const inbox = p.locator(tile('Inbox'));
       await inbox.getByText('OK to ship the speed work tonight?').first().click();
-      await p.getByRole('button', { name: 'Allow once' }).last().click();
+      // Allow, in the Inbox tile's own sheet.
+      await inbox.locator('[role="dialog"]').getByRole('button', { name: 'Allow once' }).click();
       await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count(), { timeout: 15_000 }).toBe(0);
       await expect.poll(() => inbox.getByText('OK to ship the speed work tonight?').count(), { timeout: 15_000 }).toBe(0);
     } finally { await close(); }
