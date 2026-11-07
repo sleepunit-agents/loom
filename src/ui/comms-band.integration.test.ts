@@ -72,8 +72,8 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
   });
 
   /** A thread with its first message delivered (the runtime took it) and `replies` replies after it. */
-  const thread = (agent = 'art', replies = 0): Thread => {
-    const o = openThread(h, process.env, h.members[0], { agent, id: msgId(), text: 'Hello there.' });
+  const thread = (agent = 'art', replies = 0, text = 'Hello there.'): Thread => {
+    const o = openThread(h, process.env, h.members[0], { agent, id: msgId(), text });
     recordDelivery(h, o.thread, o.seq, { delivered: true, body: 'started' });
     for (let n = 0; n < replies; n++) adapterCall(h, process.env, { op: 'post', place: o.thread.id, agent, text: `Reply ${n + 1}. ${'More words so it takes up a line or two. '.repeat(3)}` });
     if (replies) adapterCall(h, process.env, { op: 'status', place: o.thread.id, agent, status: 'done' });
@@ -84,14 +84,16 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
   const work = (n: number) => ({ items: Array.from({ length: n }, (_, k) => ({ title: `Task number ${k + 1} with a title long enough to wrap in a narrow side`, ref: `t-${100 + k}`, status: k === 0 ? 'Blocked' : 'Open', tone: k === 0 ? 'bad' : undefined, from: 'tasks' })), failed: [] });
   const band = async (p: Page) => p.evaluate(() => {
     const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
-    const side = document.querySelector('.comms-band__side')!;
+    // What scrolls: the side, stacked (two columns); in three columns each column scrolls itself, and the work is the long one.
+    const stacked = getComputedStyle(document.querySelector('.comms-band__side')!).display !== 'grid';
+    const side = document.querySelector(stacked ? '.comms-band__side' : '.comms-band .comms-work')!;
     const tile = document.querySelector('.loom-tile[data-tile="/comms"]')!.getBoundingClientRect();
     const composer = r('.comms-composer'), chat = r('.comms-chat'), b = r('.comms-band'), glass = r('.comms-screen__glass');
     // Nothing past the window: no element wider than the tile; the frames (the box, the band, the chat, the composer) inside
     // its bottom too (a message scrolled out of the chat's own view is inside its scroller, not past the window).
     const inside = [...document.querySelectorAll('.loom-tile[data-tile="/comms"] .comms *')].every((e) => { const x = e.getBoundingClientRect(); return !x.width || (x.left >= tile.left - 1 && x.right <= tile.right + 1); })
       && ['.comms', '.comms-band', '.comms-chat', '.comms-composer'].every((q) => document.querySelector(q)!.getBoundingClientRect().bottom <= tile.bottom + 1);
-    // The side scrolls: overflow-y auto, and a scroll moves it (a clipped side, overflow hidden, would read 0).
+    // The side (or the work column) scrolls: overflow-y auto, and a scroll moves it (a clipped side, overflow hidden, would read 0).
     const before = side.scrollTop; side.scrollTop = 9999; const moved = side.scrollTop > before && getComputedStyle(side).overflowY === 'auto'; side.scrollTop = 0;
     // The face: a pixel canvas drawn at a whole scale, its CSS size its own pixels (never stretched by layout).
     const cv = document.querySelector<HTMLCanvasElement>('.comms-band .comms-screen__glass canvas');
@@ -142,6 +144,110 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
       }
     });
   }
+
+  /** The chat's room (Jonathan, 2026-11-07): scrolled to its end, how far the words stay from the scrollbar's rail and the
+   *  scroller's right edge, and how far the last message and the rail end above the composer's divider. */
+  const room = async (p: Page) => p.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>('.comms-chat .comms-msgs')!;
+    scroller.scrollTop = scroller.scrollHeight;
+    const box = scroller.getBoundingClientRect();
+    const rail = scroller.closest('[data-slot="scroll-area"]')?.querySelector(':scope > [data-slot="scroll-area-scrollbar"][data-orientation="vertical"]')?.getBoundingClientRect();
+    const divider = document.querySelector('.comms-composer')!.getBoundingClientRect().top;
+    // The words: every text-bearing piece of every message (bubbles, authors, the working line), not the scroller's own parts.
+    const words = [...scroller.querySelectorAll('.v-agent-chat__message-body, .v-agent-chat__author, .comms-live, .comms-resend')].map((e) => e.getBoundingClientRect()).filter((r) => r.width);
+    const msgs = [...scroller.querySelectorAll('.v-agent-chat__message')].map((e) => e.getBoundingClientRect());
+    const last = msgs.at(-1)!;
+    // The owner's message and an agent's: each bubble's box against the log's (the scroller's content box).
+    const pad = parseFloat(getComputedStyle(scroller).paddingLeft), padR = parseFloat(getComputedStyle(scroller).paddingRight);
+    const log = { left: box.left + pad, right: box.right - padR };
+    const bubble = (from: string) => scroller.querySelector(`.v-agent-chat__message[data-from="${from}"] .v-agent-chat__message-body`)!.getBoundingClientRect();
+    const mine = bubble('user'), theirs = bubble('agent');
+    const share = (r: DOMRect) => Math.round((r.width / (log.right - log.left)) * 100);
+    return { scrolls: scroller.scrollHeight > scroller.clientHeight + 4, rail: !!rail,
+      toRail: Math.round((rail?.left ?? box.right) - Math.max(...words.map((r) => r.right))),
+      toEdge: Math.round(box.right - Math.max(...words.map((r) => r.right))),
+      lastToBottom: Math.round(box.bottom - last.bottom), lastToDivider: Math.round(divider - last.bottom),
+      mine: { share: share(mine), toRight: Math.round(log.right - mine.right), toLeft: Math.round(mine.left - log.left) },
+      theirs: { share: share(theirs), toLeft: Math.round(theirs.left - log.left) },
+      railToDivider: rail ? Math.round(divider - rail.bottom) : null, scrollerToDivider: Math.round(divider - box.bottom) };
+  });
+  /** The band's columns: the comm screen, who's in the conversation, the work; side by side (three lefts) or stacked (two). */
+  const columns = async (p: Page) => p.evaluate(() => {
+    const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
+    const screen = r('.comms-band .comms-screen'), people = r('.comms-band .comms-people'), work = r('.comms-band .comms-work'), b = r('.comms-band');
+    const scrolls = (s: string) => { const e = document.querySelector<HTMLElement>(s)!; const st = getComputedStyle(e).overflowY; return st === 'auto' || st === 'scroll'; };
+    return { n: new Set([screen.left, people.left, work.left].map(Math.round)).size, thread: Math.round(r('.comms-thread').width),
+      people: Math.round(people.width), work: Math.round(work.width), glass: [r('.comms-band .comms-screen__glass').width, r('.comms-band .comms-screen__glass').height],
+      inBand: [screen, people, work].every((x) => x.right <= b.right + 1 && x.left >= b.left - 1),
+      workScrolls: scrolls('.comms-band .comms-work') || scrolls('.comms-band__side'), peopleScrolls: scrolls('.comms-band .comms-people') || scrolls('.comms-band__side') };
+  });
+
+  for (const look of ['neon', 'lowlight', 'daylight'] as const) {
+    for (const [w, hgt, ws, cols] of [[1100, 800, '', 3], [1440, 900, '', 3], [1920, 1080, '', 3], [1280, 800, 'needs', 3], [1024, 768, 'needs', 2]] as const) {
+      it(`the chat's room and the band's columns: the words clear of the scrollbar, the last message clear of the divider, ${cols} columns, at ${w}×${hgt}${ws ? ' beside the widgets' : ''} (${look})`, async () => {
+        const t = thread('art', 12, `My own long message. ${'It goes on long enough to wrap over several lines in any window. '.repeat(6)}`);
+        const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+        await ctx.addInitScript(`localStorage.setItem('loom-look', '${look}'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+        await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+        const p = await ctx.newPage();
+        await p.route(`**/comms/${t.id}/work`, (r) => r.fulfill({ json: work(20) }));
+        await p.goto(`${base}/comms/${bare(t)}?t=*comms&w=${ws}`);
+        await p.locator('.comms-band .comms-work__row').first().waitFor();
+        await p.locator('.comms-chat .v-agent-chat__message').nth(12).waitFor();
+        await p.waitForTimeout(300);
+        const g = await room(p);
+        const c = await columns(p);
+        if (SHOTS) await p.screenshot({ path: `${SHOTS}/comms-room-${look}-${w}${ws ? '-widgets' : ''}.png` });
+        await ctx.close();
+        // The chat scrolls, with its rail: the words keep a gap (--s-3 and more) from the rail, and the rail's width from the edge.
+        expect(g.scrolls).toBe(true);
+        expect(g.rail).toBe(true);
+        expect(g.toRail).toBeGreaterThanOrEqual(12);
+        expect(g.toEdge).toBeGreaterThanOrEqual(24 + 12);
+        // Scrolled to the end: the last message ends a gap (--s-6 and more) above the scroller's bottom and the divider; the
+        // rail ends clear of the divider too.
+        expect(g.lastToBottom).toBeGreaterThanOrEqual(24);
+        expect(g.lastToDivider).toBeGreaterThanOrEqual(24);
+        expect(g.railToDivider).toBeGreaterThanOrEqual(8);
+        // Your own message on the right, narrower than the log (about three quarters, like the agent's on the left).
+        expect(g.mine.share).toBeLessThanOrEqual(78);
+        expect(g.theirs.share).toBeLessThanOrEqual(78);
+        expect(g.mine.toLeft).toBeGreaterThan(g.mine.toRight);
+        expect(g.theirs.toLeft).toBeLessThan(60);
+        // The band: three columns where they fit, the stack below; each column at least its least width, the face its own size.
+        expect(c.n).toBe(cols);
+        expect(c.glass).toEqual([192, 168]);
+        expect(c.inBand).toBe(true);
+        expect(c.workScrolls && c.peopleScrolls).toBe(true);
+        if (cols === 3) expect([c.people >= 180, c.work >= 300]).toEqual([true, true]);
+      });
+    }
+  }
+
+  it('your own message on a phone: on the right, a little wider than on a desktop, still narrower than the log', async () => {
+    const t = thread('art', 2, `My own long message. ${'It goes on long enough to wrap over several lines on a phone. '.repeat(4)}`);
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+    const p = await ctx.newPage();
+    await p.goto(`${base}/comms/${bare(t)}`);
+    const mine = p.locator('.comms[data-phone] .v-agent-chat__message[data-from="user"] .v-agent-chat__message-body').first();
+    await mine.waitFor();
+    await mine.scrollIntoViewIfNeeded();
+    const r = await p.evaluate(() => {
+      const log = document.querySelector('.comms-msgs')!, cs = getComputedStyle(log), b = log.getBoundingClientRect();
+      const left = b.left + parseFloat(cs.paddingLeft), right = b.right - parseFloat(cs.paddingRight);
+      const m = document.querySelector('.v-agent-chat__message[data-from="user"] .v-agent-chat__message-body')!.getBoundingClientRect();
+      return { share: Math.round((m.width / (right - left)) * 100), toRight: Math.round(right - m.right), toLeft: Math.round(m.left - left), sideways: document.documentElement.scrollWidth > window.innerWidth + 1 };
+    });
+    if (SHOTS) await p.screenshot({ path: `${SHOTS}/comms-room-phone-390.png` });
+    await ctx.close();
+    // At most four fifths of the log; flush right (only your avatar, 32 + 8, beside it), a clear gap on its left.
+    expect(r.share).toBeLessThanOrEqual(82);
+    expect(r.toRight).toBeLessThanOrEqual(42);
+    expect(r.toLeft).toBeGreaterThanOrEqual(24);
+    expect(r.sideways).toBe(false);
+  });
 
   it('a short tile (under 520 px tall) folds the band to a strip: the chat keeps its room', async () => {
     const t = thread('art', 3);
