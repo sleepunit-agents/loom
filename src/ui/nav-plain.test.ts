@@ -82,6 +82,15 @@ describe('the launcher\'s list (web/src/launch-list.ts, t-1925 G)', () => {
     expect(third.find((s) => s.name === 'Work')!.apps.map((a) => a.label)).toContain('Gardening');
   });
 
+  it('Approvals is Work\'s, by its own override, though its kind is a setting (t-1925, the mockups)', () => {
+    const withApprovals = { ...full(), pieces: [...full().pieces, { label: 'Approvals', href: '/p/approvals', current: false, kind: 'setting' as const, stat: '2 waiting' }] };
+    const l = launcherOf(withApprovals);
+    expect(l.find((s) => s.name === 'Work')!.apps.map((a) => a.label)).toContain('Approvals');
+    expect(l.find((s) => s.name === 'System')!.apps.map((a) => a.label)).not.toContain('Approvals');
+    // Its kind is unchanged: Setup (the phone's More) still holds it.
+    expect(settingsOf(withApprovals).map((p) => p.label)).toContain('Approvals');
+  });
+
   it('an agent owner (admin false) gets no Members and no Pieces', () => {
     const names = launcherOf({ ...full(), admin: false }).flatMap((s) => s.apps.map((a) => a.label));
     expect(names).not.toContain('Members');

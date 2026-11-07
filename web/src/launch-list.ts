@@ -11,13 +11,17 @@ export type LaunchSection = { name: string; apps: LaunchApp[] };
 type AgentLike = { id: string; label: string; href: string; asks?: number; sub?: string; working?: true };
 type LaunchShell = ShellLike & { agents?: AgentLike[] };
 
-/** The sections, in order. A piece is System's when its kind is a setting, or when it's one of loom's own first-party
- * pieces that run the household while being a place (SYSTEM, by its tab's label: a manifest has no section field yet);
- * any other piece, a third party's too, is Work's. Apps with no number of their own to say (Activity, People, Projects,
+/** The sections, in order. A piece is in the section SECTION names for it, if any; else System's when its kind is a
+ * setting, or when it's one of loom's own first-party pieces that run the household while being a place (SYSTEM, by
+ * its tab's label: a manifest has no section field yet); any other piece, a third party's too, is Work's. Apps with no number of their own to say (Activity, People, Projects,
  * Knowledge, Members) show no line under their name rather than a made-up one. */
 export const LAUNCH_SECTIONS = ['Work', 'People & agents', 'Library', 'System', 'Look & feel', 'Pieces'] as const;
 /** Pieces that run the household rather than hold its work: System's, whatever their kind says. */
 const SYSTEM = new Set(['Boxes', 'Machine', 'Clock', 'Bridges', 'Houses', 'Runtime', 'Secrets', 'Subscriptions', 'Fuel', 'Discord', 'Slack', 'Packages', 'Shuttle', 'Deploys']);
+/** A piece's section, by its tab's label, whatever its kind says (the launcher's place for it, not what the piece is):
+ * Approvals is a setting (its standing rules are configuration) but what it holds is work waiting on you, so it's
+ * Work's, as in the app mockups (t-1925). Its kind stays a setting everywhere else (Setup, the phone's More). */
+export const SECTION: Readonly<Record<string, (typeof LAUNCH_SECTIONS)[number]>> = { Approvals: 'Work' };
 
 /** Every app the launcher shows, by section (empty sections left out). The same apps as Places, Setup and the account,
  * once each, plus the household's agents: nothing is in two sections. `look` and `motion` are this device's own
@@ -34,7 +38,7 @@ export function launcherOf(s: LaunchShell, own: { look?: string; motion?: string
     put(sec, { label: p.label, href: p.href, count: p.count || undefined, ...(p.href === '/comms' ? { sub: p.count ? `${p.count} unread` : 'All read' } : {}) });
   }
   for (const p of s.pieces) {
-    const sec = p.kind === 'setting' || SYSTEM.has(p.label) ? 'System' : 'Work';
+    const sec = SECTION[p.label] ?? (p.kind === 'setting' || SYSTEM.has(p.label) ? 'System' : 'Work');
     put(sec, { label: p.label, href: p.href, sub: p.stat, tone: p.tone, icon: p.icon, count: (p as { alerts?: number }).alerts || undefined });
   }
   for (const a of s.agents ?? []) {

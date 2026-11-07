@@ -62,7 +62,7 @@ import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdPersonName, householdSuggestPeople, householdThread } from './household-pages.js';
-import { surfaceOf, tapeRows, whereLabel } from './data.js';
+import { surfaceOf, tapeRows, whereLabel, type TapeEntry } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
@@ -505,6 +505,25 @@ function householdTab(p: PieceInfo): boolean {
 function agentTabOf(p: PieceInfo): { label: string } | undefined {
   if (p.manifest.agentTab) return p.manifest.agentTab;
   return p.manifest.tab?.level === 'agent' ? { label: p.manifest.tab.label } : undefined;
+}
+
+/**
+ * A scoped piece's tile on an agent's Today (t-1925): the piece's word for this agent (its `agents` report: its first
+ * reading's detail, then each reading as a line), not its household summary ("Art: …" on Mark's window), opening the
+ * agent's own tab of it. A first reading named `Next` is a wake to come (docs/extensions.md, "agents"): under it, loom's
+ * own record of the agent's last wake. No report for the agent: the piece's tile, as it gave it.
+ */
+export function agentTile(p: PieceInfo, agent: string, lastWake: TapeEntry | undefined, nowMs: number): HomeTile {
+  const tile = p.manifest.tile!;
+  const source = pieceSource(p.piece);
+  const r = (p.manifest.agents?.[agent]?.readings ?? []).slice(0, 3);
+  if (!r.length) return { ...tile, source };
+  const [first] = r;
+  const lines = r.flatMap((x, n) => (n === 0 && !first.detail ? [] : [`${x.label}: ${x.value}`]));
+  if (first.label === 'Next' && lastWake) lines.push(`Last: ${lastWake.title}, ${agoText(lastWake.created, nowMs)}`);
+  const tone = r.find((x) => x.tone === 'bad')?.tone ?? r.find((x) => x.tone === 'warn')?.tone;
+  return { label: tile.label, value: first.detail ?? first.value, ...(lines.length ? { detail: lines.join('\n') } : {}), ...(tone ? { tone } : {}),
+    page: agentTabOf(p) ? `agent:${agent}` : tile.page ?? '', source };
 }
 
 /** A piece's pages as one agent's: links and actions stay under /a/<agent>/. */
@@ -1640,7 +1659,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // An agent owner sees their own passkeys; a household owner, every one.
     const keys = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : storeFor(opts).passkeys();
     const page: Page = {
-      title: 'Account',
+      // "Profile" wherever it's seen (t-1925); its address stays /account (and /passkeys, its old name).
+      title: 'Profile',
       sections: [
         // The board's order: your passkeys, then adding one (loom's control, put in after this), then another device.
         { id: 'passkeys', title: 'Passkeys', blocks: keys.length
@@ -1775,7 +1795,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
-        return view('inbox', { items, folder, folders: INBOX_FOLDERS, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
+        // A From folder (?f=from:<agent>) is the app's own (its items are all here); its address is kept, so a reload keeps it.
+        const from = typeof query.f === 'string' && /^from:[a-z][a-z0-9-]{0,39}$/.test(query.f) && hh.agents.includes(query.f.slice(5)) ? query.f : undefined;
+        return view('inbox', { items, folder: from ?? folder, folders: INBOX_FOLDERS, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
     }
     // Knowledge, a reader (t-1925): topics, every page's line with its freshness, and the one asked for whole
     // (/knowledge?p=<slug>, or its own address /knowledge/<slug>). The app filters and searches the lines itself.
@@ -1850,7 +1872,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             ...(() => { const bio = agentBio(hh, agent); return bio ? { bio } : {}; })(), ...windowFacts() },
           asks: absorbApprovals([...proposalAsks({ ...hh, agents: [agent] }, t.proposals), ...conversationAsks({ ...hh, agents: [agent] }), ...pieceAsks(pieces, opts.env).filter((a) => a.agent === agent || (!a.agent && scoped.some((p) => p.piece === a.source.id)))], opts.env),
           tiles: [{ label: 'Memories', value: t.memories[agent].toLocaleString('en-US'), page: 'mind', source: src },
-            ...scoped.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) }))],
+            ...(() => { const lastWake = tapeRows(agentDir(hh, agent), 24 * 7, nowMs).find((r) => r.where.split(':')[0] === 'wake');
+              return scoped.filter((p) => p.manifest.tile).map((p) => agentTile(p, agent, lastWake, nowMs)); })()],
           thread: t.items.slice(0, HOME_THREAD).map((r) => ({ agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), where: whereLabel(r.where), at: r.created, page: r.page })),
         };
         { const ctx = { ...ctxOf('', src), agents }; const ch = chrome(req, opts, pieces, skippedNames, `a/${agent}`, csrf, flash);

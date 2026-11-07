@@ -125,6 +125,30 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     });
   }
 
+  it('the folder is in the address: a reload keeps it, and back and forward step through the folders (t-1925)', async () => {
+    ask('Keep the folder in the address?');
+    const p = await screen(1280, 800, '/inbox?t=*inbox');
+    const current = () => p.locator('.loom-split__nav .loom-split__folder[aria-current="true"] .loom-split__folder-name').textContent();
+    await expect.poll(current).toBe('Needs you');
+    await p.locator('.loom-split__nav .loom-split__folder', { hasText: 'Questions' }).click();
+    await expect.poll(current).toBe('Questions');
+    await expect.poll(() => p.evaluate(() => new URL(location.href).searchParams.get('f'))).toBe('question');
+    // Within the app: no reload.
+    expect(await kept(p)).toBe(1);
+    await p.locator('.loom-split__nav .loom-split__folder', { hasText: /^art/i }).click();
+    await expect.poll(() => p.evaluate(() => new URL(location.href).searchParams.get('f'))).toBe('from:art');
+    await p.reload();
+    await p.locator('.loom-split').waitFor();
+    await expect.poll(current).toMatch(/^art$/i);
+    await p.goBack();
+    await expect.poll(current).toBe('Questions');
+    await p.goBack();
+    await expect.poll(current).toBe('Needs you');
+    await p.goForward();
+    await expect.poll(current).toBe('Questions');
+    await p.context().close();
+  });
+
   it('an ask answered elsewhere never shows live buttons and never sends', async () => {
     const a = ask('Merge the launcher change?');
     const p = await screen(1280, 800, '/inbox?t=*inbox', false, true);

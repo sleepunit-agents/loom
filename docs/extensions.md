@@ -444,6 +444,11 @@ that ignores it keeps working. Outside a household there's no `caller`.
   ```
 
   Loom combines the pieces, taking the worst state: broken, then unavailable, then working, then available.
+
+  On an agent's own Today, a `scope` piece's tile is its word for that agent, not its household summary: the
+  first reading's `detail` (else its `value`) as the tile's value, each reading as a line under it, opening the
+  agent's own tab of the piece. A first reading labelled `Next` is a wake to come; under it loom adds the agent's
+  last wake, from its own record. A piece with no report for the agent keeps its `tile` there.
   A piece says nothing about an agent it doesn't know.
 - **`add`** (optional): `{ "page": "new", "label": "New task" }`. loom draws it as
   a "+" beside the page's title, linking to that page (one of the piece's, or

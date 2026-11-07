@@ -50,9 +50,16 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
   const { ctx } = env;
   const agents = ctx.agents ?? {};
   const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
-  const [f, setF] = useState(() => (FOLDERS.some(([k]) => k === folder) ? folder : 'needs'));
-  const [q, setQ] = useState('');
   const [sel, setSel] = useState<string | null>(() => (opened && items.some((i) => i.key === opened) ? opened : null));
+  // The folder is the page's address too (?f=, t-1925): a reload or a link opens it, and back and forward step through
+  // the folders picked. A pick shows at once; loom's answer for the new address lands behind it (the page stays mounted).
+  const known = (id: string) => FOLDERS.some(([k]) => k === id) || /^from:[a-z][a-z0-9-]{0,39}$/.test(id);
+  const [f, setF] = useState(() => (known(folder) ? folder : 'needs'));
+  // The address's folder changed (back or forward, or a pick's page landing): shown, unless it already is.
+  const [was, setWas] = useState(folder);
+  if (folder !== was) { setWas(folder); const to = known(folder) ? folder : 'needs'; if (to !== f) { setF(to); setSel(null); } }
+  const [q, setQ] = useState('');
+
   // Answered here, before loom's new answer lands: Done at once, with what was said.
   const [answered, setAnswered] = useState<Record<string, string>>({});
   const [read, setRead] = useState<Set<string>>(() => new Set());
@@ -104,7 +111,7 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
       <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Inbox" aria-label="Search the Inbox" /></label>
   );
   return (
-    <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { setF(id); setSel(null); }} search={search}
+    <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { if (id === f) return; setF(id); setSel(null); env.go(id === 'needs' ? '/inbox' : `/inbox?f=${id}`); }} search={search}
       listTitle={label} listMeta={shown.length || undefined}
       list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick}
         done={doneOf(i) ? () => void markDone(i) : undefined} />)

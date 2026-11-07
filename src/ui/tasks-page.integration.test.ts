@@ -221,6 +221,13 @@ describe.runIf(built && chrome)('the Tasks page', () => {
     const tw = (await tile.boundingBox())!.width;
     expect(tw).toBeGreaterThan(300);
     expect(tw).toBeLessThan(700);
+    // Folded, the chart is a line over the fold (t-1925): its number and its shape, one row high, before it's opened.
+    const line = tile.locator('.loom-chartline');
+    await line.waitFor();
+    expect(await line.locator('.loom-chartline__num b').textContent()).toMatch(/^\d[\d,]*$/);
+    expect(await line.locator('.loom-chartline__spark rect').count()).toBeGreaterThan(0);
+    expect((await line.boundingBox())!.height).toBeLessThanOrEqual(48);
+    expect(await line.evaluate((el) => el.compareDocumentPosition(el.parentElement!.querySelector('.loom-side-fold')!) & Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
     await tile.locator('.loom-side-fold > summary').click();
     await chartWithoutData(tile);
     await findAndSortOneLine(tile);

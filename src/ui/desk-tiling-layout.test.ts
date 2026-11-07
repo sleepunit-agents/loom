@@ -158,7 +158,7 @@ describe('the tiling rule', () => {
     const apps = [app('Inbox'), app('Comms')];
     expect(admit(apps, app('Knowledge'), [], area(1231, 760), 1279).docked.map((d) => d.why)).toEqual(['Inbox went to the dock to make room for Knowledge: 2 apps is the most this screen holds']);
     expect(admit(apps, app('Knowledge'), [], area(1232, 760), 1280).docked).toEqual([]);
-    const set = ['Appearance', 'Accessibility', 'Account', 'Passkeys'].map((n) => app(n));
+    const set = ['Appearance', 'Accessibility', 'Profile', 'Passkeys'].map((n) => app(n));
     expect(admit(set.slice(0, 3), app('Passkeys'), [], area(1551, 1000), 1599).docked.map((d) => d.why)).toEqual(['Appearance went to the dock to make room for Passkeys: 3 apps is the most this screen holds']);
     expect(admit(set.slice(0, 3), app('Passkeys'), [], area(1552, 1000), 1600).docked).toEqual([]);
     expect(admit(set, app('Secrets'), [], area(2511, 1300), 2559).docked.map((d) => d.why)).toEqual(['Appearance went to the dock to make room for Secrets: 4 apps is the most this screen holds']);
