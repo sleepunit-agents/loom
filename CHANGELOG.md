@@ -495,6 +495,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and the page sits inside it; `src/ui/desk-window-overflow.integration.test.ts` holds every app to it.
 - **The desktop's bar** (Jonathan, 2026-11-06): a quiet dot between the clock and the page's name, and between LOOM//OS
   and the status glyphs; the ticker's words stand in the middle of the room between them when they fit.
+- **A reply's signal on the comm screen played for less than its 250 ms** (t-1925). The 250 ms counted from when the
+  static was asked for, not from when it showed, so a busy render ate into it: 190-240 ms on a loaded machine, as
+  little as 33 ms on CI, where the Comms test failed on main and on loom#589. They count from the screen now.
+  Two backup tick tests no longer fail when run in a ten-minute window each day (02:45-02:55 or 20:45-20:55 in
+  Chicago): they pin when the backup was set instead of taking it from the wall clock.
 - **A restore could write into the live machine's piece stores** (t-1846). The backup drill (loom#488) restored
   into a throwaway home and handed taskstore its part with the caller's environment, which named the live store;
   it didn't write there only by luck. A restore now hands a part only to a piece it installed into the home it
