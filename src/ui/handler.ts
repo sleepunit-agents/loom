@@ -184,7 +184,6 @@ const WEB_DIR = [new URL('../web/', import.meta.url), new URL('../../dist/web/',
   .map((u) => fileURLToPath(u)).find((d) => existsSync(join(d, 'index.html'))) ?? fileURLToPath(new URL('../web/', import.meta.url));
 const WEB_TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
-/** A file of the built app, or null: never outside its folder. */
 /** The service worker for the app as built (pwa.ts swJs): its files under /app/assets/, read once per start. */
 let worker: string | undefined;
 function workerJs(): string {
@@ -196,6 +195,7 @@ function workerJs(): string {
   return worker;
 }
 
+/** A file of the built app, or null: never outside its folder. */
 function webFile(rel: string): string | null {
   if (!rel || rel.includes('\0')) return null;
   const p = normalize(join(WEB_DIR, rel));

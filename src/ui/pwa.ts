@@ -55,7 +55,7 @@ const VERSION = 'loom-5';
  */
 export function swJs(built: readonly string[] = []): string {
   const tag = createHash('sha256').update(built.join('\n')).digest('base64url').slice(0, 10);
-  return SW_JS.replace("'__BUILT__'", JSON.stringify(built)).replace('__TAG__', tag);
+  return SW_JS.replace("'__BUILT__'", () => JSON.stringify(built)).replace('__TAG__', () => tag);
 }
 
 const SW_JS = `'use strict';
@@ -76,15 +76,20 @@ self.addEventListener('activate', (e) => {
 const forget = () => Promise.all([caches.delete(PAGES), caches.delete(VIEWS), caches.delete(MEDIA)]);
 // Whose the kept copies are: the session tag loom's last answer carried (x-loom-who, a hash of the session, never it).
 const WHO = new URL('/__who', location.origin).href;
+let who = null;
 async function whose(res) {
   const tag = res.headers.get('x-loom-who');
   if (!tag) return;
   const c = await caches.open(STATIC);
-  const was = await c.match(WHO);
-  if (was && (await was.text()) === tag) return;
+  const was = who ?? await c.match(WHO).then((r) => r && r.text());
+  who = tag;
+  if (was === tag) return;
   if (was) await forget();
   await c.put(WHO, new Response(tag));
 }
+// A copy is kept only while its session is still the one answering: one that lands after another session's answer
+// (two in flight across a switch) is dropped, not kept under the new one.
+const mine = (res) => { const tag = res.headers.get('x-loom-who'); return !tag || !who || tag === who; };
 self.addEventListener('message', (e) => { if (e.data === 'forget') e.waitUntil(forget()); });
 // A page's key: its address without the one-time message.
 const keyOf = (u) => { const k = new URL(u); k.searchParams.delete('_flash'); return k.href; };
@@ -135,7 +140,7 @@ async function view(req) {
     const body = await res.clone().arrayBuffer();
     const h = new Headers(res.headers);
     h.set('x-loom-saved-at', new Date().toISOString());
-    caches.open(VIEWS).then((c) => c.put(keyOf(req.url), new Response(body, { status: 200, headers: h }))).catch(() => {});
+    caches.open(VIEWS).then((c) => { if (mine(res)) return c.put(keyOf(req.url), new Response(body, { status: 200, headers: h })); }).catch(() => {});
   }
   return res;
 }
