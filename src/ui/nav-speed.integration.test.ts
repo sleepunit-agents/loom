@@ -131,7 +131,8 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
   const kept = (p: Page, sel: string) => p.locator(sel).first().evaluate((e) => !!(e as unknown as { __kept?: boolean }).__kept);
 
   it('a Comms thread pressed: the pane opens at once, the list stays mounted and scrolled, the address follows, a draft holds', async () => {
-    const { p, errors, close } = await desk('/comms');
+    // Comms alone (no widgets beside it): wide enough for the list beside the thread (comms.tsx ONE_PANE_BELOW).
+    const { p, errors, close } = await desk('/comms?t=*comms&w=');
     try {
       const list = `${tile('Comms')} .comms-list`;
       await p.locator(`${list} .comms-row__btn`).nth(10).waitFor();

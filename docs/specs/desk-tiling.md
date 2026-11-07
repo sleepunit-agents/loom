@@ -177,14 +177,14 @@ Why this and not a phone layout: a phone layout in a 300 px tile is a page you c
 oldest app to the dock keeps every tile usable and loses nothing, because its key brings it back where it was.
 
 Above its minimum but narrow, an app uses its own compact layout, through container queries on the tile's body, not the
-viewport. Comms under 620 px shows one pane (the thread, with a way back to the list). Tasks and Changes under 900 px
+viewport. Comms under 1100 px shows one pane (the thread with its band, the list a drawer from its header). Tasks and Changes under 900 px
 drop the detail pane, and under 600 px drop their extra columns.
 
 ## Fit: what each app declares
 
 | app | min (w×h) | ideal w | max w | big | why |
 |---|---|---|---|---|---|
-| Comms | 380×360 | 680 | 820 | no | a thread list and one thread |
+| Comms | 380×360 | 680 | 820 | no | one thread, its band over the chat; the list beside it from 1100 px |
 | Tasks | 520×320 | 1040 | none | yes | a wide list with a detail pane |
 | Changes | 560×320 | 1100 | none | yes | a wide list with a detail pane |
 | Inbox | 420×320 | 760 | 980 | no | one column of asks |

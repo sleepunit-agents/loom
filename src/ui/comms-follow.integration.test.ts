@@ -95,7 +95,8 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
   async function screen(width: number, height: number, path: string, motion: 'reduce' | 'no-preference' = 'reduce'): Promise<Page> {
     const phone = width < 600;
     const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: motion, serviceWorkers: 'block', ...(phone ? { isMobile: true, hasTouch: true } : {}) });
-    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    // A desktop with no widgets beside Comms: room for the list beside the thread (comms.tsx ONE_PANE_BELOW).
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');${phone ? '' : " if (!localStorage.getItem('loom-tiles')) localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: [] }));"}`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
     const errors: string[] = [];

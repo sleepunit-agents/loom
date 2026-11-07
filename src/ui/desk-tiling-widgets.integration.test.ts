@@ -271,19 +271,16 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.keyboard.press('Escape');
     await expect.poll(() => comms.locator('.comms-drawer').count()).toBe(0);
     expect(await shown('.comms-thread')).toBe(true);
-    // wide again (Comms alone): two panes, the list beside the thread, and no Back
+    // mid-size (Comms alone beside the rail, wider than 620, narrower than 1100): still one pane, the thread with its band,
+    // the threads in the drawer (2026-11-07)
     await p.locator('.loom-tile[data-tile="/people"] button[aria-label="Close People"]').click();
     await expect.poll(() => comms.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThan(620);
-    // (the thread stays open across the width: the list comes back beside it)
-    await expect.poll(() => shown('.comms-list')).toBe(true);
-    await comms.locator('.comms-row__btn').first().click();
-    await comms.locator('.comms-thread').waitFor();
-    const two = async (page: Page, sel: string) => page.locator(sel).evaluate((c) => {
-      const l = c.querySelector('.comms-list')!.getBoundingClientRect(), t = c.querySelector('.comms-thread')!.getBoundingClientRect();
-      const back = c.querySelector<HTMLElement>('button[aria-label="Back to threads"]');
-      return { list: Math.round(l.width), beside: t.left >= l.right - 1, back: !!back && getComputedStyle(back).display !== 'none' };
-    });
-    expect(await two(p, '.loom-tile[data-tile="/comms"] .comms')).toEqual({ list: 320, beside: true, back: false });
+    expect(await comms.evaluate((t) => t.getBoundingClientRect().width)).toBeLessThan(1100);
+    expect(await shown('.comms-list')).toBe(false);
+    expect(await shown('.comms-band')).toBe(true);
+    await comms.locator('button.comms-drawer-btn[aria-label="Threads"]').click();
+    await comms.locator('.comms-drawer .comms-list').waitFor();
+    await p.keyboard.press('Escape');
     await p.context().close();
   }, 60_000);
 });

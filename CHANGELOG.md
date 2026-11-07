@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Comms' band** (Jonathan, 2026-11-07; `docs/specs/comms.md`, "Desktop"). A desktop thread has a band of fixed
+  height over the chat: the comm screen at its own 2× size on the left, who's in the conversation and the thread's
+  work on the right, scrolling inside the band. The chat takes the rest. The list sits beside the thread only where
+  Comms is 1100 px or wider; narrower, it's the drawer from the thread's header. The comm screen never stretches.
 - **An agent's window** (t-1925 D; `docs/specs/desk-tiling.md`, "An agent's window"). An agent's pages wear one header:
   its face in a Neon frame (no 000h shapes, no clock element), its name with a working pill, and a plain description
   of what it does (household.json `about`, never its creed) that a household owner edits in place or asks the agent to
