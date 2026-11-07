@@ -195,6 +195,7 @@ choice, and the body's brief. The new parts follow.
   | `post` | `{op, place, agent, text, run?, on?}` | `{ok: true, id}` (the new message's `seq`, as a string) or `{ok: false, reason, permanent?}` |
   | `describe` | `{op, place, agent}` | `{ok: true, brief, readers}` |
   | `status` | `{op, place, agent, status: "working"\|"done", messages?: [delivery id], replied?: false, run?}` | `{ok: true, stop?: true}` |
+| `status` (a start, t-1946) | `{op, place, agent, status: "start-retry"\|"start-failed", attempt, retry_at?, reason?, messages?: [delivery id], run?}` | `{ok: true}` |
   | `trace` | `{op, place, agent}` | `{ok: true, trace}`: the thread's delivery facts, no words ("Tracing a reply") |
 
   - These run under the runtime's existing limits for an adapter call: 15 s, one retry for an answered `ok: false`
@@ -210,6 +211,15 @@ choice, and the body's brief. The new parts follow.
     conversation:<cv>." (the thread's conversation, so a house body can pass it: "Made here"), and `readers: [<member>]`.
   - `status: working` shows the thread's working line, and `done` clears it. After the member presses Stop, the next
     `status` call answers `stop: true` once.
+  - `start-retry` and `start-failed` (t-1946) say a start failed after the runtime had already answered `queued` (a
+    host's 60 s start timeout comes after that answer). `attempt` is a whole number from 1; `retry_at`, an ISO time, is
+    `start-retry`'s only; `reason` is one printable line of at most 200 characters, kept for the trace and never the
+    headline. The first delivery id names the member's message, and the thread keeps one line for it: the card the first
+    answer made (`e<seq>`) or a new one, updated in place. A repeat of an attempt, an older attempt after a newer one,
+    a retry after a `start-failed`, and any notice once the body is going (a `working`, a card or a reply, or a turn
+    over since that message) change nothing; a `start-failed` of the same attempt as the last retry still lands. Either
+    clears the busy wait; `start-failed` shows Send again. Only the `loom` venue takes them; an older core answers
+    `400 bad-input` (status is working or done), which the runtime takes as unsupported and doesn't retry.
   - `done` with `replied: false` and its `run` (t-1900) says the body's turn is over and nothing it said was posted
     in that run (it sent nothing, or every send was refused; a turn refused for a usage limit, run again on another
     harness, and one the member stopped, aren't said). The thread gains an error message, `no-reply`, once per run
@@ -371,6 +381,8 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | `body: "failed"` | "Art couldn't start: <reason>." |
 | `body: "queued"`, and no `status: working` within 2 minutes | "Art is busy with other work; this is waiting its turn." |
 | `body: "queued"` because no body could start (the runtime's reason "no body could start (…): trying again in N s"): it's retrying, not busy, and no busy line follows (t-1918) | "Art couldn't start; retrying." With **What happened**, the trace |
+| `status: start-retry` after a `queued` answer (t-1946) | "Art couldn't start; retrying.", or "Art couldn't start (N tries so far); retrying." from the second attempt, and "Next try at HH:MM." in the reader's time |
+| `status: start-failed` after a `queued` answer (t-1946) | "Art couldn't start: <reason>." on the same line, with Send again |
 | A loop pause (the runtime's `deferred` note turn) | "Paused: Art was repeating itself." The Inbox's Resume and Dismiss are on it |
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |

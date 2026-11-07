@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   it opens in the Inbox with that ask picked. While an Inbox tile is open, Needs you stands aside and the other widgets
   fill its room; the Inbox's **Shrink to widget** folds it back. Reduced motion: instant. Phones are unchanged.
 
+- **A Comms thread says when an agent couldn't start, even after "queued"** (t-1946). The runtime can now tell core
+  `status: start-retry` (with its attempt and next try) or `start-failed` on the adapter route, for a start that failed
+  after it had already answered `queued`. The thread keeps one line per message, updated as attempts go by ("couldn't
+  start (2 tries so far); retrying. Next try at 14:32."), the busy line no longer follows, and a late or repeated
+  notice never brings a settled line back.
 - **Sign one browser out alone** (t-1871). Profile's **Signed in** lists each browser session you may see (a household
   owner, all of them; an agent owner, their own): what it is (from its User-Agent), its sign-in link's label, how and
   when it signed in, when it was last used, and its token. **Sign out** on a row ends that session and its

@@ -17,7 +17,7 @@
  * other caller, and a thread that doesn't exist, gets the same 403, so a route never says whether a thread exists.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, linkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
@@ -434,14 +434,14 @@ interface MsgRow { seq: number; at: string; kind: string; sender: string; id: st
 const deliveryOf = (delivered: number | null): Delivery => (delivered === 1 ? 'delivered' : delivered === 0 ? 'failed' : 'sending');
 
 /** An error message's words: a fixed table, never stored (comms.md, section 7). */
-export function errorWords(code: string, agentName: string, reason: string | undefined): string {
+export function errorWords(code: string, agentName: string, reason: string | undefined, attempt?: number): string {
   const r = reason ? reason.replace(/^[a-z-]+: /, '') : '';
   switch (code) {
     case 'no-runtime': return 'loom can\'t reach any agent: the runtime isn\'t installed.';
     case 'refused': return `${agentName} didn't get that: ${r || 'the runtime refused it'}.`;
     case 'start-failed': return `${agentName} couldn't start: ${r || 'no reason given'}.`;
     case 'busy': return `${agentName} is busy with other work; this is waiting its turn.`;
-    case 'start-retry': return `${agentName} couldn't start; retrying.`;
+    case 'start-retry': return attempt && attempt > 1 ? `${agentName} couldn't start (${attempt} tries so far); retrying.` : `${agentName} couldn't start; retrying.`;
     case 'loop': return `Paused: ${agentName} was repeating itself.`;
     case 'post-failed': return `${agentName}'s reply couldn't be shown: ${r || 'no reason given'}.`;
     case 'no-reply': return `${agentName} finished without replying.`;
@@ -461,7 +461,7 @@ function householdAt(home: string): Household {
 async function messageOf(o: Opener | null, agent: string, thread: string, r: MsgRow): Promise<Message> {
   const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
   let text: string | null = null;
-  if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined);
+  if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined, typeof card?.attempt === 'number' ? card.attempt : undefined);
   else if (r.text && o) text = await decrypt(o, r.text, `${thread} #${r.seq}`);
   return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1,
     ...(r.kind === 'message' ? { delivery: deliveryOf(r.delivered) } : {}) };
@@ -815,11 +815,70 @@ export function traceOf(home: string, r: ThreadRow): ThreadTrace {
     const card = m.card_json ? JSON.parse(m.card_json) as Record<string, unknown> : null;
     const out: TraceMessage = { seq: m.seq, at: m.at, kind: m.kind as MessageKind, from: m.sender, run: m.run };
     if (m.kind === 'message') out.delivery = deliveryOf(m.delivered);
-    if (m.kind === 'error') { const code = String(card?.error ?? ''); out.error = { code, words: errorWords(code, label(r.agent), typeof card?.reason === 'string' ? card.reason : undefined) }; }
+    if (m.kind === 'error') { const code = String(card?.error ?? ''); out.error = { code, words: errorWords(code, label(r.agent), typeof card?.reason === 'string' ? card.reason : undefined, typeof card?.attempt === 'number' ? card.attempt : undefined) }; }
     if (m.kind === 'card') out.card = { tool: String(card?.tool ?? ''), state: String(card?.state ?? '') };
     return out;
   });
   return { thread: r.id, conversation: r.conversation, archived: r.archived, working_since: r.working_since, queued_since: r.queued_since, last_failed: r.last_failed === 1, messages };
+}
+
+/** A start notice's delivery id names its member message: `comms:<thread>:<message id>` (deliverMessage). */
+const DELIVERY_ID = /^comms:(th:[a-z2-7]{10}):([A-Za-z0-9_-]{1,64})$/;
+const MAX_START_REASON = 200;
+const MAX_ATTEMPT = 1000;
+
+/**
+ * Once a body is going in a thread (working, a card, a reply), its open start-retry lines are settled: a notice that
+ * arrives late, for an attempt already over, never brings "retrying" back (t-1946).
+ */
+function settleStarts(home: string, thread: string): void {
+  withMessages(home, (db) => db.prepare("UPDATE comms_messages SET card_json = json_set(card_json, '$.settled', json('true')) WHERE thread = ? AND kind = 'error' AND json_extract(card_json, '$.error') = 'start-retry' AND json_extract(card_json, '$.settled') IS NULL").run(thread));
+}
+
+/**
+ * `status: start-retry | start-failed` (t-1946): the runtime couldn't start a body after it had already answered
+ * `queued` (a host's 60 s start timeout), so the first answer couldn't say so. One line per message: the card the
+ * first answer made (`e<seq>`), or this one, updated in place as attempts go by. A repeat, an older attempt, a retry
+ * after the body got going, or anything after a start-failed changes nothing; a start-failed is never held back by a
+ * retry of the same attempt. Either clears the busy wait; start-failed shows Send again.
+ */
+function startNotice(h: Household, env: NodeJS.ProcessEnv, r: ThreadRow | undefined, status: 'start-retry' | 'start-failed', raw: Record<string, unknown>, now: Date): AdapterAnswer {
+  const { attempt, retry_at: retryAt, reason, messages, run } = raw;
+  if (typeof attempt !== 'number' || !Number.isInteger(attempt) || attempt < 1 || attempt > MAX_ATTEMPT) return fail(`bad-input: attempt is a whole number, 1-${MAX_ATTEMPT}`);
+  if (status === 'start-retry') {
+    if (typeof retryAt !== 'string' || retryAt.length > 40 || Number.isNaN(Date.parse(retryAt))) return fail('bad-input: retry_at is an ISO time');
+  } else if (retryAt !== undefined) return fail('bad-input: retry_at is for start-retry only');
+  if (reason !== undefined && (typeof reason !== 'string' || reason.length < 1 || reason.length > MAX_START_REASON || !PRINTABLE_LINE.test(reason))) return fail(`bad-input: reason is 1-${MAX_START_REASON} printable characters on one line`);
+  if (messages !== undefined && (!Array.isArray(messages) || messages.length > 50 || messages.some((m) => typeof m !== 'string' || m.length < 1 || m.length > 200))) return fail('bad-input: messages is a list of delivery ids');
+  if (run !== undefined && (typeof run !== 'string' || !RUN_ID.test(run))) return fail('bad-input: run is the body run');
+  if (!r) return { ok: true };
+  // The body is going already: whatever this says is over.
+  if (r.working_since !== null) return { ok: true };
+  const first = (messages as string[] | undefined)?.[0];
+  const named = first ? DELIVERY_ID.exec(first) : null;
+  const msg = named && named[1] === r.id
+    ? withMessages(h.home, (db) => db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'message' AND id = ?").get(r.id, named[2]) as { seq: number } | undefined)
+    : undefined;
+  if (msg) {
+    // Something came of that message since (a card, a reply, a turn over with nothing sent): the start is over.
+    const since = withMessages(h.home, (db) => db.prepare("SELECT 1 FROM comms_messages WHERE thread = ? AND seq > ? AND (kind IN ('reply', 'card') OR (kind = 'error' AND id LIKE 'noreply-%')) LIMIT 1").get(r.id, msg.seq));
+    if (since) return { ok: true };
+  }
+  const key = msg ? `e${msg.seq}` : `start-${createHash('sha256').update(first ?? (typeof run === 'string' ? run : r.id)).digest('hex').slice(0, 16)}`;
+  const card = { error: status, attempt, ...(status === 'start-retry' ? { retry_at: new Date(retryAt as string).toISOString() } : {}), ...(typeof reason === 'string' ? { reason } : {}) };
+  const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, card_json FROM comms_messages WHERE thread = ? AND kind = 'error' AND id = ?").get(r.id, key) as { seq: number; card_json: string | null } | undefined);
+  if (prior) {
+    const was = prior.card_json ? JSON.parse(prior.card_json) as Record<string, unknown> : {};
+    // Only an open retry line moves: a start-failed is final, a settled line is over, any other error isn't a start.
+    if (was.error !== 'start-retry' || was.settled) return { ok: true };
+    const before = typeof was.attempt === 'number' ? was.attempt : 0;
+    if (attempt < before || (attempt === before && status === 'start-retry')) return { ok: true };
+    withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET card_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify({ ...card, ...(card.reason === undefined && typeof was.reason === 'string' ? { reason: was.reason } : {}) }), r.id, prior.seq));
+  } else {
+    append(h.home, env, r.id, { kind: 'error', from: 'loom', id: key, card, ...(typeof run === 'string' ? { run } : {}) }, now);
+  }
+  withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { queued_since: null, ...(status === 'start-failed' ? { last_failed: 1 } : {}) }, now));
+  return { ok: true };
 }
 
 /**
@@ -854,6 +913,7 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     // quota), kept on the reply's card for the comm screen's channel line. A short word, or nothing.
     const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
     const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
+    settleStarts(h.home, r.id);
     withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };
   }
@@ -869,9 +929,11 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
   }
   // status
   const status = raw.status;
-  if (status !== 'working' && status !== 'done') return fail('bad-input: status is working or done');
+  if (status === 'start-retry' || status === 'start-failed') return startNotice(h, env, r, status, raw, now);
+  if (status !== 'working' && status !== 'done') return fail('bad-input: status is working, done, start-retry or start-failed');
   if (!r) return { ok: true };
   const stop = r.stop === 1;
+  settleStarts(h.home, r.id);
   // Its turn over with nothing sent (t-1900): said in the thread, once per run, not left as silence.
   if (status === 'done' && raw.replied === false && typeof raw.run === 'string' && RUN_ID.test(raw.run)) {
     const id = `noreply-${raw.run}`;
@@ -932,6 +994,7 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
       added++;
     }
   }
+  settleStarts(h.home, r.id);
   withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { working_since: r.working_since ?? nowIso(now), working_beat: now.getTime(), queued_since: null }, now));
   return { ok: true, added, updated };
 }
