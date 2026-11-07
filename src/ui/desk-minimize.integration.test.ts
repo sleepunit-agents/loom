@@ -125,6 +125,9 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
     expect(where(p)).toMatch(/^\/appearance\?from=strip/);
     // The strip itself, by its title and by its empty middle: to the dock, and its key brings it back where it was.
     for (const at of ['.loom-tile__bar h2', '.loom-tile__path']) {
+      // the tile's own move in (restore, t-1925 B) over first: during one the page is its picture, and a double-click
+      // lands on nothing
+      await expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
       await tile.locator(at).dblclick();
       await onDesktop(p);
       await p.locator(KEY('Setup')).click();
