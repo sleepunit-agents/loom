@@ -65,7 +65,7 @@ import { householdFind, householdPersonName, householdSuggestPeople, householdTh
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
-import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeEntry, knowledgePage, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
+import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
 import { owns, threadsOf } from '../comms.js';
@@ -76,6 +76,8 @@ import { ID, LIMITS, QUERY_KEY, splitPage, validPath, type ActResult, type Agent
 import { resolveFrom } from '../comms-work.js';
 
 const COOKIE = 'loom_ui';
+/** Knowledge's Add a fact (its reader draws it over the list). */
+const NEW_FACT_LINK = { page: 'loom:new-fact', label: 'Add a fact' };
 const LOGIN_MAX_BYTES = 4096;
 const PASSKEY_MAX_BYTES = 16 * 1024;
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
@@ -1752,10 +1754,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
         return view('inbox', { items, folder, folders: INBOX_FOLDERS, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
     }
-    if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
-    if (pathname.startsWith('/knowledge/')) {
-      const slug = decode(pathname.slice('/knowledge/'.length));
-      return send200(slug && validPath(slug) ? knowledgeEntry(hh, slug) : notFound, 'knowledge', ctxOf('knowledge'));
+    // Knowledge, a reader (t-1925): topics, every page's line with its freshness, and the one asked for whole
+    // (/knowledge?p=<slug>, or its own address /knowledge/<slug>). The app filters and searches the lines itself.
+    if (pathname === '/knowledge' || pathname.startsWith('/knowledge/')) {
+      const own = pathname.startsWith('/knowledge/') ? decode(pathname.slice('/knowledge/'.length)) : undefined;
+      const slug = own ?? (query.p || undefined);
+      if (slug !== undefined && !(slug && validPath(`knowledge/${slug}`) && !slug.includes('/'))) return send200(notFound, 'knowledge', ctxOf('knowledge'));
+      const k = knowledgeView(hh, slug);
+      if (own !== undefined && !k.open) return send200(notFound, 'knowledge', ctxOf('knowledge'));
+      const ch = chrome(req, opts, pieces, skippedNames, 'knowledge', csrf, flash);
+      // `t` is the desktop's (its tiles, docs/specs/desk-tiling.md): a topic is `?topic=`.
+      const title = k.open?.title ?? 'Knowledge';
+      const intro = k.open ? (k.open.verified_at ? `Verified ${k.open.verified_at.slice(0, 10)}` : 'Not verified yet') + (k.open.by ? ` · written by ${k.open.by}` : '')
+        : 'Facts about the world, shared by every agent in the household.';
+      return view('knowledge', { knowledge: k, title, intro, add: NEW_FACT_LINK, topic: query.topic ?? '', q: query.q ?? '', ctx: ctxOf('knowledge'), chrome: ch });
     }
     if (pathname === '/people') return send200(householdPeople(hh, query), 'people', ctxOf('people'));
     // The Projects app (docs/specs/projects.md): the household's, not an agent owner's. An agent owner gets the

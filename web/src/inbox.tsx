@@ -89,16 +89,16 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
   void chrome;
   const label = FOLDERS.find(([k]) => k === f)?.[1] ?? (f.startsWith('from:') ? `From ${name(f.slice(5))}` : 'Inbox');
   const search = (
-    <label className="loom-inbox__search"><Icon name="search" size="sm" />
+    <label className="loom-split__search"><Icon name="search" size="sm" />
       <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Inbox" aria-label="Search the Inbox" /></label>
   );
   return (
     <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { setF(id); setSel(null); }} search={search}
       listTitle={label} listMeta={shown.length || undefined}
       list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick} />)
-        : <div className="loom-inbox__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
+        : <div className="loom-split__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
           text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} /></div>}
-      reader={went ? <p className="loom-inbox__live" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
+      reader={went ? <p className="loom-split__note" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
         : reading ? <Reader key={reading.key} i={reading} who={name(reading.agent)} mark={reading.agent ? agents[reading.agent] : undefined}
         tasks={tasks} github={github} env={env} onAnswered={onAnswered} picks={picks} /> : null}
       open={!!current || went} onBack={() => setSel(null)} backLabel={label} blank={f === 'needs' ? 'All caught up' : 'Nothing open'} />
@@ -118,7 +118,7 @@ function Row({ i, who, mark, current, onPick }: { i: InboxItem; who: string; mar
         {/* Who asks, by their face (pixel or drawn), with what it is as a badge on it; nobody's is its kind alone. */}
         {mark ? <span className="loom-inbox__face"><Mark a={mark} size={28} /><span className="loom-inbox__badge" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span></span>
           : <span className="loom-inbox__kind" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span>}
-        <span className="loom-inbox__words"><span className="loom-inbox__title">{p.title}</span>{sub && <span className="loom-inbox__sub">{sub}</span>}</span>
+        <span className="loom-split__words"><span className="loom-split__title">{p.title}</span>{sub && <span className="loom-inbox__sub">{sub}</span>}</span>
         <span className="loom-inbox__when loom-data">{short(i.at)}</span>
       </button>
     </Arrive>
@@ -181,7 +181,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
         <span><b>{who || from}</b> · {p.ended ?? (boxOf(i) === 'done' ? KIND[i.kind] : BOX_WORD[boxOf(i)])}</span>
         <span className="loom-data loom-inbox__at">{short(i.at)}</span>
       </header>
-      <h2 id={`ib-${i.key}`} className="loom-inbox__head">{p.head === i.text ? words(p.head) : p.head}</h2>
+      <h2 id={`ib-${i.key}`} className="loom-split__head">{p.head === i.text ? words(p.head) : p.head}</h2>
       {p.subject && <code className="loom-inbox__subject">{p.subject}</code>}
       {why && <p className="loom-inbox__why">{words(why)}</p>}
       {(n?.if_yes || n?.if_no) && (
@@ -190,7 +190,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
             <div key={k}><dt>{k}</dt><dd>{words(v!)}</dd></div>))}
         </dl>
       )}
-      {acts && !ok && <p className="loom-inbox__live" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<Live, 'live'>]}
+      {acts && !ok && <p className="loom-split__note" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<Live, 'live'>]}
         {live === 'unknown' && <Button size="sm" variant="outline" onClick={() => { setLive('checking'); void check(); }}>Check again</Button>}</p>}
       {/* The buttons only once loom says it's open: a stale ask never shows live ones (t-1925). */}
       {acts && ok && (
@@ -201,7 +201,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
               reply: async () => { lastSaid.current = 'You replied'; await ans.reply(); } }} yesNo={yesNo} />}
             {!!i.actions?.length && (
               <As source={i.source}>
-                <div className="loom-inbox__buttons">
+                <div className="loom-split__buttons">
                   {guardFooter(i.actions, !!ans?.drafted, !!ans?.busy).map((fb) => fb.send
                     ? <Button key={fb.b.action} disabled={fb.disabled} onClick={() => { lastSaid.current = 'You replied'; void ans?.reply(); }}>{fb.label}</Button>
                     : <span key={fb.b.action + fb.b.label} onClickCapture={() => { lastSaid.current = fb.b.label === 'Done' ? 'Done' : fb.b.label; }}>
@@ -217,13 +217,13 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
         {(own || i.href || refs.length > 0) && (
           <section aria-label="Where it lives">
             <h3>Where it lives</h3>
-            <div className="loom-inbox__links">
-              {own && <As source={i.source}><Link page={i.page} className="loom-inbox__chip">{i.label ?? `Open in ${from}`}</Link></As>}
-              {i.href && <Link href={i.href} className="loom-inbox__chip">{shortHref(i.href)} <Icon name="external-link" size="sm" /></Link>}
+            <div className="loom-split__links">
+              {own && <As source={i.source}><Link page={i.page} className="loom-split__chip">{i.label ?? `Open in ${from}`}</Link></As>}
+              {i.href && <Link href={i.href} className="loom-split__chip">{shortHref(i.href)} <Icon name="external-link" size="sm" /></Link>}
               {refs.filter((r) => !(r.t === 'pr' && i.href && i.href.includes(`/${r.repo}/`) && i.href.endsWith(`/${r.n}`))).map((r, k) => (
-                r.t === 'pr' ? <Link key={k} href={githubUrl(r.repo, r.n)} className="loom-inbox__chip">{r.repo}#{r.n}</Link>
-                  : r.t === 'task' ? <As key={k} source={tasks}><Link page={`task/${r.id}`} className="loom-inbox__chip">Task {r.id}</Link></As>
-                  : r.t === 'conv' ? <As key={k} source={{ id: 'loom', base: '/' }}><Link page={`loom:conversation/${r.id}`} className="loom-inbox__chip">The conversation</Link></As> : null))}
+                r.t === 'pr' ? <Link key={k} href={githubUrl(r.repo, r.n)} className="loom-split__chip">{r.repo}#{r.n}</Link>
+                  : r.t === 'task' ? <As key={k} source={tasks}><Link page={`task/${r.id}`} className="loom-split__chip">Task {r.id}</Link></As>
+                  : r.t === 'conv' ? <As key={k} source={{ id: 'loom', base: '/' }}><Link page={`loom:conversation/${r.id}`} className="loom-split__chip">The conversation</Link></As> : null))}
             </div>
           </section>
         )}

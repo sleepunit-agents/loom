@@ -28,7 +28,7 @@ import { sessionStore, signinLink } from './ui/sessions.js';
 import { watch } from './ui/push.js';
 import { resolveKnowledgeDbPath } from './config.js';
 import { commonsPeoplePath, ensureAgentEntries, ensureMemberEntries, mergeCard, splitCard, splitPeopleIntoCommons } from './backends/people-household.js';
-import { householdPeople, householdPerson } from './ui/household-pages.js';
+import { householdPeople, householdPerson, knowledgeView } from './ui/household-pages.js';
 import { agentName } from './ui/core.js';
 import { loadIdentity, ownersBlock } from './tools/identity.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
@@ -994,23 +994,40 @@ describe('the household page', () => {
     expect((d.home.firstRun.starters as Data[]).some((s) => /^shuttle$/i.test(s.name) || /^shuttle$/i.test(s.label))).toBe(true);
   });
 
-  it('Knowledge searches as you\'d expect, rows say how fresh they are, and a page below the top goes back by name', async () => {
+  it('Knowledge is a reader: every page\'s line with its freshness, the one asked for whole (sources, cited by), and a page below the top goes back by name', async () => {
     const c = await connect(handle.port, owner);
-    for (const [slug, title, domain] of [['kiln-cone-6', 'Cone 6 is about 1222 °C', 'ceramics'], ['glaze-food-safe', 'Food-safe glazes', 'ceramics/glaze']]) {
-      await c.callTool({ name: 'knowledge_write', arguments: { slug, title, domain, body: `${title}.`, citations: [{ claim: title, source_kind: 'web', source_locator: 'https://example.com/x', excerpt: title }] } });
+    for (const [slug, title, domain, body] of [['kiln-cone-6', 'Cone 6 is about 1222 °C', 'ceramics', 'Cone 6.'], ['glaze-food-safe', 'Food-safe glazes', 'ceramics/glaze', 'Fire to [[kiln-cone-6]].'],
+      ['kiln-wash', 'Kiln wash on every shelf', 'ceramics/kiln', 'See knowledge:kiln-cone-6 for the heat.'], ['pyrometric-cones', 'Pyrometric cones', 'ceramics/kiln', 'As in /knowledge/kiln-cone-6.'],
+      ['raku', 'Raku is fast', 'ceramics', 'Unrelated: kiln-cone-6 named bare is no link.']]) {
+      await c.callTool({ name: 'knowledge_write', arguments: { slug, title, domain, body, citations: [{ claim: title, source_kind: 'web', source_locator: 'https://example.com/x', excerpt: title }] } });
     }
     await c.close();
     const cookie = await login();
     const all = await data(cookie, '/knowledge');
-    expect(blocksOf(all).find((b) => b.type === 'filters')).toMatchObject({ search: 'Search 2 facts' });
-    expect(listItems(all).find((i) => i.text === 'Cone 6 is about 1222 °C').meta).toMatch(/^(verified|written) .*· ceramics$/);
-    const hit = await data(cookie, '/knowledge?q=cone');
-    expect(JSON.stringify(hit.page)).toContain('Cone 6 is about 1222 °C');
-    expect(JSON.stringify(hit.page)).not.toContain('Food-safe glazes');
-    expect(hit.ctx.query.q).toBe('cone');
-    expect(JSON.stringify((await data(cookie, '/knowledge?q=%25')).page)).not.toContain('Cone 6 is about');
-    const one = await data(cookie, '/knowledge/kiln-cone-6');
-    expect(one.chrome.shell.back).toEqual({ label: 'Knowledge', href: '/knowledge' });
+    expect(all.view).toBe('knowledge');
+    expect(all.knowledge.total).toBe(5);
+    expect(all).toMatchObject({ title: 'Knowledge', add: { page: 'loom:new-fact', label: 'Add a fact' } });
+    expect(all.knowledge.open).toBeUndefined();
+    expect((all.knowledge.pages as Data[]).find((p) => p.slug === 'kiln-cone-6')).toMatchObject({ title: 'Cone 6 is about 1222 °C', domain: 'ceramics', fresh: 'fresh' });
+    // Asked for whole: its body, its sources, and what cites it.
+    const one = await data(cookie, '/knowledge?p=kiln-cone-6');
+    expect(one.knowledge.open).toMatchObject({ slug: 'kiln-cone-6', body: 'Cone 6.', sources: [{ claim: 'Cone 6 is about 1222 °C', kind: 'web', href: 'https://example.com/x' }],
+    });
+    // Each way one page links another ([[slug]], knowledge:slug, /knowledge/slug); a bare mention isn't one.
+    expect((one.knowledge.open.citedBy as Data[]).map((c) => c.slug).sort()).toEqual(['glaze-food-safe', 'kiln-wash', 'pyrometric-cones']);
+    // Freshness by its age: fresh, getting old from 20 days, due from 30; Recently verified is a check in 7 days.
+    const at = (days: number) => knowledgeView(h, 'kiln-cone-6', { nowMs: Date.now() + days * 86_400_000 }).open!;
+    expect([at(0).fresh, at(21).fresh, at(31).fresh]).toEqual(['fresh', 'aging', 'due']);
+    const recentAt = (days: number) => knowledgeView(h, undefined, { nowMs: Date.now() + days * 86_400_000 }).pages.filter((p) => p.recent).length;
+    expect([recentAt(0), recentAt(8)]).toEqual([5, 0]);
+    // Its own address opens the same reader on it, and goes back by name.
+    const own = await data(cookie, '/knowledge/kiln-cone-6');
+    expect(own.knowledge.open.slug).toBe('kiln-cone-6');
+    // Its page's own title heads the app, and its line says when it was verified.
+    expect(own.title).toBe('Cone 6 is about 1222 °C');
+    expect(own.intro).toMatch(/^(Verified|Not verified yet)/);
+    expect(own.chrome.shell.back).toEqual({ label: 'Knowledge', href: '/knowledge' });
+    expect((await data(cookie, '/knowledge/no-such-page')).page.title).toBe('Not found');
     // An agent's tabs carry the way around; a memory under them goes back to Mind.
     expect((await data(cookie, '/a/mark/mind')).chrome.shell.back ?? undefined).toBeUndefined();
     expect((await data(cookie, '/a/mark/memory/x')).chrome.shell.back).toEqual({ label: 'Mind', href: '/a/mark/mind' });
@@ -1030,16 +1047,11 @@ describe('the household page', () => {
     const before = (() => { const d = db(); try { return (d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string | null }).verified_at; } finally { d.close(); } })();
     const cookie = await login();
     const k = await data(cookie, '/knowledge/kiln-cone-6');
-    const verifyAt = (k.page.sections as Data[]).findIndex((s) => JSON.stringify(s.blocks).includes('"knowledge-verify"'));
-    expect(verifyAt).toBeGreaterThanOrEqual(0);
-    // The board's order: when it was confirmed under the title, the body, Sources, then Still true.
-    expect(k.page.intro).toMatch(/^(Verified|Not verified yet)/);
-    const sourcesAt = (k.page.sections as Data[]).findIndex((s) => s.title === 'Sources');
-    expect(sourcesAt).toBeGreaterThanOrEqual(0);
-    expect(sourcesAt).toBeLessThan(verifyAt);
+    expect(k.knowledge.open.slug).toBe('kiln-cone-6');
     await new Promise((r) => setTimeout(r, 20));
     const r = await post(cookie, '/act/loom', { _csrf: csrfOf(k), _action: 'knowledge-verify', _path: 'knowledge/kiln-cone-6', slug: 'kiln-cone-6' });
-    expect(r.headers.get('location')).toMatch(/^\/knowledge\/kiln-cone-6\?_flash=/);
+    // Back to the reader on the page, as Check again does (one address: the list stays as it was).
+    expect(r.headers.get('location')).toMatch(/^\/knowledge\?p=kiln-cone-6&_flash=/);
     const d = db();
     try {
       const row = d.prepare("SELECT verified_at FROM pages WHERE slug = 'kiln-cone-6'").get() as { verified_at: string };
@@ -1047,6 +1059,14 @@ describe('the household page', () => {
       const v = d.prepare("SELECT v.verifier, v.outcome FROM verifications v JOIN pages p ON p.id = v.page_id WHERE p.slug = 'kiln-cone-6' ORDER BY v.id DESC LIMIT 1").get() as { verifier: string; outcome: string };
       expect(v).toMatchObject({ verifier: 'jonathan', outcome: 'confirmed' });
     } finally { d.close(); }
+    // Check again: a stale check, so it's due one; its verified date stays where Still true put it.
+    const confirmed = (await data(cookie, '/knowledge?p=kiln-cone-6')).knowledge.open;
+    expect(confirmed.fresh).toBe('fresh');
+    await post(cookie, '/act/loom', { _csrf: csrfOf(k), _action: 'knowledge-recheck', _path: 'knowledge', slug: 'kiln-cone-6' });
+    const again = await data(cookie, '/knowledge?p=kiln-cone-6');
+    expect(again.knowledge.open).toMatchObject({ fresh: 'due', checked: { outcome: 'stale', by: 'jonathan' } });
+    expect(again.knowledge.open.verified_at).toBe(confirmed.verified_at);
+    expect((again.knowledge.pages as Data[]).find((p) => p.slug === 'kiln-cone-6').fresh).toBe('due');
   });
 
   it('the boards\' +: People and Knowledge each add one, as the owner, and never overwrite', async () => {
@@ -1060,12 +1080,12 @@ describe('the household page', () => {
     const dup = await post(cookie, '/act/loom', { _csrf: csrfOf(pform), _action: 'person-add', _path: 'new-person', name: 'Gage Taylor' });
     expect(flashOf(await data(cookie, dup.headers.get('location')!))).toContain('already in People');
 
-    expect((await data(cookie, '/knowledge')).page.add).toEqual({ page: 'loom:new-fact', label: 'Add a fact' });
+    expect((await data(cookie, '/knowledge')).add).toEqual({ page: 'loom:new-fact', label: 'Add a fact' });
     const kform = await data(cookie, '/new-fact');
     const k = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'Ceramics', body: 'Ramp **slowly** past 573 °C.', source: '' });
     expect(k.headers.get('location')).toMatch(/^\/knowledge\/glaze-firing-is-slower\?_flash=/);
     // The body reaches the page as its markdown, for the app to render.
-    const body = async () => blocksOf(await data(cookie, '/knowledge/glaze-firing-is-slower')).filter((b) => b.type === 'prose').map((b) => b.text).join('\n');
+    const body = async () => (await data(cookie, '/knowledge/glaze-firing-is-slower')).knowledge.open.body as string;
     expect(await body()).toContain('Ramp **slowly** past 573 °C.');
     const again = await post(cookie, '/act/loom', { _csrf: csrfOf(kform), _action: 'fact-add', _path: 'new-fact', title: 'Glaze firing is slower', domain: 'ceramics', body: 'something else' });
     expect(flashOf(await data(cookie, again.headers.get('location')!))).toContain('already has a page');
