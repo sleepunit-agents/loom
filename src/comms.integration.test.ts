@@ -704,6 +704,16 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       expect(asks.map((a) => a.id)).toEqual(['a-00000001']);
       expect(asks[0]).toMatchObject({ piece: 'approvals', text: 'Can I a-00000001?', if_yes: 'I do it.' });
       expect(asks[0].actions.map((a) => a.action)).toEqual(['allow', 'deny']);
+      // Whether it's still open, by the id the thread's answer gives (web/src/ask-open.ts): yes; a made-up one, no.
+      expect((await page(tok.jonathan, 'GET', `/inbox/open?a=${asks[0].id}`)).body).toEqual({ open: true });
+      expect((await page(tok.jonathan, 'GET', '/inbox/open?a=a-0000ffff')).body).toEqual({ open: false });
+      // A need that waits on it (its digest's waits_on): the approval is drawn on the need, its own card leaves the
+      // Inbox, and it's still open by its id.
+      const cv = recordTurn(agentDir(h, 'art'), 'art', { venue: 'wake', place: 'lane:asks', label: 'asks', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:clock').conversation;
+      writeDigest(agentDir(h, 'art'), { conversation: cv, run: 'r-waits' }, { summary: 'Asked.', needs_owner: { ask: 'OK to do the thing?', refs: ['a-00000001'],
+        why: 'Because.', if_yes: 'I do it.', if_no: 'I don\'t.', waits_on: { approval: 'a-00000001' } } } as never);
+      clearPieceCache();
+      expect((await page(tok.jonathan, 'GET', `/inbox/open?a=${asks[0].id}`)).body).toEqual({ open: true });
       expect(((await page(tok.jonathan, 'GET', `/comms/${other.id}/since/0`)).body.asks as Array<{ id: string }>).map((a) => a.id)).toEqual(['a-00000002']);
       // Another owner of art never sees it: the thread itself is refused.
       expect((await page(tok.sam, 'GET', `/comms/${t.id}`)).status).toBe(403);

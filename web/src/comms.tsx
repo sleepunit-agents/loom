@@ -20,6 +20,7 @@ import { prose } from '../../src/ui/prose';
 import { act, type Chrome } from './loom';
 import type { FaceState } from './face';
 import { useFollow } from './comms-follow';
+import { LIVE_SAYS, useAskLive } from './ask-open';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatPermission, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
@@ -724,19 +725,22 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
   const [said, setSaid] = useState<string | null>(null);
   const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
   const no = a.actions.find((b) => b.tone === 'danger');
+  // Live only once loom says, now, it's still open; asked again right before a send (ask-open.ts, the Inbox's rule).
+  const { live, check } = useAskLive({ a: a.id });
   const answer = async (d: 'allowed' | 'denied') => {
     const b = d === 'allowed' ? yes : no;
     if (!b) return;
     // A danger button (Deny) or one that says so asks first, as the Inbox's does (blocks.tsx ActButton).
     if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return;
     setBusy(true);
+    if (!(await check())) { setBusy(false); return; }
     const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
     setBusy(false);
     if (r.ok) { setDecision(d); setSaid(r.message || null); onAnswered(); } else setSaid(r.message || 'That didn\'t go through.');
   };
   return (
     <div className="comms-ask" aria-label={`${who} asks`}>
-      <AgentChatPermission title={a.text} description={a.why ?? `${who} is asking you.`} decision={decision} disabled={busy}
+      <AgentChatPermission title={a.text} description={a.why ?? `${who} is asking you.`} decision={decision} disabled={busy || (decision === 'pending' && live !== 'live')}
         onDecision={(d) => void answer(d)} allowLabel={yes.label} denyLabel={no?.label ?? 'Deny'}
         scope={(a.if_yes || a.if_no || a.fine) ? (
           <>
@@ -750,6 +754,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
           </>
         ) : undefined} />
       {said && <p className="comms-ask__said" role="status">{said}</p>}
+      {decision === 'pending' && live !== 'live' && <p className="comms-ask__live" role="status" data-live={live}>{LIVE_SAYS[live]}</p>}
     </div>
   );
 }

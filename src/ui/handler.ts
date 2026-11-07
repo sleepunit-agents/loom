@@ -1733,11 +1733,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // before it sends one: a copy kept on the device (page.ts, the service worker) may be of an ask answered since.
     // Never a cached answer: no-store, and the app treats one stamped x-loom-saved-at as "can't tell".
     if (pathname === '/inbox/open') {
-      const key = query.k ?? '';
-      if (!/^[0-9a-f]{16}$/.test(key)) return sendJson(res, 400, { error: 'bad item' });
-      const it = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((x) => x.key === key);
+      // By its Inbox key (k), or, for an approval asked from a Comms thread, by the approval's id (a): an approval a
+      // need waits on is drawn on that need (absorbApprovals), so its own card, and that card's key, aren't in the Inbox.
+      const key = query.k ?? '', approval = query.a ?? '';
+      if (!/^[0-9a-f]{16}$/.test(key) && !/^a-[0-9a-f]{4,32}$/.test(approval)) return sendJson(res, 400, { error: 'bad item' });
+      const names = (it: InboxItem) => [...(it.actions ?? []), ...(it.approval?.actions ?? [])].some((b) => b.fields?.id === approval);
+      const it = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((x) => (key ? x.key === key : names(x)) && x.box !== 'done');
       // Open: still there and not history, whether it's counted in Needs you or only filed (attention: false).
-      return sendJson(res, 200, { open: !!it && it.box !== 'done' }, { 'cache-control': 'no-store' });
+      return sendJson(res, 200, { open: !!it }, { 'cache-control': 'no-store' });
     }
     if (pathname === '/inbox') {
       const nowMs = Date.now();

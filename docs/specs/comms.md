@@ -316,6 +316,12 @@ nothing like Claude Code's own "allow this tool?" ever reaches a venue. The asks
   approvals piece, to make alongside its plain-asks rework (loom-approvals#7).
   - A thread shows each pending approval of its agent whose conversation is the thread's. The card has the approval's
     plain question, why, If you allow, If you deny, and **Allow once** and **Deny**.
+  - They're live only once loom says, now, that the ask is still open (`/inbox/open?a=<the approval's id>`: by the id,
+    since an approval a need waits on is drawn on that need and its own card leaves the Inbox), and loom is asked
+    again right before Allow or Deny is sent: a copy kept on this device may be of an ask answered since. Answered
+    since, loom unreachable, or the answer a copy (stamped `x-loom-saved-at`): the buttons stay disabled and the card
+    says why (`web/src/ask-open.ts`, the Inbox's own rule; the desktop's Needs you does the same, with its buttons left
+    out until then).
   - The buttons post to the approvals piece exactly as the Inbox's would (`ui act`, with the member as caller). The
     first answer wins, as owners.md has it.
   - The card stays in the Inbox too. Answering either one answers both, and the thread's card then says who answered

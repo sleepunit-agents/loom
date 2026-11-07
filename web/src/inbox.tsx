@@ -18,6 +18,7 @@ import { Arrive } from './arrive';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
+import { LIVE_SAYS, stillOpen, useAskLive, type Live } from './ask-open';
 import { Split, type SplitFolder } from './split';
 import './inbox.css';
 
@@ -93,7 +94,7 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
     : (i.actions ?? []).find((b) => /^(mark )?done$/i.test(b.label.trim()) && b.tone !== 'danger' && !b.confirm));
   const markDone = async (i: InboxItem) => {
     const b = doneOf(i);
-    if (!b || (i.reply && hasDraft(i.key)) || (await stillOpen(i.key)) !== 'live') { pick(i); return; }
+    if (!b || (i.reply && hasDraft(i.key)) || (await stillOpen({ k: i.key })) !== 'live') { pick(i); return; }
     if (await env.withSource(i.source).send(b.action, b.fields ?? {})) onAnswered(i, 'Done');
   };
   void chrome;
@@ -148,23 +149,6 @@ function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: strin
   );
 }
 
-type Live = 'checking' | 'live' | 'gone' | 'unknown';
-
-/** Whether loom says, now, that this ask is still open. Never from a copy: a stamped one (x-loom-saved-at) can't tell. */
-async function stillOpen(key: string): Promise<Live> {
-  try {
-    const r = await fetch(`/inbox/open?k=${key}`, { headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
-    if (!r.ok || r.headers.has('x-loom-saved-at') || !(r.headers.get('content-type') ?? '').startsWith('application/json')) return 'unknown';
-    return ((await r.json()) as { open?: boolean }).open ? 'live' : 'gone';
-  } catch { return 'unknown'; }
-}
-
-const LIVE_SAYS: Record<Exclude<Live, 'live'>, string> = {
-  checking: 'Checking it’s still open…',
-  gone: 'This isn’t open any more: it was answered or changed since. Nothing was sent.',
-  unknown: 'Can’t check with loom right now, so its buttons wait. Try again in a moment.',
-};
-
 /** The open item, whole: who and what, why, what happens either way, the answer, where it lives and its trail. */
 function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; tasks: Source; github?: string; env: Env;
   onAnswered: (i: InboxItem, said: string) => void; picks: number }) {
@@ -172,9 +156,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
   const from = cap(i.sourceLabel ?? i.source.id);
   // Anything still open with a way to answer it: counted in Needs you or only filed (attention: false), the same.
   const acts = boxOf(i) !== 'done' && (!!i.actions?.length || !!i.reply || !!i.approval);
-  const [live, setLive] = useState<Live>(acts ? 'checking' : 'live');
-  const check = async () => { const l = await stillOpen(i.key); setLive(l); return l === 'live'; };
-  useEffect(() => { if (!acts) return; setLive('checking'); void check(); }, [i.key, picks]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const { live, check } = useAskLive(acts ? { k: i.key } : null, picks);
   // Every button here goes through this: asked again right before it's sent; answered, it's Done here at once.
   const lastSaid = useRef('Answered');
   const guard = (e: Env): Env => ({ ...e,
@@ -214,7 +196,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
         </dl>
       )}
       {acts && !ok && <p className="loom-split__note" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<Live, 'live'>]}
-        {live === 'unknown' && <Button size="sm" variant="outline" onClick={() => { setLive('checking'); void check(); }}>Check again</Button>}</p>}
+        {live === 'unknown' && <Button size="sm" variant="outline" onClick={() => void check()}>Check again</Button>}</p>}
       {/* The buttons only once loom says it's open: a stale ask never shows live ones (t-1925). */}
       {acts && ok && (
         <EnvContext.Provider value={guarded}>
