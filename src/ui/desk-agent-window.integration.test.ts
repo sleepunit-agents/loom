@@ -159,6 +159,7 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
     it(`the card grows into the window and folds back (motion: ${motion})`, async () => {
       const p = await screen(1920, 1080, '/?w=needs,art,mark', { motion });
       await p.locator('[data-widget="art"]').waitFor();
+      if (process.env.DBG) await (await p.context().newCDPSession(p)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.DBG) });
       // The trip: an outline in the agent's colour travels from the card to the window, with motion; none without.
       await p.evaluate(() => { const w = window as unknown as { trip: boolean }; w.trip = false;
         new MutationObserver((ms) => { if (ms.some((m) => [...m.addedNodes].some((n) => (n as Element).classList?.contains('loom-morph')))) w.trip = true; }).observe(document.body, { childList: true }); });
@@ -172,12 +173,22 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
       // The card stands aside while its window is open (one app at two sizes); Mark's stays.
       await expect.poll(() => p.locator('[data-widget="art"]').count()).toBe(0);
       expect(await p.locator('[data-widget="mark"]').count()).toBe(1);
+      await p.evaluate(() => { (window as unknown as { trip: boolean }).trip = false; });
       await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Shrink Art E Fish to its card"]').click();
       await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
       await p.locator('[data-widget="art"]').waitFor();
       expect(new URL(p.url()).searchParams.get('w')).toBe('needs,art,mark');
-      await p.waitForTimeout(400);
-      expect(await p.locator('.loom-morph').count()).toBe(0);
+      // The outline travels back to the card, and is gone when its trip ends. The trip is 280 ms of the page's
+      // animation clock, which moves at the page's frames: few on a loaded runner at 1920×1080, so 400 ms of the
+      // test's clock was sometimes still mid-trip (queue run 42400239486, "expected 1 to be +0"). So wait for the
+      // trip itself to end, then the outline must be gone; one left behind still fails.
+      if (motion === 'no-preference') {
+        await expect.poll(tripped, { timeout: 4000 }).toBe(true);
+        await p.evaluate(() => Promise.all(document.getAnimations()
+          .filter((a) => ((a.effect as KeyframeEffect | null)?.target as Element | null)?.classList.contains('loom-morph'))
+          .map((a) => a.finished.catch(() => undefined))));
+        await expect.poll(() => p.locator('.loom-morph').count(), { timeout: 1000 }).toBe(0);
+      } else { await p.waitForTimeout(400); expect(await tripped()).toBe(false); }
       await p.context().close();
     });
   }
