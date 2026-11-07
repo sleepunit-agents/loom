@@ -119,15 +119,16 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     }, 60_000);
   }
 
-  // "Pin card to the desktop" on an agent's pages: the agent's tile's strip carries it (an agent's pages are its tile).
-  for (const [w, hgt] of [[1280, 800], [1920, 1080]]) it(`13. Pin card to the desktop on an agent's pages (its tile) adds its card; × removes a widget; the + key and Find add them, at ${w}×${hgt}`, async () => {
+  // An agent's window folds back into its card from its strip (t-1925 D: it was "Pin card to the desktop"): the card
+  // goes on the desktop, the window closes (one app at two sizes).
+  for (const [w, hgt] of [[1280, 800], [1920, 1080]]) it(`13. Shrink to widget on an agent's window adds its card; × removes a widget; the + key and Find add them, at ${w}×${hgt}`, async () => {
     const p = await screen(w, hgt, '/a/mark?t=*mark&w=needs');
     await expect.poll(() => labels(p)).toEqual(['mark']);
     expect(await widgets(p)).toEqual(['needs']);
-    await p.locator('.loom-tile button[aria-label^="Pin"]').click();
+    await p.locator('.loom-tile button[aria-label="Shrink mark to its card"]').click();
     await expect.poll(() => widgets(p)).toEqual(['needs', 'mark']);
     expect(query(p, 'w')).toBe('needs,mark');
-    expect(await p.locator('.loom-tile button[aria-pressed="true"]').count()).toBe(1);
+    expect(await p.locator('.loom-tile').count()).toBe(0);
     // ×
     await p.locator('[data-widget="needs"] .loom-wtile__x').click();
     await expect.poll(() => widgets(p)).toEqual(['mark']);

@@ -5,13 +5,12 @@
 // the same header, and the dock keeps the agent's sections (a sidebar would take a third of a 390 px screen).
 // The owner can write the description in place, or ask the agent to write its own (Regenerate): a Comms thread asks
 // it, and it saves its answer with describe_self. Its own chunk.
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
 import { iconFor } from './safe';
 import { AgentAvatar, useEnv } from './blocks';
 import { markColor } from './look';
-import { AgentOpsContext } from './tiling/morph';
 import type { AgentHead, Chrome } from './loom';
 import './faceframe.css';
 import './agent-window.css';
@@ -30,7 +29,6 @@ export default function AgentWindow({ head, chrome, icon, rail, children }: {
   head: AgentHead; chrome?: Chrome; icon: (label: string) => string; /** a window (a tile): the sidebar; a phone: none */ rail: boolean; children: React.ReactNode;
 }) {
   const env = useEnv();
-  const ops = useContext(AgentOpsContext);
   const box = useRef<HTMLDivElement>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
@@ -78,8 +76,6 @@ export default function AgentWindow({ head, chrome, icon, rail, children }: {
           </div>
           <div className="loom-aghead__acts">
             <Button size="sm" onClick={() => env.go('/comms')}>Message</Button>
-            {ops && rail && <Button size="sm" variant="ghost" onClick={() => ops.shrink(id)}>
-              <AnimatedIcon name={iconFor('minimize-2')} size="sm" />Shrink to widget</Button>}
           </div>
         </header>
         <div className="loom-agentwin__body">{children}</div>

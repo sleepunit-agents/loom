@@ -796,7 +796,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)} accent={accent(o)}
           landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)}
-          pin={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? { on: s.w.includes(nameOf(o.key)), toggle: () => (s.w.includes(nameOf(o.key)) ? removeWidget : addWidget)(nameOf(o.key)) } : undefined} />
+          shrink={o.key.startsWith('/a/') && widgetRef(nameOf(o.key), shell.agents, wok) ? () => agentOps.shrink(nameOf(o.key)) : undefined} />
       ))}
       {s.apps.length > 0 && wenv && <EnvContext.Provider value={wenv}>{widgetsDrawn}</EnvContext.Provider>}
       {menu && <ContextMenu at={menu} close={() => setMenu(null)} />}
@@ -819,7 +819,7 @@ function holdScroll(el: HTMLElement, top: number) {
   el.addEventListener('wheel', stop, { passive: true }); el.addEventListener('pointerdown', stop);
 }
 
-function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, accent, landed, onFocus, minimize, close, makeBig, pin, steps }: {
+function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, render, lead, tint, accent, landed, onFocus, minimize, close, makeBig, shrink, steps }: {
   o: Open & { restoreTop?: number }; n: number; of: number; rect: Rect | undefined; focused: boolean;
   say: (n: Omit<Note, 'id'>) => void; nav: (key: string) => PageNav;
   pages: React.MutableRefObject<Map<string, PageState>>; bodies: React.MutableRefObject<Map<string, HTMLElement>>;
@@ -828,7 +828,7 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   render: (p: PageState, go: (href: string) => void, wide: boolean) => React.ReactNode;
   lead: React.ReactNode; tint: string; accent: Accent; landed: (url: string) => void; onFocus: () => void; minimize: () => void; close: () => void; makeBig: () => void;
   /** An agent's tile: its card on the desktop, or not. */
-  pin?: { on: boolean; toggle: () => void };
+  /** an agent's window: fold it back into its card */ shrink?: () => void;
   /** Back and Forward for the keys (Alt+← →): true when there was somewhere to go. */
   steps: React.MutableRefObject<Map<string, (by: -1 | 1) => boolean>>;
 }) {
@@ -919,9 +919,9 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
           onClick={(e) => { e.preventDefault(); go(up.url); }}>{title}</a> : title}</h2>
         <span className="loom-tile__path loom-data" aria-hidden>loom{path}</span>
         <span className="loom-tile__acts">
-          {pin && <button type="button" className="loom-tile__btn" aria-pressed={pin.on} onClick={pin.toggle}
-            aria-label={pin.on ? `${o.label}’s card is on the desktop. Take it off` : `Pin ${o.label}’s card to the desktop`}
-            title={pin.on ? 'On the desktop' : 'Pin card to the desktop'}><AnimatedIcon name={iconFor('pin')} size="sm" /></button>}
+          {/* An agent's window folds back into its card (t-1925 D; it was Pin card to the desktop): one app, two sizes. */}
+          {shrink && <button type="button" className="loom-tile__btn" onClick={shrink} aria-label={`Shrink ${o.label} to its card`} title="Shrink to widget">
+            <AnimatedIcon name={iconFor('minimize-2')} size="sm" /></button>}
           {n > 0 && <button type="button" className="loom-tile__btn" aria-label={`Make ${o.label} the big one`} title="Make this the big one" onClick={makeBig}>
             <AnimatedIcon name={iconFor('maximize-2')} size="sm" /></button>}
           <button type="button" className="loom-tile__btn" aria-label={`Minimize ${o.label} to the dock`} title="Minimize to the dock" onClick={minimize}>

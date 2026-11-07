@@ -167,7 +167,7 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
       // The trip: an outline in motion; none at all with motion reduced.
       if (motion === 'no-preference') expect(await p.locator('.loom-morph').count()).toBeGreaterThanOrEqual(0);
       else expect(await p.locator('.loom-morph').count()).toBe(0);
-      await win(p).getByRole('button', { name: 'Shrink to widget' }).click();
+      await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Shrink Art E Fish to its card"]').click();
       await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
       await p.locator('[data-widget="art"]').waitFor();
       expect(new URL(p.url()).searchParams.get('w')).toBe('needs,art,mark');
@@ -179,7 +179,7 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
 
   it('Shrink to widget with no card on the desktop puts one there', async () => {
     const p = await screen(1280, 800, '/a/art?t=*art&w=needs');
-    await win(p).getByRole('button', { name: 'Shrink to widget' }).click();
+    await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Shrink Art E Fish to its card"]').click();
     await expect.poll(() => p.locator('[data-widget="art"]').count()).toBe(1);
     expect(new URL(p.url()).searchParams.get('w')).toBe('needs,art');
     await p.context().close();

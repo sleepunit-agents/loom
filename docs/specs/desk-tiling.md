@@ -230,9 +230,8 @@ you's first ask and "N more"; it's `min(height, compact height)`.
     widget": Needs you, each agent's card, Vitals and Backup. One already on the desktop shows "on the desktop" and
     focuses it. (It was the dock's + key until 2026-11-06, t-1925 E.)
   - **Find** lists the same as "Add widget: …".
-  - An agent's pages have **Pin card to the desktop**: the agent's tile strip carries it (an agent's pages are its
-    tile). The dock's agent key menu would have it too, but the household's dock has no agent keys yet (an agent's own
-    dock does, on its pages): that half waits for one (phase 4, 2026-11-06).
+  - An agent's window has **Shrink to widget** in its strip (it was Pin card to the desktop, before the card and the
+    window were one app: "An agent's window", below): its card goes on the desktop and the window closes.
 - **Linked:** a widget's actions open its app beside it. On an agent's card, **Chat** opens that agent's latest Comms
   thread and **Open** opens their pages. On Needs you, an ask opens in the Inbox. An app opened this way goes last, next
   to the rail. A widget is live: it draws from the same live data its app does (`/events`), so it never goes stale.
@@ -308,7 +307,7 @@ An agent's pages are one window (`web/src/agent-window.tsx`), the mockups' (2026
 - **The card and the window are one app at two sizes.** On the desktop an agent's card has Expand (and the card itself
   opens it): its window opens beside the widgets and the card stands aside while it's open (its place in the widgets is
   kept, `w` unchanged); a lit outline in the agent's colour travels from the card to the window (`tiling/morph.ts`). The
-  window's **Shrink to widget** closes it and the card comes back where it was (added to the desktop when it wasn't
+  window's **Shrink to widget** (its strip's button, where Pin card was) closes it and the card comes back where it was (added to the desktop when it wasn't
   there), the outline travelling back. Reduced motion: no outline, the change is instant.
 
 ## One window at a time
@@ -592,7 +591,7 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     1. A link between two Inbox pages stays in its tile.
 13. **Widgets.**
     - Chat on Art's card opens Comms beside the rail on Art's latest thread.
-    - Pin card to the desktop on Mark's pages adds Mark's card.
+    - Shrink to widget on Mark's window adds Mark's card and closes the window.
     - × removes a widget.
     - Every widget updates from `/events` without a reload: a new ask shows in Needs you.
 14. **Reload.** A reload of `/comms?t=tasks!,*comms&m=inbox&w=art,needs` draws Tasks (pinned, first), then Comms,
