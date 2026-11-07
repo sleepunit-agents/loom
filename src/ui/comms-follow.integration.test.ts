@@ -217,14 +217,42 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
       adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'mark', text: 'Still followed.' });
       await p.locator('.comms-msg--agent', { hasText: 'Still followed.' }).waitFor();
       await expect.poll(async () => (await at()).gap).toBeLessThanOrEqual(80);
-      // Scrolled well up: two replies land, the reader stays exactly where they were, the pill counts them.
-      await scrollBy(-1200);
-      await p.waitForTimeout(200);
-      const before = await at();
-      expect(before.gap).toBeGreaterThan(80);
+      // Scrolled well up: two replies land, the reader stays exactly where they were, the pill counts them. And scrolled
+      // up the moment they arrive: a scroll reaches the page as a scroll event only at the next frame, and a loaded machine
+      // draws few (CI's software renderer at 1920×1080 most of all), so the replies can be drawn before the page hears of
+      // the scroll (the merge queue, 2026-11-07). That order, every time: the scroll is made as the replies' read
+      // comes back, before the page draws them, and its event held until the first frame after they're drawn.
+      await p.evaluate(() => {
+        const w = window as unknown as { up?: { top: number; gap: number } };
+        let s: Element | null = document.querySelector('.comms-end')!.parentElement;
+        while (s && !(/(auto|scroll)/.test(getComputedStyle(s).overflowY) && s.scrollHeight > s.clientHeight + 1)) s = s.parentElement;
+        const el = (s ?? document.scrollingElement)!;
+        const f = window.fetch;
+        window.fetch = async (...a: Parameters<typeof fetch>) => {
+          const r = await f(...a);
+          if (!String(a[0]).includes('/since/') || !(await r.clone().text()).includes('Unseen')) return r;
+          window.fetch = f;
+          const held = new Set<EventTarget>();
+          const hold = (e: Event) => { if (e.isTrusted) { e.stopImmediatePropagation(); held.add(e.target!); } };
+          window.addEventListener('scroll', hold, { capture: true });
+          el.scrollBy(0, -1200);
+          w.up = { top: el.scrollTop, gap: el.scrollHeight - el.scrollTop - el.clientHeight };
+          const n0 = document.querySelectorAll('.comms-msg--agent').length;
+          // Asked a frame ahead of the page, so it runs first in the frame after the replies are drawn.
+          const tick = () => {
+            if (document.querySelectorAll('.comms-msg--agent').length === n0) { requestAnimationFrame(tick); return; }
+            window.removeEventListener('scroll', hold, { capture: true });
+            for (const t of held) t.dispatchEvent(new Event('scroll'));
+          };
+          requestAnimationFrame(tick);
+          return r;
+        };
+      });
       adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'mark', text: 'Unseen one.' });
       adapterCall(h, process.env, { op: 'post', place: t.id, agent: 'mark', text: 'Unseen two.' });
       await p.locator('.comms-msg--agent', { hasText: 'Unseen two.' }).waitFor({ state: 'attached' });
+      const before = await p.evaluate(() => (window as unknown as { up: { top: number; gap: number } }).up);
+      expect(before.gap).toBeGreaterThan(80);
       await expect.poll(() => p.locator('.comms-newpill').textContent()).toBe('2 new messages ↓');
       expect((await at()).top).toBe(before.top);
       // A run's step cards aren't messages: they don't count.

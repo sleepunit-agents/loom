@@ -35,6 +35,12 @@ export function useFollow(end: React.RefObject<HTMLElement | null>, count: numbe
     near.current = true;
     setUnread(0);
   }, [end]);
+  // Where the end was before new messages land: the scroller's height as the last drawing left it. A scroll reaches
+  // the page as a scroll event only at the next frame, and a loaded machine draws few (CI's software renderer at
+  // 1920×1080 most of all), so a message can land between the reader's scroll and the event that says so: `near`
+  // would still say where they were before it. The scroller's position is current at once, so the reader's place is
+  // measured against the old end instead: they're at the bottom when they were within NEAR of it.
+  const drawn = useRef<{ s: HTMLElement; height: number } | null>(null);
   // Where the reader is, kept on every scroll (read before new content lands, so a message arriving can't move it).
   useEffect(() => {
     const el = end.current;
@@ -54,6 +60,7 @@ export function useFollow(end: React.RefObject<HTMLElement | null>, count: numbe
       const t = scrollerOf(el);
       // Grown while the reader was at the bottom (a working line, a card, an image): stay at the bottom.
       if (near.current) t.scrollTo({ top: t.scrollHeight, behavior: 'instant' as ScrollBehavior });
+      drawn.current = { s: t, height: t.scrollHeight };
     });
     ro.observe(el.parentElement ?? el);
     return () => { document.removeEventListener('scroll', on, { capture: true }); ro.disconnect(); };
@@ -67,8 +74,16 @@ export function useFollow(end: React.RefObject<HTMLElement | null>, count: numbe
     const sent = mineAt > mine.current;
     mine.current = mineAt;
     if (added <= 0 && !sent) return;
-    if (near.current || sent) down();
-    else setUnread((n) => n + added);
-  }, [count, mineAt, down]);
+    const s = scrollerOf(end.current), was = drawn.current;
+    const there = was && was.s === s ? was.height - s.scrollTop - s.clientHeight <= NEAR : near.current;
+    if (there || sent) down();
+    else { near.current = false; setUnread((n) => n + added); }
+  }, [count, mineAt, down, end]);
+  // After every drawing (and after the one above has read it): the end as it now stands.
+  useLayoutEffect(() => {
+    if (!end.current) return;
+    const s = scrollerOf(end.current);
+    drawn.current = { s, height: s.scrollHeight };
+  });
   return { unread, down };
 }
