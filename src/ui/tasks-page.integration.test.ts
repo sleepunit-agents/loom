@@ -172,6 +172,9 @@ describe.runIf(built && chrome)('the Tasks page', () => {
     it(`at ${w}: the side column beside the list, its chart without Show data, Find and sort on single lines, rows opening in place`, async () => {
       const { ctx, p } = await open(w, hgt);
       await p.goto(`${base}/p/tasks`);
+      // The desktop first (its tiles): the page drawn before them is replaced by its tile, and a field focused in it
+      // with it.
+      await p.locator('.loom-tiles .loom-tile').first().waitFor({ timeout: 20_000 });
       // A tile 1100 px wide or more has the side column beside the list (fixed width); a narrower one (1280's, beside
       // the desk's widgets) folds it at the top.
       await p.locator('aside.loom-side-col, .loom-side-fold').first().waitFor({ timeout: 20_000 });
