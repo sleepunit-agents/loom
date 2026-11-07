@@ -526,7 +526,11 @@ reader is the member who said half of it.
 **The rules for the kept words:**
 - **Encryption.** They're encrypted at rest with age, one blob per message as audit.db does it, to a key of their own
   (`$LOOM_HOME/comms.key`, made at first use, mode 0600). That protects copies and backups, not the owner from himself:
-  conversations.md rule 3 already says the owner of a loom instance can read what it stores.
+  conversations.md rule 3 already says the owner of a loom instance can read what it stores. Reading a thread decrypts
+  in loom's own process with the age library (`age-encryption`, t-1926; the owner's ruling of 2026-11-07), with the
+  `age` program as the fallback for a message the library can't read (logged, without its words). The decrypted words
+  live only for that request: no cache of them in memory. Writing stays with the `age` program, and each reads the
+  other's files (`src/comms-age.integration.test.ts`).
 - **The window** is household.json's `comms_days` (1–14, default 14), tied to the slot's window (section 1).
 - **A sweep** runs hourly and at daemon start, like the audit log's. It sets `text` to null on every message older
   than `comms_days`, in `secure_delete` mode, so the deleted pages are zeroed. Rows stay, with their `seq`, `at`,

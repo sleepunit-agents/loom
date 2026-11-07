@@ -2,11 +2,12 @@
  * Navigation timings for loom's app (t-1925 F, "Measure first"): a test server with a household's worth of data, and
  * the flows Jonathan named, timed in a real browser at 1280 and 390.
  *
- *   npx tsx scripts/nav-bench.ts [--out file.json] [--runs 3] [--tasks path/to/store.db] [--serve]
+ *   npx tsx scripts/nav-bench.ts [--out file.json] [--runs 3] [--tasks path/to/store.db] [--serve] [--server-only]
  *
  * Needs the built app (npm run build), Chrome (LOOM_TEST_CHROME or /usr/bin/google-chrome) and age. --tasks points the
  * Tasks piece (loom-tasks on PATH) at a copy of a real store; without it there is no Tasks app and its flow is skipped.
- * --serve starts the server, prints its address and token, and waits (to look at it by hand).
+ * --serve starts the server, prints its address and token, and waits (to look at it by hand). --server-only times
+ * GET /comms/<thread> for each 40-message thread, with no browser, and stops.
  *
  * For each flow: ms to the first visible change after the click, ms until it's complete (the page asked for is drawn
  * and nothing in it is busy), bytes fetched meanwhile, and whether what should have stayed (a tile, a list) was
@@ -175,6 +176,22 @@ const record = (name: string, width: number, s: Sample | null) => {
   f.samples.push(s);
 };
 const tileSel = (label: string) => `.loom-tile[aria-label$=", ${label}"]`;
+
+// 0. The server alone (t-1926): GET /comms/<thread> as JSON for each 40-message thread, once, no browser.
+// The list first, untimed: the server's own first request (its routes, the stores opening) isn't a thread's cost.
+await (await fetch(`${base}/comms`, { headers: { accept: 'application/json', authorization: `Bearer ${token}` } })).arrayBuffer();
+for (const id of threads) {
+  const t0 = performance.now();
+  const r = await fetch(`${base}/comms/${id}`, { headers: { accept: 'application/json', authorization: `Bearer ${token}` } });
+  const body = await r.arrayBuffer();
+  const ms = Math.round((performance.now() - t0) * 10) / 10;
+  record('Server: GET /comms/<thread> (40 messages)', 0, r.ok ? { visibleMs: ms, completeMs: ms, bytes: body.byteLength, requests: 1, remounted: null } : null);
+}
+{
+  const ms = (flows.find((f) => f.width === 0)?.samples ?? []).map((s) => s.completeMs).sort((a, b) => a - b);
+  console.log(`GET /comms/<thread>, ${ms.length} threads of 40: median ${ms[Math.floor(ms.length / 2)]} ms, p90 ${ms[Math.floor(ms.length * 0.9)]} ms, max ${ms.at(-1)} ms`);
+}
+if (process.argv.includes('--server-only')) { if (OUT) writeFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), flows }, null, 2)); await handle.close(); await closeAllBackends(); rmSync(home, { recursive: true, force: true }); process.exit(0); }
 
 const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
 try {

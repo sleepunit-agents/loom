@@ -21,6 +21,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, linkSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
+import { Decrypter } from 'age-encryption';
 import { findProgram } from './programs.js';
 import { agentDir, loadHousehold, type Household, type Member } from './household.js';
 import { withHouseholdDb } from './household-store.js';
@@ -40,8 +41,13 @@ export const MAX_PINS = 8;
 export const PAGE = 100;
 /** A `since` read answers at most this many (a reconnect after a long gap reads on with since again). */
 export const SINCE_MAX = 500;
-/** How many messages are decrypted at once (each is one age process): a thread's page never blocks the daemon. */
+/**
+ * How many messages are decrypted at once. Decrypting is in this process (the age library, t-1926), so this bounds only
+ * the fallback to the age program: a message the library couldn't read gets its own age process.
+ */
 const DECRYPT_AT_ONCE = 8;
+/** A message's words decrypt to at most this many bytes; a bigger blob isn't one of ours. */
+const MAX_PLAIN_BYTES = 4 * MAX_TEXT + 65_536;
 export const MAX_CARDS = 50;
 export const MAX_SUMMARY = 120;
 /** A queued message with no `working` from the runtime for this long is "busy" (comms.md, section 7). */
@@ -221,14 +227,51 @@ function encrypt(home: string, env: NodeJS.ProcessEnv, text: string): Buffer {
   return r.stdout as Buffer;
 }
 
-/** One message's words, decrypted by its own age process, without blocking the daemon; null when age can't. */
-function decrypt(home: string, env: NodeJS.ProcessEnv, blob: Buffer): Promise<string | null> {
-  const k = ageKeys(home, env);
+/**
+ * The comms identity, read from comms.key for one request: what decrypts that request's messages, in this process, and
+ * is dropped with it. Null when there's no key to read (nothing to decrypt with), or the library can't take it. Neither
+ * the key nor any words are logged or kept: no plaintext cache (the owner's ruling of 2026-11-07, t-1926).
+ */
+type Words = { lib: Decrypter | null; home: string; env: NodeJS.ProcessEnv; said?: boolean };
+function wordsReader(home: string, env: NodeJS.ProcessEnv): Words {
+  let lib: Decrypter | null = null;
+  try {
+    const path = join(home, COMMS_KEY);
+    if (regularFile(path)) {
+      // age-keygen's file: `# created`, `# public key` comment lines, then the identity.
+      const line = readFileSync(path, 'utf-8').split('\n').map((l) => l.trim()).find((l) => l.startsWith('AGE-SECRET-KEY-'));
+      if (line) { const d = new Decrypter(); d.addIdentity(line); lib = d; }
+    }
+  } catch { lib = null; }
+  return { lib, home, env };
+}
+
+/** One message's words, decrypted in this process; the age program when the library can't read it; null when neither can. */
+async function decrypt(w: Words, blob: Buffer, where: string): Promise<string | null> {
+  if (blob.length > MAX_PLAIN_BYTES + 4096) return null;
+  if (w.lib) {
+    try { return await w.lib.decrypt(blob, 'text'); } catch (e) {
+      // Which message and the library's error class, never its words or the key.
+      process.stderr.write(`loom: comms: the age library couldn't read ${where} (${(e as Error)?.name ?? 'error'}); trying the age program\n`);
+    }
+  } else if (!w.said) {
+    w.said = true;
+    process.stderr.write('loom: comms: no comms key the age library can read; trying the age program\n');
+  }
+  return decryptWithProgram(w, blob);
+}
+
+/** The fallback: one message's words by its own age process, without blocking the daemon; null when age can't. */
+function decryptWithProgram(w: Words, blob: Buffer): Promise<string | null> {
+  let age: string;
+  try { age = findProgram('age', w.env); } catch { return Promise.resolve(null); }
+  const key = join(w.home, COMMS_KEY);
+  if (!regularFile(key)) return Promise.resolve(null);
   return new Promise((resolve) => {
     const out: Buffer[] = [];
     let size = 0;
-    const child = spawn(k.age, ['-d', '-i', k.key], { stdio: ['pipe', 'pipe', 'ignore'] });
-    child.stdout.on('data', (c: Buffer) => { size += c.length; if (size <= 4 * MAX_TEXT + 65_536) out.push(c); });
+    const child = spawn(age, ['-d', '-i', key], { stdio: ['pipe', 'pipe', 'ignore'] });
+    child.stdout.on('data', (c: Buffer) => { size += c.length; if (size <= MAX_PLAIN_BYTES) out.push(c); });
     child.on('error', () => resolve(null));
     child.on('close', (code) => resolve(code === 0 ? Buffer.concat(out).toString('utf-8') : null));
     child.stdin.on('error', () => {});
@@ -408,11 +451,11 @@ function householdAt(home: string): Household {
   return h;
 }
 
-async function messageOf(home: string, env: NodeJS.ProcessEnv, agent: string, r: MsgRow): Promise<Message> {
+async function messageOf(w: Words, agent: string, thread: string, r: MsgRow): Promise<Message> {
   const card = r.card_json ? JSON.parse(r.card_json) as Record<string, unknown> : null;
   let text: string | null = null;
   if (r.kind === 'error') text = errorWords(String(card?.error ?? ''), label(agent), typeof card?.reason === 'string' ? card.reason : undefined);
-  else if (r.text) text = await decrypt(home, env, r.text);
+  else if (r.text) text = await decrypt(w, r.text, `${thread} #${r.seq}`);
   return { seq: r.seq, at: r.at, kind: r.kind as MessageKind, from: r.sender, id: r.id, text, card, run: r.run, delivered: r.delivered === null ? null : r.delivered === 1,
     ...(r.kind === 'message' ? { delivery: deliveryOf(r.delivered) } : {}) };
 }
@@ -424,7 +467,9 @@ export async function messagesOf(h: Household, env: NodeJS.ProcessEnv, t: Thread
     if (at.before !== undefined) return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? AND seq < ? ORDER BY seq DESC LIMIT ?').all(t.id, at.before, PAGE) as MsgRow[]).reverse();
     return (db.prepare('SELECT * FROM comms_messages WHERE thread = ? ORDER BY seq DESC LIMIT ?').all(t.id, PAGE) as MsgRow[]).reverse();
   });
-  return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(h.home, env, t.agent, r));
+  if (!rows.length) return [];
+  const w = wordsReader(h.home, env);
+  return pool(rows, DECRYPT_AT_ONCE, (r) => messageOf(w, t.agent, t.id, r));
 }
 
 /** The thread's newest message seq (0 with none), and its newest reply's. */
@@ -642,7 +687,7 @@ export function deliveryFacts(h: Household, t: Thread, seq: number): { at: strin
 /** A member message's words, to deliver again (Send again); null once swept. */
 export async function memberWords(h: Household, env: NodeJS.ProcessEnv, t: Thread, seq: number): Promise<string | null> {
   const r = withMessages(h.home, (db) => db.prepare("SELECT text FROM comms_messages WHERE thread = ? AND seq = ? AND kind = 'message'").get(t.id, seq) as { text: Buffer | null } | undefined);
-  return r?.text ? decrypt(h.home, env, r.text) : null;
+  return r?.text ? decrypt(wordsReader(h.home, env), r.text, `${t.id} #${seq}`) : null;
 }
 
 /** What delivering a member's message came to: delivered or not, and an error message when it failed. */
