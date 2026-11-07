@@ -529,8 +529,10 @@ reader is the member who said half of it.
   conversations.md rule 3 already says the owner of a loom instance can read what it stores. Reading a thread decrypts
   in loom's own process with the age library (`age-encryption`, t-1926; the owner's ruling of 2026-11-07), with the
   `age` program as the fallback for a message the library can't read (logged, without its words). The decrypted words
-  live only for that request: no cache of them in memory. Writing stays with the `age` program, and each reads the
-  other's files (`src/comms-age.integration.test.ts`).
+  live only for that request: no cache of them in memory. Writing stays with the `age` program (one process a send,
+  from the synchronous write path), and each reads the other's files (`src/comms-age.integration.test.ts`). The audit
+  log (`src/audit.ts`) and bundles (`src/bundle.ts`) keep the program too: the audit log's decrypt is pinned to one
+  function by its own criterion, and a bundle is restored with the `age` CLI.
 - **The window** is household.json's `comms_days` (1–14, default 14), tied to the slot's window (section 1).
 - **A sweep** runs hourly and at daemon start, like the audit log's. It sets `text` to null on every message older
   than `comms_days`, in `secure_delete` mode, so the deleted pages are zeroed. Rows stay, with their `seq`, `at`,
@@ -1008,6 +1010,11 @@ A thread filed under a project already feeds its hub (section "Project" above). 
    - `comms.key` and `comms.salt` are made with mode 0600.
    - `GET /comms/<thread>` shows the thread's digests in place of the swept words.
    - Text decrypts with `comms.key`, and not with another age identity.
+   - A thread reads in loom's own process, with no age program installed; a message the library can't read is read by
+     the program, logged once a read without its words or the key; a message changed under it, or a new `comms.key`,
+     reads as it is now (nothing decrypted is kept between reads); with neither a key the library takes nor the
+     program, a read is `503 no-age`. What the library writes, `age -d` reads, and the reverse
+     (`src/comms-age.integration.test.ts`, t-1926).
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**

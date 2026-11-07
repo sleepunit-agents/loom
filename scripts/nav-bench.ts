@@ -7,7 +7,8 @@
  * Needs the built app (npm run build), Chrome (LOOM_TEST_CHROME or /usr/bin/google-chrome) and age. --tasks points the
  * Tasks piece (loom-tasks on PATH) at a copy of a real store; without it there is no Tasks app and its flow is skipped.
  * --serve starts the server, prints its address and token, and waits (to look at it by hand). --server-only times
- * GET /comms/<thread> for each 40-message thread, with no browser, and stops.
+ * GET /comms/<thread> for each 40-message thread, with no browser (and needs no Chrome), and stops: exit 1 when the
+ * median is 300 ms or more (t-1926's target).
  *
  * For each flow: ms to the first visible change after the click, ms until it's complete (the page asked for is drawn
  * and nothing in it is busy), bytes fetched meanwhile, and whether what should have stayed (a tile, a list) was
@@ -30,7 +31,8 @@ const RUNS = Number(arg('--runs') ?? 3);
 const OUT = arg('--out');
 const TASKS = arg('--tasks');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium'].find((p) => p && existsSync(p));
-if (!chrome) throw new Error('no Chrome');
+const SERVER_ONLY = process.argv.includes('--server-only');
+if (!chrome && !SERVER_ONLY) throw new Error('no Chrome');
 if (spawnSync('sh', ['-c', 'command -v age'], { encoding: 'utf-8' }).status !== 0) throw new Error('no age');
 
 // ---- the household -------------------------------------------------------------------------------
@@ -93,6 +95,29 @@ if (hasTasks) {
 
 const handle = await startHttpServer({ contextDir: art, host: '127.0.0.1', port: 0, household: h });
 const base = `http://127.0.0.1:${handle.port}`;
+if (SERVER_ONLY) {
+  // The server alone (t-1926): GET /comms/<thread> as JSON for each 40-message thread, once, no browser. The list
+  // first, untimed: the server's own first request (its routes, the stores opening) isn't a thread's cost.
+  const get = (path: string) => fetch(`${base}${path}`, { headers: { accept: 'application/json', authorization: `Bearer ${token}` } });
+  await (await get('/comms')).arrayBuffer();
+  const ms: number[] = [];
+  for (const id of threads) {
+    const t0 = performance.now();
+    const r = await get(`/comms/${id}`);
+    await r.arrayBuffer();
+    if (!r.ok) throw new Error(`GET /comms/${id} answered ${r.status}`);
+    ms.push(Math.round((performance.now() - t0) * 10) / 10);
+  }
+  const sorted = [...ms].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  console.log(`GET /comms/<thread>, ${ms.length} threads of 40: median ${median} ms, p90 ${sorted[Math.floor(sorted.length * 0.9)]} ms, max ${sorted.at(-1)} ms (in order: ${ms.join(' ')})`);
+  if (OUT) writeFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), commsThreadMs: ms }, null, 2));
+  await handle.close();
+  await closeAllBackends();
+  rmSync(home, { recursive: true, force: true });
+  // The target (t-1926): a 40-message thread answers in under 300 ms. Over it, the run fails.
+  process.exit(median < 300 ? 0 : 1);
+}
 if (process.argv.includes('--serve')) {
   console.log(`${base}  token: ${token}  home: ${home}`);
   await new Promise(() => {});
@@ -176,22 +201,6 @@ const record = (name: string, width: number, s: Sample | null) => {
   f.samples.push(s);
 };
 const tileSel = (label: string) => `.loom-tile[aria-label$=", ${label}"]`;
-
-// 0. The server alone (t-1926): GET /comms/<thread> as JSON for each 40-message thread, once, no browser.
-// The list first, untimed: the server's own first request (its routes, the stores opening) isn't a thread's cost.
-await (await fetch(`${base}/comms`, { headers: { accept: 'application/json', authorization: `Bearer ${token}` } })).arrayBuffer();
-for (const id of threads) {
-  const t0 = performance.now();
-  const r = await fetch(`${base}/comms/${id}`, { headers: { accept: 'application/json', authorization: `Bearer ${token}` } });
-  const body = await r.arrayBuffer();
-  const ms = Math.round((performance.now() - t0) * 10) / 10;
-  record('Server: GET /comms/<thread> (40 messages)', 0, r.ok ? { visibleMs: ms, completeMs: ms, bytes: body.byteLength, requests: 1, remounted: null } : null);
-}
-{
-  const ms = (flows.find((f) => f.width === 0)?.samples ?? []).map((s) => s.completeMs).sort((a, b) => a - b);
-  console.log(`GET /comms/<thread>, ${ms.length} threads of 40: median ${ms[Math.floor(ms.length / 2)]} ms, p90 ${ms[Math.floor(ms.length * 0.9)]} ms, max ${ms.at(-1)} ms`);
-}
-if (process.argv.includes('--server-only')) { if (OUT) writeFileSync(OUT, JSON.stringify({ at: new Date().toISOString(), flows }, null, 2)); await handle.close(); await closeAllBackends(); rmSync(home, { recursive: true, force: true }); process.exit(0); }
 
 const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
 try {
