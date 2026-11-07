@@ -182,7 +182,7 @@ describe.runIf(built && chrome)('a phone\'s gestures, page moves and haptics', (
     await drag(f, [200, 600], [200, 300]);
     expect(await where(f)).toBe('/');
     await open(f, '/inbox');
-    const chips = (await f.p.locator('main [aria-label="Show"]').boundingBox())!;
+    const chips = (await f.p.locator('main .loom-split__chips').boundingBox())!;
     const y = chips.y + Math.min(16, chips.height / 2);
     await drag(f, [320, y], [60, y + 4]);
     expect(await where(f)).toBe('/inbox');

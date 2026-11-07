@@ -1,170 +1,251 @@
-// The Inbox: its own chunk, loaded when it opens (it and its folder switch aren't on the first page).
+// The Inbox (t-1925, Jonathan's approved mock 2026-11-06): a mail client for asks. Folders down the left (Needs you,
+// Questions, Approvals, Alerts, Memory reviews, Done, and who it's from), the list, and the open item beside it whole:
+// why, what happens either way, its buttons, a reply, where it lives and its trail. Answering it moves it to Done and
+// opens the next. In a narrow tile or on a phone the folders are chips and the item slides over the list (split.tsx).
+//
+// An ask's buttons are live only once loom has said, just now, that it's still open (/inbox/open), and it's asked again
+// right before one is sent: a copy kept on this device (page.ts, the service worker) may be of an ask answered since.
+// Its own chunk, loaded when it opens.
 import { buzz, HapticLabel, useHaptics } from './haptic';
-import { useContext, useEffect, useState } from 'react';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Icon } from '@/components/ui/icon';
 import { Textarea } from '@/components/ui/textarea';
-import { ActButton, EnvContext, Link, LoomMark, Nothing } from './blocks';
-import type { Chrome, Source } from './loom';
-import { ApprovalBox, As, InboxRow, KIND, Mark, useOpenItem, type InboxItem, Fine } from './views';
+import { ActButton, EnvContext, Link, LoomMark, Nothing, type Env } from './blocks';
+import { markRead, type Chrome, type Source } from './loom';
+import { ApprovalBox, As, KIND, Mark, type InboxItem, Fine } from './views';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, keepDraft } from './drafts';
+import { Split, type SplitFolder } from './split';
+import './inbox.css';
 
 const useEnv = () => useContext(EnvContext)!;
 
-// The filters (Jonathan, 2026-10-30): "needs you, to do, fyi, everything is the order and we ditch answered". What
-// was answered is history, in All; a permission, a decision, a reply or an alert needs you, and says which on
-// its own row.
-const KINDS: Array<[InboxItem['kind'], string]> = [['todo', 'To do'], ['fyi', 'FYI']];
+type Box = NonNullable<InboxItem['box']>;
+/** The folders, in the mock's order; each one's icon. */
+const FOLDERS: Array<[string, string, string]> = [
+  ['needs', 'Needs you', 'inbox'], ['question', 'Questions', 'message-circle-question'], ['approval', 'Approvals', 'lock'],
+  ['alert', 'Alerts', 'triangle-alert'], ['memory', 'Memory reviews', 'brain'], ['done', 'Done', 'circle-check'],
+];
+const BOX_ICON: Record<Box, string> = { question: 'message-circle-question', approval: 'lock', alert: 'triangle-alert', memory: 'brain', done: 'circle-check' };
+/** An item's folder: the server's, else worked out as it does (an older loom's answer, a test's fixture). */
+const boxOf = (i: InboxItem): Box => i.box ?? (i.kind === 'answered' || i.kind === 'fyi' ? 'done' : i.kind === 'permission' || i.approval ? 'approval'
+  : i.kind === 'decision' || i.kind === 'reply' || i.kind === 'todo' || i.reply || i.needs ? 'question' : 'alert');
+const OLD: Record<string, string> = { permission: 'approval', decision: 'question', reply: 'question', todo: 'question', fyi: 'done', answered: 'done' };
+
+/** When, as a list's right edge says it: today's time, this week's day, else the date. */
+function short(at?: string): string {
+  const t = at ? Date.parse(at) : NaN;
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t), now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (Math.abs(now.getTime() - t) < 6 * 86_400_000) return d.toLocaleDateString([], { weekday: 'short' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 export function InboxView({ items, folder, open: opened, chrome, github }: { items: InboxItem[]; folder: string; open?: string; chrome: Chrome; github?: string }) {
-  const { ctx } = useEnv();
-  // An item asked for by its address (/inbox?i=…: Home's banner, a push) opens at once.
-  const [open, setOpen] = useState<InboxItem | null>(() => items.find((i) => i.key === opened) ?? null);
-  // The switch is this page's own: every item came with it, so it filters here, at once.
-  const [show, setShow] = useState(folder === 'needs' ? 'needs' : KINDS.some(([k]) => k === folder) ? folder : 'all');
+  const env = useEnv();
+  const { ctx } = env;
   const agents = ctx.agents ?? {};
   const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
+  const [f, setF] = useState(() => (FOLDERS.some(([k]) => k === folder) ? folder : OLD[folder] ?? 'needs'));
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState<string | null>(() => (opened && items.some((i) => i.key === opened) ? opened : null));
+  // Answered here, before loom's new answer lands: Done at once, with what was said.
+  const [answered, setAnswered] = useState<Record<string, string>>({});
+  const [read, setRead] = useState<Set<string>>(() => new Set());
+  const all = useMemo(() => items.map((i): InboxItem => (answered[i.key] ? { ...i, attention: false, unread: false, box: 'done', outcome: answered[i.key] }
+    : read.has(i.key) ? { ...i, unread: false } : { ...i, box: boxOf(i) })), [items, answered, read]);
   const tasks = items.find((i) => i.source.id === 'tasks')?.source ?? { id: 'tasks', base: '/p/tasks/' };
-  const need = items.filter((i) => i.attention);
-  const rest = items.filter((i) => !i.attention);
-  // A row opens the item: its own page (a task's), else its sheet here.
-  const openItem = useOpenItem(setOpen);
-  const row = (i: InboxItem) => <InboxRow key={i.key} i={i} onOpen={openItem} />;
+  const inF = (id: string, i: InboxItem) => (id === 'needs' ? i.attention : id.startsWith('from:') ? i.agent === id.slice(5) : i.box === id);
+  const needle = q.trim().toLowerCase();
+  const shown = all.filter((i) => inF(f, i) && (!needle || `${i.text} ${i.meta ?? ''} ${i.needs?.why ?? ''} ${i.sourceLabel ?? ''} ${name(i.agent)}`.toLowerCase().includes(needle)));
+  // Who it's from: the agents with anything here, each with what of theirs is open.
+  const from = [...new Set(all.map((i) => i.agent).filter((a): a is string => !!a))];
+  const folders: SplitFolder[] = [
+    ...FOLDERS.map(([id, label, icon]) => ({ id, label, icon, count: id === 'done' ? undefined : all.filter((i) => inF(id, i)).length, loud: id === 'needs' })),
+    ...(from.length ? [{ heading: 'From' }, ...from.map((a) => ({ id: `from:${a}`, label: name(a), count: all.filter((i) => i.agent === a && i.attention).length }))] : []),
+  ];
+  const current = shown.find((i) => i.key === sel) ?? all.find((i) => i.key === sel) ?? null;
+  // The one picked went (answered elsewhere, or changed: loom's newer answer has it no more): said, not swapped for another.
+  const went = sel !== null && !current;
+  // Beside the list, the folder's first is shown until one is picked (only picking one reads it).
+  const reading = went ? null : current ?? shown[0] ?? null;
+  // Each pick asks loom again whether it's open, even of the item already shown (it may have been answered since).
+  const [picks, setPicks] = useState(0);
+  const pick = (i: InboxItem) => {
+    setSel(i.key); setPicks((x) => x + 1);
+    if (i.unread) { setRead((r) => new Set(r).add(i.key)); void markRead(i.key, ctx.csrf); }
+  };
+  const next = (key: string) => { const n = shown.findIndex((i) => i.key === key); return shown.filter((i) => i.key !== key && i.attention)[Math.max(0, n)] ?? null; };
+  const onAnswered = (i: InboxItem, said: string) => {
+    const nx = next(i.key);
+    setAnswered((a) => ({ ...a, [i.key]: said }));
+    setSel(nx?.key ?? null);
+  };
+  void chrome;
+  const label = FOLDERS.find(([k]) => k === f)?.[1] ?? (f.startsWith('from:') ? `From ${name(f.slice(5))}` : 'Inbox');
+  const search = (
+    <label className="loom-inbox__search"><Icon name="search" size="sm" />
+      <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the Inbox" aria-label="Search the Inbox" /></label>
+  );
   return (
-    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
-      <ToggleGroup type="single" className="flex-wrap self-start justify-self-start" aria-label="Show" value={show} onValueChange={(f) => { if (f) setShow(f); }}>
-        {[['needs', `Needs you${need.length ? ` · ${need.length}` : ''}`],
-          ...KINDS.map(([k, l]) => { const c = items.filter((i) => i.kind === k).length; return [k, `${l}${c ? ` · ${c}` : ''}`]; }), ['all', 'All']]
-          .map(([f, l]) => <ToggleGroupItem key={f} value={f}>{l}</ToggleGroupItem>)}</ToggleGroup>
-      {(show === 'needs' || show === 'all') && need.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Needs you · {need.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{need.map(row)}</ul></CardContent></Card>}
-      {need.length === 0 && show === 'needs' && <Nothing title="Nothing needs you" text={rest.length ? `${rest.length} answered and FYI in All.` : 'Asks from your agents land here.'} />}
-      {show === 'all' && rest.length > 0 && <Card className="min-w-0"><CardHeader><CardTitle>Lately</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{rest.map(row)}</ul></CardContent></Card>}
-      {KINDS.map(([k, l]) => {
-        if (show !== k) return null;
-        const these = items.filter((i) => i.kind === k);
-        return these.length ? <Card key={k} className="min-w-0"><CardHeader><CardTitle>{l} · {these.length}</CardTitle></CardHeader><CardContent><ul className="min-w-0 divide-y">{these.map(row)}</ul></CardContent></Card>
-          : <Nothing key={k} title={`No ${l.toLowerCase()}`} text="Nothing of this kind right now." />;
-      })}
-      <Drawer open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
-        {open && <ItemSheet i={open} who={name(open.agent)} mark={open.agent ? agents[open.agent] : undefined} tasks={tasks} github={github} onDone={() => setOpen(null)} />}
-      </Drawer>
-      {void chrome}
-    </div>
+    <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { setF(id); setSel(null); }} search={search}
+      listTitle={label} listMeta={shown.length || undefined}
+      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} current={reading?.key === i.key} onPick={pick} />)
+        : <div className="loom-inbox__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
+          text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} /></div>}
+      reader={went ? <p className="loom-inbox__live" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
+        : reading ? <Reader key={reading.key} i={reading} who={name(reading.agent)} mark={reading.agent ? agents[reading.agent] : undefined}
+        tasks={tasks} github={github} env={env} onAnswered={onAnswered} picks={picks} /> : null}
+      open={!!current || went} onBack={() => setSel(null)} backLabel={label} blank={f === 'needs' ? 'All caught up' : 'Nothing open'} />
   );
 }
 
-const cap = (s: string) => s.replace(/^./, (c) => c.toUpperCase());
-function when(at?: string): string | undefined {
-  const t = at ? Date.parse(at) : NaN;
-  if (!Number.isFinite(t)) return undefined;
-  const m = Math.round((Date.now() - t) / 60000);
-  const ago = m < 1 ? 'just now' : m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
-  return `${new Date(t).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${ago}`;
+/** A row: what it is (its folder's mark), its words, when; unread is bold with a dot. */
+function Row({ i, who, current, onPick }: { i: InboxItem; who: string; current: boolean; onPick: (i: InboxItem) => void }) {
+  const p = plain(i, who);
+  const box = boxOf(i);
+  const sub = tidy(p.why ?? i.outcome ?? i.meta ?? '') || [who, i.sourceLabel].filter(Boolean).join(' · ');
+  return (
+    <button type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}>
+      {i.unread && <span className="loom-inbox__dot" aria-label="Unread" />}
+      <span className="loom-inbox__kind" aria-hidden><Icon name={(i.kind === 'fyi' ? 'info' : BOX_ICON[box]) as never} size="sm" /></span>
+      <span className="loom-inbox__words"><span className="loom-inbox__title">{p.title}</span>{sub && <span className="loom-inbox__sub">{sub}</span>}</span>
+      <span className="loom-inbox__when loom-data">{short(i.at)}</span>
+    </button>
+  );
 }
 
-/** An item, opened (Jonathan, 2026-10-29: "we should be presenting enough here that open it is unnecessary"): who
- * asked and where, what for (its tasks and pull requests a tap away), and how it was answered, laid out; a way to its
- * own page only when it has one (an item whose page is its piece's front page has nowhere more to go). */
-export function ItemSheet({ i, who, mark, tasks, github, onDone }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; tasks: Source; github?: string; onDone: () => void }) {
+type Live = 'checking' | 'live' | 'gone' | 'unknown';
+
+/** Whether loom says, now, that this ask is still open. Never from a copy: a stamped one (x-loom-saved-at) can't tell. */
+async function stillOpen(key: string): Promise<Live> {
+  try {
+    const r = await fetch(`/inbox/open?k=${key}`, { headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
+    if (!r.ok || r.headers.has('x-loom-saved-at') || !(r.headers.get('content-type') ?? '').startsWith('application/json')) return 'unknown';
+    return ((await r.json()) as { open?: boolean }).open ? 'live' : 'gone';
+  } catch { return 'unknown'; }
+}
+
+const LIVE_SAYS: Record<Exclude<Live, 'live'>, string> = {
+  checking: 'Checking it’s still open…',
+  gone: 'This isn’t open any more: it was answered or changed since. Nothing was sent.',
+  unknown: 'Can’t check with loom right now, so its buttons wait. Try again in a moment.',
+};
+
+/** The open item, whole: who and what, why, what happens either way, the answer, where it lives and its trail. */
+function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; tasks: Source; github?: string; env: Env;
+  onAnswered: (i: InboxItem, said: string) => void; picks: number }) {
   const p = plain(i, who);
   const from = cap(i.sourceLabel ?? i.source.id);
-  const facts: [string, React.ReactNode][] = [];
-  const asked = when(i.at);
-  // Only an ask is asked: news is when it happened, an alert or a task since when it has stood.
-  if (asked) facts.push([i.kind === 'fyi' ? 'When' : i.kind === 'alert' || i.kind === 'todo' ? 'Since' : 'Asked', <span className="loom-data">{asked}</span>]);
-  if (p.answer) facts.push(['Answer', [p.answer.verdict, p.answer.by && `by ${p.answer.by}`, p.answer.for && `for ${p.answer.for}`].filter(Boolean).join(' ')]);
-  else if (i.outcome) facts.push(['Answer', i.outcome]);
-  const left = i.expires ? when(i.expires) : undefined;
-  if (left && i.attention) facts.push(['Until', <span className="loom-data">{left.split(' · ')[0]}</span>]);
-  // A Needs you laid out (its ask is the title): why, what happens either way, the approval it waits on, links, details.
+  const acts = i.attention && (!!i.actions?.length || !!i.reply || !!i.approval);
+  const [live, setLive] = useState<Live>(acts ? 'checking' : 'live');
+  const check = async () => { const l = await stillOpen(i.key); setLive(l); return l === 'live'; };
+  useEffect(() => { if (!acts) return; setLive('checking'); void check(); }, [i.key, picks]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Every button here goes through this: asked again right before it's sent; answered, it's Done here at once.
+  const lastSaid = useRef('Answered');
+  const guard = (e: Env): Env => ({ ...e,
+    send: async (a, fields) => {
+      if (!(await check())) return false;
+      const ok = await e.send(a, fields);
+      if (ok) onAnswered(i, lastSaid.current);
+      return ok;
+    },
+    withSource: (s) => guard(e.withSource(s)) });
+  const guarded = useMemo(() => guard(env), [env, i.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const n = i.needs;
   const why = n ? n.why : tidy(p.why ?? (i.kind !== 'answered' ? i.meta : undefined) ?? '') || undefined;
-  const own = i.page !== undefined && i.page !== '';
-  // What it names that opens (its pull requests, tasks, conversations), each a link of its own as well as in its words;
-  // its own conversation last, when the words don't name it.
   const conv = /^loom:conversation\/(cv-[0-9a-f]{12})$/.exec(i.page ?? '')?.[1];
   const refs = refsOf(`${i.text} ${i.meta ?? ''} ${n?.refs.join(' ') ?? ''}`, github);
   if (conv && !refs.some((r) => r.t === 'conv' && r.id === conv)) refs.push({ t: 'conv', id: conv });
-  const task = refs.find((r) => r.t === 'task')?.id;
-  const linked = !!i.href || (i.kind === 'alert' && refs.length > 0);
-  const words = (s: string) => bits(s, github).map((b, n) => <Ref key={n} b={b} tasks={tasks} />);
-  // Answering it (a Needs you): Yes and No when it's a yes/no question (and no Allow and Deny of its own), and words.
-  const ans = useAnswer(i.reply && i.attention ? i : undefined, onDone);
+  const own = i.page !== undefined && i.page !== '' && !conv;
+  const words = (s: string) => bits(s, github).map((b, k) => <Ref key={k} b={b} tasks={tasks} />);
+  const ans = useAnswer(i.reply && i.attention ? i : undefined, () => undefined, guarded);
   const yesNo = n?.answers === 'yes-no' && !(i.approval && i.attention);
+  const ok = live === 'live';
+  const trail = trailOf(i, who, p.answer ? [p.answer.verdict, p.answer.by && `by ${p.answer.by}`].filter(Boolean).join(' ') : i.outcome);
   return (
-    <DrawerContent className="lg:mx-auto lg:max-w-xl">
-      <DrawerHeader className="flex-col items-stretch gap-3">
-        {/* The sheet's title bar (looks.css). What it is and who asks are the row's below too, so a screen
-            reader hears those once; its task is said here, as an item's task may be nowhere else on the sheet. */}
-        <div className="loom-sheet-bar"><b aria-hidden>{p.ended ?? KIND[i.kind]}</b><span aria-hidden>{who}</span>{task && <span className="loom-data">{task}</span>}</div>
-        <div className="flex min-w-0 items-center gap-3">
-          {mark ? <Mark a={mark} size={36} /> : <LoomMark size={36} />}
-          <DrawerDescription className="min-w-0 truncate text-sm">{[who, from].filter(Boolean).join(' · ')}</DrawerDescription>
-          <Badge variant={i.attention ? 'pending' : 'default'} className="ml-auto shrink-0">{p.ended ?? KIND[i.kind]}</Badge>
-        </div>
-        <DrawerTitle className="mb-0 break-words text-left leading-snug">{p.head === i.text ? words(p.head) : p.head}</DrawerTitle>
-        {p.subject && <code className="self-start break-all rounded-lg bg-[color:var(--v-beige)] px-2 py-1 text-sm">{p.subject}</code>}
-      </DrawerHeader>
-      <div className="grid gap-5 py-2">
-        {why && (
-          <section className="grid gap-1.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">{!n && (i.kind === 'fyi' || i.kind === 'alert' || i.kind === 'todo') ? 'Details' : 'Why'}</h3>
-            <p className="break-words leading-relaxed">{words(why)}</p>
-          </section>
-        )}
-        {(n?.if_yes || n?.if_no) && (
-          <dl className="grid gap-3 sm:grid-cols-2">
-            {([[i.kind === 'permission' ? 'If you allow' : 'If yes', n.if_yes], [i.kind === 'permission' ? 'If you deny' : 'If no', n.if_no]] as const).filter(([, v]) => v).map(([k, v]) => (
-              <div key={k} className="grid gap-1"><dt className="text-xs font-semibold uppercase tracking-wide opacity-60">{k}</dt><dd className="break-words">{words(v!)}</dd></div>))}
-          </dl>
-        )}
-        {i.approval && i.attention && <ApprovalBox a={i.approval} size="default" onDone={onDone} />}
-        {linked && (
-          <section className="grid gap-2" aria-label="Links">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Links</h3>
-            <div className="flex flex-wrap gap-2">
-              {i.href && <Button asChild size="sm"><Link href={i.href}>Open {shortHref(i.href)}</Link></Button>}
-              {refs.filter((r) => !(r.t === 'pr' && i.href && shortHref(i.href) === `${r.repo.split('/')[1]}#${r.n}` && i.href.includes(`/${r.repo}/`))).map((r, n) => (
-                <Button key={n} asChild size="sm" variant={r.t === 'conv' ? 'ghost' : 'outline'}>
-                  {r.t === 'pr' ? <Link href={githubUrl(r.repo, r.n)}>{r.repo}#{r.n}</Link>
-                    : r.t === 'task' ? <As source={tasks}><Link page={`task/${r.id}`}>Task <span className="loom-data">{r.id}</span></Link></As>
-                    : <As source={{ id: 'loom', base: '/' }}><Link page={`loom:conversation/${(r as { id: string }).id}`}>The conversation</Link></As>}
-                </Button>))}
+    <article className="loom-inbox__read" data-box={boxOf(i)} aria-labelledby={`ib-${i.key}`}>
+      <header className="loom-inbox__from">
+        {mark ? <Mark a={mark} size={28} /> : <LoomMark size={28} />}
+        <span><b>{who || from}</b> · {p.ended ?? KIND[i.kind]}</span>
+        <span className="loom-data loom-inbox__at">{short(i.at)}</span>
+      </header>
+      <h2 id={`ib-${i.key}`} className="loom-inbox__head">{p.head === i.text ? words(p.head) : p.head}</h2>
+      {p.subject && <code className="loom-inbox__subject">{p.subject}</code>}
+      {why && <p className="loom-inbox__why">{words(why)}</p>}
+      {(n?.if_yes || n?.if_no) && (
+        <dl className="loom-inbox__ifs">
+          {([[i.kind === 'permission' ? 'If you allow' : 'If yes', n.if_yes], [i.kind === 'permission' ? 'If you deny' : 'If no', n.if_no]] as const).filter(([, v]) => v).map(([k, v]) => (
+            <div key={k}><dt>{k}</dt><dd>{words(v!)}</dd></div>))}
+        </dl>
+      )}
+      {acts && !ok && <p className="loom-inbox__live" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<Live, 'live'>]}
+        {live === 'unknown' && <Button size="sm" variant="outline" onClick={() => { setLive('checking'); void check(); }}>Check again</Button>}</p>}
+      {/* The buttons only once loom says it's open: a stale ask never shows live ones (t-1925). */}
+      {acts && ok && (
+        <EnvContext.Provider value={guarded}>
+          <div className="loom-inbox__answer">
+            {i.approval && <ApprovalBox a={i.approval} size="default" />}
+            {ans && <AnswerBox a={{ ...ans, say: async (v) => { lastSaid.current = v === 'yes' ? 'You said yes' : 'You said no'; await ans.say(v); },
+              reply: async () => { lastSaid.current = 'You replied'; await ans.reply(); } }} yesNo={yesNo} />}
+            {!!i.actions?.length && (
+              <As source={i.source}>
+                <div className="loom-inbox__buttons">
+                  {guardFooter(i.actions, !!ans?.drafted, !!ans?.busy).map((fb) => fb.send
+                    ? <Button key={fb.b.action} disabled={fb.disabled} onClick={() => { lastSaid.current = 'You replied'; void ans?.reply(); }}>{fb.label}</Button>
+                    : <span key={fb.b.action + fb.b.label} onClickCapture={() => { lastSaid.current = fb.b.label === 'Done' ? 'Done' : fb.b.label; }}>
+                      <ActButton b={fb.b} size="default" disabled={fb.disabled} /></span>)}
+                </div>
+              </As>
+            )}
+          </div>
+        </EnvContext.Provider>
+      )}
+      <Fine text={i.fine} className="loom-inbox__fine" />
+      <div className="loom-inbox__meta">
+        {(own || i.href || refs.length > 0) && (
+          <section aria-label="Where it lives">
+            <h3>Where it lives</h3>
+            <div className="loom-inbox__links">
+              {own && <As source={i.source}><Link page={i.page} className="loom-inbox__chip">{i.label ?? `Open in ${from}`}</Link></As>}
+              {i.href && <Link href={i.href} className="loom-inbox__chip">{shortHref(i.href)} <Icon name="external-link" size="sm" /></Link>}
+              {refs.filter((r) => !(r.t === 'pr' && i.href && i.href.includes(`/${r.repo}/`) && i.href.endsWith(`/${r.n}`))).map((r, k) => (
+                r.t === 'pr' ? <Link key={k} href={githubUrl(r.repo, r.n)} className="loom-inbox__chip">{r.repo}#{r.n}</Link>
+                  : r.t === 'task' ? <As key={k} source={tasks}><Link page={`task/${r.id}`} className="loom-inbox__chip">Task {r.id}</Link></As>
+                  : r.t === 'conv' ? <As key={k} source={{ id: 'loom', base: '/' }}><Link page={`loom:conversation/${r.id}`} className="loom-inbox__chip">The conversation</Link></As> : null))}
             </div>
           </section>
         )}
-        {ans && <AnswerBox a={ans} yesNo={yesNo} />}
-        <Fine text={i.fine} className="break-words text-sm opacity-70" />
-        {n && (n.details || n.refs.length > 0) && (
-          <section className="grid gap-1.5">
-            <h3 className="text-xs font-semibold uppercase tracking-wide opacity-60">Details</h3>
-            <p className="break-words text-sm leading-relaxed opacity-80">{words([n.details, ...n.refs].join(' · '))}</p>
+        {trail.length > 0 && (
+          <section aria-label="Trail">
+            <h3>Trail</h3>
+            <ol className="loom-inbox__trail">{trail.map((t, k) => <li key={k} data-tone={t.tone}><span className="loom-data">{t.when}</span> {t.text}</li>)}</ol>
           </section>
         )}
-        {facts.length > 0 && (
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm">
-            {facts.map(([k, v]) => [<dt key={`${k}k`} className="opacity-60">{k}</dt>, <dd key={`${k}v`} className="min-w-0">{v}</dd>])}
-          </dl>
-        )}
       </div>
-      <As source={i.source}>
-        <DrawerFooter className="flex-col-reverse items-stretch sm:flex-row sm:items-center">
-          <DrawerClose asChild><Button variant="outline">Close</Button></DrawerClose>
-          {own && !i.actions?.length && !conv && <Button asChild variant="outline"><Link page={i.page}>{i.label ?? `Open in ${from}`}</Link></Button>}
-          {/* Words in the box: Done sends them, rather than answering without them (Jonathan, 2026-11-04). */}
-          {guardFooter(i.actions ?? [], !!ans?.drafted, !!ans?.busy).map((f) => f.send
-            ? <Button key={f.b.action} disabled={f.disabled} onClick={() => void ans?.reply()}>{f.label}</Button>
-            : <ActButton key={f.b.action + f.b.label} b={f.b} size="default" onDone={onDone} disabled={f.disabled} />)}
-        </DrawerFooter>
-      </As>
-    </DrawerContent>
+      {n && (n.details || n.refs.length > 0) && <p className="loom-inbox__details">{words([n.details, ...n.refs].join(' · '))}</p>}
+    </article>
   );
 }
+
+/** What happened to an item, oldest first: asked, seen, answered, and until when it waits. */
+function trailOf(i: InboxItem, who: string, answer?: string): Array<{ when: string; text: string; tone?: string; t: number }> {
+  const out: Array<{ when: string; text: string; tone?: string; t: number }> = [];
+  const at = (s?: string) => (s ? Date.parse(s) : NaN);
+  const stamp = (t: number) => `${short(new Date(t).toISOString())}${new Date(t).toDateString() === new Date().toDateString() ? '' : ` ${new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`}`;
+  const add = (t: number, text: string, tone?: string) => { if (Number.isFinite(t)) out.push({ when: stamp(t), text, tone, t }); };
+  const by = who || i.sourceLabel || 'loom';
+  add(at(i.at), i.kind === 'fyi' ? `${by}: news` : boxOf(i) === 'alert' ? `${by} raised this` : i.kind === 'answered' ? `${by} asked` : `${by} asked`, 'ask');
+  add(at(i.seen), 'You opened it', 'seen');
+  if (!i.attention && answer) add(i.kind === 'answered' ? at(i.at) : Date.now(), answer, 'done');
+  if (i.attention && i.expires) add(at(i.expires), 'It expires', 'until');
+  return out.sort((x, y) => x.t - y.t);
+}
+
+const cap = (s: string) => s.replace(/^./, (c) => c.toUpperCase());
 
 /** One bit of an item's words: a task or a pull request linked, a conversation opened, a file as code. */
 function Ref({ b, tasks }: { b: Bit; tasks: Source }) {
@@ -192,8 +273,7 @@ type Answer = { draft: string; setDraft: (s: string) => void; drafted: boolean; 
 /** A Needs you's answer, as its sheet holds it: the words in its box (kept on this device until they're sent, so
  * closing the sheet loses nothing), and sending them, or a Yes or a No. One at a time: while one is on its way, the
  * sheet's other answers wait (on 2026-11-04 a Done pressed while a reply was sending answered the ask first). */
-function useAnswer(i: InboxItem | undefined, onDone: () => void): Answer | undefined {
-  const env = useEnv();
+function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env): Answer | undefined {
   const key = i?.key ?? '';
   const [draft, setDraft] = useState(() => (key ? draftOf(key) : ''));
   const [busy, setBusy] = useState(false);

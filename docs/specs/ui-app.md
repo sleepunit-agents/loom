@@ -104,6 +104,32 @@ asked to say. The rules that the shootout settled:
 A block a version of the app doesn't know is drawn as plain text with a note, never
 dropped, so an old app and a new piece can't lose data between them.
 
+### Master/detail (t-1925)
+
+An app whose page is "pick one of many, then read it" is drawn as a mail client (`web/src/split.tsx`, `Split`): folders,
+a list, and the open item beside it. The Inbox uses it (Jonathan's approved mock, 2026-11-06), and Knowledge next. It is
+one generic piece of the app, not an app's own: other apps use it the same way.
+
+- **Its own width, not the screen's.** A `ResizeObserver` on its box picks the panes: **three** from 900 px (folders |
+  list | reader, the reader the widest), **two** from 640 px (the folders as a row of chips over the list | reader), and
+  **one** under that (chips and the list; the open item slides over the list, with a back button named for the folder).
+  A tile gets the same rule at any size, and a phone (390) is one pane.
+- **In a tile it fills the tile** edge to edge, each pane scrolling on its own; on a phone's page the list scrolls with the
+  page and the reader replaces it.
+- **Picking an item never reloads.** It's the app's own state; the list stays where it was.
+- **Keys:** ↑ and ↓ move through the rows (beside the reader, the row moved to opens); Escape in a one-pane reader goes
+  back, and focus returns to the row it came from. Focus is always visible (the app's tint). Reduced motion (`data-motion`)
+  drops the slide; higher contrast (`data-contrast`) draws the lines and the open row's edge in the stronger edge colour.
+- **Folders** are `{id, label, count?, icon?, loud?}` or a `{heading}` between groups ("From", "Topics"); `loud` puts the
+  count in a filled pill (Needs you).
+
+**The Inbox's asks are live only when loom says so.** The list may be a copy kept on the device (the last answer of the
+page, `page.ts`; the service worker's when offline). So the reader asks `GET /inbox/open?k=<key>` (`{open}`, `no-store`)
+when an item is picked and again right before any of its buttons is sent; until it answers "open", the buttons aren't
+drawn ("Checking it's still open…"), and an answer stamped `x-loom-saved-at` (a cached copy) counts as "can't tell".
+An item answered elsewhere says so and sends nothing. Any cache added in front of the app's fetches must pass
+`/inbox/open` through untouched.
+
 ### Motion
 
 000h's own motion, and its rules: reduced motion respected everywhere (things

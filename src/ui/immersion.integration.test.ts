@@ -227,7 +227,8 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
       await open(p, '/inbox');
       await p.getByRole('button', { name: /recycle bin/ }).first().tap();
       await p.locator('#loom-reply').waitFor();
-      const dialog = '[role="dialog"]';
+      // The open item: the Inbox's reader (t-1925; it was a sheet).
+      const dialog = '.loom-split__reader';
       const words = `${dialog} :is(p, h2, span):text-matches("Deleting a big show")`;
       expect((await style(p, words)).select).not.toBe('none');
       await standIn(p);
@@ -282,7 +283,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
     await open(p, '/inbox');
     await p.getByRole('button', { name: /recycle bin/ }).first().tap();
     await p.locator('#loom-reply').waitFor();
-    expect(await menu('[role="dialog"] :is(p, span):text-matches("Deleting a big show")', 'touch')).toBe(false);
+    expect(await menu('.loom-split__reader :is(p, span):text-matches("Deleting a big show")', 'touch')).toBe(false);
     expect(await menu('#loom-reply', 'touch')).toBe(false);
     await p.context().close();
   }, 60_000);

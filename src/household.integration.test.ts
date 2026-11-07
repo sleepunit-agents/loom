@@ -862,7 +862,8 @@ describe('the household page', () => {
     clearPieceCache();
     try {
       const cookie = await login();
-      const inFolder = (d: Data, f: string) => (d.items as Data[]).filter((it) => (f === 'needs' ? it.attention : it.kind === f));
+      // The folders (t-1925): Needs you, then each open item by what it wants (box), and Done.
+      const inFolder = (d: Data, f: string) => (d.items as Data[]).filter((it) => (f === 'needs' ? it.attention : it.box === f));
       const unread = (d: Data) => (d.items as Data[]).filter((it) => it.unread).length;
       const item = (d: Data, text: string) => (d.items as Data[]).find((it) => it.text.startsWith(text));
       const needs = await data(cookie, '/inbox');
@@ -892,27 +893,34 @@ describe('the household page', () => {
       expect(item(reply, 'Tonight or tomorrow')).toMatchObject({ page: 'q/1', source: { id: 'gate', base: '/p/gate/' } });
       // An item asked for in a folder it isn't in: the folder's own first item is drawn, and no page from the other.
       const elsewhere = await data(cookie, `/inbox?f=fyi&i=${keyOf('Tonight or tomorrow')}`);
-      expect(elsewhere.folder).toBe('fyi');
-      expect(inFolder(elsewhere, 'fyi').map((it) => it.text)).toContain('one joined loom');
+      // An old folder's address lands on its new folder: FYI is Done.
+      expect(elsewhere.folder).toBe('done');
+      expect(inFolder(elsewhere, 'done').map((it) => it.text)).toContain('one joined loom');
       expect(elsewhere.inline).toBeUndefined();
       // An item with buttons of its own (the permission) keeps them, and draws no page.
       expect(push.inline).toBeUndefined();
       expect(unread(reply)).toBe(0);
       const decisions = await data(cookie, '/inbox?f=decision');
-      expect(inFolder(decisions, 'decision').map((it) => it.text)).toContain('Keep this memory?');
+      expect(decisions.folder).toBe('question');
+      // A decision nothing waits on is filed with the questions all the same (not counted in Needs you).
+      expect(inFolder(decisions, 'question').map((it) => it.text)).toContain('Keep this memory?');
+      expect(inFolder(decisions, 'question').map((it) => it.text)).toEqual(expect.arrayContaining(['Tonight or tomorrow?']));
       expect(item(decisions, 'Discord bridge is dark')).toMatchObject({ kind: 'alert' });
       expect(item(decisions, 'Renew the cert?')).toMatchObject({ kind: 'decision' });
       expect(item(decisions, 'Set up the rig')).toMatchObject({ kind: 'todo' });
       const alerts = await data(cookie, '/inbox?f=alert');
       expect(alerts.folder).toBe('alert');
       expect(inFolder(alerts, 'alert').map((it) => it.text)).toEqual(['Discord bridge is dark since 9:03 AM']);
-      expect((await data(cookie, '/inbox?f=todo')).folder).toBe('todo');
-      expect(inFolder(decisions, 'decision').some((it) => it.unread)).toBe(false);
-      const fyi = await data(cookie, '/inbox?f=fyi');
-      expect(inFolder(fyi, 'fyi').map((it) => it.text)).toContain('one joined loom');
-      expect(inFolder(fyi, 'fyi').some((it) => it.unread)).toBe(false);
+      expect((await data(cookie, '/inbox?f=todo')).folder).toBe('question');
+      expect(item(needs, 'Push the fix')).toMatchObject({ box: 'approval' });
+      expect(inFolder(decisions, 'question').filter((it) => !it.attention).some((it) => it.unread)).toBe(false);
+      const fyi = await data(cookie, '/inbox?f=done');
+      expect(fyi.folder).toBe('done');
+      expect(inFolder(fyi, 'done').map((it) => it.text)).toContain('one joined loom');
+      expect(inFolder(fyi, 'done').some((it) => it.unread)).toBe(false);
       const answered = await data(cookie, '/inbox?f=answered');
-      expect(inFolder(answered, 'answered')).toContainEqual(expect.objectContaining({ text: 'A box asks to join: evil', outcome: 'Blocked.' }));
+      expect(answered.folder).toBe('done');
+      expect(inFolder(answered, 'done')).toContainEqual(expect.objectContaining({ text: 'A box asks to join: evil', outcome: 'Blocked.' }));
       // Home says how much, and links to the Inbox, instead of the cards.
       const home = await data(cookie, '/');
       expect(home.home.needs).toBe(2);

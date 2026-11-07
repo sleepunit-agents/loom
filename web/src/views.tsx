@@ -228,7 +228,9 @@ export function HouseHomeView({ home }: { home: { headline: string; needs: numbe
 
 // ---- an Inbox item's row (the Inbox's, and Home's banner) ---------------------------------------
 
-export type InboxItem = { fine?: string; key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered'; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
+export type InboxItem = { fine?: string; key: string; kind: 'permission' | 'decision' | 'reply' | 'alert' | 'todo' | 'fyi' | 'answered';
+  /** Its Inbox folder (src/ui/render.ts inboxBox), and when this reader opened it. */
+  box?: 'question' | 'approval' | 'alert' | 'memory' | 'done'; seen?: string; attention: boolean; unread: boolean; text: string; meta?: string; at?: string; expires?: string; agent?: string; source: Source; sourceLabel?: string; page?: string; label?: string; actions?: Btn[]; outcome?: string;
   /** The exact thing it's about, outside loom (a pull request's URL); and a box to answer its agent in words (core's Needs you). */
   href?: string; reply?: { action: string; label: string; fields: Record<string, string> };
   /** A Needs you laid out (its text is the ask), and the approval it waits on. */

@@ -1,0 +1,55 @@
+/* The Inbox (inbox.tsx; t-1925): a mail client's rows and its reading pane, on split.tsx's panes. Loaded with its chunk.
+   A folder's colour: questions amber, approvals violet, alerts red, memory cyan, done quiet. */
+.loom-inbox [data-box="question"] { --ib: var(--v-yellow); }
+.loom-inbox [data-box="approval"] { --ib: var(--v-olive); }
+.loom-inbox [data-box="alert"] { --ib: var(--v-danger); }
+.loom-inbox [data-box="memory"] { --ib: var(--v-blue); }
+.loom-inbox [data-box="done"] { --ib: var(--v-text-3); }
+
+.loom-inbox__search { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--v-edge); color: var(--v-text-3); }
+.loom-inbox__search:focus-within { border-color: var(--sp-tint); color: var(--v-text-2); }
+.loom-inbox__search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--v-text); font-size: 14px; }
+
+.loom-inbox__row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 14px 12px 18px; }
+.loom-inbox__dot { position: absolute; left: 6px; top: 22px; width: 6px; height: 6px; border-radius: 99px; background: var(--v-blue); box-shadow: 0 0 6px var(--v-blue); }
+.loom-inbox__kind { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--ib); border: 1px solid color-mix(in srgb, var(--ib) 60%, transparent);
+  background: color-mix(in srgb, var(--ib) 10%, transparent); }
+.loom-inbox__words { display: grid; gap: 2px; min-width: 0; }
+.loom-inbox__title { font-size: 14.5px; font-weight: 500; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.loom-inbox__row[data-unread] .loom-inbox__title { font-weight: 650; }
+.loom-inbox__sub { font-size: 13px; color: var(--v-text-2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.loom-inbox__when { font-size: 11px; color: var(--v-text-3); padding-top: 2px; white-space: nowrap; }
+.loom-inbox__empty { padding: 16px 12px; }
+
+.loom-inbox__read { display: grid; gap: 16px; max-width: 760px; }
+.loom-inbox__from { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--v-text-2); }
+.loom-inbox__from b { color: var(--v-text); font-weight: 600; }
+.loom-inbox__at { margin-left: auto; font-size: 11px; color: var(--v-text-3); }
+.loom-inbox__head { font-size: 24px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.loom-split[data-mode="one"] .loom-inbox__head { font-size: 20px; }
+.loom-inbox__subject { justify-self: start; padding: 2px 8px; border-radius: 8px; background: var(--v-beige); font-size: 13px; overflow-wrap: anywhere; }
+.loom-inbox__why { font-size: 15px; line-height: 1.6; color: var(--v-text-2); overflow-wrap: anywhere; }
+.loom-inbox__ifs { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.loom-inbox__ifs > div { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--v-border); }
+.loom-inbox__ifs dt, .loom-inbox__meta h3 { font-family: var(--loom-font-data); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--v-text-3); }
+.loom-inbox__ifs dd { overflow-wrap: anywhere; }
+.loom-inbox__live { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; font-size: 14px; color: var(--v-text-2); border: 1px dashed var(--v-edge); }
+.loom-inbox__live[data-live="gone"] { border-style: solid; border-color: color-mix(in srgb, var(--v-yellow) 60%, transparent); }
+.loom-inbox__answer { display: grid; gap: 14px; }
+.loom-inbox__buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.loom-inbox__fine { font-size: 12.5px; color: var(--v-text-3); overflow-wrap: anywhere; }
+.loom-inbox__meta { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: start; padding-top: 4px; }
+.loom-inbox__meta h3 { margin-bottom: 8px; }
+.loom-inbox__links { display: flex; flex-wrap: wrap; gap: 8px; }
+.loom-inbox__chip { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 10px; border-radius: 8px; font-family: var(--loom-font-data); font-size: 12.5px;
+  color: var(--v-blue); border: 1px solid color-mix(in srgb, var(--v-blue) 55%, transparent); text-decoration: none; overflow-wrap: anywhere; }
+.loom-inbox__chip:hover, .loom-inbox__chip:focus-visible { background: color-mix(in srgb, var(--v-blue) 10%, transparent); outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v-blue) 40%, transparent); }
+.loom-inbox__trail { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 1px solid var(--v-border); display: grid; gap: 10px; font-size: 13.5px; color: var(--v-text-2); }
+.loom-inbox__trail li { position: relative; }
+.loom-inbox__trail li::before { content: ""; position: absolute; left: -18px; top: 6px; width: 7px; height: 7px; border-radius: 99px; background: var(--v-text-3); }
+.loom-inbox__trail li[data-tone="ask"]::before { background: var(--v-pink); }
+.loom-inbox__trail li[data-tone="seen"]::before { background: var(--v-yellow); }
+.loom-inbox__trail li[data-tone="done"]::before { background: var(--v-blue); }
+.loom-inbox__trail .loom-data { font-size: 11.5px; color: var(--v-text-3); }
+.loom-inbox__details { font-size: 13px; color: var(--v-text-3); overflow-wrap: anywhere; }
+@media (prefers-contrast: more) { .loom-inbox__sub, .loom-inbox__why { color: var(--v-text); } }
