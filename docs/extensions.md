@@ -437,6 +437,11 @@ that ignores it keeps working. Outside a household there's no `caller`.
     Home's card lists them, simply ("are they up, are they working, what's happening, but that's it"); the
     details are the piece's own page. A reading marked `bad` or `warn` is the card's trouble line; the rest
     stay off the card.
+    A row may name the `conversation` (`cv-…`) a delivered body is in: loom then says which one and links it,
+    for whoever may see it. A Comms thread's row is shown only to the thread's member, as the thread's title and
+    a link to it (comms.md, rule 4); the runtime never puts a thread's title in its manifest. A piece whose rows
+    move tells loom at once with `POST /api/loom/pieces/changed` (the runtime's, today), so a card goes working,
+    and back to quiet, within seconds rather than at loom's next look at the pieces.
 
   ```json
   "agents": { "art": { "state": "working", "reason": "house h-52 on one",

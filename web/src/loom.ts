@@ -73,7 +73,9 @@ export interface Chrome { agent: string; nav: { label: string; href: string; cur
 export interface AgentHead { label: string; bg: string; fg: string; sub?: string; tabs: { label: string; href: string; current: boolean }[];
   id?: string; bio?: string; today?: number; waiting?: number; active?: string;
   /** Its window's (t-1925 D): the household's description (never its creed), may this viewer edit it, asked to write one, working now. */
-  about?: string; edit?: boolean; asked?: boolean; working?: boolean }
+  about?: string; edit?: boolean; asked?: boolean; working?: boolean;
+  /** What it is on, while working (t-1945), and its thread where it has one. */
+  on?: { text: string; href?: string } }
 
 export type View =
   | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string; /** The Projects index's cards (web/src/projects.tsx). */ projects?: ProjectCards }

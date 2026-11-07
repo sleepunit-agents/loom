@@ -261,7 +261,7 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
   describe('criterion 7: reading the audit log', () => {
     it('the routes: review takes, finishes, scores and finds; runtime writes audit and reads scorecards', () => {
       expect(ROLE_ROUTES.review).toEqual(['audit/take', 'audit/done', 'scores', 'findings']);
-      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config', 'people/ensure', 'people/merge', 'comms/adapter', 'comms/activity']);
+      expect(ROLE_ROUTES.runtime).toEqual(['review/token', 'conversations/turn', 'deliver', 'audit', 'scorecards', 'review/config', 'people/ensure', 'people/merge', 'comms/adapter', 'comms/activity', 'pieces/changed']);
       expect(AGENT_ROUTES).toEqual(['conversations/turn', 'audit']);
       expect(GET_ROUTES).toEqual(['scorecards', 'review/config']);
     });

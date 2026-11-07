@@ -68,7 +68,7 @@ import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
-import { owns, threadPath, threadsOf } from '../comms.js';
+import { owns, threadOfAgentConversation, threadPath, threadsOf } from '../comms.js';
 import { pieceAct, pieceManifests, piecePage, type ApiCaller, type PieceInfo } from './pieces.js';
 import { age, type Dashboard } from './render.js';
 import { agentSource, agoText, CORE, folderOf, INBOX_FOLDERS, inboxBox, inFolder, pageHref, pieceSource, type AgentCard, type HouseHome, type InboxFolder, type InboxItem, renderLogin, renderLoginLink, type AgentHead, type Chrome, type Found, type Shell, type HomeAsk, type HomeTile, type Source } from './render.js';
@@ -145,6 +145,23 @@ function scopedPathOk(pathname: string): boolean {
  * each manifest cut to their agents' asks, notices, answered items and readings. An item that
  * names no agent is the household's, and a tile is a household figure, so both go.
  */
+/**
+ * What each agent has going, as this viewer may see it (t-1945). A row naming a conversation (the runtime's: a body
+ * delivered there, mid-turn) that is a Comms thread is its member's alone (docs/specs/comms.md, rule 4): for them it
+ * is the thread's title and a link to it; anyone else doesn't see it at all. Any other conversation (a bridge's chat,
+ * a wake) stays as its piece says it. The runtime is the one record of a body at work; this only says which thread.
+ */
+export function atWorkFor(pieces: PieceInfo[], home: string | undefined, member: string | undefined): PieceInfo[] {
+  if (!home || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation)))) return pieces;
+  const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(home, agent, cv); } catch { return undefined; } };
+  return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, !r.doing ? r : {
+    ...r, doing: r.doing.flatMap((d) => {
+      const t = d.conversation ? threadOf(a, d.conversation) : undefined;
+      if (!t) return [d];
+      return member && t.member === member ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
+    }) }])) } });
+}
+
 function forOwner(pieces: PieceInfo[], own: string[] | undefined): PieceInfo[] {
   if (!own) return pieces;
   const mine = <T extends { agent?: string }>(xs: T[] | undefined) => (xs ?? []).filter((x) => x.agent !== undefined && own.includes(x.agent));
@@ -1027,6 +1044,12 @@ function workingOf(pieces: PieceInfo[], agent: string): { working?: true } {
   return agentStateOf(pieces, agent) === 'working' ? { working: true } : {};
 }
 
+/** The one thing an agent is on, newest first, as its card's line says it (agentCards): for its window's pill. */
+function onOf(pieces: PieceInfo[], agent: string): { on?: { text: string; href?: string } } {
+  const d = pieces.flatMap((p) => p.manifest.agents?.[agent]?.doing ?? []).sort((x, y) => (Date.parse(y.since ?? '') || 0) - (Date.parse(x.since ?? '') || 0))[0];
+  return d ? { on: { text: d.text, ...(d.href ? { href: d.href } : {}) } } : {};
+}
+
 function chrome(req: IncomingMessage, opts: UiOptions, pieces: PieceInfo[], skipped: string[], current: string, csrf: string, flash?: Flash): Chrome {
   const tabs = pieces.filter(householdTab)
     .map((p) => ({ label: p.manifest.tab?.label ?? p.piece, href: `/p/${p.piece}`, current: current === `p/${p.piece}`, piece: true }))
@@ -1351,7 +1374,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     };
     const commsChrome = async (): Promise<Chrome & { prefs?: unknown }> => {
       const { pieces: all, skipped } = await pieceManifests(scopedEnv);
-      const ch = chrome(req, opts, forOwner(all, opts.ownerScope), skipped.map((x) => x.piece), 'comms', csrf);
+      const ch = chrome(req, opts, atWorkFor(forOwner(all, opts.ownerScope), full.home, who.member?.person), skipped.map((x) => x.piece), 'comms', csrf);
       return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
     };
     await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
@@ -1637,7 +1660,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (req.method === 'GET' && !asJson) return app();
   const flash = takeFlash(url.searchParams.get('_flash'));
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
-  const pieces = forOwner(allPieces, opts.ownerScope);
+  // Each agent's card and window, and the bar's agents at work, as this viewer may see them (atWorkFor).
+  const pieces = atWorkFor(forOwner(allPieces, opts.ownerScope), full?.home, who?.member?.person);
   const skippedNames = skipped.map((s) => s.piece);
   const view = (kind: string, data: Record<string, unknown>, status = 200) => {
     if (!asJson) return app(status);
@@ -1900,7 +1924,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const windowFacts = () => {
         const about = aboutOf(hh, agent);
         return { ...(about ? { about } : {}), ...(!opts.ownerScope ? { edit: true } : {}), ...(aboutAskOf(hh, agent) ? { asked: true } : {}),
-          ...(workingOf(pieces, agent).working ? { working: true } : {}), active: lastActive(agentDir(hh, agent)) };
+          ...(workingOf(pieces, agent).working ? { working: true, ...onOf(pieces, agent) } : {}), active: lastActive(agentDir(hh, agent)) };
       };
       if (rest === '' ) {
         // The agent's Today: its asks, Memories and its pieces' tiles (scope-aware ones), its own thread.

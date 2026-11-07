@@ -61,6 +61,7 @@ import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
 import { AuditError, doneEntries, sweepAudit, writeAudit } from '../audit.js';
 import { adapterCall as commsAdapter, CommsError, postActivity, sweepComms } from '../comms.js';
 import { stopCommsWatch, watchComms } from '../ui/comms-live.js';
+import { piecesMoved } from '../ui/live.js';
 import { backfillRefs } from '../comms-work.js';
 import { takeAudit } from '../audit-take.js';
 import { computeMeasures, postFinding, postScore, recentDays, scorecards } from '../review.js';
@@ -755,6 +756,11 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
     // POST /api/loom/audit (docs/specs/conversations.md, "Who writes what"): a turn's raw text, by its writer.
     if (subpath === 'audit' && (role.kind === 'runtime' || role.kind === 'agent')) {
       try { return sendJson(res, 200, writeAudit(live!(), role, body)); } catch (e) { return auditFail(res, e, 'write the audit entry'); }
+    }
+    // Its manifest moved (docs/extensions.md, "agents"; t-1945): the open apps ask the pieces again now. No body to read.
+    if (subpath === 'pieces/changed' && role.kind === 'runtime') {
+      piecesMoved(live!().home);
+      return sendJson(res, 200, { ok: true });
     }
     // Venue loom's adapter calls and tool cards (docs/specs/comms.md, sections 1 and 3): the runtime's only.
     if ((subpath === 'comms/adapter' || subpath === 'comms/activity') && role.kind === 'runtime') {
