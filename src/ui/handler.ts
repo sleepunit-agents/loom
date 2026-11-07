@@ -146,19 +146,26 @@ function scopedPathOk(pathname: string): boolean {
  * names no agent is the household's, and a tile is a household figure, so both go.
  */
 /**
- * What each agent has going, as this viewer may see it (t-1945). A row naming a conversation (the runtime's: a body
- * delivered there, mid-turn) that is a Comms thread is its member's alone (docs/specs/comms.md, rule 4): for them it
- * is the thread's title and a link to it; anyone else doesn't see it at all. Any other conversation (a bridge's chat,
- * a wake) stays as its piece says it. The runtime is the one record of a body at work; this only says which thread.
+ * What each agent has going, as this viewer may see it (t-1945). The runtime's rows for a delivered body name only its
+ * venue, kind and conversation (a label can carry who or what it's about); loom puts in what the viewer may see:
+ * - a Comms thread is its member's alone (docs/specs/comms.md, rule 4): for them, the thread's title and a link to it;
+ *   anyone else doesn't see the row at all;
+ * - any other conversation (a bridge's chat, a wake) is its agent's owners' (owners.md): for them, its label and a link
+ *   to its page; anyone else keeps the runtime's plain words ("Working · Slack", "On a wake").
+ * The runtime is the one record of a body at work; this only says which conversation, and to whom.
  */
-export function atWorkFor(pieces: PieceInfo[], home: string | undefined, member: string | undefined): PieceInfo[] {
-  if (!home || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation)))) return pieces;
-  const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(home, agent, cv); } catch { return undefined; } };
+export function atWorkFor(pieces: PieceInfo[], h: Household | undefined, member: Member | undefined): PieceInfo[] {
+  if (!h || !pieces.some((p) => Object.values(p.manifest.agents ?? {}).some((r) => r.doing?.some((d) => d.conversation)))) return pieces;
+  const threadOf = (agent: string, cv: string) => { try { return threadOfAgentConversation(h.home, agent, cv); } catch { return undefined; } };
+  const labelOf = (agent: string, cv: string) => { try { return conversationOf(agentDir(h, agent), cv)?.label ?? undefined; } catch { return undefined; } };
   return pieces.map((p) => !p.manifest.agents ? p : { ...p, manifest: { ...p.manifest, agents: Object.fromEntries(Object.entries(p.manifest.agents).map(([a, r]) => [a, !r.doing ? r : {
     ...r, doing: r.doing.flatMap((d) => {
-      const t = d.conversation ? threadOf(a, d.conversation) : undefined;
-      if (!t) return [d];
-      return member && t.member === member ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
+      if (!d.conversation) return [d];
+      const t = threadOf(a, d.conversation);
+      if (t) return member && t.member === member.person ? [{ ...d, text: t.title ?? 'New thread', where: 'Comms', href: threadPath(t.id) }] : [];
+      if (!member || !owns(member, a) || !h.agents.includes(a)) return [d];
+      const label = labelOf(a, d.conversation);
+      return [{ ...d, ...(label ? { text: d.kind === 'talk' ? `Talking in ${label}` : label } : {}), href: `/a/${a}/conversation/${d.conversation}` }];
     }) }])) } });
 }
 
@@ -1374,7 +1381,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     };
     const commsChrome = async (): Promise<Chrome & { prefs?: unknown }> => {
       const { pieces: all, skipped } = await pieceManifests(scopedEnv);
-      const ch = chrome(req, opts, atWorkFor(forOwner(all, opts.ownerScope), full.home, who.member?.person), skipped.map((x) => x.piece), 'comms', csrf);
+      const ch = chrome(req, opts, atWorkFor(forOwner(all, opts.ownerScope), full, who.member), skipped.map((x) => x.piece), 'comms', csrf);
       return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
     };
     await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
@@ -1661,7 +1668,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   const flash = takeFlash(url.searchParams.get('_flash'));
   const { pieces: allPieces, skipped } = await pieceManifests(scopedEnv);
   // Each agent's card and window, and the bar's agents at work, as this viewer may see them (atWorkFor).
-  const pieces = atWorkFor(forOwner(allPieces, opts.ownerScope), full?.home, who?.member?.person);
+  const pieces = atWorkFor(forOwner(allPieces, opts.ownerScope), full, who?.member);
   const skippedNames = skipped.map((s) => s.piece);
   const view = (kind: string, data: Record<string, unknown>, status = 200) => {
     if (!asJson) return app(status);

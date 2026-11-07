@@ -17,6 +17,9 @@ import { agentDir, createToken, loadHousehold, type Household } from '../househo
 import { parseLoomBlock, runtimePieces } from '../cli/pieces-managed.js';
 import { createConversationTables } from '../backends/conversations.js';
 import { titleFromAgent } from '../comms.js';
+import { parseTurn, recordTurn } from '../backends/conversations.js';
+import { atWorkFor } from './handler.js';
+import type { PieceInfo } from './pieces.js';
 import { clearPieceCache } from './pieces.js';
 import { stopCommsWatch } from './comms-live.js';
 
@@ -88,7 +91,7 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
       db.close();
     }
     writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', members: [
-      { person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['mark'] }] }));
+      { person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['mark'] }, { person: 'loren', role: 'owner', agents: ['art'] }] }));
     h = loadHousehold(home)!;
     process.env.LOOM_HOME = h.home;
     const loom = parseLoomBlock({ role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'] }, 'runtime', ['loom-runtime']);
@@ -102,7 +105,7 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
     mkdirSync(join(home, 'pieces', 'bin'), { recursive: true });
     symlinkSync(join(dir, 'current', 'cli'), join(home, 'pieces', 'bin', 'loom-runtime'));
     manifest(null);
-    for (const m of ['jonathan', 'sam']) tok[m] = createToken(h, { role: { kind: 'owner', member: m }, label: m }).token;
+    for (const m of ['jonathan', 'sam', 'loren']) tok[m] = createToken(h, { role: { kind: 'owner', member: m }, label: m }).token;
     tok.runtime = createToken(h, { role: { kind: 'runtime', piece: 'runtime' }, label: 'runtime', runtimePieces: runtimePieces(process.env) }).token;
     handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
@@ -155,10 +158,26 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
     } finally { app.close(); }
   }, 30_000);
 
-  it('a row for a conversation that isn\'t a Comms thread (a bridge, a wake) stays as the runtime says it, for every owner', async () => {
-    manifest([{ text: 'Pond rollup', kind: 'lane', where: 'Wake', conversation: 'cv-00000000beef' }]);
+  it('a bridge\'s or a wake\'s row: its label and link for the agent\'s owners, only the runtime\'s plain words for anyone else', async () => {
+    // A Slack DM of mark's, as core has it: its label names who it's with.
+    const { conversation } = recordTurn(agentDir(h, 'mark'), 'mark', parseTurn({ venue: 'slack', place: 'dm:U1', at: new Date().toISOString(),
+      from: { kind: 'person', slug: 'loren' }, kind: 'message', label: 'Loren (dm:U1)' }, 'mark'), 'runtime');
+    manifest([{ text: 'Working · Slack', kind: 'talk', conversation }]);
     clearPieceCache();
-    for (const t of [tok.jonathan, tok.sam]) expect((await card(t, 'mark')).doing.map((d: Record<string, unknown>) => [d.text, d.href])).toEqual([['Pond rollup', undefined]]);
+    // mark's owners: its label, and a link to the conversation.
+    for (const t of [tok.jonathan, tok.sam]) {
+      expect((await card(t, 'mark')).doing.map((d: Record<string, unknown>) => [d.text, d.href])).toEqual([['Talking in Loren (dm:U1)', `/a/mark/conversation/${conversation}`]]);
+    }
+    // Loren doesn't own mark: no card of mark's, and nothing of the conversation anywhere in their Home.
+    const theirs = await get(tok.loren, '/');
+    expect((theirs.home.cards as Array<{ id: string }>).map((c) => c.id)).toEqual(['art']);
+    expect(JSON.stringify(theirs)).not.toContain('dm:U1');
+    // And the rule itself: a viewer who isn't the agent's owner keeps the runtime's plain words, no label, no link.
+    const pieces = [{ piece: 'runtime', manifest: { agents: { mark: { readings: [], doing: [{ text: 'Working · Slack', kind: 'talk', conversation }] } } } }] as unknown as PieceInfo[];
+    const seen = (m: string) => atWorkFor(pieces, h, h.members.find((x) => x.person === m))[0].manifest.agents!.mark.doing!;
+    expect(seen('loren')).toEqual([{ text: 'Working · Slack', kind: 'talk', conversation }]);
+    expect(seen('sam')[0]).toMatchObject({ text: 'Talking in Loren (dm:U1)', href: `/a/mark/conversation/${conversation}` });
+    expect(atWorkFor(pieces, h, undefined)[0].manifest.agents!.mark.doing).toEqual([{ text: 'Working · Slack', kind: 'talk', conversation }]);
     manifest(null);
     clearPieceCache();
   });
