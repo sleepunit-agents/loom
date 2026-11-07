@@ -12,7 +12,7 @@ import { loadHousehold } from '../household.js';
 import { closeAllBackends } from '../backends/index.js';
 import { openProjectsStore, type ProjectWriteInput } from '../backends/projects.js';
 import { clearPieceCache } from './pieces.js';
-import { feedLink, forgetProjectCounts, INDEX_WAIT_MS, projectHubPage, projectsIndex } from './projects-pages.js';
+import { feedLink, forgetProjectCounts, INDEX_WAIT_MS, projectHubPage, projectsApp, projectsIndex, whatOf } from './projects-pages.js';
 import type { ProjectHubResult } from '../tools/project.js';
 
 const TOKEN = 'projects-owner-token';
@@ -235,6 +235,33 @@ describe('the Projects pages, directly', () => {
     expect(first.items[0]).toMatchObject({ text: 't0', page: 'loom:p/tasks/task/t-1' });
     expect(first.items[0].meta).toContain('the detail');
     expect(JSON.stringify(hub.sections[9])).toContain('More sections than fit here: P9, P10, P11.');
+  });
+
+  it('the cards: a slow project says it couldn\'t count, a quiet one has no waiting row, the Changes piece is counted, the sparkline counts dated items', async () => {
+    write(dir, { slug: 'slow', name: 'Slow' });
+    write(dir, { slug: 'busy', name: 'Busy', summary: 'First line. Second line.', links: { repos: ['github:acme/busy'] } });
+    write(dir, { slug: 'old', name: 'Old', status: 'paused' });
+    const sections = [{ key: 'piece:changes', label: 'Changes', groups: [
+      { title: 'Waiting on you', waiting: true, items: [{ title: 'busy#3 Yes?', status: 'Waiting on you', when: new Date(NOW - 3_600_000).toISOString() }] },
+      { title: 'Waiting on CI', items: [{ title: 'busy#2', status: 'CI running', when: new Date(NOW - 2 * 86_400_000).toISOString() }] },
+      { title: 'Lately', items: [{ title: 'busy#1', status: 'Merged', when: new Date(NOW - 20 * 86_400_000).toISOString() }] }] },
+      // A piece after changes (sections come sorted by key): its items are never counted as changes.
+      { key: 'piece:tasks', label: 'Tasks', groups: [{ title: 'Ready', items: [{ title: 't-1', status: 'CI red' }, { title: 't-2', who: ['Ada'] }] }] },
+      { key: 'conversations', items: [{ id: 'cv-000000000001', venue: 'Slack', label: 'chat', people: ['Bo'], last: new Date(NOW - 7_200_000).toISOString(), summary: 'talked', needs_owner: 'Pick a date', new: true }] }];
+    const hub = async (d: string, slug: string) => (slug === 'slow' ? new Promise<ProjectHubResult>(() => {}) : hubWith(sections, { n: 0 })(d, slug));
+    const { cards } = await projectsApp([{ dir }], { hub, waitMs: 200, nowMs: NOW });
+    const busy = cards!.active.find((c) => c.slug === 'busy')!;
+    expect(busy).toMatchObject({ what: 'First line.', waiting: { count: 2, items: ['busy#3 Yes?', 'Pick a date'] }, repos: ['acme/busy'],
+      changes: { open: 2, failing: 0, running: 1, line: '2 open · 1 checking' } });
+    // What's waiting (a feed's waiting item, a conversation's ask) is said once, above: never again under Lately.
+    expect(busy.lately.map((l) => l.text)).toEqual(['busy#2', 'busy#1']);
+    expect(busy.spark!.days).toEqual([0, 0, 0, 0, 1, 0, 2]);                // two days ago, and today's two; within 7 days only
+    expect(busy.people.map((p) => p.name)).toEqual(['Ada', 'Bo']);          // feed names before conversations'
+    expect(cards!.active.find((c) => c.slug === 'slow')!.waiting).toEqual({ unknown: expect.stringMatching(/^Couldn't count/) });
+    expect(cards!.quiet.map((c) => [c.slug, c.waiting])).toEqual([['old', undefined]]);
+    expect(whatOf('A sentence with v1.2 in it. And more.')).toBe('A sentence with v1.2 in it.');
+    expect(whatOf('A first sentence\nwrapped over two lines. Then more.')).toBe('A first sentence wrapped over two lines.');
+    expect((await projectsApp([{ dir: join(dir, 'none') }])).cards).toBeUndefined();
   });
 
   it('an archived project\'s page says so', async () => {

@@ -64,7 +64,7 @@ import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdPersonName, householdSuggestPeople, householdThread } from './household-pages.js';
 import { surfaceOf, tapeRows, whereLabel } from './data.js';
 import { listProposals } from '../backends/proposals.js';
-import { ownerOf, projectHubPage, projectsIndex } from './projects-pages.js';
+import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
 import { ICON_APP, iconFile, iconSetOf } from '../icon-set.js';
 import { aboutAskOf, aboutOf, agentDir, faceOf, firstOwner, loadTokens, MARKS, memberOf, spriteDir, spriteOf, type Household, type Member } from '../household.js';
@@ -1673,9 +1673,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   if (hh) {
     const hhAgents = agentsOf(hh);
     const ctxOf = (path: string, source: Source = CORE) => ({ source, path, query, csrf, agents: hhAgents });
-    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead) =>
+    const send200 = (page: import('./vocab.js').Page, current: string, ctx: ReturnType<typeof ctxOf>, head?: AgentHead, extra?: Record<string, unknown>) =>
       { const ch = chrome(req, opts, pieces, skippedNames, current, csrf, flash);
-        return view('page', { page, ctx, chrome: ch, head }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
+        return view('page', { page, ctx, chrome: ch, head, ...extra }, page.title === 'Not found' && page.sections.length === 0 ? 404 : 200); }
     if (pathname === '/') {
       const nowMs = Date.now();
       const agents = agentsOf(hh)!;
@@ -1795,7 +1795,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (opts.ownerScope && (pathname === '/projects' || pathname.startsWith('/projects/'))) return send200(notFound, '', ctxOf(''));
     if (pathname === '/projects' || pathname.startsWith('/projects/')) {
       const owners = hh.agents.filter((x) => existsSync(agentDir(hh, x))).map((x) => ({ agent: x, dir: agentDir(hh, x) }));
-      if (pathname === '/projects') return send200(await projectsIndex(owners, { env: opts.env }), 'projects', ctxOf('projects'));
+      // The index's cards ride beside its page (web/src/projects.tsx draws them; docs/specs/projects.md, "The index").
+      if (pathname === '/projects') { const ix = await projectsApp(owners, { env: opts.env }); return send200(ix.page, 'projects', ctxOf('projects'), undefined, ix.cards ? { projects: ix.cards } : undefined); }
       const seg = (decode(pathname.slice('/projects/'.length)) ?? '').split('/');
       const ok = seg.every((x) => /^[a-z0-9][a-z0-9-]*$/.test(x)) && seg.length <= 2;
       const o = ok ? ownerOf(owners, seg[seg.length - 1], seg.length === 2 ? seg[0] : undefined) : null;
@@ -1922,11 +1923,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
 
   if (pathname === '/projects' || /^\/projects\/[a-z0-9][a-z0-9-]*$/.test(pathname)) {
     const owner = { dir: opts.contextDir };
-    const page = pathname === '/projects' ? await projectsIndex([owner], { env: opts.env })
-      : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env });
+    const ix = pathname === '/projects' ? await projectsApp([owner], { env: opts.env }) : undefined;
+    const page = ix ? ix.page : await projectHubPage(owner, pathname.slice('/projects/'.length), { env: opts.env });
     const ctx = { source: CORE, path: pathname.slice(1), query, csrf };
     const ch = chrome(req, opts, pieces, skippedNames, 'projects', csrf, flash);
-    return view('page', { page: page ?? notFound, ctx, chrome: ch }, page ? 200 : 404);
+    return view('page', { page: page ?? notFound, ctx, chrome: ch, ...(ix?.cards ? { projects: ix.cards } : {}) }, page ? 200 : 404);
   }
 
   const path = decode(pathname.slice(1)) ?? '\0';

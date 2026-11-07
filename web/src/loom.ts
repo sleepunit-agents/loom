@@ -3,6 +3,7 @@
 
 import type { Tint } from './tint';
 import type { Prefs } from './look';
+import type { ProjectCards } from '../../src/ui/project-cards';
 export type Tone = 'ok' | 'warn' | 'bad' | 'muted';
 export interface Source { id: string; base: string; act?: string }
 export interface Ctx { source: Source; path: string; query: Record<string, string>; csrf: string; agents?: Record<string, { label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string } }> }
@@ -73,7 +74,7 @@ export interface AgentHead { label: string; bg: string; fg: string; sub?: string
   about?: string; edit?: boolean; asked?: boolean; working?: boolean }
 
 export type View =
-  | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string }
+  | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string; /** The Projects index's cards (web/src/projects.tsx). */ projects?: ProjectCards }
   | { view: 'home' | 'house-home' | 'dashboard' | 'inbox' | 'sheet' | 'passkeys' | 'comms' | 'knowledge'; chrome: Chrome; ctx?: Ctx; [k: string]: unknown };
 
 // ---- links: loom's own rule (src/ui/vocab.ts splitPage, render.ts pageHref) ----------------------

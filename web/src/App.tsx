@@ -42,6 +42,7 @@ const KnowledgeView = lazy(() => import('./knowledge').then((m) => ({ default: m
 // An agent's window (agent-window.tsx): its header and its sections, around its pages. Its own chunk.
 const AgentWindow = lazy(() => import('./agent-window'));
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
+const ProjectsView = lazy(() => import('./projects').then((m) => ({ default: m.ProjectsView })));
 // Comms (docs/specs/comms.md): its own chunk, loaded only when it opens.
 const CommsView = lazy(() => import('./comms').then((m) => ({ default: m.CommsView })));
 // A big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide (so it's
@@ -492,7 +493,8 @@ export default function App() {
             )}
             {!pg.waiting && !pg.error && data && env && (
               <ArrivalContext.Provider value={arr}><EnvContext.Provider value={env}><SideAtContext.Provider value={side}><Boundary where={pg.url}>
-                {own(data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
+                {own(data.view === 'page' && data.projects ? <Suspense fallback={<Spinner size="lg" />}><ProjectsView cards={data.projects} /></Suspense>
+                  : data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
                   : data.view === 'house-home' && desk ? <Skeleton />
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
