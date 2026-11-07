@@ -272,5 +272,5 @@ have fallen behind.
 
 CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `memory`, `knowledge`, `person`, `project`, `update-identity`, `bootstrap`, `serve`, `inject`,
-`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `export`, `restore`, `store`, `backup`. Any other name runs an
+`harness`, `install`, `doctor`, `migrate`, `pieces`, `household`, `token`, `sessions`, `export`, `restore`, `store`, `backup`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).

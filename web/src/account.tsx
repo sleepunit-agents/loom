@@ -4,7 +4,8 @@
 // LEFT): in a big window two columns, the left your name then your passkeys with a normal-size "Add a passkey" in their
 // header, the right your agents, notifications, another device and Sign out; in a narrow tile or on a phone, one column,
 // name first. The width it answers is its own box (account.css), so a tile and a phone get the same rule.
-// Signed-in devices were in the mock but aren't here: loom keeps no device or last-seen for a session (sessions.ts).
+// Signed in (t-1871): each browser session on its own row, this device first, each with its own Sign out (sessions.ts
+// keeps what a session was opened on and when it was last used).
 // Its own chunk, with its own CSS.
 import { useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
@@ -49,11 +50,12 @@ function Pane({ label, title, action, intro, children, className }: { label?: st
   );
 }
 
-/** A passkey, as loom lists it: its name, when it was used and added, and Remove (asking first). */
-function KeyRow({ k }: { k: ListItem }) {
+/** A passkey, as loom lists it: its name, when it was used and added, and Remove (asking first). A signed-in session is
+ * the same row with a device for its glyph: what it is, when it signed in and was last used, and Sign out. */
+function KeyRow({ k, icon = 'fingerprint-pattern' }: { k: ListItem; icon?: string }) {
   return (
     <li className="loom-acct__row" data-tone={k.tone}>
-      <span className="loom-acct__glyph" aria-hidden><AnimatedIcon name={iconFor('fingerprint-pattern')} size="sm" /></span>
+      <span className="loom-acct__glyph" aria-hidden><AnimatedIcon name={iconFor(icon)} size="sm" /></span>
       <span className="grid min-w-0">
         <span className="loom-acct__row-title">{k.text}</span>
         {k.meta && <span className="loom-acct__row-meta">{k.meta}</span>}
@@ -85,7 +87,8 @@ export function AccountView({ me, csrf, add, reload, page }: {
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
   const keys = page.sections.find((s) => s.id === 'passkeys');
-  const rest = page.sections.filter((s) => s.id !== 'passkeys');
+  const sessions = page.sections.find((s) => s.id === 'sessions');
+  const rest = page.sections.filter((s) => s.id !== 'passkeys' && s.id !== 'sessions');
   const listed: ListItem[] = keys?.blocks.flatMap((b) => (b.type === 'list' ? (b.items as ListItem[]) : [])) ?? [];
   const other = keys?.blocks.filter((b) => b.type !== 'list') ?? [];
   const canAdd = 'csrf' in add;
@@ -128,6 +131,13 @@ export function AccountView({ me, csrf, add, reload, page }: {
             </Pane>
           )}
           <Push csrf={csrf} />
+          {sessions && (
+            <Pane className="loom-acct__sessions" label={sessions.title ?? 'Signed in'}>
+              {sessions.blocks.map((b, i) => (b.type === 'list'
+                ? <ul key={i} className="loom-acct__rows">{(b.items as ListItem[]).map((k) => <KeyRow key={k.act?.fields?.ref ?? k.text} k={k} icon="monitor-smartphone" />)}</ul>
+                : <BlockView key={i} b={b} />))}
+            </Pane>
+          )}
           {rest.map((s: Section) => (
             <Pane key={s.id} label={s.title}>{s.blocks.map((b, i) => <BlockView key={i} b={b} />)}</Pane>
           ))}
