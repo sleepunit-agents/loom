@@ -115,6 +115,18 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     await p.evaluate(async ([c, l]) => { await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, look: l }) }); }, [csrf, look]);
     return p;
   }
+  /** loom's time in loom's zone (Kathmandu here), as the bar's clock shows it ("9:41", no AM or PM). */
+  const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
+  /** Every minute the clock may rightly show when read between `before` and `after`: it ticks once a minute, so it can
+   * still show the minute before; and loom's time is its last answer's Date plus half a second (web/src/loom.ts, a Date
+   * header only has whole seconds), so in a minute's last half second it already shows the next. Read once from here,
+   * a minute rolling over between the read and the check failed CI (11:05 expected, 11:06 shown, t-1923). */
+  const loomMinutes = (before: number, after: number) => {
+    const out = new Set<string>();
+    for (let t = before - 60_000; t < after + 1_000; t += 1_000) out.add(loomTime(t));
+    out.add(loomTime(after + 1_000));
+    return [...out];
+  };
   const open = async (p: Page, path: string) => { await p.goto(`${base}${path}`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(400); };
 
   it('at 1280 px (a desktop): one bar, the clock and the name on its left, LOOM//OS and the named glyphs on its right; no big header; the name is the ⓘ when the page has info; the count shows', async () => {
@@ -130,13 +142,13 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
     expect(await p.locator('.loom-pbar--one .loom-sys__clock').count()).toBe(1);
     const clock = p.locator('.loom-sys__clock');
     // loom's time in loom's zone (Kathmandu here), not the browser's (Los Angeles): "9:41", no AM or PM.
-    const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
+    const before = Date.now();
     const shown = await clock.locator('[aria-hidden]').innerText();
     // Whole for a screen reader and on hover: the half of the day and the zone.
     expect(await clock.getAttribute('title')).toMatch(/^\d{1,2}:\d{2}\s[AP]M, Asia\/Kathmandu time$/);
     expect(await clock.locator('.sr-only').innerText()).toBe(await clock.getAttribute('title'));
     expect(shown).toMatch(/^\d{1,2}:\d{2}$/);
-    expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(shown);
+    expect(loomMinutes(before, Date.now())).toContain(shown);
     expect(await clock.evaluate((e) => ({ size: parseFloat(getComputedStyle(e).fontSize), weight: getComputedStyle(e).fontWeight }))).toEqual({ size: 13, weight: '700' });
     const [bar, name, brand] = await Promise.all(['.loom-pbar', '.loom-pbar__name', '.loom-pbar__brand'].map(async (s) => (await p.locator(s).boundingBox())!));
     // One line: the clock, then the name; LOOM//OS, then the glyphs; all on the bar's middle.
@@ -228,8 +240,9 @@ describe.runIf(built && chrome)('Neon wider than a phone: the phone\'s bar under
   it('its clock is loom\'s, not the device\'s: a device three hours and seven minutes fast still shows loom\'s time (its answers\' Date)', async () => {
     const p = await device('neon', 'reduce', 1280, { skewMs: (3 * 60 + 7) * 60_000 });
     await open(p, '/');
-    const loomTime = (ms: number) => new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kathmandu', hour: 'numeric', minute: '2-digit', hourCycle: 'h12' }).format(ms).replace(/\s?[AP]M$/, '');
-    expect([loomTime(Date.now()), loomTime(Date.now() - 60_000)]).toContain(await p.locator('.loom-sys__clock [aria-hidden]').innerText());
+    const before = Date.now();
+    const shown = await p.locator('.loom-sys__clock [aria-hidden]').innerText();
+    expect(loomMinutes(before, Date.now())).toContain(shown);
     await p.context().close();
   }, 60_000);
 

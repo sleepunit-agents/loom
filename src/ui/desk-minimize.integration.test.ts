@@ -104,7 +104,9 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   /** On the desktop: no tile open (every app in the dock), the widgets the desktop, and any reflow over (while one
    * runs the page is a view transition's picture: a pointer over it reaches nothing under it). */
   const onDesktop = async (p: Page) => {
-    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0); await p.locator('.loom-desk-home').waitFor();
+    // As long as a move may take (still's 8 s): a minimize is a view transition, and on a loaded runner its tile was
+    // still there past the poll's own 1 s (main's CI, 1855 px: "expected 1 to be +0", t-1923).
+    await expect.poll(() => p.locator('.loom-tile').count(), { timeout: 8000 }).toBe(0); await p.locator('.loom-desk-home').waitFor();
     await expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
   };
   /** Any tile's move over (its effect, t-1925 B, runs up to 0.3 s): during one the page is a picture, and a click lands on nothing. */
