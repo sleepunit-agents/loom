@@ -26,6 +26,24 @@ under the same lock):
 
 Up to 20 passkeys. Each one can be removed on the Passkeys page.
 
+## Signed-in sessions, each ended alone
+
+(t-1871, 2026-11-07.) Account's **Signed in** lists every browser session this
+person may see (a household owner, all of them; an agent owner, their own),
+this device first. Each row says what it is (the browser and system its
+User-Agent named when it signed in), the label its sign-in link carried, when it
+signed in and was last used (noted at most every five minutes), and the token it
+signed in as. **Sign out** on a row ends that session alone: its cookie stops
+working at once and its notifications stop, and every other session, those of
+the same "page sign-in links" token too, stays signed in. A row names its
+session by a ref, the first 16 hex of the hash of its id, which is no use as a
+cookie.
+
+On loom's machine, `loom sessions list` and `loom sessions revoke <ref>` do the
+same. A script that signs in for screenshots makes its link with
+`loom token link --label "<what for>"` and ends its own session with
+`POST /logout` before it closes; `loom sessions revoke` is for one that didn't.
+
 ## Where it works
 
 Only at loom's public HTTPS address, `LOOM_PUBLIC_URL` (for example

@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Sign one browser out alone** (t-1871). Profile's **Signed in** lists each browser session you may see (a household
+  owner, all of them; an agent owner, their own): what it is (from its User-Agent), its sign-in link's label, how and
+  when it signed in, when it was last used, and its token. **Sign out** on a row ends that session and its
+  notifications only; other sessions of the same "page sign-in links" token stay. On loom's machine, `loom sessions
+  list` and `loom sessions revoke <ref>`; `loom token link --label` names the session a link opens.
 - **Asks answered only while open, everywhere** (t-1925). The asks inside a Comms thread and the desktop's Needs you
   now use the Inbox's rule (`web/src/ask-open.ts`): no buttons until loom confirms the ask is open now, checked again
   right before a send, and none when loom can't be reached or the copy came from this device's cache.

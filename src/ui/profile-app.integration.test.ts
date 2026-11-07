@@ -1,8 +1,8 @@
 /**
  * Profile (t-1925 G; web/src/account.tsx): who you are and how you sign in. Jonathan approved the mock with one change,
  * the name top LEFT: in a big window two columns, the left starting with the name card then the passkeys, whose header
- * carries a normal-size "Add a passkey" (never a full-width bar); the right their agents, notifications, another device
- * and Sign out. In a ~480 px tile and on a 390 px phone, one column, the name first. Measured, not eyeballed: bounding
+ * carries a normal-size "Add a passkey" (never a full-width bar); the right their agents, notifications, the browsers
+ * signed in (t-1871), another device and Sign out. In a ~480 px tile and on a 390 px phone, one column, the name first. Measured, not eyeballed: bounding
  * boxes in real Chrome, Neon Noir. The head is real data: People's name, the month of the oldest owner token; an agent
  * owner sees only their agents and passkeys.
  *
@@ -145,7 +145,7 @@ describe.runIf(built && chrome)('Profile', () => {
       expect(await agents.locator('[data-slot="badge"]').allInnerTexts()).toEqual(['Available', 'Available']);
       // Each row leads with the agent's face, drawn at 36 px.
       for (const f of await agents.locator('.loom-acct__row > :first-child').all()) expect(Math.round((await f.boundingBox())!.width)).toBe(36);
-      expect(await p.locator('.loom-acct__col:nth-child(2) button', { hasText: 'Sign out' }).count()).toBe(1);
+      expect(await p.locator('.loom-acct__col:nth-child(2) .loom-acct__out button', { hasText: 'Sign out' }).count()).toBe(1);
       // Adding opens a name field in the panel; Cancel puts the button back.
       await add.click();
       await p.locator('.loom-acct__keys input[aria-label="Name"]').waitFor();
@@ -194,6 +194,43 @@ describe.runIf(built && chrome)('Profile', () => {
     expect(await p.locator('.loom-acct__role').innerText()).toBe('Owns mark · member since Sep 2026');
     expect(await p.locator('[aria-label="Your agents"] .loom-acct__row-title').allInnerTexts()).toEqual(['mark']);
     expect(await p.locator('.loom-acct__keys .loom-acct__row-title').allInnerTexts()).toEqual(['Sam laptop']);
+    expect(errors, 'no console errors').toEqual([]);
+    await p.context().close();
+  }, 60_000);
+
+  it('a 390 px phone: Signed in lists each browser, this one first, and Sign out on another ends only it (t-1871)', async () => {
+    const digest = Buffer.from(createHash('sha256').update(token).digest('hex'), 'hex');
+    const store = sessionStore(h.home);
+    const shots = store.create(digest, undefined, { device: 'HeadlessChrome on Linux', label: 'screenshots t-1871' });
+    const p = await screen(390, 844, '/account', true);
+    const pane = p.locator('.loom-acct__sessions');
+    await pane.waitFor();
+    await pane.scrollIntoViewIfNeeded();
+    await shot(p, 'profile-390-sessions');
+    const titles = await pane.locator('.loom-acct__row-title').allInnerTexts();
+    expect(titles[0]).toMatch(/\(this device\)$/);
+    expect(titles).toContain('HeadlessChrome on Linux “screenshots t-1871”');
+    // This device has no Sign out of its own (the page's Sign out is that); every other row's is inside its row and the
+    // phone's width, a tap's size; nothing scrolls sideways.
+    const rows = pane.locator('.loom-acct__row');
+    expect(await rows.first().locator('button').count()).toBe(0);
+    for (const r of (await rows.all()).slice(1)) {
+      const b = (await r.locator('button', { hasText: 'Sign out' }).boundingBox())!;
+      const rb = (await r.boundingBox())!;
+      expect(b.x).toBeGreaterThanOrEqual(rb.x);
+      expect(b.x + b.width).toBeLessThanOrEqual(Math.min(rb.x + rb.width, 390) + 0.5);
+      expect(b.y).toBeGreaterThanOrEqual(rb.y);
+      expect(b.y + b.height).toBeLessThanOrEqual(rb.y + rb.height + 0.5);
+      expect(b.height).toBeGreaterThanOrEqual(28);
+    }
+    expect(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    // Sign out the screenshot session: asked first, then it alone ends; this phone stays signed in.
+    await rows.filter({ hasText: 'screenshots t-1871' }).locator('button', { hasText: 'Sign out' }).tap();
+    await p.locator('[role="alertdialog"] button', { hasText: 'Sign out' }).tap();
+    await expect.poll(() => store.get(shots)).toBeNull();
+    await expect.poll(() => pane.locator('.loom-acct__row-title', { hasText: 'screenshots' }).count()).toBe(0);
+    expect(await p.locator('[data-profile-name]').count()).toBe(1);
+    expect(await pane.locator('.loom-acct__row-title').first().innerText()).toMatch(/\(this device\)$/);
     expect(errors, 'no console errors').toEqual([]);
     await p.context().close();
   }, 60_000);

@@ -9,6 +9,10 @@
  *     file can't be replayed as cookies;
  *   - when it was issued, and the digest of the token it was opened with
  *     (a session still dies with its token: rotate or revoke it and they stop);
+ *   - what it was opened on (the browser and system its User-Agent names), the
+ *     label its sign-in link had, and when it was last used (to the five
+ *     minutes), so the owner can tell their sessions apart and end one alone
+ *     (t-1871), by its ref: the first 16 hex of the id's hash;
  * one-time sign-in links (`loom token link`), also by hash: single use, and
  * gone after their few minutes whether used or not;
  * each person's Appearance (the look, light or dark, the ground, sound) and
@@ -25,8 +29,39 @@ import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, 
 
 export interface Session { issuedAt: number; secret: Buffer }
 
-interface Stored { issuedAt: number; secret: string }
-interface Link { expires: number; secret: string }
+/** How a session signed in: a token pasted, a one-time link, a passkey. */
+export type Via = 'token' | 'link' | 'passkey';
+interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string; via?: Via }
+interface Link { expires: number; secret: string; label?: string }
+
+/** A session as the owner sees it (the Account page, `loom sessions`): never its id, only its ref. */
+export interface SessionInfo { ref: string; issuedAt: number; seenAt?: number; device?: string; label?: string; via?: Via; secret: Buffer }
+/** How it was opened, beside its token: what the browser said it was, how it signed in, and the label its sign-in link carried. */
+interface SessionMeta { device?: string; label?: string; via?: Via }
+/** A session's ref: the start of its id's hash, enough to name one among MAX_SESSIONS, useless as a cookie. */
+export const REF = /^[0-9a-f]{16}$/;
+/** A session's last use is written at most this often (each write is a locked rewrite of the file). */
+export const SEEN_EVERY_S = 5 * 60;
+/** A sign-in link's label: a few plain words, kept with the session it opens. */
+const LABEL_MAX = 60;
+/** A label or a device name, as kept: plain words, at most LABEL_MAX characters. */
+const cleanLabel = (l: string | undefined) => {
+  // Printable words only: no control characters, so a label can't break a terminal's line or the file, and no invisible
+  // or direction-changing ones (zero-width, bidi overrides), so it can't pass itself off as another row's words.
+  const t = (l ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u061c\u180e]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX).trim();
+  return t || undefined;
+};
+
+/** What a User-Agent says the device is, in a few words ("Chrome on Android", "HeadlessChrome on Linux"); none if it says nothing loom knows. */
+export function deviceOf(ua: string | undefined): string | undefined {
+  if (!ua) return undefined;
+  const browser = /HeadlessChrome\//.test(ua) ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox'
+    : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /^curl\//.test(ua) ? 'curl' : undefined;
+  const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac'
+    : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
+  if (!browser && !system) return undefined;
+  return browser && system ? `${browser} on ${system}` : (browser ?? system);
+}
 /** A WebAuthn credential (docs/specs/passkeys.md): signs in as the token digest that added it. */
 export interface Passkey {
   id: string;
@@ -163,6 +198,8 @@ export const OPENED_MAX = 500;
 export const MAX_PASSKEYS = 20;
 
 export const MAX_SESSIONS = 50;
+/** How long a session lasts from sign-in (its cookie's Max-Age; handler.ts ends it past this). */
+export const SESSION_MAX_AGE_S = 30 * 24 * 3600;
 const LOCK_WAIT_MS = 2000;
 const LOCK_STALE_MS = 10_000;
 
@@ -203,8 +240,9 @@ export class SessionStore {
     return { v: 1, sessions: {} };
   }
 
-  private withLock<T>(fn: (f: File) => T): T {
-    const deadline = Date.now() + LOCK_WAIT_MS;
+  /** Read, change and write the file under its lock, waiting up to `waitMs` for it (0: one try, no wait). */
+  private withLock<T>(fn: (f: File) => T, waitMs = LOCK_WAIT_MS): T {
+    const deadline = Date.now() + waitMs;
     let fd: number | undefined;
     while (fd === undefined) {
       try {
@@ -212,7 +250,7 @@ export class SessionStore {
       } catch {
         // A holder that died leaves its lock; one this old is gone.
         try { if (Date.now() - statSync(this.lockFile).mtimeMs > LOCK_STALE_MS) rmSync(this.lockFile, { force: true }); } catch { /* raced */ }
-        if (Date.now() > deadline) throw new Error('ui sessions are locked');
+        if (Date.now() >= deadline) throw new Error('ui sessions are locked');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
     }
@@ -231,10 +269,13 @@ export class SessionStore {
   }
 
   /** A new session for this token digest; returns the cookie's id. The oldest go past the cap. */
-  create(secret: Buffer, nowS = Math.floor(Date.now() / 1000)): string {
+  create(secret: Buffer, nowS = Math.floor(Date.now() / 1000), meta: SessionMeta = {}): string {
     const id = randomBytes(32).toString('hex');
+    const device = cleanLabel(meta.device);
+    const label = cleanLabel(meta.label);
+    const via = meta.via && ['token', 'link', 'passkey'].includes(meta.via) ? meta.via : undefined;
     this.withLock((f) => {
-      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex') };
+      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}), ...(via ? { via } : {}) };
       const keys = Object.keys(f.sessions).sort((a, b) => f.sessions[a].issuedAt - f.sessions[b].issuedAt);
       for (const k of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) delete f.sessions[k];
     });
@@ -246,25 +287,74 @@ export class SessionStore {
     return s ? { issuedAt: s.issuedAt, secret: Buffer.from(s.secret, 'hex') } : null;
   }
 
-  /** A one-time sign-in code for this token digest, good for `ttlS` seconds. */
-  createLink(secret: Buffer, ttlS: number, nowS = Math.floor(Date.now() / 1000)): string {
+  /** A one-time sign-in code for this token digest, good for `ttlS` seconds; `label` goes to the session it opens. */
+  createLink(secret: Buffer, ttlS: number, nowS = Math.floor(Date.now() / 1000), label?: string): string {
     const code = randomBytes(32).toString('hex');
+    const named = cleanLabel(label);
     this.withLock((f) => {
       f.links ??= {};
       for (const [k, l] of Object.entries(f.links)) if (l.expires <= nowS) delete f.links[k];
-      f.links[hashId(code)] = { expires: nowS + ttlS, secret: secret.toString('hex') };
+      f.links[hashId(code)] = { expires: nowS + ttlS, secret: secret.toString('hex'), ...(named ? { label: named } : {}) };
     });
     return code;
   }
 
   /** Spend a sign-in code: its token digest if it's live and unexpired, and it's gone either way. */
   useLink(code: string, nowS = Math.floor(Date.now() / 1000)): Buffer | null {
+    return this.spendLink(code, nowS)?.secret ?? null;
+  }
+
+  /** useLink, with the label the link was made with. */
+  spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string } | null {
     if (!existsSync(this.file)) return null;
     return this.withLock((f) => {
       const l = f.links?.[hashId(code)];
       if (!l) return null;
       delete f.links![hashId(code)];
-      return l.expires > nowS ? Buffer.from(l.secret, 'hex') : null;
+      return l.expires > nowS ? { secret: Buffer.from(l.secret, 'hex'), ...(l.label ? { label: l.label } : {}) } : null;
+    });
+  }
+
+  /** Every session, the most recently used first (else the most recently signed in), as the owner sees them: refs, never ids. */
+  list(): SessionInfo[] {
+    if (!existsSync(this.file)) return [];
+    return Object.entries(this.read().sessions)
+      .map(([k, s]) => ({ ref: k.slice(0, 16), issuedAt: s.issuedAt, ...(s.seenAt ? { seenAt: s.seenAt } : {}), ...(s.device ? { device: s.device } : {}),
+        ...(s.label ? { label: s.label } : {}), ...(s.via ? { via: s.via } : {}), secret: Buffer.from(s.secret, 'hex') }))
+      .sort((a, b) => (b.seenAt ?? b.issuedAt) - (a.seenAt ?? a.issuedAt));
+  }
+
+  /** The ref of the session this cookie id opens (to say "this device"). */
+  refOf(id: string): string {
+    return hashId(id).slice(0, 16);
+  }
+
+  /**
+   * The session was used now: noted at most every SEEN_EVERY_S, so a busy page doesn't rewrite the file each request.
+   * Under the lock like every write (a write outside it would lose another process's), but one try and no wait: when
+   * another process holds it, this request goes on and a later one notes it. Last used is a nicety; a page never
+   * waits or fails for it.
+   */
+  touch(id: string, nowS = Math.floor(Date.now() / 1000)): void {
+    const key = hashId(id);
+    const s = this.read().sessions[key];
+    if (!s || (s.seenAt !== undefined && nowS - s.seenAt < SEEN_EVERY_S)) return;
+    try {
+      this.withLock((f) => { if (f.sessions[key]) f.sessions[key].seenAt = nowS; }, 0);
+    } catch { /* locked: a later request notes it */ }
+  }
+
+  /**
+   * End one session by its ref (the Account page, `loom sessions revoke`): that browser is signed out at once, and its
+   * notifications stop; every other session, its token's too, goes on. False when no session, or more than one, has it.
+   */
+  revoke(ref: string): boolean {
+    if (!REF.test(ref) || !existsSync(this.file)) return false;
+    return this.withLock((f) => {
+      const keys = Object.keys(f.sessions).filter((k) => k.startsWith(ref));
+      if (keys.length !== 1) return false;
+      drop(f, keys[0]);
+      return true;
     });
   }
 
@@ -478,12 +568,14 @@ export class SessionStore {
   delete(id: string): void {
     if (!existsSync(this.file)) return;
     const key = hashId(id);
-    this.withLock((f) => {
-      delete f.sessions[key];
-      // Signing out stops this browser's notifications too.
-      for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
-    });
+    this.withLock((f) => drop(f, key));
   }
+}
+
+/** A session gone (signed out, or revoked by its ref), and with it this browser's notifications, and no one else's. */
+function drop(f: File, key: string): void {
+  delete f.sessions[key];
+  for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
 }
 
 const stores = new Map<string, SessionStore>();
@@ -503,7 +595,7 @@ export const LINK_TOKEN = 'page sign-in links';
  * for a member (docs/specs/owners.md): its session is theirs. The first household owner's links
  * use the household's link token, as before; another member's, a link token of their own.
  */
-export function signinLink(h: Household, ttlS: number, member?: string): string {
+export function signinLink(h: Household, ttlS: number, member?: string, label?: string): string {
   const m = member === undefined ? firstOwner(h) : memberOf(h, member);
   if (!m) throw new HouseholdError(`no member named ${member} in this household`);
   const tokens = loadTokens(h.home).filter((t) => isLive(t) && t.role === 'owner');
@@ -515,5 +607,5 @@ export function signinLink(h: Household, ttlS: number, member?: string): string 
     const label = !shared && m.person === firstOwner(h).person ? LINK_TOKEN : `${LINK_TOKEN} · ${m.person}`;
     record = createToken(h, { role: { kind: 'owner', ...(label === LINK_TOKEN ? {} : { member: m.person }) }, label }).record;
   }
-  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS);
+  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS, undefined, label);
 }

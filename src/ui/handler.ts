@@ -45,7 +45,7 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { prefsOf, sessionStore, signinLink, type Done } from './sessions.js';
+import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionStore, signinLink, type Done, type SessionInfo } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, swJs } from './pwa.js';
@@ -83,7 +83,7 @@ const PASSKEY_MAX_BYTES = 16 * 1024;
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
 const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
 const ACT_MAX_BYTES = 64 * 1024;
-const COOKIE_MAX_AGE_S = 30 * 24 * 3600;
+const COOKIE_MAX_AGE_S = SESSION_MAX_AGE_S;
 const FLASH_TTL_MS = 60_000;
 const FLASH_MAX = 200;
 /** This process's cookie key. Never written anywhere: a restart means logging in again. */
@@ -287,7 +287,19 @@ function validSession(id: string, opts: UiOptions, nowS = Math.floor(Date.now() 
   if (!s) return false;
   if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { store.delete(id); return false; }
   // A session dies with its token: rotate the token and old sessions stop.
-  return auth.live(s.secret);
+  if (!auth.live(s.secret)) return false;
+  // When it was last used, for the Account page's list (t-1871): at most every few minutes.
+  store.touch(id, nowS);
+  return true;
+}
+
+/**
+ * The sessions this person may see and end (t-1871), as passkeys: a household owner's are every live one; an agent
+ * owner's, their own. Live: unexpired, and its token still good.
+ */
+function sessionsOf(opts: UiOptions, m: Member | undefined, nowS = Math.floor(Date.now() / 1000)): SessionInfo[] {
+  return storeFor(opts).list().filter((s) => nowS - s.issuedAt <= COOKIE_MAX_AGE_S && opts.auth.live(s.secret)
+    && (!opts.ownerScope || (!!m && opts.auth.member?.(s.secret)?.person === m.person)));
 }
 
 function readCookie(req: IncomingMessage, name: string): string | undefined {
@@ -1164,12 +1176,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (req.method === 'GET') return send(res, 200, 'text/html; charset=utf-8', renderLoginLink(code));
     if (req.method !== 'POST') return send(res, 405, 'text/plain', 'method not allowed');
     if (!sameOrigin(req)) return send(res, 403, 'text/plain', 'forbidden: cross-site request');
-    const secret = storeFor(opts).useLink(code);
-    if (!secret || !opts.auth.live(secret)) {
+    const spent = storeFor(opts).spendLink(code);
+    if (!spent || !opts.auth.live(spent.secret)) {
       return send(res, 401, 'text/html; charset=utf-8', renderLoginLink(code, 'That link is used up, expired, or its token was revoked.'));
     }
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(spent.secret, undefined, { device: deviceOf(req.headers['user-agent']), label: spent.label, via: 'link' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1177,7 +1189,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // Passkeys work only on the page at LOOM_PUBLIC_URL (their origin): offer one there.
   const onRp = !!rp && req.headers.host === new URL(rp.origin).host;
   const sessionCookie = (secret: Buffer) =>
-    `${COOKIE}=${storeFor(opts).create(secret)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
+    `${COOKIE}=${storeFor(opts).create(secret, undefined, { device: deviceOf(req.headers['user-agent']), via: 'passkey' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
 
   // loom's own fonts (OFL, assets/fonts): the two the page uses, nothing else.
   const font = /^\/fonts\/(instrument-sans-latin-wght-normal|jetbrains-mono-latin-wght-normal)\.woff2$/.exec(pathname);
@@ -1258,7 +1270,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(match)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1511,7 +1523,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
-    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link') {
+    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link' && action !== 'session-revoke') {
       // An agent owner's core actions are their agents' own (/a/<agent>/act/loom); the household's are refused.
       source = CORE;
       result = { ok: false, message: 'That\'s the household\'s to do: ask a household owner.' };
@@ -1521,6 +1533,14 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = (!own || own.some((k) => k.id === fields.id)) && storeFor(opts).removePasskey(fields.id ?? '')
         ? { ok: true, message: 'Removed. That device can\'t sign in with it any more.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'session-revoke') {
+      // One session ended alone (t-1871): only one this person may see (sessionsOf), named by its ref.
+      source = CORE;
+      const ref = fields.ref ?? '';
+      const mine = REF.test(ref) && sessionsOf(opts, who?.member).some((x) => x.ref === ref);
+      result = mine && storeFor(opts).revoke(ref)
+        ? { ok: true, message: 'Signed out. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
+        : { ok: false, message: 'No such session: it may have ended already.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
       source = CORE;
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
@@ -1658,6 +1678,29 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const when = (s?: number) => (s ? new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(s * 1000)) : 'never');
     // An agent owner sees their own passkeys; a household owner, every one.
     const keys = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : storeFor(opts).passkeys();
+    // Where you're signed in (t-1871): each browser on its own row, this one first, each ended alone. A household owner
+    // sees every session (an agent's screenshot session too); an agent owner, their own.
+    const sessionsSection = (): Page['sections'][number] => {
+      const here = who?.kind === 'session' ? storeFor(opts).refOf(who.cookie) : undefined;
+      const all = sessionsOf(opts, who?.member);
+      const list = [...all.filter((x) => x.ref === here), ...all.filter((x) => x.ref !== here)];
+      const tokens = hh ? loadTokens(hh.home) : [];
+      const tokenOf = (x: SessionInfo) => tokens.find((t) => t.sha256 === x.secret.toString('hex'))?.label;
+      return { id: 'sessions', title: 'Signed in', blocks: list.length ? [
+        { type: 'list', items: list.slice(0, 200).map((x) => {
+          const isHere = x.ref === here;
+          const name = [x.device ?? 'A browser', x.label ? `“${x.label}”` : ''].filter(Boolean).join(' ');
+          const token = tokenOf(x);
+          const how = [x.via === 'passkey' ? 'with a passkey' : x.via === 'link' ? 'with a sign-in link' : x.via === 'token' ? 'with a token' : '', token ? `as ${token}` : ''].filter(Boolean).join(' ');
+          return { text: isHere ? `${name} (this device)` : name,
+            meta: [`signed in ${when(x.issuedAt)}`, x.seenAt ? `last used ${when(x.seenAt)}` : '', how].filter(Boolean).join(' · '),
+            // This device signs out with the page's own Sign out, which also clears what it kept for offline (/logout).
+            ...(isHere ? {} : { act: { action: 'session-revoke', label: 'Sign out', tone: 'danger' as const,
+              confirm: 'That browser is signed out at once. Every other session, yours here too, stays signed in.', fields: { ref: x.ref } } }) };
+        }) },
+        { type: 'text', text: 'Each browser signed in to this page. Signing one out ends only that one.', tone: 'muted' },
+      ] : [{ type: 'text', text: 'Only a script with a token is signed in.', tone: 'muted' }] };
+    };
     const page: Page = {
       // "Profile" wherever it's seen (t-1925); its address stays /account (and /passkeys, its old name).
       title: 'Profile',
@@ -1671,6 +1714,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
                 act: { action: 'passkey-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } } };
             }) }]
           : [{ type: 'text', text: 'None yet: add one from the device you want to sign in with.', tone: 'muted' }] },
+        sessionsSection(),
         ...(hh ? [{ id: 'another', title: 'Another device', blocks: [
           { type: 'buttons' as const, items: [{ action: 'signin-link', label: 'Make a one-time sign-in link' }] },
           { type: 'text' as const, text: 'One sign-in, within 10 minutes, as the household\'s page sign-in links token. Open it on the other device.', tone: 'muted' as const },

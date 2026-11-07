@@ -1,6 +1,6 @@
 /**
- * `loom household` and `loom token` (docs/specs/household.md). Local only:
- * neither is a remote verb, so they never run through /cli. They read and
+ * `loom household`, `loom token` and `loom sessions` (docs/specs/household.md,
+ * docs/specs/passkeys.md). Local only: none is a remote verb, so they never run through /cli. They read and
  * write $LOOM_HOME (default ~/.config/loom) directly.
  */
 import { readFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ import { iconSetName, iconSetOf, installedIconSets, installIconSet, setIcon, use
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
-import { signinLink } from '../ui/sessions.js';
+import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -53,9 +53,11 @@ const TOKEN_USAGE = `Usage: loom token <command>
                            --service and --house name a house's (agent:<name>/<service>@<house>): a piece can tell it apart
   list                     Every token: label, role, created, last used, revoked
   revoke <label>           Revoke the live token with that label (takes effect on the next request)
-  link [--minutes 10] [--page-url <loom's page address>]
+  link [--minutes 10] [--page-url <loom's page address>] [--label <text>]
                            A one-time link that signs a browser in to the page (no token to paste).
                            Its sessions are the owner token "page sign-in links": revoke that to end them
+                           all, or one alone with \`loom sessions revoke\`. --label names the session it
+                           opens (an agent's screenshots: --label "screenshots t-1871")
 
 Roles: agent:<name> is MCP and the CLI as that agent; owner sees everything and
 the page; peer:<name> reaches commons knowledge only; piece:<piece>/<subject> is
@@ -209,7 +211,7 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!h) return 1;
       const minutes = Number(flag(rest, '--minutes') ?? 10);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) { io.stderr('--minutes is 1 to 1440\n'); return 2; }
-      const code = signinLink(h, minutes * 60);
+      const code = signinLink(h, minutes * 60, undefined, flag(rest, '--label'));
       const base = (flag(rest, '--page-url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
       io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --page-url or set LOOM_PUBLIC_URL.)'}\n`);
       io.stdout(`${base}/login/${code}\n`);
@@ -230,4 +232,61 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
     if (err instanceof HouseholdError) { io.stderr(`${err.message}\n`); return 1; }
     throw err;
   }
+}
+
+const SESSIONS_USAGE = `Usage: loom sessions <command>
+
+  list                     Every browser session on file: its ref, what it is, the label its sign-in
+                           link had, how it signed in, when it signed in and was last used (UTC), its
+                           token, and "(ended)" for one past its 30 days or whose token is revoked
+  revoke <ref>             Sign that one browser out at once (and stop its notifications); every
+                           other session, its token's too, stays signed in
+
+A script that signed in for screenshots ends its own session with POST /logout from the same
+browser before it closes; \`loom sessions revoke\` is for one that didn't.
+`;
+
+/** \`loom sessions\` (t-1871): the page's browser sessions, each ended alone. Local only, like \`loom token\`. */
+export async function runSessions(argv: string[], io: IOStreams): Promise<number> {
+  try {
+    return sessionsCommand(argv, io);
+  } catch (err) {
+    if (err instanceof HouseholdError) { io.stderr(`${err.message}\n`); return 1; }
+    // Another loom process holding ui-sessions.json's lock past its wait: say so, and try again later.
+    if (err instanceof Error && err.message === 'ui sessions are locked') { io.stderr('The sessions file is busy; try again in a moment.\n'); return 1; }
+    throw err;
+  }
+}
+
+function sessionsCommand(argv: string[], io: IOStreams): number {
+  const [sub, ...rest] = argv;
+  if (sub === 'list') {
+    const h = need(io);
+    if (!h) return 1;
+    const tokens = loadTokens(h.home);
+    const all = sessionStore(h.home).list();
+    if (!all.length) { io.stdout('No browser is signed in.\n'); return 0; }
+    const at = (s: number) => `${new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' ')}`;
+    const nowS = Math.floor(Date.now() / 1000);
+    for (const x of all) {
+      const t = tokens.find((k) => k.sha256 === x.secret.toString('hex'));
+      const token = !t ? 'no token on file' : `${t.label}${t.revoked ? ' (revoked)' : expired(t) ? ' (expired)' : ''}`;
+      // Ended: past its 30 days, or its token revoked or expired. A session with no token on file (the owner's bearer
+      // from loom-http's environment, LOOM_BEARER_TOKEN) is as live as the page says it is.
+      const ended = nowS - x.issuedAt > SESSION_MAX_AGE_S || (!!t && (!!t.revoked || expired(t)));
+      io.stdout(`${x.ref}  ${(x.device ?? 'a browser').padEnd(24)}  ${x.label ? `"${x.label}"  ` : ''}${x.via ? `by ${x.via}, ` : ''}signed in ${at(x.issuedAt)}${x.seenAt ? `, last used ${at(x.seenAt)}` : ''} UTC  (${token})${ended ? '  (ended)' : ''}\n`);
+    }
+    return 0;
+  }
+  if (sub === 'revoke') {
+    const h = need(io);
+    if (!h) return 1;
+    const ref = (rest[0] ?? '').trim();
+    if (!REF.test(ref) || rest.length !== 1) { io.stderr(SESSIONS_USAGE); return 2; }
+    if (!sessionStore(h.home).revoke(ref)) { io.stderr(`No session ${ref} (see loom sessions list).\n`); return 1; }
+    io.stdout(`Signed out session ${ref}. Every other session stays signed in.\n`);
+    return 0;
+  }
+  io.stderr(SESSIONS_USAGE);
+  return sub === undefined || sub === '--help' || sub === '-h' ? 0 : 2;
 }
