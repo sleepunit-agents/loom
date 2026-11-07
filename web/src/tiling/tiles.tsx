@@ -473,7 +473,8 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   };
 
   api.current = {
-    addable: () => addable(shell.agents, wok).map((w) => ({ ...w, on: S.current.w.includes(w.id) })),
+    // A card standing aside while its window is open isn't on the desktop to focus: it's offered (and added back).
+    addable: () => addable(shell.agents, wok).map((w) => ({ ...w, on: shownW(S.current).includes(w.id) })),
     open,
     desktop: () => { if (S.current.apps.length) homeKey(); },
     pick: (href) => {

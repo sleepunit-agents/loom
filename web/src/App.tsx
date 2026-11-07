@@ -475,7 +475,7 @@ export default function App() {
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
     const inAgent = !!agentHead?.id && !!data?.chrome?.shell?.household;
-    const own = (body: React.ReactNode) => (inAgent && agentHead ? <Suspense fallback={body}>
+    const own = (body: React.ReactNode) => (inAgent && agentHead ? <Suspense fallback={<Skeleton />}>
       <AgentWindow head={agentHead} chrome={data?.chrome} icon={icon} rail={inTile}>{body}</AgentWindow></Suspense> : body);
     return (<>
             {pg.waiting && <Skeleton />}

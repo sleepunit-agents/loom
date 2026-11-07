@@ -1474,7 +1474,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       if (!mine) return fail('only an agent in a household has a profile description');
       if (!aboutAskOf(mine.household, mine.agent)) return fail('nobody asked: your owner asks for this from your window in loom (Regenerate)');
       const t = text.replace(/\s+/g, ' ').trim();
-      if ((t.match(/[.!?](\s|$)/g) ?? []).length > 3) return fail('keep it to one or two sentences');
+      if ((t.match(/[.!?](\s|$)/g) ?? []).length > 2) return fail('keep it to one or two sentences');
       setAbout(mine.household, mine.agent, t);
       setAboutAsk(mine.household, mine.agent, null);
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, description: t }) }] };

@@ -91,7 +91,8 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
       expect(await aw.locator('.loom-aghead__name').textContent()).toMatch(/^Art E Fish/);
       expect(await p.locator('.loom-tile .loom-profile, .loom-tile .loom-profile__shape').count()).toBe(0);
       expect(await p.locator('.loom-tile').textContent()).not.toContain('persistent personal assistant');
-      expect(await aw.locator('.loom-aghead').getByText('clock', { exact: true }).count()).toBe(0);
+      // No clock element in the header: no time, no "clock".
+      expect(await aw.locator('.loom-aghead').textContent()).not.toMatch(/\bclock\b|\b\d{1,2}:\d\d\b/i);
       // The window's corner: a letter, not a cropped face.
       expect(await p.locator('.loom-tile[data-tile="/a/art"] .loom-tile__bar .loom-letter').textContent()).toBe('A');
       // Its sections, from its own tabs, down the side; Today is the one it's on.
@@ -150,7 +151,7 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
     const s = await screen(1280, 800, '/a/art?t=*art', { who: 'sam' });
     await win(s).waitFor();
     await expect.poll(() => win(s).locator('.loom-aghead__desc p').first().textContent()).toBe('Art keeps the house running: backups, machines and the task list, with you.');
-    expect(await win(s).getByRole('button', { name: /Edit|Regenerate|Write one/ }).count()).toBe(0);
+    expect(await win(s).getByRole('button', { name: /Edit|Regenerate|Write one|to write it/ }).count()).toBe(0);
     await s.context().close();
   });
 
@@ -158,15 +159,15 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
     it(`the card grows into the window and folds back (motion: ${motion})`, async () => {
       const p = await screen(1920, 1080, '/?w=needs,art,mark', { motion });
       await p.locator('[data-widget="art"]').waitFor();
+      // The trip: an outline in the agent's colour travels from the card to the window, with motion; none without.
+      const trip = p.waitForSelector('.loom-morph', { state: 'attached', timeout: 2000 }).then(() => true, () => false);
       await p.locator('[data-widget="art"] button[aria-label="Expand Art E Fish into its window"]').click();
+      expect(await trip).toBe(motion === 'no-preference');
       await win(p).waitFor();
       expect(await labels(p)).toEqual(['Art E Fish']);
       // The card stands aside while its window is open (one app at two sizes); Mark's stays.
       await expect.poll(() => p.locator('[data-widget="art"]').count()).toBe(0);
       expect(await p.locator('[data-widget="mark"]').count()).toBe(1);
-      // The trip: an outline in motion; none at all with motion reduced.
-      if (motion === 'no-preference') expect(await p.locator('.loom-morph').count()).toBeGreaterThanOrEqual(0);
-      else expect(await p.locator('.loom-morph').count()).toBe(0);
       await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Shrink Art E Fish to its card"]').click();
       await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
       await p.locator('[data-widget="art"]').waitFor();
@@ -196,7 +197,7 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
     await p.context().close();
   });
 
-  for (const look of ['lowlight', 'daylight']) {
+  for (const look of ['neon', 'lowlight', 'daylight']) {
     it(`reads in ${look}`, async () => {
       const p = await screen(1280, 800, '/a/art?t=*art', { look });
       await win(p).waitFor();
@@ -204,11 +205,16 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
       const ratio = await p.evaluate(() => {
         const px = (c: string) => { const x = document.createElement('canvas').getContext('2d')!; x.fillStyle = c; x.fillRect(0, 0, 1, 1); return [...x.getImageData(0, 0, 1, 1).data].slice(0, 3); };
         const lum = (c: number[]) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
-        let el: Element | null = document.querySelector('.loom-aghead__name');
-        let bg = 'rgba(0, 0, 0, 0)';
-        while (el && /rgba\(0, 0, 0, 0\)|transparent/.test(bg)) { bg = getComputedStyle(el).backgroundColor; el = el.parentElement; }
-        const [a, b] = [lum(px(bg)), lum(px(getComputedStyle(document.querySelector('.loom-aghead__name')!).color))].sort((x, y) => y - x);
-        return (a + 0.05) / (b + 0.05);
+        const ratio = (sel: string) => {
+          const node = document.querySelector(sel)!;
+          let el: Element | null = node;
+          let bg = 'rgba(0, 0, 0, 0)';
+          while (el && /rgba\(0, 0, 0, 0\)|transparent/.test(bg)) { bg = getComputedStyle(el).backgroundColor; el = el.parentElement; }
+          const [a, b] = [lum(px(bg)), lum(px(getComputedStyle(node).color))].sort((x, y) => y - x);
+          return (a + 0.05) / (b + 0.05);
+        };
+        // The name, and the description (owner: "No description yet."), each against what's behind it.
+        return Math.min(ratio('.loom-aghead__name'), ratio('.loom-aghead__desc p'));
       });
       expect(ratio).toBeGreaterThan(4.5);
       await p.context().close();

@@ -68,8 +68,8 @@ export default function AgentWindow({ head, chrome, icon, rail, children }: {
           <div className="loom-aghead__who">
             <div className="loom-aghead__name">
               <span>{head.label}</span>
-              {working ? <span className="loom-pill" data-tone="live"><i aria-hidden />working</span>
-                : waiting ? <span className="loom-pill" data-tone="warn"><i aria-hidden />{waiting} waiting on you</span> : null}
+              {working ? <span className="loom-agentwin__pill" data-tone="live"><i aria-hidden />working</span>
+                : waiting ? <span className="loom-agentwin__pill" data-tone="warn"><i aria-hidden />{waiting} waiting on you</span> : null}
             </div>
             <Description head={head} send={(a, f) => loom.send(a, f)} csrf={chrome?.csrf ?? ''} go={env.go} />
             {facts && <p className="loom-aghead__facts loom-data">{facts}</p>}
@@ -133,8 +133,8 @@ function Description({ head, send, csrf, go }: { head: AgentHead; send: (action:
       {head.edit && (
         <div className="loom-aghead__descacts">
           <button type="button" className="loom-linkbtn" onClick={() => setEditing(true)}>{head.about ? 'Edit' : 'Write one'}</button>
-          <button type="button" className="loom-linkbtn" disabled={busy} onClick={() => void regenerate()}>
-            {head.about ? `Ask ${head.label} to rewrite it` : `Ask ${head.label} to write it`}</button>
+          <button type="button" className="loom-linkbtn" disabled={busy} onClick={() => void regenerate()} title={`${head.label} writes it again, from a Comms thread`}>
+            {head.about ? 'Regenerate' : `Ask ${head.label} to write it`}</button>
           {waitingOn && <span className="loom-aghead__asked" role="status">Asked {head.label}; its words show here once it saves them.</span>}
         </div>
       )}

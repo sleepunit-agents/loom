@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLoomServer } from './server.js';
-import { aboutAskOf, aboutOf, ABOUT_ASK_MS, agentDir, loadHousehold, setAboutAsk, type Household } from './household.js';
+import { aboutAskOf, aboutOf, ABOUT_ASK_MS, agentDir, loadHousehold, setAbout, setAboutAsk, type Household } from './household.js';
 import { householdAct } from './ui/household-pages.js';
 
 function household(): Household {
@@ -72,18 +72,28 @@ describe('an agent\'s description', () => {
   it('describe_self keeps it short (300 characters, a sentence or two) and an ask lapses after a day', async () => {
     setAboutAsk(h, 'art', new Date().toISOString());
     expect((await describeSelf('x'.repeat(301))).error).toBe(true);
-    expect((await describeSelf('One. Two. Three. Four.')).body.error).toMatch(/one or two sentences/);
+    expect((await describeSelf('One. Two. Three.')).body.error).toMatch(/one or two sentences/);
+    expect(aboutOf(h, 'art')).toBeUndefined();
+    expect((await describeSelf('One thing. And another.')).error).toBe(false);
+    setAbout(h, 'art', '');
+    setAboutAsk(h, 'art', new Date().toISOString());
     expect(aboutOf(h, 'art')).toBeUndefined();
     setAboutAsk(h, 'art', new Date(Date.now() - ABOUT_ASK_MS - 1000).toISOString());
     expect(aboutAskOf(h, 'art')).toBeUndefined();
     expect((await describeSelf('I keep the house running.')).body.error).toMatch(/nobody asked/);
   });
 
-  it('the owner\'s own words close an open ask', async () => {
+  it('the owner\'s own words close an open ask, from the window or from Setup', async () => {
     await householdAct(h, 'about-ask', { agent: 'art' });
     await householdAct(h, 'about-set', { agent: 'art', about: 'Mine.' });
     expect(aboutAskOf(h, 'art')).toBeUndefined();
     expect((await describeSelf('Theirs.')).error).toBe(true);
     expect(aboutOf(h, 'art')).toBe('Mine.');
+    // Setup's Description (identity-set) too.
+    await householdAct(h, 'about-ask', { agent: 'art' });
+    expect((await householdAct(h, 'identity-set', { agent: 'art', about: 'Mine, from Setup.' })).ok).toBe(true);
+    expect(aboutAskOf(h, 'art')).toBeUndefined();
+    expect((await describeSelf('Theirs.')).error).toBe(true);
+    expect(aboutOf(h, 'art')).toBe('Mine, from Setup.');
   });
 });

@@ -352,7 +352,9 @@ export function DashboardView({ d, now, bare }: { /** in the agent's window: its
         }} /></Suspense>
       ) : null}
       <Asks asks={d.asks} />
-      {!d.agent?.id && <Tiles tiles={d.tiles} />}
+      {/* An agent's window keeps its tiles (Memories, its pieces': their links into its sections); a profile card had
+          them as its stats. */}
+      {(!d.agent?.id || bare) && <Tiles tiles={d.tiles} />}
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
         <Suspense fallback={<div className="grid place-items-center py-8"><Spinner size="lg" /></div>}>

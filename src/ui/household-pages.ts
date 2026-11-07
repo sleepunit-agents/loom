@@ -780,7 +780,8 @@ export async function householdAct(h: Household, action: string, fields: Record<
       if (action === 'identity-set') {
         if ('purpose' in fields) next = withPart(next, 'purpose', fields.purpose ?? '');
         for (const b of ['voice', 'rules', 'ask'] as const) if (b in fields) next = withPart(next, b, fields[b] ?? '');
-        if ('about' in fields) setAbout(h, agent, fields.about ?? '');
+        // The owner's own words close an open ask: the agent's describe_self can't write over them.
+        if ('about' in fields) { setAbout(h, agent, fields.about ?? ''); setAboutAsk(h, agent, null); }
       } else if (action === 'identity-section-set') {
         next = withPart(next, fields.section ?? '', fields.body ?? '');
       } else {

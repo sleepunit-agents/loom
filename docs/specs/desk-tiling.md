@@ -287,18 +287,22 @@ dialog over a phone's one page would add a step to reach the same tiles, and swi
 
 ## An agent's window (t-1925 D)
 
-An agent's pages are one window (`web/src/agent-window.tsx`), the mockups' (2026-11-06):
+An agent's pages are one window (`web/src/agent-window.tsx`), the mockups' (2026-11-06). "Window" here is the
+mockups' word for the agent's **tile** (the glossary's): the frame inside it, not the old single window.
 
 - **The header:** the agent's face (its pixel face where it has one) in a Neon frame (a cut corner, a lit top edge, faint
   scanlines; no 000h shapes), its name with a **working** pill (or "N waiting on you"), its **description**, and a line
   of facts (today's count, its memories, when it was last active). No clock element: the Clock is a section. Message
-  opens Comms. The window's corner (its title strip) wears the agent's **letter**, not a cropped face: the pixel face is
-  the one big picture, and small places use the letter.
+  opens Comms. The window's corner (its title strip) and Comms' thread list wear the agent's **letter**, not a cropped
+  face: the pixel face is the one big picture. (A place with room for the whole face, 36 px and up, such as Find's
+  rows, keeps the face: it's a crop only below that.) The page under the header keeps the agent's tiles (Memories, its
+  pieces'), each a link into its sections.
 - **The description** is the household's word for what the agent does, for whom, in a sentence or two: household.json
   `about` (`setAbout`), never its creed (an agent with none shows "No description yet." to its owner, and nothing to
-  anyone else). A household owner writes it in place (Edit, `about-set`), or asks the agent to write its own (`about-ask`:
+  anyone else). A household owner writes it in place (Edit, `about-set`; Setup's Description too), or asks the agent to write its own
+  (**Regenerate**, or "Ask Art to write it" while there's none; `about-ask`:
   a Comms thread from them asks, and the agent saves its answer with the `describe_self` MCP tool, which is refused
-  unless an ask is open (24 hours), writes once, at most 300 characters and one or two sentences, and is told to keep its
+  unless an ask is open (24 hours; the owner's own words close it), writes once, at most 300 characters and one or two sentences, and is told to keep its
   memories out of it). An agent owner (not the household's) reads it and can't change it.
 - **Its sections** (its own tabs: Today, Mind, Setup, and every piece's agent tab, Clock, Bridges, Houses, Secrets…) are
   a sidebar inside the window; under 640 px wide an icon rail, each still named for a screen reader. The desktop's dock
