@@ -233,7 +233,8 @@ you's first ask and "N more"; it's `min(height, compact height)`.
   - An agent's window has **Shrink to widget** in its strip (it was Pin card to the desktop, before the card and the
     window were one app: "An agent's window", below): its card goes on the desktop and the window closes.
 - **Linked:** a widget's actions open its app beside it. On an agent's card, **Chat** opens that agent's latest Comms
-  thread and **Open** opens their pages. On Needs you, an ask opens in the Inbox. An app opened this way goes last, next
+  thread and **Open** opens their pages. On Needs you, an ask opens in the Inbox with that ask picked (Needs you is the
+  Inbox shrunk: "Needs you and the Inbox", below). An app opened this way goes last, next
   to the rail. A widget is live: it draws from the same live data its app does (`/events`), so it never goes stale.
 - **Removing:** a widget's × removes it, like any tile. Removing the last widget leaves the ground. With no app and no
   widget, the desktop says "No tiles. Open an app from the dock, or right-click the desktop (or press Shift+F10) to add a
@@ -315,6 +316,23 @@ mockups' word for the agent's **tile** (the glossary's): the frame inside it, no
   menu has **Expand**) closes it and the card comes back where it was (added to the desktop when it wasn't
   there), the outline travelling back. Reduced motion: no outline, the change is instant.
 
+## Needs you and the Inbox
+
+Needs you is the Inbox shrunk (Jonathan, 2026-11-07: "the needs you view is definitely the inbox shrunk. it should expand
+into the inbox, or vanish if the inbox is opened"). They are one app at two sizes, as an agent's card and its window are,
+by the same code (`tiling/widgets.ts` `pairOf`, `tiling/morph.ts` `WidgetOps`):
+
+- **Expand** (Needs you's head, and its menu) grows it into the Inbox's tile on its Needs you folder (`/inbox?f=needs`),
+  a lit pink outline travelling from the widget to the tile. "N more in the Inbox" does the same.
+- **An ask** in it (its words, or Answer…) opens in the Inbox with that ask picked (`/inbox?f=needs&i=<key>`), the same
+  way, whatever the ask is: one with a page of its own (a task's) is drawn inside the Inbox's reader, as there.
+- **While an Inbox tile is open** on the desktop, however it was opened, Needs you stands aside: the rest of the widgets
+  fill its room, by the rule, and `w` keeps it where it was. Closed, sent to the dock, or folded back, it comes back.
+- The Inbox's **Shrink to widget** (its strip's button and its right-click menu) closes the tile and Needs you comes back
+  (added to the desktop when it wasn't there), the outline travelling back. Reduced motion: no outline, instant.
+- Its Yes, No, Allow and Deny keep the Inbox's open check (`ask-open.ts`, loom#595).
+- A phone has no desktop: its Inbox is a page and Home's Needs you a row, as before; nothing to swap.
+
 ## One window at a time
 
 An Accessibility choice, per person, off unless turned on (`oneWindow` in `/appearance/prefs`; this device's copy is
@@ -376,8 +394,8 @@ button, or the Menu key or Shift+F10 on what has focus, opens one at it:
 - **The desktop's ground:** Add a widget (above).
 - **A tile's strip:** Minimize, Make it the big one (not the big one already), Pin its card / Take its card off the
   desktop (an agent's tile), Close. A tile has no window of its own to open it in, so no such item.
-- **A widget:** an agent's card has Chat, Open and Unpin from the desktop; another widget Open and Remove from the
-  desktop.
+- **A widget:** an agent's card has Chat, Expand and Unpin from the desktop; Needs you Expand and Remove from the
+  desktop; another widget Open and Remove from the desktop. An agent's tile and the Inbox's have Shrink to widget.
 - **A dock key:** Open; Minimize while it's open; Close while it's open or in the dock. Home, All apps (the launcher), More and your own key
   (Account) have none.
 - **A list row that says what it offers** (`data-row-menu="id:Label|…"`, answered by a `loom-menu` event on the row): an

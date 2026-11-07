@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Needs you is the Inbox shrunk** (t-1925). On the desktop, Needs you's **Expand** grows it into the Inbox's tile on
+  its Needs you folder, as an agent's card grows into its window (the same code: `tiling/widgets.ts` `pairOf`); an ask in
+  it opens in the Inbox with that ask picked. While an Inbox tile is open, Needs you stands aside and the other widgets
+  fill its room; the Inbox's **Shrink to widget** folds it back. Reduced motion: instant. Phones are unchanged.
+
 - **Sign one browser out alone** (t-1871). Profile's **Signed in** lists each browser session you may see (a household
   owner, all of them; an agent owner, their own): what it is (from its User-Agent), its sign-in link's label, how and
   when it signed in, when it was last used, and its token. **Sign out** on a row ends that session and its
