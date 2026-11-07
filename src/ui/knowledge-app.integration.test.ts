@@ -38,6 +38,7 @@ describe.runIf(built && chrome)('Knowledge, a reader', () => {
     ['norns-clock-tempo', 'norns clock: clock.tempo = n is a no-op', 'music/norns', 'Use params:set("clock_tempo", n).'],
     ['elektron-digitakt-midi', 'Digitakt sends MIDI clock on port A', 'music/gear/elektron', 'Port A only.'],
     ['homelab-backup', 'The nightly backup runs at 03:00', 'ours/homelab', 'restic, to wunder.'],
+    ['m4l-lfo', 'An LFO device maps one parameter at a time', 'music/production/max-for-live-devices-and-their-mappings', 'One.'],
   ];
 
   beforeAll(async () => {
@@ -91,6 +92,8 @@ describe.runIf(built && chrome)('Knowledge, a reader', () => {
       await expect.poll(() => mode(p)).toBe('three');
       const folders = await p.locator('.loom-split__nav .loom-split__folder-name').allTextContents();
       expect(folders.slice(0, 3)).toEqual(['All pages', 'Recently verified', 'Due a check']);
+      // A long topic is cut, never wider than the folders: every count stays inside.
+      expect(await p.locator('.loom-split__nav').evaluate((n) => [...n.querySelectorAll('.loom-split__folder')].every((f) => f.getBoundingClientRect().right <= n.getBoundingClientRect().right + 0.5))).toBe(true);
       expect(folders).toEqual(expect.arrayContaining(['music', 'norns', 'gear/elektron', 'ours', 'homelab']));
       await p.locator('.loom-split__folder', { hasText: /^norns/ }).click();
       expect(await p.locator('[data-split-row]').count()).toBe(2);
@@ -151,7 +154,7 @@ describe.runIf(built && chrome)('Knowledge, a reader', () => {
 
   it('a copied desk address on a phone keeps its list (the tiles\' t is not a topic), and Add a fact is there', async () => {
     const p = await screen(390, 844, '/knowledge?t=*knowledge,comms', true);
-    await expect.poll(() => p.locator('[data-split-row]').count()).toBe(4);
+    await expect.poll(() => p.locator('[data-split-row]').count()).toBe(5);
     expect(await p.locator('.loom-split__list-head h2').textContent()).toBe('All pages');
     expect(await p.locator('.loom-kn__add').textContent()).toBe('Add a fact');
     await p.context().close();
