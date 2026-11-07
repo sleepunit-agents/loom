@@ -514,6 +514,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The desktop's boot tests failed whenever the machine was busy** (t-1949): 732 ms against a 600 ms limit on CI, 3491
+  against 3200 locally, and with the merge queue each failure ejected a PR. They now hold the page's own clock
+  (Playwright's) and move it on by hand, so they check what the boot does, and in what order, with no time limits left:
+  it stands until 2.2 s on its clock, leaves then, is gone after its 0.25 s fade, and a key or tap ends it with no time
+  passing at all. A fresh session is now cleared from a page that isn't the app, so an arrival still running can't mark
+  it again. `expect.poll` waits up to 10 s (vitest's default gave up after 1 s, a limit no test meant to set).
 - **`loom token link --help` minted a live sign-in link** (t-1950). `token`, `sessions` and `household` found
   their flags by looking for the ones they knew, so `--help` was ignored and `link` went ahead and printed a working
   link. They, and `backup`, `export`, `restore`, `store` and `pieces`, now parse every flag first (`src/cli/args.ts`,
@@ -522,7 +528,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   dir, and `knowledge`/`memory` honour `--help` anywhere after the verb. `src/cli/help-no-side-effects.test.ts` runs
   every verb that changes something with `--help` and with an unknown flag, and checks the household's files are
   unchanged.
-
 - **A window's page ran over its frame** (t-1925; Jonathan, 2026-11-06). A tile's ring was a shadow under its page, and
   the page reached the tile's edge, so a page with a background (Activity's feed) covered the bottom edge, and every
   page sat a pixel over the sides. The ring is drawn over the page and its sheets now (the cut corner's diagonal too),

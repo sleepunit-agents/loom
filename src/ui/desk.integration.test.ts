@@ -263,8 +263,14 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }, 90_000);
   }
 
-  /** A fresh session's first page: neither the boot nor the arrival had yet. */
-  const fresh = async (p: Page, path = '/') => { await p.evaluate(() => { sessionStorage.removeItem('loom-arrived'); sessionStorage.removeItem('loom-booted'); }); await p.goto(`${base}${path}`); };
+  /** A fresh session's first page: neither the boot nor the arrival had yet. Its marks are cleared from a page that isn't
+   * the app (/pieces.json, the same origin): from the app's own page, an arrival still running (arrive.tsx) could mark the
+   * session again between the clear and the next page, and on a loaded runner it did, so the boot never came (t-1949). */
+  const fresh = async (p: Page, path = '/') => {
+    await p.goto(`${base}/pieces.json`);
+    await p.evaluate(() => { sessionStorage.removeItem('loom-arrived'); sessionStorage.removeItem('loom-booted'); });
+    await p.goto(`${base}${path}`);
+  };
   /** Whether an element of the boot is shown now (its lines come up one by one: hidden ones are in the DOM already). */
   const shown = (p: Page, sel: string) => p.locator(sel).evaluate((e) => getComputedStyle(e).visibility === 'visible' && Number(getComputedStyle(e.closest('.loom-boot')!).opacity) > 0.5);
 
@@ -302,44 +308,73 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     // A key or a tap: what skips it.
     for (const t of ['keydown', 'pointerdown']) addEventListener(t, () => log.push({ what: 'key', at: performance.now() }), true);
   });
-  /** The boot's log once it has had each of `whats`, in the page's own clock. */
-  const bootHad = (p: Page, whats: BootNote['what'][], timeout = 8000) => p.waitForFunction((ws) => {
+  /** The boot's log once it has had each of `whats`, in the page's own clock. How long it waits is a budget for a loaded
+   * runner, not a limit on the boot (holdClock is what times it); if it runs out, it says what the page had. */
+  const bootHad = (p: Page, whats: BootNote['what'][], timeout = 30_000) => p.waitForFunction((ws) => {
     const log = (window as unknown as { bootLog?: BootNote[] }).bootLog ?? [];
+    // The last line shown, even if its animationend went by unseen.
+    const li = document.querySelector('.loom-boot__log li:last-child');
+    if (li && !log.some((e) => e.what === 'last') && getComputedStyle(li).visibility === 'visible') log.push({ what: 'last', at: performance.now(), text: li.textContent ?? '' });
     return ws.every((w) => log.some((e) => e.what === w)) ? log : null;
-  }, whats, { timeout }).then((h) => h.jsonValue() as Promise<BootNote[]>);
+  }, whats, { timeout }).then((h) => h.jsonValue() as Promise<BootNote[]>).catch(async (e: Error) => {
+    const had = await p.evaluate(() => ({ path: location.pathname, log: (window as unknown as { bootLog?: BootNote[] }).bootLog, boots: document.querySelectorAll('.loom-boot').length, session: { ...sessionStorage } })).catch(() => 'unreadable');
+    throw new Error(`the boot never had ${whats.join(', ')}: ${JSON.stringify(had)}\n${e.message}`);
+  });
   const note = (log: BootNote[], what: BootNote['what']) => log.find((e) => e.what === what)!;
+  /** The order the boot's notes came in (a note's place in the log, which is the page's own order of events). Its last
+   * line comes up by CSS (desk.css), on the browser's real time, which a held clock doesn't hold: so it's left out unless
+   * asked for. */
+  const order = (log: BootNote[], withLast = false) => log.map((e) => e.what).filter((w) => withLast || w !== 'last');
+  /** desk.tsx's BOOT_MS and BOOT_FADE_MS: how long the boot stands, and its fade. */
+  const BOOT_MS = 2200;
+  const BOOT_FADE_MS = 250;
+  /** Stop the page's clock (Playwright's: setTimeout, performance.now and the rest) from the next page on, so the boot's
+   * own timer only runs when a test moves it on (p.clock.runFor). No wall-clock limit is left: each timing test failed
+   * on a busy runner, the page's own clock included, since a loaded browser is late for everything (732 ms against a
+   * 600 ms limit on CI; 3491 against 3200 locally; each failure ejected a PR from the merge queue, t-1949). What the boot
+   * does now is checked in order, and to the millisecond on a clock that doesn't move until it's told to. */
+  const holdClock = async (p: Page) => { await p.clock.install(); await p.clock.pauseAt(Date.now() + 1000); };
 
   it('the boot: what loom has, licensed to the owner by name, the licence line up before it leaves; a key skips it at once', async () => {
     const p = await screen('neon', 1280, 800, { motion: 'no-preference', boot: true });
     // The owner's name as People has it (Find's answer): "Jonathan Barket" is licensed as "Jonathan B.".
     await p.route('**/find', (r) => r.fulfill({ json: { suggest: { people: [{ label: 'Jonathan Barket', href: '/people/jonathan' }] } } }));
     await logBoot(p);
+    await holdClock(p);
     await fresh(p);
     const boot = p.locator('.loom-boot');
-    // Left alone, the whole boot, as the page saw it.
-    const log = await bootHad(p, ['in', 'last', 'leaving', 'out']);
-    const [up, last, leaving, out] = (['in', 'last', 'leaving', 'out'] as const).map((w) => note(log, w));
+    // Left alone, the whole boot, as the page saw it. Its clock is held, so it stands until the test moves it on; its lines
+    // come up meanwhile (desk.css, on the browser's own time), the licence line last.
+    const lines = await bootHad(p, ['in', 'last']);
+    const [up, last] = (['in', 'last'] as const).map((w) => note(lines, w));
     expect(up.text).toMatch(/LOOM\/\/OS/);
     expect(up.text).toMatch(/2 agents/);
     expect(up.aria).toBe('true');
-    // The licence line is up, and still up, before the boot leaves by itself; by then it names the owner.
     expect(last.text).toMatch(/validating LOOM\/\/OS™ license.*compliant/);
-    expect(last.at - up.at).toBeLessThan(1900);
-    expect(last.at).toBeLessThan(leaving.at);
+    // The licence line is up, and still up, until the boot leaves by itself at 2.2 s on its clock; by then it names the owner.
+    await p.clock.runFor(BOOT_MS - 1);
+    expect(order(await p.evaluate(() => (window as unknown as { bootLog: BootNote[] }).bootLog), true)).toEqual(['in', 'last']);
+    expect(await shown(p, '.loom-boot__log li:last-child')).toBe(true);
+    await p.clock.runFor(1);
+    const leaving = note(await bootHad(p, ['leaving']), 'leaving');
     expect(leaving.lic).toBe('licensed to Jonathan B.');
     // It never has focus.
     expect(leaving.focused).toBe(false);
-    expect(out.at).toBeGreaterThan(leaving.at);
-    // A key skips it at once: long before it would have left by itself (2.2 s), and gone after its fade (0.25 s).
+    await p.clock.runFor(BOOT_FADE_MS);
+    expect(order(await bootHad(p, ['out']), true)).toEqual(['in', 'last', 'leaving', 'out']);
+    // A key skips it at once. The clock is still held, so the boot can't leave by itself however late the key is: it
+    // leaves on the key, with no time passing at all, and is gone once its fade (0.25 s) has run.
     await fresh(p);
-    await boot.waitFor({ timeout: 5000 });
+    await bootHad(p, ['in']);
     await p.keyboard.press('Space');
-    const skip = await bootHad(p, ['in', 'key', 'leaving', 'out']);
-    const [up2, key, leaving2, out2] = (['in', 'key', 'leaving', 'out'] as const).map((w) => note(skip, w));
-    expect(key.at - up2.at).toBeLessThan(2200);
-    expect(leaving2.at - key.at).toBeLessThan(200);
-    expect(out2.at - key.at).toBeLessThan(600);
+    const skip = await bootHad(p, ['in', 'key', 'leaving']);
+    expect(order(skip)).toEqual(['in', 'key', 'leaving']);
+    expect(note(skip, 'leaving').at).toBe(note(skip, 'key').at);
+    expect(await boot.count()).toBe(1);
+    await p.clock.runFor(BOOT_FADE_MS);
+    expect(order(await bootHad(p, ['out']))).toEqual(['in', 'key', 'leaving', 'out']);
     // Then the app's own arrival (its power-on) runs, and the desktop is there.
+    await p.clock.resume();
     await p.locator('.loom-desk-home').waitFor();
     // Once a session: not again on the next page, nor coming back.
     await p.goto(`${base}/`); await p.locator('.loom-desk-home').waitFor(); await p.waitForTimeout(600);
@@ -351,13 +386,17 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   it('a tap skips the boot and presses nothing under it', async () => {
     const p = await screen('neon', 1280, 800, { motion: 'no-preference', boot: true });
     await logBoot(p);
+    // Held, so it's the tap that ends the boot, never its own timer (holdClock).
+    await holdClock(p);
     await fresh(p);
-    await p.locator('.loom-boot').waitFor({ timeout: 5000 });
+    await bootHad(p, ['in']);
     // Where the Inbox's dock key is, under the boot.
     const key = (await p.locator('.loom-dock-bar [data-part="item"][aria-label="Inbox"]').boundingBox())!;
     await p.mouse.click(key.x + key.width / 2, key.y + key.height / 2);
-    const log = await bootHad(p, ['key', 'out']);
-    expect(note(log, 'out').at - note(log, 'key').at).toBeLessThan(600);
+    await bootHad(p, ['key', 'leaving']);
+    await p.clock.runFor(BOOT_FADE_MS);
+    expect(order(await bootHad(p, ['out']))).toEqual(['in', 'key', 'leaving', 'out']);
+    await p.clock.resume();
     await p.waitForTimeout(400);
     expect(new URL(p.url()).pathname).toBe('/');
     await p.context().close();
@@ -366,12 +405,18 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   it('the boot leaves by itself after about two seconds', async () => {
     const p = await screen('neon', 1920, 1080, { motion: 'no-preference', boot: true });
     await logBoot(p);
+    await holdClock(p);
     await fresh(p);
-    const log = await bootHad(p, ['in', 'out']);
-    // Up 2.2 s, then a 0.25 s fade: gone about 2.45 s after it came up, in the page's own clock.
-    const gone = note(log, 'out').at - note(log, 'in').at;
-    expect(gone).toBeGreaterThan(1700);
-    expect(gone).toBeLessThan(3200);
+    await bootHad(p, ['in']);
+    // Up 2.2 s, then a 0.25 s fade, on the page's own clock, moved on by hand: still up just before, leaving at 2.2 s,
+    // gone once the fade has run.
+    await p.clock.runFor(BOOT_MS - 100);
+    expect(order(await p.evaluate(() => (window as unknown as { bootLog: BootNote[] }).bootLog))).toEqual(['in']);
+    await p.clock.runFor(100);
+    expect(order(await bootHad(p, ['leaving']))).toEqual(['in', 'leaving']);
+    expect(await p.locator('.loom-boot').count()).toBe(1);
+    await p.clock.runFor(BOOT_FADE_MS);
+    expect(order(await bootHad(p, ['out']))).toEqual(['in', 'leaving', 'out']);
     await p.context().close();
   }, 60_000);
 
