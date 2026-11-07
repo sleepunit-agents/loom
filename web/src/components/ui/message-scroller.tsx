@@ -64,12 +64,15 @@ export function MessageScroller({
     const follow = () => {
       if (attached.current) jump();
     };
+    // Follow from the ResizeObserver alone, never straight from a mutation: a mutation's callback runs as soon as
+    // the content changes, before the frame that delivers a scroll the reader just made, so `attached` can still
+    // say "at the end" and the jump would pull them back down. A ResizeObserver runs in the frame, after its scroll
+    // events and before it paints; and observing a new child reports its size, so new content is followed there.
     const resize = new ResizeObserver(follow);
     const observe = () => {
       resize.disconnect();
       resize.observe(el);
       for (const child of el.children) resize.observe(child);
-      follow();
     };
     const mutation = new MutationObserver(observe);
     mutation.observe(el, {
@@ -78,6 +81,7 @@ export function MessageScroller({
       characterData: true,
     });
     observe();
+    follow();
     return () => {
       mutation.disconnect();
       resize.disconnect();
