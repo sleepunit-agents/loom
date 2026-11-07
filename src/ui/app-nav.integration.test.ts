@@ -303,7 +303,7 @@ describe.runIf(built && chrome)('an app\'s tile: Back, Forward, its crumb and it
   it('3000 px, beside the Inbox: a wide page with nothing for the side gets Recent here, this app\'s pages only', async () => {
     const p = await screen(3000, '/appearance', 1440);
     await titled(p, 'Appearance');
-    await tile(p).locator('button[aria-label="Close Setup"]').click();
+    await tile(p).locator('button[aria-label="Close Appearance"]').click();
     await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     await p.goto(`${base}/p/work/task/t-5`); await titled(p, 'Task 5');
     await p.goto(`${base}/p/work/about`); await titled(p, 'About tasks');

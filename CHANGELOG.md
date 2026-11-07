@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   tile or on a phone the folders are chips and the ask slides over the list. Its buttons are live only once loom says
   the ask is still open (`GET /inbox/open`), and loom is asked again before any is sent. Old `?f=` folder addresses land
   on the new folders. The master/detail layout (`web/src/split.tsx`) is generic.
+- **The launcher** (t-1925 G; `docs/specs/desk-tiling.md`, "The launcher"). On a desktop the dock's last key, All apps, or
+  Ctrl+Shift+Space opens every app in one grid, grouped as Work, People & agents, Library, System, Look & feel and
+  Pieces, each tile with its live state. Search is focused at once and filters as you type; Enter opens the first match
+  as a tile, Esc closes, the arrow keys move. It replaces Setup's dock key and the account key on the desktop; Setup and
+  More are no longer tiles there (an old link opens the launcher), and Appearance, Accessibility, Members and Pieces each
+  open in a tile of their own. Phones keep More and Places.
 - **Tiling is the only desktop** (t-1884; `docs/specs/desk-tiling.md`, "A fresh desktop", "One window at a time"). At
   1024 px and wider, apps share the screen as tiles for everyone: Appearance's Desktop choice and the old single window
   are gone. A device with no saved layout starts with Needs you, each agent's card, Vitals, Backup and the ticker

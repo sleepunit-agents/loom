@@ -247,7 +247,7 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
 
 
   it('Comms in a tile under 620 px is one pane (loom#565 measures its own box): the list, then the thread with its way back', async () => {
-    const p = await screen(1280, 800, '/comms?t=setup,*comms&w=needs');
+    const p = await screen(1280, 800, '/comms?t=people,*comms&w=needs');
     const comms = p.locator('.loom-tile[data-tile="/comms"]');
     await comms.locator('.comms-list').waitFor();
     expect(await comms.evaluate((t) => t.getBoundingClientRect().width)).toBeLessThan(620);
@@ -266,7 +266,7 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await expect.poll(() => new URL(p.url()).pathname).toBe('/comms');
     expect(await shown('.comms-list')).toBe(true);
     // wide again (Comms alone): two panes, the list beside the thread, and no Back
-    await p.locator('.loom-tile[data-tile="/setup"] button[aria-label="Close Setup"]').click();
+    await p.locator('.loom-tile[data-tile="/people"] button[aria-label="Close People"]').click();
     await expect.poll(() => comms.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThan(620);
     await expect.poll(() => shown('.comms-blank')).toBe(true);
     await comms.locator('.comms-row__btn').first().click();

@@ -1,0 +1,14 @@
+/* An agent's face in a Neon frame (the app mockups, 2026-11-06): a lit square with a cut corner and a lit top edge, faint
+   scanlines over it, no 000h shapes. --c is the agent's mark colour. Shared by the launcher and the agent's window. */
+.loom-faceframe{--c:var(--v-olive);position:relative;display:grid;place-items:center;flex:none;overflow:hidden;
+  background:radial-gradient(circle at 50% 70%,color-mix(in srgb,var(--c) 22%,transparent),transparent 70%),var(--v-structure,var(--v-paper));
+  clip-path:polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,0 100%);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,transparent)}
+.loom-faceframe::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(to bottom,rgba(7,7,12,.22) 0 1px,transparent 1px 3px);pointer-events:none}
+.loom-faceframe::before{content:"";position:absolute;left:8px;top:0;width:24px;height:2px;z-index:1;background:var(--c);box-shadow:var(--glow-line,0 0 8px) var(--c)}
+:root[data-mode="light"] .loom-faceframe{background:radial-gradient(circle at 50% 70%,color-mix(in srgb,var(--c) 26%,transparent),transparent 72%),var(--v-beige)}
+:root[data-mode="light"] .loom-faceframe::after{display:none}
+/* A letter avatar (the small places: a window's corner, a list's row): the agent's initial in its colour. */
+.loom-letter{--c:var(--v-pink);--ls:26px;width:var(--ls);height:var(--ls);flex:none;display:inline-grid;place-items:center;border-radius:7px;
+  font:700 calc(var(--ls)*.5)/1 var(--font-display);color:var(--c);background:color-mix(in srgb,var(--c) 14%,var(--v-paper));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,transparent)}
+:root[data-contrast="more"] .loom-letter{box-shadow:inset 0 0 0 1.5px var(--c)}
