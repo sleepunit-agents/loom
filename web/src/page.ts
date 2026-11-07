@@ -118,6 +118,8 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     if (!quiet && showing.current === to) { setWaiting(false); setPending(null); }
     if (showing.current !== to) {   // another page was asked for meanwhile: keep this answer for later, show nothing
       if (!r.redirect) keep(to, r);
+      // A refresh that landed first and moved what's shown (a redirect, a one-time message gone) leaves no wait behind.
+      if (!quiet) setPending((p) => (p === to ? null : p));
       return;
     }
     if (r.status === 304) return;   // nothing new: what's shown is current

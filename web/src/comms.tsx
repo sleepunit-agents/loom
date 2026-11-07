@@ -263,7 +263,7 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
   );
 }
 
-function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { threads: Thread[]; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (id: string) => void; onNew: () => void; reload: () => void }) {
+function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { threads: Thread[]; marks: Record<string, Mark>; current?: string; csrf: string; onOpen: (t: Thread) => void; onNew: () => void; reload: () => void }) {
   const [archived, setArchived] = useState<Thread[] | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   useEffect(() => { if (showArchived) void getJson<{ threads: Thread[] }>('/comms?archived=1').then((r) => setArchived(r?.threads ?? [])); }, [showArchived]);
@@ -282,7 +282,7 @@ function ThreadList({ threads, marks, current, csrf, onOpen, onNew, reload }: { 
       {list.map(([label, rows]) => rows.length ? (
         <div key={label} className="comms-group">
           <h3 className="comms-group__label loom-data">{label.toUpperCase()}</h3>
-          <ul data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t.id)}
+          <ul data-motion="off">{rows.map((t) => <ThreadRowView key={t.id} t={t} marks={marks} current={t.id === current} onOpen={() => onOpen(t)}
             onArchive={() => void act(t, t.archived ? 'unarchive' : 'archive')} onPin={() => void act(t, t.pinned ? 'unpin' : 'pin')} />)}</ul>
         </div>
       ) : null)}
@@ -656,7 +656,7 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
 
 // ---- a new thread ------------------------------------------------------------------------------
 
-function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (id: string) => void; onBack: () => void; wide: boolean; back: boolean }) {
+function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agents: string[]; marks: Record<string, Mark>; csrf: string; onOpened: (t: Thread) => void; onBack: () => void; wide: boolean; back: boolean }) {
   const [agent, setAgent] = useState(agents[0]);
   const [error, setError] = useState<string | null>(null);
   const id = useRef(newId());
@@ -664,7 +664,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agen
   const send = async (text: string) => {
     const r = await post('/comms/new', csrf, { agent, id: id.current, text });
     if (!r.ok) { setError(String(r.body.error ?? 'That didn\'t start.').replace(/^[a-z-]+: /, '')); return false; }
-    onOpened((r.body.thread as Thread).id);
+    onOpened(r.body.thread as Thread);
     return true;
   };
   return (
@@ -682,7 +682,7 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back }: { agen
         ))}
       </div>
       {error && <p className="comms-msg comms-msg--error" role="alert">{error}</p>}
-      <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} draft={`new:${agent}`} />
+      <Composer onSend={send} accent={marks[agent] ? markColor(marks[agent].bg) : undefined} label={`Message ${agentName(agent, marks)}`} placeholder={`Message ${agentName(agent, marks)}`} draft="new" />
     </article>
   );
 }
@@ -706,9 +706,10 @@ export function CommsView({ data }: { data: CommsData }) {
   useEffect(() => { if (data.threads) setThreads(data.threads); }, [data.threads]);
   // The thread asked for, from the moment it's pressed (t-1925 F): it's the one lit in the list, and its pane opens with
   // what the list knows, until its page lands. Only the pane is replaced; the list stays mounted, scrolled where it was.
-  const [opening, setOpening] = useState<string | null>(null);
+  const [opening, setOpening] = useState<Thread | null>(null);
   useEffect(() => { setMaking(false); setOpening(null); }, [data.thread?.id, data.which]);
-  const open = (id: string) => { setMaking(false); setOpening(id === data.thread?.id ? null : id); go(`/comms/${id}`); };
+  // The thread itself, not its id: one just started, or an archived one, isn't in the list's threads.
+  const open = (t: Thread) => { setMaking(false); setOpening(t.id === data.thread?.id ? null : t); go(`/comms/${t.id}`); };
   const back = () => { setMaking(false); setOpening(null); go('/comms'); };
   // A desktop's Comms in a box narrower than two panes fit (a narrow window, a tile): one pane at a time, the list, then
   // the thread with a way back. Measured on the box, not the screen; before the first paint, so two never flash.
@@ -724,12 +725,12 @@ export function CommsView({ data }: { data: CommsData }) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [wide]);
-  const asked = opening && opening !== (data.which === 'thread' ? data.thread?.id : undefined) ? threads.find((t) => t.id === opening) : undefined;
+  const asked = opening && opening.id !== (data.which === 'thread' ? data.thread?.id : undefined) ? opening : undefined;
   const pane = making ? <NewThread agents={agents} marks={marks} csrf={csrf} onOpened={open} onBack={back} wide={wide} back={!wide || one} />
     : asked ? <ThreadOpening key={asked.id} t={asked} marks={marks} wide={wide} back={!wide || one} onBack={back} />
     : data.which === 'thread' && data.thread ? <ThreadPane key={data.thread.id} initial={{ thread: data.thread, messages: data.messages ?? [], earlier: data.earlier, asks: data.asks }} marks={marks} member={data.member} csrf={csrf} wide={wide} back={!wide || one} onBack={back} onChanged={reload} github={data.github} />
       : null;
-  const list = <ThreadList threads={threads} marks={marks} current={opening ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
+  const list = <ThreadList threads={threads} marks={marks} current={opening?.id ?? data.thread?.id} csrf={csrf} onOpen={open} onNew={() => setMaking(true)} reload={reload} />;
   if (!wide) return <div className="comms" data-phone="">{pane ?? list}</div>;
   // The same two places in both, the list's and the pane's: crossing the width keeps an open thread mounted (its
   // draft, its live messages), only the list comes and goes.
