@@ -9,7 +9,7 @@
 import { describe, it, expect as vexpect, beforeAll, afterAll, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 60_000 });
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
@@ -26,6 +26,13 @@ const expect = Object.assign(((v: unknown, m?: string) => vexpect(v, m)) as type
   { poll: (f: () => unknown, o?: { timeout?: number }) => vexpect.poll(f, { timeout: 10_000, ...o }) }) as typeof vexpect;
 const KEY = (label: string) => `.loom-dock-bar [data-part="item"][aria-label="${label}"]`;
 const LAUNCHER = '.loom-launcher';
+/** A piece with a tab: its label, its kind (a place, or a setting), and the line its tile says. */
+const piece = (label: string, kind: string, value: string) => `#!/usr/bin/env node
+const args = process.argv.slice(2).join(' ');
+if (args === 'ui --json') { process.stdout.write(JSON.stringify({ v: 2, tab: { label: ${JSON.stringify(label)}, kind: ${JSON.stringify(kind)} }, tile: { label: ${JSON.stringify(label)}, value: ${JSON.stringify(value)} } })); process.exit(0); }
+let input = ''; process.stdin.on('data', (d) => { input += d; });
+process.stdin.on('end', () => { process.stdout.write(JSON.stringify({ title: ${JSON.stringify(label)}, sections: [{ id: 'a', blocks: [{ type: 'text', text: 'Here.' }] }] })); });
+`;
 
 describe.runIf(built && chrome)('the launcher', () => {
   let h: Household;
@@ -44,7 +51,13 @@ describe.runIf(built && chrome)('the launcher', () => {
     }
     writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art', owner: 'jonathan',
       members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
-    for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME']) saved[k] = process.env[k];
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    for (const [name, label, kind, value] of [['work', 'Tasks', 'place', '9 open'], ['vault', 'Secrets', 'setting', '1 request']]) {
+      writeFileSync(join(bin, `loom-${name}`), piece(label, kind, value)); chmodSync(join(bin, `loom-${name}`), 0o755);
+    }
+    for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME', 'PATH']) saved[k] = process.env[k];
+    process.env.PATH = `${bin}:${saved.PATH}`;
     process.env.LOOM_HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     h = loadHousehold(home)!;
@@ -81,8 +94,11 @@ describe.runIf(built && chrome)('the launcher', () => {
   for (const [w, hgt] of [[1280, 800], [1920, 1080]] as const) {
     it(`opens from the dock's last key with search focused; sections from loom's list; types, Enter opens a tile; Esc closes, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);
-      // The dock: no Setup key, no account key; the last key is All apps.
+      // The dock: no Setup key, no More key for the setting pieces, no account key; the last key is All apps. A place
+      // piece keeps its key.
       expect(await p.locator(KEY('Setup')).count()).toBe(0);
+      expect(await p.locator(KEY('More')).count()).toBe(0);
+      expect(await p.locator(KEY('Tasks')).count()).toBe(1);
       const keys = await p.$$eval('.loom-dock-bar [data-part="item"]', (ks) => ks.map((k) => k.getAttribute('aria-label')));
       expect(keys.at(-1)).toBe('All apps');
       await p.click(KEY('All apps'));
@@ -90,7 +106,10 @@ describe.runIf(built && chrome)('the launcher', () => {
       expect(await p.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Find an app');
       expect(await sections(p)).toEqual(['Work', 'People & agents', 'Library', 'System', 'Look & feel', 'Pieces']);
       const all = await apps(p);
-      for (const a of ['Inbox', 'Activity', 'Projects', 'Comms', 'Art E Fish', 'Visual Mark', 'People', 'Knowledge', 'Members', 'Appearance', 'Accessibility', 'Pieces']) expect(all).toContain(a);
+      for (const a of ['Inbox', 'Activity', 'Projects', 'Tasks', 'Comms', 'Art E Fish', 'Visual Mark', 'People', 'Knowledge', 'Secrets', 'Members', 'Appearance', 'Accessibility', 'Pieces']) expect(all).toContain(a);
+      // A setting piece is System's, with its tile's line; a place piece Work's.
+      expect(await p.locator(`${LAUNCHER} .loom-lsec[aria-label="System"] .loom-lapp[aria-label^="Secrets"] .loom-lapp__sub`).textContent()).toBe('1 request');
+      expect(await p.locator(`${LAUNCHER} .loom-lsec[aria-label="Work"] .loom-lapp[aria-label^="Tasks"]`).count()).toBe(1);
       // Live state under each name: the agents', the look's.
       expect(await p.locator(`${LAUNCHER} .loom-lapp[aria-label^="Appearance"] .loom-lapp__sub`).textContent()).toBe('Neon Noir');
       expect(await p.locator(`${LAUNCHER} .loom-lapp[aria-label^="Inbox"] .loom-lapp__sub`).textContent()).toMatch(/need|Nothing waiting/);
@@ -122,6 +141,11 @@ describe.runIf(built && chrome)('the launcher', () => {
       await p.keyboard.press('Enter');
       await expect.poll(() => p.evaluate(() => document.querySelector('.loom-tile[data-focused], .loom-tile[aria-current="true"]')?.getAttribute('aria-label') ?? '')).toMatch(/Accessibility/);
       expect(await labels(p)).toEqual(['Accessibility', 'Art E Fish']);
+      // A setting piece opens in a tile of its own.
+      await p.click(KEY('All apps'));
+      await p.keyboard.type('secr');
+      await p.keyboard.press('Enter');
+      await expect.poll(() => labels(p)).toContain('Secrets');
       expect((p as Page & { errors: string[] }).errors).toEqual([]);
       await p.context().close();
     });

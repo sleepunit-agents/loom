@@ -113,7 +113,8 @@ function tabsOf(chrome: Chrome, head: AgentHead | undefined): { tabs: Tab[]; mor
     { label: 'More', href: '/setup', current: setup.current }];
   // A desktop in a household: Setup isn't a key (t-1925 G): its apps are in the launcher, the dock's last key (App).
   return matchMedia('(min-width: 1024px)').matches
-    ? { tabs: s.household ? [home, inbox, ...places] : [home, inbox, ...places, setup], more: settings }
+    // (and no More key for the setting pieces: they're the launcher's too).
+    ? s.household ? { tabs: [home, inbox, ...places], more: [] } : { tabs: [home, inbox, ...places, setup], more: settings }
     : { tabs: phone, more: [] };
 }
 
