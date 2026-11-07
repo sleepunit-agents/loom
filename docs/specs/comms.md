@@ -260,22 +260,31 @@ So the activity cards need a new capture:
   - **Codex:** `events.jsonl`, items of `type` `command_execution`, `mcp_tool_call`, `file_change` and `web_search`.
     `item.started` makes the card (`status: "in_progress"`), and `item.completed` finishes it, keyed by the item's
     `id`: `status: "completed"` is `done`, and `status: "failed"` is `failed` (measured 2026-11-05 with `codex exec
-    --json`: a command that exited 2 came back `"status": "failed", "exit_code": 2`). A Codex command has no
-    description, so its summary is "Ran a command".
+    --json`: a command that exited 2 came back `"status": "failed", "exit_code": 2`). A `todo_list` item is the plan:
+    its card is `done` from the start and its label follows `item.updated` (t-1944).
 - **What a card holds:** `{id, at, tool, summary, state: running|done|failed}`.
-  - `summary` is at most 120 printable characters, with no line break. It's made by this fixed table, never by a
-    model:
+  - `summary` is the step's label (t-1944: Jonathan, 2026-11-07, "he could be playing minecraft as far as I can tell"):
+    at most 120 printable characters, with no line break. It's made by this fixed table (loom-box
+    `src/activity.mjs`, `src/redact.mjs`), never by a model:
 
-    | Tool | Summary |
+    | Tool | Label |
     |---|---|
-    | a shell command | its `description` when the harness gives one (Claude Code's Bash tool does), else "Ran a command" |
-    | a file read or edit | the verb and the path relative to the repo |
-    | a search | "Searched for <pattern>", the pattern cut at 60 characters |
-    | an MCP tool | the tool's name in words ("Recalled memories", "Wrote a note") |
+    | a shell command | its `description` when the harness gives one (Claude Code's Bash tool does), else its short form: the program and its subcommand and a few plain words (`Ran gh pr checks 603`, `Ran npm test`), a file reader as `Read delivery.mjs (lines 120–180)`, a search as `Searched for "x" in src`, a fetch as `Fetched from api.github.com`, a script as `Ran a python3 snippet`; up to three commands of a chain, never a pipe's later stages, and "Ran a command" when none says anything (`cd`, `echo`) |
+    | a file read or edit | the verb and the path relative to the repo, and the line range a read names |
+    | a search | `Searched for "<pattern>"` and where, the pattern cut at 60 characters |
+    | a web fetch | `Read a page on <host>` |
+    | a message to another agent | `Messaged <who>: "<its first line>"` |
+    | an MCP tool | the tool's name in words and its key argument (`Remembered "title"`, `Wrote a note "path"`); a digest is only "Wrote its digest" |
+    | the plan (TodoWrite, Codex's todo list) | `Plan (2/5): <the item it's on>` |
     | anything else | the tool's name |
 
-  - **Never:** a tool's output or result, a file's contents, a command line itself, or an environment value. A
-    command line can hold a secret, and an output is bulk text.
+  - **A failed step says why**, after ` — `: an exit code and one fixed phrase matched in its output (`exit 1: 3 tests
+    failed`, `exit 127: command not found`, `no such file`, `not allowed`). The output is only matched, never shown.
+  - **Never:** a tool's output or result, a file's contents (a heredoc's body included), a whole command line, or an
+    environment value. Every label goes through `redact` last, which takes out known token shapes (GitHub, Anthropic,
+    OpenAI, Slack, AWS, Google, GitLab, npm, age, JWTs, PEM keys), a URL's user and password, Authorization and cookie
+    header values, the value of any `NAME=value`, the value of a secret-named flag or query parameter, and long
+    token-like runs. Its tests are loom-box `test/redact.test.mjs`.
   - A card's `summary` is stored like a message's words: an age blob in `text`, swept with them. Only `tool` and
     `state` are plain.
 - **How it travels.** In a house, the body host adds new cards to its `body-sync` report (every 2 s). For a local
@@ -285,7 +294,8 @@ So the activity cards need a new capture:
     answers `409`.
   - A post of more than 50 cards, or with any card breaking the shape above (a non-printable character in `summary`
     included), is refused whole (`400`).
-  - A card whose `id` the thread already has updates that card's `state`. It doesn't add a second one.
+  - A card whose `id` the thread already has updates that card's `state` and its label (sealed again, unless its words
+    were already swept). It doesn't add a second one.
 - **Only `tool_use` entries and tool items become cards.** A Claude `text` or `thinking` entry, a Codex
   `agent_message` or `reasoning` item, and every result are skipped whole.
 - **The agent's own text between tools** isn't shown. In a venue body, that text is the body thinking aloud, and
@@ -595,7 +605,9 @@ A real chat, with a terminal's flavour:
 - **Each message** has a mono timestamp line, `14:02 · art`.
 - **The composer** is a mono prompt line, `> `, in the agent's accent.
 - **Activity cards** sit between messages, grouped by `run` and collapsed by default to one line per run: "▸ N steps"
-  and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to its summaries, each with its state.
+  and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to a `now:` line (the step it's on, and
+  the plan's item when there's a plan), then its labels, each with its state; three or more like steps in a row that
+  finished well fold into one line that opens ("Ran 6 commands · Ran npm test"). A plan card isn't counted as a step.
 - **The working line** is one mono line under the newest message (t-1918): `Art E Fish is working · Ran the tests ·
   0:42`, the step it's on now (the newest running card since your message, else the newest) and the time since
   `status: working` began; while your message is with it and nothing's back yet, `Art E Fish is thinking…`. It shows

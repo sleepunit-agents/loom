@@ -896,7 +896,8 @@ const PRINTABLE_LINE = /^[^\x00-\x1f\x7f\u2028\u2029]*$/;
 
 /**
  * POST /api/loom/comms/activity {conversation, run, cards}: the runtime's tool cards for a `loom` conversation's live
- * thread. A card's id the thread already has updates its state; a new one is a message. Refused whole on any bad card.
+ * thread. A card's id the thread already has updates its state and its label; a new one is a message. Refused whole on any
+ * bad card.
  */
 export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): { ok: true; added: number; updated: number } {
   const { conversation, run, cards } = raw;
@@ -918,10 +919,13 @@ export function postActivity(h: Household, env: NodeJS.ProcessEnv, raw: Record<s
   if (!r || r.archived !== null) return fail('conflict: that conversation has no live thread', 409);
   let added = 0, updated = 0;
   for (const c of checked) {
-    const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, card_json FROM comms_messages WHERE thread = ? AND kind = 'card' AND id = ?").get(r.id, c.id) as { seq: number; card_json: string } | undefined);
+    const prior = withMessages(h.home, (db) => db.prepare("SELECT seq, card_json, text IS NOT NULL AS kept FROM comms_messages WHERE thread = ? AND kind = 'card' AND id = ?").get(r.id, c.id) as { seq: number; card_json: string; kept: number } | undefined);
     if (prior) {
       const card = { ...JSON.parse(prior.card_json) as Record<string, unknown>, state: c.state };
       withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET card_json = ? WHERE thread = ? AND seq = ?').run(JSON.stringify(card), r.id, prior.seq));
+      // Its label moves with it (t-1944: a failed step says why, a plan says where it's got to), sealed like the first
+      // one; a label already swept stays swept.
+      if (prior.kept) { const blob = encrypt(h.home, env, c.summary); withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET text = ? WHERE thread = ? AND seq = ?').run(blob, r.id, prior.seq)); }
       updated++;
     } else {
       append(h.home, env, r.id, { kind: 'card', from: r.agent, id: c.id, text: c.summary, card: { tool: c.tool, state: c.state }, run }, now);

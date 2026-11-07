@@ -358,6 +358,42 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       } finally { await ctx.close(); }
     }, 30_000);
   }
+
+  it('a run\'s steps open to a now: line with the plan\'s item, and like steps in a row fold into one line that opens (t-1944)', async () => {
+    const o = openThread(h, process.env, h.members[0], { agent: 'mark', id: 'stepsstepsstepsz', text: 'What are you on?' });
+    recordDelivery(h, o.thread, o.seq, { delivered: true, body: 'started' });
+    const at = new Date().toISOString();
+    postActivity(h, process.env, { conversation: o.thread.conversation, run: 'run-s', cards: [
+      { id: 's0', at, tool: 'todo_list', summary: 'Plan (1/3): Run the approvals tests', state: 'done' },
+      { id: 's1', at, tool: 'command_execution', summary: 'Read delivery.mjs (lines 120–180)', state: 'done' },
+      { id: 's2', at, tool: 'command_execution', summary: 'Ran git status', state: 'done' },
+      { id: 's3', at, tool: 'command_execution', summary: 'Ran npm ci', state: 'done' },
+      { id: 's4', at, tool: 'command_execution', summary: 'Ran npm test', state: 'done' },
+      { id: 's5', at, tool: 'command_execution', summary: 'Ran npm test — exit 1: 3 tests failed', state: 'failed' },
+      { id: 's6', at, tool: 'mcp_tool_call', summary: 'Messaged art: "Can you review loom#612?"', state: 'running' },
+    ] });
+    const { ctx, page, errors } = await open(true);
+    try {
+      await page.goto(`${base}/comms/${o.thread.id}`);
+      const line = page.locator('.comms-steps > .comms-steps__line');
+      await line.waitFor();
+      // The plan isn't a step.
+      expect(await line.textContent()).toMatch(/6 steps · Messaged art: "Can you review loom#612\?"/);
+      await line.click();
+      expect(await page.locator('.comms-steps__now').textContent()).toBe('now: Messaged art: "Can you review loom#612?"Plan (1/3): Run the approvals tests');
+      const group = page.locator('.comms-steps__group');
+      expect(await group.count()).toBe(1);
+      expect(await group.locator('summary').textContent()).toBe('Ran 3 commands · Ran npm test');
+      expect(await group.locator('li').first().isVisible()).toBe(false);
+      await group.locator('summary').click();
+      expect(await group.locator('li').count()).toBe(3);
+      expect(await group.locator('li').first().isVisible()).toBe(true);
+      // The failure stays its own line, with why.
+      expect(await page.locator('.comms-steps li[data-state="error"]').textContent()).toContain('exit 1: 3 tests failed');
+      expect(await noSideways(page)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally { await ctx.close(); }
+  }, 30_000);
 });
 
 // In this file, not its own, so its browser never runs beside the one above (vitest runs files in parallel, and the
