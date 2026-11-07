@@ -183,7 +183,9 @@ describe('one session ended alone (t-1871)', () => {
     s.addPushSub(a, { endpoint: 'https://push.invalid/a', keys: { p256dh: 'x', auth: 'y' } });
     s.addPushSub(b, { endpoint: 'https://push.invalid/b', keys: { p256dh: 'x', auth: 'y' } });
     s.revoke(s.refOf(a));
-    expect(s.takePushWatch(60)!.subs.map((x) => x.endpoint)).toEqual(['https://push.invalid/b']);
+    // Read from the file itself, before any watch (which prunes a gone session's subscriptions on its own).
+    const subs = JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).push.subs as Record<string, unknown>;
+    expect(Object.keys(subs)).toEqual(['https://push.invalid/b']);
   });
 
   it('a sign-in link\'s label goes to the session it opens; a label is plain words, kept short', () => {

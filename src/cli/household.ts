@@ -252,6 +252,8 @@ export async function runSessions(argv: string[], io: IOStreams): Promise<number
     return sessionsCommand(argv, io);
   } catch (err) {
     if (err instanceof HouseholdError) { io.stderr(`${err.message}\n`); return 1; }
+    // Another loom process holding ui-sessions.json's lock past its wait: say so, and try again later.
+    if (err instanceof Error && err.message === 'ui sessions are locked') { io.stderr('The sessions file is busy; try again in a moment.\n'); return 1; }
     throw err;
   }
 }
