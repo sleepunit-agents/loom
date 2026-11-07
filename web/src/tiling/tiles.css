@@ -117,7 +117,7 @@
 :root[data-tile-move="page"] .loom-tile[data-moving] .loom-tile__body{view-transition-name:loom-tile-page}
 :root[data-tile-move]::view-transition-group(*){animation-duration:.22s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
 :root[data-tile-move="page"]::view-transition-old(root),:root[data-tile-move="page"]::view-transition-new(root){animation:none}
-/* a window's own move (tiles.tsx Fx; t-1925 B): the one tile opened, closed, minimized, made big or brought back wears
+/* a tile's own move (tiles.tsx Fx; t-1925 B): the one tile opened, closed, minimized, made big or brought back wears
    `loom-fx`, and <html data-tile-fx> says which. loom's look, not a page's: a CRT's power-on (a lit line, then the
    picture) and power-off (the picture folds to a line, the line to a dot); a scanline wiping it down to the dock and
    back up; a glitch, slices of it torn sideways, as it takes the big slot. 220 to 320 ms, transform, opacity and

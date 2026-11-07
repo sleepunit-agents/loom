@@ -345,8 +345,8 @@ it:
   trail, then ⤢, _ and ×. The trail never says the app's name twice: a page named as its app (a Comms thread, which
   has no title of its own) shows the name alone, and the name is the link up to the app's start (Jonathan,
   2026-11-06: "COMMS › COMMS"). The side column (`SIDE_COLUMN`) shows in a tile only when the tile is at least 1,100 px
-  wide; Recent here only when, as well, the tile shares the screen with another: a window alone on the desktop with no
-  side of its own gets the room.
+  wide; Recent here only when, as well, another app tile shares the screen (widgets don't count): the only app tile,
+  with no side of its own, gets the room. A double-click on the name minimizes the tile, as anywhere on the strip.
 - **What the old window did that a tile now does** (2026-11-06, when the window went): a tile's page wears its app's
   colour (or its agent's) as its accent (`data-accent`); each page a tile opens is noted for Find's Recent; the bar's
   ⓘ is the focused tile's page's intro; and the dock lights the focused app's key, Home's with none.
@@ -376,7 +376,7 @@ tech. In a tile:
   from its old box to its new one when tiles are added, closed, swapped or promoted.
 - **A page change inside a tile** names only that tile's body, so the others don't move.
 - Only one transition runs at a time. A change during one applies without animation.
-- **A window's own move** (t-1925 B; Jonathan, 2026-11-06: "nothing reads as a page refresh"): the one tile opened,
+- **A tile's own move** (t-1925 B; Jonathan, 2026-11-06: "nothing reads as a page refresh"): the one tile opened,
   closed, minimized, made the big one or brought back from the dock wears its own effect, in loom's look: a CRT's
   power-on (open) and power-off (close), a scanline wiping it down to the dock (minimize) and back up (bring back), a
   glitch as it takes the big slot. It is the same View Transition as the reflow: that tile is named `loom-fx` for it and
@@ -560,13 +560,16 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     device's copy is written again without it; the seed has no ticker; the desktop draws no headline. 390 px: the
     phone's bar, no clock, no glyphs.
 
-23. **Windows** (`src/ui/desk-chrome.integration.test.ts`). A Comms thread's strip reads "Comms" once, no crumb, and
-    the name goes up to `/comms`; Setup's Appearance reads "Setup › Appearance". At 1920 a lone Setup tile, with
-    pages of Setup visited, has no Recent here and its page takes the tile's width; at 3000 with the Inbox beside it,
-    Recent here is there. The loader's three sizes are 16, 24 and 40 px under text of 12 px and of 40 px, and the app's
-    scripts carry no other spinner. With motion, opening the Inbox and Comms, making Comms big, minimizing it, bringing
-    it back and closing it wear `open, open, max, min, restore, close` and run `loom-fx-on`, `-glitch`, `-wipe-out`,
-    `-wipe-in` and `-off`, none longer than 350 ms; under reduced motion the same steps wear none and run none.
+23. **Tiles' strips, room, loader, moves** (`src/ui/desk-chrome.integration.test.ts`, `src/ui/spinner.test.ts`). A
+    Comms thread's strip reads "Comms" once, no crumb; the name goes up to `/comms`, and a double-click on it
+    minimizes the tile. Setup's Appearance reads "Setup › Appearance". At 1920 a lone Setup tile, with pages of Setup
+    visited and a widget in the rail, has no Recent here and its page takes the tile's width; at 3000 with the Inbox
+    beside it, Recent here is there. `Spinner` draws `data-size` sm, md (its default) or lg with four segments, as a
+    status; those sizes are 16, 24 and 40 px under text of 12 px and of 40 px; no built asset carries the old spinner
+    (`v-pulse__orbit`, `__hub`, `__mark`, `__label`). With motion, opening the Inbox and Comms, making Comms big, minimizing it,
+    bringing it back and closing it wear `open, open, max, min, restore, close` and run `loom-fx-on`, `-glitch`,
+    `-wipe-out`, `-wipe-in` and `-off`, none longer than 350 ms; under reduced motion the same steps wear none and run
+    none.
 
 ## Build, in phases
 

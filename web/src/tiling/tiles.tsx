@@ -56,7 +56,7 @@ export type Focused = { key: string; label: string; title: string; /** what its 
 export type Accent = { name?: string; style?: React.CSSProperties };
 
 const SAVED = 'loom-tiles';
-/** A window's own move (transition, below): which, and whose. */
+/** A tile's own move (transition, below): which, and whose. */
 type Fx = { kind: 'open' | 'close' | 'min' | 'max' | 'restore'; key: string };
 /** The view-transition name the one tile with an effect wears for it (tiles.css). */
 const FX = 'loom-fx';
@@ -210,7 +210,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const drawn = useRef<State | null>(null);
   const moving = useRef(false);
   const canMove = () => !moving.current && !reducedMotion() && typeof (document as Doc).startViewTransition === 'function';
-  // A window's own move (t-1925 B; Jonathan, 2026-11-06: "nothing reads as a page refresh"): the one tile opened,
+  // A tile's own move (t-1925 B; Jonathan, 2026-11-06: "nothing reads as a page refresh"): the one tile opened,
   // closed, minimized, made the big one or brought back from the dock is named `loom-fx` for the transition, in its
   // old picture, its new one or both, and <html data-tile-fx> says which effect it wears (tiles.css): a CRT's power-on
   // and power-off, a scanline wiping it down to the dock and back up, a glitch as it takes the big slot. The rest of
@@ -741,8 +741,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
   const label = `tile ${n + 1} of ${of}, ${o.label}`;
   /** The page is called what its app is (a Comms thread before it has a title, an app's own page). */
   const named = title.trim().toLowerCase() === o.label.trim().toLowerCase();
-  // A wide tile has the side column: the page's own side sections, or, when it has none, Recent here; but a window
-  // alone on the desktop with no side of its own keeps the room (Jonathan, 2026-11-06).
+  // A wide tile has the side column: the page's own side sections, or, when it has none, Recent here; but the only app
+  // tile on the desktop (widgets don't count) with no side of its own keeps the room (Jonathan, 2026-11-06).
   const wide = (rect?.w ?? 0) >= SIDE_WIDE;
   const pageSide = !!(p.data as { page?: { sections?: { place?: string; side?: unknown }[] } } | null)?.page?.sections?.some((x) => x.place === 'side' || !!x.side);
   const recent = useMemo(() => (wide && of > 1 && !pageSide && !p.waiting ? recentHere(p.url, o.key) : []), [wide, of, pageSide, p.url, p.waiting, o.key]);
@@ -752,7 +752,8 @@ function Tile({ o, n, of, rect, focused, say, nav, pages, bodies, intents, go, r
       style={Object.assign({ '--t': tint, '--vt': vtName('tile', o.key) }, accent.style, rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : { visibility: 'hidden' }) as React.CSSProperties}
       onPointerDownCapture={onFocus} onFocusCapture={onFocus}>
       <div className="loom-tile__bar" inert={blocked || undefined} onDoubleClick={(e) => {
-        if (e.button !== 0 || (e.target as Element).closest('button, a, input, select, textarea, [role="button"]')) return;
+        // The title is the way up on a page named as its app (.loom-tile__up): a double-click there still minimizes.
+        if (e.button !== 0 || (e.target as Element).closest('button, a:not(.loom-tile__up), input, select, textarea, [role="button"]')) return;
         e.preventDefault(); minimize();
       }}>
         <span className="loom-tile__key" aria-hidden>{lead}</span>

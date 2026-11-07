@@ -362,10 +362,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- **Desktop windows** (t-1925 B; `docs/specs/desk-tiling.md`, "The frame", "Transitions"). A tile's strip never says its
-  app's name twice ("COMMS › COMMS" is "COMMS", the way up to the app's start). A window alone on the desktop, with no
+- **Desktop tiles: strip, room, loader, moves** (t-1925 B; `docs/specs/desk-tiling.md`, "The frame", "Transitions"). A tile's strip never says its
+  app's name twice ("COMMS › COMMS" is "COMMS", the way up to the app's start). The only app tile on the desktop, with no
   side of its own, has no Recent here: its page takes the room. One loader replaces every spinner: four neon segments
-  lit in turn, 16, 24 or 40 px, never sized by the text around it. Opening, closing, minimizing, making a window the
+  lit in turn, 16, 24 or 40 px, never sized by the text around it. Opening, closing, minimizing, making a tile the
   big one and bringing it back from the dock each have their own short effect (a CRT's power-on and -off, a scanline
   wipe, a glitch); reduced motion has none.
 

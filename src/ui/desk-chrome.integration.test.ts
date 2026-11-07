@@ -159,7 +159,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.context().close();
   });
 
-  // ---- B. windows ----
+  // ---- B. tiles ----
   it('a page named as its app never repeats it: no "COMMS › COMMS"; the name is the way up', async () => {
     const p = await screen(1280, 800, { path: `/comms/${thread}?t=*comms` });
     const bar = p.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar');
@@ -175,6 +175,14 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     // at the app's start there's no way up: the name alone
     expect(await bar.locator('h2 a').count()).toBe(0);
     await p.context().close();
+    // a double-click on the name that's the way up still minimizes the tile, as on the rest of the strip
+    const q = await screen(1280, 800, { path: `/comms/${thread}?t=*comms` });
+    const up = q.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar h2 a');
+    await up.waitFor();
+    await up.dblclick();
+    await expect.poll(() => labels(q)).toEqual([]);
+    expect(new URL(q.url()).searchParams.get('m')).toBe('comms');
+    await q.context().close();
   });
 
   it('a page named otherwise keeps the app before it: Setup › Appearance', async () => {
@@ -186,8 +194,8 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.context().close();
   });
 
-  it('Recent here: not beside a window alone on the desktop (it gets the room); still beside a wide one sharing it', async () => {
-    const p = await screen(1920, 1080, { path: '/setup?t=*setup&w=' });
+  it('Recent here: not beside the only app tile (it gets the room), widgets or not; still beside a wide one sharing the screen', async () => {
+    const p = await screen(1920, 1080, { path: '/setup?t=*setup&w=vitals' });
     const t = p.locator('.loom-tile[data-tile="/setup"]');
     await t.locator('a, button', { hasText: 'Appearance' }).first().click();
     await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toBe('Appearance');
@@ -213,7 +221,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await q.context().close();
   });
 
-  it('one loader: its three sizes in px, whatever the text around it; no old spinner in the app', async () => {
+  it('one loader: its three sizes in px, whatever the text around it (spinner.test.ts: the component and the built assets)', async () => {
     const p = await screen(1280, 800);
     const sizes = await p.evaluate(() => [12, 40].flatMap((fs) => ['sm', 'md', 'lg'].map((size) => {
       const host = document.createElement('div');
@@ -225,17 +233,10 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
       return `${fs}:${size}:${r.width}x${r.height}`;
     })));
     expect(sizes).toEqual(['12:sm:16x16', '12:md:24x24', '12:lg:40x40', '40:sm:16x16', '40:md:24x24', '40:lg:40x40']);
-    // the app's scripts carry no other spinner (the orbit and bloom drawings are gone)
-    const old = await p.evaluate(async () => {
-      const srcs = [...document.querySelectorAll<HTMLScriptElement>('script[src], link[rel="modulepreload"]')].map((e) => (e as HTMLScriptElement).src || (e as HTMLLinkElement).href);
-      const texts = await Promise.all(srcs.map((u) => fetch(u).then((r) => r.text())));
-      return texts.some((t) => /v-pulse__orbit|v-pulse__mark/.test(t));
-    });
-    expect(old).toBe(false);
     await p.context().close();
   });
 
-  /** Every window effect <html data-tile-fx> wore, and the loom-fx animations that ran under each. */
+  /** Every tile effect <html data-tile-fx> wore, and the loom-fx animations that ran under each. */
   const watchFx = (p: Page) => p.evaluate(() => {
     const w = window as unknown as { fx: string[]; fxAnims: string[] };
     w.fx = []; w.fxAnims = [];
@@ -250,7 +251,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   });
   const fxSeen = (p: Page) => p.evaluate(() => { const w = window as unknown as { fx: string[]; fxAnims: string[] }; return { fx: w.fx, anims: [...new Set(w.fxAnims)] }; });
   /** Open, open, make big, minimize, bring back, close: each waits for the last to settle. */
-  async function windows(p: Page) {
+  async function tileMoves(p: Page) {
     const settle = () => p.waitForFunction(() => !document.documentElement.dataset.tileMove);
     await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual(['Inbox']); await settle();
     await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']); await settle();
@@ -260,10 +261,10 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.locator('button[aria-label="Close Comms"]').click(); await expect.poll(() => labels(p)).toEqual(['Inbox']); await settle();
   }
 
-  it('each window move has its own effect: open, make big, minimize, bring back, close', async () => {
+  it('each tile move has its own effect: open, make big, minimize, bring back, close', async () => {
     const p = await screen(1280, 800, { motion: 'no-preference', path: '/?w=needs' });
     await watchFx(p);
-    await windows(p);
+    await tileMoves(p);
     const seen = await fxSeen(p);
     expect(seen.fx).toEqual(['open', 'open', 'max', 'min', 'restore', 'close']);
     for (const a of ['open:loom-fx-on', 'max:loom-fx-glitch', 'min:loom-fx-wipe-out', 'restore:loom-fx-wipe-in', 'close:loom-fx-off']) expect(seen.anims, a).toContain(a);
@@ -275,10 +276,10 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.context().close();
   });
 
-  it('under reduced motion none of them run, and the windows still open, move and close', async () => {
+  it('under reduced motion none of them run, and the tiles still open, move and close', async () => {
     const p = await screen(1280, 800, { motion: 'reduce', path: '/?w=needs' });
     await watchFx(p);
-    await windows(p);
+    await tileMoves(p);
     expect(await fxSeen(p)).toEqual({ fx: [], anims: [] });
     await p.context().close();
   });
