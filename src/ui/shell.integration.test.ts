@@ -84,7 +84,10 @@ describe('the app shell', () => {
     expect(swText).toContain("searchParams.has('_flash')");
     expect(swText).toMatch(/NEVER = .*login\|logout/);
     // What it keeps changed shape (the app's one page, under one key): a new cache, the old one dropped.
-    expect(swText).toContain("'loom-4-pages'");
+    expect(swText).toContain("'loom-5-pages'");
+    // The built app's files are kept ahead, under a name that changes with the build (t-1925 F).
+    expect(swText).toMatch(/BUILT = 'loom-5-built-[A-Za-z0-9_-]{10}'/);
+    expect(swText).toMatch(/const AHEAD = \["\/app\/assets\//);
     // A Comms thread's live reads never come from a kept copy (t-1881).
     expect(swText).toContain(String.raw`/^\/comms\/[^/]+\/(since|before)\//`);
     expect(swText).toContain("const APP = new URL('/__app', location.origin).href");
