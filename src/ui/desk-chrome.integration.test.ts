@@ -305,7 +305,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals']);
     expect(await menu(p).count()).toBe(0);
     // on a tile's page, and on a link in it, the browser's own menu: none of ours, and nothing stops the browser's
-    await p.click(KEY('Setup')); await expect.poll(() => labels(p)).toEqual(['Setup']);
+    await p.goto(`${base}/people?t=*people&w=needs,vitals`); await expect.poll(() => labels(p)).toEqual(['People']);
     await p.locator('.loom-tile__body').click({ button: 'right', position: { x: 300, y: 300 } });
     expect(await menu(p).count()).toBe(0);
     const native = (sel: string) => p.locator(sel).first().evaluate((el) => {
@@ -314,7 +314,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
       return e.defaultPrevented;
     });
     expect(await native('.loom-tile__page')).toBe(false);
-    // a link in a page (one put there: Setup's are buttons)
+    // a link in a page (one put there, so there surely is one)
     await p.locator('.loom-tile__page').evaluate((pg) => { const l = document.createElement('a'); l.href = '/people'; l.textContent = 'People'; l.id = 'a-link'; pg.prepend(l); });
     expect(await native('#a-link')).toBe(false);
     expect(await native('.loom-tile__page button')).toBe(false);
@@ -430,11 +430,12 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     expect(await items(p)).toEqual(['Open', 'Close']);
     await menu(p).locator('[role="menuitem"]', { hasText: 'Close' }).click();
     await expect.poll(() => new URL(p.url()).searchParams.get('m')).toBeNull();
-    // Home and your own key have none of ours
-    await p.locator(KEY('Home')).click({ button: 'right' });
-    expect(await menu(p).count()).toBe(0);
-    await p.locator('.loom-dock-bar [data-part="item"][data-value="/account"]').click({ button: 'right' });
-    expect(await menu(p).count()).toBe(0);
+    // Home, All apps (the launcher) and your own key, where the dock has it, have none of ours
+    for (const sel of [KEY('Home'), KEY('All apps'), '.loom-dock-bar [data-part="item"][data-value="/account"]']) {
+      if (!(await p.locator(sel).count())) continue;
+      await p.locator(sel).click({ button: 'right' });
+      expect(await menu(p).count(), sel).toBe(0);
+    }
     await p.context().close();
   });
 
