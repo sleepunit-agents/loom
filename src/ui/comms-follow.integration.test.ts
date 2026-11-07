@@ -22,6 +22,7 @@ import { createConversationTables } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { adapterCall, errorWords, openThread, postActivity, recordDelivery, sweepComms, BUSY_MS, type Thread } from '../comms.js';
 import { stopCommsWatch } from './comms-live.js';
+import { deliveredOutcome } from './comms-routes.js';
 
 const root = new URL('../../', import.meta.url).pathname;
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find((p) => p && existsSync(p));
@@ -37,6 +38,14 @@ describe('a body that couldn\'t start isn\'t busy (t-1918)', () => {
   it('says so in words, with its own code', () => {
     expect(errorWords('start-retry', 'Mark', undefined)).toBe('Mark couldn\'t start; retrying.');
     expect(errorWords('busy', 'Mark', undefined)).toMatch(/busy/);
+  });
+  it('reads the runtime\'s answer: queued while it retries a start is start-retry; failed is start-failed; queued alone is queued', () => {
+    // The runtime's own words for a retry (loom-box delivery.mjs, a start that failed).
+    const retry = { body: 'queued', reason: 'no body could start (mark\'s body host didn\'t start the body in 60 s): trying again in 30 s' };
+    expect(deliveredOutcome(retry)).toEqual({ delivered: true, body: 'queued', error: { code: 'start-retry', reason: retry.reason } });
+    expect(deliveredOutcome({ body: 'failed', reason: 'no harness' })).toEqual({ delivered: true, body: 'failed', error: { code: 'start-failed', reason: 'no harness' } });
+    expect(deliveredOutcome({ body: 'queued' })).toEqual({ delivered: true, body: 'queued' });
+    expect(deliveredOutcome({ body: 'started' })).toEqual({ delivered: true, body: 'started' });
   });
 });
 
@@ -117,6 +126,11 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/comms\/[a-z2-7]{10}$/);
     // Its JSON answers at both.
     for (const at of [bare(t), t.id]) expect((await p.context().request.get(`${base}/comms/${at}`, { headers: { accept: 'application/json' } })).status()).toBe(200);
+    // The list's agents are their letters, drawn in their colour (a lit square, not bare text).
+    const letter = await p.locator('.comms-row .loom-letter').first().evaluate((e) => { const c = getComputedStyle(e); return { w: e.getBoundingClientRect().width, bg: c.backgroundColor, shadow: c.boxShadow }; });
+    expect(letter.w).toBe(30);
+    expect(letter.bg).not.toBe('rgba(0, 0, 0, 0)');
+    expect(letter.shadow).not.toBe('none');
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
     await p.context().close();
   });
@@ -201,6 +215,12 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
       await p.locator('.comms-msg--agent', { hasText: 'Unseen two.' }).waitFor({ state: 'attached' });
       await expect.poll(() => p.locator('.comms-newpill').textContent()).toBe('2 new messages ↓');
       expect((await at()).top).toBe(before.top);
+      // A run's step cards aren't messages: they don't count.
+      postActivity(h, process.env, { conversation: t.conversation, run: `run-${w}`, cards: [1, 2, 3].map((n) => ({ id: `k${n}`, at: new Date().toISOString(), tool: 'Bash', summary: `Step ${n}`, state: 'done' })) });
+      await p.locator('.comms-steps__line', { hasText: '3 steps' }).waitFor({ state: 'attached' });
+      await p.waitForTimeout(300);
+      expect(await p.locator('.comms-newpill').textContent()).toBe('2 new messages ↓');
+      expect((await at()).top).toBe(before.top);
       if (w === 1280) await shot(p, 'pill');
       // Something above the reader grows (a run's steps opened, an older message's words): they stay where they are.
       const anchor = await p.evaluate(() => {
@@ -243,10 +263,17 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     await p.context().close();
   });
 
-  it('a body that couldn\'t start is not "busy": the sweep says it\'s retrying, with what happened', async () => {
+  it('a body that couldn\'t start is not "busy": the thread says it\'s retrying, with what happened, and the sweep adds no busy line', async () => {
     const o = openThread(h, process.env, h.members[0], { agent: 'mark', id: msgId(), text: 'Are you there?' });
-    recordDelivery(h, o.thread, o.seq, { delivered: true, body: 'queued', error: { code: 'start-failed', reason: 'the body host didn\'t start the body in 60 s' } });
+    recordDelivery(h, o.thread, o.seq, deliveredOutcome({ body: 'queued', reason: 'no body could start (mark\'s body host didn\'t start the body in 60 s): trying again in 30 s' }));
     sweepComms(h, new Date(Date.now() + BUSY_MS + 60_000));
+    // A plain queued one, for contrast: it does get its busy line.
+    const q = openThread(h, process.env, h.members[0], { agent: 'mark', id: msgId(), text: 'And you?' });
+    recordDelivery(h, q.thread, q.seq, deliveredOutcome({ body: 'queued' }));
+    sweepComms(h, new Date(Date.now() + BUSY_MS + 60_000));
+    const busy = await screen(1280, 800, `/comms/${bare(q.thread)}`);
+    await busy.locator('.comms-msg--error', { hasText: 'busy with other work' }).waitFor();
+    await busy.context().close();
     const p = await screen(1280, 800, `/comms/${bare(o.thread)}`);
     const card = p.locator('.comms-msg--error', { hasText: /couldn't start; retrying\./ });
     await card.waitFor();

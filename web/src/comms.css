@@ -77,7 +77,6 @@
 .comms .v-agent-chat__message[data-undelivered] .v-agent-chat__message-body { box-shadow: inset 0 0 0 1px var(--v-danger, #f55); }
 .comms .v-agent-chat__message .comms-reply > :last-child { margin-bottom: 0; }
 .comms .v-agent-chat__author .loom-data { font-size: 11px; letter-spacing: .04em; }
-.comms-state[data-slot] { flex-shrink: 0; }
 .comms-msg { display: flex; flex-direction: column; gap: 3px; max-width: min(640px, 86%); min-width: 0; }
 .comms-msg__meta, .comms-msg > .loom-data { font-size: 10.5px; letter-spacing: .06em; color: var(--v-text-3); }
 .comms-msg[data-undelivered] .comms-msg__text { opacity: .6; border: 1px dashed var(--v-danger, #f55); }

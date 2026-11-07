@@ -21,7 +21,6 @@ import { act, type Chrome } from './loom';
 import type { FaceState } from './face';
 import { useFollow } from './comms-follow';
 import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatPermission, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
-import type { AgentStatus } from '@/components/ui/agent-state';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const PixelFace = lazy(() => import('./pixel-face'));
@@ -150,8 +149,6 @@ export function faceOf(s: { failed: boolean; asking: boolean; talking: boolean; 
   return 'idle';
 }
 
-/** The 000h agent state a face shows (a reply landing reads as done). */
-export const statusOf = (f: FaceState): AgentStatus => (f === 'talking' ? 'complete' : f);
 
 type Link = 'ok' | 'lost' | 'none';
 
@@ -226,7 +223,7 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, you, com
           {signal && <span className="comms-screen__static" aria-hidden />}
         </div>
         <footer className="comms-screen__label loom-data">
-          <span data-channel={channelWord(phase ?? face, link)}>{name} · {channelWord(phase ?? face, link)}{on ? ` · ON ${on.toUpperCase()}` : ''}</span>
+          <span>{name} · {channelWord(phase ?? face, link)}{on ? ` · ON ${on.toUpperCase()}` : ''}</span>
           <span className="comms-screen__meter" aria-label={`signal ${meter} of 4`}>{[1, 2, 3, 4].map((i) => <i key={i} data-on={i <= meter || undefined} />)}</span>
         </footer>
       </div>
@@ -377,7 +374,9 @@ function ThreadsDrawer({ onClose, children }: { onClose: () => void; children: R
   useLayoutEffect(() => {
     const first = panel.current?.querySelector<HTMLElement>('.comms-row[data-current] .comms-row__btn') ?? panel.current?.querySelector<HTMLElement>('.comms-row__btn, button');
     first?.focus();
-    return () => { document.querySelector<HTMLElement>('[data-drawer-btn]')?.focus(); };
+    // Back to this Comms' own menu button (the panel's box holds both).
+    const box = panel.current?.closest('.comms');
+    return () => { box?.querySelector<HTMLElement>('[data-drawer-btn]')?.focus(); };
   }, []);
   const keys = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
@@ -385,6 +384,7 @@ function ThreadsDrawer({ onClose, children }: { onClose: () => void; children: R
     const all = [...panel.current.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,[tabindex]:not([tabindex="-1"])')];
     if (!all.length) return;
     const i = all.indexOf(document.activeElement as HTMLElement);
+    if (i < 0) { e.preventDefault(); all[0].focus(); return; }
     if (e.shiftKey && i <= 0) { e.preventDefault(); all[all.length - 1].focus(); } else if (!e.shiftKey && i === all.length - 1) { e.preventDefault(); all[0].focus(); }
   };
   return (
@@ -541,7 +541,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   }, [thread.id, csrf, messages.length, pull]);
 
   // Follow the bottom only while the reader's there (comms-follow.ts); their own message always brings them down.
-  const { unread, down } = useFollow(bottom, messages.length + asks.length, messages.filter((m) => m.kind === 'message').at(-1)?.seq ?? 0);
+  // What the pill counts: messages and asks, never a run's step cards (they fold into one line).
+  const { unread, down } = useFollow(bottom, messages.filter((m) => m.kind !== 'card').length + asks.length, messages.filter((m) => m.kind === 'message').at(-1)?.seq ?? 0);
   // The phone's strip collapses to the small avatar once the messages scroll under it.
   useEffect(() => {
     if (wide || !top.current) return;

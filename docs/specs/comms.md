@@ -354,7 +354,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | The runtime refused (a `4xx` with an error) | "Art didn't get that: <the error's words>." |
 | `body: "failed"` | "Art couldn't start: <reason>." |
 | `body: "queued"`, and no `status: working` within 2 minutes | "Art is busy with other work; this is waiting its turn." |
-| The same, when that delivery's result was a start failure (`start-failed`): the runtime is retrying, not busy (t-1918) | "Art couldn't start; retrying." With **What happened**, the trace |
+| `body: "queued"` because no body could start (the runtime's reason "no body could start (…): trying again in N s"): it's retrying, not busy, and no busy line follows (t-1918) | "Art couldn't start; retrying." With **What happened**, the trace |
 | A loop pause (the runtime's `deferred` note turn) | "Paused: Art was repeating itself." The Inbox's Resume and Dismiss are on it |
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |
@@ -548,13 +548,13 @@ a narrow phone (one whose dock holds four keys) keeps Places and finds Comms und
 
 - **The list** is the app's first page, in this order: Pinned, then Unread, then the rest by `last`. Archived
   threads are hidden behind an "Archived" filter.
-  - A row shows the agent's face, the title, the time, the newest digest's summary or "working…", and an unread dot.
+  - A row shows the agent's letter (t-1925 D), the title, the time, the newest digest's summary or "working…", and an unread dot.
   - Swiping a row archives it, with Undo in the toast. A long press pins it.
   - **New thread** opens a picker of the member's own agents, then the composer.
 - **A thread** is a page pushed over the list, with back to the list.
   - **The composer** sits above the dock and stays keyboard-safe on iOS: it rides on the visual viewport, so the
     keyboard never covers it, and the page never scrolls sideways. Enter is a newline; the send button sends.
-  - **The header** has the agent's face and state, the title (tap to rename), the project, Stop while the body is
+  - **The header** has the title (tap to rename), the project, Stop while the body is
     working, and a menu: Pin, Archive, Project, Delete.
 
 ### Desktop
@@ -573,9 +573,10 @@ A real chat, with a terminal's flavour:
 - **The composer** is a mono prompt line, `> `, in the agent's accent.
 - **Activity cards** sit between messages, grouped by `run` and collapsed by default to one line per run: "▸ N steps"
   and the newest card's summary ("▸ 6 steps · Ran the tests"). A group opens to its summaries, each with its state.
-- **The working line** is one mono line under the newest message, `ART · working · 0:42` (the agent's name in capitals
-  and the seconds since `status: working` began). It shows while the runtime's `status` says working, and goes on
-  `done`. The list row shows "working…" at the same time. The runtime says `working` again every 15 s while the body
+- **The working line** is one mono line under the newest message (t-1918): `Art E Fish is working · Ran the tests ·
+  0:42`, the step it's on now (the newest running card since your message, else the newest) and the time since
+  `status: working` began; while your message is with it and nothing's back yet, `Art E Fish is thinking…`. It shows
+  while the runtime's `status` says working (or the thread waits on the agent), and goes on `done`. The list row shows "working…" at the same time. The runtime says `working` again every 15 s while the body
   works, and posts its activity: a thread with no word of either for 90 s isn't working any more (its body gone, its
   `done` lost), and core records it so (t-1881). The runtime also tries a `done` that didn't land again, each tick.
 - **New things arrive** as `web/src/arrive.tsx` draws them (decode, focus, one glow). Reduced motion: they simply

@@ -81,6 +81,18 @@ function endBody(env: NodeJS.ProcessEnv, t: Thread): void {
   void pieceApi(p, { caller: { kind: 'owner', agents: '*' }, path: 'run', body: { argv: ['deliver', 'end', t.conversation] } }, env).catch(() => undefined);
 }
 
+/**
+ * What a delivery the runtime took says for the thread: its body's state, and an error when no body started. The
+ * runtime answers `queued` with "no body could start (…): trying again in N s" while it retries a start that failed
+ * (loom-box delivery.mjs): that's "couldn't start; retrying", with its trace, never "busy" (t-1918). `failed` is a start
+ * it gave up on.
+ */
+export function deliveredOutcome(b: { body?: string; reason?: string }): { delivered: true; body?: string; error?: { code: string; reason?: string } } {
+  if (b.body === 'failed') return { delivered: true, body: b.body, error: { code: 'start-failed', reason: b.reason } };
+  if (b.body === 'queued' && /^no body could start\b/.test(b.reason ?? '')) return { delivered: true, body: b.body, error: { code: 'start-retry', reason: b.reason } };
+  return { delivered: true, body: b.body };
+}
+
 /** A member's message into the runtime, and what came of it recorded on the thread. */
 async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: string, text: string): Promise<{ delivered: boolean; body?: string; error?: string }> {
   // The same delivery every time, Send again too (its id, its time and its label from its first try): core and the
@@ -92,8 +104,7 @@ async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: strin
   });
   const b = r.body as { body?: string; reason?: string; error?: string };
   if (r.status === 200) {
-    const failed = b.body === 'failed';
-    recordDelivery(c.household, t, seq, { delivered: true, body: b.body, ...(failed ? { error: { code: 'start-failed', reason: b.reason } } : {}) });
+    recordDelivery(c.household, t, seq, deliveredOutcome(b));
     return { delivered: true, body: b.body };
   }
   const err = String(b.error ?? `the runtime answered ${r.status}`);

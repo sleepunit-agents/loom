@@ -653,7 +653,9 @@ export function recordDelivery(h: Household, t: Thread, seq: number, outcome: { 
   }
   withThreadsAt(h.home, (db) => touch(h.home, db, t.id, {
     last_failed: outcome.error ? 1 : 0,
-    queued_since: outcome.delivered && outcome.body === 'queued' ? nowIso(now) : null,
+    // Queued because no body could start (start-retry): the runtime is trying again, and the thread says so; it's not
+    // waiting its turn, so no busy line follows (t-1918).
+    queued_since: outcome.delivered && outcome.body === 'queued' && outcome.error?.code !== 'start-retry' ? nowIso(now) : null,
   }, now));
 }
 
@@ -893,8 +895,7 @@ export function sweepComms(h: Household, now: Date = new Date()): number {
   if (existsSync(join(h.home, 'household.db'))) {
     const late = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE queued_since IS NOT NULL AND queued_since < ?').all(new Date(now.getTime() - BUSY_MS).toISOString()) as ThreadRow[]);
     for (const r of late) {
-      // A body that couldn't start isn't busy (t-1918): the runtime retries it, and the thread says that, with its trace.
-      append(h.home, process.env, r.id, { kind: 'error', from: 'loom', id: `busy${now.getTime()}`, card: { error: r.last_failed ? 'start-retry' : 'busy' } }, now);
+      append(h.home, process.env, r.id, { kind: 'error', from: 'loom', id: `busy${now.getTime()}`, card: { error: 'busy' } }, now);
       withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { queued_since: null }, now));
     }
   }
