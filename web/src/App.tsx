@@ -352,7 +352,7 @@ export default function App() {
       if (r.go) goTo(r.go); else if (r.ok) void pg.load(pg.url, false);
       return r.ok;
     };
-    const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => sendAs(a, f, c), go: goTo, wide, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
+    const envFor = (c: Ctx): Env => ({ ctx: c, send: (a, f) => sendAs(a, f, c), go: goTo, wide, stale: !pg.fresh, withSource: (source) => envFor({ ...c, source, path: backAs(c) }) });
     return envFor(base);
   };
   const env: Env | null = pageEnv(mainPage, go);

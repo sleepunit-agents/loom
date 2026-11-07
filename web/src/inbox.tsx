@@ -319,7 +319,7 @@ function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env): Answ
     return ok;
   };
   return {
-    draft, setDraft, busy, drafted: !!draft.trim(), label: r.label,
+    draft, setDraft, busy: busy || !!env.stale, drafted: !!draft.trim(), label: r.label,
     reply: async () => {
       if (!draft.trim() || busy) return;
       if (await post({ text: draft })) { keepDraft(key, ''); setDraft(''); onDone(); }

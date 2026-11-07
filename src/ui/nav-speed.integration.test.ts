@@ -49,7 +49,8 @@ else if (cmd === 'ui' && sub === 'page') {
   const { path } = input();
   const n = /^x\\/(\\d+)$/.exec(path || '');
   if (n) out({ title: 'Item ' + n[1], sections: [{ id: 'it', blocks: [{ type: 'text', text: 'This is item ' + n[1] + '.' }] }] });
-  else out({ title: 'Lots', sections: [{ id: 'count', blocks: [{ type: 'text', text: 'Count ' + state.count }] },
+  else out({ title: 'Lots', sections: [{ id: 'count', blocks: [{ type: 'text', text: 'Count ' + state.count },
+      ...(state.asks.length ? [{ type: 'buttons', items: state.asks.map((a) => ({ action: 'allow', label: 'Allow ' + a.id, fields: { id: a.id } })) }] : [])] },
     { id: 'list', blocks: [{ type: 'list', items: Array.from({ length: 30 }, (_, i) => ({ text: 'Item ' + (i + 1), page: 'x/' + (i + 1) })) }] }] });
 } else if (cmd === 'ui' && sub === 'act') {
   const { action, fields } = input();
@@ -211,6 +212,45 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       await mark(p, `${t} a:has-text("Item 7")`);
       await p.locator(t).getByText('Count 2').waitFor({ timeout: 5000 });
       expect(await kept(p, `${t} a:has-text("Item 7")`)).toBe(true);
+    } finally { await close(); }
+  });
+
+  it('a link the pointer rests on is fetched ahead: the press opens it at once', async () => {
+    setState({ count: 1, asks: [] });
+    const { p, close } = await desk('/p/lots');
+    try {
+      const t = tile('Lots');
+      const link = p.locator(`${t} a:has-text("Item 9")`).first();
+      await link.waitFor();
+      const asked = p.waitForRequest((r) => r.url().endsWith('/p/lots/x/9'), { timeout: 3000 });
+      await link.hover();
+      await asked;
+      await p.waitForTimeout(300);
+      // From here loom is slow: the press is answered from what was fetched ahead.
+      await p.route(/\/p\/lots\/x\/9$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
+      await link.click();
+      await p.locator(t).getByText('This is item 9.').waitFor({ timeout: 400 });
+    } finally { await close(); }
+  });
+
+  it('an Allow in a kept copy waits until loom has been asked again, then goes with the answered ask', async () => {
+    setState({ count: 1, asks: [{ id: 'a-2', text: 'OK to clear the old builds?', at: new Date().toISOString() }] });
+    const { p, close } = await desk('/p/lots');
+    try {
+      const t = tile('Lots');
+      const allow = p.locator(`${t} button:has-text("Allow a-2")`);
+      await allow.waitFor();
+      expect(await allow.isDisabled()).toBe(false);
+      await p.locator(`${t} a:has-text("Item 4")`).first().click();
+      await p.locator(t).getByText('This is item 4.').waitFor();
+      // Answered elsewhere, and this tab never heard; loom answers slowly from here.
+      setState({ count: 1, asks: [] });
+      await p.route(/\/p\/lots$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
+      await p.locator(`${t} .loom-tile__btn[aria-label^="Back"]`).click();
+      // The kept copy at once, its Allow there but not pressable; then gone.
+      await allow.waitFor({ timeout: 400 });
+      expect(await allow.isDisabled()).toBe(true);
+      await expect.poll(() => allow.count(), { timeout: 5000 }).toBe(0);
     } finally { await close(); }
   });
 

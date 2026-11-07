@@ -248,7 +248,7 @@ function ThreadRowView({ t, marks, current, onOpen, onArchive, onPin }: { t: Thr
         const s = touch.current; touch.current = null;
         if (s && s.x - e.changedTouches[0].clientX > 80 && Math.abs(s.y - e.changedTouches[0].clientY) < 40) { acted.current = true; onArchive(); }
       }}>
-      <button type="button" className="comms-row__btn" onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
+      <button type="button" className="comms-row__btn" data-prefetch={`/comms/${t.id}`} onClick={() => { if (acted.current) { acted.current = false; return; } onOpen(); }}>
         {mark ? <AgentAvatar a={mark} size={32} className="comms-row__avatar" />
           : <span className="comms-row__face">{t.agent[0]}</span>}
         <span className="comms-row__main">
@@ -413,6 +413,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const [thread, setThread] = useState(initial.thread);
   const [messages, setMessages] = useState(initial.messages);
   const [asks, setAsks] = useState<ThreadAsk[]>(initial.asks ?? []);
+  // Its asks are offered once this pane has read the thread itself (t-1925 F): a copy kept from before can hold an ask
+  // answered since, and its Allow must never be pressed from that.
+  const [asksRead, setAsksRead] = useState(false);
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
@@ -438,6 +441,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     // Only when it moved: a read that changed nothing redraws nothing.
     setThread((t) => (JSON.stringify(t) === JSON.stringify(r.thread) ? t : r.thread));
     setAsks(r.asks ?? []);
+    setAsksRead(true);
     if (r.thread.state.failed) setLink('none');
     // What's new or moved (a read from an unsettled message brings back some the app already has, unchanged).
     const had = new Map(shown.current.map((m) => [m.seq, m]));
@@ -583,7 +587,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
               <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} conversation={thread.conversation} />
             ))}
-            {asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
+            {asksRead && asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
             {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
             <div ref={bottom} />
