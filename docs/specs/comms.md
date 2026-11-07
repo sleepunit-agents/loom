@@ -611,6 +611,10 @@ Neon OS's own, not copied from any game.
   thread from the menu button in its header (t-1925 C): focus goes into it, Tab stays in it, Esc or the scrim closes it
   and gives focus back to the button, picking a thread closes it. With no thread open the list fills the pane. A phone
   keeps its list, then the thread with its way back.
+- **An ask in a thread** has live buttons only once loom says, now, that it's still open (`/inbox/open`, by the ask's
+  Inbox key, which the thread's answer carries), and loom is asked again right before Allow or Deny is sent: a copy kept
+  on this device may be of an ask answered since. Answered since, or loom unreachable: the buttons stay off and say
+  why (web/src/ask-open.ts, the Inbox's own rule). The desktop's Needs you does the same.
 - **The list's agents** are their letters (t-1925 D): the pixel face is the comm screen's one big picture.
 - **The portrait** is the agent's pixel face (`web/src/pixel-face.tsx`), at 2× or larger, at whole-pixel scales only.
   An agent with no sprite gets its drawn face (`face.tsx`) in the same frame.

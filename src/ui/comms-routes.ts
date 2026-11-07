@@ -15,6 +15,7 @@
  *   POST /comms/<thread>/pin, unpin, archive, unarchive, stop, delete
  *   POST /comms/<thread>/read           {seq}
  */
+import { askKey } from './push.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   addMemberMessage, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
@@ -145,7 +146,7 @@ async function asView(c: CommsContext, which: 'list' | 'thread', pathname: strin
     ...(c.household.github ? { github: c.household.github } : {}) };
 }
 
-export interface ThreadAsk { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
+export interface ThreadAsk { id: string; /** its Inbox key (push.ts askKey): /inbox/open says whether it's still open */ key: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
   actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> }
 
 /**
@@ -166,7 +167,7 @@ async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
       if (a.conversation !== t.conversation || a.agent !== t.agent || !a.actions?.length || a.attention === false) continue;
       const id = a.actions[0].fields?.id;
       if (typeof id !== 'string') continue;
-      out.push({ id, piece: p.piece, text: a.text, ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
+      out.push({ id, key: askKey({ source: { id: p.piece }, text: a.text, page: a.page }), piece: p.piece, text: a.text, ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
         ...(a.fine ? { fine: a.fine } : {}), ...(a.at ? { at: a.at } : {}), actions: a.actions.map((b) => ({ action: b.action, label: b.label, ...(b.tone ? { tone: b.tone } : {}), ...(b.confirm ? { confirm: b.confirm } : {}), ...(b.fields ? { fields: b.fields } : {}) })) });
     }
   }

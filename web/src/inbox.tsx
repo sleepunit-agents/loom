@@ -18,6 +18,7 @@ import { Arrive } from './arrive';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
+import { LIVE_SAYS, stillOpen, type Live } from './ask-open';
 import { Split, type SplitFolder } from './split';
 import './inbox.css';
 
@@ -147,23 +148,6 @@ function Row({ i, who, mark, current, onPick, done }: { i: InboxItem; who: strin
     </Arrive>
   );
 }
-
-type Live = 'checking' | 'live' | 'gone' | 'unknown';
-
-/** Whether loom says, now, that this ask is still open. Never from a copy: a stamped one (x-loom-saved-at) can't tell. */
-async function stillOpen(key: string): Promise<Live> {
-  try {
-    const r = await fetch(`/inbox/open?k=${key}`, { headers: { accept: 'application/json' }, cache: 'no-store', credentials: 'same-origin' });
-    if (!r.ok || r.headers.has('x-loom-saved-at') || !(r.headers.get('content-type') ?? '').startsWith('application/json')) return 'unknown';
-    return ((await r.json()) as { open?: boolean }).open ? 'live' : 'gone';
-  } catch { return 'unknown'; }
-}
-
-const LIVE_SAYS: Record<Exclude<Live, 'live'>, string> = {
-  checking: 'Checking it’s still open…',
-  gone: 'This isn’t open any more: it was answered or changed since. Nothing was sent.',
-  unknown: 'Can’t check with loom right now, so its buttons wait. Try again in a moment.',
-};
 
 /** The open item, whole: who and what, why, what happens either way, the answer, where it lives and its trail. */
 function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; tasks: Source; github?: string; env: Env;

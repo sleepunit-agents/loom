@@ -4,10 +4,11 @@
 // keys. Never a number loom doesn't have.
 //
 // In the desk's own chunk (desk.tsx and the tiles import it): a phone never fetches it.
-import { useContext, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { Button } from '@/components/ui/button';
-import { ActButton, AgentAvatar, LoomMark, Nothing, useEnv, type Mark } from './blocks';
+import { ActButton, AgentAvatar, EnvContext, LoomMark, Nothing, useEnv, type Mark } from './blocks';
+import { guardedEnv, LIVE_SAYS, useAskLive } from './ask-open';
 import { Arrive } from './arrive';
 import { AnswersWithLines, ApprovalBox, As, Fine, useOpenItem, type InboxItem } from './views';
 import { plain } from './plain';
@@ -52,14 +53,20 @@ export function Widget({ tint, title, more, className, children }: { tint: Tint;
 /** One thing that needs you: who, what, why, and its answers: Allow and Deny under the approval's own words (never the
  * ask's alone: inbox.tsx ApprovalBox), Yes and No for a yes/no ask, else its own buttons. Words, or anything more, open it. */
 function Need({ i }: { i: InboxItem }) {
-  const env = useEnv();
-  const agents = env.ctx.agents ?? {};
+  const outer = useEnv();
+  const agents = outer.ctx.agents ?? {};
   const who = (i.agent && agents[i.agent]?.label) || (i.agent ? i.agent[0].toUpperCase() + i.agent.slice(1) : '');
   const p = plain(i, who);
   const open = useOpenItem();
   const [busy, setBusy] = useState(false);
   const approval = i.approval && i.attention ? i.approval : undefined;
   const yesNo = !approval && i.needs?.answers === 'yes-no' && !!i.reply;
+  // Its buttons are live only once loom says, now, it's still open, and it's asked again right before a send (ask-open.ts,
+  // the Inbox's rule): a copy of the desktop kept on this device may be of an ask answered since.
+  const answerable = !!approval || yesNo || !!i.actions?.length;
+  const { live, check } = useAskLive(answerable ? i.key : undefined);
+  const env = useMemo(() => guardedEnv(outer, check), [outer, i.key]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const off = answerable && live !== 'live';
   // A yes or a no, posted as its own source's, as its sheet does (inbox.tsx useAnswer).
   const say = async (answer: 'yes' | 'no') => {
     if (busy || !i.reply) return;
@@ -74,6 +81,7 @@ function Need({ i }: { i: InboxItem }) {
   return (
     // Its own buttons (an approval's card that wasn't absorbed is its own Allow and Deny) stand under its words whole,
     // never cut: what a button grants is read in full beside it (views.tsx ApprovalBox's rule).
+    <EnvContext.Provider value={env}>
     <Arrive as="li" k={`need:${i.key}`} className="loom-need" {...(acts.length ? { 'data-whole': '' } : {})}>
       {i.agent && agents[i.agent] ? <AgentAvatar a={agents[i.agent]} size={28} /> : <LoomMark size={28} />}
       <div className="loom-need__body">
@@ -81,8 +89,10 @@ function Need({ i }: { i: InboxItem }) {
           {i.unread && <span className="loom-need__unread" aria-label="Unread" />}{p.title}
         </button>
         {(p.why ?? i.outcome) && <p className="loom-need__why">{tidy(p.why ?? i.outcome ?? '')}</p>}
-        {approval && <ApprovalBox a={approval} />}
-        {(yesNo || words || (acts.length > 0 && !lined)) && (
+        {/* Not yet confirmed open (or can't be): its words, and why its buttons wait; none of them. */}
+        {off && <p className="loom-need__live" role="status" data-live={live}>{LIVE_SAYS[live as Exclude<typeof live, 'live'>]}</p>}
+        {!off && approval && <ApprovalBox a={approval} />}
+        {!off && (yesNo || words || (acts.length > 0 && !lined)) && (
           <div className="loom-need__acts" role="group" aria-label="Your answer">
             {yesNo && <><Button size="sm" disabled={busy} onClick={() => void say('yes')}>Yes</Button>
               <Button size="sm" variant="outline" disabled={busy} onClick={() => void say('no')}>No</Button></>}
@@ -91,10 +101,11 @@ function Need({ i }: { i: InboxItem }) {
           </div>
         )}
         {/* Allow beside "If you allow", Deny beside "If you deny", under the ask read whole. */}
-        {lined && <As source={i.source}><AnswersWithLines actions={acts} lines={i.needs!} /></As>}
+        {!off && lined && <As source={i.source}><AnswersWithLines actions={acts} lines={i.needs!} /></As>}
         {acts.length > 0 && <Fine text={i.fine} className="loom-need__fine" />}
       </div>
     </Arrive>
+    </EnvContext.Provider>
   );
 }
 

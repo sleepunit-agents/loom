@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Asks answered only while open, everywhere** (t-1925). The asks inside a Comms thread and the desktop's Needs you
+  now use the Inbox's rule (`web/src/ask-open.ts`): no buttons until loom confirms the ask is open now, checked again
+  right before a send, and none when loom can't be reached or the copy came from this device's cache.
 - **Comms' band** (Jonathan, 2026-11-07; `docs/specs/comms.md`, "Desktop"). A desktop thread has a band of fixed
   height over the chat: the comm screen at its own 2× size on the left, who's in the conversation and the thread's
   work on the right, scrolling inside the band. The chat takes the rest. The list sits beside the thread only where
