@@ -119,10 +119,11 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
       await page.goto(`${base}/comms/${thread.id}`);
       const tile = page.locator('.loom-tile[data-tile="/comms"]');
       await page.waitForFunction(() => /Work \(5/.test(document.querySelector('.loom-tile .comms-work__toggle')?.textContent ?? ''));
-      // In the band beside the comm screen (2026-11-07): who's in the conversation, then the work, its rows shown.
-      const you = await tile.locator('.comms-band .comms-people').boundingBox();
-      const panel = await tile.locator('.comms-band__side .comms-work').boundingBox();
-      expect(panel!.y).toBeGreaterThan(you!.y);
+      // In the band beside the comm screen (2026-11-07): who's in the conversation, then the work, its rows shown; under it
+      // when the band stacks them, beside it (its own column) when the thread has room for three.
+      const you = (await tile.locator('.comms-band .comms-people').boundingBox())!;
+      const panel = (await tile.locator('.comms-band__side .comms-work').boundingBox())!;
+      expect(panel.y > you.y || panel.x >= you.x + you.width).toBe(true);
       await tile.locator('.comms-work__row').first().waitFor();
       const rows = await tile.locator('.comms-work__row').evaluateAll((els) => els.map((e) => [e.querySelector('.comms-work__badge')!.textContent, e.querySelector('.comms-work__meta')!.textContent]));
       expect(rows).toEqual([

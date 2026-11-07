@@ -34,7 +34,7 @@
 .comms-blank { display: grid; place-items: center; color: var(--v-text-3); font-size: 12px; letter-spacing: .14em; }
 
 /* ---- a thread ---- */
-.comms-thread { display: flex; flex-direction: column; min-height: 0; min-width: 0; container-type: inline-size; }
+.comms-thread { display: flex; flex-direction: column; min-height: 0; min-width: 0; container: comms-thread / inline-size; }
 .comms-thread__head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--comms-line); position: relative; }
 .comms-back { font-size: 24px; line-height: 1; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; }
 .comms-thread__title { flex: 1; min-width: 0; text-align: left; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; min-height: 40px; }
@@ -62,13 +62,26 @@
 /* ---- messages: the 000h agent chat thread, inside Comms' own panes ---- */
 .comms .comms-chat[data-slot="agent-chat"] { max-width: none; height: auto; min-height: 0; border: 0; border-radius: 0; background: transparent; overflow: visible; }
 .comms-thread[data-wide] .comms-chat[data-slot="agent-chat"] { height: 100%; overflow: hidden; }
-.comms .comms-msgs.v-agent-chat__thread[data-slot] { gap: 16px; padding: 16px 16px 20px; }
+/* The chat's breathing room (Jonathan, 2026-11-07): the scrollbar's rail is 24 px (--s-6, scroll-area.css) laid over the
+   scroller's right edge, so the words stop a gap short of it; and the last message ends clear of the composer's divider.
+   The rail itself is inset top and bottom, so the thumb never runs into the band or the divider. Every width, every look.
+   (The native scrollbar is hidden, scrollbar-width none; scrollbar-gutter would reserve nothing, so the padding does it.) */
+.comms .comms-msgs.v-agent-chat__thread[data-slot] { gap: var(--s-4); padding: var(--s-4) calc(var(--s-6) + var(--s-3)) var(--s-8) var(--s-4); }
+.comms .comms-chat > .v-message-scroll-root > [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] { margin-block: var(--s-2) var(--s-3); }
 .comms[data-phone] .comms-msgs.v-agent-chat__thread[data-slot] { overflow: visible; }
 /* On a phone the page scrolls, not the thread: its scroll area takes its words' height (the strip above still collapses). */
 .comms[data-phone] .comms-chat > .v-message-scroll-root[data-slot] { flex: none; height: auto; overflow: visible; }
 .comms[data-phone] .comms-chat [data-radix-scroll-area-viewport] { overflow: visible !important; height: auto; }
 .comms .v-agent-chat__message[data-from="user"] { flex-direction: row-reverse; }
 .comms .v-agent-chat__message[data-from="user"] .v-agent-chat__message-content { align-items: flex-end; }
+/* One measure for both sides (Jonathan, 2026-11-07): like most messaging apps, a message takes at most about three
+   quarters of the log, the agent's on the left and yours on the right; never wider than a line reads (65ch, the
+   bubble's own cap in agent-chat.css). A phone gives it a little more. */
+.comms { --comms-msg-max: min(65ch, 75%); }
+.comms[data-phone] { --comms-msg-max: 80%; }
+/* A phone's page scrolls, not the log, so there's no rail to clear: its words keep the even --s-4 each side. */
+.comms[data-phone] .comms-msgs.v-agent-chat__thread[data-slot] { padding-right: var(--s-4); }
+.comms .v-agent-chat__message .v-agent-chat__message-content { max-width: var(--comms-msg-max); }
 .comms .v-agent-chat__message[data-from="user"] .v-agent-chat__author { justify-content: flex-end; }
 .comms .v-agent-chat__message[data-from="agent"] .v-agent-chat__message-body { border-left: 2px solid color-mix(in srgb, var(--c, var(--v-pink)) 55%, transparent); }
 .comms .v-agent-chat__message[data-undelivered] .v-agent-chat__message-body { box-shadow: inset 0 0 0 1px var(--v-danger, #f55); }
@@ -200,3 +213,13 @@
 .comms-people li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
 .comms-people__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .comms-people__what { margin-left: auto; flex: none; font-size: 11px; color: var(--v-text-3); }
+/* Three columns when the thread is wide enough (Jonathan, 2026-11-07): the comm screen, who's in the conversation, the
+   thread's work, each column scrolling inside the band. Below it, the two-column stack above. The breakpoint is the
+   band's padding (--s-3 × 2), the screen (192 glass + --s-2 × 2 frame), two gaps (--s-3) and the columns' least widths:
+   --comms-people-min for a name and its word, --comms-work-min for a work row's badge and a readable title. */
+.comms-band { --comms-people-min: 180px; --comms-work-min: 300px; }
+@container comms-thread (min-width: 760px) {
+  .comms-band__side { display: grid; grid-template-columns: minmax(var(--comms-people-min), 1fr) minmax(var(--comms-work-min), 2fr); gap: var(--s-3); overflow: hidden; padding-right: 0; }
+  .comms-band__side > * { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .comms-band .comms-people { padding-right: var(--s-2); }
+}
