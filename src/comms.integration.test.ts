@@ -14,7 +14,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { parseLoomBlock, runtimePieces } from './cli/pieces-managed.js';
 import { conversationId, createConversationTables, recordTurn, writeDigest } from './backends/conversations.js';
-import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, WORKING_STALE_MS, type Thread } from './comms.js';
+import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
 import { stopCommsWatch } from './ui/comms-live.js';
@@ -36,7 +36,7 @@ process.stdin.on('end', () => {
   if (mode === 'said') { console.log(JSON.stringify({ status: 503, error: 'no house free for art' })); process.exit(1); }
   if (mode === 'refuse') { console.log(JSON.stringify({ status: 400, error: 'bad-input: no such thing' })); process.exit(1); }
   const d = JSON.parse(input);
-  console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: 1, body: mode === 'failed' ? 'failed' : 'started', ...(mode === 'failed' ? { reason: 'no box is logged in' } : {}) }));
+  console.log(JSON.stringify({ conversation: 'cv-0123456789ab', seq: 1, body: mode === 'failed' ? 'failed' : mode === 'queued' ? 'queued' : 'started', ...(mode === 'failed' ? { reason: 'no box is logged in' } : {}) }));
 });
 `;
 
@@ -120,7 +120,7 @@ describe.skipIf(!hasAge)('Comms', () => {
     const f = join(h.home, 'runtime-api.jsonl');
     return existsSync(f) ? readFileSync(f, 'utf-8').trim().split('\n').map((l) => JSON.parse(l)) : [];
   };
-  const mode = (m: 'ok' | 'said' | 'refuse' | 'failed') => writeFileSync(join(h.home, 'runtime-mode'), m);
+  const mode = (m: 'ok' | 'said' | 'refuse' | 'failed' | 'queued') => writeFileSync(join(h.home, 'runtime-mode'), m);
   let n = 100;
   /** Until no member's message in the thread is on its way: a send is accepted at once, delivered in the background. */
   const settled = async (thread: string) => {
@@ -851,6 +851,96 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as Array<{ kind: string; text: string }>;
       expect(msgs.at(-1)).toMatchObject({ kind: 'error', text: 'Paused: Art was repeating itself.' });
     });
+    describe('t-1946: a start that fails after the runtime answered queued', () => {
+      type M = { kind: string; id: string; seq: number; text: string; card: Record<string, unknown> | null };
+      const msgs = async (t: { id: string }) => (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.messages as M[];
+      const errs = async (t: { id: string }) => (await msgs(t)).filter((m) => m.kind === 'error');
+      const row = (t: { id: string }) => {
+        const db = new BetterSqlite3(join(h.home, 'household.db'), { readonly: true });
+        try { return db.prepare('SELECT queued_since, last_failed FROM comms_threads WHERE id = ?').get(t.id) as { queued_since: string | null; last_failed: number }; } finally { db.close(); }
+      };
+      const queued = async () => { mode('queued'); const t = await open(); mode('ok'); const first = (await msgs(t)).find((m) => m.kind === 'message')!; return { t, delivery: `comms:${t.id}:${first.id}` }; };
+      const notice = (t: { id: string }, body: Record<string, unknown>) => api(tok.runtime, 'comms/adapter', { op: 'status', place: t.id, agent: 'art', ...body });
+      const at = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
+
+      it('says it is retrying, one line per message moved on by later attempts, and a start-failed of the same attempt still lands', async () => {
+        const { t, delivery } = await queued();
+        expect(row(t).queued_since).not.toBeNull();
+        expect((await notice(t, { status: 'start-retry', messages: [delivery], attempt: 1, retry_at: at(1), reason: 'host timed out in 60 s' })).body).toEqual({ ok: true });
+        expect(row(t).queued_since).toBeNull(); // no busy line follows
+        let e = await errs(t);
+        expect(e).toHaveLength(1);
+        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start; retrying.', card: { error: 'start-retry', attempt: 1, reason: 'host timed out in 60 s' } });
+        expect(typeof e[0].card?.retry_at).toBe('string');
+        // The same attempt again, then an older one after a newer: nothing moves.
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 1, retry_at: at(1) });
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 2, retry_at: at(4) });
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 1, retry_at: at(1) });
+        e = await errs(t);
+        expect(e).toHaveLength(1);
+        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start (2 tries so far); retrying.', card: { attempt: 2 } });
+        // Given up at the same attempt as the last retry: still said.
+        await notice(t, { status: 'start-failed', messages: [delivery], attempt: 2, reason: 'no house would start' });
+        e = await errs(t);
+        expect(e).toHaveLength(1);
+        // Fixed words: the runtime's reason is the trace's, never the headline.
+        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start after 2 tries.', card: { error: 'start-failed', attempt: 2, reason: 'no house would start' } });
+        expect(e[0].card?.retry_at).toBeUndefined();
+        expect(row(t).last_failed).toBe(1);
+        const traced = (() => { const db = new BetterSqlite3(join(h.home, 'household.db'), { readonly: true }); try { return traceOf(h.home, db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(t.id) as Parameters<typeof traceOf>[1]); } finally { db.close(); } })();
+        expect(traced.messages.filter((m) => m.error).at(-1)?.error).toEqual({ code: 'start-failed', words: 'Art couldn\'t start after 2 tries.', reason: 'no house would start' });
+        // After a start-failed, a delayed retry never brings the line back.
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 3, retry_at: at(10) });
+        expect((await errs(t))[0].card).toMatchObject({ error: 'start-failed' });
+      });
+
+      it('updates the line the first answer made, rather than adding a second', async () => {
+        const { t, delivery } = await queued();
+        const seq = (await msgs(t)).find((m) => m.kind === 'message')!.seq;
+        // As if the first answer had said "no body could start" (t-1918): its card is e<seq>.
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 1, retry_at: at(1) });
+        expect((await errs(t)).map((m) => m.id)).toEqual([`e${seq}`]);
+      });
+
+      it('a late notice changes nothing once the body is going, or after it', async () => {
+        const { t, delivery } = await queued();
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 1, retry_at: at(1) });
+        await notice(t, { status: 'working', messages: [delivery] });
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 2, retry_at: at(4) });
+        await notice(t, { status: 'done' });
+        await notice(t, { status: 'start-retry', messages: [delivery], attempt: 3, retry_at: at(10) });
+        await notice(t, { status: 'start-failed', messages: [delivery], attempt: 3 });
+        const e = await errs(t);
+        expect(e).toHaveLength(1);
+        expect(e[0]).toMatchObject({ text: 'Art couldn\'t start at first.', card: { error: 'start-retry', attempt: 1, settled: true } });
+        expect(row(t).last_failed).toBe(0);
+        // A message already answered: its first notice, arriving late, adds no line.
+        const second = await queued();
+        await api(tok.runtime, 'comms/adapter', { op: 'post', place: second.t.id, agent: 'art', text: 'here now' });
+        await notice(second.t, { status: 'start-retry', messages: [second.delivery], attempt: 1, retry_at: at(1) });
+        expect(await errs(second.t)).toEqual([]);
+      });
+
+      it('refuses a bad shape, and takes one for a thread that is gone', async () => {
+        const { t, delivery } = await queued();
+        for (const bad of [
+          { status: 'start-retry', messages: [delivery], retry_at: at(1) },
+          { status: 'start-retry', messages: [delivery], attempt: 0, retry_at: at(1) },
+          { status: 'start-retry', messages: [delivery], attempt: 1 },
+          { status: 'start-retry', messages: [delivery], attempt: 1, retry_at: 'soon' },
+          { status: 'start-failed', messages: [delivery], attempt: 1, retry_at: at(1) },
+          { status: 'start-failed', messages: [delivery], attempt: 1, reason: 'two\nlines' },
+          { status: 'start-failed', messages: [delivery], attempt: 1, reason: 'x'.repeat(201) },
+          { status: 'start-failed', messages: 'one', attempt: 1 },
+          { status: 'sleeping' },
+        ]) expect((await notice(t, bad)).status).toBe(400);
+        expect(await errs(t)).toEqual([]);
+        const gone = await queued();
+        await page(tok.jonathan, 'POST', `/comms/${gone.t.id}/archive`, {});
+        expect((await notice(gone.t, { status: 'start-failed', messages: [gone.delivery], attempt: 1 })).body).toEqual({ ok: true });
+      });
+    });
+
     it('says a start that failed in words', async () => {
       mode('failed');
       const t = await open();

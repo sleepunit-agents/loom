@@ -421,8 +421,10 @@ const traceHref = (conversation: string) => `/p/runtime/trace/${conversation}`;
 
 function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks: Record<string, Mark>; agent: string; owner?: string; you: string; conversation?: string }) {
   // An error card links to what happened: the runtime's trace of this thread (none when there's no runtime to ask).
-  const card = (m.card ?? {}) as { error?: unknown };
-  if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}</p>
+  const card = (m.card ?? {}) as { error?: unknown; retry_at?: unknown; settled?: unknown };
+  // A start the runtime is still retrying (t-1946) says when it tries next, in the reader's own time.
+  const next = m.kind === 'error' && card.error === 'start-retry' && !card.settled && typeof card.retry_at === 'string' ? hhmm(card.retry_at) : '';
+  if (m.kind === 'error') return <div className="comms-msg comms-msg--error" role="status"><span className="loom-data">{hhmm(m.at)} · loom</span><p>{m.text}{next && ` Next try at ${next}.`}</p>
     {conversation && !['no-runtime', 'busy', 'loop'].includes(String(card.error)) && <a className="loom-data comms-trace" href={traceHref(conversation)}>What happened</a>}</div>;
   if (m.kind === 'ask') return <div className="comms-msg comms-msg--ask"><span className="loom-data">{hhmm(m.at)} · {agentName(m.from, marks).toLowerCase()}</span><p>{agentName(agent, marks)} is asking you something: it's in your Inbox.</p></div>;
   const mine = m.kind === 'message';
