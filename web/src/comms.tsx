@@ -169,8 +169,8 @@ export const onOf = (messages: Msg[]): string | null => {
   return typeof on === 'string' && on ? on : null;
 };
 
-function CommScreen({ agent, mark, channel, face: base, talk, link, on, you, compact, wide }: {
-  agent: string; mark: Mark; channel: number; face: FaceState; talk: { n: number; key: number } | null; link: Link; on?: string | null; you?: string; compact: boolean; wide: boolean;
+function CommScreen({ agent, mark, channel, face: base, talk, link, on, compact }: {
+  agent: string; mark: Mark; channel: number; face: FaceState; talk: { n: number; key: number } | null; link: Link; on?: string | null; compact: boolean;
 }) {
   const [signal, setSignal] = useState(false);
   const [talkNow, setTalkNow] = useState<{ n: number; key: number } | undefined>();
@@ -227,12 +227,6 @@ function CommScreen({ agent, mark, channel, face: base, talk, link, on, you, com
           <span className="comms-screen__meter" aria-label={`signal ${meter} of 4`}>{[1, 2, 3, 4].map((i) => <i key={i} data-on={i <= meter || undefined} />)}</span>
         </footer>
       </div>
-      {you && wide && (
-        <div className="comms-screen__you">
-          <span className="comms-screen__you-face" aria-hidden>{you[0].toUpperCase()}</span>
-          <span className="loom-data">YOU · {you.toUpperCase()}</span>
-        </div>
-      )}
       <span className="sr-only">{agent}</span>
     </section>
   );
@@ -606,7 +600,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     const cards = messages.filter((m) => m.kind === 'card' && (!lastMine || m.seq > lastMine.seq));
     return (cards.filter((c) => String(c.card?.state ?? '') === 'running').at(-1) ?? cards.at(-1))?.text ?? null;
   })();
-  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} you={member} compact={!wide && compact} wide={wide} />;
+  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={!wide && compact} />;
 
   return (
     <article className="comms-thread" data-wide={wide || undefined}>
@@ -628,6 +622,26 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
       <div className="comms-thread__body">
         {!wide && <div ref={top} className="comms-thread__strip">{screen}</div>}
         {!wide && <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />}
+        {/* A desktop's thread (Jonathan, 2026-11-07: "outlook-esque"): a band of fixed height over the chat, the comm screen
+            at its own size on the left (never stretched), who's in the conversation and the thread's work on the right,
+            scrolling inside the band so its height never changes; the chat takes the rest. */}
+        {wide && (
+          <div className="comms-band">
+            {screen}
+            <aside className="comms-band__side" aria-label="In this conversation">
+              <section className="comms-people">
+                <h3 className="comms-people__head loom-data">IN THIS CONVERSATION</h3>
+                <ul>
+                  <li><span className="loom-letter" aria-hidden style={{ '--c': markColor(mark.bg), '--ls': '24px' } as React.CSSProperties}>{mark.label[0]}</span>
+                    <span className="comms-people__name">{mark.label}</span><span className="comms-people__what loom-data">{channelWord(face, link).toLowerCase()}</span></li>
+                  <li><span className="loom-letter" aria-hidden style={{ '--c': 'var(--v-blue)', '--ls': '24px' } as React.CSSProperties}>{(member[0] ?? 'Y').toUpperCase()}</span>
+                    <span className="comms-people__name">{member[0]?.toUpperCase()}{member.slice(1)}</span><span className="comms-people__what loom-data">you</span></li>
+                </ul>
+              </section>
+              <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />
+            </aside>
+          </div>
+        )}
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
           {/* No living morph on the log's avatars and marks (data-motion="off", cojeev-motion category.ts): each host
               reads computed style after the last one wrote it, and a thread of 40 messages spent seconds there
@@ -657,7 +671,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
           </AgentChatThread>
           {unread > 0 && <button type="button" className="comms-newpill" onClick={down}>{unread === 1 ? 'New message' : `${unread} new messages`} ↓</button>}
         </AgentChat>
-        {wide && <aside className="comms-thread__side">{screen}<WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} /></aside>}
+
       </div>
       <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
     </article>
@@ -758,7 +772,10 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }
 // ---- the view ----------------------------------------------------------------------------------
 
 /** Narrower than this, a desktop's Comms shows one pane at a time: a 320 px list beside a thread needs room. */
-const ONE_PANE_BELOW = 620;
+// Two panes (the list beside the thread) only where the thread keeps a readable band: the list's 320 px, then the comm
+// screen's 224 and a people-and-work column of 320 or more, and the chat under them (Jonathan, 2026-11-07). Narrower,
+// one pane, the threads a drawer from its header: a narrow tile and a mid-size window alike.
+const ONE_PANE_BELOW = 1100;
 
 export function CommsView({ data }: { data: CommsData }) {
   const { go, wide } = useEnv();

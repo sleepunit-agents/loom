@@ -113,17 +113,18 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
   const noSideways = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
   const widest = (page: Page) => page.evaluate(() => Math.max(...[...document.querySelectorAll('.comms-work, .comms-work *')].map((e) => e.getBoundingClientRect().right)));
 
-  it('at 1280 px, in the Comms tile: the panel under YOU, folded to "Work (N)" in a thread under 760 px, problems first, with words', async () => {
+  it('at 1280 px, in the Comms tile: the panel in the band under who\'s in the conversation, problems first, with words', async () => {
     const { ctx, page, errors } = await open(1280, false);
     try {
       await page.goto(`${base}/comms/${thread.id}`);
       const tile = page.locator('.loom-tile[data-tile="/comms"]');
-      const toggle = tile.locator('.comms-thread__side .comms-work__toggle');
+      const toggle = tile.locator('.comms-band__side .comms-work__toggle');
       await page.waitForFunction(() => /Work \(5/.test(document.querySelector('.loom-tile .comms-work__toggle')?.textContent ?? ''));
-      const you = await tile.locator('.comms-screen__you').boundingBox();
-      const panel = await tile.locator('.comms-thread__side .comms-work').boundingBox();
+      // In the band beside the comm screen (2026-11-07): who's in the conversation, then the work, its rows shown.
+      const you = await tile.locator('.comms-band .comms-people').boundingBox();
+      const panel = await tile.locator('.comms-band__side .comms-work').boundingBox();
       expect(panel!.y).toBeGreaterThan(you!.y);
-      await toggle.click();
+      void toggle;
       await tile.locator('.comms-work__row').first().waitFor();
       const rows = await tile.locator('.comms-work__row').evaluateAll((els) => els.map((e) => [e.querySelector('.comms-work__badge')!.textContent, e.querySelector('.comms-work__meta')!.textContent]));
       expect(rows).toEqual([

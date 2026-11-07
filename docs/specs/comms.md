@@ -559,8 +559,17 @@ a narrow phone (one whose dock holds four keys) keeps Places and finds Comms und
 
 ### Desktop
 
-Two panes inside the app's window (desk.css's window): the list at the left, about 320 px, and the open thread. The
-list stays as you move between threads. ⌘K's Find lists threads by title.
+**The thread** has a **band** of fixed height (232 px) over the chat (Jonathan, 2026-11-07: "outlook-esque"): on the
+left the comm screen at its own size (its glass the sprite's 96 × 84 at a whole 2×, never stretched to the width), on
+the right **In this conversation** (the agent with what it's doing, and you) and **Work in this thread**, which scroll
+inside the band, so its height never changes however much work there is. The chat (the messages and the composer)
+takes the rest of the height and scrolls on its own. Wherever there's width to spare, the people-and-work side takes
+it, never the comm screen.
+
+**Two panes** (the list at the left, 320 px, beside the thread) where Comms' box is 1100 px or wider: the list's 320,
+the comm screen's 224 and a people-and-work side of 320 or more, with room around them. **Narrower** (a mid-size
+window, Comms beside the widgets at 1280, a narrow tile): one pane, the thread with its band, the list a drawer from the
+menu button in its header; with no thread open the list fills the pane. The list stays as you move between threads. ⌘K's Find lists threads by title.
 
 ### The look: Neon OS chat
 

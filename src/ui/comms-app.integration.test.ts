@@ -91,6 +91,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       ? { viewport: { width: 430, height: 900 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, serviceWorkers: 'block' }
       : { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+    // A desktop with no widgets beside Comms: room for the list beside the thread (comms.tsx ONE_PANE_BELOW).
+    if (!phone) await ctx.addInitScript(() => { try { if (!localStorage.getItem('loom-tiles')) localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: [] })); } catch { /* private */ } });
     const page = await ctx.newPage();
     const errors: string[] = [];
     page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -130,7 +132,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.goto(`${base}/comms/${thread.id}`);
       await page.locator('.comms-list').waitFor();
       await page.locator('.comms-thread').waitFor();
-      expect(await page.locator('.comms-screen__you').count()).toBe(1);
+      // Who's in the conversation: the agent and you, beside the comm screen in the band (2026-11-07).
+      expect(await page.locator('.comms-band .comms-people li').allInnerTexts()).toEqual([expect.stringMatching(/Art E Fish/), expect.stringMatching(/you$/)]);
       expect(await page.locator('.comms-screen').getAttribute('data-face')).toBe('idle');
       // The dock carries Comms.
       expect(await page.locator('[aria-label="Comms"]').count()).toBeGreaterThan(0);
@@ -263,18 +266,18 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.locator('.comms-list').waitFor();
       await hold(560);
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
-      // The edge: 619 px is one pane, 620 two, side by side with no way back. A thread open across it stays mounted.
+      // The edge: 1099 px is one pane, 1100 two, side by side with no way back. A thread open across it stays mounted.
       await page.locator('.comms-row__btn').first().click();
       await page.locator('.comms-thread:not(.comms-thread--opening) .comms-screen').waitFor();
       await page.locator('.comms-composer textarea').fill('a draft kept across the width');
-      await hold(619);
+      await hold(1099);
       await page.waitForFunction(() => document.querySelector('.comms')?.hasAttribute('data-one'));
-      await hold(620);
+      await hold(1100);
       await page.locator('.comms:not([data-one]) .comms-list').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-thread').count()).toBe(1);
       expect(await back.count()).toBe(0);
       expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
-      await hold(619);
+      await hold(1099);
       await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
       await hold(null);
