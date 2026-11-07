@@ -22,6 +22,7 @@
 :root[data-look] .loom-tile__bar h2{flex:0 1 auto;min-width:3em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-display);font-weight:700;
   font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text);outline:none}
 :root[data-look] .loom-tile__bar h2:focus-visible{text-decoration:underline;text-decoration-color:var(--v-blue);text-underline-offset:4px}
+:root[data-look] .loom-tile__up{color:inherit;text-decoration:none} :root[data-look] .loom-tile__up:is(:hover,:focus-visible){text-decoration:underline;text-underline-offset:3px}
 :root[data-look] .loom-tile__path{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:var(--v-text-3)}
 :root[data-look] .loom-tile__acts{margin-left:auto;flex:none;display:flex;gap:2px}
 :root[data-look] .loom-tile__btn{display:grid;place-items:center;width:28px;height:26px;color:var(--v-text-2)}
@@ -116,6 +117,28 @@
 :root[data-tile-move="page"] .loom-tile[data-moving] .loom-tile__body{view-transition-name:loom-tile-page}
 :root[data-tile-move]::view-transition-group(*){animation-duration:.22s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
 :root[data-tile-move="page"]::view-transition-old(root),:root[data-tile-move="page"]::view-transition-new(root){animation:none}
+/* a window's own move (tiles.tsx Fx; t-1925 B): the one tile opened, closed, minimized, made big or brought back wears
+   `loom-fx`, and <html data-tile-fx> says which. loom's look, not a page's: a CRT's power-on (a lit line, then the
+   picture) and power-off (the picture folds to a line, the line to a dot); a scanline wiping it down to the dock and
+   back up; a glitch, slices of it torn sideways, as it takes the big slot. 220 to 320 ms, transform, opacity and
+   clip-path only. Reduced motion never starts one. */
+:root[data-tile-fx]::view-transition-group(loom-fx){z-index:2}
+:root[data-tile-fx]::view-transition-image-pair(loom-fx){isolation:auto}
+:root[data-tile-fx="open"]::view-transition-new(loom-fx){animation:loom-fx-on .3s cubic-bezier(.2,.8,.2,1) both}
+:root[data-tile-fx="close"]::view-transition-old(loom-fx){animation:loom-fx-off .26s cubic-bezier(.5,0,.8,.4) both}
+:root[data-tile-fx="min"]::view-transition-old(loom-fx){animation:loom-fx-wipe-out .24s cubic-bezier(.5,0,.8,.4) both}
+:root[data-tile-fx="restore"]::view-transition-new(loom-fx){animation:loom-fx-wipe-in .28s cubic-bezier(.2,.8,.2,1) both}
+:root[data-tile-fx="max"]::view-transition-group(loom-fx){animation-duration:.3s}
+:root[data-tile-fx="max"]::view-transition-old(loom-fx){animation:loom-fx-fade .12s linear both}
+:root[data-tile-fx="max"]::view-transition-new(loom-fx){animation:loom-fx-glitch .3s steps(1,end) both}
+@keyframes loom-fx-on{0%{opacity:0;transform:scale(.55,.004)}12%{opacity:1;transform:scale(.55,.004)}45%{opacity:1;transform:scale(1,.004)}
+  70%{opacity:.85;transform:scale(1,1.02)}100%{opacity:1;transform:none}}
+@keyframes loom-fx-off{0%{opacity:1;transform:none}50%{opacity:1;transform:scale(1.02,.004)}85%{opacity:1;transform:scale(0,.004)}100%{opacity:0;transform:scale(0,.004)}}
+@keyframes loom-fx-wipe-out{0%{clip-path:inset(0 0 0 0);transform:none;opacity:1}100%{clip-path:inset(100% 0 0 0);transform:translateY(8%);opacity:.3}}
+@keyframes loom-fx-wipe-in{0%{clip-path:inset(0 0 100% 0);transform:translateY(8%);opacity:.3}100%{clip-path:inset(0 0 0 0);transform:none;opacity:1}}
+@keyframes loom-fx-fade{to{opacity:0}}
+@keyframes loom-fx-glitch{0%{clip-path:inset(0 0 62% 0);transform:translateX(-6px)}15%{clip-path:inset(38% 0 22% 0);transform:translateX(5px)}
+  30%{clip-path:inset(8% 0 70% 0);transform:translateX(-3px)}45%{clip-path:inset(55% 0 0 0);transform:translateX(2px)}60%,100%{clip-path:inset(0);transform:none}}
 /* a widget the keys moved to (Alt+Shift+arrows) shows where focus is */
 :root[data-look] .loom-wtile:focus-visible{outline:1px solid var(--v-blue);outline-offset:2px}
 /* a choice of many in a tile is the browser's own list (choice-select.tsx), dressed as the look's field */

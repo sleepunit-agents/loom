@@ -362,6 +362,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Desktop windows** (t-1925 B; `docs/specs/desk-tiling.md`, "The frame", "Transitions"). A tile's strip never says its
+  app's name twice ("COMMS › COMMS" is "COMMS", the way up to the app's start). A window alone on the desktop, with no
+  side of its own, has no Recent here: its page takes the room. One loader replaces every spinner: four neon segments
+  lit in turn, 16, 24 or 40 px, never sized by the text around it. Opening, closing, minimizing, making a window the
+  big one and bringing it back from the dock each have their own short effect (a CRT's power-on and -off, a scanline
+  wipe, a glitch); reduced motion has none.
+
 - **The desktop's bar is one line** (t-1925 A; `docs/specs/desk-tiling.md`, "The bar"). At 1024 px and wider: loom's
   clock and the page's name on the left, LOOM//OS and the status glyphs on the right, the ticker scrolling between, 34
   px tall, where there were two bars. The ticker widget is gone (the bar has the same feed): a layout or an address

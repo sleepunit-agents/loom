@@ -22,7 +22,7 @@ export function Callout({ tone = 'info', icon, title, children, actions, classNa
 }) {
   return (
     <Alert variant={tone} className={className} role={role ?? (busy ? 'status' : undefined)} aria-busy={busy || undefined}>
-      <AlertIcon>{busy ? <Spinner appearance="orbit" className="[--pulse:24px]" /> : <Icon name={iconFor(icon ?? TONE_ICON[tone]) as never} />}</AlertIcon>
+      <AlertIcon>{busy ? <Spinner size="md" /> : <Icon name={iconFor(icon ?? TONE_ICON[tone]) as never} />}</AlertIcon>
       <AlertBody>{title && <AlertTitle>{title}</AlertTitle>}{children && <AlertDescription>{children}</AlertDescription>}
         {actions && <AlertActions>{actions}</AlertActions>}</AlertBody>
     </Alert>

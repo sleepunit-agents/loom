@@ -342,8 +342,11 @@ it:
   follows the link rules above, and its `send` is its own page's. Blocks need no change: they already link and act
   through `useEnv()`.
 - **The frame:** the old window's strip became the tile's strip, slimmer: 30 px with the app's key, Back, Forward, the
-  trail, then ⤢, _ and ×. The side column (`SIDE_COLUMN`, Recent here) shows in a tile only when the tile is at least
-  1,100 px wide.
+  trail, then ⤢, _ and ×. The trail never says the app's name twice: a page named as its app (a Comms thread, which
+  has no title of its own) shows the name alone, and the name is the link up to the app's start (Jonathan,
+  2026-11-06: "COMMS › COMMS"). The side column (`SIDE_COLUMN`) shows in a tile only when the tile is at least 1,100 px
+  wide; Recent here only when, as well, the tile shares the screen with another: a window alone on the desktop with no
+  side of its own gets the room.
 - **What the old window did that a tile now does** (2026-11-06, when the window went): a tile's page wears its app's
   colour (or its agent's) as its accent (`data-accent`); each page a tile opens is noted for Find's Recent; the bar's
   ⓘ is the focused tile's page's intro; and the dock lights the focused app's key, Home's with none.
@@ -373,6 +376,12 @@ tech. In a tile:
   from its old box to its new one when tiles are added, closed, swapped or promoted.
 - **A page change inside a tile** names only that tile's body, so the others don't move.
 - Only one transition runs at a time. A change during one applies without animation.
+- **A window's own move** (t-1925 B; Jonathan, 2026-11-06: "nothing reads as a page refresh"): the one tile opened,
+  closed, minimized, made the big one or brought back from the dock wears its own effect, in loom's look: a CRT's
+  power-on (open) and power-off (close), a scanline wiping it down to the dock (minimize) and back up (bring back), a
+  glitch as it takes the big slot. It is the same View Transition as the reflow: that tile is named `loom-fx` for it and
+  `<html data-tile-fx>` says which effect (`tiles.css`); the rest morph as before. 220 to 320 ms; transform, opacity
+  and clip-path only. Home sending every app to the dock, and back, is the plain reflow.
 - **Reduced motion** (`access.ts`) skips all of it, and the layout simply changes.
 
 ## The address, and what each device keeps
@@ -550,6 +559,14 @@ three tiles, and 12 is about one that doesn't fit); 13, 14, 17 and 18 at 1280×8
     layout or an address with `ticker` in its widgets loads without it, and the
     device's copy is written again without it; the seed has no ticker; the desktop draws no headline. 390 px: the
     phone's bar, no clock, no glyphs.
+
+23. **Windows** (`src/ui/desk-chrome.integration.test.ts`). A Comms thread's strip reads "Comms" once, no crumb, and
+    the name goes up to `/comms`; Setup's Appearance reads "Setup › Appearance". At 1920 a lone Setup tile, with
+    pages of Setup visited, has no Recent here and its page takes the tile's width; at 3000 with the Inbox beside it,
+    Recent here is there. The loader's three sizes are 16, 24 and 40 px under text of 12 px and of 40 px, and the app's
+    scripts carry no other spinner. With motion, opening the Inbox and Comms, making Comms big, minimizing it, bringing
+    it back and closing it wear `open, open, max, min, restore, close` and run `loom-fx-on`, `-glitch`, `-wipe-out`,
+    `-wipe-in` and `-off`, none longer than 350 ms; under reduced motion the same steps wear none and run none.
 
 ## Build, in phases
 

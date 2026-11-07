@@ -189,8 +189,8 @@ describe.runIf(built && chrome)('desk tiling: widgets are tiles', () => {
     await p.context().close();
   }, 60_000);
 
-  it('a tile 1,100 px wide or wider, on a page with no side sections of its own, has Recent here', async () => {
-    const p = await screen(1920, 1080, '/people?t=*people&w=');
+  it('a tile 1,100 px wide or wider sharing the screen, on a page with no side sections of its own, has Recent here', async () => {
+    const p = await screen(3000, 1440, '/people?t=*people,inbox&w=');
     const people = p.locator('.loom-tile[data-tile="/people"]');
     expect(await people.evaluate((t) => t.getBoundingClientRect().width)).toBeGreaterThanOrEqual(1100);
     await people.locator('a[href^="/people/"]').first().click();

@@ -110,7 +110,7 @@ export function FindPanel({ chrome, icon, go, autoFocus = true, onClose, widgets
         <input autoFocus={autoFocus} value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={key} placeholder="Find anything" aria-label="Find anything"
           role="combobox" aria-expanded aria-controls="loom-find-list" aria-activedescendant={rows[sel] ? `loom-find-${sel}` : undefined}
           enterKeyHint="go" autoComplete="off" spellCheck={false} className="h-14 min-w-0 flex-1 bg-transparent text-lg outline-none placeholder:opacity-60" />
-        {busy && <Spinner appearance="orbit" className="[--pulse:18px]" />}
+        {busy && <Spinner size="sm" />}
         {onClose && <button type="button" onClick={onClose} className="loom-find-esc rounded-lg px-2 py-1 text-xs font-medium opacity-70 hover:opacity-100">
           <span className="max-lg:hidden">esc</span><span className="lg:hidden">Cancel</span></button>}
       </label>

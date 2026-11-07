@@ -299,14 +299,19 @@ describe.runIf(built && chrome)('an app\'s tile: Back, Forward, its crumb and it
     await p.context().close();
   });
 
-  it('1920: a page with nothing for the side gets Recent here, this app\'s pages only', async () => {
-    const p = await screen(1920, '/appearance', 1080);
+  // Recent here is beside a wide tile that shares the screen; a window alone keeps the room (desk-chrome.integration.test.ts).
+  it('3000 px, beside the Inbox: a wide page with nothing for the side gets Recent here, this app\'s pages only', async () => {
+    const p = await screen(3000, '/appearance', 1440);
     await titled(p, 'Appearance');
     await tile(p).locator('button[aria-label="Close Setup"]').click();
     await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     await p.goto(`${base}/p/work/task/t-5`); await titled(p, 'Task 5');
     await p.goto(`${base}/p/work/about`); await titled(p, 'About tasks');
-    const recent = tile(p).locator('nav.loom-tile__side[aria-label="Recent here"]');
+    const work = tile(p);
+    expect(await work.locator('nav.loom-tile__side').count()).toBe(0);
+    await p.click('.loom-dock-bar [data-part="item"][aria-label="Inbox"]');
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(2);
+    const recent = p.locator('.loom-tile', { has: p.locator('h2', { hasText: 'About tasks' }) }).locator('nav.loom-tile__side[aria-label="Recent here"]');
     await recent.waitFor();
     const names = await recent.locator('a').allInnerTexts();
     expect(names).toContain('Task 5');

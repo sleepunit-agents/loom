@@ -353,7 +353,7 @@ export function DashboardView({ d, now }: { d: { label: string; title?: string; 
       {!d.agent?.id && <Tiles tiles={d.tiles} />}
       {/* The thread as 000h's activity feed (its living-thread look): newest first, a page at a time. */}
       <div className="min-w-0">
-        <Suspense fallback={<div className="grid place-items-center py-8"><Spinner appearance="orbit" /></div>}>
+        <Suspense fallback={<div className="grid place-items-center py-8"><Spinner size="lg" /></div>}>
         <Ledger rows={d.thread} title={d.title ?? 'Thread'} now={now} />
         </Suspense>
       </div>
