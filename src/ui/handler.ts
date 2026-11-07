@@ -1714,7 +1714,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const key = query.k ?? '';
       if (!/^[0-9a-f]{16}$/.test(key)) return sendJson(res, 400, { error: 'bad item' });
       const it = inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((x) => x.key === key);
-      return sendJson(res, 200, { open: !!it?.attention }, { 'cache-control': 'no-store' });
+      // Open: still there and not history, whether it's counted in Needs you or only filed (attention: false).
+      return sendJson(res, 200, { open: !!it && it.box !== 'done' }, { 'cache-control': 'no-store' });
     }
     if (pathname === '/inbox') {
       const nowMs = Date.now();
@@ -1749,7 +1750,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         ch.shell.back = { label: INBOX_FOLDERS.find((f) => f.id === folder)!.label, href: folder === 'needs' ? '/inbox' : `/inbox?f=${folder}` };
       }
       { const ctx = { ...ctxOf('inbox'), agents: agentsOf(hh)! };
-        return view('inbox', { items, folder, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
+        return view('inbox', { items, folder, folders: INBOX_FOLDERS, open: open?.key, ctx, chrome: ch, now: nowMs, inline, ...(hh.github ? { github: hh.github } : {}) }); }
     }
     if (pathname === '/knowledge') return send200(knowledgePage(hh, query), 'knowledge', ctxOf('knowledge'));
     if (pathname.startsWith('/knowledge/')) {

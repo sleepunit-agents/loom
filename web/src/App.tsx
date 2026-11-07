@@ -463,7 +463,7 @@ export default function App() {
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
                   : data.view === 'comms' ? <Suspense fallback={<Spinner size="lg" />}><CommsView data={data as never} /></Suspense>
-                  : data.view === 'inbox' ? <Suspense fallback={<Spinner size="lg" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
+                  : data.view === 'inbox' ? <Suspense fallback={<Spinner size="lg" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} folders={data.folders as never} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
                   : data.view === 'passkeys' ? <Suspense fallback={<Spinner size="lg" />}>
                     <AccountView me={(data.me as Me | undefined) ?? { name: data.chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}
                       add={data.add as never} reload={() => void pg.load(pg.url, false, true)} page={data.page as Page} /></Suspense>

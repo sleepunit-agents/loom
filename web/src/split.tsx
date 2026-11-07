@@ -100,12 +100,12 @@ export function Split({ label, folders, folder, onFolder, search, listTitle, lis
         {folders.map((f, n) => isFolder(f) ? (
           <li key={f.id}>
             <button type="button" className="loom-split__folder" data-sub={f.sub || undefined} aria-current={f.id === folder ? 'true' : undefined} onClick={() => onFolder(f.id)}>
-              {f.icon && <Icon name={f.icon as never} size="sm" />}
+              {f.icon && <Icon name={f.icon} size="sm" />}
               <span className="loom-split__folder-name">{f.label}</span>
               {f.count !== undefined && f.count > 0 && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
             </button>
           </li>
-        ) : <li key={`h${n}`} className="loom-split__heading" role="presentation">{f.heading}</li>)}
+        ) : <li key={`h${n}`} className="loom-split__heading">{f.heading}</li>)}
       </ul>
     </nav>
   );

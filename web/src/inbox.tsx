@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ActButton, EnvContext, Link, LoomMark, Nothing, type Env } from './blocks';
 import { markRead, type Chrome, type Source } from './loom';
 import { ApprovalBox, As, KIND, Mark, type InboxItem, Fine } from './views';
+import { Arrive } from './arrive';
 import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, keepDraft } from './drafts';
@@ -23,18 +24,14 @@ import './inbox.css';
 const useEnv = () => useContext(EnvContext)!;
 
 type Box = NonNullable<InboxItem['box']>;
-/** The folders, in the mock's order; each one's icon. */
-const FOLDERS: Array<[string, string, string]> = [
-  ['needs', 'Needs you', 'inbox'], ['question', 'Questions', 'message-circle-question-mark'], ['approval', 'Approvals', 'lock'],
-  ['alert', 'Alerts', 'triangle-alert'], ['memory', 'Memory reviews', 'brain'], ['done', 'Done', 'circle-check'],
-];
+/** Each folder's icon (its name and order are loom's: the view's `folders`, src/ui/render.ts INBOX_FOLDERS). Every
+ * one is in the authored icon set, so the Inbox never pulls in the whole Lucide pack (icon.tsx). */
+const FOLDER_ICON: Record<string, string> = { needs: 'inbox', question: 'message-circle', approval: 'lock', alert: 'triangle-alert', memory: 'brain', done: 'circle-check' };
 /** What an open item is, as its reader's first line says it. */
 const BOX_WORD: Record<Box, string> = { question: 'Question', approval: 'Approval', alert: 'Alert', memory: 'Memory review', done: 'Done' };
-const BOX_ICON: Record<Box, string> = { question: 'message-circle-question-mark', approval: 'lock', alert: 'triangle-alert', memory: 'brain', done: 'circle-check' };
-/** An item's folder: the server's, else worked out as it does (an older loom's answer, a test's fixture). */
-const boxOf = (i: InboxItem): Box => i.box ?? (i.kind === 'answered' || i.kind === 'fyi' ? 'done' : i.kind === 'permission' || i.approval ? 'approval'
-  : i.kind === 'decision' || i.kind === 'reply' || i.kind === 'todo' || i.reply || i.needs ? 'question' : 'alert');
-const OLD: Record<string, string> = { permission: 'approval', decision: 'question', reply: 'question', todo: 'question', fyi: 'done', answered: 'done' };
+const BOX_ICON: Record<Box, string> = { question: 'message-circle', approval: 'lock', alert: 'triangle-alert', memory: 'brain', done: 'circle-check' };
+/** An item's folder is loom's (render.ts inboxBox: one rule, on the server); an answer from before it said one is Done. */
+const boxOf = (i: InboxItem): Box => i.box ?? 'done';
 
 /** When, as a list's right edge says it: today's time, this week's day, else the date. */
 function short(at?: string): string {
@@ -46,19 +43,20 @@ function short(at?: string): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-export function InboxView({ items, folder, open: opened, chrome, github }: { items: InboxItem[]; folder: string; open?: string; chrome: Chrome; github?: string }) {
+export function InboxView({ items, folder, folders: named, open: opened, chrome, github }: { items: InboxItem[]; folder: string; folders?: Array<{ id: string; label: string }>; open?: string; chrome: Chrome; github?: string }) {
+  const FOLDERS = (named ?? [{ id: 'needs', label: 'Needs you' }]).map((x) => [x.id, x.label, FOLDER_ICON[x.id] ?? 'inbox'] as const);
   const env = useEnv();
   const { ctx } = env;
   const agents = ctx.agents ?? {};
   const name = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
-  const [f, setF] = useState(() => (FOLDERS.some(([k]) => k === folder) ? folder : OLD[folder] ?? 'needs'));
+  const [f, setF] = useState(() => (FOLDERS.some(([k]) => k === folder) ? folder : 'needs'));
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<string | null>(() => (opened && items.some((i) => i.key === opened) ? opened : null));
   // Answered here, before loom's new answer lands: Done at once, with what was said.
   const [answered, setAnswered] = useState<Record<string, string>>({});
   const [read, setRead] = useState<Set<string>>(() => new Set());
   const all = useMemo(() => items.map((i): InboxItem => (answered[i.key] ? { ...i, attention: false, unread: false, box: 'done', outcome: answered[i.key] }
-    : read.has(i.key) ? { ...i, unread: false } : { ...i, box: boxOf(i) })), [items, answered, read]);
+    : read.has(i.key) ? { ...i, unread: false, box: boxOf(i) } : { ...i, box: boxOf(i) })), [items, answered, read]);
   const tasks = items.find((i) => i.source.id === 'tasks')?.source ?? { id: 'tasks', base: '/p/tasks/' };
   const inF = (id: string, i: InboxItem) => (id === 'needs' ? i.attention : id.startsWith('from:') ? i.agent === id.slice(5) : i.box === id);
   const needle = q.trim().toLowerCase();
@@ -80,7 +78,9 @@ export function InboxView({ items, folder, open: opened, chrome, github }: { ite
     setSel(i.key); setPicks((x) => x + 1);
     if (i.unread) { setRead((r) => new Set(r).add(i.key)); void markRead(i.key, ctx.csrf); }
   };
-  const next = (key: string) => { const n = shown.findIndex((i) => i.key === key); return shown.filter((i) => i.key !== key && i.attention)[Math.max(0, n)] ?? null; };
+  // The next open one after it in the list, else the one before: a mail client's.
+  const next = (key: string) => { const n = shown.findIndex((i) => i.key === key); const open = (i: InboxItem) => i.key !== key && boxOf(i) !== 'done';
+    return shown.slice(n + 1).find(open) ?? shown.slice(0, Math.max(0, n)).reverse().find(open) ?? null; };
   const onAnswered = (i: InboxItem, said: string) => {
     const nx = next(i.key);
     setAnswered((a) => ({ ...a, [i.key]: said }));
@@ -95,7 +95,7 @@ export function InboxView({ items, folder, open: opened, chrome, github }: { ite
   return (
     <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { setF(id); setSel(null); }} search={search}
       listTitle={label} listMeta={shown.length || undefined}
-      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} current={reading?.key === i.key} onPick={pick} />)
+      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick} />)
         : <div className="loom-inbox__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
           text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} /></div>}
       reader={went ? <p className="loom-inbox__live" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
@@ -106,17 +106,22 @@ export function InboxView({ items, folder, open: opened, chrome, github }: { ite
 }
 
 /** A row: what it is (its folder's mark), its words, when; unread is bold with a dot. */
-function Row({ i, who, current, onPick }: { i: InboxItem; who: string; current: boolean; onPick: (i: InboxItem) => void }) {
+function Row({ i, who, mark, current, onPick }: { i: InboxItem; who: string; mark?: { label: string; bg: string; fg: string }; current: boolean; onPick: (i: InboxItem) => void }) {
   const p = plain(i, who);
   const box = boxOf(i);
   const sub = tidy(p.why ?? i.outcome ?? i.meta ?? '') || [who, i.sourceLabel].filter(Boolean).join(' · ');
   return (
-    <button type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}>
-      {i.unread && <span className="loom-inbox__dot" aria-label="Unread" />}
-      <span className="loom-inbox__kind" aria-hidden><Icon name={(i.kind === 'fyi' ? 'info' : BOX_ICON[box]) as never} size="sm" /></span>
-      <span className="loom-inbox__words"><span className="loom-inbox__title">{p.title}</span>{sub && <span className="loom-inbox__sub">{sub}</span>}</span>
-      <span className="loom-inbox__when loom-data">{short(i.at)}</span>
-    </button>
+    // What's new arrives (arrive.tsx; docs/specs/ui-app.md): a row that wasn't there at the last answer glows once.
+    <Arrive k={`in:${i.key}\0${i.kind}`}>
+      <button type="button" data-split-row="" className="loom-inbox__row" data-box={box} data-unread={i.unread || undefined} aria-current={current ? 'true' : undefined} onClick={() => onPick(i)}>
+        {i.unread && <span className="loom-inbox__dot" aria-label="Unread" />}
+        {/* Who asks, by their face (pixel or drawn), with what it is as a badge on it; nobody's is its kind alone. */}
+        {mark ? <span className="loom-inbox__face"><Mark a={mark} size={28} /><span className="loom-inbox__badge" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span></span>
+          : <span className="loom-inbox__kind" aria-hidden><Icon name={i.kind === 'fyi' ? 'info' : BOX_ICON[box]} size="sm" /></span>}
+        <span className="loom-inbox__words"><span className="loom-inbox__title">{p.title}</span>{sub && <span className="loom-inbox__sub">{sub}</span>}</span>
+        <span className="loom-inbox__when loom-data">{short(i.at)}</span>
+      </button>
+    </Arrive>
   );
 }
 
@@ -142,7 +147,8 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
   onAnswered: (i: InboxItem, said: string) => void; picks: number }) {
   const p = plain(i, who);
   const from = cap(i.sourceLabel ?? i.source.id);
-  const acts = i.attention && (!!i.actions?.length || !!i.reply || !!i.approval);
+  // Anything still open with a way to answer it: counted in Needs you or only filed (attention: false), the same.
+  const acts = boxOf(i) !== 'done' && (!!i.actions?.length || !!i.reply || !!i.approval);
   const [live, setLive] = useState<Live>(acts ? 'checking' : 'live');
   const check = async () => { const l = await stillOpen(i.key); setLive(l); return l === 'live'; };
   useEffect(() => { if (!acts) return; setLive('checking'); void check(); }, [i.key, picks]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -164,8 +170,8 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
   if (conv && !refs.some((r) => r.t === 'conv' && r.id === conv)) refs.push({ t: 'conv', id: conv });
   const own = i.page !== undefined && i.page !== '' && !conv;
   const words = (s: string) => bits(s, github).map((b, k) => <Ref key={k} b={b} tasks={tasks} />);
-  const ans = useAnswer(i.reply && i.attention ? i : undefined, () => undefined, guarded);
-  const yesNo = n?.answers === 'yes-no' && !(i.approval && i.attention);
+  const ans = useAnswer(i.reply && acts ? i : undefined, () => undefined, guarded);
+  const yesNo = n?.answers === 'yes-no' && !(i.approval && acts);
   const ok = live === 'live';
   const trail = trailOf(i, who, p.answer ? [p.answer.verdict, p.answer.by && `by ${p.answer.by}`].filter(Boolean).join(' ') : i.outcome);
   return (
@@ -240,7 +246,7 @@ function trailOf(i: InboxItem, who: string, answer?: string): Array<{ when: stri
   const stamp = (t: number) => `${short(new Date(t).toISOString())}${new Date(t).toDateString() === new Date().toDateString() ? '' : ` ${new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`}`;
   const add = (t: number, text: string, tone?: string) => { if (Number.isFinite(t)) out.push({ when: stamp(t), text, tone, t }); };
   const by = who || i.sourceLabel || 'loom';
-  add(at(i.at), i.kind === 'fyi' ? `${by}: news` : boxOf(i) === 'alert' ? `${by} raised this` : i.kind === 'answered' ? `${by} asked` : `${by} asked`, 'ask');
+  add(at(i.at), i.kind === 'fyi' ? `${by}: news` : boxOf(i) === 'alert' ? `${by} raised this` : `${by} asked`, 'ask');
   add(at(i.seen), 'You opened it', 'seen');
   if (!i.attention && answer) add(i.kind === 'answered' ? at(i.at) : Date.now(), answer, 'done');
   if (i.attention && i.expires) add(at(i.expires), 'It expires', 'until');

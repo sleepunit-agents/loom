@@ -1,6 +1,6 @@
 /**
  * Neon Noir's chrome, every look's since 2026-11-05, in a real browser, over a household with something waiting (an ask
- * from Art, task t-738): the Inbox's sheet has its title bar, Find is a command bar, the power-on ends at a tap well
+ * from Art, task t-738): the Inbox's open item says what and who, Find is a command bar, the power-on ends at a tap well
  * before it would end by itself, and sound plays only when the person has turned it on and the opening animation runs.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
@@ -80,22 +80,16 @@ describe.runIf(built && chrome)('Neon Noir\'s chrome', () => {
     expect(await p.evaluate(async ([c, b]) => (await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, ...(b as object) }) })).status, [csrf, prefs] as const)).toBe(200);
   }
 
-  it('the Inbox\'s sheet: a title bar (what, who, its task), in every look', async () => {
+  it('the Inbox\'s open item (t-1925; it was a sheet): what it is and who asks on its first line, its task where it lives, in every look', async () => {
     for (const look of ['neon', 'lowlight', 'daylight'] as const) {
       const p = await device('reduce', look);
       await choose(p, { look });
       await p.goto(`${base}/inbox`);
       await p.getByText('OK to turn off the recycle bin').first().click();
-      const bar = p.locator('.loom-sheet-bar');
-      await bar.waitFor({ state: 'attached' });
-      await bar.waitFor();
-      expect((await bar.innerText()).replace(/\s+/g, ' '), look).toMatch(/ALERT|ASK|PERMISSION|DECISION/);
-      expect(await bar.innerText()).toMatch(/t-738/i);
-      expect(await bar.locator('.loom-data').getAttribute('aria-hidden')).toBeNull();
-      // The sheet stands off the page in every look: a lit edge in Neon, a quiet shadow in the others, never none.
-      const shadow = await p.locator('[data-slot="drawer-content"],[data-slot="dialog-content"]').first().evaluate((e) => getComputedStyle(e).boxShadow);
-      expect(shadow, look).toMatch(/\d+px \d+px$|px -?\d+px -?\d+px/);
-      expect(shadow, look).not.toMatch(/^none$|0px 0px 0px 0px$/);
+      const from = p.locator('.loom-split__reader .loom-inbox__from');
+      await from.waitFor();
+      expect((await from.innerText()).replace(/\s+/g, ' '), look).toMatch(/Question|Alert|Approval/);
+      expect(await p.locator('.loom-split__reader [aria-label="Where it lives"]').innerText(), look).toMatch(/t-738/i);
       await p.context().close();
     }
   }, 60_000);

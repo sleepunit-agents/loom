@@ -192,4 +192,39 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     expect(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
     await p.context().close();
   });
+
+  it('a stamped answer (a kept copy, x-loom-saved-at) is "can not tell": no live buttons', async () => {
+    ask('Reboot the field box?');
+    const p = await screen(1280, 800, '/inbox?t=*inbox', false, true);
+    await p.route('**/inbox/open?*', (r) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'x-loom-saved-at': new Date().toISOString() }, body: '{"open":true}' }));
+    await row(p, 'Reboot the field box?').click();
+    await expect.poll(() => p.locator(`${reader} [role="status"]`).first().textContent()).toMatch(/Can’t check with loom/);
+    expect(await p.locator(`${reader} button:text-is("Done")`).count()).toBe(0);
+    expect(await p.locator(`${reader} button:text-is("Yes")`).count()).toBe(0);
+    await p.context().close();
+  });
+
+  it('two panes between 640 and 900 px (Inbox beside Comms at 1440): chips over the list, the reader beside it; ↑ and ↓ read each in turn', async () => {
+    ask('Rename the pond repo?');
+    ask('Move the backups to Tuesday?');
+    const p = await screen(1440, 900, '/inbox?t=*inbox,comms&w=');
+    const width = await p.locator('.loom-inbox').evaluate((e) => e.getBoundingClientRect().width);
+    expect(width).toBeGreaterThanOrEqual(640);
+    expect(width).toBeLessThan(900);
+    await expect.poll(() => mode(p)).toBe('two');
+    expect(await p.locator('.loom-split__chips').count()).toBe(1);
+    expect(await p.locator('.loom-split__nav').count()).toBe(0);
+    const [r, l] = await Promise.all([p.locator(reader).boundingBox(), p.locator('.loom-split__list').boundingBox()]);
+    expect(r!.x).toBeGreaterThanOrEqual(l!.x + l!.width - 1);
+    await p.locator('[data-split-row]').first().focus();
+    await p.keyboard.press('ArrowDown');
+    const second = await p.locator('[data-split-row]').nth(1).locator('.loom-inbox__title').textContent();
+    await expect.poll(() => p.locator(`${reader} h2`).textContent()).toBe(second);
+    await p.keyboard.press('ArrowUp');
+    const first = await p.locator('[data-split-row]').first().locator('.loom-inbox__title').textContent();
+    await expect.poll(() => p.locator(`${reader} h2`).textContent()).toBe(first);
+    expect(await kept(p)).toBe(1);
+    await p.context().close();
+  });
+
 });

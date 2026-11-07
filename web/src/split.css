@@ -57,6 +57,8 @@
 .loom-split__rows > [data-split-row], .loom-split__rows > * > [data-split-row] { width: 100%; text-align: left; border-bottom: 1px solid var(--sp-line); position: relative; }
 .loom-split [data-split-row]:hover { background: var(--sp-hover); }
 .loom-split [data-split-row][aria-current="true"] { background: var(--sp-current); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sp-tint) 60%, transparent); }
+/* One pane with nothing open: no row is lit as if it were (the reader beside it is the one shown). */
+.loom-split[data-mode="one"]:not([data-open]) [data-split-row][aria-current="true"] { background: none; box-shadow: none; }
 .loom-split [data-split-row]:focus-visible, .loom-split__folder:focus-visible, .loom-split__chips button:focus-visible, .loom-split__back:focus-visible {
   outline: 2px solid var(--sp-tint); outline-offset: -2px; }
 

@@ -906,7 +906,11 @@ describe('the household page', () => {
       expect(inFolder(decisions, 'question').map((it) => it.text)).toContain('Keep this memory?');
       expect(inFolder(decisions, 'question').map((it) => it.text)).toEqual(expect.arrayContaining(['Tonight or tomorrow?']));
       expect(item(decisions, 'Discord bridge is dark')).toMatchObject({ kind: 'alert' });
-      expect(item(decisions, 'Renew the cert?')).toMatchObject({ kind: 'decision' });
+      expect(item(decisions, 'Renew the cert?')).toMatchObject({ kind: 'decision', attention: false, box: 'question' });
+      // Filed without counting, it's still open: loom says so, so the reader draws its Renew (t-1925).
+      const openOf = async (text: string) => (await (await fetch(`${base}/inbox/open?k=${item(needs, text).key}`, { headers: { cookie, accept: 'application/json' } })).json()).open;
+      expect(await openOf('Renew the cert?')).toBe(true);
+      expect(await openOf('Push the fix')).toBe(true);
       expect(item(decisions, 'Set up the rig')).toMatchObject({ kind: 'todo' });
       const alerts = await data(cookie, '/inbox?f=alert');
       expect(alerts.folder).toBe('alert');

@@ -404,13 +404,17 @@ that ignores it keeps working. Outside a household there's no `caller`.
     asking to join). `"decision"` means a choice. `"reply"` means words, not a button. `"alert"` means
     something is wrong and worth a look, with nothing to choose (a bridge gone dark). `"todo"` means a
     task waiting on the owner. With no `kind`, an ask with `actions` is a decision; one without is an alert.
+    The Inbox's folders (t-1925) group the kinds by what they want from the owner: **Questions** (`decision`, `reply`,
+    `todo`), **Approvals** (`permission`, or an ask that holds one), **Alerts** (`alert`), **Memory reviews** (loom's
+    own memory proposals), and **Done** (what's answered, and news). An open ask is read whole in the Inbox's reading
+    pane beside the list, with its buttons.
   - `expires` (an ISO date-time) is when it stops mattering.
-  - `attention: false` files the ask without counting it as unread. Use it for a memory proposal
-    that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
+  - `attention: false` files the ask in its folder without counting it in Needs you or as unread (its
+    buttons still work). Use it for a memory proposal that nothing waits on. Otherwise an ask needs the owner: it counts on the Inbox and may notify.
   - **Laid out** (Jonathan, 2026-11-05: "explain the whole thing in human friendly text"): `text` is the one plain
     question, read whole; `why` (≤ 300) is one line; `if_yes` and `if_no` (≤ 300 each) say what happens on its primary
     button (Allow, Yes) and on its danger one (Deny), and loom draws each beside its button on Home and in the Inbox;
-    `details` (≤ 2,000) is longer text for its sheet; `fine` (≤ 400) is the small print, exactly what the yes allows
+    `details` (≤ 2,000) is longer text for the Inbox's reading pane; `fine` (≤ 400) is the small print, exactly what the yes allows
     (the machine's kind and target), under "Exactly what this allows". An ask with buttons is never drawn cut.
   - `conversation` (a `cv-` id) is the conversation the ask was made from: a Comms thread shows a permission ask
     inline when its `conversation` is the thread's and its `agent` is the thread's agent ([specs/comms.md](specs/comms.md),
