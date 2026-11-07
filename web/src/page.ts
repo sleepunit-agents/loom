@@ -39,7 +39,8 @@ export type Answer = { status: number; data?: View; redirect?: string; savedAt?:
 const kept = new Map<string, { etag?: string; data: View }>();
 
 const keep = (to: string, r: Answer) => {
-  if (r.data && r.etag && !r.savedAt) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
+  // One without a fingerprint too (a Comms thread's): shown at once all the same, then asked for whole behind it.
+  if (r.data && !r.savedAt) kept.set(to, { etag: r.etag, data: { ...r.data, chrome: { ...r.data.chrome, flash: undefined } } });
 };
 /** Whether this tab has a copy of a page (a swipe's next page is fetched ahead only when it hasn't). */
 export const hasKept = (to: string): boolean => kept.has(to);

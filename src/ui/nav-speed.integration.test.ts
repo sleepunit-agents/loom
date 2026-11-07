@@ -168,9 +168,12 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
       expect(await p.locator(list).evaluate((e) => e.scrollTop)).toBe(before);
       expect(await p.locator(`${list} .comms-row[data-current]`).count()).toBe(1);
       expect(await p.locator(`${list} .comms-row`).nth(12).getAttribute('data-current')).not.toBeNull();
-      // Back to the first: its draft is as it was left.
+      // Back to the first, loom slow from here: it opens from the tab's copy at once (no wait in the pane), its
+      // draft as it was left.
+      await p.route(/\/comms\/th:[a-z2-7]+$/, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue().catch(() => {}); });
       await p.locator(`${list} .comms-row__btn:has(.comms-row__title:text-is("${firstTitle}"))`).evaluate((e) => (e as HTMLElement).click());
-      await expect.poll(() => new URL(p.url()).pathname).toBe(first);
+      await expect.poll(() => new URL(p.url()).pathname, { timeout: 400 }).toBe(first);
+      expect(await p.locator(`${tile('Comms')} .comms-thread--opening`).count()).toBe(0);
       await expect.poll(() => p.locator(`${tile('Comms')} .comms-composer textarea`).inputValue()).toBe('half a thought');
       expect(await kept(p, list)).toBe(true);
       expect(errors).toEqual([]);
