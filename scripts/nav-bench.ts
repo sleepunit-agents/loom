@@ -104,7 +104,7 @@ type Flow = { name: string; width: number; samples: Sample[] };
 async function screen(browser: Browser, width: number, path: string): Promise<{ ctx: BrowserContext; p: Page; cdp: CDPSession }> {
   const phone = width < 1024;
   const ctx = await browser.newContext({ viewport: { width, height: phone ? 844 : 800 }, isMobile: phone, hasTouch: phone, reducedMotion: 'reduce', bypassCSP: true });
-  await ctx.addInitScript(`try { localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); } catch {}`);
+  await ctx.addInitScript(`window.__name = (f) => f; try { localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); } catch {}`);
   await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
   const p = await ctx.newPage();
   const cdp = await ctx.newCDPSession(p);
@@ -116,8 +116,13 @@ async function screen(browser: Browser, width: number, path: string): Promise<{ 
   return { ctx, p, cdp };
 }
 
+/** When a step is done, as data (no code is built from strings): every `has` selector there, no `not` one, the address
+ * holding `url` (and not `notUrl`), the path being `path`, the page holding `text`, a thread titled `title`, at least
+ * `count[1]` of `count[0]`; or else `or`. */
+type Done = { has?: string[]; not?: string[]; url?: string; notUrl?: string; path?: string; text?: string; title?: string; count?: [string, number]; or?: Done };
+
 /** Times one step: `act` (a click) until `done` holds in the page; marks `keep` first, to see if it survived. */
-async function step(p: Page, cdp: CDPSession, act: () => Promise<void>, done: string, keep?: string, scope = 'body', probes: string[] = []): Promise<Sample> {
+async function step(p: Page, cdp: CDPSession, act: () => Promise<unknown>, done: Done, keep?: string, scope = 'body'): Promise<Sample> {
   let bytes = 0, requests = 0;
   const onReq = () => { requests++; };
   // What reached the page, decoded (a service worker's answer has no wire size of its own).
@@ -136,10 +141,15 @@ async function step(p: Page, cdp: CDPSession, act: () => Promise<void>, done: st
     addEventListener('pointerdown', () => { w.__b.t0 = performance.now(); w.__b.first = null; }, { capture: true, once: true });
   }, [keep ?? '', scope] as const);
   await act();
-  const end = await p.waitForFunction((done) => {
-    const ok = typeof done === 'string' ? (new Function(`return (${done})`)() as boolean) : false;
+  const end = await p.waitForFunction((done: Done) => {
+    const holds = (d: Done): boolean => (d.has ?? []).every((x) => !!document.querySelector(x)) && !(d.not ?? []).some((x) => !!document.querySelector(x))
+      && (d.url === undefined || location.href.includes(d.url)) && (d.notUrl === undefined || !location.href.includes(d.notUrl))
+      && (d.path === undefined || location.pathname === d.path) && (d.text === undefined || (document.body.textContent ?? '').includes(d.text))
+      && (d.title === undefined || [...document.querySelectorAll('.comms-thread__title')].some((e) => (e.textContent ?? '').trim() === d.title))
+      && (d.count === undefined || document.querySelectorAll(d.count[0]).length >= d.count[1]);
+    const ok = holds(done) || (!!done.or && holds(done.or));
     return ok && !document.querySelector('[aria-busy="true"]') ? performance.now() : 0;
-  }, done, { timeout: 20_000, polling: 'raf' }).then((h) => h.jsonValue() as Promise<number>).catch(async (e) => {
+  }, done, { timeout: 45_000, polling: 100 }).then((h) => h.jsonValue() as Promise<number>).catch(async (e) => {
     console.error('not done:', done, await p.evaluate(() => ({ url: location.href, busy: [...document.querySelectorAll('[aria-busy="true"]')].map((e) => e.outerHTML.slice(0, 160)),
       titles: [...document.querySelectorAll('.comms-thread__title')].map((e) => e.textContent), msgs: document.querySelectorAll('.comms-msg--agent').length })));
     throw e;
@@ -163,7 +173,6 @@ const record = (name: string, width: number, s: Sample) => {
   f.samples.push(s);
 };
 const tileSel = (label: string) => `.loom-tile[aria-label$=", ${label}"]`;
-const jsStr = (s: string) => JSON.stringify(s);
 
 const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
 try {
@@ -179,9 +188,19 @@ try {
           if (!desk && i > 0) { await p.goBack(); await p.locator('.comms-row__btn').first().waitFor(); await p.waitForTimeout(300); }
           const title = (await p.locator('.comms-row__title').nth(n).textContent())!.trim();
           const s = await step(p, cdp, () => p.locator('.comms-row__btn').nth(n).click(),
-            `[...document.querySelectorAll('.comms-thread__title')].some((e) => e.textContent.trim() === ${jsStr(title)}) && document.querySelectorAll('.comms-msg--agent').length > 3`,
+            { title, count: ['.comms-msg--agent', 4] },
             desk ? listSel : undefined);
           record(`Comms: open a thread (${k})`, width, s);
+        }
+        // As a person does on a desktop: the pointer rests on the row a moment (400 ms) before the press.
+        if (desk) {
+          const n = 12 + run;
+          const title = (await p.locator('.comms-row__title').nth(n).textContent())!.trim();
+          await p.locator('.comms-row__btn').nth(n).hover();
+          await p.waitForTimeout(400);
+          const s = await step(p, cdp, () => p.locator('.comms-row__btn').nth(n).click(),
+            { title, count: ['.comms-msg--agent', 4] }, listSel);
+          record('Comms: open a thread (pointer rested 400 ms)', width, s);
         }
         await ctx.close();
       }
@@ -192,7 +211,7 @@ try {
         await rows.first().waitFor({ timeout: 20_000 }).catch(() => {});
         const count = await rows.count();
         if (count > 2) {
-          const s = await step(p, cdp, () => rows.nth(1 + run).click(), `!!document.querySelector('[role="dialog"][data-state="open"]') || /[?&]i=/.test(location.search)`, desk ? tileSel('Inbox') : undefined);
+          const s = await step(p, cdp, () => rows.nth(1 + run).click(), { has: ['[role="dialog"][data-state="open"]'], or: { url: 'i=' } }, desk ? tileSel('Inbox') : undefined);
           record('Inbox: open an item', width, s);
         }
         await ctx.close();
@@ -205,10 +224,22 @@ try {
         const href = await link.nth(run).getAttribute('href');
         const id = /task\/(t-\d+)/.exec(href ?? '')?.[1] ?? '';
         const words = ((await link.nth(run).textContent()) ?? '').trim().slice(0, 24);
-        const s1 = await step(p, cdp, () => link.nth(run).click(), `location.href.includes(${jsStr(`task/${id}`)}) && !document.querySelector('a[href*="/p/tasks/task/"]:not([href$=${jsStr(id)}])') && document.body.textContent.includes(${jsStr(words)})`, desk ? tileSel('Tasks') : undefined);
+        const s1 = await step(p, cdp, () => link.nth(run).click(), { url: `task/${id}`, not: [`a[href*="/p/tasks/task/"]:not([href$="${id}"])`], text: words }, desk ? tileSel('Tasks') : undefined);
         record('Tasks: list → task', width, s1);
+        if (desk) {
+          // And a second, the pointer resting on it 400 ms first.
+          await p.locator(`${tileSel('Tasks')} .loom-tile__btn[aria-label^="Back"]`).click();
+          await link.nth(run + 5).waitFor();
+          const h2 = await link.nth(run + 5).getAttribute('href');
+          const id2 = /task\/(t-\d+)/.exec(h2 ?? '')?.[1] ?? '';
+          const words2 = ((await link.nth(run + 5).textContent()) ?? '').trim().slice(0, 24);
+          await link.nth(run + 5).hover();
+          await p.waitForTimeout(400);
+          const s3 = await step(p, cdp, () => link.nth(run + 5).click(), { url: `task/${id2}`, not: [`${tileSel('Tasks')} [aria-busy="true"]`], text: words2 }, tileSel('Tasks'));
+          record('Tasks: list → task (pointer rested 400 ms)', width, s3);
+        }
         const back = desk ? () => p.locator(`${tileSel('Tasks')} .loom-tile__btn[aria-label^="Back"]`).click() : () => p.goBack();
-        const s2 = await step(p, cdp, back, `!location.href.includes(${jsStr(`task/${id}`)}) && !!document.querySelector('a[href*="/p/tasks/task/"]')`, desk ? tileSel('Tasks') : undefined);
+        const s2 = await step(p, cdp, back, { notUrl: `task/${id}`, has: ['a[href*="/p/tasks/task/"]'] }, desk ? tileSel('Tasks') : undefined);
         record('Tasks: task → back to list', width, s2);
         await ctx.close();
       }
@@ -221,8 +252,7 @@ try {
         const apps = desk ? ['Comms', 'Inbox', ...(hasTasks ? ['Tasks'] : []), 'Comms'] : ['Places', 'Inbox', 'Home', 'Places'];
         for (const [i, app] of apps.entries()) {
           if (!(await key(app).count())) { console.error(`no dock key ${app} at ${width}`); continue; }
-          const done = desk ? `!!document.querySelector(${jsStr(`${tileSel(app)}[data-focused]`)}) && !!document.querySelector(${jsStr(`${tileSel(app)} .loom-tile__page > *`)})`
-            : `location.pathname === ${jsStr(PHONE[app])} && !document.querySelector('.loom-skel')`;
+          const done: Done = desk ? { has: [`${tileSel(app)}[data-focused]`, `${tileSel(app)} .loom-tile__page > *`] } : { path: PHONE[app], not: ['.loom-skel'] };
           const s = await step(p, cdp, () => key(app).click(), done, desk && i > 0 ? tileSel(apps[i - 1]) : undefined);
           record(`Dock: switch to ${app}${apps.slice(0, i).includes(app) ? ' (again)' : ''}`, width, s);
         }
@@ -232,7 +262,7 @@ try {
       if (desk) {
         const { ctx, p, cdp } = await screen(browser, width, '/');
         const s = await step(p, cdp, () => p.locator('.loom-dock-bar [data-part="item"][aria-label="Comms"]').click(),
-          `!!document.querySelector(${jsStr(`${tileSel('Comms')} .comms-row__btn`)})`, '.loom-dock-bar');
+          { has: [`${tileSel('Comms')} .comms-row__btn`] }, '.loom-dock-bar');
         record('Desktop: open a tile', width, s);
         await ctx.close();
       }
