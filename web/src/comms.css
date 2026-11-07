@@ -1,7 +1,7 @@
 /* Comms (docs/specs/comms.md, "The app"): Neon OS chat. A real chat with a terminal's flavour: mono timestamps and a
    prompt line, the agent's accent on its frame and its prompt. Loaded with the Comms chunk only. */
 
-.comms { --comms-band-h: 232px; --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); min-height: 0; }
+.comms { --comms-face: 192px; --comms-band-h: 232px; --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); min-height: 0; }
 .comms[data-wide] { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 0; height: calc(100dvh - 300px); min-height: 440px; border: 1px solid var(--comms-line); border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--v-paper) 80%, transparent); }
 .comms[data-phone] { padding-bottom: calc(var(--dock-h) + 84px + env(safe-area-inset-bottom)); }
 
@@ -51,6 +51,11 @@
 /* A desktop's thread: the band over the chat (Jonathan, 2026-11-07). The band's height is fixed (the comm screen's,
    whose glass is the face's own 96 × 84 at 2×), so the chat under it never moves when work is added. */
 .comms-thread[data-wide] .comms-thread__body { grid-template-rows: var(--comms-band-h) minmax(0, 1fr); }
+/* A thread on its way has no band yet: its shape takes the whole body. */
+.comms-thread--opening[data-wide] .comms-thread__body { grid-template-rows: minmax(0, 1fr); }
+/* A short tile (Comms' least is 360 tall): the band folds to the screen's one-line strip, so the chat keeps its room. */
+.comms-thread[data-wide][data-short] { --comms-band-h: 76px; }
+.comms-thread[data-short] .comms-band .comms-people { display: none; }
 .comms-thread[data-wide] .comms-msgs { overflow-y: auto; }
 .comms-thread__strip { position: sticky; top: 0; z-index: 5; padding: 8px 12px 0; background: linear-gradient(var(--v-canvas, transparent) 70%, transparent); }
 
@@ -183,12 +188,9 @@
 .comms-band { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; height: var(--comms-band-h); min-height: 0; padding: 10px 12px; border-bottom: 1px solid var(--comms-line); overflow: hidden; }
 /* The comm screen never stretches: its glass is the sprite's own 96 × 84 at a whole 2×; any width left goes to the side. */
 .comms-band .comms-screen { width: max-content; min-height: 0; }
-.comms-band .comms-screen__glass { width: 192px; height: 168px; aspect-ratio: auto; }
-.comms-band .comms-screen__label { width: 192px; }
+.comms-band .comms-screen__glass { width: var(--comms-face); height: calc(var(--comms-face) * 84 / 96); aspect-ratio: auto; }
+/* The band's height: its padding (10 + 10), the frame's (8 + 8), the glass (168) and the label (7 + 14), with a hair. */
 .comms-band__side { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
-.comms-band__side .comms-work { margin: 0; }
-.comms-band__side .comms-work__rows { display: block; }
-.comms-band__side .comms-work__list { max-height: none; overflow: visible; }
 .comms-people__head { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .14em; font-weight: 500; color: var(--v-text-2); }
 .comms-people ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .comms-people li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }

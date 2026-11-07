@@ -1,6 +1,6 @@
 /**
  * Work in this thread, in a real browser (docs/specs/comms.md, "The panel"; criterion 26): at 1280 px, in the Comms
- * tile, the panel sits under YOU, folded to "Work (N)" in a thread narrower than 760 px, in the route's order with its
+ * tile, the panel sits in the thread's band under who's in the conversation, always open (a phone's is folded to "Work (N)"), in the route's order with its
  * status words; at 390 px it's the folded "Work (N)" strip,
  * which opens on a tap; nothing is wider than the viewport, and no console errors. LOOM_SHOT_DIR, when set, keeps a
  * screenshot of each (the PR's evidence).
@@ -118,13 +118,11 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
     try {
       await page.goto(`${base}/comms/${thread.id}`);
       const tile = page.locator('.loom-tile[data-tile="/comms"]');
-      const toggle = tile.locator('.comms-band__side .comms-work__toggle');
       await page.waitForFunction(() => /Work \(5/.test(document.querySelector('.loom-tile .comms-work__toggle')?.textContent ?? ''));
       // In the band beside the comm screen (2026-11-07): who's in the conversation, then the work, its rows shown.
       const you = await tile.locator('.comms-band .comms-people').boundingBox();
       const panel = await tile.locator('.comms-band__side .comms-work').boundingBox();
       expect(panel!.y).toBeGreaterThan(you!.y);
-      void toggle;
       await tile.locator('.comms-work__row').first().waitFor();
       const rows = await tile.locator('.comms-work__row').evaluateAll((els) => els.map((e) => [e.querySelector('.comms-work__badge')!.textContent, e.querySelector('.comms-work__meta')!.textContent]));
       expect(rows).toEqual([

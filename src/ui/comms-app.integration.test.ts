@@ -116,8 +116,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       expect(await page.locator('.comms-reply').innerHTML()).toContain('href="/p/tasks/task/t-12"');
       // Each agent message carries the agent's face.
       expect(await page.locator('.comms-msg--agent .comms-msg__face').count()).toBeGreaterThan(0);
-      // The YOU panel is the desktop's; a phone leaves it out.
-      expect(await page.locator('.comms-screen__you').count()).toBe(0);
+      // The band (who's in it, the work) is a desktop's; a phone's thread has its strip.
+      expect(await page.locator('.comms-band').count()).toBe(0);
       const comp = await page.locator('.comms-composer').boundingBox();
       const vh = page.viewportSize()!.height;
       expect(comp!.y + comp!.height).toBeLessThanOrEqual(vh - 96 + 1);
@@ -126,7 +126,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
     } finally { await ctx.close(); }
   }, 30_000);
 
-  it('on a desktop: two panes, the YOU panel, and a reply arriving live with the signal, then talking', async () => {
+  it('on a desktop: two panes, the band with who\'s in it, and a reply arriving live with the signal, then talking', async () => {
     const { ctx, page, errors } = await open(false);
     try {
       await page.goto(`${base}/comms/${thread.id}`);

@@ -1,11 +1,9 @@
 /**
- * Comms' band (Jonathan, 2026-11-07), in a real browser: on a desktop the thread has a band of fixed height over the chat, the
- * comm screen at its own size on the left, who's in the conversation and the thread's work on the right, scrolling inside
- * it. Also from the polish (t-1918; t-1925 C): a thread's address has no colon and reloads, an old one is sent
- * to it; the comm screen's channel line says what the agent is doing; the working line and its steps show as they
- * happen; the thread follows the bottom only while you're there, and a pill counts what came in below; the Enter hint
- * shows faintly only while you type; a body that couldn't start says so, not "busy". At 1280 and 1920 (a desktop's
- * Comms tile), and 390 (a phone).
+ * Comms' band (Jonathan, 2026-11-07, "outlook-esque"), in a real browser: a desktop thread has a band of fixed height
+ * over the chat, the comm screen at its own size on the left (the pixel face at a whole scale, never stretched), who's
+ * in the conversation and the thread's work on the right, scrolling inside the band; the chat takes the rest. The list
+ * sits beside the thread from 1100 px; narrower it's a drawer. A short tile folds the band to a strip. At 1024, 1280
+ * (beside the widgets) and 1920.
  *
  * Runs where the app is built (npm run build), a Chrome is installed and age is (the thread's words are encrypted).
  */
@@ -19,7 +17,8 @@ import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import { chromium, type Browser, type Page } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
-import { createToken, loadHousehold, type Household } from '../household.js';
+import { createToken, loadHousehold, manifestFromPixelLab, setSprite, type Household } from '../household.js';
+import { sheet } from './pixel-sheet.fixture.js';
 import { createConversationTables } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { adapterCall, openThread, recordDelivery, type Thread } from '../comms.js';
@@ -56,6 +55,9 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner' }, label: 'jonathan' }).token;
+    // Art wears a pixel sheet: the comm screen draws his pixel face, and it must stay at a whole scale.
+    const { png, json } = sheet();
+    setSprite(h, 'art', manifestFromPixelLab(JSON.parse(json.toString())), { 'sheet.png': png });
     handle = await startHttpServer({ contextDir: join(home, 'agents', 'art'), host: '127.0.0.1', port: 0, household: h });
     base = `http://127.0.0.1:${handle.port}`;
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
@@ -78,21 +80,6 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     return o.thread;
   };
   const bare = (t: Thread) => t.id.replace(/^th:/, '');
-  async function screen(width: number, height: number, path: string, motion: 'reduce' | 'no-preference' = 'reduce'): Promise<Page> {
-    const phone = width < 600;
-    const ctx = await browser.newContext({ viewport: { width, height }, reducedMotion: motion, serviceWorkers: 'block', ...(phone ? { isMobile: true, hasTouch: true } : {}) });
-    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
-    await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
-    const p = await ctx.newPage();
-    const errors: string[] = [];
-    p.on('pageerror', (e) => errors.push(e.message));
-    (p as Page & { errors: string[] }).errors = errors;
-    await p.goto(`${base}${path}`);
-    await p.locator('.comms-thread, .comms-list').first().waitFor();
-    return p;
-  }
-  const label = (p: Page) => p.locator('.comms-screen__label > span').first().textContent();
-  const shot = async (p: Page, name: string) => { if (SHOTS) await p.screenshot({ path: `${SHOTS}/comms-${name}.png` }); };
 
   const work = (n: number) => ({ items: Array.from({ length: n }, (_, k) => ({ title: `Task number ${k + 1} with a title long enough to wrap in a narrow side`, ref: `t-${100 + k}`, status: k === 0 ? 'Blocked' : 'Open', tone: k === 0 ? 'bad' : undefined, from: 'tasks' })), failed: [] });
   const band = async (p: Page) => p.evaluate(() => {
@@ -100,10 +87,20 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     const side = document.querySelector('.comms-band__side')!;
     const tile = document.querySelector('.loom-tile[data-tile="/comms"]')!.getBoundingClientRect();
     const composer = r('.comms-composer'), chat = r('.comms-chat'), b = r('.comms-band'), glass = r('.comms-screen__glass');
-    const inside = [...document.querySelectorAll('.loom-tile[data-tile="/comms"] .comms *')].every((e) => { const x = e.getBoundingClientRect(); return !x.width || (x.left >= tile.left - 1 && x.right <= tile.right + 1); });
+    // Nothing past the window: no element wider than the tile; the frames (the box, the band, the chat, the composer) inside
+    // its bottom too (a message scrolled out of the chat's own view is inside its scroller, not past the window).
+    const inside = [...document.querySelectorAll('.loom-tile[data-tile="/comms"] .comms *')].every((e) => { const x = e.getBoundingClientRect(); return !x.width || (x.left >= tile.left - 1 && x.right <= tile.right + 1); })
+      && ['.comms', '.comms-band', '.comms-chat', '.comms-composer'].every((q) => document.querySelector(q)!.getBoundingClientRect().bottom <= tile.bottom + 1);
+    // The side scrolls: overflow-y auto, and a scroll moves it (a clipped side, overflow hidden, would read 0).
+    const before = side.scrollTop; side.scrollTop = 9999; const moved = side.scrollTop > before && getComputedStyle(side).overflowY === 'auto'; side.scrollTop = 0;
+    // The face: a pixel canvas drawn at a whole scale, its CSS size its own pixels (never stretched by layout).
+    const cv = document.querySelector<HTMLCanvasElement>('.comms-band .comms-screen__glass canvas');
+    const face = cv ? { k: cv.getBoundingClientRect().width / cv.width, ky: cv.getBoundingClientRect().height / cv.height } : null;
+    const list = document.querySelector('.comms > .comms-list')?.getBoundingClientRect();
+    const thread = document.querySelector('.comms-thread')!.getBoundingClientRect();
     return { band: Math.round(b.height), side: { scroll: side.scrollHeight, client: side.clientHeight }, glass: [glass.width, glass.height],
       chatFills: Math.abs(chat.top - b.bottom) <= 2 && Math.abs(chat.bottom - composer.top) <= 2 && chat.height > 120, inside,
-      one: document.querySelector('.comms')!.hasAttribute('data-one'), list: !!document.querySelector('.comms > .comms-list') };
+      one: document.querySelector('.comms')!.hasAttribute('data-one'), list: !!list, listW: list ? Math.round(list.width) : 0, beside: !!list && thread.left >= list.right - 1, moved, face };
   });
 
   for (const [w, hgt, layout, ws] of [[1024, 768, 'mid', ''], [1280, 800, 'mid', 'needs'], [1920, 1080, 'wide', '']] as const) {
@@ -127,15 +124,37 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
       // One height, whatever the work; with 20 items the side scrolls inside the band.
       expect(sizes[0].band).toBe(sizes[20].band);
       expect(sizes[20].side.scroll).toBeGreaterThan(sizes[20].side.client);
+      expect(sizes[20].moved).toBe(true);
       // The face at its own 2x: the glass is 96 x 84 x 2, never stretched to the width.
       for (const s of [sizes[0], sizes[20]]) {
         expect(s.glass).toEqual([192, 168]);
+        expect(s.face).not.toBeNull();
+        // Sheet pixels to screen pixels: a whole number, 2 or more, the same both ways (never stretched).
+        expect(Number.isInteger(s.face!.k) && s.face!.k >= 2).toBe(true);
+        expect(s.face!.ky).toBe(s.face!.k);
         expect(s.chatFills).toBe(true);
         expect(s.inside).toBe(true);
         // Mid-size: one pane, the threads a drawer; wide: the list beside the thread.
         expect(s.one).toBe(layout === 'mid');
         expect(s.list).toBe(layout === 'wide');
+        // Wide: the list, 320 px, beside the thread.
+        if (layout === 'wide') expect([s.listW, s.beside]).toEqual([320, true]);
       }
     });
   }
+
+  it('a short tile (under 520 px tall) folds the band to a strip: the chat keeps its room', async () => {
+    const t = thread('art', 3);
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 500 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+    const p = await ctx.newPage();
+    await p.goto(`${base}/comms/${bare(t)}?t=*comms&w=`);
+    await p.locator('.comms-thread[data-short] .comms-band').waitFor();
+    const r = await p.evaluate(() => ({ band: document.querySelector('.comms-band')!.getBoundingClientRect().height, chat: document.querySelector('.comms-chat')!.getBoundingClientRect().height }));
+    expect(r.band).toBeLessThanOrEqual(80);
+    // (A 232 px band would leave the chat nothing at this height.)
+    expect(r.chat).toBeGreaterThan(60);
+    await ctx.close();
+  });
 });

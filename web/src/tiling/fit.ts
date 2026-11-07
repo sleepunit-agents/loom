@@ -14,7 +14,7 @@ const reading: Fit = { min: [420, 300], ideal: 760, max: 1100, big: false, why: 
 
 /** The core apps' fit, by label. */
 export const FIT: Readonly<Record<string, Fit>> = {
-  Comms: { min: [380, 360], ideal: 680, max: 820, big: false, why: 'a thread list and one thread' },
+  Comms: { min: [380, 360], ideal: 680, max: 820, big: false, why: 'one thread, its band over the chat; the list beside it from 1100 px' },
   Tasks: { min: [520, 320], ideal: 1040, max: null, big: true, why: 'a wide list with a detail pane' },
   Changes: { min: [560, 320], ideal: 1100, max: null, big: true, why: 'a wide list with a detail pane' },
   Inbox: { min: [420, 320], ideal: 760, max: 980, big: false, why: 'one column of asks' },

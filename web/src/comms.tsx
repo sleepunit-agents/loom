@@ -464,6 +464,18 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
   const [compact, setCompact] = useState(false);
+  // A desktop thread in a short tile (under 520 px tall): the band folds to a strip so the chat keeps its room.
+  const pane = useRef<HTMLElement>(null);
+  const [short, setShort] = useState(false);
+  useLayoutEffect(() => {
+    const el = pane.current;
+    if (!wide || !el) return;
+    const fit = (h: number) => setShort(h > 0 && h < SHORT_BELOW);
+    fit(el.getBoundingClientRect().height);
+    const ro = new ResizeObserver(([e]) => fit(e.contentRect.height));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [wide]);
   const [now, setNow] = useState(Date.now());
   const last = useRef(initial.messages.at(-1)?.seq ?? 0);
   // The oldest message that can still change (unsettled): each read starts there, so it's read again until it settles.
@@ -600,10 +612,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     const cards = messages.filter((m) => m.kind === 'card' && (!lastMine || m.seq > lastMine.seq));
     return (cards.filter((c) => String(c.card?.state ?? '') === 'running').at(-1) ?? cards.at(-1))?.text ?? null;
   })();
-  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={!wide && compact} />;
+  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={wide ? short : compact} />;
 
   return (
-    <article className="comms-thread" data-wide={wide || undefined}>
+    <article ref={pane} className="comms-thread" data-wide={wide || undefined} data-short={wide && short ? '' : undefined}>
       <header className="comms-thread__head">
         {drawer ? <DrawerButton {...drawer} /> : back && <button type="button" className="comms-back" onClick={onBack} aria-label="Back to threads">‹</button>}
         <button type="button" className="comms-thread__title" onClick={rename} title="Rename">{thread.title ?? `New thread with ${mark.label}`}</button>
@@ -628,9 +640,9 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         {wide && (
           <div className="comms-band">
             {screen}
-            <aside className="comms-band__side" aria-label="In this conversation">
-              <section className="comms-people">
-                <h3 className="comms-people__head loom-data">IN THIS CONVERSATION</h3>
+            <div className="comms-band__side">
+              <section className="comms-people" aria-labelledby={`people-${thread.id}`}>
+                <h2 id={`people-${thread.id}`} className="comms-people__head loom-data">IN THIS CONVERSATION</h2>
                 <ul>
                   <li><span className="loom-letter" aria-hidden style={{ '--c': markColor(mark.bg), '--ls': '24px' } as React.CSSProperties}>{mark.label[0]}</span>
                     <span className="comms-people__name">{mark.label}</span><span className="comms-people__what loom-data">{channelWord(face, link).toLowerCase()}</span></li>
@@ -639,7 +651,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
                 </ul>
               </section>
               <WorkPanel thread={thread.id} replySeq={lastReply?.seq ?? 0} />
-            </aside>
+            </div>
           </div>
         )}
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
@@ -771,10 +783,12 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }
 
 // ---- the view ----------------------------------------------------------------------------------
 
-/** Narrower than this, a desktop's Comms shows one pane at a time: a 320 px list beside a thread needs room. */
-// Two panes (the list beside the thread) only where the thread keeps a readable band: the list's 320 px, then the comm
-// screen's 224 and a people-and-work column of 320 or more, and the chat under them (Jonathan, 2026-11-07). Narrower,
-// one pane, the threads a drawer from its header: a narrow tile and a mid-size window alike.
+/** A desktop thread under this tall folds its band to a strip (the chat's room first). */
+const SHORT_BELOW = 520;
+// Two panes (the list beside the thread) only where the thread keeps a readable band (Jonathan, 2026-11-07): the list's
+// 320 px and its edge, the band's padding (24), the comm screen (208: its 192 glass and the frame's 16), the gap (12)
+// and a people-and-work side of 420 or more, so a work item's title reads on a line or two: 985, and Comms' own frame
+// and a tile's padding around it make 1100. Narrower, one pane, the threads a drawer from its header.
 const ONE_PANE_BELOW = 1100;
 
 export function CommsView({ data }: { data: CommsData }) {

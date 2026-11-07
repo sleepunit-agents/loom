@@ -607,7 +607,7 @@ Neon OS's own, not copied from any game.
   the messages ("Art is working · Ran the tests · 0:12", or "is thinking…") show as they arrive.
 - **The composer's hint** (Enter to send · Shift+Enter for a new line) is faint, shows only while the composer has
   focus, and takes no line of its own (t-1925 C).
-- **In a box too narrow for two panes** (under 620 px: a narrow tile), the threads fold out as a drawer over the
+- **In a box too narrow for two panes** (under 1100 px: a narrow tile, a mid-size desktop), the threads fold out as a drawer over the
   thread from the menu button in its header (t-1925 C): focus goes into it, Tab stays in it, Esc or the scrim closes it
   and gives focus back to the button, picking a thread closes it. With no thread open the list fills the pane. A phone
   keeps its list, then the thread with its way back.
@@ -630,8 +630,9 @@ Neon OS's own, not copied from any game.
     on the reply's card. (loom-box t-1907.) It's read from the messages the app has loaded: a thread whose newest 100
     messages hold no reply at all shows no word. That's accepted, since every turn ends in a reply.
 - **Where it sits:**
-  - **Desktop:** a column at the right of the thread pane, about 240 px, beside the messages. A thread pane narrower
-    than 760 px puts it at the top of the pane instead.
+  - **Desktop:** the left of the thread's band, at its own size (the glass 192 × 168, the sprite's 96 × 84 at 2×, and
+    the agent's own manifest scale on top, cropped by the frame like a camera's), never stretched; a short tile (under
+    520 px tall) folds it to its one-line strip.
   - **Phone:** a compact strip at the top of the thread, which collapses to the small avatar in the header once you
     scroll.
 - **The face follows the thread's real state**, through the existing states and the beat-and-hold player:
@@ -821,9 +822,8 @@ beside `sections.project`.
   - The order: `bad` first, then `warn`, then the rest. Within each, the newest `when` first, and items without one
     last.
   - `failed` lists the labels of the pieces that didn't answer.
-- **Desktop.** With the comm screen in its right column (a thread pane 760 px or wider), a panel, "Work in this
-  thread", in that column under the comm screen and YOU, in the same frame style. A narrower pane, with the comm
-  screen at its top, gets the phone's strip below it instead. Each row has its status as a badge in its tone (with words, never colour alone), the title, the ref in mono,
+- **Desktop.** In the thread's band, beside the comm screen: a panel, "Work in this thread", always open, under "In
+  this conversation" (the agent and you: a thread has one member), in the same frame style; the band's side scrolls. Each row has its status as a badge in its tone (with words, never colour alone), the title, the ref in mono,
   and "made here" when it was. A row opens the item's page.
   - Empty, it says "Nothing yet. Tasks, changes and notes this thread names or makes show up here."
   - A piece that failed adds one muted line: "Tasks didn't answer."
@@ -1062,11 +1062,12 @@ A thread filed under a project already feeds its hub (section "Project" above). 
       `NO CARRIER` after a failed delivery. A reply posted with `on: "Codex"` adds `· ON CODEX`, and the next reply
       without it takes it away. A member's third thread with an agent is `CH 03`, and stays `CH 03` after
       the first is deleted.
-    - The desktop shows the YOU panel and a phone doesn't.
+    - The desktop's band shows who's in the conversation (the agent, you) and a phone's thread has no band.
 18. The list, a thread and the composer load with no console errors and no sideways scroll. On a phone viewport with
     the keyboard open (a resized visual viewport), the composer stays visible above it. The desktop shows two panes,
-    and one at a time when the Comms box is narrower than 620 px (a narrow window, a tile): the list, then a thread or
-    New thread with a way back; 619 px is one pane, 620 two, and an open thread stays mounted across the edge.
+    and one at a time when the Comms box is narrower than 1100 px (a narrow tile, a mid-size window): the list, then a
+    thread or New thread with the list in a drawer; 1099 px is one pane, 1100 two, and an open thread stays mounted
+    across the edge.
     The dock has a Comms key for a member who owns an agent, with the unread count, and none for a member who owns
     none.
 19. The JS and CSS budgets still pass. Comms loads as its own chunk.
