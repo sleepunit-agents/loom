@@ -365,7 +365,7 @@ Every failure a thread can meet is an error message in the thread, in plain word
 | A `post` the runtime reports failed | "Art's reply couldn't be shown: <reason>." |
 | A turn over with nothing sent (`status: done`, `replied: false`) | "Art finished without replying." With **What happened**, the reply's trace |
 | No `age` program (the send is refused with `503`, nothing delivered, nothing stored but the error) | "loom can't keep messages safely right now: the age program is missing." |
-| A read with no way to decrypt: `comms.key` missing or not a plain file, or neither the age library nor the program can take it (the read is refused with `503` and its reason, as before t-1926; nothing is shown as swept) | Not yet in words: the app keeps what it already shows, and the reason is in the answer and loom's log |
+| A read with no way to decrypt: `comms.key` missing or not a plain file, or neither the age library nor the program can take it (the read is refused with `503` and its reason, as before t-1926; nothing is shown as swept) | "Can't open this conversation right now: loom couldn't decrypt it." With **Try again**; what the app already shows stays, under "What's shown here may be out of date." (t-1937). Another `5xx` on a read: "…: loom couldn't answer." |
 | The stream dropped | "Reconnecting…" while it's down, then the missed messages, fetched by `seq` |
 
 A refused action that isn't a delivery (a `400` or `409` from a route: a ninth pin, a send to an archived thread)
@@ -1017,6 +1017,9 @@ A thread filed under a project already feeds its hub (section "Project" above). 
      reads as it is now (nothing decrypted is kept between reads); with neither a key the library takes nor the
      program, a read is `503 no-age`, and with a `comms.key` missing or not a plain file, a `503`. What the library writes, `age -d` reads, and the reverse
      (`src/comms-age.integration.test.ts`, t-1926).
+   - An open thread whose read is refused (`comms.key` gone) says "Can't open this conversation right now: loom couldn't
+     decrypt it.", keeps the messages it shows under "What's shown here may be out of date.", and **Try again** clears
+     it once a read works (`src/ui/comms-refused.integration.test.ts`, t-1937).
    - A planted message's words appear, as plain bytes, in no file under `$LOOM_HOME`.
    - A bundle and `loom export` contain none of `comms.db`, `comms.key` and `comms.salt`.
 10. **Live.**

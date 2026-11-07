@@ -79,6 +79,8 @@
 .comms-msg[data-undelivered] .comms-msg__text { opacity: .6; border: 1px dashed var(--v-danger, #f55); }
 .comms-msg__gone { color: var(--v-text-3); font-style: italic; font-size: 13px; }
 .comms-msg--error { align-self: stretch; max-width: none; border-left: 2px solid var(--v-danger, #f55); padding: 4px 10px; color: var(--v-text-2); font-size: 13px; }
+.comms-refused p { margin: 0 0 4px; }
+.comms-refused__retry { margin-top: 2px; font: inherit; color: var(--v-text); background: none; border: 1px solid currentColor; border-radius: 4px; padding: 2px 10px; cursor: pointer; }
 .comms-msg--ask { align-self: stretch; max-width: none; border-left: 2px solid var(--v-yellow); padding: 4px 10px; font-size: 13px; }
 .comms-earlier { border: 1px dashed var(--comms-line); border-radius: 10px; padding: 10px 12px; color: var(--v-text-2); font-size: 13px; }
 .comms-earlier .loom-data { font-size: 10px; letter-spacing: .14em; color: var(--v-text-3); display: block; margin-bottom: 4px; }

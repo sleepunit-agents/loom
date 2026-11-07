@@ -68,6 +68,24 @@ async function post(path: string, csrf: string, body: Record<string, unknown> = 
     return { ok: r.ok, status: r.status, body: j as Record<string, unknown> };
   } catch { return { ok: false, status: 0, body: { error: 'loom can\'t be reached right now' } }; }
 }
+/** A GET that says why it failed: loom's status and its answer's `error` (status 0: not reached). */
+async function getRead<T>(path: string): Promise<{ ok: true; body: T } | { ok: false; status: number; error?: unknown }> {
+  try {
+    const r = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json' } });
+    if (r.ok) return { ok: true, body: (await r.json()) as T };
+    const j = await r.json().catch(() => ({})) as { error?: unknown };
+    return { ok: false, status: r.status, error: j.error };
+  } catch { return { ok: false, status: 0 }; }
+}
+
+/** A thread read loom refused, in words (comms.md §7, t-1937): a 5xx, e.g. a `503` when comms.key is missing or
+ * unreadable. Null when it isn't one: not reached is the stream's Reconnecting, and a 4xx isn't a read loom failed. */
+export function readRefusal(status: number, error: unknown): string | null {
+  if (status < 500) return null;
+  const why = /comms\.key|^no-age|\bage\b|decrypt/i.test(String(error ?? '')) ? 'loom couldn\'t decrypt it' : 'loom couldn\'t answer';
+  return `Can't open this conversation right now: ${why}.`;
+}
+
 async function getJson<T>(path: string): Promise<T | null> {
   try {
     const r = await fetch(path, { credentials: 'same-origin', headers: { accept: 'application/json' } });
@@ -468,6 +486,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   // answered since, and its Allow must never be pressed from that.
   const [asksRead, setAsksRead] = useState(false);
   const [link, setLink] = useState<Link>(initial.thread.state.failed ? 'none' : 'ok');
+  // Loom refused this thread's last read (a 503: comms.key missing or unreadable): its words, until a read works.
+  const [refused, setRefused] = useState<string | null>(null);
   const [talk, setTalk] = useState<{ n: number; key: number } | null>(null);
   const [menu, setMenu] = useState(false);
   const [compact, setCompact] = useState(false);
@@ -498,9 +518,15 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const pull = useCallback(async () => {
     const lastMine = shown.current.filter((m) => m.kind === 'message').at(-1);
     const oldest = shown.current.slice(-100).find((m) => unsettled(m) || (m === lastMine && deliveryOf(m) === 'failed'));
-    const from = oldest ? Math.min(last.current, oldest.seq - 1) : last.current;
-    const r = await getJson<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${from}`);
-    if (!r) return;
+    // And always the newest message with words (t-1937): a read with nothing to decrypt needs no key, so a comms.key
+    // gone would go unnoticed while the thread looks current.
+    const worded = shown.current.filter((m) => m.text && m.kind !== 'error').at(-1);
+    const from = Math.min(oldest ? Math.min(last.current, oldest.seq - 1) : last.current, worded ? worded.seq - 1 : Infinity);
+    const got = await getRead<{ thread: Thread; messages: Msg[]; asks?: ThreadAsk[] }>(`/comms/${thread.id}/since/${from}`);
+    // A refused read says so (t-1937): what's shown stays, marked as possibly out of date, with Try again.
+    if (!got.ok) { const why = readRefusal(got.status, got.error); if (why) setRefused(why); return; }
+    setRefused(null);
+    const r = got.body;
     // Only when it moved: a read that changed nothing redraws nothing.
     setThread((t) => (JSON.stringify(t) === JSON.stringify(r.thread) ? t : r.thread));
     setAsks(r.asks ?? []);
@@ -678,6 +704,13 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             {asksRead && asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
             {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
+            {refused && (
+              <div className="comms-msg comms-msg--error comms-refused" role="alert">
+                <p>{refused}</p>
+                {messages.length > 0 && <p className="comms-refused__stale">What's shown here may be out of date.</p>}
+                <button type="button" className="comms-refused__retry" onClick={() => void pull()}>Try again</button>
+              </div>
+            )}
             {/* The working line (t-1918): what the agent is on as it happens, the newest step and how long, under the thread. */}
             {(face === 'working' || face === 'thinking') && (
               <div className="comms-live loom-data" role="status" data-face={face}>
