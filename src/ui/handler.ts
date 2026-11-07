@@ -47,7 +47,7 @@ import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionStore, signinLink, type Done, type SessionInfo } from './sessions.js';
 import { APP_JS } from './app.js';
-import { askKey, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
+import { askKey, needsAskText, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, swJs } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
@@ -694,7 +694,7 @@ export function conversationAsks(h: Household): HomeAsk[] {
       // (Jonathan, 2026-11-03: "I don't know wtf that wants from me"). A plain string reads as it always did.
       const plain = n && !n.legacy;
       return {
-        kind: 'alert', text: plain ? n.ask : `${name} needs you: ${d.needs_owner}`,
+        kind: 'alert', text: plain ? n.ask : needsAskText(name, d.needs_owner ?? '', true),
         meta: plain ? n.why ?? where : where,
         page: `loom:conversation/${c.id}`, label: 'Open the conversation', agent: a, at: d.at, source: agentSource(a), sourceLabel: 'Conversations',
         ...(d.needs_owner_href ? { href: d.needs_owner_href } : {}),

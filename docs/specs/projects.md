@@ -344,7 +344,8 @@ working in a project's repo or conversation passes it, the way a bridge passes `
   Both pages only read: no actions, no buttons (the card is written by agents, with `project_write`). Then, in this order, each only when its section is present:
   1. **Goal and where it stands**: `kv` of the goal and each `where` field with its marker in words ("checked 2 days
      ago", "not checked", "stale for 9 days").
-  2. **Waiting on you**: every `waiting` feed item and every open `needs_owner` ask, one list, tone `warn`.
+  2. **Waiting on you**: every `waiting` feed item and every open `needs_owner` ask, one list, tone `warn`. An ask
+     opens in the Inbox (`/inbox?i=<key>`), where it's answered, not the bare conversation.
   3. **Each piece section**, under its `label` (Changes, Tasks…), its groups as lists, items linking by their `page`
      or `href`, with `when` (as an age), `who` and `ref` in the row's meta, `status` as its badge, the first `person`'s
      avatar, and `body` folded under the row. Groups marked `waiting` are left out here, since they're shown above. A `{key, error}` section is a

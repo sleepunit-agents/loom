@@ -14,6 +14,8 @@ import { managedPieceSections } from '../project-feeds.js';
 import { fieldState } from '../backends/cards.js';
 import type { FeedGroup } from '../offers.js';
 import { age, agoText } from './render.js';
+import { agentName } from './core.js';
+import { needsAskKey, needsAskText } from './push.js';
 import { openProjectsStore } from '../backends/projects.js';
 import type { CardPerson, ProjectCards, ProjectCardView } from './project-cards.js';
 
@@ -342,7 +344,7 @@ export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env
 
   const bySection = (key: string) => h.sections.find((s) => s.key === key);
   const pieces = h.sections.filter((s) => s.key.startsWith('piece:')) as PieceSection[];
-  const conv = bySection('conversations') as { items: Array<{ id: string; label: string | null; venue: string; last: string; summary: string | null; needs_owner: string | null; people: string[] }> } | undefined;
+  const conv = bySection('conversations') as { items: Array<{ id: string; label: string | null; venue: string; last: string; summary: string | null; needs_owner: string | null; needs_digest?: string | null; needs_legacy?: boolean; people: string[] }> } | undefined;
 
   const waiting: Array<Record<string, unknown> & { text: string }> = [];
   for (const s of pieces) {
@@ -350,7 +352,12 @@ export async function projectHubPage(o: ProjectsOwner, slug: string, opts: { env
     for (const g of s.groups ?? []) if (g.waiting) for (const it of g.items) waiting.push({ ...feedRow(piece, it, nowMs), meta: [s.label, feedRow(piece, it, nowMs).meta].filter(Boolean).join(' · ') });
   }
   for (const c of conv?.items ?? []) {
-    if (c.needs_owner) waiting.push({ text: c.needs_owner, meta: [c.label ?? c.venue, agoText(c.last, nowMs)].filter(Boolean).join(' · '), page: `conversation/${c.id}` });
+    // The hub's needs_owner is the Inbox's open ask (openNeeds' own test), and it opens there, where it's answered.
+    if (c.needs_owner) {
+      const text = needsAskText(agentName(o.dir), c.needs_owner, !!c.needs_legacy);
+      waiting.push({ text: c.needs_owner, meta: [c.label ?? c.venue, agoText(c.last, nowMs)].filter(Boolean).join(' · '),
+        page: c.needs_digest ? `loom:inbox?i=${needsAskKey(text, c.id)}` : `conversation/${c.id}` });
+    }
   }
   if (waiting.length) sections.push({ id: 'waiting', title: 'Waiting on you', tone: 'warn', blocks: [{ type: 'list', wrap: true, items: waiting.slice(0, 200) as never }] });
 
