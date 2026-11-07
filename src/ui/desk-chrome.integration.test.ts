@@ -386,29 +386,31 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await menu(p).locator('[role="menuitem"]', { hasText: 'Minimize' }).click();
     await expect.poll(() => labels(p)).toEqual(['Inbox']);
     expect(new URL(p.url()).searchParams.get('m')).toBe('comms');
-    // an agent's tile: its card, pinned and taken off from the strip
+    // an agent's window: Shrink to widget folds it back into its card (t-1925 D)
     await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual([]);
     await p.goto(`${base}/a/art?t=*art&w=`);
     await expect.poll(() => labels(p)).toEqual(['art']);
     const strip = p.locator('.loom-tile[data-tile="/a/art"] .loom-tile__bar h2');
     await strip.click({ button: 'right' });
-    expect(await items(p)).toEqual(['Minimize', 'Pin its card to the desktop', 'Close']);
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Pin' }).click();
+    expect(await items(p)).toEqual(['Minimize', 'Shrink to widget', 'Close']);
+    await menu(p).locator('[role="menuitem"]', { hasText: 'Shrink' }).click();
     await expect.poll(() => widgets(p)).toEqual(['art']);
-    await strip.click({ button: 'right' });
-    expect(await items(p)).toEqual(['Minimize', 'Take its card off the desktop', 'Close']);
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Take' }).click();
-    await expect.poll(() => widgets(p)).toEqual([]);
+    expect(await labels(p)).toEqual([]);
     await p.context().close();
   });
 
-  it('an agent\'s card: Chat, Open, Unpin', async () => {
+  it('an agent\'s card: Chat, Expand, Unpin', async () => {
     const p = await screen(1280, 800, { path: '/?w=art,needs' });
     await p.locator('[data-widget="art"]').click({ button: 'right', position: { x: 60, y: 60 } });
     await menu(p).waitFor();
-    expect(await items(p)).toEqual(['Chat', 'Open', 'Unpin from the desktop']);
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Open' }).click();
+    expect(await items(p)).toEqual(['Chat', 'Expand', 'Unpin from the desktop']);
+    // Expand grows the card into its window (one app at two sizes): the card stands aside while it's open
+    await menu(p).locator('[role="menuitem"]', { hasText: 'Expand' }).click();
     await expect.poll(() => labels(p)).toEqual(['art']);
+    await expect.poll(() => widgets(p)).toEqual(['needs']);
+    await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label^="Shrink"]').click();
+    await expect.poll(async () => (await widgets(p)).sort()).toEqual(['art', 'needs']);
+    expect(new URL(p.url()).searchParams.get('w')).toBe('art,needs');
     await p.locator('[data-widget="art"]').click({ button: 'right', position: { x: 40, y: 40 } });
     await menu(p).locator('[role="menuitem"]', { hasText: 'Unpin' }).click();
     await expect.poll(() => widgets(p)).toEqual(['needs']);

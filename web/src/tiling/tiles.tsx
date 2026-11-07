@@ -7,7 +7,7 @@
 // Home's widgets are tiles too (phase 4): with no app open they are the desktop, laid out as Home is; with apps open
 // they move to the right edge, in columns, a rail or the strip, as the rule says (layout.ts rule 1). A widget is live
 // (it draws from Home's own page, which the live stream keeps current), its × removes it, and what it links to opens
-// beside it, last, next to the rail. The desktop's menu (a right-click on it, menu.tsx) and Find add them; an agent's tile can pin its card.
+// beside it, last, next to the rail. The desktop's menu (a right-click on it, menu.tsx) and Find add them; an agent's window shrinks back into its card.
 //
 // The only desktop there is (App.tsx; Jonathan, 2026-11-06). Accessibility's One window at a time is this desktop with
 // one app tile at most: opening another sends the one there to the dock, as the rule sends one that doesn't fit. A fresh
@@ -638,11 +638,12 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       if (!t.closest('.loom-tile__bar')) return null;
       const s = S.current, key = tile.dataset.tile!, i = s.apps.findIndex((a) => a.key === key), o = s.apps[i];
       if (!o) return null;
-      const id = nameOf(key), pinnable = key.startsWith('/a/') && !!widgetRef(id, shell.agents, wok), on = s.w.includes(id);
+      // An agent's window folds back into its card (t-1925 D: one app at two sizes), as its strip's button does.
+      const id = nameOf(key), shrinkable = key.startsWith('/a/') && !!widgetRef(id, shell.agents, wok);
       return { title: o.label, items: [
         item('min', 'Minimize', () => minimize(key), 'Alt+Shift+M'),
         ...(i > 0 ? [item('big', 'Make it the big one', () => makeBig(key), 'Alt+Shift+Enter')] : []),
-        ...(pinnable ? [item('pin', on ? 'Take its card off the desktop' : 'Pin its card to the desktop', () => (on ? removeWidget : addWidget)(id))] : []),
+        ...(shrinkable ? [item('shrink', 'Shrink to widget', () => agentOps.shrink(id))] : []),
         item('close', 'Close', () => close(key), 'Alt+Shift+W'),
       ] };
     }
@@ -653,7 +654,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       const where = w.kind === 'agent' ? `/a/${id}` : w.kind === 'needs' ? '/inbox' : w.kind === 'backup' ? shell.backup?.href ?? '/setup' : '/places';
       return { title: w.kind === 'agent' ? w.name : w.label, items: [
         ...(w.kind === 'agent' && chat ? [item('chat', 'Chat', () => chat(id))] : []),
-        item('open', 'Open', () => goWidget(where)),
+        item('open', w.kind === 'agent' ? 'Expand' : 'Open', () => (w.kind === 'agent' ? agentOps.expand(id, wEl) : goWidget(where))),
         item('unpin', w.kind === 'agent' ? 'Unpin from the desktop' : 'Remove from the desktop', () => removeWidget(id)),
       ] };
     }

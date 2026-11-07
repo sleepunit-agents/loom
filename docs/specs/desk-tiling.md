@@ -311,7 +311,8 @@ mockups' word for the agent's **tile** (the glossary's): the frame inside it, no
 - **The card and the window are one app at two sizes.** On the desktop an agent's card has Expand (and the card itself
   opens it): its window opens beside the widgets and the card stands aside while it's open (its place in the widgets is
   kept, `w` unchanged); a lit outline in the agent's colour travels from the card to the window (`tiling/morph.ts`). The
-  window's **Shrink to widget** (its strip's button, where Pin card was) closes it and the card comes back where it was (added to the desktop when it wasn't
+  window's **Shrink to widget** (its strip's button, where Pin card was, and its strip's right-click menu; the card's
+  menu has **Expand**) closes it and the card comes back where it was (added to the desktop when it wasn't
   there), the outline travelling back. Reduced motion: no outline, the change is instant.
 
 ## One window at a time

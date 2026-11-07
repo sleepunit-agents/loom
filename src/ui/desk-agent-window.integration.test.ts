@@ -160,9 +160,12 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
       const p = await screen(1920, 1080, '/?w=needs,art,mark', { motion });
       await p.locator('[data-widget="art"]').waitFor();
       // The trip: an outline in the agent's colour travels from the card to the window, with motion; none without.
-      const trip = p.waitForSelector('.loom-morph', { state: 'attached', timeout: 2000 }).then(() => true, () => false);
+      await p.evaluate(() => { const w = window as unknown as { trip: boolean }; w.trip = false;
+        new MutationObserver((ms) => { if (ms.some((m) => [...m.addedNodes].some((n) => (n as Element).classList?.contains('loom-morph')))) w.trip = true; }).observe(document.body, { childList: true }); });
       await p.locator('[data-widget="art"] button[aria-label="Expand Art E Fish into its window"]').click();
-      expect(await trip).toBe(motion === 'no-preference');
+      await win(p).waitFor();
+      await p.waitForTimeout(600);
+      expect(await p.evaluate(() => (window as unknown as { trip: boolean }).trip)).toBe(motion === 'no-preference');
       await win(p).waitFor();
       expect(await labels(p)).toEqual(['Art E Fish']);
       // The card stands aside while its window is open (one app at two sizes); Mark's stays.
