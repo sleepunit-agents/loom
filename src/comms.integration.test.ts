@@ -490,6 +490,9 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('c1', { summary: 'x'.repeat(121) })] })).status).toBe(400);
       expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('c1', { summary: 'two\nlines' })] })).status).toBe(400);
       expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('c1')] })).body).toMatchObject({ ok: true, added: 1 });
+      expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('c1', { state: 'failed', summary: 'Ran the tests — exit 1: 3 tests failed' })] })).body).toMatchObject({ ok: true, added: 0, updated: 1 });
+      // t-1944: the update carries its label too (a failure's why), and the label stays sealed.
+      expect(((await page(tok.jonathan, 'GET', `/comms/${t.id}/since/0`)).body.messages as Array<{ kind: string; text: string }>).find((m) => m.kind === 'card')!.text).toBe('Ran the tests — exit 1: 3 tests failed');
       expect((await api(tok.runtime, 'comms/activity', { conversation: t.conversation, run: 'r1', cards: [card('c1', { state: 'done' })] })).body).toMatchObject({ ok: true, added: 0, updated: 1 });
       const msgs = (await page(tok.jonathan, 'GET', `/comms/${t.id}/since/0`)).body.messages as Array<{ kind: string; text: string; card: { state: string }; run: string }>;
       const cards = msgs.filter((m) => m.kind === 'card');

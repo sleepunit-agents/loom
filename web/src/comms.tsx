@@ -425,16 +425,53 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
 /** A card's state as the progress list draws it. */
 const stepOf = (c: Msg): AgentChatStep['status'] => { const st = String(c.card?.state ?? ''); return st === 'failed' ? 'error' : st === 'running' ? 'current' : 'complete'; };
 
-/** A run's activity cards, one line until opened (comms.md, "The look"), then the 000h progress list. */
-function Steps({ cards }: { cards: Msg[] }) {
+/** A plan card (Claude's TodoWrite, Codex's todo list; t-1944): the plan, not a step. Its label is `Plan (2/5): …`. */
+const isPlan = (c: Msg) => ['TodoWrite', 'todo_list'].includes(String(c.card?.tool ?? ''));
+/** A step's kind for grouping repeats: its label's first word and its tool ("Ran", "Read", "Searched"…). */
+const kindOf = (c: Msg) => `${String(c.card?.tool ?? '')}:${(c.text ?? '').split(' ')[0]}`;
+const GROUP_WORDS: Record<string, string> = { Ran: 'Ran N commands', Read: 'Read N files', Searched: 'N searches', Edited: 'Edited N files', Wrote: 'Wrote N files', Listed: 'Listed N folders', Messaged: 'N messages', Changed: 'Changed files N times' };
+const groupLabel = (cards: Msg[]) => {
+  const w = (cards[0].text ?? '').split(' ')[0];
+  return (GROUP_WORDS[w] ?? `N steps: ${w}`).replace('N', String(cards.length));
+};
+/** Steps as the list shows them: three or more like ones in a row, all finished well, fold into one line you can open. */
+function folded(cards: Msg[]): Array<{ few: Msg[] } | { many: Msg[] }> {
+  const out: Array<{ few: Msg[] } | { many: Msg[] }> = [];
+  for (let i = 0; i < cards.length;) {
+    let j = i;
+    while (j < cards.length && kindOf(cards[j]) === kindOf(cards[i]) && stepOf(cards[j]) === 'complete' && cards[j].text !== null) j++;
+    if (j - i >= 3) { out.push({ many: cards.slice(i, j) }); i = j; continue; }
+    const last = out.at(-1);
+    if (last && 'few' in last) last.few.push(cards[i]); else out.push({ few: [cards[i]] });
+    i++;
+  }
+  return out;
+}
+const asStep = (c: Msg): AgentChatStep => ({ id: String(c.seq), label: c.text ?? 'a step', status: stepOf(c) });
+
+/**
+ * A run's activity cards, one line until opened (comms.md, "The look"), then the 000h progress list: a `now:` line on
+ * top (the newest step, and the plan's item when it keeps one), like steps in a row folded into one line (t-1944).
+ */
+function Steps({ cards: all }: { cards: Msg[] }) {
   const [open, setOpen] = useState(false);
-  const newest = cards[cards.length - 1];
+  const plan = all.filter(isPlan).at(-1);
+  const cards = all.filter((c) => !isPlan(c));
+  const newest = cards.at(-1) ?? plan!;
   return (
     <div className="comms-steps" data-open={open || undefined}>
       <button type="button" className="comms-steps__line loom-data" onClick={() => setOpen(!open)} aria-expanded={open}>
         {open ? '▾' : '▸'} {cards.length} step{cards.length === 1 ? '' : 's'} · {newest.text ?? 'a step'}
       </button>
-      {open && <AgentChatProgress steps={cards.map((c) => ({ id: String(c.seq), label: c.text ?? 'a step', status: stepOf(c) }))} />}
+      {open && <>
+        <p className="comms-steps__now loom-data">now: {(cards.findLast((c) => stepOf(c) === 'current') ?? newest).text ?? 'a step'}{plan?.text ? <><br />{plan.text}</> : null}</p>
+        {folded(cards).map((g) => ('few' in g
+          ? <AgentChatProgress key={g.few[0].seq} steps={g.few.map(asStep)} />
+          : <details key={g.many[0].seq} className="comms-steps__group">
+              <summary className="comms-steps__line loom-data">{groupLabel(g.many)} · {g.many.at(-1)!.text}</summary>
+              <AgentChatProgress steps={g.many.map(asStep)} />
+            </details>))}
+      </>}
     </div>
   );
 }
@@ -616,7 +653,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
   // The step it's on now: the newest card of the newest run still running, else the newest card since your message.
   const running = (() => {
-    const cards = messages.filter((m) => m.kind === 'card' && (!lastMine || m.seq > lastMine.seq));
+    const cards = messages.filter((m) => m.kind === 'card' && !isPlan(m) && (!lastMine || m.seq > lastMine.seq));
     return (cards.filter((c) => String(c.card?.state ?? '') === 'running').at(-1) ?? cards.at(-1))?.text ?? null;
   })();
   const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={wide ? short : compact} />;
