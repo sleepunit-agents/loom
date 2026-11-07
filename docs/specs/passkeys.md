@@ -42,10 +42,17 @@ challenge is 32 random bytes, kept by hash, used once, and good for 5 minutes.
 **Adding one** needs a signed-in session, and the form token for it:
 
 ```
-GET  /passkeys                           the page: the passkeys, Remove, and "Add a passkey"
+GET  /passkeys                           the page (also /account, the Profile app): the passkeys, Remove, and "Add a passkey"
 POST /passkeys/options   {_csrf}         → creation options (challenge, rp, user, algorithms, excludeCredentials)
 POST /passkeys           {_csrf, label, id, clientDataJSON, authenticatorData, publicKey, publicKeyAlgorithm}
 ```
+
+The page is the Profile app (web/src/account.tsx, t-1925): in a big window two columns, the left your name card ("Owner
+of the household · member since" the month of your oldest owner token) then the Passkeys panel with a normal-size "Add a
+passkey" in its header, which opens a name field in the panel; the right your agents (each with its state, as its Home
+card says it), notifications on this device, another device and Sign out. In a narrow tile or on a phone, one column,
+name first. It keeps no signed-in-device list: a session holds only when it was issued and its token, no device or
+last-seen (src/ui/sessions.ts).
 
 loom checks:
 - `clientDataJSON`: type `webauthn.create`, this challenge, this origin;

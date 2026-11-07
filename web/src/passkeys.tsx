@@ -20,7 +20,7 @@ const why = (e: unknown) => {
 };
 
 /** Add a passkey on this device, or the reason it can't be done here (loom's note). */
-export function PasskeyAdd({ add, reload }: { add: { csrf: string } | { note: string }; reload: () => void }) {
+export function PasskeyAdd({ add, reload, onCancel }: { add: { csrf: string } | { note: string }; reload: () => void; onCancel?: () => void }) {
   const [label, setLabel] = useState('');
   const [msg, setMsg] = useState<{ bad: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,23 +42,26 @@ export function PasskeyAdd({ add, reload }: { add: { csrf: string } | { note: st
       setLabel(''); setMsg({ bad: false, text: 'Added.' }); reload();
     } catch (e) { setMsg({ bad: true, text: why(e) }); } finally { setBusy(false); }
   };
+  // Opened from the Passkeys header's "Add a passkey" (account.tsx): name it, then the device asks for its lock.
   return (
-    <Card><CardHeader><CardTitle>Add a passkey</CardTitle><CardDescription>On this device: it signs in with its own lock (Face ID, a fingerprint, a PIN).</CardDescription></CardHeader>
-      <CardContent className="grid gap-3">
-        <Input maxLength={60} placeholder="Name it, like Jonathan's phone" aria-label="Name" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <Button disabled={!supported || busy} onClick={go}>{busy ? 'Waiting for the device…' : 'Add a passkey'}</Button>
-        {!supported && <p className="text-sm opacity-80">This browser has no passkeys.</p>}
-        {msg && <p role="status" className={`text-sm ${msg.bad ? 'text-[color:var(--v-danger-fill)]' : 'opacity-80'}`}>{msg.text}</p>}
-      </CardContent>
-    </Card>
+    <form className="grid gap-2" onSubmit={(e) => { e.preventDefault(); void go(); }}>
+      <p className="text-sm opacity-80">On this device: it signs in with its own lock (Face ID, a fingerprint, a PIN).</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input autoFocus maxLength={60} placeholder="Name it, like Jonathan's phone" aria-label="Name" className="min-w-0 flex-1 basis-48" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <Button type="submit" size="sm" disabled={!supported || busy}>{busy ? 'Waiting for the device…' : 'Add'}</Button>
+        {onCancel && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>}
+      </div>
+      {!supported && <p className="text-sm opacity-80">This browser has no passkeys.</p>}
+      {msg && <p role="status" className={`text-sm ${msg.bad ? 'text-[color:var(--v-danger-fill)]' : 'opacity-80'}`}>{msg.text}</p>}
+    </form>
   );
 }
 
 /**
  * This device's push for Your call: can it (a secure page with a service worker and PushManager), is it on, and the
- * switch. Shared by the Passkeys page's switch and the ask on every page (PushAsk).
+ * switch. Shared by Profile's Notifications panel (account.tsx) and the ask on every page (PushAsk).
  */
-function usePush(csrf: string) {
+export function usePush(csrf: string) {
   const can = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && window.isSecureContext;
   const [sub, setSub] = useState<PushSubscription | null | undefined>(undefined);
   const [msg, setMsg] = useState<string | null>(null);
@@ -79,24 +82,6 @@ function usePush(csrf: string) {
     } catch (e) { setMsg(`That failed: ${why(e)}`); } finally { setBusy(false); }
   };
   return { can, sub, msg, busy, flip };
-}
-
-/** Push for Your call on this device: a notification when something new needs you; a tap opens it on Home. */
-export function PushSwitch({ csrf }: { csrf: string }) {
-  const { can, sub, msg, busy, flip } = usePush(csrf);
-  return (
-    <Card><CardHeader><CardTitle>Notifications</CardTitle><CardDescription>Your call, on this device: a notification when something new needs you, and a tap opens it on Home.</CardDescription></CardHeader>
-      <CardContent className="grid gap-3">
-        {!can ? <p className="text-sm opacity-80">Needs loom over https; on an iPhone, loom added to the Home Screen first.</p> : (
-          <>
-            <p className="text-sm opacity-80">{sub === undefined ? '…' : sub ? 'On: Your call reaches this device.' : 'Off on this device.'}</p>
-            <Button variant={sub ? 'outline' : 'default'} disabled={busy || sub === undefined} onClick={flip}>{sub ? 'Turn off on this device' : 'Turn on for this device'}</Button>
-          </>
-        )}
-        {msg && <p role="status" className="text-sm">{msg}</p>}
-      </CardContent>
-    </Card>
-  );
 }
 
 const ASKED = 'loom.push-asked';

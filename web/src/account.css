@@ -1,0 +1,39 @@
+/* Profile (account.tsx; t-1925 G): two columns in a big window, the name top left; one column, name first, in a narrow
+   tile or on a phone. It answers its own width (container "profile"), so a tile and a phone take the same rule.
+   Loaded with the Profile chunk only. */
+
+.loom-profile { container: profile / inline-size; min-width: 0; --profile-line: color-mix(in srgb, var(--v-text) 12%, transparent); }
+.loom-profile__grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; max-width: 1180px; margin-inline: auto; }
+.loom-profile__col { display: grid; gap: 16px; min-width: 0; align-content: start; }
+@container profile (min-width: 680px) {
+  .loom-profile__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+}
+
+.loom-profile__panel { min-width: 0; border: 1px solid var(--profile-line); border-radius: var(--r-panel, 14px); padding: 16px;
+  background: color-mix(in srgb, var(--v-paper) 82%, transparent); }
+.loom-profile__me { display: flex; align-items: center; gap: 16px; padding-block: 18px; }
+.loom-profile__name { margin: 0; font-family: var(--font-display); font-size: 24px; font-weight: 600; line-height: 1.15; color: var(--v-text); overflow-wrap: anywhere; }
+.loom-profile__role { font-size: 14px; color: var(--v-text-2); }
+
+.loom-profile__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.loom-profile__eyebrow { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--v-text-3); }
+.loom-profile__title { margin: 2px 0 0; font-size: 17px; font-weight: 600; color: var(--v-text); }
+.loom-profile__intro { margin: 0 0 8px; font-size: 13px; color: var(--v-text-2); }
+/* A normal-size button in the header, never a full-width bar. */
+.loom-profile__add { flex: none; width: auto; max-width: 240px; gap: 6px; }
+.loom-profile__adding { margin: 4px 0 10px; padding: 12px; border-radius: 10px; border: 1px dashed var(--profile-line); }
+
+.loom-profile__rows { list-style: none; margin: 0; padding: 0; }
+.loom-profile__row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 0; border-bottom: 1px solid var(--profile-line); }
+.loom-profile__row:last-child { border-bottom: 0; }
+.loom-profile__row > :nth-child(2) { flex: 1; }
+.loom-profile__row-title { font-weight: 500; color: var(--v-text); overflow-wrap: anywhere; }
+.loom-profile__row-meta { font-size: 13px; color: var(--v-text-2); overflow-wrap: anywhere; }
+.loom-profile__row[data-tone="warn"] .loom-profile__row-meta { color: var(--status-warn-ink, var(--v-text-2)); }
+.loom-profile__glyph { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px;
+  color: var(--v-yellow, var(--v-text)); border: 1px solid color-mix(in srgb, var(--v-yellow, var(--v-text)) 55%, transparent); }
+.loom-profile__row a:focus-visible { outline: 2px solid var(--v-pink); outline-offset: 2px; border-radius: 6px; }
+
+.loom-profile__out { justify-self: start; }
+
+:root[data-contrast="more"] .loom-profile { --profile-line: color-mix(in srgb, var(--v-text) 40%, transparent); }
