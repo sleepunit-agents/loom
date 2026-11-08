@@ -470,7 +470,7 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
           return {
             text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
             meta: `${t.role === 'owner' ? 'owner · ' : ''}${t.from !== undefined ? `made from "${t.from}" · ` : ''}used ${since(t.last_used, nowMs)}${n ? ` · ${n} passkey${n === 1 ? '' : 's'} made from it` : ''}`,
-            act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: n ? `Anything still using it is signed out at once. ${cap(n)} made from it keep${n === 1 ? 's' : ''} working. You can make a new one.` : 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
+            act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: n ? `Anything still using it is signed out at once. ${cap(n)} made from it ${n === 1 ? 'isn\'t' : 'aren\'t'} touched. You can make a new one.` : 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
           };
         };
         const own = live.filter((t) => !isHouse(t)), houses = live.filter(isHouse);

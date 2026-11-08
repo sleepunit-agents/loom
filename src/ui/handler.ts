@@ -1435,6 +1435,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!session) return sendJson(res, 401, { error: 'signed out' });
     // Only soon after signing in (t-1969): a browser left signed in can't quietly add a lasting way in.
     if (staleForPasskey(session)) return sendJson(res, 403, { error: STALE_FOR_PASSKEY });
+    // In a household a session is always a member's; one that isn't (tokens.json unreadable) adds nothing, nor is told whose credentials exist.
+    if (opts.household && !who.member) return sendJson(res, 401, { error: 'this session isn\'t a member of the household; sign in again' });
     if (pathname === '/passkeys/options') {
       return sendJson(res, 200, {
         challenge: store.createChallenge('register', session.secret),
@@ -1458,8 +1460,6 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const label = (typeof body.label === 'string' ? body.label.trim() : '').slice(0, 60) || 'A passkey';
       const added = { id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000) };
       const hh = opts.household?.();
-      // In a household a session is always a member's; one that isn't (tokens.json unreadable) adds nothing.
-      if (hh && !who.member) return sendJson(res, 401, { error: 'this session isn\'t a member of the household; sign in again' });
       if (!hh || !who.member) {
         store.addPasskey({ ...added, secret: session.secret.toString('hex') });
         return sendJson(res, 200, { ok: true });
@@ -1804,7 +1804,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
                 act: { action: 'passkey-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } } };
             }) },
             // A passkey whose sessions added others (t-1969): Remove leaves those working; this takes them too.
-            ...(keys.some((k) => made.get(k.secret)) ? [{ type: 'details' as const, summary: 'Remove a passkey with the ones added from it', blocks: [{ type: 'list' as const, items: keys.filter((k) => made.get(k.secret)).slice(0, 50).map((k) => {
+            // Only a passkey with its own token: Remove takes what was added from that token (passkey-tokens.ts removePasskey).
+            ...(keys.some((k) => k.tokenLabel && made.get(k.secret)) ? [{ type: 'details' as const, summary: 'Remove a passkey with the ones added from it', blocks: [{ type: 'list' as const, items: keys.filter((k) => k.tokenLabel && made.get(k.secret)).slice(0, 50).map((k) => {
               const n = made.get(k.secret)!;
               return { text: k.label, meta: `${n} passkey${n === 1 ? '' : 's'} added from a browser it signed in`,
                 act: { action: 'passkey-remove', label: 'Remove with them', tone: 'danger' as const, confirm: `That device can't sign in with it any more, and ${thePasskeys(n)} added from it ${n === 1 ? 'is' : 'are'} removed too.`, fields: { id: k.id, made: 'with' } } };

@@ -185,10 +185,16 @@ function madeFromAll(tokens: TokenRecord[], roots: string[]): TokenRecord[] {
   return out;
 }
 
-/** Revoke these passkey tokens (the live ones) and remove the passkeys that sign in with them. Returns the passkeys removed. */
+/**
+ * Revoke these passkey tokens (the live ones) and remove the passkeys that sign in with them. Returns the passkeys
+ * removed. One that can't be revoked throws PasskeyTokenLeft naming it; none are removed then, so it can be redone.
+ */
 function takePasskeys(h: Household, made: TokenRecord[]): number {
   const store = sessionStore(h.home);
-  for (const t of made) if (isLive(t)) revokePasskeyToken(h, t.label);
+  for (const t of made) {
+    if (!isLive(t)) continue;
+    try { revokePasskeyToken(h, t.label); } catch (e) { throw new PasskeyTokenLeft(t.label, e); }
+  }
   const digests = new Set(made.map((t) => t.sha256));
   let removed = 0;
   for (const k of store.passkeys()) if (digests.has(k.secret) && store.removePasskey(k.id)) removed += 1;
@@ -206,7 +212,8 @@ export function revokeTokenAndPasskeys(h: Household, label: string, withPasskeys
   const made = madeFromAll(loadTokens(h.home), [token.sha256]);
   // No passkey made from it (an agent's token, say): the page's session store isn't touched.
   if (!made.length) return { token, passkeys: 0 };
-  if (!withPasskeys) return { token, passkeys: keptAmong(made, sessionStore(h.home).passkeys()) };
+  // Not asked: the ones that keep working (a stopped one isn't counted as working).
+  if (!withPasskeys) return { token, passkeys: keptAmong(made.filter((t) => isLive(t)), sessionStore(h.home).passkeys()) };
   return { token, passkeys: takePasskeys(h, made) };
 }
 
@@ -228,10 +235,11 @@ export function removePasskey(h: Household, id: string, withMade: boolean): { re
   const own = loadTokens(h.home).find((t) => t.sha256 === k.secret);
   try {
     if (own && isLive(own)) revokePasskeyToken(h, own.label);
-    return { removed: true, made: withMade && own ? takePasskeys(h, madeFromAll(loadTokens(h.home), [own.sha256])) : 0 };
   } catch (e) {
-    throw new PasskeyTokenLeft(own?.label ?? k.tokenLabel, e);
+    throw new PasskeyTokenLeft(own!.label, e);
   }
+  // takePasskeys names the one it couldn't revoke.
+  return { removed: true, made: withMade && own ? takePasskeys(h, madeFromAll(loadTokens(h.home), [own.sha256])) : 0 };
 }
 
 /** "the passkey" / "the 3 passkeys", for what's said about passkeys made from something (the CLI's and the page's words). */
