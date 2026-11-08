@@ -4,7 +4,7 @@
 // evicting the oldest, so Jonathan's phone session went within days, and with it his phone's subscription. The phone
 // itself still held its subscription, so Profile said "On" and nothing ever sent it again.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AGENT_SESSION_MAX_AGE_S, MAX_SESSIONS, SessionStore } from './sessions.js';
@@ -62,6 +62,24 @@ describe('a device\'s notifications outlive the session they were turned on in (
     s.addPushSub(viaLink, laptop, 1001);
     expect(s.removePushByTokens([links.toString('hex')])).toBe(1);
     expect(endpoints()).toEqual([phone.endpoint]);
+  });
+
+  it('a subscription kept before they carried a token is still taken by a compromise revoke, and the watch backfills it', () => {
+    const mine = s.create(his, 1000);
+    const viaLink = s.create(links, 1001);
+    s.addPushSub(mine, phone, 1000);
+    s.addPushSub(viaLink, laptop, 1001);
+    // As an older loom wrote them: no token on either.
+    const file = join(dir, 'ui-sessions.json');
+    const raw = JSON.parse(readFileSync(file, 'utf-8'));
+    for (const d of Object.values(raw.push.subs) as Array<{ token?: string }>) delete d.token;
+    writeFileSync(file, JSON.stringify(raw));
+    expect(s.removePushByTokens([links.toString('hex')])).toBe(1);
+    expect(endpoints()).toEqual([phone.endpoint]);
+    // The watch (endpoints() takes one) wrote his phone's token in, so it's matched even once its session is gone.
+    s.delete(mine);
+    expect(s.removePushByTokens([his.toString('hex')])).toBe(1);
+    expect(endpoints()).toEqual([]);
   });
 
   it('an agent\'s session, or a headless browser\'s, can never turn notifications on', () => {

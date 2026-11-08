@@ -212,13 +212,13 @@ export function revokeTokenAndPasskeys(h: Household, label: string, withPasskeys
   const made = madeFromAll(loadTokens(h.home), [token.sha256]);
   // Revoked as compromised (t-1978): the devices that signed in with it, and with what's taken with it, stop getting
   // notifications. A plain revoke (cleaning up the links token, say) leaves every device's alone.
-  const devices = () => (withDevices || withPasskeys ? sessionStore(h.home).removePushByTokens([token.sha256, ...(withPasskeys ? made.map((t) => t.sha256) : [])]) : 0);
+  // First, so a passkey token that can't be revoked further on (PasskeyTokenLeft) leaves no device still notified.
+  const devices = withDevices || withPasskeys ? sessionStore(h.home).removePushByTokens([token.sha256, ...(withPasskeys ? made.map((t) => t.sha256) : [])]) : 0;
   // No passkey made from it (an agent's token, say): no passkey is touched.
-  if (!made.length) return { token, passkeys: 0, devices: devices() };
+  if (!made.length) return { token, passkeys: 0, devices };
   // Not asked: the ones that keep working (a stopped one isn't counted as working).
-  if (!withPasskeys) return { token, passkeys: keptAmong(made.filter((t) => isLive(t)), sessionStore(h.home).passkeys()), devices: devices() };
-  const passkeys = takePasskeys(h, made);
-  return { token, passkeys, devices: devices() };
+  if (!withPasskeys) return { token, passkeys: keptAmong(made.filter((t) => isLive(t)), sessionStore(h.home).passkeys()), devices };
+  return { token, passkeys: takePasskeys(h, made), devices };
 }
 
 /** The passkey was removed, but a token it, or one made from it, signs in with couldn't be revoked. */

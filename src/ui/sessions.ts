@@ -657,7 +657,11 @@ export class SessionStore {
     const set = new Set(digests);
     return this.withLock((f) => {
       let n = 0;
-      for (const [ep, d] of Object.entries(f.push?.subs ?? {})) if (d.token && set.has(d.token)) { delete f.push!.subs![ep]; n++; }
+      // One kept before subscriptions carried their token: its session's, while that session is still on file.
+      for (const [ep, d] of Object.entries(f.push?.subs ?? {})) {
+        const token = d.token ?? f.sessions[d.session]?.secret;
+        if (token && set.has(token)) { delete f.push!.subs![ep]; n++; }
+      }
       return n;
     });
   }
@@ -687,6 +691,7 @@ export class SessionStore {
       // A device stays whatever happens to sessions (t-1978: they used to go with theirs, and the cap took them);
       // one whose person is no longer in the household goes.
       const subs = f.push.subs ?? {};
+      backfillTokens(f);
       if (belongs) for (const [ep, s] of Object.entries(subs)) if (!belongs(s.member)) delete subs[ep];
       return { subs: Object.values(subs).map((s) => ({ ...s.sub, ...(s.member ? { member: s.member } : {}) })), pushed: { ...(f.push.pushed ?? {}) } };
     });
@@ -707,6 +712,11 @@ export class SessionStore {
     const key = hashId(id);
     this.withLock((f) => { delete f.sessions[key]; });
   }
+}
+
+/** A subscription kept before they carried their token gets its session's, while that session is still on file. */
+function backfillTokens(f: File): void {
+  for (const d of Object.values(f.push?.subs ?? {})) if (!d.token && f.sessions[d.session]) d.token = f.sessions[d.session].secret;
 }
 
 /** Past its time: a month from sign-in (SESSION_MAX_AGE_S), an agent's within hours (AGENT_SESSION_MAX_AGE_S). */
