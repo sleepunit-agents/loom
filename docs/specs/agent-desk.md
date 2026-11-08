@@ -65,8 +65,8 @@ member's stream), when a Comms pane posts a read, when the tab comes back, and e
 
 ## Work
 
-- **The rail**: 296 px from 1280, 320 px from 1440, at the right edge (under 1280 there's no rail: two apps need the
-  room there, and the agents are Home's and the dock's); the apps share the rest by the tiling rule
+- **The rail**: 296 px from 1280, 320 px from 1440, at the right edge (under 1280 it's the strip: two apps need the
+  room there; "Hiding", below); the apps share the rest by the tiling rule
   (layout.ts `railWidth`; the desktop takes it off the area first). Needs you at its top: its count and its top
   item, opening the Inbox on Needs you. Then a compact card per agent: face, name, how it is, what it's on, its ask,
   what's unread (count and first line). No composer. A card opens the agent's thread: the one with its first unread
@@ -83,13 +83,20 @@ member's stream), when a Comms pane posts a read, when the tab comes back, and e
   the screen the band is who's in the conversation and the work, 140 px tall, and two panes fit Comms from 880 px
   (comms.tsx ONE_PANE_BELOW_RAIL) instead of 1100.
 
-## Hiding the rail and the dock (phase 4)
+## Hiding the rail and the dock (phase 4, built)
 
 A right-click on the rail, or on the dock's ground, offers **Always show**, **Minimize to strip** and **Auto-hide**.
 Kept per device (localStorage, as the device's own UI choices are), not synced. A strip is a thin bar that brings it
 back on a click; auto-hide slides it in over the apps from its edge when the pointer reaches the edge (or a swipe in)
 and away when it leaves, never reflowing the tiles. A strip or an edge shows a glowing dot while anything is unread or
-asking. Ctrl+Shift+1…9 opens the Nth agent's thread (in the cards' order).
+asking. Ctrl+Shift+1…9 opens the Nth agent's thread (in the cards' order), typing or not.
+
+- The rail's menu is a right-click on the rail, its strip or its edge; the dock's, on the dock's ground or its Home
+  and All apps keys (an app's key keeps its own menu). Kept as `loom-rail` and `loom-dock` in this browser.
+- Under 1280 px there's no room for the rail beside two apps, so it's the strip whatever was chosen; its strip brings
+  it in over the apps there instead of back for good.
+- A hidden dock gives the desktop its room back. Esc, or a press outside, sends a rail or dock brought in away.
+- The comm screen is the rail's only while the rail is shown for good: on its strip or auto-hiding, Comms keeps it.
 
 ## The ticker (phase 5)
 

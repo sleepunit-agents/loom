@@ -412,9 +412,11 @@ export function openInRail(agents: DeskAgent[], onAir: string | null): string | 
  * The rail beside the apps: Needs you at the top, then a compact card per agent. When they don't all fit at their own
  * size, the accordion: each a line, one open (openInRail). Measured before it's painted, so it never flashes.
  */
-export function AgentRail({ agents, d, onAir, screen, slot }: { agents: DeskAgent[]; d: DeskHomeData | null; onAir: string | null;
+export function AgentRail({ agents, d, onAir, screen, slot, over, onEnter, onLeave }: { agents: DeskAgent[]; d: DeskHomeData | null; onAir: string | null;
   /** the agent whose card is the comm screen (its thread is in Comms beside the rail), and where the screen goes */
-  screen?: string | null; slot?: (el: HTMLElement | null) => void }) {
+  screen?: string | null; slot?: (el: HTMLElement | null) => void;
+  /** brought in over the apps (from its strip, or auto-hiding): the pointer coming and going */
+  over?: boolean; onEnter?: () => void; onLeave?: () => void }) {
   const { go } = useEnv();
   const box = useRef<HTMLElement>(null);
   const [fold, setFold] = useState(false);
@@ -436,7 +438,8 @@ export function AgentRail({ agents, d, onAir, screen, slot }: { agents: DeskAgen
   }, []);
   const open = fold ? openInRail(agents, onAir) : undefined;
   return (
-    <aside ref={box} className="loom-arail" aria-label="Agents" data-fold={fold || undefined}>
+    <aside ref={box} className={over ? 'loom-arail loom-arail--over' : 'loom-arail'} aria-label="Agents" data-fold={fold || undefined}
+      onPointerEnter={onEnter} onPointerLeave={(e) => { if (e.pointerType === 'mouse') onLeave?.(); }}>
       <RailNeeds d={d} />
       {agents.map((a) => (a.id === screen ? <ScreenCard key={a.id} a={a} slot={slot} />
         : fold && a.id !== open ? <RailRow key={a.id} a={a} onOpen={() => go(a.open)} /> : <RailCard key={a.id} a={a} />))}

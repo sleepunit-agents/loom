@@ -16,6 +16,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { flushSync } from 'react-dom';
 import { PortalContainer } from '@/components/ui/portal-container';
 import { reducedMotion } from '../access';
+import { keep } from '../look';
 import { EnvContext, type Env } from '../blocks';
 import type { Shell } from '../loom';
 import { noteRecent, readRecent } from '../recent';
@@ -54,6 +55,13 @@ export type Focused = { key: string; label: string; title: string; /** what its 
 export type Accent = { name?: string; style?: React.CSSProperties };
 
 const SAVED = 'loom-tiles';
+/** How the rail and the dock are shown (docs/specs/agent-desk.md, "Hiding"). */
+type Hide = 'always' | 'strip' | 'auto';
+const HIDE_LABEL: Record<Hide, string> = { always: 'Always show', strip: 'Minimize to strip', auto: 'Auto-hide' };
+const HIDE_SAYS: Record<Hide, string> = { always: 'always shown', strip: 'minimized to a strip', auto: 'auto-hides' };
+const keptHide = (k: string): Hide => { try { const v = localStorage.getItem(k); return v === 'strip' || v === 'auto' ? v : 'always'; } catch { return 'always'; } };
+/** The strip a minimized rail folds to. */
+const STRIP_W = 14;
 /** A tile's own move (transition, below): which, and whose. */
 type Fx = { kind: 'open' | 'close' | 'min' | 'max' | 'restore'; key: string };
 /** The view-transition name the one tile with an effect wears for it (tiles.css). */
@@ -263,9 +271,22 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     transition('reflow', () => { drawn.current = null; flushSync(bump); }, undefined, fx);
   };
   const tiles = (apps: Open[]): AppTile[] => apps.map((a) => ({ id: a.key, name: a.label, fit: a.fit, ...(a.pinned ? { pinned: true } : {}) }));
+  // ---- hiding the rail and the dock (docs/specs/agent-desk.md, "Hiding"): Always show, Minimize to strip or Auto-hide,
+  // each this device's own choice (kept in this browser, never synced), from a right-click on either.
+  const [railMode, setRailModeState] = useState<Hide>(() => keptHide('loom-rail'));
+  const [dockMode, setDockModeState] = useState<Hide>(() => keptHide('loom-dock'));
+  const [peek, setPeek] = useState<{ rail: boolean; dock: boolean }>({ rail: false, dock: false });
+  const setHide = (what: 'rail' | 'dock', m: Hide) => {
+    keep(what === 'rail' ? 'loom-rail' : 'loom-dock', m);
+    (what === 'rail' ? setRailModeState : setDockModeState)(m);
+    setPeek((x) => ({ ...x, [what]: false }));
+    announce(`${what === 'rail' ? 'Agents rail' : 'Dock'}: ${HIDE_SAYS[m]}`);
+  };
   /** The room the apps share: the desktop's, less the agents' rail and the gap beside it (docs/specs/agent-desk.md). */
-  // Under 1280 px there's no room for it beside two apps: the agents are Home's (docs/specs/agent-desk.md, "Work").
-  const railW = railWidth(innerWidth);
+  // Under 1280 px a shown rail has no room beside two apps: there it's the strip, whatever was chosen.
+  const roomy = railWidth(innerWidth) > 0;
+  const railAs: Hide = railMode === 'always' && !roomy ? 'strip' : railMode;
+  const railW = railAs === 'always' ? railWidth(innerWidth) : railAs === 'strip' ? STRIP_W : 0;
   const appArea = (a: Rect = area): Rect => ({ x: 0, y: 0, w: Math.max(0, a.w - (railW ? railW + GUTTER : 0)), h: a.h });
   const scrollOf = (key: string) => bodies.current.get(key)?.scrollTop ?? 0;
   const announce = (m: string) => { setSaid(''); requestAnimationFrame(() => setSaid(m)); };
@@ -506,7 +527,15 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     if (best) focusEl(best);
   };
   const onKey = useRef<(e: KeyboardEvent) => void>(() => {});
+  const agentsNow = useRef<import('../desk-agents').DeskAgent[]>([]);
   onKey.current = (e: KeyboardEvent) => {
+    // Ctrl+Shift+1…9: the Nth agent's thread, in the cards' order (docs/specs/agent-desk.md). From anywhere, typing too.
+    const nth = /^Digit([1-9])$/.exec(e.code);
+    if (nth && (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && !e.defaultPrevented) {
+      const a = agentsNow.current[Number(nth[1]) - 1];
+      if (a) { e.preventDefault(); deskGo(a.open); announce(`${a.label}’s thread`); }
+      return;
+    }
     if (!e.altKey || e.ctrlKey || e.metaKey || e.defaultPrevented || typing()) return;
     const el = current();
     if (popUpFor(el)) return;
@@ -558,6 +587,14 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
         .map(([id, label]) => item(id, label, () => row.dispatchEvent(new CustomEvent('loom-menu', { detail: id }))));
       return items.length ? { title: row.dataset.rowMenuTitle || 'This item', items } : null;
     }
+    // the agents' rail (or its strip) and the dock's own ground: how each is shown
+    const modes = (what: 'rail' | 'dock'): Omit<MenuAt, 'x' | 'y' | 'back'> => {
+      const cur = what === 'rail' ? railMode : dockMode;
+      return { title: what === 'rail' ? 'Agents rail' : 'Dock', items: (['always', 'strip', 'auto'] as const).map((m) =>
+        item(`${what}:${m}`, HIDE_LABEL[m], () => setHide(what, m), cur === m ? 'on' : undefined)) };
+    };
+    if (t.closest('.loom-arail, .loom-rstrip, .loom-redge')) return modes('rail');
+    if (t.closest('.loom-dstrip, .loom-dedge')) return modes('dock');
     const tile = t.closest<HTMLElement>('.loom-tile');
     if (tile) {
       if (!t.closest('.loom-tile__bar')) return null;
@@ -575,7 +612,9 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
       // loom's own table, not the attribute. Home, All apps, More and your own key (Account) have none: they aren't apps
       // you'd minimize or close.
       const path = /^\/[\w\-/]*$/.exec(key.dataset.value ?? '')?.[0];
-      if (!path || path === '/' || path === '/account') return null;
+      // Home and All apps, which aren't apps to minimize or close: how the dock is shown.
+      if (!path || path === '/') return modes('dock');
+      if (path === '/account') return null;
       const r = appOf(path);
       if (!r) return null;
       const s = S.current, isOpen = s.apps.some((a) => a.key === r.key), docked = s.min.some((a) => a.key === r.key);
@@ -585,6 +624,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
         ...(isOpen || docked ? [item('close', 'Close', () => (isOpen ? close(r.key) : closeDocked(r.key)))] : []),
       ] };
     }
+    if (t.closest('.loom-dock-bar')) return modes('dock');
     return null;
   };
   const menuRef = useRef(menuFor);
@@ -642,13 +682,57 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   }, [oneWindow]);   // eslint-disable-line react-hooks/exhaustive-deps
   // The address and this device's copy, as the set first stands.
   useEffect(() => { commit(S.current); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The rail shown again (a wider room for it): what no longer fits beside it goes to the dock.
+  useEffect(() => {
+    const n = shed(S.current, 'the agents\' rail needed the room');
+    if (n !== S.current) commit(n);
+  }, [railW]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // The dock's choice is worn on the page (desk.css): its bar is App's, not the tiles'.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.deskDock = dockMode;
+    if (peek.dock) root.dataset.deskDockPeek = ''; else delete root.dataset.deskDockPeek;
+    return () => { delete root.dataset.deskDock; delete root.dataset.deskDockPeek; };
+  }, [dockMode, peek.dock]);
+  // Auto-hide: the pointer at the edge (or a swipe in from it) brings it in, leaving sends it out; a press outside, or
+  // Esc, too. The dock's edge is the screen's bottom; the rail's, the tiles' right.
+  const away = useRef<Record<string, number>>({});
+  const show = (what: 'rail' | 'dock', on: boolean) => {
+    clearTimeout(away.current[what]);
+    if (on) setPeek((x) => (x[what] ? x : { ...x, [what]: true }));
+    else away.current[what] = window.setTimeout(() => { if (!document.querySelector('.loom-cmenu')) setPeek((x) => (x[what] ? { ...x, [what]: false } : x)); }, 280);
+  };
+  useEffect(() => {
+    const out = (e: PointerEvent) => {
+      const t = e.target as Element;
+      if (peek.rail && !t.closest('.loom-arail, .loom-redge, .loom-rstrip, .loom-cmenu')) setPeek((x) => ({ ...x, rail: false }));
+      if (peek.dock && !t.closest('.loom-dock-bar, .loom-dedge, .loom-dstrip, .loom-cmenu')) setPeek((x) => ({ ...x, dock: false }));
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' && (peek.rail || peek.dock) && !document.querySelector('.loom-cmenu')) setPeek({ rail: false, dock: false }); };
+    const dock = document.querySelector('.loom-dock-bar');
+    const enter = () => { if (dockMode === 'auto') show('dock', true); };
+    const leave = (e: Event) => { if (dockMode === 'auto' && (e as PointerEvent).pointerType === 'mouse') show('dock', false); };
+    // A mouse that has gone elsewhere sends an auto-hiding one away (it may have come up under a still pointer, which
+    // then never "entered" it to leave); back over it, or its edge, keeps it.
+    const moved = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse') return;
+      const t = e.target as Element;
+      if (peek.rail && railAs === 'auto') show('rail', !!t.closest('.loom-arail, .loom-redge, .loom-cmenu'));
+      if (peek.dock && dockMode === 'auto') show('dock', !!t.closest('.loom-dock-bar, .loom-dedge, .loom-cmenu'));
+    };
+    addEventListener('pointermove', moved, { passive: true });
+    addEventListener('pointerdown', out, true); addEventListener('keydown', esc);
+    dock?.addEventListener('pointerenter', enter); dock?.addEventListener('pointerleave', leave);
+    return () => { removeEventListener('pointermove', moved); removeEventListener('pointerdown', out, true); removeEventListener('keydown', esc); dock?.removeEventListener('pointerenter', enter); dock?.removeEventListener('pointerleave', leave); };
+  });
 
   // What's drawn: the state before a reflow until its transition has the picture of it, else the state.
   const s = drawn.current ?? S.current;
-  const l = useMemo(() => layout(tiles(s.apps), appArea(area), innerWidth), [s.apps, area]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const l = useMemo(() => layout(tiles(s.apps), appArea(area), innerWidth), [s.apps, area, railW]);   // eslint-disable-line react-hooks/exhaustive-deps
   // The agents (desk-agents.tsx): the viewer's own, from Home's page, the shell and their own Comms summary.
   const comms = useAgentComms(shell.core.some((p) => p.href === '/comms'));
   const agents = useMemo(() => deskAgents(shell, homeData, comms), [shell, homeData, comms]);
+  agentsNow.current = agents;
   const env = deskEnv(deskGo);
   // Whose thread a Comms tile shows (desk-rail.ts): its card is the one the rail's accordion keeps open.
   const [air, setAir] = useState<{ who: OnAir; from: object | null }>({ who: null, from: null });
@@ -656,7 +740,11 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
     : was.from === from ? { who: null, from: null } : was)), []);
   // That agent's card in the rail is its comm screen while the rail is shown (the slot the card gives).
   const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const railShown = railW > 0 && s.apps.length > 0;
+  // The screen is the rail's only while the rail is shown for good (Always show, with room for it): hidden or auto-hiding,
+  // the band keeps it (the avatar appears once, wherever it is).
+  // A glowing dot on a hidden rail or dock: something unread, or something waiting on you.
+  const glow = (homeData?.needs ?? 0) > 0 || agents.some((a) => a.unread > 0 || a.asks > 0);
+  const railShown = railAs === 'always' && railW > 0 && s.apps.length > 0;
   const screenOf = railShown && air.who ? air.who.agent : null;
   const rail = useMemo<RailLink>(() => ({ onAir, shown: railShown, screen: screenOf && slot ? { agent: screenOf, el: slot } : null }), [onAir, railShown, screenOf, slot]);
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
@@ -674,13 +762,24 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
 
   return (
     <RailContext.Provider value={rail}>
-    <div className="loom-tiles" ref={box} data-count={s.apps.length} data-mode={s.apps.length ? 'work' : 'home'} style={{ '--rail-w': `${railW}px` } as React.CSSProperties}>
+    <div className="loom-tiles" ref={box} data-count={s.apps.length} data-mode={s.apps.length ? 'work' : 'home'} style={{ '--rail-w': `${railW}px`, '--rail-over': `${railWidth(innerWidth) || 296}px` } as React.CSSProperties} data-rail={railAs}>
       {s.apps.length === 0 ? (env ? <EnvContext.Provider value={env}><HomeDesk agents={agents} d={homeData} /></EnvContext.Provider> : home) : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)} accent={accent(o)}
           landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)} />
       ))}
-      {s.apps.length > 0 && railW > 0 && env && <EnvContext.Provider value={env}><AgentRail agents={agents} d={homeData} onAir={air.who?.agent ?? null} screen={screenOf} slot={setSlot} /></EnvContext.Provider>}
+      {s.apps.length > 0 && env && <EnvContext.Provider value={env}>
+        {railAs === 'always' ? <AgentRail agents={agents} d={homeData} onAir={air.who?.agent ?? null} screen={screenOf} slot={setSlot} />
+          : peek.rail && <AgentRail agents={agents} d={homeData} onAir={air.who?.agent ?? null} over onLeave={railAs === 'auto' ? () => show('rail', false) : undefined} onEnter={() => show('rail', true)} />}
+        {railAs === 'strip' && <button type="button" className="loom-rstrip" aria-label={`Show the agents' rail${glow ? ': something new' : ''}`}
+          onClick={() => (roomy ? setHide('rail', 'always') : setPeek((x) => ({ ...x, rail: !x.rail })))}>{glow && <span className="loom-glow" aria-hidden />}</button>}
+        {railAs === 'auto' && <div className="loom-redge" aria-hidden onPointerEnter={() => show('rail', true)}
+          onPointerDown={(e) => { if (e.pointerType !== 'mouse') show('rail', true); }}>{glow && <span className="loom-glow" />}</div>}
+      </EnvContext.Provider>}
+      {dockMode === 'strip' && <button type="button" className="loom-dstrip" aria-label={`Show the dock${glow ? ': something new' : ''}`} onClick={() => setHide('dock', 'always')}>
+        {glow && <span className="loom-glow" aria-hidden />}</button>}
+      {dockMode === 'auto' && !peek.dock && <div className="loom-dedge" aria-hidden onPointerEnter={() => show('dock', true)}
+        onPointerDown={(e) => { if (e.pointerType !== 'mouse') show('dock', true); }}>{glow && <span className="loom-glow" />}</div>}
       {menu && <ContextMenu at={menu} close={() => setMenu(null)} />}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>
