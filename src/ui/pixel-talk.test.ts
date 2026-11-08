@@ -7,7 +7,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createPlayer, PIXEL, stateFrom, type Frame, type PlayerEnv } from '../../web/src/pixel-face';
-import { faceOf, talkBeats, newId, onOf, replyHtml, staysInside } from '../../web/src/comms';
+import { faceOf, talkBeats, newId, onOf, replyHtml, staysInside, MARKED_REF } from '../../web/src/comms';
+import { batches, BATCH, cardHref, cardPage } from '../../web/src/comms-refs';
+import { verdictOfAction } from '../../web/src/comms-asks';
+import { CARD_PAGE, REFS_MAX, refShape } from '../comms-refs.js';
+import { verdictOf } from '../comms-asks.js';
 
 function fakeEnv(seed = 11): PlayerEnv & { run: (ms: number) => void; t: () => number } {
   let now = 0, id = 0, s = seed;
@@ -132,18 +136,51 @@ describe('the comm screen\'s rules', () => {
   it('message ids are 16 base32 characters', () => {
     for (let i = 0; i < 50; i++) expect(newId()).toMatch(/^[a-z2-7]{16}$/);
   });
-  it('a bare repo#N links under the household\'s GitHub owner, and is words without one', () => {
-    expect(replyHtml('Merged app#7.', 'acme')).toContain('href="https://github.com/acme/app/issues/7"');
-    expect(replyHtml('Merged app#7.')).not.toContain('href=');
+  it('a bare repo#N is marked under the household\'s GitHub owner, and is words without one', () => {
+    expect(replyHtml('Merged app#7.', 'acme')).toContain('<span class="comms-ref" data-ref="github:acme/app#7">acme/app#7</span>');
+    expect(replyHtml('Merged app#7.')).not.toContain('data-ref');
   });
-  it('a reply\'s links: tasks, PRs and conversations inside or on GitHub; http and javascript stay words', () => {
+  it('a reply\'s tasks, PRs, conversations and notes are marked, never links until the thread knows them (t-1979); http and javascript stay words', () => {
     const h = replyHtml('See t-12, acme/app#3 and cv-0123456789ab, note:pond/plan, [x](http://evil.example) and [y](javascript:alert(1)).');
-    expect(h).toContain('data-inside="" href="/p/tasks/task/t-12"');
-    expect(h).toContain('href="https://github.com/acme/app/issues/3"');
-    expect(h).toContain('data-inside="" href="/conversation/cv-0123456789ab"');
-    expect(h).toContain('<code>note:pond/plan</code>');
+    expect(h).toContain('<span class="comms-ref" data-ref="t-12">t-12</span>');
+    expect(h).toContain('<span class="comms-ref" data-ref="github:acme/app#3">acme/app#3</span>');
+    expect(h).toContain('<span class="comms-ref" data-ref="cv-0123456789ab">cv-0123456789ab</span>');
+    expect(h).toContain('<span class="comms-ref" data-ref="note:pond/plan"><code>note:pond/plan</code></span>');
+    expect(h).not.toContain('<a ');
     expect(h).not.toMatch(/href="http:/);
     expect(h).not.toMatch(/href="javascript/i);
+    // Whatever case the scheme is in.
+    for (const x of ['[x](HTTP://evil.example)', '[x](Http://evil.example)', 'HTTP://evil.example']) expect(replyHtml(x), x).not.toMatch(/href="http:/i);
+  });
+  it('a ref in code, in a link the agent wrote or in a URL is left as written', () => {
+    const h = replyHtml('Run `git log @mark t-12` then\n\n```\nnpm i @scope/pkg # t-9\n```\n\nSee [the t-12 notes](https://example.com/t-12) and https://github.com/acme/app/issues/3 for a-0123abcd.');
+    expect(h).toContain('<code>git log @mark t-12</code>');
+    expect(h).toContain('npm i @scope/pkg # t-9');
+    expect(h).toContain('href="https://example.com/t-12"');
+    expect(h).toContain('>the t-12 notes</a>');
+    expect(h).not.toContain('loom.invalid');
+    // Outside them, still marked.
+    expect(h).toContain('data-ref="a-0123abcd"');
+    expect(h.match(/data-ref=/g)).toHaveLength(1);
+    for (const x of ['~~~\nsee t-12\n~~~', 'Code:\n\n    npm i @scope/pkg t-12\n']) {
+      const c = replyHtml(x);
+      expect(c, x).not.toContain('data-ref');
+      expect(c, x).not.toContain('loom.invalid');
+    }
+    // A link the agent spells as loom's own mark is never taken for one: its words, no chip.
+    for (const x of ['[t-5 · closed](https://loom.invalid/ref/t-12)', '[x](https://loom.invalid/ref-0011223344556677/t-12)']) expect(replyHtml(x), x).not.toContain('data-ref');
+  });
+  it('a reply\'s other loom things are marked, not linked: an approval, a knowledge page, a project, a person, an @agent', () => {
+    const h = replyHtml('Filed a-0123abcd; see [[dns-health]], project:pond, person:loren and @mark. Not a-xyz or me@mark.dev.');
+    for (const r of ['a-0123abcd', 'knowledge:dns-health', 'project:pond', 'person:loren', 'at:mark']) expect(h, r).toContain(`<span class="comms-ref" data-ref="${r}">`);
+    expect(h).toContain('>dns-health</span>');
+    expect(h).not.toContain('loom.invalid');
+    expect(h).not.toContain('data-ref="a-xyz');
+    // An address isn't an @: me@mark.dev marks nothing (the one @mark above is the only at: ref).
+    expect(h.match(/data-ref="at:/g)).toHaveLength(1);
+    expect(replyHtml('Write to me@mark.dev.')).not.toContain('data-ref');
+    // A marked ref an agent spells out as a URL with anything else in it is its words.
+    expect(replyHtml('[x](https://loom.invalid/ref/%22%3E%3Cimg)')).not.toContain('data-ref');
   });
   it('an inside-looking link an agent writes is a link only to an allowed page, and never leaves loom', () => {
     const evil = ['//evil.com', '/\\evil', '../x', 'p/tasks/../../x', 'javascript:alert(1)', 'p/notes/x', 'conversation/cv-zz', 'p/tasks/t-12?next=//evil.com'];
@@ -152,8 +189,8 @@ describe('the comm screen\'s rules', () => {
       expect(h, path).not.toContain('data-inside');
       expect(h, path).not.toMatch(/href="\/(?!\/p\/tasks\/task\/t-\d+")/);
     }
-    // A task named in the reply is the inside link loom makes; one an agent spells out as a URL is never trusted as one.
-    expect(replyHtml('See t-12.')).toContain('data-inside="" href="/p/tasks/task/t-12"');
+    // A link into loom an agent writes, even to an allowed page, is its words: inside loom opens only as a chip.
+    for (const x of ['[Open](https://loom.invalid/p/tasks/task/t-12)', '[c](https://loom.invalid/conversation/cv-0123456789ab)']) expect(replyHtml(x), x).not.toContain('<a ');
     expect(replyHtml('[t](https://loom.invalid/p/tasks/t-12)')).not.toContain('href="https://loom.invalid');
     const here = 'https://loom.example/comms/th:aaaaaaaaaa';
     expect(staysInside('/p/tasks/task/t-12', here)).toBe(true);
@@ -162,6 +199,39 @@ describe('the comm screen\'s rules', () => {
     for (const href of ['//evil.com/p/tasks/t-1', '/\\evil.com', 'https://evil.com/p/tasks/t-1', 'javascript:alert(1)', '/../x', '/p/tasks/t-1/../../admin', '/p/notes/x']) {
       expect(staysInside(href, here), href).toBe(false);
     }
+  });
+});
+
+describe('a chip\'s card opens only where it may (t-1979)', () => {
+  it('Open goes to an allowed inside page or an https link, and the client and the server agree on the pages', () => {
+    const c = (page?: string, href?: string) => ({ kind: 'task' as const, title: 'x', ...(page !== undefined ? { page } : {}), ...(href !== undefined ? { href } : {}) });
+    for (const p of ['p/tasks/task/t-12', 'conversation/cv-0123456789ab', 'knowledge/dns-health', 'projects/pond', 'people/loren', 'a/mark', 'inbox']) {
+      expect(cardPage(c(p)), p).toBe(`/${p}`);
+      expect(CARD_PAGE.test(p), p).toBe(true);
+    }
+    for (const p of ['\\evil.com', '/evil', '//evil.com', 'p/tasks/task/t-12?x=1', 'p/tasks/../admin', 'javascript:alert(1)', 'a/Mark', 'knowledge/../x', 'inbox/x']) {
+      expect(cardPage(c(p)), p).toBeUndefined();
+      expect(CARD_PAGE.test(p), p).toBe(false);
+    }
+    expect(cardHref(c(undefined, 'https://github.com/acme/app/issues/3'))).toBe('https://github.com/acme/app/issues/3');
+    for (const h of ['javascript:alert(1)', 'http://github.com/x', 'https://x" onmouseover="y', 'https://a\\b', ' https://x']) expect(cardHref(c(undefined, h)), h).toBeUndefined();
+  });
+  it('the client and the server agree on what a ref is, and on the answer a button gives', () => {
+    const samples = ['t-1', 't-1234567890', 'github:acme/app#3', 'github:a/b#c', 'cv-0123456789ab', 'cv-1', 'a-0123abcd', 'a-0123', 'note:a/b', 'note:a/../b', 'note:',
+      'knowledge:x', 'project:x', 'person:x', 'agent:x', 'at:x', 'at:X', 'evil:x', 't-1" onclick="x', 'note:.hidden'];
+    for (const r of samples) expect(MARKED_REF.test(r) && !r.split('/').includes('..'), r).toBe(!!refShape(r));
+    for (const [a, f] of [['allow', {}], ['deny', {}], ['needs-answer', { answer: 'yes' }], ['needs-answer', { answer: 'no' }], ['needs-answer', { answer: 'maybe' }],
+      ['needs-reply', {}], ['needs-done', {}], ['needs-dismiss', {}], ['snooze', {}]] as Array<[string, Record<string, string>]>) expect(verdictOfAction(a, f), a).toBe(verdictOf(a, f));
+  });
+  it('the thread asks in reads of at most the server\'s 60, each ref once', () => {
+    const refs = Array.from({ length: 130 }, (_, i) => `t-${i % 125}`);
+    const b = batches(refs);
+    expect(b.map((x) => x.length)).toEqual([60, 60, 5]);
+    expect(BATCH).toBe(REFS_MAX);
+  });
+  it('a reply marks only refs of a known shape', () => {
+    for (const r of ['t-1', 'github:acme/app#3', 'cv-0123456789ab', 'a-0123abcd', 'note:a/b', 'knowledge:x', 'project:x', 'person:x', 'agent:x', 'at:x']) expect(MARKED_REF.test(r), r).toBe(true);
+    for (const r of ['t-x', 'a-0123', 'cv-1', 'note:', 'at:X', 'evil:x', 'github:a/b#c', 't-1" onclick="x']) expect(MARKED_REF.test(r), r).toBe(false);
   });
 });
 

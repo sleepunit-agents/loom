@@ -350,7 +350,19 @@ const MESSAGES_SCHEMA = `CREATE TABLE IF NOT EXISTS comms_messages (
     PRIMARY KEY (thread, seq)
   );
   CREATE INDEX IF NOT EXISTS comms_messages_id ON comms_messages (thread, kind, id);
-  CREATE INDEX IF NOT EXISTS comms_messages_at ON comms_messages (at);`;
+  CREATE INDEX IF NOT EXISTS comms_messages_at ON comms_messages (at);
+  CREATE TABLE IF NOT EXISTS comms_asks (
+    thread      TEXT NOT NULL,
+    ref         TEXT NOT NULL,
+    approval    TEXT,
+    raised      TEXT NOT NULL,
+    seen        TEXT NOT NULL,
+    words       BLOB,
+    answer_json TEXT,
+    PRIMARY KEY (thread, ref)
+  );
+  CREATE INDEX IF NOT EXISTS comms_asks_ref ON comms_asks (ref);
+  CREATE INDEX IF NOT EXISTS comms_asks_approval ON comms_asks (approval);`;
 
 const threadsReady = new Set<string>();
 function withThreads<T>(home: string, f: (db: Database) => T): T {
@@ -835,13 +847,59 @@ export function askStop(h: Household, t: Thread, now: Date = new Date()): void {
 
 /** Delete a thread: its row and every message, words included, at once; a tombstone stays. */
 export function deleteThread(h: Household, t: Thread, now: Date = new Date()): void {
-  withMessages(h.home, (db) => db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(t.id));
+  withMessages(h.home, (db) => { db.prepare('DELETE FROM comms_messages WHERE thread = ?').run(t.id); db.prepare('DELETE FROM comms_asks WHERE thread = ?').run(t.id); });
   withThreadsAt(h.home, (db) => db.transaction(() => {
     db.prepare('INSERT OR REPLACE INTO comms_deleted (id, member, agent, channel, at) VALUES (?, ?, ?, ?, ?)').run(t.id, t.member, t.agent, t.channel, nowIso(now));
     db.prepare('DELETE FROM comms_threads WHERE id = ?').run(t.id);
   }).immediate());
   dropRefs(h.home, t.id);
   bump(h.home);
+}
+
+// ─── Asks kept on their thread (comms.md, "Asks inline") ──────────────────────
+
+/** How an ask kept on a thread was answered: allowed, denied, yes, no, replied, done, dismissed (by a member, `by`), or
+ * how it ended on its own (expired, used, resolved, gone). */
+export interface AskAnswer { verdict: string; by?: string; at?: string }
+/** An ask a thread showed: which (`approval:<id>`, `digest:<id>` or `key:<inbox key>`), the approval it waits on, when it
+ * was raised, its words as the card drew them (null once swept), and its answer once known. */
+export interface KeptAsk { ref: string; approval: string | null; raised: string; words: Record<string, unknown> | null; answer: AskAnswer | null }
+/** The most asks a thread read draws (the newest). */
+export const ASKS_KEPT = 50;
+
+/**
+ * Keep an ask on its thread the first time the thread shows it, so the thread still says what it was and how it was
+ * answered once it has left the Inbox. Its words are sealed like the thread's own and swept with them. True when it's new.
+ */
+export function keepThreadAsk(home: string, env: NodeJS.ProcessEnv, thread: string, a: { ref: string; approval?: string; raised: string; words: Record<string, unknown> }, now: Date = new Date()): boolean {
+  const had = withMessages(home, (db) => !!db.prepare('SELECT 1 FROM comms_asks WHERE thread = ? AND ref = ?').get(thread, a.ref));
+  if (had) return false;
+  const blob = encrypt(home, env, JSON.stringify(a.words));
+  return withMessages(home, (db) => db.prepare('INSERT OR IGNORE INTO comms_asks (thread, ref, approval, raised, seen, words) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(thread, a.ref, a.approval ?? null, a.raised, nowIso(now), blob).changes > 0);
+}
+
+/** Record how a kept ask was answered: by its ref, or by the approval it waits on; the first answer stays. */
+export function answerKeptAsk(home: string, which: { ref?: string; approval?: string; thread?: string }, answer: AskAnswer): number {
+  if (!existsSync(join(home, COMMS_DB)) || (!which.ref && !which.approval)) return 0;
+  const json = JSON.stringify(answer);
+  return withMessages(home, (db) => db.prepare(`UPDATE comms_asks SET answer_json = ? WHERE answer_json IS NULL AND (ref = ? OR approval = ?)${which.thread ? ' AND thread = ?' : ''}`)
+    .run(json, which.ref ?? null, which.approval ?? null, ...(which.thread ? [which.thread] : [])).changes);
+}
+
+/** A thread's kept asks, the newest ASKS_KEPT, oldest first, their words opened for this read. */
+export async function keptAsksOf(h: Household, env: NodeJS.ProcessEnv, t: Thread): Promise<KeptAsk[]> {
+  if (!existsSync(join(h.home, COMMS_DB))) return [];
+  const rows = withMessages(h.home, (db) => (db.prepare('SELECT * FROM comms_asks WHERE thread = ? ORDER BY raised DESC LIMIT ?').all(t.id, ASKS_KEPT) as Array<{
+    ref: string; approval: string | null; raised: string; words: Buffer | null; answer_json: string | null }>).reverse());
+  const o = rows.some((r) => r.words) ? openerFor(h.home, env) : null;
+  return pool(rows, DECRYPT_AT_ONCE, async (r) => {
+    let words: Record<string, unknown> | null = null;
+    if (r.words && o) { try { const s = await decrypt(o, r.words, `an ask of ${t.id}`); words = s ? JSON.parse(s) as Record<string, unknown> : null; } catch { words = null; } }
+    let answer: AskAnswer | null = null;
+    try { answer = r.answer_json ? JSON.parse(r.answer_json) as AskAnswer : null; } catch { answer = null; }
+    return { ref: r.ref, approval: r.approval, raised: r.raised, words, answer };
+  });
 }
 
 // ─── The runtime's side: the core venue adapter and activity ───────────────────
@@ -1044,8 +1102,11 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     // Work made here shows in the thread's panel by its source (comms.md, "Made here"); a house's piece calls carry no
     // environment, so the brief names the conversation itself, without naming any piece.
     const lines = [`A private thread in loom's app with your owner, ${name}. Only they read it. They can see your tool use as you work. Work you record here can name this conversation as its source: conversation:${r.conversation}.`];
-    if (r.project) lines.push(`The thread is filed under the project ${r.project}.`);
-    if (!r.title) lines.push('Give the thread a short title once you know what it\'s about: call comms_title.');
+    // Its asks show here (comms.md, "Asks inline"): a body asking from a thread needn't send them to the Inbox in words.
+    lines.push(`When you need ${name}'s OK, ask it as you always do (a needs_owner, or an approval request): it shows right here in the thread as a card with its buttons, as well as in their Inbox, and their answer comes back to you.`);
+    // At most three lines reach the brief (the runtime's rule): the project and the title share the last.
+    const last = [r.project ? `The thread is filed under the project ${r.project}.` : '', r.title ? '' : 'Give the thread a short title once you know what it\'s about: call comms_title.'].filter(Boolean).join(' ');
+    if (last) lines.push(last);
     return { ok: true, brief: lines, readers: [r.member] };
   }
   // status
@@ -1130,7 +1191,13 @@ export function sweepComms(h: Household, now: Date = new Date()): number {
   const days = h.commsDays ?? COMMS_DAYS_DEFAULT;
   let swept = 0;
   if (existsSync(join(h.home, COMMS_DB))) {
-    swept = withMessages(h.home, (db) => db.prepare('UPDATE comms_messages SET text = NULL WHERE text IS NOT NULL AND at < ?').run(new Date(now.getTime() - days * DAY_MS).toISOString()).changes);
+    const cut = new Date(now.getTime() - days * DAY_MS).toISOString();
+    swept = withMessages(h.home, (db) => {
+      // An ask's words kept on its thread go with the thread's (comms.md, "Asks inline"): the row stays, its answer too.
+      // By when core first kept it (its own clock), never the piece's `at`, which could be any time.
+      db.prepare('UPDATE comms_asks SET words = NULL WHERE words IS NOT NULL AND seen < ?').run(cut);
+      return db.prepare('UPDATE comms_messages SET text = NULL WHERE text IS NOT NULL AND at < ?').run(cut).changes;
+    });
   }
   if (existsSync(join(h.home, 'household.db'))) {
     const late = withThreadsAt(h.home, (db) => db.prepare('SELECT * FROM comms_threads WHERE queued_since IS NOT NULL AND queued_since < ?').all(new Date(now.getTime() - BUSY_MS).toISOString()) as ThreadRow[]);

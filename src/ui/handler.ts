@@ -57,6 +57,7 @@ import { answeredNeeds, answerNeeds, ConversationError, getConversation as conve
 import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
 import { commsRoute, pageRefused } from './comms-routes.js';
+import { recordAnswer, recordApprovalAnswer, verdictOf } from '../comms-asks.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
 import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
 import { venueLabel } from '../household-store.js';
@@ -935,7 +936,8 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
     const lead = card.lead ? { text: card.text, meta: a.text, ...(a.needs ? { needs: { ...a.needs, why: a.text,
       ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}) } } : {}) } : {};
     return { ...a, ...lead, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source,
-      ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}), ...(card.fine ? { fine: card.fine } : {}), ...(card.details ? { details: card.details } : {}) } };
+      ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}), ...(card.fine ? { fine: card.fine } : {}), ...(card.details ? { details: card.details } : {}),
+      ...(card.conversation && /^cv-[0-9a-f]{12}$/.test(card.conversation) ? { conversation: card.conversation } : {}) } };
   });
   return out.filter((a) => !taken.has(a));
 }
@@ -984,6 +986,19 @@ function agentCards(h: Household, pieces: PieceInfo[], marks: Record<string, { l
   });
 }
 
+/** The open Inbox item `match` finds, as the member answering sees it now (their Inbox's own), before an answer takes it
+ * out: what its Comms thread keeps (comms-asks.ts recordAnswer). Never fails an answer: none on any trouble. */
+function askBefore(hh: Household, pieces: PieceInfo[], opts: UiOptions, match: (it: InboxItem) => boolean): InboxItem | undefined {
+  try { return inboxItems(hh, pieces, opts.env, [], !opts.ownerScope).find((it) => it.box !== 'done' && match(it)); } catch { return undefined; }
+}
+
+/** The approvals the household owner alone answers (the approvals piece's lead cards: a grant, a vouch, a reset). */
+export function leadIds(pieces: PieceInfo[], env: NodeJS.ProcessEnv): Set<string> {
+  const src = pieceWithRole(env, 'approvals')?.name;
+  const p = src ? pieces.find((x) => x.piece === src) : undefined;
+  return new Set((p?.manifest.asks ?? []).filter((a) => a.lead).flatMap((a) => (a.actions ?? []).map((b) => b.fields?.id).filter((x): x is string => typeof x === 'string')));
+}
+
 /** Everything the Inbox files: the asks (loom's and every piece's), the pieces' notices and what they've answered, and
  * what the owner's own actions said (their toasts, as FYI), newest first. */
 function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, done: Done[] = [], householdOwner = false): InboxItem[] {
@@ -993,7 +1008,8 @@ function inboxItems(h: Household, pieces: PieceInfo[], env: NodeJS.ProcessEnv, d
     ...asks.map((a): InboxItem => ({ key: askKey(a), kind: askKind(a), box: inboxBox({ ...a, kind: askKind(a), attention: a.attention !== false }), attention: a.attention !== false, unread: false,
       text: a.text, meta: a.meta, at: a.at, expires: a.expires, agent: a.agent, source: a.source, sourceLabel: a.sourceLabel, page: a.page, label: a.label, actions: a.actions,
       ...(a.href ? { href: a.href } : {}), ...(a.reply ? { reply: a.reply } : {}), ...(a.needs ? { needs: a.needs } : {}), ...(a.approval ? { approval: a.approval } : {}),
-      ...(a.fine ? { fine: a.fine } : {}), ...(a.relayedFrom ? { relayedFrom: a.relayedFrom } : {}) })),
+      ...(a.fine ? { fine: a.fine } : {}), ...(a.relayedFrom ? { relayedFrom: a.relayedFrom } : {}),
+      ...(a.conversation && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}) })),
     ...pieces.flatMap((p) => {
       const source = pieceSource(p.piece);
       const sourceLabel = p.manifest.tab?.label ?? p.piece;
@@ -1493,11 +1509,23 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const ch = chrome(req, opts, atWorkFor(forOwner(all, opts.ownerScope), full, who.member), skipped.map((x) => x.piece), 'comms', csrf);
       return { ...ch, prefs: storeFor(opts).prefs(readerFor(opts, who)) };
     };
+    // The pieces this member may hear from, read once a request (a thread's read asks for them more than once).
+    let piecesOnce: Promise<PieceInfo[]> | undefined;
+    let inboxOnce: ReturnType<NonNullable<Parameters<typeof commsRoute>[3]['inbox']>> | undefined;
+    const commsPieces = () => (piecesOnce ??= pieceManifests(scopedEnv).then((x) => forOwner(x.pieces, opts.ownerScope)));
     await commsRoute(req, res, pathname, { household: full, live: () => opts.household?.(), member: who.member, env: opts.env, chrome: commsChrome,
       // Only the agents this member owns: the same rule as the thread routes (comms.md, rule 1).
       agents: Object.fromEntries(Object.entries(agentsOf(full) ?? {}).filter(([a]) => owns(who.member, a))),
       // The Inbox's own filter, so a thread's asks never come from a piece this member isn't cleared for.
-      pieces: async () => forOwner((await pieceManifests(scopedEnv)).pieces, opts.ownerScope), session: streamOwner(req, who), headers: { ...SECURITY_HEADERS, ...whoTag(who) }, guard });
+      pieces: commsPieces, session: streamOwner(req, who), headers: { ...SECURITY_HEADERS, ...whoTag(who) }, guard,
+      // A thread's asks are the member's own Inbox items (comms.md, "Asks inline"): the same household, pieces and rule.
+      inbox: () => (inboxOnce ??= (async () => {
+        const seen = opts.household?.();
+        const ps = await commsPieces();
+        const appr = pieceWithRole(opts.env, 'approvals')?.name;
+        return { items: seen ? inboxItems(seen, ps, opts.env, [], !opts.ownerScope) : [], leads: leadIds(ps, opts.env), householdOwner: !opts.ownerScope, checkers: pieceCheckers(opts.env),
+          ...(appr ? { approvals: pieceSource(appr).id } : {}) };
+      })()) });
     return;
   }
 
@@ -1687,9 +1715,15 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // An agent's Needs you, answered from its sheet: replied to, done or dismissed. Who answers is the signed-in member.
       source = agentSource(agentAct[1]);
       const person = who?.member?.person ?? firstOwner(hh!).person;
+      // The ask as it was before it's answered: its Comms thread keeps how it was answered (comms.md, "Asks inline").
+      const seen = await pieceManifests(scopedEnv).then((x) => forOwner(x.pieces, opts.ownerScope)).catch(() => [] as PieceInfo[]);
+      const before = askBefore(hh!, seen, opts, (it) => it.agent === agentAct[1] && !!it.reply && it.reply.fields.digest === fields.digest && it.reply.fields.conversation === fields.conversation);
       result = ['needs-reply', 'needs-answer', 'needs-done', 'needs-dismiss'].includes(action)
         ? await needsAct(opts, hh!, agentAct[1], action, fields, person) : { ok: false, message: 'No such action.' };
       quiet = result.ok;
+      const verdict = verdictOf(action, fields);
+      const appr = pieceWithRole(opts.env, 'approvals')?.name;
+      if (result.ok && verdict) recordAnswer(hh!, opts.env, before, { verdict, by: person }, { lead: leadIds(seen, opts.env).has(before?.approval?.actions.find((b) => b.fields?.id)?.fields?.id ?? ''), approvals: appr ? pieceSource(appr).id : undefined });
     } else if (agentAct) {
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
@@ -1775,12 +1809,28 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       source = pieceSource(info.piece);
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
+      const approvalsName = pieceWithRole(opts.env, 'approvals')?.name;
+      const approvals = !!hh && approvalsName === info.piece;
+      // A piece's card as it was before it's answered (any piece's, by the id it names): its Comms thread keeps how it was
+      // answered (comms.md, "Asks inline").
+      const src = pieceSource(info.piece).id;
+      const pieceVerdict = action === 'allow' ? 'allowed' : action === 'deny' ? 'denied' : undefined;
+      const before = hh && pieceVerdict && fields.id
+        ? askBefore(hh, pieces, opts, (it) => [...(it.source.id === src ? it.actions ?? [] : []), ...(it.approval?.source.id === src ? it.approval.actions : [])].some((b) => b.action === action && b.fields?.id === fields.id)) : undefined;
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+      // The piece's answer is what counts (its own record): its thread keeps it after, whatever comes of the grant below.
+      const answered = result.ok && !!pieceVerdict;
       if (result.ok && hh && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
         // An Allow on a grant, a vouch or a reset applies it (t-1970, t-1975): the owner's yes does it, nothing left for him to do.
         if (action === 'allow') result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
         // An approval answered: the Needs you that waited on it clears now, not at the next minute's pass.
         await resolveNeeds(hh, pieceCheckers(opts.env)).catch(() => undefined);
+      }
+      if (answered && hh) {
+        const by = who?.member?.person ?? firstOwner(hh).person;
+        const appr = approvalsName ? pieceSource(approvalsName).id : undefined;
+        recordAnswer(hh, opts.env, before, { verdict: pieceVerdict!, by }, { lead: approvals && leadIds(pieces, opts.env).has(fields.id ?? ''), approvals: appr });
+        if (approvals) recordApprovalAnswer(hh, fields.id ?? '', { verdict: pieceVerdict!, by });
       }
     }
     changed(opts.ownerScope ?? '*');   // whatever it did, the open apps that may see it look again

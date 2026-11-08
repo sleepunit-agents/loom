@@ -163,7 +163,8 @@ export interface Ask { text: string; meta?: string; page?: string; label?: strin
   conversation?: string;
   /** Its own words are what the owner decides on (an approval whose Allow does something lasting, like the approvals
    * piece's grant: t-1970): wherever a Needs you absorbs it, its text heads the item and its if-lines are the ones beside
-   * Allow and Deny; the agent's own ask becomes the item's why. */
+   * Allow and Deny; the agent's own ask becomes the item's why. It also marks a card only the household owner may
+   * answer: a Comms thread offers its Allow to nobody else (comms.md, "Asks inline"; core also reads the approval's kind). */
   lead?: true }
 /** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
 export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }

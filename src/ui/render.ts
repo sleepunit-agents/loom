@@ -134,7 +134,9 @@ export interface HomeAsk extends Ask { source: Source; /** The piece's tab label
   memory?: boolean }
 
 export interface NeedsView { why?: string; if_yes?: string; if_no?: string; answers: 'yes-no' | 'words'; refs: string[]; details: string }
-export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source; if_yes?: string; if_no?: string; fine?: string; details?: string }
+export interface ApprovalView { text: string; meta?: string; actions: Button[]; source: Source; if_yes?: string; if_no?: string; fine?: string; details?: string;
+  /** The conversation the approval itself was asked from (its own card's), when it names one: its Comms thread's. */
+  conversation?: string }
 
 // ─── Home, an agent's Today, and the sign-in pages ───
 
@@ -253,6 +255,8 @@ export interface InboxItem {
   fine?: string;
   /** The agent whose request it passes on (HomeAsk's): who asks is them, via `agent`. */
   relayedFrom?: string;
+  /** The conversation a piece's ask was asked from (a cv- id): its Comms thread shows it too (comms.md, "Asks inline"). */
+  conversation?: string;
 }
 
 export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [

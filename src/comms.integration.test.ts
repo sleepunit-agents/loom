@@ -17,6 +17,9 @@ import { conversationId, createConversationTables, recordTurn, writeDigest } fro
 import { COMMS_DB, COMMS_FILES, COMMS_KEY, COMMS_SALT, placeFor, resendMessage, SEND_STALE_MS, settleThread, sweepComms, threadState, traceOf, WORKING_STALE_MS, type Thread } from './comms.js';
 import { createHash, createHmac } from 'node:crypto';
 import { clearPieceCache } from './ui/pieces.js';
+import { knowledgeWrite } from './tools/knowledge-write.js';
+import { openProjectsStore } from './backends/projects.js';
+import { Notes } from './notes.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 
 const hasAge = spawnSync('sh', ['-c', 'command -v age && command -v age-keygen'], { encoding: 'utf-8' }).status === 0;
@@ -148,17 +151,51 @@ describe.skipIf(!hasAge)('Comms', () => {
     // A stand-in approvals piece: its manifest's asks are a file the test writes (approvals-asks.json).
     piece(h.home, 'approvals', { role: 'approvals' }, `#!${process.execPath}
 const fs = require('node:fs');
+const f = process.env.LOOM_HOME + '/approvals-asks.json';
+const st = process.env.LOOM_HOME + '/approvals-state.json';
+const read = (x, d) => fs.existsSync(x) ? JSON.parse(fs.readFileSync(x, 'utf-8')) : d;
 if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
-  const f = process.env.LOOM_HOME + '/approvals-asks.json';
-  console.log(JSON.stringify({ v: 2, owners: 2, asks: fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [] }));
+  console.log(JSON.stringify({ v: 2, owners: 2, asks: read(f, []) }));
+} else if (process.argv[2] === 'ui' && process.argv[3] === 'act') {
+  // Allow or Deny: the card leaves the manifest, its state is kept (as the real piece's answer).
+  const req = JSON.parse(fs.readFileSync(0, 'utf-8'));
+  const id = req.fields && req.fields.id;
+  const asks = read(f, []);
+  if (!asks.some((a) => a.actions.some((b) => b.fields.id === id))) { console.log(JSON.stringify({ ok: false, message: 'Not pending.', page: '' })); process.exit(0); }
+  fs.writeFileSync(f, JSON.stringify(asks.filter((a) => !a.actions.some((b) => b.fields.id === id))));
+  const s = read(st, {}); s[id] = { state: req.action === 'allow' ? 'allowed' : 'denied', agent: 'art', kind: 'merge' }; fs.writeFileSync(st, JSON.stringify(s));
+  console.log(JSON.stringify({ ok: true, message: req.action === 'allow' ? 'Allowed once.' : 'Denied.', page: '' }));
+} else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
+  const req = JSON.parse(fs.readFileSync(0, 'utf-8'));
+  const s = read(st, {});
+  if (req.path === 'state') console.log(JSON.stringify({ status: 200, body: { approvals: Object.fromEntries((req.body.ids || []).filter((i) => s[i]).map((i) => [i, s[i]])) } }));
+  else console.log(JSON.stringify({ status: 404, body: { error: 'no' } }));
 } else process.exit(2);
 `);
     // A piece that doesn't understand agent owners (no owners: 2): the household owner's only, as the Inbox has it.
     piece(h.home, 'deskonly', {}, `#!${process.execPath}
 const fs = require('node:fs');
+const f = process.env.LOOM_HOME + '/household-asks.json';
 if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
-  const f = process.env.LOOM_HOME + '/household-asks.json';
   console.log(JSON.stringify({ v: 2, asks: fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [] }));
+} else if (process.argv[2] === 'ui' && process.argv[3] === 'act') {
+  const req = JSON.parse(fs.readFileSync(0, 'utf-8'));
+  const asks = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [];
+  fs.writeFileSync(f, JSON.stringify(asks.filter((a) => !a.actions.some((b) => b.fields.id === req.fields.id))));
+  console.log(JSON.stringify({ ok: true, message: 'Done.', page: '' }));
+} else process.exit(2);
+`);
+    // A stand-in tasks piece: `run show t-N` answers any task under 1000 (t-7 is closed), none above.
+    piece(h.home, 'tasks', { role: 'tasks' }, `#!${process.execPath}
+const fs = require('node:fs');
+if (process.argv[2] === 'ui' && process.argv[3] === '--json') console.log(JSON.stringify({ v: 2, tab: { label: 'Tasks' }, asks: [] }));
+else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
+  const req = JSON.parse(fs.readFileSync(0, 'utf-8'));
+  const id = req.body && req.body.argv && req.body.argv[1];
+  fs.appendFileSync(process.env.LOOM_HOME + '/tasks-shows.log', id + '\\n');
+  const n = Number(String(id).slice(2));
+  const out = n < 1000 ? { ok: true, task: { id, title: 'Task ' + id, status: n === 7 ? 'closed' : 'open' } } : { ok: false, errors: ['E_UNKNOWN_ID'] };
+  console.log(JSON.stringify({ status: 200, body: { exit: 0, stdout: JSON.stringify(out) } }));
 } else process.exit(2);
 `);
     piece(h.home, 'runtime', { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { spawn: { label: 'Spawn', kind: 'agent' }, relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } }, RUNTIME_BIN);
@@ -703,12 +740,13 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       ]));
       clearPieceCache();
       const r = await page(tok.jonathan, 'GET', `/comms/${t.id}`);
-      const asks = r.body.asks as Array<{ id: string; piece: string; text: string; if_yes: string; actions: Array<{ action: string }> }>;
-      expect(asks.map((a) => a.id)).toEqual(['a-00000001']);
-      expect(asks[0]).toMatchObject({ piece: 'approvals', text: 'Can I a-00000001?', if_yes: 'I do it.' });
-      expect(asks[0].actions.map((a) => a.action)).toEqual(['allow', 'deny']);
-      // Whether it's still open, by the id the thread's answer gives (web/src/ask-open.ts): yes; a made-up one, no.
-      expect((await page(tok.jonathan, 'GET', `/inbox/open?a=${asks[0].id}`)).body).toEqual({ open: true });
+      const asks = r.body.asks as Array<{ ref: string; key: string; state: string; text: string; if_yes: string; decide: { allow: { action: string }; deny: { action: string }; source: { id: string } } }>;
+      expect(asks.map((a) => a.ref)).toEqual(['approval:a-00000001']);
+      expect(asks[0]).toMatchObject({ state: 'open', kind: 'permission', text: 'Can I a-00000001?', why: 'Because.', if_yes: 'I do it.', fine: 'relay · a-00000001' });
+      expect([asks[0].decide.allow.action, asks[0].decide.deny.action, asks[0].decide.source.id]).toEqual(['allow', 'deny', 'approvals']);
+      // Whether it's still open, by its Inbox key (web/src/ask-open.ts): yes; and by the approval's id; a made-up one, no.
+      expect((await page(tok.jonathan, 'GET', `/inbox/open?k=${asks[0].key}`)).body).toEqual({ open: true });
+      expect((await page(tok.jonathan, 'GET', '/inbox/open?a=a-00000001')).body).toEqual({ open: true });
       expect((await page(tok.jonathan, 'GET', '/inbox/open?a=a-0000ffff')).body).toEqual({ open: false });
       // A need that waits on it (its digest's waits_on): the approval is drawn on the need, its own card leaves the
       // Inbox, and it's still open by its id.
@@ -716,12 +754,281 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       writeDigest(agentDir(h, 'art'), { conversation: cv, run: 'r-waits' }, { summary: 'Asked.', needs_owner: { ask: 'OK to do the thing?', refs: ['a-00000001'],
         why: 'Because.', if_yes: 'I do it.', if_no: 'I don\'t.', waits_on: { approval: 'a-00000001' } } } as never);
       clearPieceCache();
-      expect((await page(tok.jonathan, 'GET', `/inbox/open?a=${asks[0].id}`)).body).toEqual({ open: true });
-      expect(((await page(tok.jonathan, 'GET', `/comms/${other.id}/since/0`)).body.asks as Array<{ id: string }>).map((a) => a.id)).toEqual(['a-00000002']);
+      expect((await page(tok.jonathan, 'GET', '/inbox/open?a=a-00000001')).body).toEqual({ open: true });
+      expect(((await page(tok.jonathan, 'GET', `/comms/${other.id}/since/0`)).body.asks as Array<{ ref: string }>).map((a) => a.ref)).toEqual(['approval:a-00000002']);
       // Another owner of art never sees it: the thread itself is refused.
       expect((await page(tok.sam, 'GET', `/comms/${t.id}`)).status).toBe(403);
       rmSync(join(h.home, 'approvals-asks.json'));
       clearPieceCache();
+    });
+  });
+
+  describe('t-1979: one ask, in the thread and the Inbox; answered either place, the thread says who and when', () => {
+    const permission = (id: string, conversation: string, agent = 'art') => ({ text: `Can I ${id}?`, why: 'Because.', if_yes: 'I do it.', if_no: 'I don\'t.', kind: 'permission', tone: 'warn', agent, conversation,
+      at: new Date(Date.now() - 60_000 + Number.parseInt(id.slice(2), 16)).toISOString(),
+      actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] });
+    const act = (token: string, path: string, fields: Record<string, string>) => fetch(`${base}${path}`, { method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'x-loom-fetch': '1', authorization: `Bearer ${token}` }, body: new URLSearchParams(fields) })
+      .then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) as { ok?: boolean; message?: string } }));
+    type View = { ref: string; key: string; state: string; text: string; answer?: { verdict: string; by?: string; at?: string }; yesNo?: true; reply?: { action: string; source: { act?: string } } };
+    const asksOf = async (t: { id: string }, token = tok.jonathan) => (await page(token, 'GET', `/comms/${t.id}`)).body.asks as View[];
+
+    it('an Allow from the thread (or the Inbox: the same /act) leaves the Inbox, and the thread keeps it, allowed by its member', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000021', t.conversation)]));
+      rmSync(join(h.home, 'approvals-state.json'), { force: true });
+      clearPieceCache();
+      try {
+        expect((await asksOf(t)).map((a) => [a.ref, a.state])).toEqual([['approval:a-00000021', 'open']]);
+        const r = await act(tok.jonathan, '/act/approvals', { _action: 'allow', id: 'a-00000021' });
+        expect(r.body).toMatchObject({ ok: true });
+        clearPieceCache();
+        expect((await page(tok.jonathan, 'GET', '/inbox/open?a=a-00000021')).body).toEqual({ open: false });
+        const after = await asksOf(t);
+        expect(after).toHaveLength(1);
+        expect(after[0]).toMatchObject({ ref: 'approval:a-00000021', state: 'answered', text: 'Can I a-00000021?', if_yes: 'I do it.', answer: { verdict: 'allowed', by: 'jonathan' } });
+        expect(Date.parse(after[0].answer!.at!)).toBeGreaterThan(Date.now() - 60_000);
+        // No buttons on an answered one.
+        expect(after[0]).not.toHaveProperty('decide');
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('one answered in the Inbox before the thread ever showed it is still kept, denied; one that left on its own says how', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000022', t.conversation), permission('a-00000023', t.conversation)]));
+      rmSync(join(h.home, 'approvals-state.json'), { force: true });
+      clearPieceCache();
+      try {
+        expect((await act(tok.jonathan, '/act/approvals', { _action: 'deny', id: 'a-00000022' })).body).toMatchObject({ ok: true });
+        clearPieceCache();
+        let v = await asksOf(t);
+        expect(v.map((a) => [a.ref, a.state, a.answer?.verdict])).toEqual([['approval:a-00000022', 'answered', 'denied'], ['approval:a-00000023', 'open', undefined]]);
+        // a-00000023 expires (the piece's own clock): out of the manifest, its state expired.
+        writeFileSync(join(h.home, 'approvals-asks.json'), '[]');
+        writeFileSync(join(h.home, 'approvals-state.json'), JSON.stringify({ 'a-00000022': { state: 'denied' }, 'a-00000023': { state: 'expired' } }));
+        clearPieceCache();
+        v = await asksOf(t);
+        expect(v.map((a) => [a.ref, a.state, a.answer?.verdict, a.answer?.by])).toEqual([['approval:a-00000022', 'answered', 'denied', 'jonathan'], ['approval:a-00000023', 'answered', 'expired', undefined]]);
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); rmSync(join(h.home, 'approvals-state.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('a needs_owner raised in the thread: Yes and No and words, answered as the Inbox does, then kept: answered yes by its member', async () => {
+      mode('ok');
+      const t = await open();
+      const art = agentDir(h, 'art');
+      const cv = recordTurn(art, 'art', { venue: 'loom', place: t.id, label: 'thread', at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime').conversation;
+      expect(cv).toBe(t.conversation);
+      const d = writeDigest(art, { conversation: cv, run: 'r-ask' }, { summary: 'Asked.', needs_owner: { ask: 'Ship the comm screen?', why: 'CI is green.', if_yes: 'I merge it.', if_no: 'It waits.', refs: ['t-5'], answers: 'yes-no' } } as never) as unknown as { id?: string };
+      void d;
+      let v = await asksOf(t);
+      expect(v).toHaveLength(1);
+      expect(v[0]).toMatchObject({ state: 'open', kind: 'question', text: 'Ship the comm screen?', why: 'CI is green.', if_yes: 'I merge it.', refs: ['t-5'], yesNo: true, reply: { action: 'needs-reply', source: { act: '/a/art/act/loom' } } });
+      // Another member can't read it, nor answer it in its thread.
+      expect((await page(tok.loren, 'GET', `/comms/${t.id}`)).status).toBe(403);
+      const digest = v[0].ref.slice('digest:'.length);
+      const r = await act(tok.jonathan, '/a/art/act/loom', { _action: 'needs-answer', conversation: t.conversation, digest, answer: 'yes' });
+      expect(r.body).toMatchObject({ ok: true });
+      v = await asksOf(t);
+      expect(v.map((a) => [a.state, a.answer?.verdict, a.answer?.by])).toEqual([['answered', 'yes', 'jonathan']]);
+    });
+
+    it('an ask\'s kept words are sealed like the thread\'s, and swept with them; the answer stays', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000041', t.conversation)]));
+      clearPieceCache();
+      try {
+        await asksOf(t);
+        const row = () => { const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true }); try { return db.prepare('SELECT words, answer_json FROM comms_asks WHERE thread = ? AND ref = ?').get(t.id, 'approval:a-00000041') as { words: Buffer | null; answer_json: string | null }; } finally { db.close(); } };
+        const w = row().words!;
+        expect(w.subarray(0, 21).toString()).toBe('age-encryption.org/v1');
+        expect(w.toString('latin1')).not.toContain('Can I');
+        expect((await act(tok.jonathan, '/act/approvals', { _action: 'allow', id: 'a-00000041' })).body).toMatchObject({ ok: true });
+        clearPieceCache();
+        sweepComms(h, new Date(Date.now() + 30 * 86_400_000));
+        expect(row().words).toBeNull();
+        expect(JSON.parse(row().answer_json!)).toMatchObject({ verdict: 'allowed', by: 'jonathan' });
+        expect((await asksOf(t)).find((a) => a.ref === 'approval:a-00000041')).toMatchObject({ state: 'answered', text: '', answer: { verdict: 'allowed' } });
+        // One a piece says was asked in the future still goes with the thread's words: by when loom kept it.
+        writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{ ...permission('a-00000042', t.conversation), at: new Date(Date.now() + 60 * 86_400_000).toISOString() }]));
+        clearPieceCache();
+        await asksOf(t);
+        const fut = () => { const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true }); try { return db.prepare('SELECT words FROM comms_asks WHERE thread = ? AND ref = ?').get(t.id, 'approval:a-00000042') as { words: Buffer | null }; } finally { db.close(); } };
+        expect(fut().words).not.toBeNull();
+        sweepComms(h, new Date(Date.now() + 30 * 86_400_000));
+        expect(fut().words).toBeNull();
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('another member\'s answer never puts words into a thread that hadn\'t shown the ask; it answers one it had', async () => {
+      // Sam's thread with art: the household owner sees its asks in his own Inbox and may answer them there.
+      const t = await open(tok.sam, 'art', 'hi from sam');
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000051', t.conversation), permission('a-00000052', t.conversation)]));
+      rmSync(join(h.home, 'approvals-state.json'), { force: true });
+      clearPieceCache();
+      try {
+        const rows = () => { const db = new BetterSqlite3(join(h.home, COMMS_DB), { readonly: true }); try { return (db.prepare('SELECT ref FROM comms_asks WHERE thread = ? ORDER BY ref').all(t.id) as Array<{ ref: string }>).map((r) => r.ref); } finally { db.close(); } };
+        // a-00000051, answered by Jonathan before Sam's thread ever showed it: nothing kept in Sam's thread.
+        expect((await act(tok.jonathan, '/act/approvals', { _action: 'allow', id: 'a-00000051' })).body).toMatchObject({ ok: true });
+        clearPieceCache();
+        expect(rows()).toEqual([]);
+        // a-00000052, shown in Sam's thread, then denied by Jonathan: Sam's thread says so, by Jonathan.
+        expect((await asksOf(t, tok.sam)).map((a) => [a.ref, a.state])).toEqual([['approval:a-00000052', 'open']]);
+        expect((await act(tok.jonathan, '/act/approvals', { _action: 'deny', id: 'a-00000052' })).body).toMatchObject({ ok: true });
+        clearPieceCache();
+        writeFileSync(join(h.home, 'approvals-state.json'), JSON.stringify({ 'a-00000051': { state: 'allowed' }, 'a-00000052': { state: 'denied' } }));
+        const v = await asksOf(t, tok.sam);
+        expect(v.map((a) => [a.ref, a.state, a.answer?.verdict, a.answer?.by])).toEqual([['approval:a-00000052', 'answered', 'denied', 'jonathan']]);
+        expect(rows()).toEqual(['approval:a-00000052']);
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); rmSync(join(h.home, 'approvals-state.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('an agent owner gets no Allow on a kind only the household owner gives, flagged or not; a merge, yes', async () => {
+      const t = await open(tok.sam, 'art', 'hi from sam');
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000061', t.conversation), permission('a-00000062', t.conversation), permission('a-00000063', t.conversation), permission('a-00000064', t.conversation)]));
+      // a-63's state names no kind, a-64 the piece doesn't know: neither has an Allow for him.
+      writeFileSync(join(h.home, 'approvals-state.json'), JSON.stringify({ 'a-00000061': { state: 'pending', agent: 'art', kind: 'vouch-wake' }, 'a-00000062': { state: 'pending', agent: 'art', kind: 'merge' }, 'a-00000063': { state: 'pending', agent: 'art' } }));
+      clearPieceCache();
+      try {
+        const v = (await page(tok.sam, 'GET', `/comms/${t.id}`)).body.asks as Array<{ ref: string; decide?: unknown; ownerOnly?: true }>;
+        expect(v.map((a) => [a.ref, !!a.decide, !!a.ownerOnly])).toEqual([['approval:a-00000061', false, true], ['approval:a-00000062', true, false], ['approval:a-00000063', false, true], ['approval:a-00000064', false, true]]);
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); rmSync(join(h.home, 'approvals-state.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('an approval asked from here stays here when a Needs you elsewhere waits on it; a Needs you here never carries another conversation\'s', async () => {
+      const t = await open();
+      const art = agentDir(h, 'art');
+      // a-71, asked from this thread; a Needs you in a wake waits on it.
+      const wake = recordTurn(art, 'art', { venue: 'wake', place: 'lane:w71', label: 'w71', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:clock').conversation;
+      writeDigest(art, { conversation: wake, run: 'r-71' }, { summary: 'Waits.', needs_owner: { ask: 'OK to do the wake thing?', refs: ['a-00000071'], waits_on: { approval: 'a-00000071' } } } as never);
+      // a-72, asked from the wake; a Needs you here waits on it.
+      recordTurn(art, 'art', { venue: 'loom', place: t.id, label: 'thread', at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');
+      writeDigest(art, { conversation: t.conversation, run: 'r-72' }, { summary: 'Waits too.', needs_owner: { ask: 'OK to do the thread thing?', refs: ['a-00000072'], waits_on: { approval: 'a-00000072' }, answers: 'yes-no' } } as never);
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{ ...permission('a-00000071', t.conversation), text: 'Run the wake thing?' }, { ...permission('a-00000072', wake), text: 'Run the other thing?' }]));
+      clearPieceCache();
+      try {
+        const v = (await page(tok.jonathan, 'GET', `/comms/${t.id}`)).body.asks as Array<{ ref: string; text: string; decide?: { allow: { fields: { id: string } } }; yesNo?: true; reply?: unknown }>;
+        const own = v.find((a) => a.ref === 'approval:a-00000071');
+        expect(own).toMatchObject({ text: 'Run the wake thing?', decide: { allow: { fields: { id: 'a-00000071' } } } });
+        const need = v.find((a) => a.ref.startsWith('digest:'));
+        expect(need).toMatchObject({ text: 'OK to do the thread thing?' });
+        expect(need).not.toHaveProperty('decide');
+        expect(need).not.toHaveProperty('yesNo');
+        expect(JSON.stringify(v)).not.toContain('Run the other thing?');
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('an answer goes through even when its thread can\'t keep it (comms.db read-only)', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([permission('a-00000081', t.conversation)]));
+      clearPieceCache();
+      const db = join(h.home, COMMS_DB);
+      try {
+        await asksOf(t);
+        chmodSync(db, 0o400);
+        const r = await act(tok.jonathan, '/act/approvals', { _action: 'allow', id: 'a-00000081' });
+        expect(r.status).toBe(200);
+        expect(r.body).toMatchObject({ ok: true });
+      } finally { chmodSync(db, 0o600); rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache(); }
+    });
+
+    it('the brief tells a body its asks show in the thread', async () => {
+      const t = await open();
+      const d = await api(tok.runtime, 'comms/adapter', { op: 'describe', place: t.id, agent: 'art' });
+      const brief = d.body.brief as string[];
+      expect(brief.length).toBeLessThanOrEqual(3);
+      expect(brief.some((l) => /shows right here in the thread as a card with its buttons/.test(l))).toBe(true);
+      expect(brief.every((l) => l.length <= 300)).toBe(true);
+    });
+  });
+
+  describe('t-1979: the loom things a thread names, as chips, only what its member could open', () => {
+    type Card = { kind: string; title: string; status?: string; page?: string; href?: string } | null;
+    const refs = async (token: string, t: { id: string }, rs: string[]) => {
+      const r = await page(token, 'GET', `/comms/${t.id}/refs?${rs.map((x) => `r=${encodeURIComponent(x)}`).join('&')}`);
+      return { status: r.status, refs: r.body.refs as Record<string, Card> };
+    };
+    it('the household owner: agents, conversations, a pull request; nothing for what isn\'t there', async () => {
+      const t = await open();
+      // Its conversation, once the runtime has recorded a turn in it.
+      recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: t.id, label: 'thread', at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' } as never, 'runtime:runtime');
+      const r = await refs(tok.jonathan, t, ['agent:art', 'at:mark', t.conversation, 'github:acme/app#3', 'knowledge:no-such-page', 'project:nope', 'person:nobody', 't-99999', 'a-0000beef', 'bogus', 'note:x/y']);
+      expect(r.status).toBe(200);
+      expect(r.refs['agent:art']).toMatchObject({ kind: 'agent', page: 'a/art' });
+      expect(r.refs['at:mark']).toMatchObject({ kind: 'agent', page: 'a/mark' });
+      expect(r.refs[t.conversation]).toMatchObject({ kind: 'conv', page: `conversation/${t.conversation}` });
+      expect(r.refs['github:acme/app#3']).toMatchObject({ kind: 'pr', title: 'acme/app#3', href: 'https://github.com/acme/app/issues/3' });
+      for (const x of ['knowledge:no-such-page', 'project:nope', 'person:nobody', 't-99999', 'a-0000beef', 'note:x/y']) expect(r.refs[x], x).toBeNull();
+      // A ref of no known shape isn't answered at all.
+      expect(r.refs).not.toHaveProperty('bogus');
+    });
+    it('the household owner: a knowledge page, a project, a person and a note of the thread\'s agent; an agent owner: none of the first three', async () => {
+      await knowledgeWrite(agentDir(h, 'art'), { slug: 'dns-health', title: 'DNS health', domain: 'homelab', body: 'It resolves.',
+        citations: [{ claim: 'It resolves.', source_kind: 'docs', source_locator: 'https://example.com/dns', excerpt: 'It resolves.' }] } as never, 'art');
+      { const st = openProjectsStore(agentDir(h, 'art'))!; try { st.write({ slug: 'pond', name: 'The Pond' } as never); } finally { st.close(); } }
+      { const nt = new Notes(agentDir(h, 'art')); try { nt.write('pond/plan', 'The plan.', { lifespan: 'keep', by: 'art' }); } finally { nt.close(); } }
+      const mine = await open();
+      const r = await refs(tok.jonathan, mine, ['knowledge:dns-health', 'project:pond', 'person:sam', 'note:pond/plan']);
+      expect(r.refs['knowledge:dns-health']).toMatchObject({ kind: 'knowledge', title: 'DNS health', page: 'knowledge/dns-health' });
+      expect(r.refs['project:pond']).toMatchObject({ kind: 'project', title: 'The Pond', page: 'projects/pond' });
+      expect(r.refs['person:sam']).toMatchObject({ kind: 'person', page: 'people/sam' });
+      expect(r.refs['note:pond/plan']).toMatchObject({ kind: 'note', title: 'pond/plan' });
+      const sams = await open(tok.sam, 'art', 'hi again');
+      // A conversation of mark's (sam owns art only): a card for Jonathan, words for Sam.
+      const marks = recordTurn(agentDir(h, 'mark'), 'mark', { venue: 'wake', place: 'lane:x', label: 'mark lane', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' } as never, 'runtime:clock').conversation;
+      expect((await refs(tok.jonathan, mine, [marks])).refs[marks]).toMatchObject({ kind: 'conv', title: 'mark lane' });
+      expect((await refs(tok.sam, sams, [marks])).refs[marks]).toBeNull();
+      const s = await refs(tok.sam, sams, ['knowledge:dns-health', 'project:pond', 'person:sam', 'note:pond/plan']);
+      for (const x of ['knowledge:dns-health', 'project:pond', 'person:sam']) expect(s.refs[x], x).toBeNull();
+      // The note is his own thread's agent's.
+      expect(s.refs['note:pond/plan']).toMatchObject({ kind: 'note' });
+    });
+    it('an agent owner: their own agent only; another agent, Knowledge, people and projects stay words; another\'s thread is refused', async () => {
+      const t = await open(tok.sam, 'art', 'hi from sam');
+      const r = await refs(tok.sam, t, ['agent:art', 'at:mark', 'agent:mark', 'knowledge:dns', 'person:jonathan', 'project:pond']);
+      expect(r.refs['agent:art']).toMatchObject({ kind: 'agent' });
+      for (const x of ['at:mark', 'agent:mark', 'knowledge:dns', 'person:jonathan', 'project:pond']) expect(r.refs[x], x).toBeNull();
+      expect((await refs(tok.loren, t, ['agent:art'])).status).toBe(403);
+      expect((await refs(tok.jonathan, t, ['agent:art'])).status).toBe(403);
+    });
+    it('an approval pending in the reader\'s own Inbox, from elsewhere, is a chip too', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{ text: 'Can I deploy?', kind: 'permission', agent: 'art', conversation: 'cv-0000000000aa',
+        actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00000091' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00000091' } }] }]));
+      clearPieceCache();
+      try {
+        expect((await refs(tok.jonathan, t, ['a-00000091'])).refs['a-00000091']).toMatchObject({ kind: 'approval', title: 'Can I deploy?', status: 'Waiting on you' });
+        // Loren (pond-bot's owner) has no such approval in his Inbox: words.
+        const lorens = await open(tok.loren, 'pond-bot', 'hi');
+        expect((await refs(tok.loren, lorens, ['a-00000091'])).refs['a-00000091']).toBeNull();
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache(); }
+    });
+    it('answers at most 60 refs a read, and only refs of a known shape', async () => {
+      const t = await open();
+      const asked = Array.from({ length: 70 }, (_, i) => `agent:a${i}`);
+      expect(Object.keys((await refs(tok.jonathan, t, asked)).refs)).toHaveLength(60);
+      const odd = await refs(tok.jonathan, t, ['evil:x', 'note:a/../b', 't-1"x', 'agent:art']);
+      expect(Object.keys(odd.refs)).toEqual(['agent:art']);
+    });
+    it('a task: the tasks piece\'s card for the household owner, at most 20 a read; for an agent owner, only what his thread\'s work knows', async () => {
+      const t = await open();
+      const r = await refs(tok.jonathan, t, ['t-7', 't-5000']);
+      expect(r.refs['t-7']).toMatchObject({ kind: 'task', title: 'Task t-7', status: 'Closed', page: 'p/tasks/task/t-7' });
+      expect(r.refs['t-5000']).toBeNull();
+      const many = await refs(tok.jonathan, t, Array.from({ length: 30 }, (_, i) => `t-${100 + i}`));
+      expect(Object.values(many.refs).filter((x) => x !== null)).toHaveLength(20);
+      const sams = await open(tok.sam, 'art', 'tasks?');
+      expect((await refs(tok.sam, sams, ['t-7'])).refs['t-7']).toBeNull();
+    });
+    it('an approval is a chip in its own thread, with its state', async () => {
+      const t = await open();
+      writeFileSync(join(h.home, 'approvals-asks.json'), JSON.stringify([{ text: 'Can I merge?', kind: 'permission', agent: 'art', conversation: t.conversation,
+        actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00000031' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00000031' } }] }]));
+      clearPieceCache();
+      try {
+        expect((await refs(tok.jonathan, t, ['a-00000031'])).refs['a-00000031']).toMatchObject({ kind: 'approval', title: 'Can I merge?', status: 'Waiting on you', page: 'inbox' });
+        // Sam owns art too, but the thread isn't his: refused whole.
+        expect((await refs(tok.sam, t, ['a-00000031'])).status).toBe(403);
+      } finally { rmSync(join(h.home, 'approvals-asks.json'), { force: true }); clearPieceCache(); }
     });
   });
 
@@ -734,9 +1041,16 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       writeFileSync(join(h.home, 'household-asks.json'), JSON.stringify([ask('a-0000000a', mine.conversation, 'art'), ask('a-0000000b', lorens.conversation, 'pond-bot')]));
       clearPieceCache();
       try {
-        expect(((await page(tok.jonathan, 'GET', `/comms/${mine.id}`)).body.asks as Array<{ id: string; piece: string }>).map((a) => [a.id, a.piece])).toEqual([['a-0000000a', 'deskonly']]);
+        expect(((await page(tok.jonathan, 'GET', `/comms/${mine.id}`)).body.asks as Array<{ ref: string; decide: { source: { id: string } } }>).map((a) => [a.ref, a.decide.source.id])).toEqual([['ask:deskonly:a-0000000a', 'deskonly']]);
         expect((await page(tok.loren, 'GET', `/comms/${lorens.id}`)).body.asks).toEqual([]);
         expect((await page(tok.loren, 'GET', `/comms/${lorens.id}/since/0`)).body.asks).toEqual([]);
+        // Another piece's ask, allowed from the thread (the same /act): kept answered, never taken for an approval's id.
+        const r = await fetch(`${base}/act/deskonly`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'x-loom-fetch': '1', authorization: `Bearer ${tok.jonathan}` },
+          body: new URLSearchParams({ _action: 'allow', id: 'a-0000000a' }) });
+        expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
+        clearPieceCache();
+        const after = (await page(tok.jonathan, 'GET', `/comms/${mine.id}`)).body.asks as Array<{ ref: string; state: string; answer?: { verdict: string; by: string } }>;
+        expect(after.map((a) => [a.ref, a.state, a.answer?.verdict, a.answer?.by])).toEqual([['ask:deskonly:a-0000000a', 'answered', 'allowed', 'jonathan']]);
       } finally { rmSync(join(h.home, 'household-asks.json')); clearPieceCache(); }
     });
   });
