@@ -40,9 +40,10 @@ export function useSplitMode(): [React.RefObject<HTMLDivElement | null>, SplitMo
 
 const isFolder = (f: SplitFolder): f is Extract<SplitFolder, { id: string }> => 'id' in f;
 
-export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop, search, listTitle, listMeta, list, reader, open, onBack, backLabel, blank, className }: {
+export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop, search, listTitle, listMeta, list, reader, open, onBack, backLabel, blank, className, showZeroCounts = false }: {
   /** The app's name: the landmarks say it ("Inbox folders", "Inbox list"). */
   label: string;
+  showZeroCounts?: boolean;
   folders: SplitFolder[];
   folder: string;
   onFolder: (id: string) => void;
@@ -109,7 +110,7 @@ export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop,
               {...(isOn ? { 'aria-pressed': isOn(f.id) } : { 'aria-current': f.id === folder ? 'true' as const : undefined })} onClick={() => onFolder(f.id)}>
               {f.icon && <Icon name={f.icon} size="sm" />}
               <span className="loom-split__folder-name">{f.label}</span>
-              {f.count !== undefined && f.count > 0 && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
+              {f.count !== undefined && (showZeroCounts || f.count > 0) && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
             </button>
           </li>
         ) : <li key={`h${n}`} className="loom-split__heading">{f.heading}</li>)}
@@ -120,7 +121,7 @@ export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop,
     <div className="loom-split__chips" role="group" aria-label={`${label} folders`}>
       {items.map((f) => (
         <button key={f.id} type="button" aria-pressed={isOn ? isOn(f.id) : f.id === folder} onClick={() => onFolder(f.id)}>
-          {f.label}{f.count !== undefined && f.count > 0 && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
+          {f.label}{f.count !== undefined && (showZeroCounts || f.count > 0) && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
         </button>
       ))}
     </div>
