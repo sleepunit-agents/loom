@@ -779,6 +779,8 @@ function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; ma
 /** An ask, answered here as the Inbox would answer it: its piece's own action, with this page's form token, drawn as
  *  the 000h permission (no implied consent: a deliberate Allow once or Deny). */
 function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: string; agentName: string; onAnswered: () => void }) {
+  const { stale } = useEnv();
+  const sending = useRef(false);
   const [busy, setBusy] = useState(false);
   const [decision, setDecision] = useState<'pending' | 'allowed' | 'denied'>('pending');
   const [said, setSaid] = useState<string | null>(null);
@@ -788,18 +790,20 @@ function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: 
   const { live, check } = useAskLive({ a: a.id });
   const answer = async (d: 'allowed' | 'denied') => {
     const b = d === 'allowed' ? yes : no;
-    if (!b) return;
+    if (!b || sending.current || busy || stale) return;
     // A danger button (Deny) or one that says so asks first, as the Inbox's does (blocks.tsx ActButton).
     if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return;
-    setBusy(true);
-    if (!(await check())) { setBusy(false); return; }
-    const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
-    setBusy(false);
-    if (r.ok) { setDecision(d); setSaid(r.message || null); onAnswered(); } else setSaid(r.message || 'That didn\'t go through.');
+    sending.current = true;
+    try {
+      if (!(await check())) return;
+      setBusy(true);
+      const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
+      if (r.ok) { setDecision(d); setSaid(r.message || null); onAnswered(); } else setSaid(r.message || 'That didn\'t go through.');
+    } finally { setBusy(false); sending.current = false; }
   };
   return (
     <div className="comms-ask" aria-label={`${who} asks`}>
-      <AgentChatPermission title={a.text} description={a.why ?? `${who} is asking you.`} decision={decision} disabled={busy || (decision === 'pending' && live !== 'live')}
+      <AgentChatPermission title={a.text} description={a.why ?? `${who} is asking you.`} decision={decision} disabled={busy || stale || (decision === 'pending' && live !== 'live')}
         onDecision={(d) => void answer(d)} allowLabel={yes.label} denyLabel={no?.label ?? 'Deny'}
         scope={(a.if_yes || a.if_no || a.fine) ? (
           <>

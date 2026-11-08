@@ -3,7 +3,8 @@
 // kept on this device (page.ts, the service worker) may be of an ask answered since, and a copy can't tell: so no
 // answer from loom (offline, a cached copy stamped x-loom-saved-at) leaves the buttons off. Used by the Inbox, the
 // asks inside a Comms thread and the desktop's Needs you.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { onLive } from './page';
 import type { Env } from './blocks';
 
 export type Live = 'checking' | 'live' | 'gone' | 'unknown';
@@ -31,9 +32,28 @@ export const LIVE_SAYS: Record<Exclude<Live, 'live'>, string> = {
  * right before a send. `null`: nothing to answer, so nothing to check. */
 export function useAskLive(ref: AskRef | null, recheck: unknown = 0): { live: Live; check: () => Promise<boolean> } {
   const id = ref ? ('k' in ref ? `k:${ref.k}` : `a:${ref.a}`) : '';
-  const [live, setLive] = useState<Live>(ref ? 'checking' : 'live');
-  const check = async () => { if (!ref) return true; const l = await stillOpen(ref); setLive(l); return l === 'live'; };
-  useEffect(() => { if (!ref) { setLive('live'); return; } setLive('checking'); void check(); }, [id, recheck]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const [state, setState] = useState<{ id: string; live: Live }>({ id, live: ref ? 'checking' : 'live' });
+  const current = useRef(id);
+  current.current = id;
+  const live = state.id === id ? state.live : ref ? 'checking' : 'live';
+  const check = async () => {
+    if (!ref) return true;
+    const l = await stillOpen(ref);
+    if (current.current !== id) return false;
+    setState({ id, live: l });
+    return l === 'live';
+  };
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      const l = ref ? await stillOpen(ref) : 'live';
+      if (active) setState({ id, live: l });
+    };
+    // Keep the last confirmed answer while checking the same ask. A different id starts gated above.
+    void refresh();
+    const stop = onLive(() => void refresh());
+    return () => { active = false; stop(); };
+  }, [id, recheck]); // eslint-disable-line react-hooks/exhaustive-deps
   return { live, check };
 }
 

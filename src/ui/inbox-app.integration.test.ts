@@ -17,6 +17,7 @@ import { chromium, type Browser, type Page } from 'playwright-core';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { answerNeeds, createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
+import { changed } from './live.js';
 import { closeAllBackends } from '../backends/index.js';
 
 const root = new URL('../../', import.meta.url).pathname;
@@ -87,6 +88,76 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
   const reader = '.loom-split__reader';
   /** Screenshots for a PR's evidence, when LOOM_SHOTS names a directory. */
   const shot = async (p: Page, name: string) => { if (process.env.LOOM_SHOTS) await p.screenshot({ path: join(process.env.LOOM_SHOTS, `${name}.png`) }); };
+
+  it('an open ask keeps its computed colours and enabled buttons through repeated events and rechecks', async () => {
+    ask('Keep these answer buttons steady?');
+    const p = await screen(1280, 800, '/inbox?t=*inbox');
+    await row(p, 'Keep these answer buttons steady?').click();
+    const buttons = p.locator(`${reader} button`).filter({ hasText: /^(Yes|No|Done)$/ });
+    await expect.poll(() => buttons.count()).toBe(3);
+    await p.evaluate((selector) => {
+      const w = window as unknown as { samples: string[]; sample: () => void; baseline: string };
+      w.samples = [];
+      w.sample = () => {
+        const values = Array.from(document.querySelectorAll<HTMLButtonElement>(`${selector} button`))
+          .filter((b) => /^(Yes|No|Done)$/.test(b.textContent ?? ''))
+          .map((b) => { const s = getComputedStyle(b); return [b.textContent, b.disabled, s.color, s.backgroundColor, s.opacity]; });
+        const value = JSON.stringify(values);
+        if (value !== w.baseline) w.samples.push(value);
+      };
+      w.sample(); w.baseline = w.samples.pop()!;
+      const frame = () => { w.sample(); requestAnimationFrame(frame); };
+      requestAnimationFrame(frame);
+    }, reader);
+    let pages = 0, checks = 0;
+    // Hold both checks in flight so a pending refresh lasts many browser frames.
+    await p.route((url) => url.pathname === '/inbox', async (r) => {
+      if (!r.request().headers().accept?.includes('application/json')) return r.continue();
+      pages++; await new Promise((resolve) => setTimeout(resolve, 250)); await r.continue();
+    });
+    await p.route('**/inbox/open?*', async (r) => {
+      checks++; await new Promise((resolve) => setTimeout(resolve, 250)); await r.continue();
+    });
+    for (let n = 0; n < 3; n++) {
+      const before = pages;
+      changed();
+      await expect.poll(() => pages).toBeGreaterThan(before);
+      await p.waitForTimeout(350);
+    }
+    // Picking the same ask is another background check, not a reason to remove its buttons.
+    await row(p, 'Keep these answer buttons steady?').click();
+    await p.waitForTimeout(350);
+    expect(await p.evaluate(() => (window as unknown as { samples: string[] }).samples)).toEqual([]);
+    expect(checks).toBeGreaterThanOrEqual(4);
+    for (const b of await buttons.all()) expect(await b.isEnabled()).toBe(true);
+    await p.context().close();
+  });
+
+  it('a send-time check leaves the other answers bright and prevents a second answer', async () => {
+    ask('Wait for the check before sending?');
+    const p = await screen(1280, 800, '/inbox?t=*inbox', false, true);
+    await row(p, 'Wait for the check before sending?').click();
+    const yes = p.locator(`${reader} button:text-is("Yes")`);
+    await yes.waitFor();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let checks = 0, posts = 0;
+    await p.route('**/inbox/open?*', async (r) => { checks++; await held; await r.fulfill({ json: { open: true } }); });
+    await p.route('**/act/**', (r) => { posts++; return r.fulfill({ json: { ok: true } }); });
+    const no = p.locator(`${reader} button:text-is("No")`);
+    const appearance = () => no.evaluate((b) => { const s = getComputedStyle(b); return [s.color, s.backgroundColor, (b as HTMLButtonElement).disabled]; });
+    const before = await appearance();
+    await yes.click();
+    await expect.poll(() => checks).toBe(1);
+    expect(posts).toBe(0);
+    expect(await appearance()).toEqual(before);
+    await p.locator(`${reader} button:text-is("Done")`).click();
+    expect(checks).toBe(1);
+    expect(posts).toBe(0);
+    release();
+    await expect.poll(() => posts).toBe(1);
+    await p.context().close();
+  });
 
   for (const [w, hgt] of [[1280, 800], [1920, 1080]] as const) {
     it(`a big Inbox tile is three panes; picking an item reads it without a reload; Done moves it out of Needs you, at ${w}×${hgt}`, async () => {

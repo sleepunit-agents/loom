@@ -164,11 +164,15 @@ function NeedChip({ i }: { i: InboxItem }) {
   const { live, check } = useAskLive(answerable ? { k: i.key } : null);
   const env = useMemo(() => guardedEnv(outer, check), [outer, i.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
+  const sending = useRef(false);
   const say = async (answer: 'yes' | 'no') => {
-    if (busy || !i.reply) return;
-    setBusy(true);
-    await env.withSource(i.source).send('needs-answer', { ...i.reply.fields, answer });
-    setBusy(false);
+    if (sending.current || busy || outer.stale || !i.reply) return;
+    sending.current = true;
+    try {
+      if (!(await check())) return;
+      setBusy(true);
+      await outer.withSource(i.source).send('needs-answer', { ...i.reply.fields, answer });
+    } finally { setBusy(false); sending.current = false; }
   };
   const open = () => outer.go(needHref(i));
   const sub = [asks, p.why ?? i.outcome].filter(Boolean).join(' · ');
@@ -182,8 +186,8 @@ function NeedChip({ i }: { i: InboxItem }) {
         <span className="loom-nchip__acts" role="group" aria-label="Your answer">
           {answerable && live !== 'live' ? <span className="loom-nchip__live loom-data" role="status" data-live={live} title={LIVE_SAYS[live as Exclude<typeof live, 'live'>]}>
             {live === 'checking' ? 'checking…' : live === 'gone' ? 'answered' : 'offline'}</span>
-            : yesNo ? <><Button size="sm" disabled={busy} onClick={() => void say('yes')}>Yes</Button>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void say('no')}>No</Button></>
+            : yesNo ? <><Button size="sm" disabled={busy || outer.stale} onClick={() => void say('yes')}>Yes</Button>
+              <Button size="sm" variant="outline" disabled={busy || outer.stale} onClick={() => void say('no')}>No</Button></>
             : acts.length ? <As source={i.source}>{acts.slice(0, 2).map((b) => <ActButton key={b.action + b.label} b={b} />)}</As>
             : <Button size="sm" variant="outline" onClick={open}>{i.reply?.label || (i.approval ? 'Read and answer' : 'Open')}…</Button>}
         </span>
