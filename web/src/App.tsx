@@ -531,14 +531,16 @@ export default function App() {
   const [booting, setBooting] = useState(false);
   useLayoutEffect(() => {
     if (arrived.current || !data || waiting) return;
+    // A cold desktop chunk can land after the page data. Keep the session fresh until it can boot.
+    if (desk && !D) return;
     arrived.current = true;
     // Its sound only when it runs (never under reduced motion), and only if the person turned Sound on.
     // loom's word on Sound first: on a device that has no copy yet, the page that just landed is the first to say it.
     const soundNow = data.chrome?.prefs?.sound ?? soundOn.current;
     // A desktop boots first, once a session and only with motion allowed; the arrival (its power-on) runs as it ends.
-    if (desk && desk$?.bootsNow()) { setBooting(true); return; }
+    if (desk && D?.bootsNow()) { setBooting(true); return; }
     if (arriveOnce(document.querySelector<HTMLElement>('.loom-top h1')) && soundNow) void import('./sound').then((m) => m.chime('boot'));
-  }, [data, waiting]);
+  }, [data, waiting, D, wide]);
 
   // A page come back to with Back or Forward: back where it was, once its page is drawn.
   useLayoutEffect(() => {
