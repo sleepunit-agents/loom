@@ -426,7 +426,8 @@ details (the conversation, its venue, the refs). A plain string reads as before:
 - **Clearing itself** (src/needs-resolve.ts). Each minute (and at start, and right after an approval is answered on
   the page) core checks what each open ask waits on, through the pieces' own APIs as the household owner: the
   approvals piece's (`role: approvals`) `state` (`{ids}` → each known id's state; an unknown id is gone), the tasks
-  piece's (`role: tasks`) `run show`. Allowed, used, denied, expired or gone, or a task closed or gone: the ask is
+  piece's (`role: tasks`) `run show`. Allowed, used, denied, expired, withdrawn (the piece that filed it took it back
+  unanswered, to ask again with an up-to-date list, t-1975) or gone, or a task closed or gone: the ask is
   answered `resolved`, by `loom`, with the reason, and leaves a quiet FYI in the Inbox ("Cleared itself: the approval
   was allowed and used"). A piece that's absent or doesn't answer clears nothing.
 

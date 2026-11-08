@@ -253,11 +253,11 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     // and were the piece to answer it, core's own check still refuses: the state is allowed here, the caller a member.
     approvals({ 'a-0000beef': { ...GRANT['a-0000beef'], state: 'allowed' } });
     const pieces = (await pieceManifests(process.env)).pieces;
-    const r = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'sam', agents: ['art'] }, { ok: true, message: 'Allowed: Give Mark access to Tasks.' });
+    const r = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'sam', agents: ['art'] }, { ok: true, message: 'Allowed: Give Mark access to Tasks.' }, h);
     expect(r).toMatchObject({ ok: false, message: expect.stringMatching(/It wasn't applied: access to a piece is the household owner's to give/) });
     expect(runtimeActs()).toEqual([]);
     // And the household owner's, through the same function, is applied.
-    const ok = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'jonathan', agents: '*' }, { ok: true, message: 'Allowed.' });
+    const ok = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'jonathan', agents: '*' }, { ok: true, message: 'Allowed.' }, h);
     expect(ok).toMatchObject({ ok: true, message: 'Mark may use Tasks now.' });
     expect(runtimeActs()).toHaveLength(1);
   });
@@ -267,7 +267,7 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     const owner = { kind: 'owner' as const, who: 'jonathan', agents: '*' as const };
     for (const st of ['pending', 'denied', 'used']) {
       approvals({ 'a-0000beef': { ...GRANT['a-0000beef'], state: st } });
-      expect(await applyGrant(process.env, pieces, 'a-0000beef', owner, { ok: true, message: 'Said.' })).toEqual({ ok: true, message: 'Said.' });
+      expect(await applyGrant(process.env, pieces, 'a-0000beef', owner, { ok: true, message: 'Said.' }, h)).toEqual({ ok: true, message: 'Said.' });
     }
     expect(runtimeActs()).toEqual([]);
   });

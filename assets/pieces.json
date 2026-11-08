@@ -36,7 +36,7 @@
     {
       "name": "approvals",
       "repo": "sleepunit-agents/loom-approvals",
-      "commit": "f01b9a7e2c1b9c977cb8dcf14ed184a0dc0b027c",
+      "commit": "7a56814416c64bbf8bbbc3f527cd26ac9c7194f3",
       "version": "0.1.0",
       "label": "Approvals",
       "description": "Single-use approvals, and standing rules for merging: a body asks for one action, the owner allows or denies it on loom's Home, and it's spent once by exactly that action."

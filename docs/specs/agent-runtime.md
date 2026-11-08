@@ -283,6 +283,28 @@ Who may do what, in one place:
     everyone else's. Deny records no and nothing else. A member who owns some agents can't answer one (approvals
     refuses it, and the authority refuses a non-owner's call); a body can't spend one (only the authority does).
     Without grants yet, nothing is written: every agent may already use every piece.
+  - **Whose work it is, asked the same way** (t-1975; Jonathan, 2026-11-08: "It needs to have the site ask me"). The
+    two owner-only actions that were typed at a terminal on loom's machine are asked on loom's page too, and applied on
+    his Allow: a `vouch-wake` (target `<agent>:<w-id>,…`: 1 to 12 wake ids, each `w-` and 6 hex as the clock mints
+    them, sorted and each once, so one set has one text; the approvals piece refuses any other, filed by the clock: "Count these 5 scheduled jobs as your
+    work?", core posts `vouch-approved` to the piece with role `clock`) and a `principal-reset` (target
+    `<agent>:<cv>` with `cv-` and 12 hex, filed by the runtime: "Count this conversation as your work from now on?", core posts
+    `reset-approved` to the delivery piece). As for a grant: read back from the approvals piece, only the household
+    owner's Allow, the piece spends the approval for exactly its target and only then applies it, Deny records no.
+    The card shows exactly what Allow does, resolved by the filing piece, never only an agent's words: a vouch-wake's
+    details list each wake (its id, when it fires, its note and the start of what it runs), a principal-reset's name the
+    conversation (its label and id) and list each waiting message it counts; the approvals piece refuses a card whose
+    details leave one out. The clock files a vouch-wake by itself only for unknown wakes set from a house of the agent
+    whose body sent no principal statement (no evidence of anyone else), one card per agent at a time (a new candidate
+    withdraws the waiting card and files one with the whole list; a No is never asked again); a body that knows asks with
+    `wake ask-vouch`. More than 12: the first 12 on one card, the rest on the next once it's answered.
+    The approvals piece marks these cards `lead` (as a grant's), so an Allow core can't read back is never a quiet
+    "Allowed"; core also refuses a target that isn't the asking agent's own wakes or conversation, or is malformed,
+    and a reset for a conversation core has on record as another agent's. The applying piece checks the same on its
+    side before it spends: the clock that the wakes are that agent's clock's, the runtime that the conversation is that
+    agent's and still asked about by exactly that card.
+    Nothing an owner decides is a command for him to type: a body files the approval (or the piece does), never hands
+    him a command. `wake vouch` and `loom runtime principal --reset` at a terminal stay as the fallback.
   - **Where to see them.** The authority's page `permissions` is the household owner's Permissions app (the launcher's
     System section), and `permissions/<agent>` is one agent's, linked from its window as "What <Agent> can use".
 - **Relay pairing,** as above.
