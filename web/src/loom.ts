@@ -51,7 +51,14 @@ export interface ListItem { text: string; meta?: string; badge?: string; tone?: 
   /** Opens in place to these pairs; its page is then a link inside, named `open` (src/ui/vocab.ts RowMore). */
   more?: { items: { label: string; value: string }[]; open?: string } }
 export interface Section { id: string; title?: string; place?: 'side'; /** The older spelling, in a copy kept from before. */ side?: boolean; tone?: Tone; fold?: 'open' | 'closed'; level?: string; blocks: Block[] }
-export interface Page { title: string; intro?: string; sections: Section[]; refresh?: number }
+export interface ChangesData {
+  groups: { id: string; label: string }[];
+  rows: { id: string; group: string; title: string; repo: string; number: string; author: string; ago: string; status: string }[];
+  selected: string;
+  reader?: Page | null;
+}
+export interface Page {
+  changes?: ChangesData; title: string; intro?: string; sections: Section[]; refresh?: number }
 export interface AgentView { id: string; label: string; bg: string; fg: string; face?: { shape?: string; eyes?: string; sprite?: { facings: string[]; v: string; base: string } }; href: string; current: boolean; asks?: number; sub?: string; working?: true }
 export interface Shell {
   owner: string; admin?: boolean; scope: string; household: boolean; agents: AgentView[]; asks: number; home: string;

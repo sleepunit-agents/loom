@@ -122,7 +122,14 @@ export interface Section {
   blocks: Block[];
 }
 
+export interface ChangesData {
+  groups: { id: string; label: string }[];
+  rows: { id: string; group: string; title: string; repo: string; number: string; author: string; ago: string; status: string }[];
+  selected: string;
+  reader?: Page | null;
+}
 export interface Page {
+  changes?: ChangesData;
   title: string;
   intro?: string;
   sections: Section[];
@@ -1062,6 +1069,22 @@ export function parseManifest(value: unknown): Manifest | string {
   });
 }
 
+function changesData(value: unknown): ChangesData {
+  const c = obj(value, 'changes');
+  if (c.reader != null && obj(c.reader, 'reader').changes !== undefined) throw new Invalid('nested changes reader');
+  const r = c.reader == null ? null : obj(c.reader, 'reader');
+  const reader = r ? { title: str(r.title, 'reader.title'), intro: optStr(r.intro, 'reader.intro'), sections: sections(r.sections) } : null;
+  return {
+    groups: arr(c.groups, 'changes.groups', 12).map((v) => { const g = obj(v, 'group'); return { id: name(g.id, 'group.id'), label: str(g.label, 'group.label') }; }),
+    rows: arr(c.rows, 'changes.rows', 500).map((v) => {
+      const r = obj(v, 'change');
+      return { id: page(r.id, 'change.id') ?? '', group: name(r.group, 'change.group'), title: str(r.title, 'change.title'),
+        repo: str(r.repo, 'change.repo'), number: str(r.number, 'change.number'), author: str(r.author, 'change.author'),
+        ago: str(r.ago, 'change.ago'), status: str(r.status, 'change.status') };
+    }), selected: c.selected === '' ? '' : page(c.selected, 'changes.selected') ?? '', reader,
+  };
+}
+
 /**
  * Validate a piece's `ui page --json` answer. A block's own words over their limit are cut short and the block marked
  * (long()); `onCut` hears which, to log. Anything else out of bounds (too many sections, blocks or rows; a bad name or
@@ -1074,6 +1097,7 @@ export function parsePage(value: unknown, onCut?: (fields: string[]) => void): P
     if (r !== undefined && (typeof r !== 'number' || !Number.isInteger(r) || r < 2 || r > 300)) throw new Invalid('refresh must be whole seconds from 2 to 300');
     const add = top.add === undefined ? undefined : obj(top.add, 'add');
     return { title: str(top.title, 'title'), intro: optStr(top.intro, 'intro'), sections: sections(top.sections), ...(r !== undefined ? { refresh: r } : {}),
+      ...(top.changes === undefined ? {} : { changes: changesData(top.changes) }),
       ...(add ? { add: { page: page(add.page, 'add.page') ?? '', label: str(add.label, 'add.label') } } : {}) };
   });
   const cut = cuts.all;

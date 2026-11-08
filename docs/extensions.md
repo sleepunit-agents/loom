@@ -903,3 +903,17 @@ LOOM_IMPORT_IDENTITY=/path/owner.key loom-<piece> bundle import < part   # stdin
 
 Roles under consideration: `wake` (a clock that starts the agent) and an
 approval page. Each one gets its contract when it gets built.
+
+### Changes list and reader
+
+A Changes page can include `changes: { groups, rows, selected, reader }` beside
+its sections. loom draws it with the shared split panes, including inside a tile.
+`groups` is up to 12 `{id, label}` entries; `rows` is up to 500
+`{id, group, title, repo, number, author, ago, status}` entries. A row's `id` is
+its piece page path. `selected` is that path (empty for no reader); `reader` is
+null or a page with title, intro and sections using the existing block vocabulary.
+Nested Changes readers are refused. All strings and reader blocks retain the
+usual validation and limits. The top page's sections appear above the list for
+notices and existing actions. `group`, `repo` and `author` query parameters keep
+the selection and filters in the address. The piece still owns all authorization
+and action handling, including the selected reader's buttons.
