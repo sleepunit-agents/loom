@@ -19,10 +19,23 @@ under the same lock):
   (ES256, EdDSA or RS256);
 - its signature counter;
 - a label, when it was added, and when it was last used;
-- **the digest of the token whose session added it.** A passkey signs in as that
-  token, and only while that token is live: rotate or revoke the token, and its
-  passkeys stop with its sessions. A passkey never gets more than the link that
-  set it up.
+- **the digest of the owner token it signs in as.** In a household that's a
+  token of its own (t-1969, 2026-11-07), minted for the signed-in member when
+  the passkey is added, labeled `passkey · <person> · <12 hex of the credential
+  id's hash>`, and kept by digest alone, so nobody ever holds it. Revoking the
+  page sign-in links token, or whichever token the adding browser used, never
+  stops a passkey (revoking the links on 2026-11-07 stopped Jonathan's only
+  one, which is why). What stops it: removing the passkey (its token is revoked
+  with it, so the sessions it opened end too), removing the person from the
+  household, or revoking its own token. A passkey gets exactly what its person
+  has, never more. Outside a household (a single bearer token), a passkey still
+  signs in as the adding session's token, and only while that one is live.
+
+  Passkeys made before this signed in as the adding session's token. loom-http
+  moves each onto a token of its own when it starts (once; a second start does
+  nothing): one whose token is live, or is the env owner token, and one whose
+  token is a revoked page sign-in links token. A passkey whose token was any
+  other revoked one stays stopped, as does one whose person has left.
 
 Up to 20 passkeys. Each one can be removed on the Passkeys page.
 
@@ -97,7 +110,8 @@ loom checks:
   stored key;
 - the counter: a counter that doesn't go up, when either side has one, means a
   copied key, and is refused;
-- the token behind it is still live.
+- the token behind it is still live (in a household, its own token, and its
+  person still a member).
 
 Then it opens a session exactly as the token or a link does.
 

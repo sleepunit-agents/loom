@@ -5,12 +5,17 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { startHttpServer, type HttpServeHandle } from '../transport/http-server.js';
-import { sessionStore } from './sessions.js';
+import { LINK_TOKEN, sessionStore, signinLink } from './sessions.js';
+import BetterSqlite3 from 'better-sqlite3';
+import { createConversationTables } from '../backends/conversations.js';
+import { closeAllBackends } from '../backends/index.js';
+import { agentDir, createToken, loadHousehold, loadTokens, removeMember, revokeToken, type Household } from '../household.js';
 
 const TOKEN = 'passkey-test-token';
 const HOST = 'loom.test';
@@ -216,5 +221,166 @@ describe('passkeys', () => {
     const csrf = csrfOf(await passkeys(cookie));
     const r = await call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label: 'x', ...new Device().register('bm90LWlzc3VlZA') } });
     expect(r.status).toBe(401);
+  });
+});
+
+/**
+ * In a household (t-1969): a passkey signs its person in with a token of its own, not the adding session's. Revoking
+ * the page sign-in links (as on 2026-11-07) or any other token leaves it working; removing the person's membership,
+ * or the passkey, stops it. A passkey made before this moves onto its own token when loom-http starts.
+ */
+describe('passkeys in a household', () => {
+  let h: Household;
+  let handle: HttpServeHandle;
+  const saved: Record<string, string | undefined> = {};
+
+  function call(method: string, path: string, opts: { cookie?: string; json?: unknown; form?: Record<string, string>; accept?: string } = {}): Promise<Reply> {
+    return new Promise((resolve, reject) => {
+      const body = opts.json !== undefined ? JSON.stringify(opts.json) : opts.form ? new URLSearchParams(opts.form).toString() : undefined;
+      const req = request({ host: '127.0.0.1', port: handle.port, method, path, headers: {
+        host: HOST, 'sec-fetch-site': 'same-origin',
+        ...(opts.cookie ? { cookie: opts.cookie } : {}),
+        ...(opts.accept ? { accept: opts.accept } : {}),
+        ...(body !== undefined ? { 'content-type': opts.json !== undefined ? 'application/json' : 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } : {}),
+      } }, (res) => {
+        let data = '';
+        res.on('data', (d) => { data += d; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: data }));
+      });
+      req.on('error', reject);
+      if (body !== undefined) req.write(body);
+      req.end();
+    });
+  }
+  const cookieOf = (r: Reply) => String(r.headers['set-cookie'] ?? '').split(';')[0];
+  const csrfOf = async (cookie: string) => (JSON.parse((await call('GET', '/passkeys', { cookie, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
+  /** Signed in the way Jonathan was: a one-time sign-in link, so the session is the page sign-in links token's. */
+  const linkSignIn = async (member?: string) => cookieOf(await call('POST', `/login/${signinLink(h, 600, member)}`));
+  const signedIn = async (cookie: string) => (await call('GET', '/', { cookie, accept: 'application/json' })).status === 200;
+  async function addPasskey(cookie: string, device: Device, label = 'Phone'): Promise<Reply> {
+    const csrf = await csrfOf(cookie);
+    const o = JSON.parse((await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } })).body);
+    return call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label, ...device.register(o.challenge) } });
+  }
+  async function passkeySignIn(device: Device): Promise<Reply> {
+    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+    return call('POST', '/login/passkey', { json: device.assert(challenge) });
+  }
+  const start = async () => { handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h }); };
+  const digest = (t: string) => createHash('sha256').update(t).digest('hex');
+
+  beforeEach(async () => {
+    const home = await mkdtemp(join(tmpdir(), 'loom-passkeys-hh-'));
+    for (const a of ['art', 'mark']) {
+      mkdirSync(join(home, 'agents', a), { recursive: true });
+      writeFileSync(join(home, 'agents', a, 'IDENTITY.md'), `# ${a}\n`);
+      const db = new BetterSqlite3(join(home, 'agents', a, 'memories.db')); createConversationTables(db); db.close();
+    }
+    writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'art',
+      members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person: 'sam', role: 'owner', agents: ['mark'] }] }));
+    for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME', 'LOOM_PUBLIC_URL']) saved[k] = process.env[k];
+    process.env.LOOM_HOME = home;
+    process.env.XDG_CONFIG_HOME = join(home, 'xdg');
+    process.env.LOOM_PUBLIC_URL = ORIGIN;
+    h = loadHousehold(home)!;
+    await start();
+  });
+  afterEach(async () => {
+    await handle?.close();
+    await closeAllBackends();
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await rm(h.home, { recursive: true, force: true });
+  });
+
+  it('revoking the sign-in links token leaves a passkey signing its person in', async () => {
+    const cookie = await linkSignIn();
+    const device = new Device();
+    expect((await addPasskey(cookie, device)).status).toBe(200);
+    const [pk] = sessionStore(h.home).passkeys();
+    // Its own token, Jonathan's, not the links token the browser signed in with.
+    const linkDigest = loadTokens(h.home).find((t) => t.label === LINK_TOKEN)!.sha256;
+    expect(pk.tokenLabel).toMatch(/^passkey · jonathan · [0-9a-f]{12}$/);
+    expect(pk.secret).not.toBe(linkDigest);
+    expect(loadTokens(h.home).find((t) => t.label === pk.tokenLabel)).toMatchObject({ role: 'owner', member: 'jonathan', sha256: pk.secret });
+
+    revokeToken(h, LINK_TOKEN);
+    expect(await signedIn(cookie)).toBe(false);
+    const r = await passkeySignIn(device);
+    expect([r.status, r.body]).toEqual([200, '{"ok":true,"to":"/"}']);
+    expect(await signedIn(cookieOf(r))).toBe(true);
+    // Any other token too: the one a browser pasted.
+    const pasted = createToken(h, { role: { kind: 'owner' }, label: 'laptop' }).token;
+    const viaPaste = cookieOf(await call('POST', '/login', { form: { token: pasted } }));
+    const other = new Device();
+    expect((await addPasskey(viaPaste, other, 'Laptop')).status).toBe(200);
+    revokeToken(h, 'laptop');
+    expect((await passkeySignIn(other)).status).toBe(200);
+  });
+
+  it('removing the member stops their passkey; removing a passkey stops it and its token', async () => {
+    const sam = await linkSignIn('sam');
+    const samKey = new Device();
+    expect((await addPasskey(sam, samKey, 'Sam phone')).status).toBe(200);
+    expect(sessionStore(h.home).passkeys()[0].tokenLabel).toMatch(/^passkey · sam · /);
+    expect((await passkeySignIn(samKey)).status).toBe(200);
+    removeMember(h, 'sam');
+    const r = await passkeySignIn(samKey);
+    expect(r.status).toBe(401);
+    expect(JSON.parse(r.body).error).toMatch(/isn't a member/);
+
+    const jon = await linkSignIn();
+    const device = new Device();
+    await addPasskey(jon, device);
+    const pk = sessionStore(h.home).passkeys().find((k) => k.tokenLabel?.startsWith('passkey · jonathan'))!;
+    const viaKey = cookieOf(await passkeySignIn(device));
+    expect(await signedIn(viaKey)).toBe(true);
+    const csrf = await csrfOf(jon);
+    expect((await call('POST', '/act/loom', { cookie: jon, form: { _csrf: csrf, _action: 'passkey-remove', _path: 'passkeys', id: pk.id } })).status).toBe(303);
+    expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/doesn't know that passkey/);
+    // Its token is revoked with it, so the session it opened ends too; the link's session stays.
+    expect(loadTokens(h.home).find((t) => t.label === pk.tokenLabel)?.revoked).toBeTruthy();
+    expect(await signedIn(viaKey)).toBe(false);
+    expect(await signedIn(jon)).toBe(true);
+  });
+
+  it('a passkey made before moves onto its own token at start, even with the links token revoked', async () => {
+    // Before t-1969: three passkeys signing in as the adding session's token. Jonathan's, the links token's (revoked,
+    // as on 2026-11-07); one whose pasted token was revoked (stays stopped); and Sam's, who has since left.
+    signinLink(h, 600);
+    const linkDigest = loadTokens(h.home).find((t) => t.label === LINK_TOKEN)!.sha256;
+    const pasted = createToken(h, { role: { kind: 'owner' }, label: 'old laptop' }).token;
+    const samToken = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
+    const [jon, lost, sam] = [new Device(), new Device(), new Device()];
+    const store = sessionStore(h.home);
+    const legacy = (d: Device, label: string, secret: string) => {
+      const reg = d.register('x');
+      store.addPasskey({ id: reg.id, publicKey: reg.publicKey, alg: -7, counter: 0, label, created: 1, secret });
+      return reg.id;
+    };
+    const jonId = legacy(jon, 'Jonathan', linkDigest);
+    const lostId = legacy(lost, 'Lost', digest(pasted));
+    const samId = legacy(sam, 'Sam', digest(samToken));
+    revokeToken(h, LINK_TOKEN);
+    revokeToken(h, 'old laptop');
+    removeMember(h, 'sam');
+    expect(JSON.parse((await passkeySignIn(jon)).body).error).toMatch(/token that added this passkey was revoked/);
+
+    await handle.close();
+    await start();
+    const after = Object.fromEntries(sessionStore(h.home).passkeys().map((k) => [k.id, k]));
+    expect(after[jonId].tokenLabel).toMatch(/^passkey · jonathan · /);
+    expect(after[lostId].tokenLabel).toBeUndefined();
+    expect(after[samId].tokenLabel).toBeUndefined();
+    const r = await passkeySignIn(jon);
+    expect(r.status).toBe(200);
+    expect(await signedIn(cookieOf(r))).toBe(true);
+    expect((await passkeySignIn(lost)).status).toBe(401);
+    expect((await passkeySignIn(sam)).status).toBe(401);
+    // Once: another start mints nothing more.
+    const count = loadTokens(h.home).length;
+    await handle.close();
+    await start();
+    expect(loadTokens(h.home).length).toBe(count);
+    expect(JSON.parse(readFileSync(join(h.home, 'ui-sessions.json'), 'utf-8')).passkeys[jonId].secret).toBe(after[jonId].secret);
   });
 });

@@ -45,7 +45,7 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionStore, signinLink, type Done, type SessionInfo } from './sessions.js';
+import { deviceOf, passkeyToken, prefsOf, REF, revokePasskeyToken, SESSION_MAX_AGE_S, sessionStore, signinLink, type Done, type SessionInfo } from './sessions.js';
 import { APP_JS } from './app.js';
 import { askKey, needsAskText, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, swJs } from './pwa.js';
@@ -127,7 +127,7 @@ const PIXEL_ICON = new RegExp(`^/pixel-icons/(${ICON_APP.source.slice(1, -1)})\\
 
 /** Paths an agent owner's page may open: Home, the Inbox, Activity, their agents, opted-in pieces, their passkeys. */
 function scopedPathOk(pathname: string): boolean {
-  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/inbox/open' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/account' || pathname === '/events'
+  return pathname === '/' || pathname === '/inbox' || pathname === '/inbox/read' || pathname === '/inbox/open' || pathname === '/activity' || pathname === '/passkeys' || pathname === '/passkeys/options' || pathname === '/account' || pathname === '/events'
     || pathname === '/scope' || pathname === '/places' || pathname === '/find' || pathname === '/setup' || pathname === '/appearance' || pathname === '/accessibility' || pathname === '/appearance/prefs'
     // Their agents' pixel faces (the route itself checks the agent is one they see).
     || pathname.startsWith('/faces/')
@@ -1281,7 +1281,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const used = store.usePasskey(stored.id, a.counter);
       if (!used) return sendJson(res, 401, { error: 'that passkey\'s counter went backwards: it may have been copied, so it was refused' });
       const secret = Buffer.from(used.secret, 'hex');
-      if (!opts.auth.live(secret)) return sendJson(res, 401, { error: 'the token that added this passkey was revoked; sign in with a link and add it again' });
+      // Its own token in a household (t-1969): live while the passkey is kept and its person is a member.
+      if (!opts.auth.live(secret)) return sendJson(res, 401, { error: used.tokenLabel ? 'this passkey no longer signs anyone in: its person isn\'t a member any more, or its token was revoked' : 'the token that added this passkey was revoked; sign in with a link and add it again' });
       return sendJson(res, 200, { ok: true, to: '/' }, { 'set-cookie': sessionCookie(secret) });
     } catch (err) {
       if (err instanceof PasskeyError) return sendJson(res, 401, { error: err.message });
@@ -1440,7 +1441,22 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // It signs in as the token of the session that asked, and only that one.
       if (!c.secret.equals(session.secret)) return sendJson(res, 403, { error: 'that was started by another session' });
       const label = (typeof body.label === 'string' ? body.label.trim() : '').slice(0, 60) || 'A passkey';
-      store.addPasskey({ id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000), secret: session.secret.toString('hex') });
+      const added = { id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000) };
+      const hh = opts.household?.();
+      if (!hh || !who.member) {
+        store.addPasskey({ ...added, secret: session.secret.toString('hex') });
+        return sendJson(res, 200, { ok: true });
+      }
+      // In a household it signs its person in with a token of its own (t-1969), not the session's: revoking the
+      // sign-in links, or whatever token this browser used, never stops it. Refused before minting one it won't use.
+      if (store.passkey(r.id)) return sendJson(res, 409, { error: 'that passkey is already added' });
+      const own = passkeyToken(hh, who.member.person, r.id);
+      try {
+        store.addPasskey({ ...added, secret: own.secret, tokenLabel: own.tokenLabel });
+      } catch (err) {
+        if (own.minted && !store.passkeys().some((k) => k.tokenLabel === own.tokenLabel)) revokePasskeyToken(hh, own.tokenLabel);
+        throw err;
+      }
       return sendJson(res, 200, { ok: true });
     } catch (err) {
       if (err instanceof PasskeyError) return sendJson(res, 400, { error: err.message });
@@ -1560,7 +1576,12 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     } else if (sourceId === 'loom' && action === 'passkey-remove') {
       source = CORE;
       const own = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : undefined;
-      result = (!own || own.some((k) => k.id === fields.id)) && storeFor(opts).removePasskey(fields.id ?? '')
+      const gone = storeFor(opts).passkey(fields.id ?? '');
+      const removed = (!own || own.some((k) => k.id === fields.id)) && storeFor(opts).removePasskey(fields.id ?? '');
+      // Its own token goes with it, and so do the sessions it opened (t-1969).
+      const hhr = opts.household?.();
+      if (removed && hhr && gone?.tokenLabel) revokePasskeyToken(hhr, gone.tokenLabel);
+      result = removed
         ? { ok: true, message: 'Removed. That device can\'t sign in with it any more.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'session-revoke') {
@@ -1740,7 +1761,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         { id: 'passkeys', title: 'Passkeys', blocks: keys.length
           ? [{ type: 'list', items: keys.slice(0, 200).map((k) => {
               const works = opts.auth.live(Buffer.from(k.secret, 'hex'));
-              return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}` : 'its token was revoked, so it no longer works',
+              return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}` : k.tokenLabel ? 'it no longer works: its person isn\'t a member, or its token was revoked' : 'its token was revoked, so it no longer works',
                 ...(works ? {} : { tone: 'warn' as const }),
                 act: { action: 'passkey-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } } };
             }) }]
