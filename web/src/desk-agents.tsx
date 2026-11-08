@@ -297,7 +297,7 @@ function Composer({ a }: { a: DeskAgent }) {
 }
 
 /** An agent, big (Home): its face as big as the card allows, how it is, its facts, its ask and what's new, a composer. */
-export function BigCard({ a }: { a: DeskAgent }) {
+export function BigCard({ a, flow }: { a: DeskAgent; /** as tall as it needs (a phone's column), not a box the desktop sets */ flow?: boolean }) {
   const env = useEnv();
   const box = useRef<HTMLElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -311,7 +311,7 @@ export function BigCard({ a }: { a: DeskAgent }) {
     return () => ro.disconnect();
   }, []);
   const face = faceFor(size.w, size.h);
-  const tall = size.h === 0 || size.h > 360;
+  const tall = flow || size.h === 0 || size.h > 360;
   const rows = BIG_ROWS.filter((r) => tall || !r.tall).map((r) => ({ r, v: r.draw(a) })).filter((x) => x.v !== null);
   const sections = BIG_SECTIONS.map((s) => ({ s, v: s.draw(a, env.go) })).filter((x) => x.v !== null);
   return (
@@ -446,3 +446,30 @@ export function AgentRail({ agents, d, onAir, screen, slot, over, onEnter, onLea
     </aside>
   );
 }
+
+// ---- a phone's Home ------------------------------------------------------------------------------------------------
+
+/** How many agents a phone's Home draws as cards; past it, a line each and one card open (the rail's accordion rule). */
+export const PHONE_CARDS_UP_TO = 4;
+
+/**
+ * A phone's Home (docs/specs/agent-desk.md, "A phone"): Needs you, then the agents in the same spirit as a desktop's,
+ * alphabetical, the viewer's own. Up to four, a card each (face, how it is, what it's on, its last thread, what's new, a
+ * composer); past four, a line each, and the one that most wants you open as a card (t-1869: a screen of big cards is
+ * a nightmare past a few).
+ */
+export function PhoneHome({ home, shell }: { home: DeskHomeData; shell: Shell }) {
+  const { go } = useEnv();
+  const comms = useAgentComms(shell.core.some((p) => p.href === '/comms'));
+  const agents = useMemo(() => deskAgents(shell, home, comms), [shell, home, comms]);
+  const fold = agents.length > PHONE_CARDS_UP_TO;
+  const open = fold ? openInRail(agents, null) : undefined;
+  return (
+    <section className="loom-phome" aria-label="Home">
+      <NeedsBand d={home} />
+      {agents.length === 0 && <Nothing title="No agents yet" text="An agent is who does the work here. Make the first one."><Button className="mt-2" onClick={() => go('/new-agent')}>New agent</Button></Nothing>}
+      {agents.map((a) => (fold && a.id !== open ? <RailRow key={a.id} a={a} onOpen={() => go(a.open)} /> : <BigCard key={a.id} a={a} flow />))}
+    </section>
+  );
+}
+export default PhoneHome;

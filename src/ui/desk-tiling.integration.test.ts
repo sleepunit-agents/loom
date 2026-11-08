@@ -243,7 +243,8 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
     await phone.reload(); await phone.locator('.loom-dock-bar [data-part="item"]').first().waitFor(); await phone.waitForTimeout(800);
     expect(await phone.locator('.loom-tile').count()).toBe(0);
     expect(new URL(phone.url()).pathname).toBe('/comms');
-    expect(assets.filter((u) => /\/desk-[^/]*\.js/.test(u))).toEqual([]);
+    // The desk's own chunk: never on a phone (the small shared ones, desk-rail and the agent cards, may come).
+    expect(assets.filter((u) => /\/desk-(?!rail-|agents-)[^/]*\.js/.test(u))).toEqual([]);
     await phone.context().close();
     const p = await screen(1280, 800);
     await open(p, 'Inbox', 1); await open(p, 'Comms', 2);

@@ -167,7 +167,7 @@ describe.runIf(built && chrome)('the Accessibility app', () => {
     // The ticker (Neon's bar): its track's animation, when its words overflow (two agents' names and more do at 390 px).
     const ticker = await p.locator('.loom-tick__track').first().evaluate((t) => getComputedStyle(t).animationName).catch(() => 'absent');
     // Mark's drawn face is alive (data-live) only with motion; Art's pixel face plays frames only with motion.
-    const drawnFaceLive = await p.locator('.loom-identity [data-slot="agent-face"]').first().evaluate((e) => e.hasAttribute('data-live'));
+    const drawnFaceLive = await p.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').first().evaluate((e) => e.hasAttribute('data-live'));
     // Art's pixel face: with motion, its first beat comes within a second (the page's dice are loaded: Math.random is 0)
     // and plays its frames; without, it draws its rest frame and nothing after.
     // Counted from its first frame (its sheet may still be on its way).

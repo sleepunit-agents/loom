@@ -210,7 +210,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
       const p = await phone({ look });
       await open(p, '/');
       expect(await standIn(p)).toBeGreaterThan(0);
-      const chromeParts = ['.loom-dock-bar [data-part="item"]', '.loom-top h1', '.loom-find-pill', 'main [data-slot="card"] button', 'main [data-slot="badge"]'];
+      const chromeParts = ['.loom-dock-bar [data-part="item"]', '.loom-top h1', '.loom-find-pill', 'main .loom-phome button', 'main .loom-phome .loom-bigcard__eb'];
       for (const sel of chromeParts) {
         const s = await style(p, sel);
         expect({ sel, select: s.select }).toEqual({ sel, select: 'none' });
@@ -221,7 +221,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
       expect((await style(p, '.loom-dock-bar [data-part="item"]')).touch).toBe('none');
       expect((await style(p, 'main')).touch).toBe('pan-y pinch-zoom');
       // The tap flash is gone from components too (base.css keeps the browser's on them).
-      expect((await style(p, '[data-slot="card"]')).flash).toBe('rgba(0, 0, 0, 0)');
+      expect((await style(p, '.loom-phome .loom-bigcard')).flash).toBe('rgba(0, 0, 0, 0)');
 
       // An ask's sheet: its words are content, and select; its buttons are chrome; its reply field takes words.
       await open(p, '/inbox');
@@ -277,7 +277,7 @@ describe.runIf(built && chrome)('a phone\'s app, not a web page', () => {
       return ev.defaultPrevented;
     }, pointerType);
     expect(await menu('.loom-dock-bar [data-part="item"]', 'touch')).toBe(true);
-    expect(await menu('main [data-slot="card"] button', 'touch')).toBe(true);
+    expect(await menu('main .loom-phome button', 'touch')).toBe(true);
     expect(await menu('.loom-pbar__needs', 'touch')).toBe(true);
     expect(await menu('.loom-dock-bar [data-part="item"]', 'mouse')).toBe(false);
     await open(p, '/inbox');

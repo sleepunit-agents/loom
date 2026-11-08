@@ -145,18 +145,19 @@ describe('an agent\'s pixel face', () => {
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const page = await ctx.newPage();
     await page.goto(`${base}/`);
-    const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
+    const face = page.locator('.loom-phome .loom-bigcard .loom-pixel-face canvas').first();
     await face.waitFor({ timeout: 15_000 });
     expect(await face.evaluate((c) => [getComputedStyle(c).imageRendering, c.getBoundingClientRect().width, (c as HTMLCanvasElement).width])).toEqual(['pixelated', 192, 96]);
     // It draws the sheet (the fixture's cyan square), not an empty square.
-    await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-identity .loom-pixel-face canvas'); if (!c) return false;
+    await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-phome .loom-bigcard .loom-pixel-face canvas'); if (!c) return false;
       const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }, null, { timeout: 15_000 });
-    expect(await page.locator('.loom-identity').count()).toBe(2);
-    expect(await page.locator('.loom-identity [data-slot="agent-face"]').count()).toBe(1);   // Mark's, drawn
+    expect(await page.locator('.loom-phome .loom-bigcard').count()).toBe(2);
+    // Mark's, drawn (its chunk may still be on its way: the card shows his initial until it lands)
+    await expect.poll(() => page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').count(), { timeout: 15_000 }).toBe(1);
     await page.goto(`${base}/appearance`);
     await page.getByRole('radio', { name: 'Off' }).first().click();
     await page.goto(`${base}/`);
-    await page.locator('.loom-identity [data-slot="agent-face"]').nth(1).waitFor({ timeout: 15_000 });
+    await page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').nth(1).waitFor({ timeout: 15_000 });
     expect(await page.locator('.loom-pixel-face').count()).toBe(0);
     await ctx.close();
   }, 60_000);
@@ -180,7 +181,7 @@ describe('an agent\'s pixel face', () => {
         await choose({ look, pixel: true });
         await page.goto(`${base}/`);
         await page.waitForFunction((l) => document.documentElement.dataset.look === l, look);
-        const face = page.locator('.loom-identity .loom-pixel-face canvas').first();
+        const face = page.locator('.loom-phome .loom-bigcard .loom-pixel-face canvas').first();
         await face.waitFor({ timeout: 15_000 });
         await page.waitForTimeout(300);
         return face.evaluate((c) => [c.getBoundingClientRect().width, getComputedStyle(c).translate]);

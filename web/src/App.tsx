@@ -45,6 +45,8 @@ const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxVi
 const ProjectsView = lazy(() => import('./projects').then((m) => ({ default: m.ProjectsView })));
 // Comms (docs/specs/comms.md): its own chunk, loaded only when it opens.
 const CommsView = lazy(() => import('./comms').then((m) => ({ default: m.CommsView })));
+// A phone's Home (desk-agents.tsx PhoneHome): the agents' cards, their own chunk (a desktop's comes with the desk's).
+const PhoneHome = lazy(() => import('./desk-agents').then((m) => ({ default: m.PhoneHome })));
 // A big screen (desk.tsx): the desktop's own chunk, asked for at once on a screen that wide (so it's
 // here by the time the first page is), and never on a phone.
 let desk$: typeof import('./desk') | null = null;
@@ -497,6 +499,8 @@ export default function App() {
                   : data.view === 'page' ? <PageView page={data.page} unscoped={data.unscoped} />
                   // A desktop's Home is its widgets (tiles.tsx), drawn once the desk's chunk is here.
                   : data.view === 'house-home' && desk ? <Skeleton />
+                  // A phone's Home is the agents too (docs/specs/agent-desk.md, "A phone"): Needs you, then a card each.
+                  : data.view === 'house-home' && data.chrome?.shell ? <Suspense fallback={<Skeleton />}><PhoneHome home={data.home as never} shell={data.chrome.shell} /></Suspense>
                   : data.view === 'house-home' ? <HouseHomeView home={data.home as never} />
                   : data.view === 'dashboard' ? <DashboardView d={data.dashboard as never} now={data.now as number} bare={inAgent} />
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>

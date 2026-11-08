@@ -209,7 +209,8 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     for (const [w, want] of [[1280, true], [390, false]] as const) {
       const p = await screen('neon', w, 800);
       const got: string[] = [];
-      p.on('request', (r) => { if (/\/assets\/desk-[^/]*\.(js|css)$/.test(r.url())) got.push(r.url()); });
+      // The desk's own chunk (desk-*), not the agent cards' or desk-rail's, which a phone's Home shares.
+      p.on('request', (r) => { if (/\/assets\/desk-(?!rail-|agents-)[^/]*\.(js|css)$/.test(r.url())) got.push(r.url()); });
       await p.goto(`${base}/`); await p.locator('.loom-top h1').waitFor(); await p.waitForTimeout(800);
       expect(got.length > 0, `${w}`).toBe(want);
       await p.context().close();
