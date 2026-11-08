@@ -48,15 +48,15 @@ describe('the launcher\'s list (web/src/launch-list.ts, t-1925 G)', () => {
       ['Work', ['Inbox', 'Activity', 'Projects', 'Tasks', 'Changes']],
       ['People & agents', ['Comms', 'Art E Fish', 'Visual Mark', 'People']],
       ['Library', ['Knowledge']],
-      ['System', ['Boxes', 'Bridges', 'Clock', 'Members']],
+      ['System', ['Boxes', 'Bridges', 'Clock', 'Members', 'Profile']],
       ['Look & feel', ['Appearance', 'Accessibility']],
       ['Pieces', ['Pieces']],
     ]);
     const hrefs = l.flatMap((s) => s.apps.map((a) => a.href));
     expect(hrefs.filter((h, n) => hrefs.indexOf(h) !== n)).toEqual([]);
-    // Everything Places and Setup held is here (the launcher replaces both on a desktop), and the account isn't an app.
+    // Everything Places and Setup held is here (the launcher replaces both on a desktop), and Profile is an app (t-1970).
     for (const p of [...placesOf(full()), ...settingsOf(full())]) expect(hrefs).toContain(p.href);
-    expect(hrefs).not.toContain('/account');
+    expect(hrefs).toContain('/account');
   });
 
   it('says each app\'s live state under its name', () => {
@@ -91,16 +91,39 @@ describe('the launcher\'s list (web/src/launch-list.ts, t-1925 G)', () => {
     expect(settingsOf(withApprovals).map((p) => p.label)).toContain('Approvals');
   });
 
-  it('an agent owner (admin false) gets no Members and no Pieces', () => {
-    const names = launcherOf({ ...full(), admin: false }).flatMap((s) => s.apps.map((a) => a.label));
+  it('an agent owner (admin false) gets no Members, no Pieces and no Permissions; Profile is theirs too', () => {
+    const names = launcherOf({ ...full(), admin: false, permissions: '/p/runtime/permissions' }).flatMap((s) => s.apps.map((a) => a.label));
     expect(names).not.toContain('Members');
     expect(names).not.toContain('Pieces');
+    expect(names).not.toContain('Permissions');
+    expect(names).toContain('Profile');
+  });
+
+  it('Permissions is a System app, by name among the others, where the household has a grants authority (t-1970)', () => {
+    const l = launcherOf({ ...full(), permissions: '/p/runtime/permissions' });
+    const sys = l.find((s) => s.name === 'System')!.apps;
+    expect(sys.map((a) => a.label)).toEqual(['Boxes', 'Bridges', 'Clock', 'Members', 'Permissions', 'Profile']);
+    expect(sys.find((a) => a.label === 'Permissions')!.href).toBe('/p/runtime/permissions');
+    const found = launchFilter(l, 'perm').flatMap((s) => s.apps);
+    expect(firstMatch(found, 'perm')).toMatchObject({ label: 'Permissions', href: '/p/runtime/permissions' });
+    // Without one (no runtime), there's no page to open, so no app.
+    expect(launcherOf(full()).flatMap((s) => s.apps.map((a) => a.label))).not.toContain('Permissions');
+  });
+
+  it('Profile is an app a search finds by profile, passkey, account or sign out; Enter opens it (t-1970)', () => {
+    const l = launcherOf(full());
+    for (const q of ['profile', 'Prof', 'passkey', 'account', 'sign out']) {
+      const found = launchFilter(l, q).flatMap((s) => s.apps);
+      expect(found.map((a) => a.label), q).toContain('Profile');
+      expect(firstMatch(found, q), q).toMatchObject({ label: 'Profile', href: '/account' });
+    }
   });
 
   it('filters by an app\'s name or its section\'s; Enter\'s pick is the first name that starts with it', () => {
     const l = launcherOf(full());
-    expect(launchFilter(l, 'acc').flatMap((s) => s.apps.map((a) => a.label))).toEqual(['Accessibility']);
-    expect(launchFilter(l, 'system').flatMap((s) => s.apps.map((a) => a.label))).toEqual(['Boxes', 'Bridges', 'Clock', 'Members']);
+    expect(launchFilter(l, 'acc').flatMap((s) => s.apps.map((a) => a.label))).toEqual(['Profile', 'Accessibility']);
+    expect(firstMatch(launchFilter(l, 'acc').flatMap((s) => s.apps), 'acc').label).toBe('Accessibility');
+    expect(launchFilter(l, 'system').flatMap((s) => s.apps.map((a) => a.label))).toEqual(['Boxes', 'Bridges', 'Clock', 'Members', 'Profile']);
     expect(launchFilter(l, 'zzz')).toEqual([]);
     expect(launchFilter(l, '  ')).toBe(l);
     // "people" matches People & agents' section and People: Enter opens People, not Comms (shown first).

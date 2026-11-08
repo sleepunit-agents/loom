@@ -64,6 +64,8 @@ export interface Shell {
   backup?: { tone: 'ok' | 'warn' | 'bad'; text: string; href: string };
   /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for. */
   icons?: { v: string; apps: Record<string, { line?: true }> };
+  /** The household's Permissions page (the grants authority's), for a household owner: the launcher's Permissions (t-1970). */
+  permissions?: string;
   tab: string;
 }
 export interface Flash { ok: boolean; message: string; from?: string; keep?: boolean; undo?: { act: string; path: string; action: string; label?: string; fields?: Record<string, string> } }
@@ -74,6 +76,8 @@ export interface AgentHead { label: string; bg: string; fg: string; sub?: string
   id?: string; bio?: string; today?: number; waiting?: number; active?: string;
   /** Its window's (t-1925 D): the household's description (never its creed), may this viewer edit it, asked to write one, working now. */
   about?: string; edit?: boolean; asked?: boolean; working?: boolean;
+  /** Its page of what it can use (the runtime's Permissions, for a household owner): "What Mark can use" (t-1970). */
+  permissions?: string;
   /** What it is on, while working (t-1945), and its thread where it has one. */
   on?: { text: string; href?: string } }
 

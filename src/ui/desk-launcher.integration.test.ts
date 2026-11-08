@@ -130,7 +130,8 @@ describe.runIf(built && chrome)('the launcher', () => {
       expect(await p.locator(`${LAUNCHER} .loom-lapp[data-first] .loom-lapp__nm`).textContent()).toBe('Inbox');
       // It filters as you type; the first match is marked; Enter opens it as a tile.
       await p.keyboard.type('acc');
-      await expect.poll(() => apps(p)).toEqual(['Accessibility']);
+      // Profile's too: it's found by "account" (t-1970). Enter's pick is still the one whose name starts so.
+      await expect.poll(() => apps(p)).toEqual(['Profile', 'Accessibility']);
       expect(await p.locator(`${LAUNCHER} .loom-lapp[data-first]`).count()).toBe(1);
       await p.keyboard.press('Enter');
       await expect.poll(() => p.locator(LAUNCHER).count()).toBe(0);
@@ -199,6 +200,22 @@ describe.runIf(built && chrome)('the launcher', () => {
     await p.keyboard.press('ArrowDown');
     await p.keyboard.press('Enter');
     await expect.poll(() => labels(p)).toEqual(['Knowledge']);
+    await p.context().close();
+  });
+
+  it('Profile is an app: "profile", "passkey" or "sign out" finds it, and Enter opens it (t-1970)', async () => {
+    const p = await screen(1280, 800);
+    for (const q of ['profile', 'passkey', 'sign out']) {
+      await p.click(KEY('All apps'));
+      await p.locator(LAUNCHER).waitFor();
+      await p.keyboard.type(q);
+      await expect.poll(() => apps(p)).toContain('Profile');
+      expect(await p.locator(`${LAUNCHER} .loom-lapp[data-first] .loom-lapp__nm`).textContent()).toBe('Profile');
+      expect(await p.locator(`${LAUNCHER} .loom-lsec[aria-label="System"] .loom-lapp[aria-label^="Profile"]`).count()).toBe(1);
+      await p.keyboard.press('Enter');
+      await expect.poll(() => p.locator(LAUNCHER).count()).toBe(0);
+      await expect.poll(() => new URL(p.url()).pathname).toBe('/account');
+    }
     await p.context().close();
   });
 

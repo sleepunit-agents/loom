@@ -274,6 +274,17 @@ Who may do what, in one place:
     pieces) as the fallback for a household without a runtime.
   - **Done** means: with the runtime installed, no piece's own list is consulted. Core's grant check runs first, and a
     piece sees only granted calls.
+  - **Asked for, and given on a Yes** (t-1970). An agent that needs a piece (its own, or another agent's request it
+    passes on) never grants it and never asks the owner to go and do it: it files a `grant` approval (approvals piece,
+    target `<piece>:<agent>[:<path>,<path>]`) and its Needs you waits on it, so Allow and Deny sit on the ask. Right
+    after a household owner's Allow on a `grant`, core reads the approval's agent and target from the approvals piece
+    (`state`, never the form) and posts `grant-approved` to the grants authority as that owner. The authority spends
+    the approval (allowed, for exactly that target, once) and only then adds the agent to that piece's grant, keeping
+    everyone else's. Deny records no and nothing else. A member who owns some agents can't answer one (approvals
+    refuses it, and the authority refuses a non-owner's call); a body can't spend one (only the authority does).
+    Without grants yet, nothing is written: every agent may already use every piece.
+  - **Where to see them.** The authority's page `permissions` is the household owner's Permissions app (the launcher's
+    System section), and `permissions/<agent>` is one agent's, linked from its window as "What <Agent> can use".
 - **Relay pairing,** as above.
 - **Secrets:** the runtime says *where* a secret lands in a house (the repo's house description). The secrets piece
   decides *whether* an agent may have it, through its own `run` path: `may <agent> <name>` answers allowed, denied or

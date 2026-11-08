@@ -76,6 +76,9 @@ export default function AgentWindow({ head, chrome, icon, rail, children }: {
             </p>}
             <Description head={head} send={(a, f) => loom.send(a, f)} csrf={chrome?.csrf ?? ''} go={env.go} />
             {facts && <p className="loom-aghead__facts loom-data">{facts}</p>}
+            {/* What it may use (t-1970): one click from its window to its permissions, in plain words. */}
+            {head.permissions && <p className="loom-aghead__perms"><a href={head.permissions}
+              onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); env.go(head.permissions!); }}>What {head.label} can use</a></p>}
           </div>
           <div className="loom-aghead__acts">
             <Button size="sm" onClick={() => env.go('/comms')}>Message</Button>

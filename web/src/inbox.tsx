@@ -15,7 +15,7 @@ import { ActButton, EnvContext, Link, LoomMark, Nothing, type Env } from './bloc
 import { markRead, type Chrome, type Source } from './loom';
 import { ApprovalBox, As, KIND, Mark, type InboxItem, Fine } from './views';
 import { Arrive } from './arrive';
-import { bits, githubUrl, plain, refsOf, type Bit } from './plain';
+import { askerOf, bits, githubUrl, plain, refsOf, type Bit } from './plain';
 import { tidy } from './tidy';
 import { draftOf, guardFooter, hasDraft, keepDraft } from './drafts';
 import { LIVE_SAYS, stillOpen, useAskLive, type Live } from './ask-open';
@@ -113,12 +113,12 @@ export function InboxView({ items, folder, folders: named, open: opened, chrome,
   return (
     <Split className="loom-inbox" label="Inbox" folders={folders} folder={f} onFolder={(id) => { if (id === f) return; setF(id); setSel(null); env.go(id === 'needs' ? '/inbox' : `/inbox?f=${id}`); }} search={search}
       listTitle={label} listMeta={shown.length || undefined}
-      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={name(i.agent)} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick}
+      list={shown.length ? shown.map((i) => <Row key={i.key} i={i} who={askerOf(i, name).who} mark={i.agent ? agents[i.agent] : undefined} current={reading?.key === i.key} onPick={pick}
         done={doneOf(i) ? () => void markDone(i) : undefined} />)
         : <div className="loom-split__empty"><Nothing title={needle ? `Nothing matches “${q.trim()}”` : f === 'needs' ? 'Nothing needs you' : `Nothing in ${label}`}
           text={needle ? undefined : f === 'needs' ? 'Asks from your agents land here.' : 'Nothing of this kind right now.'} /></div>}
       reader={went ? <p className="loom-split__note" role="status" data-live="gone">That item isn’t here any more: it was answered or changed elsewhere.</p>
-        : reading ? <Reader key={reading.key} i={reading} who={name(reading.agent)} mark={reading.agent ? agents[reading.agent] : undefined}
+        : reading ? <Reader key={reading.key} i={reading} who={askerOf(reading, name).who} mark={reading.agent ? agents[reading.agent] : undefined}
         tasks={tasks} github={github} env={env} onAnswered={onAnswered} picks={picks} /> : null}
       open={!!current || went} onBack={() => setSel(null)} backLabel={label} blank={f === 'needs' ? 'All caught up' : 'Nothing open'} />
   );

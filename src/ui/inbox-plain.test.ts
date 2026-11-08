@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bits, duration, githubUrl, openItem, opensTo, plain, refsOf } from '../../web/src/plain';
+import { askerOf, bits, duration, githubUrl, openItem, opensTo, plain, refsOf } from '../../web/src/plain';
 
 // The texts as the approvals and secrets pieces write them (live Inbox, 2026-10-29).
 describe('the Inbox in plain words', () => {
@@ -91,5 +91,15 @@ describe('an item opens to the item itself', () => {
     const log: string[] = [];
     await openItem({ key, kind: 'todo', page: 'task/t-1', unread: true }, { read: () => Promise.reject(new Error('offline')), page: (p) => log.push(p), go: () => {} });
     expect(log).toEqual(['task/t-1']);
+  });
+});
+
+describe('who asks (t-1970)', () => {
+  const name = (a?: string) => ({ art: 'Art E Fish', mark: 'Visual Mark' } as Record<string, string>)[a ?? ''] ?? '';
+  it('an agent\'s own ask is theirs; one relayed from another agent says whose, then via whom', () => {
+    expect(askerOf({ agent: 'art' }, name)).toEqual({ who: 'Art E Fish', asks: 'Art E Fish asks' });
+    // Before: "Art E Fish asks", though it was Mark's request, relayed.
+    expect(askerOf({ agent: 'art', relayedFrom: 'mark' }, name)).toEqual({ who: 'Visual Mark, via Art E Fish', asks: 'Visual Mark asks, via Art E Fish' });
+    expect(askerOf({}, name)).toEqual({ who: '', asks: '' });
   });
 });
