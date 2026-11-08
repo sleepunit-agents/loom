@@ -39,8 +39,9 @@
 :root[data-look] .loom-tile__btn:not(:disabled):is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
 /* The page: its own scroll, its own width (an app's narrow layout asks the tile, not the screen: container queries). */
 :root[data-look] .loom-tile__body{flex:1 1 auto;min-height:0;margin:0 var(--frame) var(--frame);overflow:auto;overflow-anchor:none;scrollbar-gutter:stable;container-type:size;container-name:tile}
-:root[data-look] .loom-tile__page{padding:16px 18px 28px;display:flex;flex-direction:column;gap:16px}
-:root[data-look] .loom-tile__page>*{width:100%;max-width:72rem;margin-inline:auto}
+/* Its app fills it edge to edge, every padding inside the scroller: an app's page is one surface (surface.css). */
+:root[data-look] .loom-tile__page{display:flex;flex-direction:column}
+:root[data-look] .loom-tile__page>*{width:100%;min-width:0}
 /* A wide tile's side column (SIDE_WIDE): Recent here, as the window has it, beside the page; it stays as the page scrolls. */
 :root[data-look] .loom-tile__body:has(>.loom-tile__side){display:flex;align-items:flex-start}
 :root[data-look] .loom-tile__body:has(>.loom-tile__side)>.loom-tile__page{flex:1 1 auto;min-width:0}
@@ -67,8 +68,6 @@
 :root[data-look] .loom-cmenu [role="menuitem"]:is(:hover,:focus-visible,:focus){background:color-mix(in srgb,var(--v-pink) 12%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
 :root[data-look] .loom-cmenu__hint{margin-left:auto;font-family:var(--loom-font-data);font-size:11px;color:var(--v-text-3)}
 @media (prefers-contrast:more){:root[data-look] .loom-cmenu{box-shadow:inset 0 0 0 2px var(--v-text)}}
-/* Comms in a tile fills the tile's height (its own height is the window's, read from the screen: comms.css) */
-:root[data-look] .loom-tile__page>.comms[data-wide]{height:calc(100cqh - 44px);min-height:300px}
 
 /* ---- phase 5: a tile's own pop-ups (components/ui/portal-container.ts). Its layer covers the tile and lets presses
    through until a dialog opens in it; then a scrim covers this tile only, and the dialog sits in the tile's middle (the

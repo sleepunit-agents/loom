@@ -19,7 +19,7 @@
 .loom-split[data-mode="one"] { grid-template-columns: minmax(0, 1fr); }
 
 /* In a tile it fills the tile, edge to edge, and each pane scrolls on its own (the tile's body is a size container). */
-:root[data-look] .loom-tile__page > .loom-split { height: 100cqh; width: auto; max-width: none; margin: -16px -18px -28px; }
+:root[data-look] .loom-tile__page > .loom-split { height: 100cqh; }
 :root[data-look] .loom-tile__page > .loom-split > * { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 :root[data-look] .loom-tile__page > .loom-split[data-mode="one"] > .loom-split__reader { position: absolute; inset: 0; }
 /* On a phone's page (no tile) it's the page's own height: the list scrolls with the page, the reader replaces it. */

@@ -881,11 +881,13 @@ function NewThread({ agents, marks, csrf, onOpened, onBack, wide, back, drawer }
 const SHORT_BELOW = 520;
 // Two panes (the list beside the thread) only where the thread keeps a readable band (Jonathan, 2026-11-07): the list's
 // 320 px and its edge, the band's padding (24), the comm screen (208: its 192 glass and the frame's 16), the gap (12)
-// and a people-and-work side of 420 or more, so a work item's title reads on a line or two: 985, and Comms' own frame
-// and a tile's padding around it make 1100. Narrower, one pane, the threads a drawer from its header.
-const ONE_PANE_BELOW = 1100;
-/** The same with the comm screen in the agents' rail, not the band (its 208 and the gap gone). */
-const ONE_PANE_BELOW_RAIL = 880;
+// and a people-and-work side of 420 or more, so a work item's title reads on a line or two: 985, and room to spare make
+// 1100 of Comms in a tile as it was, inside the page's 18 px padding each side and the body's 15 px scrollbar gutter.
+// Comms now fills the tile's body (t-1960: an app in a tile is one surface, nothing around it), 51 px wider at the same
+// window: 1151, so it changes where it did. Narrower, one pane, the threads a drawer from its header.
+const ONE_PANE_BELOW = 1151;
+/** The same with the comm screen in the agents' rail, not the band (its 208 and the gap gone): 880, and the same 51. */
+const ONE_PANE_BELOW_RAIL = 931;
 
 export function CommsView({ data }: { data: CommsData }) {
   const { go, wide } = useEnv();

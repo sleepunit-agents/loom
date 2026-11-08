@@ -82,7 +82,7 @@ const follow = (label: string, value: Follow, set: (v: Follow) => void) => (
 /** The Accessibility app (Jonathan, 2026-11-05): zoom, motion, contrast and one window at a time. The person's, on every device (access.ts). */
 function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContrast, oneWindow, setOneWindow }: { zoom: boolean; setZoom: (on: boolean) => void; motion: Follow; setMotion: (v: Follow) => void; contrast: Follow; setContrast: (v: Follow) => void; oneWindow: boolean; setOneWindow: (on: boolean) => void }) {
   return (
-    <Card id="accessibility">
+    <Card id="accessibility" data-band>
       <CardContent className="grid divide-y">
         {row('Allow zoom', 'Pinch or double-tap to zoom in on a phone. Off, loom holds still like an app.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Allow zoom" value={zoom ? 'on' : 'off'} onValueChange={(v) => { if (v) setZoom(v === 'on'); }}>
@@ -104,7 +104,7 @@ function AccessibilityApp({ zoom, setZoom, motion, setMotion, contrast, setContr
 /** The Appearance app: the look, and the ground behind every page. The person's, on every device. */
 function AppearanceApp({ ground, setGround, look, setLook, sound, setSound, pixel, setPixel, pixIcons, setPixIcons, iconSet, haptics, setHaptics, sprites }: { ground: Ground; setGround: (g: Ground) => void; look: Look; setLook: (l: Look) => void; sound: boolean; setSound: (on: boolean) => void; pixel: boolean; setPixel: (on: boolean) => void; pixIcons: boolean; setPixIcons: (on: boolean) => void; iconSet: boolean; haptics: boolean; setHaptics: (on: boolean) => void; sprites: boolean }) {
   return (
-    <Card id="appearance">
+    <Card id="appearance" data-band>
       <CardContent className="grid divide-y">
         {row('Look', 'Neon Noir is loud and lit; Low Light is the same, calmer; Daylight is light.', (
           <ToggleGroup type="single" className="v-seg" aria-label="Look" value={look} onValueChange={(l) => { if (l) setLook(l as Look); }}>
