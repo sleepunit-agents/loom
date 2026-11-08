@@ -68,6 +68,8 @@ export type DeskAgent = {
   asks: number; ask?: InboxItem;
   /** where its card opens: the thread with its first unread reply, else its last thread, else Comms */
   open: string;
+  /** in a conversation now (the runtime's `talk`) */
+  talking: boolean;
 };
 
 /** How an agent is, in a word (precedence: trouble, an ask, work, unavailable, quiet). */
@@ -99,7 +101,7 @@ export function deskAgents(shell: Shell, home: DeskHomeData | null, comms: Recor
       id: s.id, label: s.label, mark: s as unknown as Mark, color: markColor(s.bg), status: { word: st.word, tone: st.tone }, face: st.face, now: nowLine,
       ...(next ? { wake: [next.value, next.detail].filter(Boolean).join(' · ') } : {}),
       ...(last ? { last } : {}), unread: k?.unread ?? 0, ...(first ? { first } : {}), asks, ...(ask ? { ask } : {}),
-      open: first?.href ?? last?.href ?? '/comms',
+      open: first?.href ?? last?.href ?? '/comms', talking: doing.some((x) => x.kind === 'talk'),
     };
   });
 }
@@ -366,12 +368,58 @@ export function RailCard({ a }: { a: DeskAgent }) {
   );
 }
 
-/** The rail beside the apps: Needs you at the top, then a compact card per agent. */
-export function AgentRail({ agents, d }: { agents: DeskAgent[]; d: DeskHomeData | null }) {
+/** An agent folded to one line (the accordion): its face, its name with how it is as a dot, ASK, and what's new. */
+export function RailRow({ a, onOpen }: { a: DeskAgent; onOpen: () => void }) {
+  const what = [a.status.word, a.asks ? 'asks you' : '', a.unread ? `${a.unread} new` : ''].filter(Boolean).join(', ');
   return (
-    <aside className="loom-arail" aria-label="Agents">
+    <button type="button" className="loom-rrow" data-tone={a.status.tone} data-agent={a.id} style={{ '--c': a.color } as React.CSSProperties}
+      onClick={onOpen} aria-label={`${a.label}: ${what}. Open the thread`}>
+      <span className="loom-rrow__face" aria-hidden><AgentAvatar a={a.mark} size={48} state={a.face} /></span>
+      <b><span className="loom-dot" aria-hidden />{a.label}</b>
+      {a.asks > 0 ? <span className="loom-askb loom-data">ASK</span> : <span />}
+      {a.unread > 0 ? <span className="loom-rrow__n loom-data">{a.unread}</span> : <span />}
+    </button>
+  );
+}
+
+/**
+ * The one card the accordion keeps open: the agent whose thread Comms shows, else one in a conversation now, else one
+ * with an ask, else one with something unread, else the first.
+ */
+export function openInRail(agents: DeskAgent[], onAir: string | null): string | undefined {
+  return (agents.find((a) => a.id === onAir) ?? agents.find((a) => a.talking) ?? agents.find((a) => a.asks > 0)
+    ?? agents.find((a) => a.unread > 0) ?? agents[0])?.id;
+}
+
+/**
+ * The rail beside the apps: Needs you at the top, then a compact card per agent. When they don't all fit at their own
+ * size, the accordion: each a line, one open (openInRail). Measured before it's painted, so it never flashes.
+ */
+export function AgentRail({ agents, d, onAir }: { agents: DeskAgent[]; d: DeskHomeData | null; onAir: string | null }) {
+  const { go } = useEnv();
+  const box = useRef<HTMLElement>(null);
+  const [fold, setFold] = useState(false);
+  const [h, setH] = useState(0);
+  // What the cards hold: a change tries them at full size again.
+  const holds = agents.map((a) => `${a.id}:${a.unread}:${a.asks}:${a.now.text}`).join('|');
+  useLayoutEffect(() => { setFold(false); }, [h, holds, agents.length]);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || fold) return;
+    if (el.scrollHeight > el.clientHeight + 1) setFold(true);
+  });
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setH(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const open = fold ? openInRail(agents, onAir) : undefined;
+  return (
+    <aside ref={box} className="loom-arail" aria-label="Agents" data-fold={fold || undefined}>
       <RailNeeds d={d} />
-      {agents.map((a) => <RailCard key={a.id} a={a} />)}
+      {agents.map((a) => (fold && a.id !== open ? <RailRow key={a.id} a={a} onOpen={() => go(a.open)} /> : <RailCard key={a.id} a={a} />))}
     </aside>
   );
 }

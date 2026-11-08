@@ -20,6 +20,7 @@ import { EnvContext, type Env } from '../blocks';
 import type { Shell } from '../loom';
 import { noteRecent, readRecent } from '../recent';
 import { AgentRail, deskAgents, HomeDesk, useAgentComms, type DeskHomeData } from '../desk-agents';
+import { RailContext, type OnAir, type RailLink } from '../desk-rail';
 import { AnimatedIcon } from '@/components/ui/animated-icon';
 import { ahead, hasKept, keepAhead, usePage, type Answer, type PageNav, type PageState } from '../page';
 import { fetchView } from '../loom';
@@ -649,6 +650,11 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const comms = useAgentComms(shell.core.some((p) => p.href === '/comms'));
   const agents = useMemo(() => deskAgents(shell, homeData, comms), [shell, homeData, comms]);
   const env = deskEnv(deskGo);
+  // Whose thread a Comms tile shows (desk-rail.ts): its card is the one the rail's accordion keeps open.
+  const [air, setAir] = useState<{ who: OnAir; from: object | null }>({ who: null, from: null });
+  const rail = useMemo<RailLink>(() => ({
+    onAir: (who, from) => setAir((was) => (who ? (was.who?.agent === who.agent && was.from === from ? was : { who, from }) : was.from === from ? { who: null, from: null } : was)),
+  }), []);
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
   const fp = f ? pages.current.get(f.key) : undefined;
   const focusedTitle = f ? titleOf(fp ?? ({ data: null } as PageState), f) : '';
@@ -663,16 +669,18 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   });
 
   return (
+    <RailContext.Provider value={rail}>
     <div className="loom-tiles" ref={box} data-count={s.apps.length} data-mode={s.apps.length ? 'work' : 'home'} style={{ '--rail-w': `${railW}px` } as React.CSSProperties}>
       {s.apps.length === 0 ? (env ? <EnvContext.Provider value={env}><HomeDesk agents={agents} d={homeData} /></EnvContext.Provider> : home) : s.apps.map((o, i) => (
         <Tile key={o.key} o={o} n={i} of={s.apps.length} rect={l.apps[o.key]} focused={o.key === s.focus} say={say} nav={navFor}
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)} accent={accent(o)}
           landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)} />
       ))}
-      {s.apps.length > 0 && railW > 0 && env && <EnvContext.Provider value={env}><AgentRail agents={agents} d={homeData} /></EnvContext.Provider>}
+      {s.apps.length > 0 && railW > 0 && env && <EnvContext.Provider value={env}><AgentRail agents={agents} d={homeData} onAir={air.who?.agent ?? null} /></EnvContext.Provider>}
       {menu && <ContextMenu at={menu} close={() => setMenu(null)} />}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>
+    </RailContext.Provider>
   );
 }
 

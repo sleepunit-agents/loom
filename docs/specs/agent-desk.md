@@ -71,9 +71,11 @@ member's stream), when a Comms pane posts a read, when the tab comes back, and e
   item, opening the Inbox on Needs you. Then a compact card per agent: face, name, how it is, what it's on, its ask,
   what's unread (count and first line). No composer. A card opens the agent's thread: the one with its first unread
   reply, else its last, else Comms.
-- **The accordion** (phase 2): when the cards don't all fit at their own size, they fold to one line each (face,
+- **The accordion** (phase 2, built): when the cards don't all fit at their own size, they fold to one line each (face,
   name, a dot, ASK, a count) and one stays open: the agent whose thread Comms shows, else one that's talking, else one
-  with an ask, else one with something unread, else the first.
+  with an ask, else one with something unread, else the first. A Comms pane in a tile says whose thread it shows
+  (desk-rail.ts `RailContext`); a line opens its agent's thread. The rail measures before it paints, so a fold never
+  flashes, and tries the cards at full size again whenever its height or what they hold changes.
 - **The comm screen moves to the rail** (phase 3): the avatar appears once. While Comms shows an agent's thread and
   the rail is shown, that agent's rail card is the comm screen (static on a reply, talking, its channel line) and the
   Comms band drops its avatar. With the rail hidden or auto-hiding, and on a phone, the band keeps it.
