@@ -467,3 +467,8 @@ provenance only.
 
 Before this doc merges, a context-stripped reviewer reviews it, and every finding is folded, accepted as a trade-off,
 or rejected with a quote.
+
+Quota-blocked failed delivery replies may include `code: "quota"` and `retryAfter`
+(an ISO UTC timestamp, milliseconds and Z) for the earliest known reset. Core validates
+and preserves these fields. The clock waits for that reset without incrementing its
+job failure count; absent a reset it waits an hour. Successful replies carry neither.

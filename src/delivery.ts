@@ -73,6 +73,8 @@ export interface DeliverAnswer {
   seq: number;
   body: BodyState;
   reason?: string;
+  code?: 'quota';
+  retryAfter?: string;
 }
 
 /** What the route answers: a status and a JSON body. */
@@ -131,14 +133,17 @@ export function parseDeliver(raw: unknown): DeliverBody | string {
 /** The runtime's answer checked: `{conversation, seq, body, reason?}`, `reason` required when `body` is failed. */
 export function parseDeliverAnswer(v: unknown): DeliverAnswer | string {
   if (!isObject(v)) return 'not a JSON object';
-  const bad = Object.keys(v).find((k) => !['conversation', 'seq', 'body', 'reason'].includes(k));
+  const bad = Object.keys(v).find((k) => !['conversation', 'seq', 'body', 'reason', 'code', 'retryAfter'].includes(k));
   if (bad !== undefined) return `unknown key ${JSON.stringify(bad)}`;
   if (typeof v.conversation !== 'string' || !/^cv-[0-9a-f]{12}$/.test(v.conversation)) return 'conversation is a conversation id (cv-…)';
   if (typeof v.seq !== 'number' || !Number.isInteger(v.seq) || v.seq < 1) return 'seq is a positive integer';
   if (!BODY_STATES.includes(v.body as BodyState)) return `body is one of ${BODY_STATES.join(', ')}`;
   if (v.reason !== undefined && (typeof v.reason !== 'string' || !v.reason.length || v.reason.length > 500)) return 'reason is 1-500 characters';
   if (v.body === 'failed' && v.reason === undefined) return 'a failed body says why (reason)';
-  return { conversation: v.conversation, seq: v.seq, body: v.body as BodyState, ...(v.reason !== undefined ? { reason: v.reason as string } : {}) };
+  if (v.code !== undefined && (v.code !== 'quota' || v.body !== 'failed')) return 'code is quota, on a failed delivery only';
+  if (v.retryAfter !== undefined && (v.code !== 'quota' || typeof v.retryAfter !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v.retryAfter) || !Number.isFinite(Date.parse(v.retryAfter)))) return 'retryAfter is an ISO UTC timestamp on a quota failure';
+  return { conversation: v.conversation, seq: v.seq, body: v.body as BodyState, ...(v.reason !== undefined ? { reason: v.reason as string } : {}),
+    ...(v.code === 'quota' ? { code: 'quota' as const } : {}), ...(v.retryAfter !== undefined ? { retryAfter: v.retryAfter as string } : {}) };
 }
 
 /**
