@@ -386,7 +386,12 @@ export async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id
   const a = (await pieceCheckers(env).approvals([id]).catch(() => undefined))?.[id];
   // Couldn't say what it was (the piece busy, slow, or answering for no such id): never a quiet "Allowed", which for a
   // grant would read as done while nothing was granted.
-  if (!a) return { ok: false, message: `${allowed.message} loom couldn't read that approval back, so if it gives an agent a piece, check it on Permissions: it may not be applied.` };
+  if (!a) {
+    // Only for a grant's card (it leads: the approvals piece marks those), so a merge's or a relay's Allow isn't made a failure.
+    const src = pieceWithRole(env, 'approvals')?.name;
+    const grantCard = pieces.find((p) => p.piece === src)?.manifest.asks.some((x) => x.lead && x.actions?.some((b) => b.fields?.id === id));
+    return grantCard ? { ok: false, message: `${allowed.message} It may not be applied: loom couldn't read that approval back. Check it on Permissions.` } : allowed;
+  }
   if (a.kind !== 'grant' || a.state !== 'allowed') return allowed;
   const owner = caller?.kind === 'owner' && (caller.agents === undefined || caller.agents === '*');
   const target = typeof a.target === 'string' ? a.target : '';
@@ -875,7 +880,10 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
     const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
     if (!card) return a;
     taken.add(card);
-    return { ...a, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source,
+    // A card that leads (a grant, t-1970): what Allow gives is the piece's words, never the agent's; its ask is the why.
+    const lead = card.lead ? { text: card.text, meta: a.text, ...(a.needs ? { needs: { ...a.needs, why: a.text,
+      ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}) } } : {}) } : {};
+    return { ...a, ...lead, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source,
       ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}), ...(card.fine ? { fine: card.fine } : {}), ...(card.details ? { details: card.details } : {}) } };
   });
   return out.filter((a) => !taken.has(a));

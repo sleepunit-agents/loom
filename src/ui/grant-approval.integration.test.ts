@@ -33,7 +33,7 @@ process.stdin.on('end', () => {
   const s = read();
   if (a[0] === 'ui' && a.length === 1) {
     return console.log(JSON.stringify({ v: 2, tab: { label: 'Approvals', kind: 'setting' }, asks: Object.entries(s).filter(([, x]) => x.state === 'pending').map(([id, x]) => ({
-      text: x.text, kind: 'permission', agent: x.agent, page: '',
+      text: x.text, kind: 'permission', agent: x.agent, page: '', ...(x.kind === 'grant' ? { lead: true, if_yes: 'Mark can use Tasks (all of it) from now on.', if_no: 'Nothing changes.' } : {}),
       actions: [{ action: 'allow', label: 'Allow', tone: 'primary', fields: { id } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id } }] })) }));
   }
   if (a[0] === 'ui' && a[1] === 'act') {
@@ -41,7 +41,7 @@ process.stdin.on('end', () => {
     const x = s[req.fields.id];
     if (!x || x.state !== 'pending') return console.log(JSON.stringify({ ok: false, message: 'not pending' }));
     const c = req.caller || {};
-    if (x.kind === 'grant' && !fs.existsSync(process.env.LOOM_HOME + '/lenient') && !(c.kind === 'owner' && (c.agents === undefined || c.agents === '*'))) return console.log(JSON.stringify({ ok: false, message: 'Access to a piece is the household owner\\'s to give or refuse.' }));
+    if (x.kind === 'grant' && !(c.kind === 'owner' && (c.agents === undefined || c.agents === '*'))) return console.log(JSON.stringify({ ok: false, message: 'Access to a piece is the household owner\\'s to give or refuse.' }));
     x.state = req.action === 'allow' ? 'allowed' : 'denied';
     fs.writeFileSync(f, JSON.stringify(s));
     return console.log(JSON.stringify({ ok: true, message: (req.action === 'allow' ? 'Allowed: ' : 'Denied: ') + x.text.replace(/\\?$/, '.') }));
@@ -188,6 +188,22 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     expect(askOf(await inbox(cookie))).toBeUndefined();
   });
 
+  it('the ask is headed by what Allow gives, in the piece\'s words, whatever the agent wrote; its own ask is the why', async () => {
+    const art = agentDir(h, 'art');
+    const conv = recordTurn(art, 'art', { venue: 'relay', place: 'mark', label: 'Relay from Mark', at: new Date().toISOString(), from: { kind: 'agent', id: 'mark' }, kind: 'message' }, 'runtime:runtime').conversation;
+    writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'x', needs_owner: { ...ASK, ask: 'Shall I file Mark a reminder?', if_yes: 'I file it.', if_no: 'I drop it.' } });
+    const a = askOf(await inbox(await login('jonathan')));
+    expect(a.text).toBe('Give Mark access to Tasks?');
+    expect(a.needs).toMatchObject({ why: 'Shall I file Mark a reminder?', if_yes: 'Mark can use Tasks (all of it) from now on.', if_no: 'Nothing changes.' });
+  });
+
+  it('a state read that fails after a merge\'s Allow leaves it an Allow, not a failure about pieces', async () => {
+    approvals({ 'a-0000cafe': { state: 'pending', agent: 'art', kind: 'merge', target: 'github:a/b#1@' + 'f'.repeat(40), text: 'Merge b#1?' } });
+    writeFileSync(join(h.home, 'state-broken'), '1');
+    const cookie = await login('jonathan');
+    expect(await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000cafe' })).toMatchObject({ ok: true });
+  });
+
   it('a form can\'t name another target: core reads it from the approval', async () => {
     const cookie = await login('jonathan');
     const d = await inbox(cookie);
@@ -265,7 +281,7 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     const d = await inbox(cookie);
     const r = await press(cookie, d, 'allow', { id: 'a-0000beef' });
     expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/couldn't read that approval back.*may not be applied/);
+    expect(r.message).toMatch(/It may not be applied: loom couldn't read that approval back/);
     expect(runtimeActs()).toEqual([]);
   });
 

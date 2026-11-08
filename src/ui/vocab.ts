@@ -153,7 +153,11 @@ export interface Ask { text: string; meta?: string; page?: string; label?: strin
   why?: string; if_yes?: string; if_no?: string; details?: string; fine?: string;
   /** The conversation it was asked from (a cv- id: the approvals piece's, docs/specs/comms.md "Asks inline"): a Comms
    * thread shows it, when its agent is the thread's too. */
-  conversation?: string }
+  conversation?: string;
+  /** Its own words are what the owner decides on (an approval whose Allow does something lasting, like the approvals
+   * piece's grant: t-1970): wherever a Needs you absorbs it, its text heads the item and its if-lines are the ones beside
+   * Allow and Deny; the agent's own ask becomes the item's why. */
+  lead?: true }
 /** News, never unread: what happened that the owner may want to know (a box joined, a bridge restarted). */
 export interface Notice { text: string; meta?: string; page?: string; at: string; agent?: string }
 /** One the owner already answered (or that expired): the Inbox's history. */
@@ -1007,6 +1011,7 @@ export function parseManifest(value: unknown): Manifest | string {
           ...(a.attention !== undefined ? attention(a.attention) : {}),
           ...(a.expires !== undefined ? { expires: when(a.expires, 'ask.expires') } : {}),
           ...(typeof a.conversation === 'string' && /^cv-[0-9a-f]{12}$/.test(a.conversation) ? { conversation: a.conversation } : {}),
+          ...(a.lead === true ? { lead: true as const } : {}),
           ...plainOf(a),
         };
       });
