@@ -56,6 +56,7 @@ import { readRecord, runtimePieces } from '../cli/pieces-managed.js';
 import { AGENT_ROUTES, DELIVER_ROUTE, ENSURE_ROUTE, MERGE_ROUTE, GET_ROUTES, ROLE_ROUTES, RUNTIME_GET_ROUTES, roleReaches } from './role-routes.js';
 import { deliver, DELIVER_MAX_BYTES } from '../delivery.js';
 import { askGrant } from '../grants.js';
+import { grantsAuthority } from '../offers-registry.js';
 import { writeTurn } from '../conversations.js';
 import { ConversationError, foldConversations } from '../backends/conversations.js';
 import { syncVenuesQuietly, venueDirectory } from '../household-store.js';
@@ -584,8 +585,12 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
         // The grants authority, if one is installed, decides before the piece runs (src/grants.ts).
         // A piece that isn't there is still its 404 below, asked or not.
         if (piece !== 'loom' && findPiece(piece, process.env)) {
+          // Read before asking: an authority installed mid-call leaves the piece's own list to decide.
+          const decided = grantsAuthority(process.env).piece !== undefined;
           const no = await askGrant(process.env, { agent: role.agent, piece, path: subpath });
           if (no) return sendError(res, no.status, no.error);
+          // The authority said yes, so the piece doesn't consult its own agent list (agent-runtime.md section 6, t-1971).
+          if (decided) caller = { ...caller, granted: true };
         }
         break;
       }
