@@ -131,6 +131,7 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     // A refresh (quiet) never takes an answer asked for before whatever it's refreshing for.
     const r: Answer = await (have ? fetchView(to, have.etag) : (!quiet && ahead.get(to)) || fetchView(to)).catch(() => ({ status: 0 }));
     // Fresh only on loom's own word: nothing new, a page, or a move; not an error, nor the worker's saved copy.
+    if (showing.current === to && (!r.status || r.savedAt)) setFresh(false);
     if (showing.current === to && (r.status === 304 || r.redirect || (r.data && !r.savedAt && r.status < 400))) setFresh(true);
     // Not reached: once more in a moment, so a blip doesn't leave its actions waiting until the next refresh.
     else if (!r.status && showing.current === to && !quiet) setTimeout(() => { if (showing.current === to) void load(to, false, true); }, 3000);
@@ -165,8 +166,8 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
 
   const [live, setLive] = useState(false);
   useEffect(() => {
-    // Something moved: what's shown is checked again, and waits to be acted on until it has been.
-    const again = () => { if (!document.hidden) { setFresh(false); void load(showing.current, false, true); } };
+    // Revalidate in the background without making a confirmed page look like a cached copy.
+    const again = () => { if (!document.hidden) { void load(showing.current, false, true); } };
     const stop = listen({ change: again, open: setLive });
     document.addEventListener('visibilitychange', again);
     return () => { stop(); document.removeEventListener('visibilitychange', again); };
@@ -184,7 +185,12 @@ export function usePage(start: string, say: (n: Omit<Note, 'id'>) => void, nav: 
     return () => clearInterval(t);
   }, [every]);
 
-  useEffect(() => { const f = () => void load(navNow.current.here(), false, true); addEventListener('online', f); return () => removeEventListener('online', f); }, [load]);
+  useEffect(() => {
+    const f = () => void load(navNow.current.here(), false, true);
+    const offline = () => setFresh(false);
+    addEventListener('online', f); addEventListener('offline', offline);
+    return () => { removeEventListener('online', f); removeEventListener('offline', offline); };
+  }, [load]);
 
   return { url, data, error, waiting, fresh, pending, savedAt, showing, load };
 }

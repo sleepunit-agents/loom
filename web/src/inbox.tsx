@@ -166,14 +166,19 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
   const { live, check } = useAskLive(acts ? { k: i.key } : null, picks);
   // Every button here goes through this: asked again right before it's sent; answered, it's Done here at once.
   const lastSaid = useRef('Answered');
-  const guard = (e: Env): Env => ({ ...e,
+  const sending = useRef(false);
+  const guard = (e: Env, checked = false): Env => ({ ...e,
     send: async (a, fields) => {
-      if (!(await check())) return false;
-      const ok = await e.send(a, fields);
-      if (ok) onAnswered(i, lastSaid.current);
-      return ok;
+      if (!checked && sending.current) return false;
+      if (!checked) sending.current = true;
+      try {
+        if (!checked && !(await check())) return false;
+        const ok = await e.send(a, fields);
+        if (ok) onAnswered(i, lastSaid.current);
+        return ok;
+      } finally { if (!checked) sending.current = false; }
     },
-    withSource: (s) => guard(e.withSource(s)) });
+    withSource: (s) => guard(e.withSource(s), checked) });
   const guarded = useMemo(() => guard(env), [env, i.key]);   // eslint-disable-line react-hooks/exhaustive-deps
   const n = i.needs;
   const why = n ? n.why : tidy(p.why ?? (i.kind !== 'answered' ? i.meta : undefined) ?? '') || undefined;
@@ -182,7 +187,7 @@ function Reader({ i, who, mark, tasks, github, env, onAnswered, picks }: { i: In
   if (conv && !refs.some((r) => r.t === 'conv' && r.id === conv)) refs.push({ t: 'conv', id: conv });
   const own = i.page !== undefined && i.page !== '' && !conv;
   const words = (s: string) => bits(s, github).map((b, k) => <Ref key={k} b={b} tasks={tasks} />);
-  const ans = useAnswer(i.reply && acts ? i : undefined, () => undefined, guarded);
+  const ans = useAnswer(i.reply && acts ? i : undefined, () => undefined, guard(env, true), check, sending);
   const yesNo = n?.answers === 'yes-no' && !(i.approval && acts);
   const ok = live === 'live';
   const trail = trailOf(i, who, p.answer ? [p.answer.verdict, p.answer.by && `by ${p.answer.by}`].filter(Boolean).join(' ') : i.outcome);
@@ -288,12 +293,12 @@ function shortHref(href: string): string {
   } catch { return href; }
 }
 
-type Answer = { draft: string; setDraft: (s: string) => void; drafted: boolean; busy: boolean; /** what's shown is being checked with loom (page.ts fresh): answers wait */ stale: boolean; reply: () => Promise<void>; say: (a: 'yes' | 'no') => Promise<void>; label: string };
+type Answer = { draft: string; setDraft: (s: string) => void; drafted: boolean; busy: boolean; /** offline or showing a cached copy: answers wait */ stale: boolean; reply: () => Promise<void>; say: (a: 'yes' | 'no') => Promise<void>; label: string };
 
 /** A Needs you's answer, as its sheet holds it: the words in its box (kept on this device until they're sent, so
  * closing the sheet loses nothing), and sending them, or a Yes or a No. One at a time: while one is on its way, the
  * sheet's other answers wait (on 2026-11-04 a Done pressed while a reply was sending answered the ask first). */
-function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env): Answer | undefined {
+function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env, check: () => Promise<boolean>, sending: { current: boolean }): Answer | undefined {
   const key = i?.key ?? '';
   const [draft, setDraft] = useState(() => (key ? draftOf(key) : ''));
   const [busy, setBusy] = useState(false);
@@ -301,11 +306,14 @@ function useAnswer(i: InboxItem | undefined, onDone: () => void, env: Env): Answ
   if (!i?.reply) return undefined;
   const r = i.reply;
   const post = async (fields: Record<string, string>, action = r.action) => {
-    setBusy(true);
-    // Posted as the item's own source's (the agent's actions), as its sheet's other buttons are.
-    const ok = await env.withSource(i.source).send(action, { ...r.fields, ...fields });
-    setBusy(false);
-    return ok;
+    if (sending.current) return false;
+    sending.current = true;
+    try {
+      if (!(await check())) return false;
+      setBusy(true);
+      // Posted as the item's own source's (the agent's actions), as its sheet's other buttons are.
+      return await env.withSource(i.source).send(action, { ...r.fields, ...fields });
+    } finally { setBusy(false); sending.current = false; }
   };
   return {
     draft, setDraft, busy, stale: !!env.stale, drafted: !!draft.trim(), label: r.label,
