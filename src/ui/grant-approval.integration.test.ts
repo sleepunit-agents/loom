@@ -201,7 +201,9 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     approvals({ 'a-0000cafe': { state: 'pending', agent: 'art', kind: 'merge', target: 'github:a/b#1@' + 'f'.repeat(40), text: 'Merge b#1?' } });
     writeFileSync(join(h.home, 'state-broken'), '1');
     const cookie = await login('jonathan');
-    expect(await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000cafe' })).toMatchObject({ ok: true });
+    const r = await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000cafe' });
+    expect(r.ok).toBe(true);
+    expect(r.message).toMatch(/couldn't read it back: if it gives an agent a piece, check Permissions/);
   });
 
   it('a Yes in words\' place is refused on an ask that waits on an approval: only Allow allows', async () => {
@@ -258,6 +260,16 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     const ok = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'jonathan', agents: '*' }, { ok: true, message: 'Allowed.' });
     expect(ok).toMatchObject({ ok: true, message: 'Mark may use Tasks now.' });
     expect(runtimeActs()).toHaveLength(1);
+  });
+
+  it('only an allowed grant is applied: a pending or denied one, or another kind, leaves the answer as it was', async () => {
+    const pieces = (await pieceManifests(process.env)).pieces;
+    const owner = { kind: 'owner' as const, who: 'jonathan', agents: '*' as const };
+    for (const st of ['pending', 'denied', 'used']) {
+      approvals({ 'a-0000beef': { ...GRANT['a-0000beef'], state: st } });
+      expect(await applyGrant(process.env, pieces, 'a-0000beef', owner, { ok: true, message: 'Said.' })).toEqual({ ok: true, message: 'Said.' });
+    }
+    expect(runtimeActs()).toEqual([]);
   });
 
   it('a runtime that refuses says so, and where to give it instead', async () => {

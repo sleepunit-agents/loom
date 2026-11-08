@@ -390,14 +390,17 @@ export async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id
     // Only for a grant's card (it leads: the approvals piece marks those), so a merge's or a relay's Allow isn't made a failure.
     const src = pieceWithRole(env, 'approvals')?.name;
     const grantCard = pieces.find((p) => p.piece === src)?.manifest.asks.some((x) => x.lead && x.actions?.some((b) => b.fields?.id === id));
-    return grantCard ? { ok: false, message: `${allowed.message} It may not be applied: loom couldn't read that approval back. Check it on Permissions.` } : allowed;
+    // One past the cards loom was shown can't be told apart: never a bare "Allowed" for it either.
+    return grantCard ? { ok: false, message: `${allowed.message} It may not be applied: loom couldn't read that approval back. Check it on Permissions.` }
+      : { ...allowed, message: `${allowed.message} (loom couldn't read it back: if it gives an agent a piece, check Permissions.)` };
   }
   if (a.kind !== 'grant' || a.state !== 'allowed') return allowed;
   const owner = caller?.kind === 'owner' && (caller.agents === undefined || caller.agents === '*');
   const target = typeof a.target === 'string' ? a.target : '';
   // Every way it isn't applied says so, and where the owner can still give it himself (his Allow can't be pressed again).
   const unapplied = (why: string): ActResult => ({ ok: false, message: `${allowed.message} It wasn't applied: ${why} You can give it on Permissions.` });
-  if (!owner || !target || !a.agent) return unapplied('access to a piece is the household owner\'s to give.');
+  if (!owner) return unapplied('access to a piece is the household owner\'s to give.');
+  if (!target || !a.agent) return unapplied('loom couldn\'t read what that approval allows.');
   const auth = grantsAuthority(env).piece;
   const info = auth ? pieces.find((p) => p.piece === auth) : undefined;
   if (!info) return unapplied('no runtime is installed to apply it.');
@@ -1628,6 +1631,10 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const sp = splitPage(backLink);
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
+      // The approvals piece answered from an agent's pages (should it ever have a tab there): its grant applied the same.
+      if (result.ok && hh && action === 'allow' && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
+        result = await applyGrant(opts.env, pieces, fields.id ?? '', callerOf(who), result);
+      }
     } else if (agentAct && action.startsWith('needs-')) {
       // An agent's Needs you, answered from its sheet: replied to, done or dismissed. Who answers is the signed-in member.
       source = agentSource(agentAct[1]);
