@@ -148,12 +148,19 @@ describe.runIf(built && chrome)('an app\'s tile: Back, Forward, its crumb and it
   it('1280: Back from a task is the list it came from, at its query and its scroll; Forward goes again; the browser\'s Back agrees', async () => {
     const p = await screen(1280, '/p/work?sort=new');
     await titled(p, 'Tasks');
+    await p.evaluate(() => document.fonts.ready);
     expect(await step(p, 'Back').isDisabled()).toBe(true);   // nowhere yet: the app opened here
     expect(await step(p, 'Forward').isDisabled()).toBe(true);
     await bodyOf(p).evaluate((m) => { m.scrollTop = 400; });
-    const top = await bodyOf(p).evaluate((m) => m.scrollTop);
+    // click() may scroll the link into view before dispatching it. Back must restore where the list was
+    // actually left, including that browser scroll, rather than the position before the automation moved it.
+    const taskLink = tile(p).locator('.loom-tile__page a[href$="/task/t-12"]');
+    await taskLink.evaluate((el) => el.addEventListener('click', () => {
+      document.documentElement.dataset.navTopAtClick = String(el.closest('.loom-tile__body')!.scrollTop);
+    }, { capture: true, once: true }));
+    await taskLink.click();
+    const top = await p.evaluate(() => Number(document.documentElement.dataset.navTopAtClick));
     expect(top).toBeGreaterThan(100);
-    await tile(p).locator('.loom-tile__page a[href$="/task/t-12"]').click();
     await titled(p, 'Task 12');
     expect(where(p)).toBe('/p/work/task/t-12');
     // The crumb: the app.
