@@ -229,9 +229,13 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
         while (s && !(/(auto|scroll)/.test(getComputedStyle(s).overflowY) && s.scrollHeight > s.clientHeight + 1)) s = s.parentElement;
         const el = (s ?? document.scrollingElement)!;
         const f = window.fetch;
+        let intercepted = false;
         window.fetch = async (...a: Parameters<typeof fetch>) => {
           const r = await f(...a);
           if (!String(a[0]).includes('/since/') || !(await r.clone().text()).includes('Unseen')) return r;
+          // Several reads may already be in flight: restoring fetch doesn't cancel those wrappers.
+          if (intercepted) return r;
+          intercepted = true;
           window.fetch = f;
           const held = new Set<EventTarget>();
           const hold = (e: Event) => { if (e.isTrusted) { e.stopImmediatePropagation(); held.add(e.target!); } };
