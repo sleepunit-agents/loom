@@ -371,6 +371,9 @@ function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id:
 }
 
 /**
+ * The household-owner rule is checked here, by the approvals piece and by the runtime too: three programs, each refusing
+ * on its own, so no one of them being wrong gives a piece away (a trade-off against one shared helper, t-1970 review).
+ *
  * After the household owner's Allow on an approval (t-1970): if it's a `grant` (an agent's access to a piece, its target
  * `<piece>:<agent>[:<paths>]`), the grants authority applies it now, as the same owner: the runtime's `grant-approved`
  * spends the approval (allowed, for exactly that target) and only then adds the agent to that piece's grant. Read from
@@ -378,7 +381,7 @@ function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id:
  * owner (every agent's); a member who owns some agents can't give a household's piece away (approvals refuses their
  * Allow too, and the authority refuses their call). Any other approval, or one not allowed, leaves the answer as it was.
  */
-async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: string, caller: ApiCaller | undefined, allowed: ActResult): Promise<ActResult> {
+export async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: string, caller: ApiCaller | undefined, allowed: ActResult): Promise<ActResult> {
   if (!/^a-[0-9a-f]{8}$/.test(id)) return allowed;
   const a = (await pieceCheckers(env).approvals([id]).catch(() => undefined))?.[id];
   // Couldn't say what it was (the piece busy, slow, or answering for no such id): never a quiet "Allowed", which for a
@@ -387,12 +390,14 @@ async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: strin
   if (a.kind !== 'grant' || a.state !== 'allowed') return allowed;
   const owner = caller?.kind === 'owner' && (caller.agents === undefined || caller.agents === '*');
   const target = typeof a.target === 'string' ? a.target : '';
-  if (!owner || !target || !a.agent) return { ok: false, message: `${allowed.message} It wasn't applied: access to a piece is the household owner's to give.` };
+  // Every way it isn't applied says so, and where the owner can still give it himself (his Allow can't be pressed again).
+  const unapplied = (why: string): ActResult => ({ ok: false, message: `${allowed.message} It wasn't applied: ${why} You can give it on Permissions.` });
+  if (!owner || !target || !a.agent) return unapplied('access to a piece is the household owner\'s to give.');
   const auth = grantsAuthority(env).piece;
   const info = auth ? pieces.find((p) => p.piece === auth) : undefined;
-  if (!info) return { ok: false, message: `${allowed.message} No runtime is installed to apply it, so nothing changed.` };
+  if (!info) return unapplied('no runtime is installed to apply it.');
   const r = await pieceAct(info, { action: 'grant-approved', path: '', fields: { id, agent: a.agent, target } }, env, caller);
-  return r.ok ? { ...r, page: '' } : { ok: false, message: `${allowed.message} ${r.message}` };
+  return r.ok ? { ...r, page: '' } : unapplied(r.message);
 }
 
 /** The household's Permissions page: the grants authority's own (the runtime's `permissions`), when one is installed. */

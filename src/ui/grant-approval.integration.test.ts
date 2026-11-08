@@ -18,7 +18,8 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { parseLoomBlock } from '../cli/pieces-managed.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
-import { clearPieceCache } from './pieces.js';
+import { clearPieceCache, pieceManifests } from './pieces.js';
+import { applyGrant } from './handler.js';
 import { closeAllBackends } from '../backends/index.js';
 
 const APPROVALS_BIN = `#!${process.execPath}
@@ -40,7 +41,7 @@ process.stdin.on('end', () => {
     const x = s[req.fields.id];
     if (!x || x.state !== 'pending') return console.log(JSON.stringify({ ok: false, message: 'not pending' }));
     const c = req.caller || {};
-    if (x.kind === 'grant' && !(c.kind === 'owner' && (c.agents === undefined || c.agents === '*'))) return console.log(JSON.stringify({ ok: false, message: 'Access to a piece is the household owner\\'s to give or refuse.' }));
+    if (x.kind === 'grant' && !fs.existsSync(process.env.LOOM_HOME + '/lenient') && !(c.kind === 'owner' && (c.agents === undefined || c.agents === '*'))) return console.log(JSON.stringify({ ok: false, message: 'Access to a piece is the household owner\\'s to give or refuse.' }));
     x.state = req.action === 'allow' ? 'allowed' : 'denied';
     fs.writeFileSync(f, JSON.stringify(s));
     return console.log(JSON.stringify({ ok: true, message: (req.action === 'allow' ? 'Allowed: ' : 'Denied: ') + x.text.replace(/\\?$/, '.') }));
@@ -70,6 +71,7 @@ process.stdin.on('end', () => {
   if (a[0] === 'ui' && a[1] === 'act') {
     const req = JSON.parse(input);
     fs.appendFileSync(home + '/runtime-acts', JSON.stringify({ action: req.action, fields: req.fields, caller: req.caller, scope: process.env.LOOM_SCOPE || '', grant: !!process.env.LOOM_STORE_GRANT }) + '\\n');
+    if (fs.existsSync(home + '/runtime-refuses')) return console.log(JSON.stringify({ ok: false, message: 'Not granted: the approval was not spendable.' }));
     const s = JSON.parse(fs.readFileSync(home + '/approvals.json', 'utf-8'));
     const x = s[req.fields.id];
     if (!x || x.state !== 'allowed' || x.target !== req.fields.target) return console.log(JSON.stringify({ ok: false, message: 'Not granted: not allowed.' }));
@@ -212,6 +214,29 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     expect(j.ok).toBe(false);
     expect(state('a-0000beef')).toBe('pending');
     expect(runtimeActs()).toEqual([]);
+  });
+
+  it('core\'s own gate: even if the approvals piece let a member\'s Allow through, core never has it applied', async () => {
+    // A member's Allow can't reach the approvals piece over the page at all (it isn't theirs to see: 404). Were it to,
+    // and were the piece to answer it, core's own check still refuses: the state is allowed here, the caller a member.
+    approvals({ 'a-0000beef': { ...GRANT['a-0000beef'], state: 'allowed' } });
+    const pieces = (await pieceManifests(process.env)).pieces;
+    const r = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'sam', agents: ['art'] }, { ok: true, message: 'Allowed: Give Mark access to Tasks.' });
+    expect(r).toMatchObject({ ok: false, message: expect.stringMatching(/It wasn't applied: access to a piece is the household owner's to give/) });
+    expect(runtimeActs()).toEqual([]);
+    // And the household owner's, through the same function, is applied.
+    const ok = await applyGrant(process.env, pieces, 'a-0000beef', { kind: 'owner', who: 'jonathan', agents: '*' }, { ok: true, message: 'Allowed.' });
+    expect(ok).toMatchObject({ ok: true, message: 'Mark may use Tasks now.' });
+    expect(runtimeActs()).toHaveLength(1);
+  });
+
+  it('a runtime that refuses says so, and where to give it instead', async () => {
+    approvals({ 'a-0000beef': { ...GRANT['a-0000beef'], target: 'tasks:mark' } });
+    writeFileSync(join(h.home, 'runtime-refuses'), '1');
+    const cookie = await login('jonathan');
+    const r = await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000beef' });
+    expect(r.ok).toBe(false);
+    expect(r.message).toMatch(/It wasn't applied: Not granted.*You can give it on Permissions\./);
   });
 
   it('any other approval\'s Allow is only an Allow: the runtime isn\'t asked', async () => {
