@@ -26,7 +26,7 @@ import { findProgram } from './programs.js';
 import { agentDir, loadHousehold, type Household, type Member } from './household.js';
 import { withHouseholdDb } from './household-store.js';
 import { dropRefs, noteRefs } from './comms-work.js';
-import { conversationId, digestsOf, openConversationsReadonly, projectLookup, setConversationLabel } from './backends/conversations.js';
+import { conversationId, getConversation, digestsOf, openConversationsReadonly, projectLookup, setConversationLabel } from './backends/conversations.js';
 
 export const COMMS_VENUE = 'loom';
 export const COMMS_DB = 'comms.db';
@@ -963,12 +963,46 @@ function startNotice(h: Household, env: NodeJS.ProcessEnv, r: ThreadRow | undefi
   return { ok: true };
 }
 
+/** A runtime-created job gets an owner-visible thread backed by its agent-venue conversation.
+ * This operation is reachable only with the runtime role, like the other adapter operations.
+ */
+function spawnThread(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date): AdapterAnswer {
+  const agent = typeof raw.agent === 'string' && h.agents.includes(raw.agent) ? raw.agent : '';
+  const cv = typeof raw.conversation === 'string' ? getConversation(agentDir(h, agent), raw.conversation) : undefined;
+  if (!agent || !cv || cv.venue !== 'spawn') return fail('bad-input: a spawn conversation of this agent is required');
+  const existing = threadOfConversation(h.home, cv.id);
+  if (existing) return { ok: true, id: existing.id };
+  const parentThread = typeof raw.parent === 'string' ? threadOfConversation(h.home, raw.parent) : undefined;
+  const askingMember = parentThread?.agent === agent ? h.members.find((m) => m.person === parentThread.member && owns(m, agent)) : undefined;
+  const member = askingMember ?? h.members.find((m) => Array.isArray(m.agents) && m.agents.includes(agent)) ?? h.members.find((m) => m.agents === '*');
+  if (!member) return fail('bad-input: the agent has no owner');
+  const id = base32(createHash('sha256').update(`spawn:${agent}:${cv.id}`).digest()).slice(0, 16);
+  const opened = openThread(h, env, member, { agent, id, text: checkText(raw.text) }, now);
+  withThreadsAt(h.home, (db) => db.prepare('UPDATE comms_threads SET conversation = ? WHERE id = ?').run(cv.id, opened.thread.id));
+  withMessages(h.home, (db) => db.prepare("UPDATE comms_messages SET delivered = 1, sender = ? WHERE thread = ? AND seq = ?").run(agent, opened.thread.id, opened.seq));
+  const t = threadOfConversation(h.home, cv.id)!;
+  setTitle(h, t, (cv.label ?? 'Spawn').slice(0, MAX_TITLE), 'agent', now);
+  recordDelivery(h, t, opened.seq, { delivered: true, body: 'queued' }, now);
+  if (typeof raw.parent === 'string') {
+    const parent = getConversation(agentDir(h, agent), raw.parent);
+    if (parent) {
+      const text = `Spawned job: [${cv.label ?? 'Spawn'}](${threadPath(t.id)}) · ${cv.id}`;
+      const pt = threadOfConversation(h.home, parent.id);
+      if (pt && pt.agent === agent) append(h.home, env, pt.id, { kind: 'reply', from: agent, id: `spawn-${cv.id}`, text }, now);
+      append(h.home, env, t.id, { kind: 'reply', from: agent, id: `parent-${parent.id}`, text: `Asked from [${parent.label ?? parent.id}](/a/${agent}/conversation/${parent.id})${typeof raw.run === 'string' ? ` · ${raw.run}` : ''}` }, now);
+    }
+  }
+  bump(h.home);
+  return { ok: true, id: t.id };
+}
+
 /**
  * POST /api/loom/comms/adapter (comms.md, section 1): the runtime's post, describe and status for venue `loom`, the
  * same three calls a piece adapter answers on its send argv, with the same answers.
  */
 export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<string, unknown>, now: Date = new Date()): AdapterAnswer {
   const { op, place, agent } = raw;
+  if (op === 'spawn') return spawnThread(h, env, raw, now);
   if (op !== 'post' && op !== 'describe' && op !== 'status' && op !== 'trace') return fail('bad-input: op is post, describe, status or trace');
   if (typeof agent !== 'string' || !h.agents.includes(agent)) return fail('bad-input: agent names one of this household\'s agents');
   if (typeof place !== 'string') return fail('bad-input: place is a thread');
@@ -994,7 +1028,12 @@ export function adapterCall(h: Household, env: NodeJS.ProcessEnv, raw: Record<st
     // `on`: the harness a switched body answers on (loom-box t-1907: "Codex" while the agent's own account is out of
     // quota), kept on the reply's card for the comm screen's channel line. A short word, or nothing.
     const on = typeof raw.on === 'string' && HARNESS_WORD.test(raw.on) ? raw.on : undefined;
-    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
+    const ref = typeof raw.ref === 'string' && /^spawn-run-[0-9a-f]{12}$/.test(raw.ref) ? raw.ref : undefined;
+    if (ref) {
+      const prior = withMessages(h.home, (db) => db.prepare("SELECT seq FROM comms_messages WHERE thread = ? AND kind = 'reply' AND id = ?").get(r.id, ref) as { seq: number } | undefined);
+      if (prior) return { ok: true, id: String(prior.seq) };
+    }
+    const seq = append(h.home, env, r.id, { kind: 'reply', from: agent, id: ref ?? `r${randomBytes(6).toString('hex')}`, text, ...(typeof raw.run === 'string' ? { run: raw.run } : {}), ...(on ? { card: { on } } : {}) }, now);
     settleStarts(h.home, r.id);
     withThreadsAt(h.home, (db) => touch(h.home, db, r.id, { last: nowIso(now), queued_since: null, last_failed: 0 }, now));
     return { ok: true, id: String(seq) };
@@ -1131,7 +1170,7 @@ export function threadOfConversation(home: string, conversation: string): Thread
  */
 export function threadOfAgentConversation(home: string, agent: string, conversation: string): Thread | undefined {
   const t = threadOfConversation(home, conversation);
-  return t && t.agent === agent && conversationId(agent, COMMS_VENUE, t.id) === conversation ? t : undefined;
+  return t && t.agent === agent && (conversationId(agent, COMMS_VENUE, t.id) === conversation || getConversation(join(home, 'agents', agent), conversation)?.venue === 'spawn') ? t : undefined;
 }
 
 /** The conversations of `agent`'s threads filed under project `slug` (the hub counts them, comms.md "Project"). */

@@ -161,7 +161,7 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
   console.log(JSON.stringify({ v: 2, asks: fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf-8')) : [] }));
 } else process.exit(2);
 `);
-    piece(h.home, 'runtime', { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } }, RUNTIME_BIN);
+    piece(h.home, 'runtime', { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'], venues: { spawn: { label: 'Spawn', kind: 'agent' }, relay: { label: 'Relay', kind: 'agent', send: ['loom-runtime', 'relay-send'] } } }, RUNTIME_BIN);
     tok.jonathan = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
     tok.sam = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
     tok.loren = createToken(h, { role: { kind: 'owner', member: 'loren' }, label: 'loren' }).token;
@@ -957,4 +957,31 @@ if (process.argv[2] === 'ui' && process.argv[3] === '--json') {
       expect(e.text).not.toMatch(/^\d{3}$/);
     });
   });
+  it('runtime spawns appear as their own Comms thread, return reports once, and owner steering reaches the same conversation', async () => {
+    mode('ok');
+    const parent = await open();
+    recordTurn(agentDir(h, 'art'), 'art', { venue: 'loom', place: parent.id, at: new Date().toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'runtime:runtime');
+    const child = recordTurn(agentDir(h, 'art'), 'art', { venue: 'spawn', place: 'sp-test', label: 'spawn test', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'message' }, 'runtime:runtime');
+    const q = { op: 'spawn', agent: 'art', conversation: child.conversation, parent: parent.conversation, text: 'Reply ok', run: 'run-0123456789ab' };
+    expect((await api(tok.art, 'comms/adapter', q)).status).toBe(403);
+    const a = await api(tok.runtime, 'comms/adapter', q);
+    expect(a.status).toBe(200);
+    const id = a.body.id as string;
+    expect(id).toMatch(/^th:/);
+    expect((await api(tok.runtime, 'comms/adapter', q)).body.id).toBe(id);
+    const thread = await page(tok.jonathan, 'GET', `/comms/${id}`);
+    expect(thread.body.thread).toMatchObject({ conversation: child.conversation, title: 'spawn test' });
+    expect((await page(tok.sam, 'GET', `/comms/${id}`)).status).toBe(403);
+    expect(JSON.stringify((await page(tok.jonathan, 'GET', `/comms/${parent.id}`)).body.messages)).toContain(id.replace(/^th:/, ''));
+    const post = { op: 'post', agent: 'art', place: id, text: 'ok', run: 'run-0123456789ab', ref: 'spawn-run-0123456789ab' };
+    await api(tok.runtime, 'comms/adapter', post);
+    await api(tok.runtime, 'comms/adapter', post);
+    const msgs = (await page(tok.jonathan, 'GET', `/comms/${id}`)).body.messages as Array<{text: string}>;
+    expect(msgs.filter((m) => m.text === 'ok')).toHaveLength(1);
+    await page(tok.jonathan, 'POST', `/comms/${id}/send`, { id: mid(n++), text: 'Try yes instead' });
+    await settled(id);
+    expect(deliveries().at(-1)).toMatchObject({ venue: 'spawn', place: 'sp-test', from: { kind: 'person', slug: 'jonathan' }, text: 'Try yes instead' });
+  });
+
+
 });

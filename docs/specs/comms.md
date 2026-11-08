@@ -1235,3 +1235,15 @@ pattern in loom-discord at 93a213d and loom-slack at 8d47373.
 
 Before this doc merges, a context-stripped reviewer reviews it, and every finding is folded, accepted as a trade-off,
 or rejected with a quote.
+
+### Runtime-spawned jobs
+
+The runtime may create a Comms view for one of its `spawn` conversations through
+its runtime-only adapter operation `spawn` (agent, conversation, text, optional
+parent and run). Core checks the agent and conversation, assigns its owner, and
+keeps the existing conversation id. It never starts a second body. The brief,
+parent link, working status and final report are shown as one thread. Its owner's
+follow-ups are delivered to that conversation's actual venue and place. Thread
+access still requires that member to own the agent. The runtime's report post
+may carry a stable `spawn-run-…` reference to avoid duplicate reports after a
+restart. A client or an agent token cannot create these thread views directly.
