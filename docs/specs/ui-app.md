@@ -107,7 +107,7 @@ dropped, so an old app and a new piece can't lose data between them.
 ### Master/detail (t-1925)
 
 An app whose page is "pick one of many, then read it" is drawn as a mail client (`web/src/split.tsx`, `Split`): folders,
-a list, and the open item beside it. The Inbox and Knowledge use it (Jonathan's approved mocks, 2026-11-06). It is
+a list, and the open item beside it. The Inbox, Knowledge and Activity use it (Jonathan's approved mocks, 2026-11-06 and 2026-11-08). It is
 one generic piece of the app, not an app's own: other apps use it the same way.
 
 - **Its own width, not the screen's.** A `ResizeObserver` on its box picks the panes: **three** from 900 px (folders |
@@ -130,6 +130,25 @@ picked is fetched whole (body, sources, the pages that cite it, its last check).
 (two thirds of the 30 days), **due a check** (30 days unchecked, or its last check found it stale). **Still true** is a
 confirmed check (moves its verified date); **Check again** is a stale one (`knowledge-recheck`): the date stays and the
 page is due a check until someone confirms it.
+
+**Activity** (`view: 'activity'`, `/activity`; t-1972, Jonathan's approved design 2026-11-08): what happened in the
+household, a few days at a time. Its folders are **filters** (`isOn`: toggles, `aria-pressed`, several at once): **Who**
+(the viewer's agents and the owner), **Where** (Comms, Discord, Slack, Terminal, Wakes, and any other venue present),
+**What** (Conversations, Work done, System), alphabetical in each group, each with the shown day's count. Within a group
+any matches, across groups all must; they live in the address (`?who=art,owner&where=slack&what=work`), with the open
+entry (`?e=`) and the day (`?day=`). Over the rows a **day strip** (`listTop`) draws the shown day's entries per hour;
+an hour jumps the list to it. In two and one pane the filters are one menu (`narrow`), not chips.
+
+- **An entry** is a conversation's run (its digest: the conversation's label as the title, the summary's first sentence as
+  its line), a conversation that moved with no digest, or an episode no conversation covers (a body's own episode beside
+  its run's digest, minutes apart in the same venue, is the same run told twice: shown once). Never a body's prompt: an
+  episode titled with the runtime's spawn preamble takes its conversation's label (`src/ui/episode-title.ts`).
+- **The reader** has what was asked, what happened, what was decided, the tasks and pull requests it names, where to read
+  more (the Comms thread, the memory) and, for a Comms run, its steps as the thread shows them.
+- **Who sees what** is the household page's, never more: only the viewer's agents (an agent owner's household is
+  narrowed first), and a Comms thread (and its steps, and an episode about one) only to its own member.
+- Loom answers three days (`?to=` for an earlier three, "Earlier" asks for them without moving the address); rows off
+  screen skip layout (`content-visibility`).
 
 **The Inbox's asks are live only when loom says so.** The list may be a copy kept on the device (the last answer of the
 page, `page.ts`; the service worker's when offline). So the reader asks `GET /inbox/open?k=<key>` (`{open}`, `no-store`)

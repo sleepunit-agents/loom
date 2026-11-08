@@ -39,6 +39,8 @@ import { Skeleton, StateCard } from './states';
 import { MeAvatar, nameOf } from './account-button';
 // Knowledge, a reader (knowledge.tsx): its own chunk.
 const KnowledgeView = lazy(() => import('./knowledge').then((m) => ({ default: m.KnowledgeView })));
+// Activity (activity.tsx, t-1972): its own chunk.
+const ActivityView = lazy(() => import('./activity').then((m) => ({ default: m.ActivityView })));
 // An agent's window (agent-window.tsx): its header and its sections, around its pages. Its own chunk.
 const AgentWindow = lazy(() => import('./agent-window'));
 const InboxView = lazy(() => import('./inbox').then((m) => ({ default: m.InboxView })));
@@ -417,7 +419,7 @@ export default function App() {
     || (data?.view === 'dashboard' && !!(data.dashboard as { agent?: AgentHead }).agent?.id);
   // A page that didn't open has no title of its own: not the last page's, still standing over the reason.
   const title = error || waiting ? '' : data?.view === 'page' || data?.view === 'passkeys' ? (data.page as Page).title : head?.label ?? (data?.view === 'dashboard' ? (data.dashboard as { label?: string }).label
-    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
+    : data?.view === 'inbox' ? 'Inbox' : data?.view === 'activity' ? 'Activity' : data?.view === 'knowledge' ? String(data.title ?? 'Knowledge') : data?.view === 'comms' ? 'Comms' : data?.view === 'sheet' ? (data.which === 'setup' && !wide ? 'More' : String(data.which).replace(/^./, (c) => c.toUpperCase())) : 'Home');
 
   // The header (app-header.tsx): the app's icon tile (or the agent's mark, or its way back), the title, one line.
   const shellPlaces = chrome?.shell ? [...placesOf(chrome.shell), ...settingsOf(chrome.shell), ...chrome.shell.core] : [];
@@ -506,6 +508,7 @@ export default function App() {
                   : data.view === 'home' ? <><DashboardView d={{ label: 'Home', asks: data.asks as never, tiles: data.tiles as never, thread: [] }} now={Date.now()} /><div className="mt-4"><PageView page={data.page as Page} /></div></>
                   : data.view === 'comms' ? <Suspense fallback={<Spinner size="lg" />}><CommsView data={data as never} /></Suspense>
                   : data.view === 'knowledge' ? <Suspense fallback={<Spinner size="lg" />}><KnowledgeView data={data as never} /></Suspense>
+                  : data.view === 'activity' ? <Suspense fallback={<Spinner size="lg" />}><ActivityView data={data as never} /></Suspense>
                   : data.view === 'inbox' ? <Suspense fallback={<Spinner size="lg" />}><InboxView key={String(data.open ?? '')} items={data.items as never} folder={data.folder as string} folders={data.folders as never} open={data.open as string | undefined} chrome={data.chrome} github={data.github as string | undefined} /></Suspense>
                   : data.view === 'passkeys' ? <Suspense fallback={<Spinner size="lg" />}>
                     <AccountView me={(data.me as Me | undefined) ?? { name: data.chrome?.shell?.owner ?? 'owner', role: 'Signed in' }} csrf={data.chrome.csrf}

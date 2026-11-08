@@ -79,7 +79,7 @@ export interface AgentHead { label: string; bg: string; fg: string; sub?: string
 
 export type View =
   | { view: 'page'; page: Page; ctx: Ctx; chrome: Chrome; head?: AgentHead; unscoped?: string; /** The Projects index's cards (web/src/projects.tsx). */ projects?: ProjectCards }
-  | { view: 'home' | 'house-home' | 'dashboard' | 'inbox' | 'sheet' | 'passkeys' | 'comms' | 'knowledge'; chrome: Chrome; ctx?: Ctx; [k: string]: unknown };
+  | { view: 'home' | 'house-home' | 'dashboard' | 'inbox' | 'sheet' | 'passkeys' | 'comms' | 'knowledge' | 'activity'; chrome: Chrome; ctx?: Ctx; [k: string]: unknown };
 
 // ---- links: loom's own rule (src/ui/vocab.ts splitPage, render.ts pageHref) ----------------------
 

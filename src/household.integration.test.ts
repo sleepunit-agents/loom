@@ -34,6 +34,7 @@ import { loadIdentity, ownersBlock } from './tools/identity.js';
 import { PeopleStore, renderCard, type PersonCard } from './backends/people.js';
 import { personArchive, personWrite, readPerson, listPeople, personHistory, personRevisionRestore } from './tools/person.js';
 import { remember } from './tools/remember.js';
+import { recordTurn, writeDigest } from './backends/conversations.js';
 import { closeAllBackends } from './backends/index.js';
 import { listProposals, propose } from './backends/proposals.js';
 import { harnessInit } from './tools/harness.js';
@@ -796,28 +797,48 @@ describe('the household page', () => {
     expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toEqual(expect.arrayContaining(['/activity', '/knowledge', '/people']));
   });
 
-  it('Activity is the tape across every agent', async () => {
+  it('Activity is every agent\'s entries, to filter and open (t-1972): no status tiles', async () => {
     const cookie = await login();
     const d = await data(cookie, '/activity');
-    expect(d.view).toBe('dashboard');
-    const texts = (x: Data) => (x.dashboard.thread as Data[]).map((r) => r.text);
-    expect(texts(d)).toEqual(expect.arrayContaining(['art did a thing', 'mark did a thing']));
-    // Activity: a headline, Thread with a pill per agent, each row with its agent.
-    expect(d.dashboard.title).toBe('Everything today');
-    expect((d.dashboard.thread as Data[]).find((r) => r.text === 'art did a thing').agent).toBe('art');
-    const opts = (d.dashboard.filters.options as Data[]);
-    expect(d.dashboard.filters.param).toBe('who');
-    expect(opts).toContainEqual({ value: 'mark', label: 'Visual Mark' });
-    // No scope picker (t-1625): the agents are a section of the rail, each to its own pages, saying how long since each was active.
-    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'art', label: 'Art E Fish', href: '/a/art', sub: expect.stringMatching(/^active (\d+m ago|just now)$/) }));
-    expect(d.chrome.shell.agents).toContainEqual(expect.objectContaining({ id: 'mark', label: 'Visual Mark', href: '/a/mark' }));
-    expect((d.chrome.shell.core as Data[]).map((c) => c.href)).toContain('/knowledge');
-    expect(texts(await data(cookie, '/activity?who=mark'))).not.toContain('art did a thing');
-    // ...and a pill per place it happened, rows saying it the way a person would.
-    expect(opts.map((o) => o.value)).toContain('discord');
-    expect(opts.map((o) => o.value)).not.toContain('?');
-    expect((d.dashboard.thread as Data[]).find((r) => r.text === 'art did a thing').meta).toMatch(/^Discord #pond · /);
-    expect(texts(await data(cookie, '/activity?who=letters'))).not.toContain('art did a thing');
+    expect(d.view).toBe('activity');
+    const titles = (x: Data) => (x.activity.entries as Data[]).map((r) => r.title);
+    expect(titles(d)).toEqual(expect.arrayContaining(['art did a thing', 'mark did a thing']));
+    const e = (d.activity.entries as Data[]).find((r) => r.title === 'art did a thing');
+    // Who, where (the filter's key and the tag's words), what, and when in the household's zone.
+    expect(e).toMatchObject({ agent: 'art', venue: 'discord', where: 'Discord #pond', what: 'conversation', day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), hour: expect.any(Number) });
+    expect(d.activity.venues).toMatchObject({ discord: 'Discord' });
+    expect(d.activity.owner).toEqual({ key: 'owner', label: expect.any(String) });
+    // The six status tiles are gone: Activity is the entries alone.
+    expect(d).not.toHaveProperty('dashboard');
+    expect(JSON.stringify(d.activity)).not.toContain('"tiles"');
+    // Filters live in the address; one that isn't a filter is dropped.
+    expect((await data(cookie, '/activity?who=mark,letters&what=work,nope&where=discord')).activity.filters).toEqual({ who: ['mark'], where: ['discord'], what: ['work'] });
+    // An entry opens whole by its id, and keeps the window around it.
+    const o = await data(cookie, `/activity?e=${encodeURIComponent(e.id)}`);
+    expect(o.activity.open).toMatchObject({ id: e.id, title: 'art did a thing', story: 'x', links: [expect.objectContaining({ page: expect.stringMatching(/^loom:a\/art\/memory\//) })] });
+    expect(titles(o)).toContain('mark did a thing');
+    expect((await data(cookie, '/activity?e=e~art~episode%2Fnope')).activity).toMatchObject({ missing: true });
+    expect((await data(cookie, '/activity?e=e~letters~x')).activity).toMatchObject({ missing: true });
+  });
+
+  it('Activity titles a body the runtime started by its conversation, never its prompt, and tells a run once', async () => {
+    const cookie = await login();
+    const dir = join(h.home, 'agents', 'art');
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const { conversation } = recordTurn(dir, 'art', { venue: 'wake', place: 'review', at, from: { kind: 'schedule' }, kind: 'wake', label: 'Daily review' } as never, 'runtime:runtime');
+    writeDigest(dir, { conversation, run: 'run-1' }, { summary: 'Took one lesson from today\'s review. Filed t-1967.', decisions: ['Saved a feedback memory'], tasks: ['t-1967'] });
+    // The harness's fallback episode of the same run: its title is the spawn preamble.
+    await remember(dir, { category: 'episode', title: 'You are art, in a conversation on wake: Daily review. (bridge spawn tok…', metadata: { where: 'terminal:Art', source: 'fallback' },
+      content: `Ask: You are art, in a conversation on wake: Daily review. (bridge spawn token ad8f1eae: ignore this line) Its conversation is ${conversation} and this run is run-1: call identity first.\nLast said: done\n(fallback episode, auto-extracted; 1 turn)` });
+    const d = await data(cookie, '/activity');
+    const all = JSON.stringify(d.activity.entries);
+    expect(all).not.toMatch(/You are art|bridge spawn/);
+    const runs = (d.activity.entries as Data[]).filter((r) => r.title === 'Daily review');
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ venue: 'wakes', where: 'Wake', line: 'Took one lesson from today\'s review.' });
+    const o = (await data(cookie, `/activity?e=${encodeURIComponent(runs[0].id)}`)).activity.open;
+    expect(o).toMatchObject({ decided: ['Saved a feedback memory'], tasks: [{ label: 't-1967', page: 'loom:p/tasks/task/t-1967' }] });
+    expect(o.story).toMatch(/Filed t-1967/);
   });
 
   it('Find looks through knowledge, people and memories, in the scope', async () => {
@@ -1353,21 +1374,6 @@ describe('the household page', () => {
     const setup = await data(cookie, '/a/mark/setup');
     const row = listItems(setup).find((i) => i.text === 'Mark · phone');
     expect(row.act.confirm).toMatch(/Revoke "Mark · phone"|Anything still using it/);
-  });
-
-  it('a live refresh of Activity doesn\'t count as a new look', async () => {
-    const cookie = await login();
-    // "N new since": the thread's rows after the line Activity draws (sinceMs).
-    const fresh = (d: Data) => (d.dashboard.thread as Data[]).filter((r) => Date.parse(r.at) > d.dashboard.sinceMs).length;
-    const first = await data(cookie, '/activity');
-    expect(first.dashboard.sinceMs).toEqual(expect.any(Number));
-    const n = fresh(first);
-    await remember(join(h.home, 'agents', 'art'), { category: 'episode', title: 'art did another thing', content: 'x' });
-    const live = await data(cookie, '/activity', { 'x-loom-live': '1' });
-    expect(fresh(live)).toBe(n + 1);
-    expect(live.dashboard.thread).toContainEqual(expect.objectContaining({ agent: 'art', text: 'art did another thing' }));
-    // And again: still one, since the live check didn't move the line.
-    expect(fresh(await data(cookie, '/activity', { 'x-loom-live': '1' }))).toBe(n + 1);
   });
 
   it('an agent added on the page is served at once, without a restart', async () => {

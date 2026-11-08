@@ -58,6 +58,7 @@ export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrom
 /** A message's id: 16 characters of RFC 4648 base32, lowercased (comms.md, "The message id"). */
 export { newId } from './comms-id';
 import { newId } from './comms-id';
+import { folded, groupLabel, isPlan, stepOf } from './steps';
 
 async function post(path: string, csrf: string, body: Record<string, unknown> = {}): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   try {
@@ -440,31 +441,6 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
   );
 }
 
-/** A card's state as the progress list draws it. */
-const stepOf = (c: Msg): AgentChatStep['status'] => { const st = String(c.card?.state ?? ''); return st === 'failed' ? 'error' : st === 'running' ? 'current' : 'complete'; };
-
-/** A plan card (Claude's TodoWrite, Codex's todo list; t-1944): the plan, not a step. Its label is `Plan (2/5): …`. */
-const isPlan = (c: Msg) => ['TodoWrite', 'todo_list'].includes(String(c.card?.tool ?? ''));
-/** A step's kind for grouping repeats: its label's first word and its tool ("Ran", "Read", "Searched"…). */
-const kindOf = (c: Msg) => `${String(c.card?.tool ?? '')}:${(c.text ?? '').split(' ')[0]}`;
-const GROUP_WORDS: Record<string, string> = { Ran: 'Ran N commands', Read: 'Read N files', Searched: 'N searches', Edited: 'Edited N files', Wrote: 'Wrote N files', Listed: 'Listed N folders', Messaged: 'N messages', Changed: 'Changed files N times' };
-const groupLabel = (cards: Msg[]) => {
-  const w = (cards[0].text ?? '').split(' ')[0];
-  return (GROUP_WORDS[w] ?? `N steps: ${w}`).replace('N', String(cards.length));
-};
-/** Steps as the list shows them: three or more like ones in a row, all finished well, fold into one line you can open. */
-function folded(cards: Msg[]): Array<{ few: Msg[] } | { many: Msg[] }> {
-  const out: Array<{ few: Msg[] } | { many: Msg[] }> = [];
-  for (let i = 0; i < cards.length;) {
-    let j = i;
-    while (j < cards.length && kindOf(cards[j]) === kindOf(cards[i]) && stepOf(cards[j]) === 'complete' && cards[j].text !== null) j++;
-    if (j - i >= 3) { out.push({ many: cards.slice(i, j) }); i = j; continue; }
-    const last = out.at(-1);
-    if (last && 'few' in last) last.few.push(cards[i]); else out.push({ few: [cards[i]] });
-    i++;
-  }
-  return out;
-}
 const asStep = (c: Msg): AgentChatStep => ({ id: String(c.seq), label: c.text ?? 'a step', status: stepOf(c) });
 
 /**
