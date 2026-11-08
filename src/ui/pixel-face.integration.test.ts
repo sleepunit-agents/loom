@@ -152,7 +152,8 @@ describe('an agent\'s pixel face', () => {
     await page.waitForFunction(() => { const c = document.querySelector<HTMLCanvasElement>('.loom-phome .loom-bigcard .loom-pixel-face canvas'); if (!c) return false;
       const d = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; }, null, { timeout: 15_000 });
     expect(await page.locator('.loom-phome .loom-bigcard').count()).toBe(2);
-    expect(await page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').count()).toBe(1);   // Mark's, drawn
+    // Mark's, drawn (its chunk may still be on its way: the card shows his initial until it lands)
+    await expect.poll(() => page.locator('.loom-phome .loom-bigcard [data-slot="agent-face"]').count(), { timeout: 15_000 }).toBe(1);
     await page.goto(`${base}/appearance`);
     await page.getByRole('radio', { name: 'Off' }).first().click();
     await page.goto(`${base}/`);
