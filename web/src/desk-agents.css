@@ -136,3 +136,16 @@
 @media (prefers-contrast:more){
   :root[data-look] :is(.loom-bigcard,.loom-needs-band,.loom-rcard,.loom-rneeds){-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
 }
+
+/* the accordion: an agent on one line (its face cropped to its head), one card open */
+:root[data-look] .loom-rrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto auto;align-items:center;gap:9px;flex:none;width:100%;padding:3px 12px 3px 4px;
+  text-align:left;color:var(--v-text);background:color-mix(in srgb,var(--v-paper) 92%,transparent);box-shadow:inset 0 0 0 1px var(--v-border),inset 2px 0 0 var(--c)}
+:root[data-look] .loom-rrow__face{display:block;width:48px;height:42px;overflow:hidden}
+:root[data-look] .loom-rrow__face>span{margin:-3px 0 0 0}
+:root[data-look] .loom-rrow b{display:flex;align-items:center;gap:8px;min-width:0;font-family:var(--font-display);font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rrow .loom-dot{width:7px;height:7px}
+:root[data-look] .loom-rrow .loom-askb{padding:3px 5px}
+:root[data-look] .loom-rrow__n{display:grid;place-items:center;min-width:20px;height:18px;padding:0 5px;border-radius:9px;font-size:11px;font-weight:700;line-height:1;
+  color:var(--v-on-accent);background:var(--c)}
+:root[data-look] .loom-rrow:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
+@media (hover:hover) and (pointer:fine){:root[data-look] .loom-rrow:hover{box-shadow:inset 0 0 0 1px var(--v-edge),inset 2px 0 0 var(--c);background:color-mix(in srgb,var(--v-beige-2) 92%,transparent)}}

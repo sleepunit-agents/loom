@@ -9,7 +9,8 @@
 // desktop: the two side by side in the app's window, or one at a time with a way back when that window (or tile) is
 // narrower than two panes fit (ONE_PANE_BELOW). Each thread has its comm screen: the agent's pixel portrait in a
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { RailContext } from './desk-rail';
 import './comms.css';
 import { WorkPanel } from './comms-work';
 import { AgentAvatar, useEnv, type Mark } from './blocks';
@@ -681,6 +682,14 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     const cards = messages.filter((m) => m.kind === 'card' && !isPlan(m) && (!lastMine || m.seq > lastMine.seq));
     return (cards.filter((c) => String(c.card?.state ?? '') === 'running').at(-1) ?? cards.at(-1))?.text ?? null;
   })();
+  // On a desktop, the agents' rail beside this tile opens this agent's card (desk-rail.ts).
+  const rail = useContext(RailContext);
+  const me = useRef({});
+  useEffect(() => {
+    if (!rail || !wide) return;
+    rail.onAir({ agent: thread.agent }, me.current);
+    return () => rail.onAir(null, me.current);
+  }, [rail, wide, thread.agent]);
   const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={wide ? short : compact} />;
 
   return (
