@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { ActButton, AgentAvatar, EnvContext, Nothing, useEnv, type Mark, type MarkState } from './blocks';
 import { guardedEnv, LIVE_SAYS, useAskLive } from './ask-open';
 import { As, type InboxItem } from './views';
-import { plain } from './plain';
+import { askerOf, plain } from './plain';
 import { markColor } from './look';
 import { onLive } from './page';
 import { newId } from './comms-id';
@@ -154,7 +154,8 @@ const needHref = (i: InboxItem) => `/inbox?f=needs&i=${encodeURIComponent(i.key)
 function NeedChip({ i }: { i: InboxItem }) {
   const outer = useEnv();
   const agents = outer.ctx.agents ?? {};
-  const who = (i.agent && agents[i.agent]?.label) || (i.agent ? i.agent[0].toUpperCase() + i.agent.slice(1) : '');
+  const named = (a?: string) => (a && agents[a]?.label) || (a ? a[0].toUpperCase() + a.slice(1) : '');
+  const { who, asks } = askerOf(i, named);
   const p = plain(i, who);
   const yesNo = !i.approval && i.needs?.answers === 'yes-no' && !!i.reply;
   const lined = !!(i.needs?.if_yes || i.needs?.if_no);
@@ -170,7 +171,7 @@ function NeedChip({ i }: { i: InboxItem }) {
     setBusy(false);
   };
   const open = () => outer.go(needHref(i));
-  const sub = [who && `${who} asks`, p.why ?? i.outcome].filter(Boolean).join(' · ');
+  const sub = [asks, p.why ?? i.outcome].filter(Boolean).join(' · ');
   return (
     <EnvContext.Provider value={env}>
       <li className="loom-nchip" data-tone={i.approval ? 'ask' : undefined}>

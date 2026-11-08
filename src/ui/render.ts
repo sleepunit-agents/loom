@@ -90,6 +90,8 @@ export interface Shell {
   /** The household's pixel icons (src/icon-set.ts), when it has a set in use: the apps it has one for (line: line-only, inverted
    * on a dark key), and its version. Each is /pixel-icons/<app>.png?v=<v>, for someone signed in. */
   icons?: { v: string; apps: Record<string, { line?: true }> };
+  /** The household's Permissions page (the grants authority's), a household owner's only (t-1970). */
+  permissions?: string;
   /** The page being shown, for the active tab: 'home', 'places', 'find', 'scope', 'setup', 'appearance', 'accessibility' or ''. */
   tab: string;
 }
@@ -116,6 +118,8 @@ export interface Found {
 
 export interface HomeTile extends Tile { source: Source }
 export interface HomeAsk extends Ask { source: Source; /** The piece's tab label, for the card's source line. */ sourceLabel?: string;
+  /** Another agent whose request this agent passed on (a relay conversation's sender, t-1970): "Mark asks, via Art". Core's only. */
+  relayedFrom?: string;
   /** The exact thing it's about, outside loom (a pull request's URL): its sheet's first button. Core's asks only. */
   href?: string;
   /** Its sheet has a box to answer the agent in words: posted as `action` with `fields` and the words as `text`. Core's only. */
@@ -149,6 +153,8 @@ export interface Dashboard {
     id?: string; bio?: string; today?: number; waiting?: number; active?: string;
     /** Its window's (t-1925 D): the household's description of it, may this viewer edit it, asked to write one, working now. */
     about?: string; edit?: boolean; asked?: boolean; working?: boolean;
+    /** Its page of what it can use (t-1970). */
+    permissions?: string;
     /** What it is on, while working (t-1945): its newest doing row, and a link where loom has one (a Comms thread, for its member). */
     on?: { text: string; href?: string } };
   asks: HomeAsk[];
@@ -245,6 +251,8 @@ export interface InboxItem {
   approval?: ApprovalView;
   /** Exactly what its yes allows (a piece's machine fields: a kind and a target), as small print. */
   fine?: string;
+  /** The agent whose request it passes on (HomeAsk's): who asks is them, via `agent`. */
+  relayedFrom?: string;
 }
 
 export const INBOX_FOLDERS: ReadonlyArray<{ id: InboxFolder; label: string; hint: string }> = [

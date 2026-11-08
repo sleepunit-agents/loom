@@ -18,7 +18,9 @@ import { agentDir, type Household } from './household.js';
 import { pieceApi } from './ui/pieces.js';
 
 /** An approval as the approvals piece tells core: its state, and whose it is. */
-export interface ApprovalState { state: string; agent?: string }
+export interface ApprovalState { state: string; agent?: string; kind?: string;
+  /** A `grant`'s target only (`<piece>:<agent>[:<paths>]`, t-1970): what the owner's Allow gives, for the runtime to apply. */
+  target?: string }
 
 /** How core learns whether what an ask waits on is resolved. Undefined: couldn't tell (the piece is absent, or failed). */
 export interface WaitCheckers {

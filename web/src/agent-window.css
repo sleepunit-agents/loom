@@ -33,6 +33,9 @@
 .loom-linkbtn:disabled{opacity:.5}
 .loom-aghead__asked{color:var(--v-text-3)}
 .loom-aghead__facts{margin:0;font-size:12px;color:var(--v-text-3)}
+.loom-aghead__perms{margin:0;font-size:12px}
+.loom-aghead__perms a{color:var(--v-text-2);text-decoration:underline;text-underline-offset:2px}
+.loom-aghead__perms a:hover{color:var(--v-text)}
 .loom-aghead__on{margin:0;font-size:13px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .loom-aghead__on>a{color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:3px}
 .loom-aghead__acts{display:flex;flex-direction:column;align-items:flex-end;gap:8px}

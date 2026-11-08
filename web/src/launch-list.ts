@@ -1,15 +1,26 @@
 // The launcher's list (launcher.tsx): every app, grouped (t-1925 G; the app mockups, 2026-11-06). Plain, no React,
 // tested on its own (src/ui/nav-plain.test.ts); its own module so the first page doesn't carry it.
 import type { Tone } from './loom';
-import { ACCESSIBILITY, APPEARANCE, type Place } from './nav';
+import { ACCESSIBILITY, ACCOUNT, APPEARANCE, type Place } from './nav';
 
 type ShellLike = { core: Place[]; pieces: Place[]; tab: string; admin?: boolean };
 
 /** An app in the launcher: where it opens, and what it says about itself under its name (its live state). */
-export type LaunchApp = { label: string; href: string; sub?: string; count?: number; tone?: Tone; icon?: string; agent?: string };
+export type LaunchApp = { label: string; href: string; sub?: string; count?: number; tone?: Tone; icon?: string; agent?: string;
+  /** Other words a search finds it by (Profile: "passkey", "sign out"). */ keywords?: readonly string[] };
 export type LaunchSection = { name: string; apps: LaunchApp[] };
 type AgentLike = { id: string; label: string; href: string; asks?: number; sub?: string; working?: true };
-type LaunchShell = ShellLike & { agents?: AgentLike[] };
+type LaunchShell = ShellLike & { agents?: AgentLike[];
+  /** The household's Permissions page (the grants authority's), for its owner: which agent may use which piece (t-1970). */
+  permissions?: string };
+
+/** Profile (t-1970: Jonathan couldn't find it, a control in the corner a search didn't know): the member's own account,
+ * an app like the others. */
+export const PROFILE: LaunchApp = { label: ACCOUNT[0].label, href: ACCOUNT[0].href, sub: 'Passkeys, signing out',
+  keywords: ['profile', 'account', 'passkey', 'passkeys', 'sign out', 'sign in', 'log out'] };
+/** Permissions: which agent may use which piece, who may relay to whom, and each agent's people (the runtime's page). */
+const PERMISSIONS = (href: string): LaunchApp => ({ label: 'Permissions', href, sub: 'Who can use what',
+  keywords: ['permissions', 'grants', 'access', 'relay'] });
 
 /** The sections, in order. A piece is in the section SECTION names for it, if any; else System's when its kind is a
  * setting, or when it's one of loom's own first-party pieces that run the household while being a place (SYSTEM, by
@@ -46,6 +57,10 @@ export function launcherOf(s: LaunchShell, own: { look?: string; motion?: string
       sub: a.asks ? `${a.asks} waiting on you` : a.working ? 'Working' : a.sub ?? 'Quiet' });
   }
   if (s.admin !== false) put('System', { label: 'Members', href: '/members' });
+  if (s.admin !== false && s.permissions) put('System', PERMISSIONS(s.permissions));
+  put('System', PROFILE);
+  // System by name (t-1970): Members, Permissions and Profile among the pieces, not after them.
+  by.get('System')!.sort((x, y) => x.label.localeCompare(y.label));
   put('Look & feel', { ...APPEARANCE, ...(own.look ? { sub: own.look } : {}) });
   put('Look & feel', { ...ACCESSIBILITY, ...(own.motion ? { sub: own.motion } : {}) });
   if (s.admin !== false) put('Pieces', { label: 'Pieces', href: '/pieces', sub: `${s.pieces.length} installed` });
@@ -61,12 +76,13 @@ export function launcherOf(s: LaunchShell, own: { look?: string; motion?: string
 export function launchFilter(sections: LaunchSection[], q: string): LaunchSection[] {
   const n = q.trim().toLowerCase();
   if (!n) return sections;
-  return sections.map((s) => ({ ...s, apps: s.apps.filter((a) => a.label.toLowerCase().includes(n) || s.name.toLowerCase().includes(n)) }))
+  return sections.map((s) => ({ ...s, apps: s.apps.filter((a) => a.label.toLowerCase().includes(n) || s.name.toLowerCase().includes(n)
+    || (a.keywords ?? []).some((k) => k.includes(n))) }))
     .filter((s) => s.apps.length > 0);
 }
 
 /** The best match for Enter: an app whose name starts with what's typed, else the first one shown. */
 export const firstMatch = (apps: LaunchApp[], q: string) => {
   const n = q.trim().toLowerCase();
-  return apps.find((a) => a.label.toLowerCase().startsWith(n)) ?? apps[0];
+  return apps.find((a) => a.label.toLowerCase().startsWith(n)) ?? apps.find((a) => (a.keywords ?? []).some((k) => k.startsWith(n))) ?? apps[0];
 };
