@@ -177,13 +177,12 @@ describe('one session ended alone (t-1871)', () => {
     expect(s.list()[0]).toMatchObject({ label: 'passkey', via: 'link' });
   });
 
-  it('revoking one stops its notifications, and only its', () => {
+  it('revoking one (on purpose: a lost device) stops its notifications, and only its', () => {
     const s = new SessionStore(dir);
     const a = s.create(links), b = s.create(links);
     s.addPushSub(a, { endpoint: 'https://push.invalid/a', keys: { p256dh: 'x', auth: 'y' } });
     s.addPushSub(b, { endpoint: 'https://push.invalid/b', keys: { p256dh: 'x', auth: 'y' } });
     s.revoke(s.refOf(a));
-    // Read from the file itself, before any watch (which prunes a gone session's subscriptions on its own).
     const subs = JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).push.subs as Record<string, unknown>;
     expect(Object.keys(subs)).toEqual(['https://push.invalid/b']);
   });

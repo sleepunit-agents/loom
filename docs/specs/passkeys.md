@@ -72,15 +72,59 @@ this device first. Each row says what it is (the browser and system its
 User-Agent named when it signed in), the label its sign-in link carried, when it
 signed in and was last used (noted at most every five minutes), and the token it
 signed in as. **Sign out** on a row ends that session alone: its cookie stops
-working at once and its notifications stop, and every other session, those of
-the same "page sign-in links" token too, stays signed in. A row names its
+working at once and that device's notifications stop (it's signed out on
+purpose: a lost or stolen device), and every other session and device, those of
+the same "page sign-in links" token too, stays as it was. A row names its
 session by a ref, the first 16 hex of the hash of its id, which is no use as a
 cookie.
 
 On loom's machine, `loom sessions list` and `loom sessions revoke <ref>` do the
-same. A script that signs in for screenshots makes its link with
-`loom token link --label "<what for>"` and ends its own session with
-`POST /logout` before it closes; `loom sessions revoke` is for one that didn't.
+same. An agent that signs in for screenshots makes its link with
+`loom token link --agent --label "<what for>"` and ends its own session when
+done with `POST /logout` from that browser, or
+`loom sessions revoke --label "<what for>"`; never `loom token revoke` on the
+links token, which signs out every browser a link opened (t-1936). An agent's
+session (one made with `--agent`, or any from a headless browser) is listed as
+`(agent)`, ends six hours after it signed in, and goes first at the 50-session
+cap: past the cap, sessions already ended (past their time, or their token
+revoked) go first, then agents', then the oldest of the rest. So agents'
+screenshots never push a person's own session out.
+
+## Notifications
+
+(t-1978, 2026-11-08.) A device's notifications are its person's and the
+device's, never a session's. They used to be kept under the session they were
+turned on in and dropped when it went; agents' screenshot sign-ins (about 20 a
+day) pushed the oldest sessions past the 50-session cap within days, and every
+device's subscription went with them, while the device itself still said On.
+
+Now housekeeping never touches a device's notifications: other sessions
+evicted at the cap or signed out, its own session past its time or signed out on
+the device, the device signing in again, a plain token revoke (cleaning up the
+links token). The app sends the device's subscription again on each load, so
+loom's record of it can't quietly go missing. Each is kept with the session
+and token it was last sent from. It goes only when:
+
+- its person turns notifications off on that device;
+- its person removes it on Profile (**Remove a device**); the device sending it
+  again by itself is then refused, and it's back only when turned on there;
+- that device is signed out on purpose: **Sign out** on its row under Signed
+  in, or `loom sessions revoke <ref>`;
+- the token it signed in with is revoked as compromised:
+  `loom token revoke <label> --with-devices`, or `--with-passkeys` (Setup's
+  "Revoke a token with its passkeys"), which takes the devices of the tokens it
+  takes too;
+- the push service says it's gone (404 or 410);
+- its person leaves the household (the watch skips and forgets it).
+
+An agent's session (an `--agent` link's, or a headless browser's) can never
+turn notifications on. A push says only what it is and who it's from ("Your
+call · Tasks", "Art replied") and where a tap opens: never the ask's words or a
+thread's title, which a locked screen or the push service would see.
+
+Profile's Notifications lists every device of yours that gets them, this
+device marked, each with **Send a test notification**, which sends one to that
+device only.
 
 ## Where it works
 

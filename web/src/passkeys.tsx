@@ -61,13 +61,26 @@ export function PasskeyAdd({ add, reload, onCancel }: { add: { csrf: string } | 
  * This device's push for Your call: can it (a secure page with a service worker and PushManager), is it on, and the
  * switch. Shared by Profile's Notifications panel (account.tsx) and the ask on every page (PushAsk).
  */
-export function usePush(csrf: string) {
+export function usePush(csrf: string, onChange?: () => void) {
   const can = typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window && window.isSecureContext;
   const [sub, setSub] = useState<PushSubscription | null | undefined>(undefined);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (can) void navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then(setSub).catch(() => setSub(null)); }, [can]);
-  const send = (path: string, s: PushSubscriptionJSON) => fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: csrf, sub: s }) });
+  const send = (path: string, s: PushSubscriptionJSON, again = false) => fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: csrf, sub: s, ...(again ? { again: true } : {}) }) });
+  useEffect(() => {
+    if (!can) return;
+    void navigator.serviceWorker.ready.then((r) => r.pushManager.getSubscription()).then(async (s) => {
+      // What this device holds, sent again once per app load (t-1978): loom's record of it can be lost while the
+      // device still says On, and nothing would ever send it again. One its person removed on Profile is refused, and
+      // turned off here too, so this switch says what's true.
+      if (s && csrf && !resent) {
+        resent = true;
+        const r = await send('/push/subscribe', s.toJSON(), true).catch(() => null);
+        if (r?.status === 409 && (await r.json().catch(() => ({}))).removed) { await s.unsubscribe().catch(() => undefined); setSub(null); return; }
+      }
+      setSub(s);
+    }).catch(() => setSub(null));
+  }, [can, csrf]);
   const flip = async () => {
     setBusy(true); setMsg(null);
     try {
@@ -79,10 +92,12 @@ export function usePush(csrf: string) {
       const r = await send('/push/subscribe', s.toJSON());
       if (!r.ok) { const e = (await r.json().catch(() => ({}))).error || 'loom said no'; await s.unsubscribe(); setMsg(e); return; }
       setSub(s);
-    } catch (e) { setMsg(`That failed: ${why(e)}`); } finally { setBusy(false); }
+    } catch (e) { setMsg(`That failed: ${why(e)}`); } finally { setBusy(false); onChange?.(); }
   };
   return { can, sub, msg, busy, flip };
 }
+/** This app load already sent the device's subscription again (usePush): once is enough. */
+let resent = false;
 
 const ASKED = 'loom.push-asked';
 const ASK_AGAIN_MS = 30 * 86_400_000;

@@ -1843,6 +1843,24 @@ esac
     expect(await signedIn(phone)).toBe(true);
     expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(1);
     expect(await runSessions(['revoke', 'nope'], io)).toBe(2);
+
+    // An agent's sign-in (t-1936): --agent needs a label, its session is listed as an agent's, and the agent ends it
+    // by that label when done, leaving every other session, the same token's too.
+    out.length = 0;
+    expect(await runToken(['link', '--agent', '--page-url', base], io)).toBe(2);
+    expect(await runToken(['link', '--agent', '--label', 'screenshots t-1936', '--page-url', base], io)).toBe(0);
+    const url = out.join('').split('\n').find((l) => l.startsWith(`${base}/login/`))!;
+    expect(out.join('')).toContain('loom sessions revoke --label "screenshots t-1936"');
+    const agentS = await fetch(url, { method: 'POST', redirect: 'manual', headers: { 'user-agent': HEADLESS, 'sec-fetch-site': 'same-origin' } });
+    const agentC = (agentS.headers.get('set-cookie') ?? '').split(';')[0];
+    expect(await signedIn(agentC)).toBe(true);
+    out.length = 0;
+    expect(await runSessions(['list'], io)).toBe(0);
+    expect(out.join('').split('\n').find((l) => l.includes('screenshots t-1936'))).toMatch(/HeadlessChrome on Linux\s+\(agent\)  "screenshots t-1936"/);
+    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(0);
+    expect(await signedIn(agentC)).toBe(false);
+    expect(await signedIn(phone)).toBe(true);
+    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(1);
   });
   it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
     const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
@@ -1875,7 +1893,12 @@ esac
     store.markPushed(['~seeded']);  // the first watch only records; this one has run
     await watch(store, async () => [{ key: 'a1', title: 't', body: 'art', agent: 'art', open: true }, { key: 'a2', title: 't', body: 'mark', agent: 'mark', open: true },
       { key: 'a3', title: 't', body: 'house' }, { key: 'a4', title: 't', body: 'mark-unscoped', agent: 'mark', open: false }],
-      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => { sent.push(`${sub.endpoint.slice(-1)}:${JSON.parse(payload).body}`); return {} as never; }, hears);
-    expect(sent.sort()).toEqual(['j:art', 'j:house', 'j:mark', 'j:mark-unscoped', 'l:mark']);
+      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => {
+        const p = JSON.parse(payload);
+        // Never the ask's words in a push (t-1978 review): what it is, who from, where a tap opens.
+        expect(p.body).toBe('');
+        sent.push(`${sub.endpoint.slice(-1)}:${p.tag}`); return {} as never;
+      }, hears);
+    expect(sent.sort()).toEqual(['j:ask-a1', 'j:ask-a2', 'j:ask-a3', 'j:ask-a4', 'l:ask-a2']);
   });
 });

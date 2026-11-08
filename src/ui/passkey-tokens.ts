@@ -206,15 +206,19 @@ function takePasskeys(h: Household, made: TokenRecord[]): number {
  * the passkey removed. Without `withPasskeys`, they keep working (each has its own token). Returns the revoked
  * record and how many passkeys went, or (not asked) how many were made from it and stay.
  */
-export function revokeTokenAndPasskeys(h: Household, label: string, withPasskeys: boolean): { token: TokenRecord; passkeys: number } {
+export function revokeTokenAndPasskeys(h: Household, label: string, withPasskeys: boolean, withDevices = false): { token: TokenRecord; passkeys: number; devices: number } {
   const token = revokeToken(h, label);
   // Read after the revoke: no browser signed in with it can add another now.
   const made = madeFromAll(loadTokens(h.home), [token.sha256]);
-  // No passkey made from it (an agent's token, say): the page's session store isn't touched.
-  if (!made.length) return { token, passkeys: 0 };
+  // Revoked as compromised (t-1978): the devices that signed in with it, and with what's taken with it, stop getting
+  // notifications. A plain revoke (cleaning up the links token, say) leaves every device's alone.
+  // First, so a passkey token that can't be revoked further on (PasskeyTokenLeft) leaves no device still notified.
+  const devices = withDevices || withPasskeys ? sessionStore(h.home).removePushByTokens([token.sha256, ...(withPasskeys ? made.map((t) => t.sha256) : [])]) : 0;
+  // No passkey made from it (an agent's token, say): no passkey is touched.
+  if (!made.length) return { token, passkeys: 0, devices };
   // Not asked: the ones that keep working (a stopped one isn't counted as working).
-  if (!withPasskeys) return { token, passkeys: keptAmong(made.filter((t) => isLive(t)), sessionStore(h.home).passkeys()) };
-  return { token, passkeys: takePasskeys(h, made) };
+  if (!withPasskeys) return { token, passkeys: keptAmong(made.filter((t) => isLive(t)), sessionStore(h.home).passkeys()), devices };
+  return { token, passkeys: takePasskeys(h, made), devices };
 }
 
 /** The passkey was removed, but a token it, or one made from it, signs in with couldn't be revoked. */
