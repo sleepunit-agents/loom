@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any
+  other) no longer stops the passkeys added from it, as it did Jonathan's on 2026-11-07. The passkey's token is an owner
+  token naming its member, labeled `Passkey: <name> · <person> · …`, and says what it was made from. `loom token revoke
+  <label> --with-passkeys` (Setup: "Revoke a token with its passkeys") takes the passkeys made from it too; plain revoke
+  keeps them. Profile's "Remove a passkey with the ones added from it" does the same for a passkey. A passkey is added
+  only within 10 minutes of signing in. Passkeys made before move onto their own token when loom-http starts if their
+  token is live; one whose token was revoked stays stopped and is replaced by adding a new one. Agent owners can add
+  passkeys (`/passkeys/options` was refused for them).
+
 - **Needs you is the Inbox shrunk** (t-1925). On the desktop, Needs you's **Expand** grows it into the Inbox's tile on
   its Needs you folder, as an agent's card grows into its window (the same code: `tiling/widgets.ts` `pairOf`); an ask in
   it opens in the Inbox with that ask picked. While an Inbox tile is open, Needs you stands aside and the other widgets

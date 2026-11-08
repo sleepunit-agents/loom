@@ -19,10 +19,48 @@ under the same lock):
   (ES256, EdDSA or RS256);
 - its signature counter;
 - a label, when it was added, and when it was last used;
-- **the digest of the token whose session added it.** A passkey signs in as that
-  token, and only while that token is live: rotate or revoke the token, and its
-  passkeys stop with its sessions. A passkey never gets more than the link that
-  set it up.
+- **the digest of the owner token it signs in as.** In a household that's a
+  token of its own (t-1969, 2026-11-07; `src/ui/passkey-tokens.ts`), minted for
+  the signed-in member when the passkey is added and kept by digest alone, so
+  nobody ever holds it and only the passkey can use it. It's an owner token
+  naming that member, so a passkey reaches exactly what its person does, never
+  more. Its record says what it is: labeled `Passkey: <the passkey's name> ·
+  <person> · <12 hex>`, with `passkey` (the sha256 of the credential id) and
+  `from` / `from_sha256` (the token the adding browser was signed in with). The
+  token list (`loom token list`, an agent's Setup) shows that label and what it
+  was made from; Profile's Passkeys row says what it was added from; a session
+  it opened shows in the signed-in list as that label.
+
+  Revoking another token never stops a passkey on its own: revoking the page
+  sign-in links on 2026-11-07 stopped Jonathan's only one, which is why this
+  changed. Revoking a token offers to take the passkeys made from it too
+  (`loom token revoke <label> --with-passkeys`; on Setup, "Revoke a token with
+  its passkeys"): each one's token is revoked and the passkey removed. Plain
+  revoke leaves them working, so routine link cleanup never kills a passkey.
+  Taking them follows the line down: a passkey added from a browser that a
+  passkey made from that token signed in goes too. Removing a passkey works the
+  same way: plain Remove leaves the passkeys added from its sessions working;
+  "Remove a passkey with the ones added from it" (Profile) takes them too.
+  Each offer counts every passkey it would take, down the line.
+  What stops a passkey: removing it (its token is revoked with it, so the
+  sessions it opened end too), removing its person from the household, or
+  revoking its own token (it then shows as stopped, and can be removed, by an
+  agent owner too).
+
+  Outside a household (a single bearer token), a passkey still signs in as the
+  adding session's token, and only while that one is live.
+
+  Passkeys made before this signed in as the adding session's token. When
+  loom-http starts, each one whose token is still live, or is the env owner
+  token, moves onto a token of its own for that token's person, made from it
+  (once: a second start mints and moves nothing; one that fails is said on
+  stderr and doesn't stop the others). One whose token was revoked, expired or
+  is gone from `tokens.json`, or whose person has left, stays as it is: it
+  doesn't sign in, its row says it stopped working, and a new one is added in
+  its place. Nothing revives a passkey whose token was revoked. One whose
+  person left is like that person's tokens: removing a member revokes nothing,
+  so adding the same person back brings their tokens and passkeys back with
+  them (remove the passkey, or revoke its token, to end it for good).
 
 Up to 20 passkeys. Each one can be removed on the Passkeys page.
 
@@ -57,7 +95,15 @@ aren't set up, and the token and link sign-ins work as before.
 Every passkey route is same-origin only, the same as every other form. A
 challenge is 32 random bytes, kept by hash, used once, and good for 5 minutes.
 
-**Adding one** needs a signed-in session, and the form token for it:
+**Adding one** needs a signed-in session that signed in within the last 10
+minutes (one left signed in on a desk can't quietly add a lasting way in;
+the page says to sign in again), and the form token for it. Signing in is a
+token, a passkey, or a link made on loom's machine (`loom token link`); a link
+the page makes ("Make a one-time sign-in link", or a Members link, for
+anyone) opens a session that signed in when the one that made it did, so it
+can't freshen a stale one. Asked for options, a member is told only their
+own credentials to exclude. This holds outside a household
+too:
 
 ```
 GET  /passkeys                           the page (also /account, the Profile app): the passkeys, Remove, and "Add a passkey"
@@ -97,7 +143,8 @@ loom checks:
   stored key;
 - the counter: a counter that doesn't go up, when either side has one, means a
   copied key, and is refused;
-- the token behind it is still live.
+- the token behind it is still live (in a household, its own token, and its
+  person still a member).
 
 Then it opens a session exactly as the token or a link does.
 

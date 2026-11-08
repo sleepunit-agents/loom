@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import {
   addAgent, agentDir, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
-  expired, parseRole, revokeToken, checkSpriteManifest, manifestFromPixelLab, setSprite, spriteOf, type Household,
+  expired, parseRole, checkSpriteManifest, manifestFromPixelLab, setSprite, spriteOf, type Household,
 } from '../household.js';
 import { iconSetName, iconSetOf, installedIconSets, installIconSet, setIcon, useIconSet } from '../icon-set.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';
@@ -15,6 +15,7 @@ import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
 import { extractGlobalFlags, parseVerb, type VerbOptions } from './args.js';
 import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
+import { revokeTokenAndPasskeys, thePasskeys, ThePasskeys } from '../ui/passkey-tokens.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -52,8 +53,12 @@ const TOKEN_USAGE = `Usage: loom token <command>
   create (--agent <name> [--service <name>] [--house <h-N>] | --owner | --peer <name> | --piece <piece>/<subject> | --runtime <piece>) --label <text>
                            Mint a token. It's printed once; only its sha256 is kept.
                            --service and --house name a house's (agent:<name>/<service>@<house>): a piece can tell it apart
-  list                     Every token: label, role, created, last used, revoked
-  revoke <label>           Revoke the live token with that label (takes effect on the next request)
+  list                     Every token: label, role, created, last used, revoked, and for a passkey's
+                           own token, what it was made from
+  revoke <label> [--with-passkeys]
+                           Revoke the live token with that label (takes effect on the next request).
+                           A passkey made from a browser signed in with it has its own token and keeps
+                           working; --with-passkeys revokes those too, and removes the passkeys
   link [--minutes 10] [--page-url <loom's page address>] [--label <text>]
                            A one-time link that signs a browser in to the page (no token to paste).
                            Its sessions are the owner token "page sign-in links": revoke that to end them
@@ -199,7 +204,7 @@ const TOKEN_OPTIONS: Record<string, VerbOptions> = {
     peer: { type: 'string' }, piece: { type: 'string' }, runtime: { type: 'string' }, label: { type: 'string' },
   },
   list: {},
-  revoke: {},
+  revoke: { 'with-passkeys': { type: 'boolean' } },
   link: { minutes: { type: 'string' }, 'page-url': { type: 'string' }, label: { type: 'string' } },
 };
 
@@ -237,7 +242,7 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!tokens.length) { io.stdout('No tokens yet.\n'); return 0; }
       for (const t of tokens) {
         const state = t.revoked ? 'revoked' : expired(t) ? 'expired' : 'live   ';
-        io.stdout(`${state}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.expires && !t.revoked ? `, expire${expired(t) ? 'd' : 's'} ${t.expires.slice(0, 16).replace('T', ' ')}` : ''}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''})\n`);
+        io.stdout(`${state}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.expires && !t.revoked ? `, expire${expired(t) ? 'd' : 's'} ${t.expires.slice(0, 16).replace('T', ' ')}` : ''}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''}${t.from !== undefined ? `, made from "${t.from}"` : ''})\n`);
       }
       return 0;
     }
@@ -257,8 +262,14 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!h) return 1;
       const label = rest.join(' ').trim();
       if (!label) { io.stderr(TOKEN_USAGE); return 2; }
-      const t = revokeToken(h, label);
+      const { token: t, passkeys } = revokeTokenAndPasskeys(h, label, p.values['with-passkeys'] === true);
       io.stdout(`Revoked ${t.role} token "${t.label}".\n`);
+      if (passkeys) {
+        const them = thePasskeys(passkeys);
+        io.stdout(p.values['with-passkeys'] === true
+          ? `Removed ${them} made from it, and revoked ${passkeys === 1 ? 'its token' : 'their tokens'}.\n`
+          : `${ThePasskeys(passkeys)} made from it keep${passkeys === 1 ? 's' : ''} working (each has its own token); --with-passkeys revokes those too.\n`);
+      }
       return 0;
     }
     io.stderr(TOKEN_USAGE);
