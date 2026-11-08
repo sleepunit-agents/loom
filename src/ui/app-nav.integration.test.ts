@@ -187,7 +187,7 @@ describe.runIf(built && chrome)('an app\'s tile: Back, Forward, its crumb and it
     await step(p, 'Back').click();
     await titled(p, 'Tasks');
     await key(p, 'Tasks').click();   // the focused app's key: minimize
-    await p.locator('.loom-desk-home').waitFor();
+    await p.locator('.loom-adesk').waitFor();
     await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
     await key(p, 'Tasks').click();   // and open it again
     await titled(p, 'Tasks');

@@ -1,9 +1,9 @@
-/* A big screen (desk.tsx, App.tsx): the tiled desktop's frame and Home's widgets, in every look (each its own colours:
-   looks/looks.css). Loaded with the desk's own chunk, so a phone never fetches it. Everything is under .loom-desk,
+/* A big screen (desk.tsx, App.tsx): the tiled desktop's frame, in every look (each its own colours: looks/looks.css);
+   Home's agents are desk-agents.css. Loaded with the desk's own chunk, so a phone never fetches it. Everything is under .loom-desk,
    which App.tsx sets at 1024 px and wider, in a household.
 
    The screen is the bars on top, the desktop between them and the dock, and the dock: one screen's height, never a
-   scrolling page. A widget column that has more than fits scrolls inside itself. */
+   scrolling page. The agents' rail, when it has more than fits, scrolls inside itself. */
 :root[data-look] .loom-desk{--desk-gutter:24px;--desk-dock:104px;--desk-cut:14px}
 :root[data-look] .loom-desk .loom-page-clip{display:flex;flex-direction:column;height:100dvh;overflow:hidden}
 /* the bars span the screen, not a phone's column */
@@ -12,103 +12,12 @@
 :root[data-look] .loom-desk main.loom-desk-main{flex:1 1 auto;min-height:0;width:100%;max-width:none;margin:0;
   padding:14px var(--desk-gutter) var(--desk-dock);display:flex;flex-direction:column;gap:12px;overflow:hidden}
 
-/* ---- the desktop's layout: what needs you on the left, the agents in the middle, vitals on the right. The side columns
-   keep a readable width from 1024 to 2560; the middle takes the rest, and its agents fill it two or three across. ---- */
-:root[data-look] .loom-desk-home{flex:1 1 auto;min-height:0;display:grid;gap:16px;
-  grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(250px,320px);grid-template-rows:minmax(0,1fr)}
-@media (min-width:1600px){:root[data-look] .loom-desk-home{grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(300px,380px);gap:20px}}
-:root[data-look] .loom-desk-col{display:flex;flex-direction:column;gap:16px;min-height:0;overflow:auto;scrollbar-width:thin;
-  padding:2px 4px 8px;margin:-2px -4px 0}
-:root[data-look] .loom-desk-agents{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,360px),1fr))}
-
-/* ---- a widget: a dark panel over the ground, a hairline edge, a lit tick in its tint on the top edge, a cut corner ---- */
-:root[data-look] .loom-w{--t:var(--v-pink);position:relative;display:flex;flex-direction:column;min-width:0;flex:none;
-  background:color-mix(in srgb,var(--v-paper) 86%,transparent);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
-  box-shadow:inset 0 0 0 1px var(--v-border);clip-path:polygon(0 0,calc(100% - var(--desk-cut)) 0,100% var(--desk-cut),100% 100%,0 100%);color:var(--v-text)}
-:root[data-look] .loom-w[data-tint]{--t:var(--loom-tint-pink)}
-:root[data-look] .loom-w[data-tint="blue"]{--t:var(--v-blue)} :root[data-look] .loom-w[data-tint="yellow"]{--t:var(--v-yellow)}
-:root[data-look] .loom-w[data-tint="olive"]{--t:var(--v-olive)} :root[data-look] .loom-w[data-tint="pink"]{--t:var(--v-pink)}
-:root[data-look] .loom-w::before{content:"";position:absolute;left:14px;top:0;width:56px;height:2px;background:var(--t);box-shadow:var(--glow-bar) var(--t);pointer-events:none}
-:root[data-look] .loom-w::after{content:"";position:absolute;right:0;top:0;width:calc(var(--desk-cut) * 1.414);height:1px;background:var(--t);
-  transform-origin:100% 0;rotate:45deg;translate:0 0;opacity:.8;pointer-events:none}
-:root[data-look] .loom-w__head{display:flex;align-items:center;gap:8px;min-width:0;padding:12px 16px 10px;border-bottom:1px solid var(--v-border)}
-:root[data-look] .loom-w__head h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--loom-font-data);font-size:11px;font-weight:500;
-  letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
-:root[data-look] .loom-w__dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--t);box-shadow:var(--glow-tick) var(--t)}
-:root[data-look] .loom-w__more{margin-left:auto;margin-right:var(--desk-cut);flex:none;font-size:12.5px;color:var(--v-text-2);text-decoration:none}
-:root[data-look] button.loom-w__grow{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;background:none;border:0;cursor:pointer;font:inherit;font-size:12.5px}
-:root[data-look] button.loom-w__grow:focus-visible{outline:none;box-shadow:inset 0 0 0 1px var(--v-border)}
-:root[data-look] .loom-w__quiet{padding:14px 16px;font-size:14px;color:var(--v-text-2)}
-:root[data-look] .loom-w__foot{display:block;padding:10px 16px;border-top:1px solid var(--v-border);font-size:13px;color:var(--v-text-2);text-decoration:none}
-
-/* ---- needs you: a stack, each answerable where it stands ---- */
-:root[data-look] .loom-needs{display:grid}
-:root[data-look] .loom-need{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:14px 16px;border-top:1px solid var(--v-border)}
-:root[data-look] .loom-need:first-child{border-top:0}
-:root[data-look] .loom-need__body{display:grid;gap:8px;min-width:0}
-:root[data-look] .loom-need__title{display:flex;align-items:flex-start;gap:8px;text-align:left;font-weight:600;font-size:14.5px;line-height:1.35;color:var(--v-text);
-  overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:4;overflow:hidden}
-:root[data-look] .loom-need__unread{display:inline-block;flex:none;width:7px;height:7px;margin:.45em 6px 0 0;border-radius:50%;background:var(--loom-unread);vertical-align:top}
-:root[data-look] .loom-need__why{font-size:13px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
-:root[data-look] .loom-need__acts{display:flex;flex-wrap:wrap;gap:8px}
-/* its own buttons under it: its words whole */
-:root[data-look] .loom-need[data-whole] :is(.loom-need__title,.loom-need__why){display:block;-webkit-line-clamp:none;overflow:visible}
-:root[data-look] .loom-need__fine{font-size:12px;line-height:1.4;color:var(--v-text-2);overflow-wrap:anywhere}
-
-/* ---- an agent: its face big on the left, how it is and its name beside it, the one thing it's on under them ---- */
-:root[data-look] .loom-w--agent{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "line line" "foot foot";
-  align-items:center;column-gap:18px;text-decoration:none;--t:var(--acc,var(--v-pink));cursor:pointer;transition:box-shadow .15s ease-out}
-:root[data-look] .loom-w--agent::before{width:72px}
-:root[data-look] .loom-agent__face{grid-area:face;display:grid;place-items:center;width:112px;height:112px;margin:18px 0 6px 18px;
-  background:radial-gradient(closest-side,color-mix(in srgb,var(--t) 16%,transparent),transparent)}
-:root[data-look] .loom-agent__who{grid-area:who;display:grid;gap:4px;min-width:0;padding:18px 18px 6px 0}
-:root[data-look] .loom-agent__eyebrow{font-family:var(--loom-font-data);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--v-text-2)}
-:root[data-look] .loom-agent__eyebrow[data-trouble]{color:var(--loom-bad-ink)}
-:root[data-look] .loom-agent__name{font-family:var(--font-display);font-weight:600;font-size:24px;line-height:1.15;color:var(--v-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:root[data-look] .loom-agent__line{grid-area:line;display:flex;align-items:flex-start;gap:10px;margin:8px 16px 14px;padding:10px 12px;
-  background:color-mix(in srgb,var(--t) 7%,var(--v-beige-2));box-shadow:inset 2px 0 0 var(--t);font-size:14px;line-height:1.35;color:var(--v-text)}
-:root[data-look] .loom-agent__line[data-tone="bad"]{--t:var(--loom-bad)} :root[data-look] .loom-agent__line[data-tone="warn"]{--t:var(--loom-warn)}
-:root[data-look] .loom-agent__line>span{display:grid;gap:2px;min-width:0}
-:root[data-look] .loom-agent__thread{pointer-events:auto;position:relative;z-index:1;color:inherit;text-decoration:underline;text-decoration-color:color-mix(in srgb,currentColor 40%,transparent);text-underline-offset:3px}
-:root[data-look] .loom-agent__thread:is(:hover,:focus-visible){text-decoration-color:currentColor}
-:root[data-look] .loom-agent__text{overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
-:root[data-look] .loom-agent__where{font-size:12px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-:root[data-look] .loom-agent__foot{grid-area:foot;display:flex;align-items:center;gap:12px;min-width:0;padding:10px 18px;border-top:1px solid var(--v-border);
-  font-size:13px;color:var(--v-text-2);white-space:nowrap}
-:root[data-look] .loom-agent__foot>span:first-child{color:var(--v-text);font-weight:500}
-:root[data-look] .loom-agent__foot>span+span{margin-left:auto;overflow:hidden;text-overflow:ellipsis;font-size:12px}
-
-/* ---- vitals: the pieces' tiles, a row each ---- */
-:root[data-look] .loom-vitals{display:grid}
-:root[data-look] .loom-vitals>li+li{border-top:1px solid var(--v-border)}
-:root[data-look] .loom-vital{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:2px;padding:11px 16px;color:var(--v-text);text-decoration:none}
-:root[data-look] .loom-vital__label{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;font-size:14px}
-:root[data-look] .loom-vital__value{font-size:13px;color:var(--t);text-align:right}
-:root[data-look] .loom-vital__detail{grid-column:1/-1;font-size:12.5px;color:var(--v-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-:root[data-look] .loom-backup{display:flex;align-items:center;gap:10px;padding:14px 16px;font-size:14px}
-:root[data-look] .loom-backup[data-tone="bad"]{color:var(--loom-bad-ink);font-weight:600}
-:root[data-look] .loom-backup[data-tone="warn"]{color:var(--loom-warn-ink)}
-
-/* ---- More contrast: no glass, no glow ---- */
-@media (prefers-contrast:more){
-  :root[data-look] .loom-w{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-edge)}
-}
-
 /* ---- the dock, at the bottom centre: its rule spans the keys and a little more, not the screen ---- */
 :root[data-look] .loom-desk .loom-dock-bar::before{display:none}
 :root[data-look] .loom-desk .loom-dock-bar .loom-dock-swap{position:relative}
 :root[data-look] .loom-desk .loom-dock-bar .loom-dock-swap::before{content:"";position:absolute;left:-40px;right:-40px;top:22px;height:1px;
   background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--v-pink) 45%,var(--v-border)) 12%,color-mix(in srgb,var(--v-pink) 45%,var(--v-border)) 88%,transparent);pointer-events:none}
 
-/* hover only where there's a pointer that hovers (ui-app.md: hover effects only on fine pointers) */
-@media (hover:hover) and (pointer:fine){
-  :root[data-look] :is(.loom-w__more,.loom-w__foot):hover{color:var(--v-text)}
-  :root[data-look] .loom-need__title:hover{text-decoration:underline;text-underline-offset:3px}
-  :root[data-look] .loom-w--agent:hover{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
-  :root[data-look] .loom-vital:hover{background:color-mix(in srgb,var(--t) 6%,transparent)}
-}
-:root[data-look] .loom-w--agent:focus-visible{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
 /* ---- the boot (desk.tsx DeskBoot): once a session, never under reduced motion, any key or tap skips it. It takes the
    taps while it stands (so one that skips it presses nothing under it), none while it leaves. ---- */
 .loom-boot{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--v-canvas);color:var(--v-text);
@@ -138,4 +47,3 @@
 }
 @keyframes loom-boot-line{from{visibility:hidden}to{visibility:visible}}
 @keyframes loom-boot-flick{0%{opacity:0}30%{opacity:.7}45%{opacity:.15}60%,100%{opacity:1}}
-:root[data-look] .loom-need__live{margin:6px 0 0;font-size:12.5px;color:var(--v-text-3)}

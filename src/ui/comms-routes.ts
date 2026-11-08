@@ -5,6 +5,7 @@
  *
  *   GET  /comms                         the member's threads (?archived=1 for the archived ones)
  *   POST /comms/new                     {agent, project?, id, text}: a thread and its first message
+ *   GET  /comms/agents                  each agent the member owns: their last thread, unread replies, the first one's line
  *   GET  /comms/<thread>                the thread and its newest messages
  *   GET  /comms/<thread>/since/<seq>    the messages after seq
  *   GET  /comms/<thread>/before/<seq>   the 100 before seq
@@ -17,7 +18,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
-  addMemberMessage, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
+  addMemberMessage, agentsComms, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
   deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
 import { deliverAsOwner } from '../delivery.js';
@@ -176,7 +177,7 @@ async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
 /** Whether a /comms page load names a thread the member may not see: the same 403 as its JSON form (rule 3). */
 export function pageRefused(pathname: string, household: Household, member: Member | undefined): string | null {
   const m = /^\/comms\/([^/]+)/.exec(pathname);
-  if (!m || m[1] === 'new') return null;
+  if (!m || m[1] === 'new' || m[1] === 'agents') return null;
   try { threadFor(household, member, threadIdOf(decodeURIComponent(m[1]))); return null; } catch (e) { return e instanceof CommsError ? e.message : 'forbidden'; }
 }
 
@@ -201,6 +202,14 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       const unread = archived ? threadsOf(h, m).filter((t) => t.unread).length : threads.filter((t) => t.unread).length;
       send(200, { ...(await asView(c, 'list', pathname)), threads: threads.map((t) => ({ ...view(t), unread: t.unread, last_seq: t.last_seq })), unread,
         agents: h.agents.filter((a) => m.agents === '*' || m.agents.includes(a)), member: m.person });
+      return true;
+    }
+    // The desktop's agent cards (docs/specs/agent-desk.md, "Unread"): the member's own threads only, never another's.
+    if (pathname === '/comms/agents') {
+      if (req.method !== 'GET') return send(405, { error: 'method not allowed' }), true;
+      if (!m) return send(403, { error: 'forbidden: Comms is for an agent\'s owners' }), true;
+      settleThread(h.home, null);
+      send(200, { agents: await agentsComms(h, c.env, m) });
       return true;
     }
     if (pathname === '/comms/new') {

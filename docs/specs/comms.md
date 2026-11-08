@@ -100,6 +100,7 @@ redirected to the new; links loom draws (From, push) use the new.
 |---|---|
 | `GET /comms` | the member's threads (rule 3), with each one's unread state |
 | `POST /comms/new` `{agent, project?, id, text}` | opens a thread with its first message (`403` for an agent the member doesn't own). The same member, agent, `id` and text again answer the same thread; the same `id` with another agent or other text is a `409`. The thread row keeps its first message's id and an HMAC of its text keyed by `comms.salt` (`first_id`, `first_hash`) for the thread's life, which is how a repeat is known |
+| `GET /comms/agents` | each agent the member owns, from the member's own unarchived threads only: the thread last moved (`last`: its id, title, when), how many of the agent's replies they haven't read (`unread`) and the first of those, one line of its words (`first`), for the desktop's agent cards ([agent-desk.md](agent-desk.md), "Unread"). A caller that isn't signed in as a person (no session, an agent's or a piece's token) is sent to sign in (`303`), as every page is; a session with no member behind it gets `403` |
 | `GET /comms/<thread>` | the thread and its newest 100 messages |
 | `GET /comms/<thread>/since/<seq>` | the messages after `seq`, and the thread's state |
 | `GET /comms/<thread>/before/<seq>` | the 100 messages before `seq`, newest last: scrolling up |

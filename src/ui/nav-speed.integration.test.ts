@@ -115,8 +115,8 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
 
-  async function desk(path: string, o: { sw?: boolean } = {}): Promise<{ p: Page; errors: string[]; close: () => Promise<void> }> {
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce', serviceWorkers: o.sw ? 'allow' : 'block' });
+  async function desk(path: string, o: { sw?: boolean; width?: number } = {}): Promise<{ p: Page; errors: string[]; close: () => Promise<void> }> {
+    const ctx = await browser.newContext({ viewport: { width: o.width ?? 1280, height: 800 }, reducedMotion: 'reduce', serviceWorkers: o.sw ? 'allow' : 'block' });
     await ctx.addInitScript(`try { localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1'); } catch {}`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
@@ -131,8 +131,8 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
   const kept = (p: Page, sel: string) => p.locator(sel).first().evaluate((e) => !!(e as unknown as { __kept?: boolean }).__kept);
 
   it('a Comms thread pressed: the pane opens at once, the list stays mounted and scrolled, the address follows, a draft holds', async () => {
-    // Comms alone (no widgets beside it): wide enough for the list beside the thread (comms.tsx ONE_PANE_BELOW).
-    const { p, errors, close } = await desk('/comms?t=*comms&w=');
+    // Comms alone (the agents' rail beside it): wide enough for the list beside the thread (comms.tsx ONE_PANE_BELOW).
+    const { p, errors, close } = await desk('/comms?t=*comms', { width: 1600 });
     try {
       const list = `${tile('Comms')} .comms-list`;
       await p.locator(`${list} .comms-row__btn`).nth(10).waitFor();
@@ -293,11 +293,11 @@ describe.runIf(built && chrome && hasAge)('navigation replaces only what changes
 
   it('an ask answered in one tile leaves the others by the live stream', async () => {
     setState({ count: 1, asks: [{ id: 'a-1', text: 'OK to ship the speed work tonight?', at: new Date().toISOString() }] });
-    const { p, close } = await desk('/inbox?t=*inbox&w=needs');
+    const { p, close } = await desk('/inbox?t=*inbox');
     try {
-      // Needs you (a widget, drawn from Home's page) and the Inbox both show it. Needs you is the Inbox shrunk: it stands
-      // aside while the Inbox's tile is open, and is back once that tile goes to the dock.
-      const needs = p.locator('[data-widget="needs"]');
+      // Home's Needs you band (drawn from Home's page, docs/specs/agent-desk.md) and the Inbox both show it: the band
+      // while no app is open, the Inbox's tile once it is.
+      const needs = p.locator('.loom-needs-band');
       const inbox = p.locator(tile('Inbox'));
       await inbox.locator('button[aria-label="Minimize Inbox to the dock"]').click();
       await expect.poll(() => needs.getByText('OK to ship the speed work tonight?').count()).toBeGreaterThan(0);

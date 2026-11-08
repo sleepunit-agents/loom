@@ -111,7 +111,8 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
 
   it('a thread\'s address has no colon, and a reload of it works; an old th: link is sent there', async () => {
     const t = thread('art', 1);
-    const p = await screen(1280, 800, `/comms/${bare(t)}`);
+    // 1920: the list beside the thread, beside the agents' rail.
+    const p = await screen(1920, 1080, `/comms/${bare(t)}`);
     await p.locator('.comms-thread .comms-msg--agent').first().waitFor();
     expect(new URL(p.url()).pathname).toBe(`/comms/${bare(t)}`);
     await p.reload();

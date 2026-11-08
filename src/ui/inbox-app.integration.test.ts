@@ -182,7 +182,7 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
 
   it('a narrow tile (Comms and the Inbox side by side at 1280) has chips, and the reader slides over the list with a way back', async () => {
     ask('Sign Claude Code in again?');
-    const p = await screen(1280, 800, '/inbox?t=*inbox,comms&w=needs,art');
+    const p = await screen(1280, 800, '/inbox?t=*inbox,comms');
     const width = await p.locator('.loom-inbox').evaluate((e) => e.getBoundingClientRect().width);
     expect(width).toBeLessThan(640);
     await expect.poll(() => mode(p)).toBe('one');
@@ -228,10 +228,10 @@ describe.runIf(built && chrome)('the Inbox, a mail client', () => {
     await p.context().close();
   });
 
-  it('two panes between 640 and 900 px (Inbox beside Comms at 1440): chips over the list, the reader beside it; ↑ and ↓ read each in turn', async () => {
+  it('two panes between 640 and 900 px (Inbox beside Comms and the agents\' rail at 1920): chips over the list, the reader beside it; ↑ and ↓ read each in turn', async () => {
     ask('Rename the pond repo?');
     ask('Move the backups to Tuesday?');
-    const p = await screen(1440, 900, '/inbox?t=*inbox,comms&w=');
+    const p = await screen(1920, 1080, '/inbox?t=*inbox,comms');
     const width = await p.locator('.loom-inbox').evaluate((e) => e.getBoundingClientRect().width);
     expect(width).toBeGreaterThanOrEqual(640);
     expect(width).toBeLessThan(900);

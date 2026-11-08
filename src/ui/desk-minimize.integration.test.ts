@@ -106,7 +106,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   const onDesktop = async (p: Page) => {
     // As long as a move may take (still's 8 s): a minimize is a view transition, and on a loaded runner its tile was
     // still there past the poll's own 1 s (main's CI, 1855 px: "expected 1 to be +0", t-1923).
-    await expect.poll(() => p.locator('.loom-tile').count(), { timeout: 8000 }).toBe(0); await p.locator('.loom-desk-home').waitFor();
+    await expect.poll(() => p.locator('.loom-tile').count(), { timeout: 8000 }).toBe(0); await p.locator('.loom-adesk').waitFor();
     await expect.poll(() => p.evaluate(() => document.documentElement.dataset.tileMove ?? ''), { timeout: 8000 }).toBe('');
   };
   /** Any tile's move over (its effect, t-1925 B, runs up to 0.3 s): during one the page is a picture, and a click lands on nothing. */
@@ -143,7 +143,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
 
   it('a key lets go of its magnification once the pointer leaves it: after a click that opens an app, and after a minimize', async () => {
     const p = await screen(1280);
-    await p.locator('.loom-desk-home').waitFor();
+    await p.locator('.loom-adesk').waitFor();
     const key = p.locator(KEY('Inbox'));
     // Open it from its key, then the pointer goes away.
     await key.click();
@@ -176,7 +176,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
 
   it('a tap leaves no key magnified or engaged', async () => {
     const p = await screen(1280, { touch: true });
-    await p.locator('.loom-desk-home').waitFor();
+    await p.locator('.loom-adesk').waitFor();
     await p.locator(KEY('Inbox')).tap();
     await p.locator('.loom-tile').waitFor(); await still(p);
     await p.waitForTimeout(450);
@@ -240,7 +240,7 @@ describe.runIf(built && chrome)('the desktop\'s windows minimize, and the dock l
   for (const width of [1280, 1855, 1920]) {
     it(`${width} px: the dock never shows a scrollbar, after loading, hovering, or a minimize`, async () => {
       const p = await screen(width);
-      await p.locator('.loom-desk-home').waitFor();
+      await p.locator('.loom-adesk').waitFor();
       await p.waitForTimeout(3000);
       expect(await bars(p), 'after load').toEqual([]);
       const items = p.locator('.loom-dock-bar [data-part="item"]');

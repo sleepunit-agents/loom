@@ -218,12 +218,13 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     await p.context().close();
   }, 60_000);
 
-  it('1280 px, the desktop: its widgets and a tile\'s title', async () => {
+  it('1280 px, the desktop: its agents\' cards and a tile\'s title', async () => {
     const p = await device(1280);
     await p.goto(`${base}/`);
-    await p.locator('.loom-desk-home').waitFor();
-    await settle(p, { small: true });
-    check('the desktop', await faces(p), { small: true });
+    await p.locator('.loom-adesk').waitFor();
+    // Home's faces are the big cards' whole faces (docs/specs/agent-desk.md): no small crops there.
+    await settle(p);
+    check('the desktop', await faces(p));
     await p.goto(`${base}/inbox`);
     await p.locator('.loom-tile').waitFor();
     await settle(p, { small: true });

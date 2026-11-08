@@ -71,8 +71,8 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
     await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
-    await p.goto(`${base}/comms/${o.thread.id.replace(/^th:/, '')}?t=*comms&w=`);
-    await p.getByText('A reply you can read.').waitFor();
+    await p.goto(`${base}/comms/${o.thread.id.replace(/^th:/, '')}?t=*comms`);
+    await p.locator('.loom-tile').getByText('A reply you can read.').waitFor();
     expect(await p.locator('.comms-refused').count()).toBe(0);
 
     // The key goes: every read of the thread is now a 503 (comms.key is missing).
@@ -88,8 +88,8 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
       expect(await banner.innerText()).toContain('Can\'t open this conversation right now: loom couldn\'t decrypt it.');
       expect(await banner.innerText()).toContain('What\'s shown here may be out of date.');
       // What it already showed is still there.
-      expect(await p.getByText('A reply you can read.').isVisible()).toBe(true);
-      expect(await p.getByText('Hello there.').isVisible()).toBe(true);
+      expect(await p.locator('.loom-tile').getByText('A reply you can read.').isVisible()).toBe(true);
+      expect(await p.locator('.loom-tile').getByText('Hello there.').isVisible()).toBe(true);
       // Try again while it's still refused: still says so.
       await banner.getByRole('button', { name: 'Try again' }).click();
       await p.waitForTimeout(500);
@@ -99,7 +99,7 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
     // The key is back: Try again reads, and the error goes.
     await p.locator('.comms-refused').getByRole('button', { name: 'Try again' }).click();
     await expect.poll(() => p.locator('.comms-refused').count()).toBe(0);
-    expect(await p.getByText('A reply you can read.').isVisible()).toBe(true);
+    expect(await p.locator('.loom-tile').getByText('A reply you can read.').isVisible()).toBe(true);
     await ctx.close();
   });
 });

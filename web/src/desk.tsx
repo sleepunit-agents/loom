@@ -1,12 +1,12 @@
 // A big screen (1024 px and wider, in a household): the tiled desktop (tiling/tiles.tsx, docs/specs/desk-tiling.md), the
-// only desktop there is, and its boot. Home's widgets are tiles (desk-widgets.tsx).
+// only desktop there is, and its boot. Home is the agents (desk-agents.tsx, docs/specs/agent-desk.md).
 //
 // Its own chunk, loaded only on a screen this wide (App.tsx): a phone never fetches it.
 import { useEffect, useRef, useState } from 'react';
 import './desk.css';
 import type { Shell } from './loom';
 import { reducedMotion } from './access';
-export type { DeskHomeData } from './desk-widgets';
+export type { DeskHomeData } from './desk-agents';
 export { TileDesk } from './tiling/tiles';
 
 // ---- the boot ----------------------------------------------------------------------------------

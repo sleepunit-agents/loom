@@ -71,7 +71,7 @@ describe.runIf(built && chrome)('desk tiling: a piece\'s own fit', () => {
     await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p: Page = await ctx.newPage();
-    await p.goto(`${base}/inbox?t=*inbox&w=`);
+    await p.goto(`${base}/inbox?t=*inbox`);
     await p.locator('.loom-tile').first().waitFor();
     await p.click(`.loom-dock-bar [data-part="item"][aria-label="${label}"]`);
     await expect.poll(() => p.locator('.loom-tile').count()).toBe(2);
@@ -83,8 +83,9 @@ describe.runIf(built && chrome)('desk tiling: a piece\'s own fit', () => {
   it('21. a manifest\'s tab.fit is the layout\'s: big takes the left, its ideal sets the share; without it, the default row', async () => {
     const own = await inboxThen('Garden');
     expect(own.order).toEqual(['/p/garden', '/inbox']);
-    // round((1872 - 10) × 1300 / (1300 + 760)) = 1175, as the rule splits it (Inbox has no say past its 980 max here)
-    expect(Math.round(own.widths['/p/garden'])).toBe(1175);
+    // The agents' rail takes 330 (docs/specs/agent-desk.md): round((1872 - 330 - 10) × 1300 / (1300 + 760)) = 967, as
+    // the rule splits it (Inbox has no say past its 980 max here)
+    expect(Math.round(own.widths['/p/garden'])).toBe(967);
     const none = await inboxThen('Shed');
     expect(none.order).toEqual(['/inbox', '/p/shed']);
   }, 60_000);

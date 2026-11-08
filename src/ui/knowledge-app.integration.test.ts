@@ -125,7 +125,7 @@ describe.runIf(built && chrome)('Knowledge, a reader', () => {
   }
 
   it('a narrow tile: topic chips, the list, then the reader slides over it; Escape goes back to the row', async () => {
-    const p = await screen(1280, 800, '/knowledge?t=*knowledge,comms&w=needs,art');
+    const p = await screen(1280, 800, '/knowledge?t=*knowledge,comms');
     await expect.poll(() => mode(p)).toBe('one');
     expect(await p.locator('.loom-split__chips button').allTextContents()).toEqual(expect.arrayContaining([expect.stringMatching(/^norns/)]));
     await p.locator('.loom-split__chips button', { hasText: /^homelab/ }).click();

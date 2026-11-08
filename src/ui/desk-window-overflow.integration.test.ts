@@ -4,7 +4,7 @@
  * app a test household has, at a single big window (1280×800, 1920×1080), a short one (1280×600) and a narrow tile in
  * a three-tile layout: nothing in a tile's page, nor in a sheet opened in it, is drawn past the frame's inner edge
  * (what's scrolled away is clipped, so each box is measured as it's seen); the page scrolls inside its body, never the
- * frame and never the page. The widgets' cards and the launcher are held to their own boxes the same way.
+ * frame and never the page. Home's agent cards, the agents' rail and the launcher are held to their own boxes the same way.
  *
  * What it holds, plainly: a tile's body clips what's in it, so a page's own boxes are measured as the body shows them;
  * what fails is the body (or the sheet layer) reaching past the ring, something that escapes the body's clip (a fixed
@@ -222,11 +222,11 @@ describe.runIf(built && chrome)('a tile\'s page stays inside its frame', () => {
     }
   });
 
-  // ---- narrow tiles: each app beside two others and the widgets' rail at 1280, three tiles of 395 to 537 px ----
+  // ---- narrow tiles: each app beside two others and the agents' rail at 1280 ----
   for (const [label, path, name] of APPS) {
     const others = name === 'people' || name === 'knowledge' ? 'activity,pieces' : 'people,knowledge';
     it(`${label}, one of three tiles at 1280×800: the narrow tile keeps inside its frame`, async () => {
-      const p = await screen(1280, 800, `${path}?t=*${name},${others}&w=needs,art`);
+      const p = await screen(1280, 800, `${path}?t=*${name},${others}`);
       await settled(p, 3);
       const own = await p.locator('.loom-tile[data-focused]').evaluate((t) => t.getBoundingClientRect().width);
       expect(own).toBeLessThan(560);
@@ -236,7 +236,7 @@ describe.runIf(built && chrome)('a tile\'s page stays inside its frame', () => {
   }
 
   it('a sheet opened in a tile keeps inside its frame (a narrow one, a short screen)', async () => {
-    const p = await screen(1280, 600, '/members?t=*members,people,knowledge&w=needs');
+    const p = await screen(1280, 600, '/members?t=*members,people,knowledge');
     await settled(p);
     const t = p.locator('.loom-tile[data-tile="/members"]');
     await t.getByText('Owns every agent').first().click();
@@ -247,13 +247,13 @@ describe.runIf(built && chrome)('a tile\'s page stays inside its frame', () => {
     await p.context().close();
   });
 
-  // ---- the widgets and the launcher: each card in its own box ----
+  // ---- Home's agent cards and the launcher: each card in its own box ----
   for (const [w, hgt] of [[1280, 800], [1920, 1080], [1280, 600]]) {
-    it(`Home's widgets at ${w}×${hgt}, and the launcher: nothing past its box, nothing scrolls the page`, async () => {
+    it(`Home's agent cards at ${w}×${hgt}, and the launcher: nothing past its box, nothing scrolls the page`, async () => {
       const p = await screen(w, hgt, '/');
-      await p.locator('.loom-wtile').first().waitFor();
+      await p.locator('.loom-bigcard').first().waitFor();
       await p.waitForTimeout(500);
-      expect(await p.evaluate(outside, ['.loom-wtile', '', 0] as const)).toEqual([]);
+      expect(await p.evaluate(outside, ['.loom-bigcard', '', 0] as const)).toEqual([]);
       expect(await still(p)).toEqual([]);
       await p.click('.loom-dock-bar [data-part="item"][aria-label="All apps"]');
       await p.locator('.loom-launcher').waitFor();
