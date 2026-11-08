@@ -173,7 +173,8 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     await p.route(`**/comms/${t.id}/since/**`, async (route) => {
       const r = await route.fetch();
       const j = await r.json() as Record<string, unknown>;
-      await route.fulfill({ json: { ...j, asks: [{ id: 'a-0001', piece: 'approvals', text: 'OK to merge?', actions: [{ action: 'allow', label: 'Allow once', fields: { id: 'a-0001' } }] }] } });
+      await route.fulfill({ json: { ...j, asks: [{ key: '0000000000000a01', ref: 'approval:a-00000a01', at: new Date().toISOString(), state: 'open', kind: 'permission', text: 'OK to merge?',
+        decide: { allow: { action: 'allow', label: 'Allow once', fields: { id: 'a-00000a01' } }, deny: { action: 'deny', label: 'Deny', fields: { id: 'a-00000a01' } }, source: { id: 'approvals', base: '/p/approvals/' } } }] } });
     });
     await p.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await expect.poll(() => label(p)).toBe('ART E FISH · WAITING ON YOU');

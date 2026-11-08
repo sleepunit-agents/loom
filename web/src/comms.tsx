@@ -17,13 +17,15 @@ import { WorkPanel } from './comms-work';
 import { AgentAvatar, useEnv, type Mark } from './blocks';
 import { markColor } from './look';
 import { reducedMotion } from './access';
-import { bits, githubUrl } from './plain';
+import { bits } from './plain';
 import { prose } from '../../src/ui/prose';
-import { act, type Chrome } from './loom';
+import type { Chrome } from './loom';
 import type { FaceState } from './face';
 import { useFollow } from './comms-follow';
-import { LIVE_SAYS, useAskLive } from './ask-open';
-import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatPermission, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
+import { refBits, RefText, ThreadRefs, useHtmlRefs } from './comms-refs';
+import { ThreadAskCard, type ThreadAsk } from './comms-asks';
+import { onLive } from './page';
+import { AgentChat, AgentChatComposer, AgentChatMessage, AgentChatProgress, AgentChatThread, type AgentChatStep } from '@/components/ui/agent-chat';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 const PixelFace = lazy(() => import('./pixel-face'));
@@ -47,9 +49,7 @@ const deliveryOf = (m: Msg): Delivery => m.delivery ?? (m.delivered === true ? '
  * read. (Your last message, not delivered, is read again too: Send again from another tab puts it back on its way.)
  */
 const unsettled = (m: Msg) => (m.kind === 'message' && deliveryOf(m) === 'sending') || (m.kind === 'card' && String(m.card?.state ?? '') === 'running');
-/** A pending ask from this thread's agent, asked from this thread (comms.md, "Asks inline"): Allow once and Deny. */
-export type ThreadAsk = { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
-  actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> };
+export type { ThreadAsk };
 export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrome; member: string; asks?: ThreadAsk[];
   threads?: Thread[]; unread?: number; agents?: string[]; thread?: Thread; messages?: Msg[]; earlier?: { at: string; summary: string }[];
   /** household.json's github: a bare repo#N in a reply links under it. */
@@ -103,24 +103,48 @@ const ago = (iso: string) => {
 
 const INSIDE = 'https://loom.invalid/';
 /**
- * A reply's words as markdown with its references made links: t-N (the task), owner/repo#N (GitHub), cv-… (the
- * conversation). note:<path> is set as code (loom has no note page yet). Links go only to https or inside loom: the
- * renderer (src/ui/prose.ts) drops anything else, and an http:// link is left as its words.
+ * A reply's words as markdown, with the loom things it names marked (`data-ref`): a task (t-N), a pull request or issue
+ * (owner/repo#N), a conversation (cv-…), an approval, a note, a knowledge page, a project, a person, an @agent. Each is
+ * its words, no link, until the thread knows this reader may open it, and then a chip (comms-refs.tsx). Links go only to
+ * https or inside loom: the renderer (src/ui/prose.ts) drops anything else, and an http:// link is left as its words.
  */
 export function replyHtml(text: string, owner?: string): string {
-  // As the Inbox's sheet links them (inbox.tsx Ref): a task's page in the tasks piece, task/<id>.
-  const linked = bits(text, owner).map((b) => b.t === 'task' ? `[${b.id}](${INSIDE}p/tasks/task/${b.id})`
-    : b.t === 'pr' ? `[${b.repo}#${b.n}](${githubUrl(b.repo, b.n)})`
-      : b.t === 'conv' ? `[${b.id}](${INSIDE}conversation/${b.id})`
-        : b.t === 'path' ? `\`${b.s}\`` : b.s).join('')
-    .replace(/(^|\s)note:([\w./-]+)/g, (_m, sp: string, p: string) => `${sp}\`note:${p}\``);
-  return prose(linked)
-    .replace(/<a [^>]*href="http:\/\/[^"]*"[^>]*>([\s\S]*?)<\/a>/g, '$1')
-    // Inside loom only for the pages a reply may link to, by exact shape; any other inside-looking link (one an agent
-    // wrote to reach //evil.com, /\\host or ..) is left as its words.
-    .replace(/<a ([^>]*)href="https:\/\/loom\.invalid\/([^"]*)"([^>]*)>([\s\S]*?)<\/a>/g, (_m, pre: string, path: string, post: string, words: string) =>
-      (insidePath(path) ? `<a ${pre}data-inside="" href="/${path}"${post}>${words}</a>` : words));
+  // Only in the words themselves: code (a span or a fenced block), a link the agent wrote and a bare URL stay as written.
+  // Marked under a word made for this call alone, so a link the agent wrote can never pass for one loom marked.
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const marked = text.split(KEEP_AS_WRITTEN).map((part, i) => (i % 2 ? part : markRefs(part, nonce, owner))).join('');
+  return htmlOf(marked, nonce);
 }
+
+/** Code, a markdown link or a bare URL: a reply's parts no ref is marked in. */
+const KEEP_AS_WRITTEN = /(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|(?:^|\n)(?: {4}|\t)[^\n]*|`[^`\n]*`|!?\[[^\]\n]*\]\([^)\n]*\)|<https?:\/\/[^>\s]*>|https?:\/\/[^\s<>()]+)/i;
+
+function markRefs(text: string, nonce: string, owner?: string): string {
+  const mark = (ref: string, words: string) => `[${words}](${INSIDE}ref-${nonce}/${encodeURIComponent(ref)})`;
+  return bits(text, owner).map((b) => b.t === 'task' ? mark(b.id, b.id)
+    : b.t === 'pr' ? mark(`github:${b.repo}#${b.n}`, `${b.repo}#${b.n}`)
+      : b.t === 'conv' ? mark(b.id, b.id)
+        : b.t === 'path' ? `\`${b.s}\`` : refBits(b.s).map((x) => (x.t === 'text' || /^(?:t-|github:|cv-)/.test(x.ref) ? x.s
+          : mark(x.ref, x.ref.startsWith('note:') ? `\`${x.s}\`` : x.s))).join('')).join('');
+}
+
+function htmlOf(marked: string, nonce: string): string {
+  return prose(marked)
+    .replace(/<a [^>]*href="http:\/\/[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, '$1')
+    // The marked things: words, until the thread knows them.
+    .replace(new RegExp(`<a [^>]*href="https://loom\\.invalid/ref-${nonce}/([^"/]*)"[^>]*>([\\s\\S]*?)</a>`, 'g'), (_m, enc: string, words: string) => {
+      let ref = '';
+      try { ref = decodeURIComponent(enc); } catch { return words; }
+      return MARKED_REF.test(ref) && !ref.split('/').includes('..') ? `<span class="comms-ref" data-ref="${ref}">${words}</span>` : words;
+    })
+    // Any other link into loom an agent writes (a task's page, //evil.com, /\\host, ..) is its words: what's inside
+    // loom opens only as a chip, once the reader may open it.
+    .replace(/<a [^>]*href="https:\/\/loom\.invalid\/[^"]*"[^>]*>([\s\S]*?)<\/a>/g, '$1');
+}
+
+/** The refs a reply marks, by shape (src/comms-refs.ts refShape's, with no `..` segment: src/ui/pixel-talk.test.ts checks
+ * they agree). Nothing else becomes a data-ref. */
+export const MARKED_REF = /^(?:t-\d{1,9}|github:[\w.-]{1,100}\/[\w.-]{1,100}#\d{1,10}|cv-[0-9a-f]{12}|a-[0-9a-f]{8}|note:[A-Za-z0-9][\w./-]{0,199}|(?:knowledge|project|person|agent|at):[a-z0-9][a-z0-9-]{0,79})$/;
 
 /** The loom pages a reply may link to: a task's, a conversation's. Nothing with a scheme, a leading slash, .. or //. */
 const INSIDE_PAGES = /^(?:p\/tasks\/task\/t-\d{1,9}|conversation\/cv-[0-9a-f]{12})$/;
@@ -137,9 +161,14 @@ export function staysInside(href: string, here: string = location.href): boolean
 function Reply({ text, owner }: { text: string; owner?: string }) {
   const { go } = useEnv();
   const html = useMemo(() => replyHtml(text, owner), [text, owner]);
+  const box = useRef<HTMLDivElement>(null);
+  const chip = useHtmlRefs(box, html);
   return (
-    <div className="loom-prose comms-reply" dangerouslySetInnerHTML={{ __html: html }}
+    <div ref={box} className="loom-prose comms-reply" dangerouslySetInnerHTML={{ __html: html }}
+      onKeyDown={(e) => { chip(e); }}
       onClick={(e) => {
+        // A ref that's a chip opens its card; one not known yet is words (it takes no click).
+        if (chip(e)) return;
         const a = (e.target as HTMLElement).closest('a[data-inside]');
         if (!a || e.metaKey || e.ctrlKey) return;
         e.preventDefault();
@@ -441,13 +470,13 @@ function Message({ m, marks, agent, owner, you, conversation }: { m: Msg; marks:
   );
 }
 
-const asStep = (c: Msg): AgentChatStep => ({ id: String(c.seq), label: c.text ?? 'a step', status: stepOf(c) });
+const asStep = (c: Msg, owner?: string): AgentChatStep => ({ id: String(c.seq), label: c.text ? <RefText text={c.text} owner={owner} /> : 'a step', status: stepOf(c) });
 
 /**
  * A run's activity cards, one line until opened (comms.md, "The look"), then the 000h progress list: a `now:` line on
  * top (the newest step, and the plan's item when it keeps one), like steps in a row folded into one line (t-1944).
  */
-function Steps({ cards: all }: { cards: Msg[] }) {
+function Steps({ cards: all, owner }: { cards: Msg[]; owner?: string }) {
   const [open, setOpen] = useState(false);
   const plan = all.filter(isPlan).at(-1);
   const cards = all.filter((c) => !isPlan(c));
@@ -458,16 +487,34 @@ function Steps({ cards: all }: { cards: Msg[] }) {
         {open ? '▾' : '▸'} {cards.length} step{cards.length === 1 ? '' : 's'} · {newest.text ?? 'a step'}
       </button>
       {open && <>
-        <p className="comms-steps__now loom-data">now: {(cards.findLast((c) => stepOf(c) === 'current') ?? newest).text ?? 'a step'}{plan?.text ? <><br />{plan.text}</> : null}</p>
+        <p className="comms-steps__now loom-data">now: <RefText text={(cards.findLast((c) => stepOf(c) === 'current') ?? newest).text ?? 'a step'} owner={owner} />{plan?.text ? <><br /><RefText text={plan.text} owner={owner} /></> : null}</p>
         {folded(cards).map((g) => ('few' in g
-          ? <AgentChatProgress key={g.few[0].seq} steps={g.few.map(asStep)} />
+          ? <AgentChatProgress key={g.few[0].seq} steps={g.few.map((c) => asStep(c, owner))} />
           : <details key={g.many[0].seq} className="comms-steps__group">
               <summary className="comms-steps__line loom-data">{groupLabel(g.many)} · {g.many.at(-1)!.text}</summary>
-              <AgentChatProgress steps={g.many.map(asStep)} />
+              <AgentChatProgress steps={g.many.map((c) => asStep(c, owner))} />
             </details>))}
       </>}
     </div>
   );
+}
+
+/** The thread's asks put where each was raised (comms.md, "Asks inline"): before the first message or run that came after it. */
+type Shown = { key: string; msg?: Msg; cards?: Msg[]; ask?: ThreadAsk };
+export function withAsks(groups: Shown[], asks: ThreadAsk[]): Shown[] {
+  if (!asks.length) return groups;
+  const at = (g: Shown) => Date.parse((g.msg ?? g.cards?.[0])?.at ?? '') || 0;
+  const out: Shown[] = [];
+  const left = [...asks].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  for (const g of groups) {
+    // An ask in the same second as the agent's reply or step goes before it (a time is often to the second), never
+    // before your own message: the agent asked after reading it.
+    const before = (a: ThreadAsk) => { const t = Date.parse(a.at) || 0; return t < at(g) || (t === at(g) && g.msg?.kind !== 'message'); };
+    while (left.length && before(left[0])) { const a = left.shift()!; out.push({ key: `ask:${a.ref}`, ask: a }); }
+    out.push(g);
+  }
+  for (const a of left) out.push({ key: `ask:${a.ref}`, ask: a });
+  return out;
 }
 
 /** Messages, with each run's cards gathered into one line where the run's first card was. */
@@ -582,6 +629,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     return () => { stop = true; es?.close(); };
   }, [thread.id, pull]);
 
+  // Anything loom says moved (its live stream, /events): an ask answered in the Inbox, an approval filed. The thread
+  // reads again, so a card answered elsewhere shows its answer, and a new one shows its buttons (comms.md, "Asks inline").
+  useEffect(() => onLive(() => { void pull(); }), [pull]);
+
   // Read: while the thread is on screen and the page visible, now and every 30 s (that's also "in front" for push).
   useEffect(() => {
     // And a look for asks every 30 s: an approval reaches loom's manifests on its own clock, not the thread's stream.
@@ -595,7 +646,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
 
   // Follow the bottom only while the reader's there (comms-follow.ts); their own message always brings them down.
   // What the pill counts: messages and asks, never a run's step cards (they fold into one line).
-  const { unread, down } = useFollow(bottom, messages.filter((m) => m.kind !== 'card').length + asks.length, messages.filter((m) => m.kind === 'message').at(-1)?.seq ?? 0);
+  const { unread, down } = useFollow(bottom, messages.filter((m) => m.kind !== 'card').length + asks.filter((a) => a.state === 'open').length, messages.filter((m) => m.kind === 'message').at(-1)?.seq ?? 0);
   // The phone's strip collapses to the small avatar once the messages scroll under it.
   useEffect(() => {
     if (wide || !top.current) return;
@@ -651,7 +702,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   const lastAnswer = messages.filter((m) => m.kind === 'reply' || (m.kind === 'error' && m.card?.error === 'no-reply')).at(-1);
   const waitingOnAgent = !!lastMine && deliveryOf(lastMine) !== 'failed' && (!lastAnswer || lastAnswer.seq < lastMine.seq);
   // An ask waiting on you wins over everything but an error (comms.md's precedence).
-  const face = faceOf({ failed: thread.state.failed, asking: asks.length > 0, talking: false, working: thread.state.working, waitingOnAgent });
+  const face = faceOf({ failed: thread.state.failed, asking: asks.some((a) => a.state === 'open'), talking: false, working: thread.state.working, waitingOnAgent });
   const since = thread.state.working_since ? Math.max(0, Math.round((now - Date.parse(thread.state.working_since)) / 1000)) : 0;
   const swept = messages.some((m) => m.text === null && m.kind !== 'error');
   // The step it's on now: the newest card of the newest run still running, else the newest card since your message.
@@ -713,6 +764,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
             </div>
           </div>
         )}
+        <ThreadRefs thread={thread.id} refresh={lastReply?.seq ?? 0}>
         <AgentChat className="comms-chat" aria-label={`Thread with ${mark.label}`} style={{ '--c': markColor(mark.bg) } as React.CSSProperties}>
           {/* No living morph on the log's avatars and marks (data-motion="off", cojeev-motion category.ts): each host
               reads computed style after the last one wrote it, and a thread of 40 messages spent seconds there
@@ -724,10 +776,11 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
                 {initial.earlier.map((d) => <p key={d.at}>{d.summary}</p>)}
               </div>
             ) : null}
-            {grouped(messages).map((g) => g.cards ? <Steps key={g.key} cards={g.cards} /> : (
+            {withAsks(grouped(messages), asksRead ? asks : []).map((g) => g.ask ? (
+              <ThreadAskCard key={`ask:${g.ask.ref}`} a={g.ask} who={mark.label} member={member} csrf={csrf} owner={github} onAnswered={() => void pull()} />
+            ) : g.cards ? <Steps key={g.key} cards={g.cards} owner={github} /> : (
               <Message key={g.key} m={g.msg!} marks={marks} agent={thread.agent} owner={github} you={member} conversation={thread.conversation} />
             ))}
-            {asksRead && asks.map((a) => <AskCard key={a.id} a={a} csrf={csrf} agentName={mark.label} onAnswered={() => void pull()} />)}
             {lastMine && deliveryOf(lastMine) === 'failed' && <div className="comms-resend"><button type="button" onClick={() => void resend(lastMine)}>Not delivered · Send again</button> <a className="loom-data comms-trace" href={traceHref(thread.conversation)}>What happened</a></div>}
             {link === 'lost' && <div className="comms-msg comms-msg--error" role="status"><p>Reconnecting…</p></div>}
             {refused && (
@@ -749,6 +802,7 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
           </AgentChatThread>
           {unread > 0 && <button type="button" className="comms-newpill" onClick={down}>{unread === 1 ? 'New message' : `${unread} new messages`} ↓</button>}
         </AgentChat>
+        </ThreadRefs>
 
       </div>
       <Composer onSend={send} disabled={!!thread.archived} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={thread.archived ? 'Archived: unarchive it to write here' : `Message ${mark.label}`} draft={thread.id} />
@@ -773,52 +827,6 @@ function ThreadOpening({ t, marks, wide, back, onBack, drawer }: { t: Thread; ma
       </div>
       <Composer onSend={async () => false} accent={markColor(mark.bg)} label={`Message ${mark.label}`} placeholder={`Message ${mark.label}`} draft={t.id} />
     </article>
-  );
-}
-
-/** An ask, answered here as the Inbox would answer it: its piece's own action, with this page's form token, drawn as
- *  the 000h permission (no implied consent: a deliberate Allow once or Deny). */
-function AskCard({ a, csrf, agentName: who, onAnswered }: { a: ThreadAsk; csrf: string; agentName: string; onAnswered: () => void }) {
-  const { stale } = useEnv();
-  const sending = useRef(false);
-  const [busy, setBusy] = useState(false);
-  const [decision, setDecision] = useState<'pending' | 'allowed' | 'denied'>('pending');
-  const [said, setSaid] = useState<string | null>(null);
-  const yes = a.actions.find((b) => b.tone === 'primary') ?? a.actions[0];
-  const no = a.actions.find((b) => b.tone === 'danger');
-  // Live only once loom says, now, it's still open; asked again right before a send (ask-open.ts, the Inbox's rule).
-  const { live, check } = useAskLive({ a: a.id });
-  const answer = async (d: 'allowed' | 'denied') => {
-    const b = d === 'allowed' ? yes : no;
-    if (!b || sending.current || busy || stale) return;
-    // A danger button (Deny) or one that says so asks first, as the Inbox's does (blocks.tsx ActButton).
-    if ((b.tone === 'danger' || b.confirm) && !confirm(b.confirm ?? `${b.label}: are you sure?`)) return;
-    sending.current = true;
-    try {
-      if (!(await check())) return;
-      setBusy(true);
-      const r = await act({ source: { id: a.piece, base: `/p/${a.piece}/` }, path: '', query: {}, csrf }, csrf, b.action, b.fields ?? {});
-      if (r.ok) { setDecision(d); setSaid(r.message || null); onAnswered(); } else setSaid(r.message || 'That didn\'t go through.');
-    } finally { setBusy(false); sending.current = false; }
-  };
-  return (
-    <div className="comms-ask" aria-label={`${who} asks`}>
-      <AgentChatPermission title={a.text} description={a.why ?? `${who} is asking you.`} decision={decision} disabled={busy || stale || (decision === 'pending' && live !== 'live')}
-        onDecision={(d) => void answer(d)} allowLabel={yes.label} denyLabel={no?.label ?? 'Deny'}
-        scope={(a.if_yes || a.if_no || a.fine) ? (
-          <>
-            {(a.if_yes || a.if_no) && (
-              <dl className="comms-ask__either">
-                {a.if_yes && <><dt>If you allow</dt><dd>{a.if_yes}</dd></>}
-                {a.if_no && <><dt>If you deny</dt><dd>{a.if_no}</dd></>}
-              </dl>
-            )}
-            {a.fine && <p className="comms-ask__fine loom-data">Exactly what this allows: {a.fine}</p>}
-          </>
-        ) : undefined} />
-      {said && <p className="comms-ask__said" role="status">{said}</p>}
-      {decision === 'pending' && live !== 'live' && <p className="comms-ask__live" role="status" data-live={live}>{LIVE_SAYS[live]}</p>}
-    </div>
   );
 }
 

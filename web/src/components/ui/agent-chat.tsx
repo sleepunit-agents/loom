@@ -158,15 +158,17 @@ export type AgentChatPermissionProps = Omit<React.ComponentProps<"div">, "title"
   disabled?: boolean;
   allowLabel?: string;
   denyLabel?: string;
+  /** What the receipt says once it's decided (default: "Permission allowed once" or "Permission denied"). */
+  receipt?: React.ReactNode;
 };
 /** No implied consent: pending permissions require a deliberate allow or deny. */
-export function AgentChatPermission({ title, description, scope, decision = "pending", onDecision, disabled, allowLabel = "Allow once", denyLabel = "Deny", className, ...props }: AgentChatPermissionProps) {
+export function AgentChatPermission({ title, description, scope, decision = "pending", onDecision, disabled, allowLabel = "Allow once", denyLabel = "Deny", receipt, className, ...props }: AgentChatPermissionProps) {
   const id = React.useId();
   return <div data-slot="agent-chat-permission" data-decision={decision} className={cn("v-agent-chat__permission", className)} role="group" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} {...props}>
     <div className="v-agent-chat__decision-title"><Icon name="shield-check" style={{width:19,height:19}} aria-hidden="true" /><h3 id={`${id}-title`}>{title}</h3></div>
     <p id={`${id}-description`}>{description}</p>
     {scope && <div className="v-agent-chat__scope">{scope}</div>}
-    <MotionPresence mode="wait">{decision === "pending" ? <MotionSurface key="pending" preset="fade" className="v-agent-chat__decision-actions"><Button variant="secondary" onClick={() => onDecision("denied")} disabled={disabled}>{denyLabel}</Button><Button onClick={() => onDecision("allowed")} disabled={disabled}>{allowLabel}</Button></MotionSurface> : <MotionSurface key={decision} preset="fade" asChild><p className="v-agent-chat__receipt" role="status">{decision === "allowed" ? <Icon name="check" style={{width:16,height:16}} aria-hidden="true" /> : <Icon name="x" style={{width:16,height:16}} aria-hidden="true" />}{decision === "allowed" ? "Permission allowed once" : "Permission denied"}</p></MotionSurface>}</MotionPresence>
+    <MotionPresence mode="wait">{decision === "pending" ? <MotionSurface key="pending" preset="fade" className="v-agent-chat__decision-actions"><Button variant="secondary" onClick={() => onDecision("denied")} disabled={disabled}>{denyLabel}</Button><Button onClick={() => onDecision("allowed")} disabled={disabled}>{allowLabel}</Button></MotionSurface> : <MotionSurface key={decision} preset="fade" asChild><p className="v-agent-chat__receipt" role="status">{decision === "allowed" ? <Icon name="check" style={{width:16,height:16}} aria-hidden="true" /> : <Icon name="x" style={{width:16,height:16}} aria-hidden="true" />}{receipt ?? (decision === "allowed" ? "Permission allowed once" : "Permission denied")}</p></MotionSurface>}</MotionPresence>
   </div>;
 }
 
@@ -196,7 +198,7 @@ export function AgentChatOptions({ title, options, value, onValueChange, onConfi
   </Questionnaire>;
 }
 
-export type AgentChatStep = { id: string; label: string; detail?: string; status: "pending" | "current" | "complete" | "error" };
+export type AgentChatStep = { id: string; label: React.ReactNode; detail?: string; status: "pending" | "current" | "complete" | "error" };
 export type AgentChatProgressProps = React.ComponentProps<"ol"> & { steps: readonly AgentChatStep[] };
 export function AgentChatProgress({ steps, className, ...props }: AgentChatProgressProps) {
   return <ol data-slot="agent-chat-progress" className={cn("v-agent-chat__progress", className)} aria-label="Work progress" {...props}>

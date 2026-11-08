@@ -10,6 +10,8 @@
  *   GET  /comms/<thread>/since/<seq>    the messages after seq
  *   GET  /comms/<thread>/before/<seq>   the 100 before seq
  *   GET  /comms/<thread>/events         its live stream (comms-live.ts)
+ *   GET  /comms/<thread>/work           the work it names or made (comms-work.ts)
+ *   GET  /comms/<thread>/refs?r=…       the loom things it names, as chips (comms-refs.ts)
  *   POST /comms/<thread>/send           {id, text}
  *   POST /comms/<thread>/title          {title}
  *   POST /comms/<thread>/project        {project | null}
@@ -31,6 +33,8 @@ import { managedPieces } from '../cli/pieces-managed.js';
 import { threadWork } from '../comms-work.js';
 import { openThreadStream } from './comms-live.js';
 import { pieceApi, type PieceInfo } from './pieces.js';
+import { threadAsks, type ThreadAskView, type ThreadAsksDeps } from '../comms-asks.js';
+import { refShape, resolveRefs, REFS_MAX } from '../comms-refs.js';
 
 export interface CommsContext {
   household: Household;
@@ -49,6 +53,8 @@ export interface CommsContext {
   agents?: Record<string, unknown>;
   /** The pieces this member may hear from, as the Inbox and Home have them (handler.ts forOwner over the scoped manifests). */
   pieces?: () => Promise<PieceInfo[]>;
+  /** This member's Inbox, now (handler.ts inboxItems, the Inbox's own rule), for a thread's asks. */
+  inbox?: () => Promise<ThreadAsksDeps>;
 }
 
 const MAX_BODY = 200 * 1024;
@@ -150,32 +156,20 @@ async function asView(c: CommsContext, which: 'list' | 'thread', pathname: strin
     ...(c.household.github ? { github: c.household.github } : {}) };
 }
 
-export interface ThreadAsk { id: string; piece: string; text: string; why?: string; if_yes?: string; if_no?: string; fine?: string; at?: string;
-  actions: Array<{ action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> }> }
-
 /**
- * A thread's pending asks (comms.md, "Asks inline"): a piece's permission ask that names this thread's conversation AND
- * whose agent (the caller the piece was told, which loom authenticated) is this thread's agent. A conversation id is
- * the body's own claim; the agent is what binds it, so an ask never shows in another agent's thread. The viewer is
- * already the thread's member and owns its agent (threadFor).
+ * A thread's asks (comms.md, "Asks inline"; src/comms-asks.ts): the member's own Inbox items asked from this thread by its
+ * agent, open with the Inbox's own buttons, and those it showed before, answered. Without the Inbox given, none: never
+ * every piece's.
  */
-async function threadAsks(c: CommsContext, t: Thread): Promise<ThreadAsk[]> {
-  // Only pieces this member may hear from, exactly as the Inbox filters them (an agent owner: those that understand
-  // agent owners, cut to their agents). Without the filter given, none: never every piece's.
-  let pieces: PieceInfo[];
-  try { pieces = c.pieces ? await c.pieces() : []; } catch { return []; }
-  const out: ThreadAsk[] = [];
-  for (const p of pieces) {
-    for (const a of p.manifest.asks ?? []) {
-      // Only what needs the owner (an ask filed with attention: false waits on nothing, as the Inbox counts it).
-      if (a.conversation !== t.conversation || a.agent !== t.agent || !a.actions?.length || a.attention === false) continue;
-      const id = a.actions[0].fields?.id;
-      if (typeof id !== 'string') continue;
-      out.push({ id, piece: p.piece, text: a.text, ...(a.why ? { why: a.why } : {}), ...(a.if_yes ? { if_yes: a.if_yes } : {}), ...(a.if_no ? { if_no: a.if_no } : {}),
-        ...(a.fine ? { fine: a.fine } : {}), ...(a.at ? { at: a.at } : {}), actions: a.actions.map((b) => ({ action: b.action, label: b.label, ...(b.tone ? { tone: b.tone } : {}), ...(b.confirm ? { confirm: b.confirm } : {}), ...(b.fields ? { fields: b.fields } : {}) })) });
-    }
+async function asksOf(c: CommsContext, t: Thread): Promise<ThreadAskView[]> {
+  if (!c.inbox) return [];
+  try {
+    const i = await c.inbox();
+    return await threadAsks(c.household, c.env, t, i);
+  } catch (e) {
+    process.stderr.write(`loom: a Comms thread's asks couldn't be read: ${(e as Error).message}\n`);
+    return [];
   }
-  return out;
 }
 
 /** Whether a /comms page load names a thread the member may not see: the same 403 as its JSON form (rule 3). */
@@ -246,11 +240,23 @@ export async function commsRoute(req: IncomingMessage, res: ServerResponse, path
       }
       // Work in this thread (comms.md, "The panel"): live from the pieces, for this member only.
       if (verb === 'work' && dir === undefined) return send(200, await threadWork(h, c.env, t, m!)), true;
+      // The loom things it names, as chips (comms.md, "Chips"): each ref's card, or null where this member can't open it.
+      if (verb === 'refs' && dir === undefined) {
+        const asked = new URL(req.url ?? '/', 'http://x').searchParams.getAll('r').filter((r) => r.length <= 220 && refShape(r)).slice(0, REFS_MAX);
+        const refs = await resolveRefs(h, c.env, t, m!, asked, {
+          pieces: async () => (c.pieces ? c.pieces() : []),
+          work: () => threadWork(h, c.env, t, m!),
+          asks: () => asksOf(c, t),
+          pending: async () => (c.inbox ? (await c.inbox()).items : []).filter((it) => it.box !== 'done').flatMap((it) =>
+            [...(it.actions ?? []), ...(it.approval?.actions ?? [])].flatMap((b) => (typeof b.fields?.id === 'string' ? [{ id: b.fields.id, text: it.approval?.text ?? it.text, ...(it.agent ? { agent: it.agent } : {}) }] : []))),
+        });
+        return send(200, { refs }), true;
+      }
       if (verb) return send(404, { error: 'not-found' }), true;
       const seq = seqRaw === undefined ? undefined : Number(seqRaw);
       const messages = await messagesOf(h, c.env, t, dir === 'since' ? { after: seq } : dir === 'before' ? { before: seq } : {});
       const swept = messages.some((x) => x.text === null && x.kind !== 'error');
-      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, asks: dir === 'before' ? undefined : await threadAsks(c, t),
+      send(200, { ...(dir === undefined ? await asView(c, 'thread', pathname) : {}), thread: view(t), messages, asks: dir === 'before' ? undefined : await asksOf(c, t),
         ...(dir === undefined || swept ? { earlier: digestsFor(h, t) } : {}), member: m!.person });
       return true;
     }

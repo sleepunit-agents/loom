@@ -114,7 +114,12 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       // The channel line says what the agent is doing (t-1918): its last turn done, here.
       expect(await page.locator('.comms-screen__label').textContent()).toMatch(/^ART E FISH · DONE/);
       expect(await page.locator('.comms-steps__line').textContent()).toMatch(/2 steps · Ran the tests/);
-      expect(await page.locator('.comms-reply').innerHTML()).toContain('href="/p/tasks/task/t-12"');
+      // t-12 is a chip only where this reader could open it (t-1979): no tasks piece here, so it ends as its words.
+      await page.locator('.comms-reply [data-ref="t-12"]').waitFor({ state: 'attached' });
+      await page.waitForTimeout(1500);
+      expect(await page.locator('.comms-reply [data-ref="t-12"][data-chip]').count()).toBe(0);
+      expect(await page.locator('.comms-reply a').count()).toBe(0);
+      expect(await page.locator('.comms-reply').textContent()).toContain('See t-12.');
       // Each agent message carries the agent's face.
       expect(await page.locator('.comms-msg--agent .comms-msg__face').count()).toBeGreaterThan(0);
       // The band (who's in it, the work) is a desktop's; a phone's thread has its strip.
@@ -297,8 +302,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       const opened = openThread(h, process.env, h.members[0], { agent: 'art', id: 'dddddddddddddddd', text: 'Ship it when it\'s green?' });
       const thread = opened.thread;
       recordDelivery(h, thread, opened.seq, { delivered: true, body: 'started' });
-      const ask = { id: 'a-00c0ffee', piece: 'approvals', text: 'OK to merge the comm screen PR?', why: 'CI is green.', if_yes: 'I merge it.', if_no: 'It waits.',
-        fine: 'merge · github:acme/app#3@abc', actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00c0ffee' } }, { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00c0ffee' } }] };
+      const ask = { key: '00000000c0ffee00', ref: 'approval:a-00c0ffee', at: new Date().toISOString(), state: 'open', kind: 'permission', text: 'OK to merge the comm screen PR?', why: 'CI is green.', if_yes: 'I merge it.', if_no: 'It waits.',
+        fine: 'merge · github:acme/app#3@abc', decide: { allow: { action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-00c0ffee' } }, deny: { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-00c0ffee' } }, source: { id: 'approvals', base: '/p/approvals/' } } };
       // The thread's answers carry the ask (as loom adds it from the approvals piece's manifest).
       await page.route(`**/comms/${thread.id}**`, async (route) => {
         const r = route.request();
@@ -309,7 +314,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       });
       // loom says it's open (ask-open.ts): asked when it's shown, and again right before Allow is sent.
       const asked: string[] = [];
-      await page.route('**/inbox/open?*', (route) => { asked.push(new URL(route.request().url()).searchParams.get('a')!); return route.fulfill({ json: { open: true } }); });
+      await page.route('**/inbox/open?*', (route) => { asked.push(new URL(route.request().url()).searchParams.get('k')!); return route.fulfill({ json: { open: true } }); });
       const posted: string[] = [];
       await page.route('**/act/approvals', async (route) => {
         posted.push(route.request().postData() ?? '');
@@ -324,7 +329,7 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.getByRole('button', { name: 'Allow once' }).click();
       await page.locator('.comms-ask__said').waitFor();
       expect(posted).toHaveLength(1);
-      expect(asked.filter((a) => a === 'a-00c0ffee').length).toBeGreaterThanOrEqual(2);
+      expect(asked.filter((a) => a === '00000000c0ffee00').length).toBeGreaterThanOrEqual(2);
       const sent = new URLSearchParams(posted[0]);
       expect([sent.get('_action'), sent.get('id')]).toEqual(['allow', 'a-00c0ffee']);
       expect(sent.get('_csrf')).toMatch(/^[0-9a-f]{64}$/);
@@ -338,7 +343,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       try {
         const opened = openThread(h, process.env, h.members[0], { agent: 'art', id: { closed: 'eeeeeeeeeeeeeeef', offline: 'eeeeeeeeeeeeeeeg', cached: 'eeeeeeeeeeeeeeeh' }[how], text: 'Ship it?' });
         recordDelivery(h, opened.thread, opened.seq, { delivered: true, body: 'started' });
-        const ask = { id: 'a-0000dead', piece: 'approvals', text: 'OK to merge it?', actions: [{ action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-0000dead' } }] };
+        const ask = { key: '000000000000dead', ref: 'approval:a-0000dead', at: new Date().toISOString(), state: 'open', kind: 'permission', text: 'OK to merge it?',
+          decide: { allow: { action: 'allow', label: 'Allow once', tone: 'primary', fields: { id: 'a-0000dead' } }, deny: { action: 'deny', label: 'Deny', tone: 'danger', fields: { id: 'a-0000dead' } }, source: { id: 'approvals', base: '/p/approvals/' } } };
         await page.route(`**/comms/${opened.thread.id}**`, async (route) => {
           const r = route.request();
           if (r.method() !== 'GET' || !(r.headers().accept ?? '').includes('json')) return route.continue();

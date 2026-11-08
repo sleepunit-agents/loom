@@ -110,6 +110,7 @@ redirected to the new; links loom draws (From, push) use the new.
 | `POST /comms/<thread>/project` `{project \| null}` | files or unfiles it |
 | `POST /comms/<thread>/pin`, `/unpin`, `/archive`, `/unarchive` | as named |
 | `GET /comms/<thread>/work` | the thread's work, live from the pieces ("Work in this thread") |
+| `GET /comms/<thread>/refs?r=…` | each ref's chip card, or null where the member can't open it ("Chips", t-1979) |
 | `POST /comms/<thread>/read` `{seq}` | sets `read_seq` (never backwards), and marks the member in front (below) |
 | `POST /comms/<thread>/stop` | asks the body to stop (below) |
 | `POST /comms/<thread>/delete` | deletes the thread's words and its row (below) |
@@ -243,11 +244,15 @@ choice, and the body's brief. The new parts follow.
 ### 2. The brief, for a body in a thread
 
 The runtime's brief already names the venue, the conversation and the run, and carries `describe`'s `brief` lines. For
-`loom`, core's `describe` answer adds up to two more lines after its first, so the runtime needs no Comms-specific code
-for them:
+`loom`, core's `describe` answer adds up to two more lines after its first (the runtime keeps three), so the runtime
+needs no Comms-specific code for them:
 
-- "The thread is filed under the project <slug>." (only when the thread has a project);
-- "Give the thread a short title once you know what it's about: call `comms_title`." (only while it has none).
+- That its asks show in the thread (t-1979): "When you need <member>'s OK, ask it as you always do (a needs_owner, or an
+  approval request): it shows right here in the thread as a card with its buttons, as well as in their Inbox, and their
+  answer comes back to you."
+- One line for the rest, as they apply: "The thread is filed under the project <slug>." (only when the thread has a
+  project), then "Give the thread a short title once you know what it's about: call `comms_title`." (only while it has
+  none).
 
 ### 3. Activity: what the runtime must add to capture
 
@@ -347,7 +352,9 @@ nothing like Claude Code's own "allow this tool?" ever reaches a venue. The asks
     first answer wins, as owners.md has it.
   - The card stays in the Inbox too. Answering either one answers both, and the thread's card then says who answered
     and how.
-- **How an ask becomes a message.** Core writes an `ask` message into the thread, with the next `seq`, when it first
+- **How an ask becomes a message.** (Superseded as built, t-1979: an ask isn't written as a message; it's kept on its
+  thread in `comms_asks` and placed by when it was raised. See "As built (asks inline)", which governs.) The first design:
+  core writes an `ask` message into the thread, with the next `seq`, when it first
   sees the ask: an approval when the approvals piece's manifest (which core already reads each minute for the Inbox)
   first lists it with the thread's conversation; a `needs_owner` when the digest carrying it is written. The message
   stores only the reference (`{approval: id}` or `{digest: id}`). Its words, its state and who answered are read live
@@ -370,6 +377,22 @@ sheet (conversations.md):
 - `https://` URLs stay links. Nothing else is a link.
 
 Nothing is fetched to preview a link.
+
+#### Chips (t-1979)
+
+The loom things a thread names are chips: a task (`t-N`), a pull request or issue (`owner/repo#N`), an approval
+(`a-` and 8 hex), a conversation (`cv-…`), a note (`note:<path>`), a knowledge page (`[[slug]]`), a project
+(`project:slug`), a person (`person:slug`) and an agent, or else a person, by `@name`. They're the refs a digest's
+`refs` names too. In a reply, a step's label and an ask's refs, each is its words until loom says what it is for this
+reader: `GET /comms/<thread>/refs?r=…` (at most 60 a read, asked in batches as they're drawn, and again 5 s after a new
+reply) answers each ref's card (its title, its state, where it opens) or null. A chip opens a small card with **Open**,
+which opens the page in its app's tile (GitHub's in a new tab; a note has no page yet).
+
+Null is "this reader couldn't open it", and the ref stays its words (no link either). What a reader may open is loom's
+rule everywhere else (`src/comms-refs.ts`): a task their thread's work knows (its pieces' feeds, asked as this member),
+or any, for a household owner, through the tasks piece; any pull request (GitHub's); an approval of this thread's, or
+pending in their own Inbox; a conversation of an agent they own; a note of the thread's agent; an agent they own; and
+knowledge, projects and people for a household owner only (an agent owner has none of those pages).
 
 ### 7. Errors, in words
 
@@ -1210,13 +1233,29 @@ Points the first version settled or left for later:
 - **The comm screen's** compact strip shows the agent's small static avatar (`AgentAvatar`), never the portrait scaled
   down; its `data-face` follows the player's own beats (talking, then done, then the thread's state).
 
-## As built (asks inline, t-1876)
+## As built (asks inline, t-1876; t-1979)
 
-- **Read live, not stored:** a thread's asks are read from the pieces' manifests on each thread read (and every 30 s
-  while it's open), matched by conversation **and** agent, from the pieces the viewer may hear from (the Inbox's own
-  filter), and only those that need the owner (`attention` not false). They aren't written as `ask` messages.
-- **Later:** a digest's `needs_owner` inline with Yes and No (it's answered in the Inbox for now); an answered ask
-  leaving a line in the thread ("Allowed by Jonathan").
+- **One object:** a thread's asks are the member's own Inbox items (the Inbox's household, pieces filter and absorbing)
+  that are open, need the owner (`attention` not false), are the thread's agent's and name its conversation: a piece's
+  ask by its `conversation` (any kind of approval: merge, grant, vouch-wake, principal-reset, relay…), a Needs you by
+  its page. Each card carries the item's own key, words and buttons (`src/comms-asks.ts`), posted to the same piece
+  through the same `/act`, so an answer either place is the same answer. The thread reads again whenever loom's live
+  stream (`/events`) says something moved, and every 30 s.
+- **Where it sits:** by when it was raised, before the first message or run that came after it (one in the same second
+  as the agent's reply goes before it; never before the member's own message).
+- **Its buttons:** an approval's Allow and Deny (or an absorbed one's, on a Needs you); a yes/no Needs you's Yes and
+  No (`needs-answer`), with "Or answer in your own words" (`needs-reply`), Done and Dismiss; a words one's reply box.
+  Live only once `/inbox/open?k=<its key>` says it's open, and asked again before each send. A card only the household
+  owner may give (the approvals piece's lead cards: a grant, a vouch, a reset) has no Allow for an agent owner: it says
+  so instead.
+- **Kept, answered:** once shown, an ask is kept on its thread (`comms_asks` in comms.db: its ref, the approval it waits
+  on, when it was raised, its words sealed like the thread's and swept with them, its answer). An answer that goes
+  through core's `/act` is recorded on it with who and when, from the thread or the Inbox (one its thread hadn't shown
+  yet is kept then only when the one answering is the thread's member). One that left otherwise reads its answer from
+  the agent's store (a Needs you) or the approvals piece's `state` (expired, gone). The card then says so: "Allowed by
+  you · 2:14 PM".
+- **The body knows:** the thread's brief says its asks show in the thread as a card with buttons, as well as in the
+  Inbox.
 
 ## Open questions
 

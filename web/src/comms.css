@@ -162,6 +162,43 @@
 .comms-ask__either dt { color: var(--v-text-3); }
 .comms-ask__fine { font-size: 11px; color: var(--v-text-3); overflow-wrap: anywhere; }
 .comms-ask__said { font-size: 13px; color: var(--v-text-2); }
+.comms-ask__who { font-size: 11px; color: var(--v-text-3); }
+.comms-ask[data-state="answered"] .v-agent-chat__permission { border-left-color: var(--v-border); }
+.comms-ask__question { border-left: 3px solid var(--v-yellow); }
+.comms-ask__question h3 { margin: 0; font: var(--fw-semibold) var(--fs-body)/1.4 var(--font-text); overflow-wrap: anywhere; }
+.comms-ask :is(h3, .v-agent-chat__permission > p) { overflow-wrap: anywhere; }
+.comms-ask__refs { margin: 6px 0 0; font-size: 11.5px; color: var(--v-text-2); }
+.comms-ask__reply { display: grid; gap: 6px; }
+.comms-ask__label { font-size: 11px; color: var(--v-text-3); letter-spacing: .04em; }
+.comms-ask__words { justify-self: start; background: none; border: 0; padding: 4px 0; color: var(--v-text-2); font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.comms-ask__row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.comms-ask__live { font-size: 12.5px; color: var(--v-text-2); margin: 0; }
+
+/* ---- the loom things a thread names (comms.md, "Chips"): words until loom says this viewer may open them ---- */
+.comms-reply [data-ref]:not([data-chip]) { color: inherit; text-decoration: none; pointer-events: none; cursor: text; }
+.comms-reply [data-ref][data-chip], .comms-chip {
+  display: inline; padding: 0 5px; margin: 0 1px; border-radius: 5px; font: inherit; font-size: .94em; line-height: inherit;
+  color: var(--v-text); text-decoration: none; cursor: pointer; vertical-align: baseline;
+  background: color-mix(in srgb, var(--chip, var(--v-blue)) 14%, transparent); border: 1px solid color-mix(in srgb, var(--chip, var(--v-blue)) 40%, transparent);
+  box-decoration-break: clone; -webkit-box-decoration-break: clone; overflow-wrap: anywhere;
+}
+.comms-reply [data-chip] code { background: none; padding: 0; }
+:is(.comms-reply [data-chip], .comms-chip):is(:hover, :focus-visible) { background: color-mix(in srgb, var(--chip, var(--v-blue)) 26%, transparent); outline: none; }
+:is(.comms-reply [data-chip], .comms-chip):focus-visible { box-shadow: 0 0 0 2px var(--chip, var(--v-blue)); }
+:is(.comms-reply [data-chip], .comms-chip)[data-tone="warn"] { --chip: var(--v-yellow); }
+:is(.comms-reply [data-chip], .comms-chip)[data-tone="bad"] { --chip: var(--v-pink); }
+:is(.comms-reply [data-chip], .comms-chip)[data-kind="approval"] { --chip: var(--v-yellow); }
+.comms-refcard {
+  position: fixed; z-index: 60; width: min(300px, calc(100vw - 32px)); display: grid; gap: 4px; padding: 12px 14px; border-radius: var(--r-md, 10px);
+  background: var(--surface-raised, var(--v-paper)); color: var(--v-text); border: 1px solid var(--v-border); box-shadow: var(--shadow-float);
+}
+.comms-refcard__kind { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--v-text-3); }
+.comms-refcard__title { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.comms-refcard__status { justify-self: start; font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--tone, var(--v-text-3)) 55%, transparent); color: var(--tone, var(--v-text-2)); }
+.comms-refcard__status[data-tone="warn"] { --tone: var(--v-yellow); }
+.comms-refcard__status[data-tone="bad"] { --tone: var(--v-pink); }
+.comms-refcard__open { justify-self: end; margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--v-text); text-decoration: underline; text-underline-offset: 3px; }
+.comms-refcard__none { font-size: 11px; color: var(--v-text-3); }
 /* A thread on its way (comms.tsx ThreadOpening): a few lines of its shape, after 150 ms, where its messages will be. */
 .comms-thread--opening .comms-chat { display: grid; align-content: end; gap: 18px; padding: 18px; flex: 1 1 auto; min-height: 0; }
 .comms-opening__line { display: grid; gap: 8px; }
