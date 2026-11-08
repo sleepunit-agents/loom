@@ -1893,7 +1893,12 @@ esac
     store.markPushed(['~seeded']);  // the first watch only records; this one has run
     await watch(store, async () => [{ key: 'a1', title: 't', body: 'art', agent: 'art', open: true }, { key: 'a2', title: 't', body: 'mark', agent: 'mark', open: true },
       { key: 'a3', title: 't', body: 'house' }, { key: 'a4', title: 't', body: 'mark-unscoped', agent: 'mark', open: false }],
-      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => { sent.push(`${sub.endpoint.slice(-1)}:${JSON.parse(payload).body}`); return {} as never; }, hears);
-    expect(sent.sort()).toEqual(['j:art', 'j:house', 'j:mark', 'j:mark-unscoped', 'l:mark']);
+      'mailto:t@t', async (sub: { endpoint: string }, payload: string) => {
+        const p = JSON.parse(payload);
+        // Never the ask's words in a push (t-1978 review): what it is, who from, where a tap opens.
+        expect(p.body).toBe('');
+        sent.push(`${sub.endpoint.slice(-1)}:${p.tag}`); return {} as never;
+      }, hears);
+    expect(sent.sort()).toEqual(['j:ask-a1', 'j:ask-a2', 'j:ask-a3', 'j:ask-a4', 'l:ask-a2']);
   });
 });

@@ -72,9 +72,9 @@ this device first. Each row says what it is (the browser and system its
 User-Agent named when it signed in), the label its sign-in link carried, when it
 signed in and was last used (noted at most every five minutes), and the token it
 signed in as. **Sign out** on a row ends that session alone: its cookie stops
-working at once, and every other session, those of the same "page sign-in
-links" token too, stays signed in. A device's notifications aren't a session's
-(see "Notifications" below), so they stay. A row names its
+working at once and that device's notifications stop (it's signed out on
+purpose: a lost or stolen device), and every other session and device, those of
+the same "page sign-in links" token too, stays as it was. A row names its
 session by a ref, the first 16 hex of the hash of its id, which is no use as a
 cookie.
 
@@ -98,16 +98,29 @@ turned on in and dropped when it went; agents' screenshot sign-ins (about 20 a
 day) pushed the oldest sessions past the 50-session cap within days, and every
 device's subscription went with them, while the device itself still said On.
 
-Now a device stays on whatever happens to sessions: others evicted or signed
-out, its own signed out, or the device signing in again. The app sends the
-device's subscription again on each load, so loom's record of it can't quietly
-go missing. It goes only when:
+Now housekeeping never touches a device's notifications: other sessions
+evicted at the cap or signed out, its own session past its time or signed out on
+the device, the device signing in again, a plain token revoke (cleaning up the
+links token). The app sends the device's subscription again on each load, so
+loom's record of it can't quietly go missing. Each is kept with the session
+and token it was last sent from. It goes only when:
 
 - its person turns notifications off on that device;
 - its person removes it on Profile (**Remove a device**); the device sending it
   again by itself is then refused, and it's back only when turned on there;
+- that device is signed out on purpose: **Sign out** on its row under Signed
+  in, or `loom sessions revoke <ref>`;
+- the token it signed in with is revoked as compromised:
+  `loom token revoke <label> --with-devices`, or `--with-passkeys` (Setup's
+  "Revoke a token with its passkeys"), which takes the devices of the tokens it
+  takes too;
 - the push service says it's gone (404 or 410);
-- its person leaves the household.
+- its person leaves the household (the watch skips and forgets it).
+
+An agent's session (an `--agent` link's, or a headless browser's) can never
+turn notifications on. A push says only what it is and who it's from ("Your
+call · Tasks", "Art replied") and where a tap opens: never the ask's words or a
+thread's title, which a locked screen or the push service would see.
 
 Profile's Notifications lists every device of yours that gets them, this
 device marked, each with **Send a test notification**, which sends one to that

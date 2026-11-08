@@ -103,7 +103,9 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   const vapid = store.pushKeys(() => webpush.generateVAPIDKeys());
   let sent = 0;
   for (const a of fresh.slice(0, 5)) {
-    const payload = JSON.stringify({ title: a.title, body: a.body.slice(0, 200), tag: `ask-${a.key}`, url: a.url ?? `/inbox?i=${a.key}` });
+    // Only what it is and who it's from, and where a tap opens: never the ask's words or a thread's title, which a
+    // locked phone's screen or the push service's logs would show (t-1978 review). The page says the rest, signed in.
+    const payload = JSON.stringify({ title: a.title, body: '', tag: `ask-${a.key}`, url: a.url ?? `/inbox?i=${a.key}` });
     for (const { member, ...sub } of w.subs) {
       if (a.member !== undefined && (member ?? firstMember?.()) !== a.member) continue;
       if (!hears(member, a)) continue;

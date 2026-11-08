@@ -748,11 +748,12 @@ export async function householdAct(h: Household, action: string, fields: Record<
     }
     if (action === 'revoke-token') {
       const withPasskeys = fields.passkeys === 'with';
-      const { token: t, passkeys } = revokeTokenAndPasskeys(h, fields.label ?? '', withPasskeys);
+      const { token: t, passkeys, devices } = revokeTokenAndPasskeys(h, fields.label ?? '', withPasskeys);
       const r = parseRole(t.role);
       const agent = r?.kind === 'agent' ? r.agent : h.default;
-      const pk = !passkeys ? '' : withPasskeys ? ` ${cap(passkeys)} made from it ${passkeys === 1 ? 'is' : 'are'} removed.`
-        : ` ${cap(passkeys)} made from it keep${passkeys === 1 ? 's' : ''} working.`;
+      const pk = (!passkeys ? '' : withPasskeys ? ` ${cap(passkeys)} made from it ${passkeys === 1 ? 'is' : 'are'} removed.`
+        : ` ${cap(passkeys)} made from it keep${passkeys === 1 ? 's' : ''} working.`)
+        + (devices ? ` ${devices} device${devices === 1 ? '' : 's'} signed in with ${withPasskeys ? 'them' : 'it'} no longer get${devices === 1 ? 's' : ''} notifications.` : '');
       return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.${pk}`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'face-set') {

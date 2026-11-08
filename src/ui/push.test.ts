@@ -76,6 +76,20 @@ describe('push: the watch', () => {
     expect(store.takePushWatch(0)!.subs).toHaveLength(1);
   });
 
+  it('a push carries what it is and where a tap opens, never the ask\'s words; a device of someone no longer a member is skipped and forgotten', async () => {
+    store.addPushSub(session, sub());
+    store.addPushSub(session, sub('fcm.googleapis.com', '/gone-member'), undefined, 'left');
+    store.markPushed(['~seeded']);
+    const got: Array<{ endpoint: string; payload: Record<string, unknown> }> = [];
+    const send = async (s: { endpoint: string }, payload: string) => { got.push({ endpoint: s.endpoint, payload: JSON.parse(payload) }); return {} as never; };
+    await watch(store, async () => [{ key: 'k', title: 'Your call · Tasks', body: 'Approve the $4,000 invoice from Acme', url: '/inbox?i=k' }], 'mailto:x', send,
+      undefined, undefined, (m) => m !== 'left');
+    expect(got.map((g) => g.endpoint)).toEqual(['https://fcm.googleapis.com/fcm/send/abc']);
+    expect(got[0].payload).toEqual({ title: 'Your call · Tasks', body: '', tag: 'ask-k', url: '/inbox?i=k' });
+    expect(JSON.stringify(got)).not.toContain('invoice');
+    expect(store.takePushWatch(0)!.subs.map((x) => x.endpoint)).toEqual(['https://fcm.googleapis.com/fcm/send/abc']);
+  });
+
   it('an ask\'s key is stable, and differs by source, text and page', () => {
     const a = { source: { id: 'tasks' }, text: 'Review the rubric', page: 'task/t-1' };
     expect(askKey(a)).toBe(askKey({ ...a }));

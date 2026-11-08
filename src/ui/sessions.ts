@@ -194,11 +194,14 @@ export interface PushSub { endpoint: string; keys: { p256dh: string; auth: strin
 /**
  * A device that gets notifications (t-1978), by endpoint. It's its person's and the device's, never a session's: it
  * stays while sessions come and go (the cap, a revoke, signing in again), and goes only when its person turns it off
- * there, removes it on Profile, the push service says it's gone (404/410), or its person leaves the household.
+ * there, removes it on Profile, the push service says it's gone (404/410), or its person leaves the household; and
+ * when that device is signed out on purpose (Profile's Sign out on its row, `loom sessions revoke`), or the token it
+ * signed in with is revoked as compromised (`loom token revoke --with-devices`, or `--with-passkeys`). Housekeeping
+ * (the cap, a session past its time, signing out and in again on the device) never touches it.
  * `member`: whose (docs/specs/owners.md); none is the first household owner's. `session`: the hash of the session it
- * was last sent from, only to say "this device" on Profile. `at`: when it was turned on; `seenAt`: last sent again.
+ * was last sent from (this device's), `token`: that session's token digest. `at`: turned on; `seenAt`: last sent again.
  */
-interface PushDevice { session: string; sub: PushSub; at: number; seenAt?: number; member?: string; device?: string }
+interface PushDevice { session: string; token?: string; sub: PushSub; at: number; seenAt?: number; member?: string; device?: string }
 /** A device that gets notifications, as its person sees it on Profile: a ref (never its endpoint), what it is, since when. */
 export interface PushDeviceInfo { ref: string; at: number; seenAt?: number; device?: string; session: string }
 /** A device's ref: the start of its endpoint's hash. */
@@ -395,9 +398,9 @@ export class SessionStore {
   }
 
   /**
-   * End one session by its ref (the Account page, `loom sessions revoke`): that browser is signed out at once; every
-   * other session, its token's too, goes on, and every device's notifications too (PushDevice). False when no session,
-   * or more than one, has it.
+   * End one session by its ref (the Account page, `loom sessions revoke`): that browser is signed out at once, on
+   * purpose (a lost or stolen device), so its notifications stop too; every other session and device, its token's too,
+   * goes on. False when no session, or more than one, has it. Housekeeping (the cap, `delete`) keeps them (PushDevice).
    */
   revoke(ref: string): boolean {
     if (!REF.test(ref) || !existsSync(this.file)) return false;
@@ -405,6 +408,7 @@ export class SessionStore {
       const keys = Object.keys(f.sessions).filter((k) => k.startsWith(ref));
       if (keys.length !== 1) return false;
       delete f.sessions[keys[0]];
+      for (const [ep, d] of Object.entries(f.push?.subs ?? {})) if (d.session === keys[0]) delete f.push!.subs![ep];
       return true;
     });
   }
@@ -600,11 +604,13 @@ export class SessionStore {
    * by itself). One entry per endpoint: sent again, it keeps when it was turned on and moves to this session. `again`
    * is refused for a device removed on Profile ('removed'); its person turning it on there takes it ('added').
    */
-  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000), member?: string, opts: { again?: boolean; device?: string } = {}): 'added' | 'removed' | 'no-session' {
+  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000), member?: string, opts: { again?: boolean; device?: string } = {}): 'added' | 'removed' | 'no-session' | 'agent' {
     const key = hashId(session);
     const device = cleanLabel(opts.device);
     return this.withLock((f) => {
       if (!f.sessions[key]) return 'no-session';
+      // An agent's session (a screenshot run's, a headless browser) is no person's device: it never gets notifications.
+      if (isAgent(f.sessions[key])) return 'agent';
       f.push ??= {};
       const gone = hashId(sub.endpoint);
       if (f.push.removed?.includes(gone)) {
@@ -615,7 +621,7 @@ export class SessionStore {
       const was = subs[sub.endpoint];
       // Another member's device signed in as this one now: it's theirs from here (a shared tablet), turned on anew.
       const same = was && (was.member ?? undefined) === (member ?? undefined);
-      subs[sub.endpoint] = { session: key, sub, at: same ? was.at : nowS, ...(same && opts.again ? { seenAt: nowS } : {}), ...(member ? { member } : {}),
+      subs[sub.endpoint] = { session: key, token: f.sessions[key].secret, sub, at: same ? was.at : nowS, ...(same && opts.again ? { seenAt: nowS } : {}), ...(member ? { member } : {}),
         ...(device ?? (same ? was.device : undefined) ? { device: device ?? was!.device } : {}) };
       // A household has a handful of devices; past 20, the longest unseen go.
       const all = Object.entries(subs).sort((a, b) => (b[1].seenAt ?? b[1].at) - (a[1].seenAt ?? a[1].at));
@@ -643,6 +649,17 @@ export class SessionStore {
     if (!REF.test(ref) || !existsSync(this.file)) return null;
     const d = Object.values(this.read().push?.subs ?? {}).find((x) => pushRef(x.sub.endpoint) === ref && (x.member ?? undefined) === (member ?? undefined));
     return d ? d.sub : null;
+  }
+
+  /** A token revoked as compromised (`loom token revoke --with-devices`): every device signed in with one of these goes. */
+  removePushByTokens(digests: string[]): number {
+    if (!digests.length || !existsSync(this.file)) return 0;
+    const set = new Set(digests);
+    return this.withLock((f) => {
+      let n = 0;
+      for (const [ep, d] of Object.entries(f.push?.subs ?? {})) if (d.token && set.has(d.token)) { delete f.push!.subs![ep]; n++; }
+      return n;
+    });
   }
 
   /** Removed on Profile, by its person: it stops, and the device sending it again by itself doesn't bring it back. */

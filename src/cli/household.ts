@@ -55,10 +55,12 @@ const TOKEN_USAGE = `Usage: loom token <command>
                            --service and --house name a house's (agent:<name>/<service>@<house>): a piece can tell it apart
   list                     Every token: label, role, created, last used, revoked, and for a passkey's
                            own token, what it was made from
-  revoke <label> [--with-passkeys]
+  revoke <label> [--with-passkeys] [--with-devices]
                            Revoke the live token with that label (takes effect on the next request).
                            A passkey made from a browser signed in with it has its own token and keeps
-                           working; --with-passkeys revokes those too, and removes the passkeys
+                           working; --with-passkeys revokes those too, and removes the passkeys.
+                           --with-devices (implied by --with-passkeys): it's compromised, so the devices
+                           that signed in with it stop getting notifications too
   link [--minutes 10] [--page-url <loom's page address>] [--label <text>] [--agent]
                            A one-time link that signs a browser in to the page (no token to paste).
                            Its sessions are the owner token "page sign-in links". --label names the session
@@ -207,7 +209,7 @@ const TOKEN_OPTIONS: Record<string, VerbOptions> = {
     peer: { type: 'string' }, piece: { type: 'string' }, runtime: { type: 'string' }, label: { type: 'string' },
   },
   list: {},
-  revoke: { 'with-passkeys': { type: 'boolean' } },
+  revoke: { 'with-passkeys': { type: 'boolean' }, 'with-devices': { type: 'boolean' } },
   link: { minutes: { type: 'string' }, 'page-url': { type: 'string' }, label: { type: 'string' }, agent: { type: 'boolean' } },
 };
 
@@ -268,8 +270,9 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!h) return 1;
       const label = rest.join(' ').trim();
       if (!label) { io.stderr(TOKEN_USAGE); return 2; }
-      const { token: t, passkeys } = revokeTokenAndPasskeys(h, label, p.values['with-passkeys'] === true);
+      const { token: t, passkeys, devices } = revokeTokenAndPasskeys(h, label, p.values['with-passkeys'] === true, p.values['with-devices'] === true);
       io.stdout(`Revoked ${t.role} token "${t.label}".\n`);
+      if (devices) io.stdout(`${devices} device${devices === 1 ? '' : 's'} signed in with it no longer get${devices === 1 ? 's' : ''} notifications.\n`);
       if (passkeys) {
         const them = thePasskeys(passkeys);
         io.stdout(p.values['with-passkeys'] === true
@@ -291,8 +294,8 @@ const SESSIONS_USAGE = `Usage: loom sessions <command>
   list                     Every browser session on file: its ref, what it is, the label its sign-in
                            link had, how it signed in, when it signed in and was last used (UTC), its
                            token, and "(ended)" for one past its 30 days or whose token is revoked
-  revoke <ref>             Sign that one browser out at once; every other session, its token's too,
-                           stays signed in. A device's notifications stay: they're its person's
+  revoke <ref>             Sign that one browser out at once, on purpose (a lost device): its
+                           notifications stop too; every other session, its token's too, stays
   revoke --label <text>    End every agent session (loom token link --agent) with that label
 
 A script that signed in for screenshots ends its own session with POST /logout from the same

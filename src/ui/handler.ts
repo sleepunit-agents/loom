@@ -1482,6 +1482,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // `again`: the device sending what it already holds, on each app load (t-1978): a device whose entry was lost gets
     // it back by itself; one its person removed on Profile is told so, and turns itself off.
     const got = storeFor(opts).addPushSub(who.cookie, sub, undefined, readerFor(opts, who), { again: body.again === true, device: deviceOf(req.headers['user-agent']) });
+    if (got === 'agent') return sendJson(res, 403, { error: 'An agent\'s session gets no notifications.' });
     return got === 'added' ? sendJson(res, 200, { ok: true }) : sendJson(res, 409, { error: got === 'removed' ? 'This device was removed from notifications on Profile.' : 'Sign in again.', removed: got === 'removed' });
   }
   if ((pathname === '/passkeys/options' || pathname === '/passkeys') && req.method === 'POST') {
@@ -1686,7 +1687,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const ref = fields.ref ?? '';
       const mine = REF.test(ref) && sessionsOf(opts, who?.member).some((x) => x.ref === ref);
       result = mine && storeFor(opts).revoke(ref)
-        ? { ok: true, message: 'Signed out. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
+        ? { ok: true, message: 'Signed out, and its notifications stopped. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such session: it may have ended already.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'push-test') {
       // Profile's "Send a test notification" (t-1978): to one of this person's own devices, pressed by them.
@@ -1865,7 +1866,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             meta: [`signed in ${when(x.issuedAt)}`, x.seenAt ? `last used ${when(x.seenAt)}` : '', how].filter(Boolean).join(' · '),
             // This device signs out with the page's own Sign out, which also clears what it kept for offline (/logout).
             ...(isHere ? {} : { act: { action: 'session-revoke', label: 'Sign out', tone: 'danger' as const,
-              confirm: 'That browser is signed out at once. Every other session, yours here too, stays signed in.', fields: { ref: x.ref } } }) };
+              confirm: 'That browser is signed out at once, and gets no more notifications. Every other session, yours here too, stays signed in.', fields: { ref: x.ref } } }) };
         }) },
         { type: 'text', text: 'Each browser signed in to this page. Signing one out ends only that one.', tone: 'muted' },
       ] : [{ type: 'text', text: 'Only a script with a token is signed in.', tone: 'muted' }] };

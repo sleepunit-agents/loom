@@ -95,6 +95,27 @@ describe('devices that get notifications, on Profile (t-1978, t-1936)', () => {
     expect(await act(phone, 'push-test', hers)).toMatchObject({ ok: false });
     expect(await act(phone, 'push-remove', hers)).toMatchObject({ ok: false });
     expect(sent).toHaveLength(1);
+    // An agent's screenshot session can't turn notifications on.
+    const code = signinLink(h, 600, 'jonathan', 'screenshots push', undefined, true);
+    const shot = (await fetch(`${base}/login/${code}`, { method: 'POST', redirect: 'manual', headers: { 'user-agent': HEADLESS, 'sec-fetch-site': 'same-origin' } })).headers.get('set-cookie')!.split(';')[0];
+    expect((await subscribe(shot, { ...phoneSub, endpoint: 'https://web.push.apple.com/agent' })).status).toBe(403);
+    expect((await devices(phone)).map((d) => d.text)).toEqual(['Safari on iPhone (this device)']);
+  });
+
+  it('signing a lost phone out on Profile stops its notifications; his other devices keep theirs', async () => {
+    const lost = await login(jonathan);
+    await subscribe(lost, phoneSub);
+    const desk = await login(jonathan, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await subscribe(desk, { ...lorenSub, endpoint: 'https://fcm.googleapis.com/fcm/send/desk-test' });
+    expect(await devices(desk)).toHaveLength(2);
+    const sessions = (await account(desk)).page.sections.find((x: { id: string }) => x.id === 'sessions').blocks[0].items as Array<{ text: string; act?: { fields: { ref: string } } }>;
+    const row = sessions.find((r) => r.text.startsWith('Safari on iPhone'))!;
+    const csrf = (await account(desk)).ctx.csrf as string;
+    const r = await fetch(`${base}/act/loom`, { method: 'POST', redirect: 'manual', headers: { cookie: desk, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1', 'sec-fetch-site': 'same-origin' },
+      body: new URLSearchParams({ _csrf: csrf, _action: 'session-revoke', _path: 'passkeys', ref: row.act!.fields.ref }).toString() });
+    expect(await r.json()).toMatchObject({ ok: true });
+    // Only the desk's own is left (the helper names every device from its iPhone User-Agent; "this device" is the desk).
+    expect((await devices(desk)).map((d) => d.text)).toEqual(['Safari on iPhone (this device)']);
   });
 
   it('signing out and in again on the device keeps it; Remove on Profile stops it, the device can\'t quietly undo that, turning it on can', async () => {

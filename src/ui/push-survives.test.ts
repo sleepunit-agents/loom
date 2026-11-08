@@ -36,14 +36,40 @@ describe('a device\'s notifications outlive the session they were turned on in (
     expect(endpoints()).toEqual([phone.endpoint]);
   });
 
-  it('revoking or signing out an unrelated session keeps his; so does signing out the one it was turned on in', () => {
+  it('revoking an unrelated session keeps his; signing that device out on purpose (Profile, loom sessions revoke) drops it', () => {
     const mine = s.create(his, 1000);
     const other = s.create(links, 1001);
     s.addPushSub(mine, phone, 1000);
+    s.addPushSub(other, laptop, 1001);
     s.revoke(s.refOf(other));
     expect(endpoints()).toEqual([phone.endpoint]);
+    // A stolen phone, signed out on Profile: it gets nothing more.
     s.revoke(s.refOf(mine));
+    expect(endpoints()).toEqual([]);
+  });
+
+  it('housekeeping keeps it: the session past its time or signed out on the device (delete) leaves the device on', () => {
+    const mine = s.create(his, 1000);
+    s.addPushSub(mine, phone, 1000);
+    s.delete(mine);
     expect(endpoints()).toEqual([phone.endpoint]);
+  });
+
+  it('a token revoked as compromised takes the devices signed in with it; others stay', () => {
+    const mine = s.create(his, 1000);
+    const viaLink = s.create(links, 1001);
+    s.addPushSub(mine, phone, 1000);
+    s.addPushSub(viaLink, laptop, 1001);
+    expect(s.removePushByTokens([links.toString('hex')])).toBe(1);
+    expect(endpoints()).toEqual([phone.endpoint]);
+  });
+
+  it('an agent\'s session, or a headless browser\'s, can never turn notifications on', () => {
+    const agent = s.create(links, 1000, { agent: true, label: 'screenshots t-1' });
+    const headless = s.create(links, 1001, { device: 'HeadlessChrome on Linux' });
+    expect(s.addPushSub(agent, phone, 1000)).toBe('agent');
+    expect(s.addPushSub(headless, laptop, 1001)).toBe('agent');
+    expect(endpoints()).toEqual([]);
   });
 
   it('signing in again on the same device keeps it, one entry, now under the new session', () => {

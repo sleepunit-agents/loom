@@ -177,14 +177,14 @@ describe('one session ended alone (t-1871)', () => {
     expect(s.list()[0]).toMatchObject({ label: 'passkey', via: 'link' });
   });
 
-  it('revoking one leaves every device\'s notifications, its own too: they\'re the person\'s and the device\'s (t-1978)', () => {
+  it('revoking one (on purpose: a lost device) stops its notifications, and only its', () => {
     const s = new SessionStore(dir);
     const a = s.create(links), b = s.create(links);
     s.addPushSub(a, { endpoint: 'https://push.invalid/a', keys: { p256dh: 'x', auth: 'y' } });
     s.addPushSub(b, { endpoint: 'https://push.invalid/b', keys: { p256dh: 'x', auth: 'y' } });
     s.revoke(s.refOf(a));
     const subs = JSON.parse(readFileSync(join(dir, 'ui-sessions.json'), 'utf-8')).push.subs as Record<string, unknown>;
-    expect(Object.keys(subs).sort()).toEqual(['https://push.invalid/a', 'https://push.invalid/b']);
+    expect(Object.keys(subs)).toEqual(['https://push.invalid/b']);
   });
 
   it('a sign-in link\'s label goes to the session it opens; a label is plain words, kept short', () => {
