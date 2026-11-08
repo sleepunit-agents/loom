@@ -21,6 +21,8 @@ import {
   addMemberMessage, agentsComms, askStop, threadIdOf, CommsError, COMMS_VENUE, deleteThread, digestsFor, markRead, memberWords, messagesOf, openThread,
   deliveryFacts, recordDelivery, resendMessage, setArchived, setPinned, setProject, setTitle, settleThread, stateOf, stillSees, threadFor, threadsOf, type Thread,
 } from '../comms.js';
+import { getConversation } from '../backends/conversations.js';
+import { agentDir } from '../household.js';
 import { deliverAsOwner } from '../delivery.js';
 import type { Household, Member } from '../household.js';
 import type { Chrome } from './render.js';
@@ -100,8 +102,10 @@ async function deliverMessage(c: CommsContext, t: Thread, seq: number, id: strin
   // runtime answer a repeat with the first answer, so a message whose first try got through after all (its answer
   // lost) never reaches a body twice.
   const facts = deliveryFacts(c.household, t, seq);
+  const backing = getConversation(agentDir(c.household, t.agent), t.conversation);
+  const spawned = backing?.venue === 'spawn';
   const r = await deliverAsOwner(c.env, c.household, {
-    id: `comms:${t.id}:${id}`, agent: t.agent, venue: COMMS_VENUE, place: t.id, label: facts.label, person: t.member, text, at: facts.at,
+    id: `comms:${t.id}:${id}`, agent: t.agent, venue: spawned ? backing.venue : COMMS_VENUE, place: spawned ? backing.place : t.id, label: facts.label, person: t.member, text, at: facts.at,
   });
   const b = r.body as { body?: string; reason?: string; error?: string };
   if (r.status === 200) {
