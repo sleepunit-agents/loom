@@ -141,7 +141,14 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await expect.poll(() => new URL(p.url()).pathname).toMatch(/^\/people\/./);
       const person = new URL(p.url()).pathname;
       const setup = tile(p, 'Activity');
-      await setup.locator('[aria-label="Filter"] button, [aria-label="Filter"] [role="radio"]', { hasText: 'mark' }).first().click();
+      // Activity's Who filter (t-1972): a folder beside the list, or in its menu when the tile is narrow.
+      const who = async (name: RegExp) => {
+        if (await setup.locator('.loom-split__nav').count()) return setup.locator('.loom-split__nav .loom-split__folder', { hasText: name }).first().click();
+        await setup.locator('.loom-act__menu > summary').click();
+        await setup.locator('.loom-act__menu-panel button', { hasText: name }).first().click();
+        await setup.locator('.loom-act__menu > summary').click();
+      };
+      await who(/^mark/i);
       await expect.poll(() => query(p, 'who')).toBe('mark');
       expect(await p.evaluate(() => history.length)).toBe(before + 2);
       await setup.locator('.loom-tile__btn[aria-label^="Back"]').click();
@@ -149,7 +156,7 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       // People stayed on its person
       expect(await tile(p, 'People').locator('.loom-tile__path').textContent()).toBe(`loom${person}`);
       // the browser's Back and Forward walk the focused tile's history
-      await setup.locator('[aria-label="Filter"] button, [aria-label="Filter"] [role="radio"]', { hasText: 'art' }).first().click();
+      await who(/^art/i);
       await expect.poll(() => query(p, 'who')).toBe('art');
       await p.goBack();
       await expect.poll(() => [new URL(p.url()).pathname, query(p, 'who')]).toEqual(['/activity', null]);

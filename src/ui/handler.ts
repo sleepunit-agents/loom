@@ -62,7 +62,8 @@ import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
 import { resolvePieceName } from '../cli/pieces.js';
 import { householdFind, householdPersonName, householdSuggestPeople, householdThread } from './household-pages.js';
-import { surfaceOf, tapeRows, whereLabel, type TapeEntry } from './data.js';
+import { activityView } from './activity.js';
+import { tapeRows, whereLabel, type TapeEntry } from './data.js';
 import { listProposals } from '../backends/proposals.js';
 import { ownerOf, projectHubPage, projectsApp } from './projects-pages.js';
 import { agentBio, agentSetup, householdAct, householdHome, householdMembers, householdPeople, householdPerson, knowledgeView, newAgentPage, newFactPage, newPersonPage } from './household-pages.js';
@@ -979,10 +980,6 @@ function lastActive(dir: string, nowMs = Date.now()): string {
   return `active ${agoText(last.created, nowMs)}`;
 }
 
-function clockAt(ms: number): string {
-  return new Intl.DateTimeFormat('en-US', { timeZone: uiTimeZone(), hour: 'numeric', minute: '2-digit' }).format(new Date(ms));
-}
-
 const SCOPE_COOKIE = 'loom_scope';
 
 /** The scope the owner chose (a cookie), if it still names an agent in the household. */
@@ -1795,34 +1792,16 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       { const ctx = { ...ctxOf(''), agents }; const ch = chrome(req, opts, pieces, skippedNames, '', csrf, flash);
         return view('house-home', { home: d, ctx, chrome: ch }); }
     }
-    // Activity: everything that happened (the household's thread), what Home was before it showed how the agents are.
+    // Activity (t-1972): what happened, a few days at a time, as entries to read: filters (who, where, what), the
+    // timeline with its day strip, and the open entry's whole story (src/ui/activity.ts; web/src/activity.tsx).
     if (pathname === '/activity') {
       const at = 'activity';
-      const nowMs = Date.now();
-      const store = storeFor(opts);
-      const reader = readerFor(opts, who);
-      const sinceMs = (req.headers['x-loom-live'] === '1' ? store.seenSince(Math.floor(nowMs / 1000), reader) : store.lookedAt(Math.floor(nowMs / 1000), reader)) * 1000;
-      const t = householdThread(hh, 24, nowMs);
-      // Thread chips: All, each agent (when there's more than one), then each place it happened.
-      // A row with no where ("?") is under All only: a pill for it says nothing.
-      const surfaces = [...new Set(t.items.map((r) => surfaceOf(r.where)))].filter((w) => w !== '?').sort();
-      const from = query.who && (hh.agents.includes(query.who) || surfaces.includes(query.who)) ? query.who : '';
-      const agents = agentsOf(hh)!;
-      const chips = [...(hh.agents.length > 1 ? hh.agents.map((a) => ({ value: a, label: agents[a].label })) : []),
-        ...(surfaces.length > 1 ? surfaces.filter((s) => !hh.agents.includes(s)).map((s) => ({ value: s, label: whereLabel(s) })) : [])];
-      // Activity is the thread, and the house's tiles beside it: what Home was before it showed how the agents are.
-      const d: Dashboard = {
-        label: 'Activity',
-        title: 'Everything today',
-        asks: [],
-        tiles: pieces.filter((p) => p.manifest.tile).map((p) => ({ ...p.manifest.tile!, source: pieceSource(p.piece) })),
-        thread: t.items.filter((r) => !from || r.agent === from || surfaceOf(r.where) === from).slice(0, HOME_THREAD)
-          .map((r) => ({ agent: r.agent, text: r.text, meta: [whereLabel(r.where), age(r.created, nowMs)].filter(Boolean).join(' · '), where: whereLabel(r.where), at: r.created, page: r.page })),
-        sinceMs, sinceLabel: clockAt(sinceMs),
-        filters: chips.length ? { param: 'who', current: from, options: [{ value: '', label: 'All' }, ...chips] } : undefined,
-      };
-      { const ctx = { ...ctxOf(at), agents }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
-        return view('dashboard', { dashboard: d, ctx, chrome: ch, now: nowMs }); }
+      const person = who?.member?.person ?? firstOwner(hh).person;
+      const named = householdPersonName(hh, person) ?? (person === firstOwner(hh).person && hh.owner ? hh.owner : person);
+      const ownerLabel = named.split(/[\s-]+/)[0].replace(/^./, (x) => x.toUpperCase());
+      const activity = await activityView(hh, query, { member: who?.member, ownerPerson: person, ownerLabel, tz: uiTimeZone(), env: scopedEnv, github: hh.github });
+      { const ctx = { ...ctxOf(at), agents: agentsOf(hh)! }; const ch = chrome(req, opts, pieces, skippedNames, at, csrf, flash);
+        return view('activity', { activity, ctx, chrome: ch }); }
     }
     // Is this ask still open (t-1925)? The Inbox asks it, fresh, before it shows an ask's buttons as live and again
     // before it sends one: a copy kept on the device (page.ts, the service worker) may be of an ask answered since.

@@ -40,12 +40,18 @@ export function useSplitMode(): [React.RefObject<HTMLDivElement | null>, SplitMo
 
 const isFolder = (f: SplitFolder): f is Extract<SplitFolder, { id: string }> => 'id' in f;
 
-export function Split({ label, folders, folder, onFolder, search, listTitle, listMeta, list, reader, open, onBack, backLabel, blank, className }: {
+export function Split({ label, folders, folder, onFolder, isOn, narrow, listTop, search, listTitle, listMeta, list, reader, open, onBack, backLabel, blank, className }: {
   /** The app's name: the landmarks say it ("Inbox folders", "Inbox list"). */
   label: string;
   folders: SplitFolder[];
   folder: string;
   onFolder: (id: string) => void;
+  /** Filters, not folders (Activity's): several can be on at once, each a toggle (aria-pressed) instead of the one current. */
+  isOn?: (id: string) => boolean;
+  /** In two and one pane, this in place of the chips (Activity's filter menu). */
+  narrow?: ReactNode;
+  /** Over the rows, under the list's heading (Activity's day strip): stays put while the rows scroll. */
+  listTop?: ReactNode;
   /** A search field (or any control) over the folders. */
   search?: ReactNode;
   listTitle: ReactNode;
@@ -99,7 +105,8 @@ export function Split({ label, folders, folder, onFolder, search, listTitle, lis
       <ul>
         {folders.map((f, n) => isFolder(f) ? (
           <li key={f.id}>
-            <button type="button" className="loom-split__folder" data-sub={f.sub || undefined} aria-current={f.id === folder ? 'true' : undefined} onClick={() => onFolder(f.id)}>
+            <button type="button" className="loom-split__folder" data-sub={f.sub || undefined}
+              {...(isOn ? { 'aria-pressed': isOn(f.id) } : { 'aria-current': f.id === folder ? 'true' as const : undefined })} onClick={() => onFolder(f.id)}>
               {f.icon && <Icon name={f.icon} size="sm" />}
               <span className="loom-split__folder-name">{f.label}</span>
               {f.count !== undefined && f.count > 0 && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
@@ -112,7 +119,7 @@ export function Split({ label, folders, folder, onFolder, search, listTitle, lis
   const chips = (
     <div className="loom-split__chips" role="group" aria-label={`${label} folders`}>
       {items.map((f) => (
-        <button key={f.id} type="button" aria-pressed={f.id === folder} onClick={() => onFolder(f.id)}>
+        <button key={f.id} type="button" aria-pressed={isOn ? isOn(f.id) : f.id === folder} onClick={() => onFolder(f.id)}>
           {f.label}{f.count !== undefined && f.count > 0 && <span className="loom-split__count" data-loud={f.loud || undefined}>{f.count}</span>}
         </button>
       ))}
@@ -120,8 +127,9 @@ export function Split({ label, folders, folder, onFolder, search, listTitle, lis
   );
   const listPane = (
     <section className="loom-split__list" aria-label={`${label} list`} inert={over || undefined}>
-      {mode !== 'three' && <div className="loom-split__top">{search}{chips}</div>}
+      {mode !== 'three' && <div className="loom-split__top">{search}{narrow ?? chips}</div>}
       <header className="loom-split__list-head"><h2>{listTitle}</h2>{listMeta !== undefined && <span>{listMeta}</span>}</header>
+      {listTop}
       <div className="loom-split__rows" ref={listRef} onKeyDown={onListKey} onClickCapture={onListClick}>{list}</div>
     </section>
   );
