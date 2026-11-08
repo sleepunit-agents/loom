@@ -308,9 +308,12 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.route(`**/comms/${thread.id}**`, async (route) => {
         const r = route.request();
         if (r.method() !== 'GET' || !(r.headers().accept ?? '').includes('json')) return route.continue();
-        const res = await route.fetch();
-        const body = await res.json();
-        return route.fulfill({ response: res, json: { ...body, asks: [ask] } });
+        // A read still on its way as the page closes (the thread reads again on loom's live stream) ends with it.
+        try {
+          const res = await route.fetch();
+          const body = await res.json();
+          return await route.fulfill({ response: res, json: { ...body, asks: [ask] } });
+        } catch { return undefined; }
       });
       // loom says it's open (ask-open.ts): asked when it's shown, and again right before Allow is sent.
       const asked: string[] = [];
@@ -348,8 +351,10 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
         await page.route(`**/comms/${opened.thread.id}**`, async (route) => {
           const r = route.request();
           if (r.method() !== 'GET' || !(r.headers().accept ?? '').includes('json')) return route.continue();
-          const res = await route.fetch();
-          return route.fulfill({ response: res, json: { ...(await res.json()), asks: [ask] } });
+          try {
+            const res = await route.fetch();
+            return await route.fulfill({ response: res, json: { ...(await res.json()), asks: [ask] } });
+          } catch { return undefined; }
         });
         // A copy (the service worker's, stamped x-loom-saved-at) can't tell, even one that says open.
         await page.route('**/inbox/open?*', (route) => (how === 'closed' ? route.fulfill({ json: { open: false } }) : how === 'cached'

@@ -171,10 +171,11 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
     // An ask waiting on you (as loom adds it from the approvals piece's manifest).
     // (route.fetch reuses the sign-in's keep-alive socket: test-setup.ts keeps the server from closing it under it.)
     await p.route(`**/comms/${t.id}/since/**`, async (route) => {
-      const r = await route.fetch();
-      const j = await r.json() as Record<string, unknown>;
+      // A read still on its way as the page closes ends with it.
+      let j: Record<string, unknown>;
+      try { j = await (await route.fetch()).json() as Record<string, unknown>; } catch { return; }
       await route.fulfill({ json: { ...j, asks: [{ key: '0000000000000a01', ref: 'approval:a-00000a01', at: new Date().toISOString(), state: 'open', kind: 'permission', text: 'OK to merge?',
-        decide: { allow: { action: 'allow', label: 'Allow once', fields: { id: 'a-00000a01' } }, deny: { action: 'deny', label: 'Deny', fields: { id: 'a-00000a01' } }, source: { id: 'approvals', base: '/p/approvals/' } } }] } });
+        decide: { allow: { action: 'allow', label: 'Allow once', fields: { id: 'a-00000a01' } }, deny: { action: 'deny', label: 'Deny', fields: { id: 'a-00000a01' } }, source: { id: 'approvals', base: '/p/approvals/' } } }] } }).catch(() => undefined);
     });
     await p.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
     await expect.poll(() => label(p)).toBe('ART E FISH · WAITING ON YOU');
