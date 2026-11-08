@@ -470,7 +470,8 @@ export const API_MAX_BYTES = 8 * 1024 * 1024;
 export type ApiCaller =
   /** `who`: the member (a People slug); `agents`: what they own, `*` for a household owner (docs/specs/owners.md). */
   | { kind: 'owner'; who?: string; agents?: '*' | string[] }
-  | { kind: 'agent'; agent: string; service?: string; house?: string } | { kind: 'piece'; subject: string }
+  /** `granted`: the grants authority allowed this call, so the piece doesn't consult its own agent list (agent-runtime.md section 6). */
+  | { kind: 'agent'; agent: string; service?: string; house?: string; granted?: true } | { kind: 'piece'; subject: string }
   /** No token, on a path the piece declared open (loom.strangers): a box asking to join. */
   | { kind: 'stranger'; address: string };
 

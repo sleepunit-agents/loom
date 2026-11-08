@@ -682,7 +682,10 @@ echo '{"caller": {...}, "path": "<path>", "body": {...}}' | loom-<piece> api --j
   (with `"service": "slack"` when it's a service house's token, and
   `"house": "h-104"` when it's a house's: role `agent:art/slack@h-104`. A piece
   can then tell the agent's bridge from its other bodies, or grant one house
-  something and none of the agent's others), or
+  something and none of the agent's others; and `"granted": true` when a
+  grants authority allowed the call, [specs/agent-runtime.md](specs/agent-runtime.md)
+  "Agent grants": the piece then doesn't consult its own agent list, which
+  stays the fallback for a household without an authority), or
   `{"kind": "piece", "subject": "thor"}` for a **piece credential**, a token
   with the role `piece:<piece>/<subject>` (`loom token create --piece
   box/thor`). A piece credential reaches its own piece's API and nothing

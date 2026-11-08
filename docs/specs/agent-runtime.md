@@ -273,7 +273,8 @@ Who may do what, in one place:
   - **Pieces keep their lists** (taskstore's `TASKSTORE_AGENTS`, the clock's `WAKE_AGENTS`, and the lists in agent-made
     pieces) as the fallback for a household without a runtime.
   - **Done** means: with the runtime installed, no piece's own list is consulted. Core's grant check runs first, and a
-    piece sees only granted calls.
+    piece sees only granted calls. Core tells it so: an agent caller the authority allowed carries `granted: true`
+    (extensions.md, "The API"), and a piece with its own list skips that list for such a caller (t-1971).
   - **Asked for, and given on a Yes** (t-1970). An agent that needs a piece (its own, or another agent's request it
     passes on) never grants it and never asks the owner to go and do it: it files a `grant` approval (approvals piece,
     target `<piece>:<agent>[:<path>,<path>]`) and its Needs you waits on it, so Allow and Deny sit on the ask. Right
