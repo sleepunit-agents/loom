@@ -232,9 +232,8 @@ describe.runIf(built && chrome && hasAge)('Comms: the address, the channel line,
         let intercepted = false;
         window.fetch = async (...a: Parameters<typeof fetch>) => {
           const r = await f(...a);
-          if (!String(a[0]).includes('/since/') || !(await r.clone().text()).includes('Unseen')) return r;
-          // Several reads may already be in flight: restoring fetch doesn't cancel those wrappers.
-          if (intercepted) return r;
+          if (!String(a[0]).includes('/since/') || !(await r.clone().text()).includes('Unseen') || intercepted) return r;
+          // Multiple reads may already be in flight through this wrapper: scroll once, even then.
           intercepted = true;
           window.fetch = f;
           const held = new Set<EventTarget>();
