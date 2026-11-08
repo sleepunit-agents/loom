@@ -96,8 +96,9 @@ describe.runIf(built && chrome && hasAge)('Comms: a thread read loom refuses', (
       expect(await banner.isVisible()).toBe(true);
     } finally { renameSync(`${key}.away`, key); }
 
-    // The key is back: Try again reads, and the error goes.
-    await p.locator('.comms-refused').getByRole('button', { name: 'Try again' }).click();
+    // The key is back: Try again reads, and the error goes. (The thread may read again by itself first, when loom's live
+    // stream says something moved: then there's no Try again left to press.)
+    await p.locator('.comms-refused').getByRole('button', { name: 'Try again' }).click({ timeout: 5000 }).catch(() => undefined);
     await expect.poll(() => p.locator('.comms-refused').count()).toBe(0);
     expect(await p.locator('.loom-tile').getByText('A reply you can read.').isVisible()).toBe(true);
     await ctx.close();
