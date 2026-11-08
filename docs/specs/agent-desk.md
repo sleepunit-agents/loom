@@ -98,10 +98,13 @@ asking. Ctrl+Shift+1…9 opens the Nth agent's thread (in the cards' order), typ
 - A hidden dock gives the desktop its room back. Esc, or a press outside, sends a rail or dock brought in away.
 - The comm screen is the rail's only while the rail is shown for good: on its strip or auto-hiding, Comms keeps it.
 
-## The ticker (phase 5)
+## The ticker (phase 5, built)
 
-Centred on the screen (the bar's two sides are equal), each item a button that opens its app. Tasks, bridges and boxes
-say what they have there (they were widgets and Home's tiles).
+Centred on the screen: the desktop's one bar is three columns, its two sides as wide as each other and the ticker
+`min(44vw, 980px)` between them (looks.css), so a long page name on the left never moves it. Each item is a link that
+opens its app in a tile: the agents Home, an agent its window, a place (Tasks, Boxes, Bridges, whatever has a stat) its
+own page; the copy that follows a running ticker round is out of the tab order. Tasks, bridges and boxes say what they
+have there (they were widgets and Home's tiles).
 
 ## A phone (phase 6)
 
