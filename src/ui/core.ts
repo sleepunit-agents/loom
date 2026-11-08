@@ -31,14 +31,7 @@ export function uiTimeZone(): string {
   return 'UTC';
 }
 
-/** The agent's name: IDENTITY.md's first heading, else the context dir's name. */
-export function agentName(contextDir: string): string {
-  try {
-    const line = readFileSync(join(contextDir, 'IDENTITY.md'), 'utf-8').split('\n').find((l) => /^#\s+\S/.test(l));
-    if (line) return line.replace(/^#\s+/, '').trim();
-  } catch { /* no identity file */ }
-  return contextDir.split('/').filter(Boolean).pop() ?? 'loom';
-}
+export { agentName } from './data.js';
 
 export interface CoreOptions { timeZone?: string; nowMs?: number }
 
