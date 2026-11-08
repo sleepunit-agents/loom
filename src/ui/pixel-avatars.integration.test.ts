@@ -141,7 +141,7 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
    * moving. A fixed 900 ms wait (the arrive animation's length) read a widget that arrived late at its first frame,
    * scaled to .975 (t-1886): sizes are read once the finite animations on a face and what holds it have finished.
    */
-  const settle = (p: Page, o: { art?: boolean; small?: boolean; drawnArt?: boolean } = {}) => p.waitForFunction((o) => {
+  const settle = (p: Page, o: { art?: boolean; small?: boolean; drawnArt?: boolean; mark?: boolean } = {}) => p.waitForFunction((o) => {
     const vis = (e: Element) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     const moving = (e: Element | null) => {
       for (; e; e = e.parentElement) if (e.getAnimations().some((a) => a.playState === 'running' && a.effect?.getTiming().iterations !== Infinity)) return true;
@@ -150,6 +150,7 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
     const art = (sel: string) => [...document.querySelectorAll(sel)].filter((e) => vis(e) && (e.getAttribute('aria-label') ?? '').startsWith('Art E Fish'));
     const small = [...document.querySelectorAll<HTMLCanvasElement>('.loom-pixel-avatar canvas')].filter(vis);
     const faces = [...document.querySelectorAll('.loom-pixel-face canvas, [data-slot="agent-face"]')].filter(vis);
+    if (o.mark && !faces.some((e) => (e.getAttribute('aria-label') ?? '').startsWith('Visual Mark'))) return false;
     if (o.small && !small.length) return false;
     if (o.art !== false && !o.drawnArt && !art('.loom-pixel-face canvas').length) return false;
     if (o.drawnArt && !art('[data-slot="agent-face"]').length) return false;
@@ -173,10 +174,15 @@ describe.runIf(built && chrome)('pixel faces wherever an agent\'s face shows', (
 
   it('390 px: Home, the Inbox and an ask\'s sheet, Find, People and Art\'s page', async () => {
     const p = await device(390);
+    // Mark's drawn face is a different lazy chunk from Art's pixels; Art arriving says nothing about Mark.
+    await p.route('**/assets/face-*.js', async (r) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await r.continue();
+    });
     for (const path of ['/', '/inbox', '/people', '/people/art', '/a/art']) {
       await p.goto(`${base}${path}`);
       await p.locator('.loom-top h1').waitFor();
-      await settle(p, { small: path === '/inbox', art: path !== '/people' });
+      await settle(p, { small: path === '/inbox', art: path !== '/people', mark: path === '/' });
       const f = await faces(p);
       // People's list draws people as their letters (history-style: they stay); Art's own entry wears his face.
       check(path, f, { small: path === '/inbox', art: path !== '/people' });

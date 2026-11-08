@@ -326,6 +326,11 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     const p = await screen('neon', 1280, 800, { motion: 'no-preference', boot: true });
     // The owner's name as People has it (Find's answer): "Jonathan Barket" is licensed as "Jonathan B.".
     await p.route('**/find', (r) => r.fulfill({ json: { suggest: { people: [{ label: 'Jonathan Barket', href: '/people/jonathan' }] } } }));
+    // A cold desktop chunk may arrive after the page data on a busy runner.
+    await p.route('**/assets/desk-*.js', async (r) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await r.continue();
+    });
     await logBoot(p);
     await holdClock(p);
     await fresh(p);
