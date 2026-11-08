@@ -1843,6 +1843,24 @@ esac
     expect(await signedIn(phone)).toBe(true);
     expect(await runSessions(['revoke', line.slice(0, 16)], io)).toBe(1);
     expect(await runSessions(['revoke', 'nope'], io)).toBe(2);
+
+    // An agent's sign-in (t-1936): --agent needs a label, its session is listed as an agent's, and the agent ends it
+    // by that label when done, leaving every other session, the same token's too.
+    out.length = 0;
+    expect(await runToken(['link', '--agent', '--page-url', base], io)).toBe(2);
+    expect(await runToken(['link', '--agent', '--label', 'screenshots t-1936', '--page-url', base], io)).toBe(0);
+    const url = out.join('').split('\n').find((l) => l.startsWith(`${base}/login/`))!;
+    expect(out.join('')).toContain('loom sessions revoke --label "screenshots t-1936"');
+    const agentS = await fetch(url, { method: 'POST', redirect: 'manual', headers: { 'user-agent': HEADLESS, 'sec-fetch-site': 'same-origin' } });
+    const agentC = (agentS.headers.get('set-cookie') ?? '').split(';')[0];
+    expect(await signedIn(agentC)).toBe(true);
+    out.length = 0;
+    expect(await runSessions(['list'], io)).toBe(0);
+    expect(out.join('').split('\n').find((l) => l.includes('screenshots t-1936'))).toMatch(/HeadlessChrome on Linux\s+\(agent\)  "screenshots t-1936"/);
+    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(0);
+    expect(await signedIn(agentC)).toBe(false);
+    expect(await signedIn(phone)).toBe(true);
+    expect(await runSessions(['revoke', '--label', 'screenshots t-1936'], io)).toBe(1);
   });
   it("MCP and a piece's API: only their agents, and only a piece that understands agent owners", async () => {
     const mcp = (token: string, path: string) => fetch(`${base}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },

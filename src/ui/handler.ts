@@ -45,10 +45,10 @@ const gzipAsync = promisify(gzip);
 import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
-import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
+import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionEnded, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
 import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
-import { askKey, needsAskText, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
+import { askKey, needsAskText, publicKey, pushSub, pushTitle, sendTest, watch, type Announce } from './push.js';
 import { MANIFEST, swJs } from './pwa.js';
 import { ALGS, PASSKEY_JS, PasskeyError, relyingParty, verifyAssertion, verifyRegistration } from './passkeys.js';
 import { checkBearer } from '../transport/guards.js';
@@ -142,7 +142,9 @@ function scopedPathOk(pathname: string): boolean {
     // A conversation is found among their agents only (the household they're given is theirs alone).
     || pathname.startsWith('/conversation/')
     // Comms (docs/specs/comms.md): every route checks the member owns the thread's agent itself.
-    || pathname === '/comms' || pathname.startsWith('/comms/');
+    || pathname === '/comms' || pathname.startsWith('/comms/')
+    // Notifications on their own device (t-1978): each route acts only on the caller's own subscription.
+    || pathname === '/push/key' || pathname === '/push/subscribe' || pathname === '/push/unsubscribe';
 }
 
 /**
@@ -321,7 +323,8 @@ function validSession(id: string, opts: UiOptions, nowS = Math.floor(Date.now() 
   const store = storeFor(opts);
   const s = store.get(id);
   if (!s) return false;
-  if (nowS - s.issuedAt > COOKIE_MAX_AGE_S) { store.delete(id); return false; }
+  // Past its time (a month; an agent's, hours: t-1936).
+  if (sessionEnded(s, nowS)) { store.delete(id); return false; }
   // A session dies with its token: rotate the token and old sessions stop.
   if (!auth.live(s.secret)) return false;
   // When it was last used, for the Account page's list (t-1871): at most every few minutes.
@@ -334,7 +337,7 @@ function validSession(id: string, opts: UiOptions, nowS = Math.floor(Date.now() 
  * owner's, their own. Live: unexpired, and its token still good.
  */
 function sessionsOf(opts: UiOptions, m: Member | undefined, nowS = Math.floor(Date.now() / 1000)): SessionInfo[] {
-  return storeFor(opts).list().filter((s) => nowS - s.issuedAt <= COOKIE_MAX_AGE_S && opts.auth.live(s.secret)
+  return storeFor(opts).list().filter((s) => !sessionEnded(s, nowS) && opts.auth.live(s.secret)
     && (!opts.ownerScope || (!!m && opts.auth.member?.(s.secret)?.person === m.person)));
 }
 
@@ -674,9 +677,12 @@ export async function yourCall(opts: UiOptions): Promise<HomeAsk[]> {
   return pieceAsks(pieces, opts.env).filter(needs);
 }
 
+/** Who loom's pushes are from (VAPID's subject): its public address, else a placeholder. */
+const pushSubject = (opts: UiOptions) => (opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost');
+
 /** One minute's push watch (push.ts): one of loom's listeners announces what's new in Your call. */
 export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>[3]): Promise<number> {
-  const subject = opts.env.LOOM_PUBLIC_URL?.startsWith('https://') ? opts.env.LOOM_PUBLIC_URL : 'mailto:loom@localhost';
+  const subject = pushSubject(opts);
   const hh = opts.household?.();
   // Asks an agent owner may hear of: loom's own, or a piece's that understands agent owners (owners: 2).
   const ownersOk = new Set((await pieceManifests(opts.env)).pieces.filter((p) => p.manifest.owners === 2).map((p) => pieceSource(p.piece).id));
@@ -690,7 +696,9 @@ export async function pushWatch(opts: UiOptions, send?: Parameters<typeof watch>
   return watch(storeFor(opts), async () => [...(await yourCall(opts)).map((a) => ({
     key: askKey(a), title: pushTitle(a.kind, a.sourceLabel ?? a.source.id), body: a.text, ...(a.agent ? { agent: a.agent } : {}),
     open: a.source.id === CORE.id || ownersOk.has(a.source.id),
-  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined));
+  })), ...(hh ? commsAnnouncements(hh) : [])], subject, send, hears, () => (hh ? firstOwner(hh).person : undefined),
+  // A device whose person left the household goes (t-1978); none is the first owner's, who always belongs.
+  (member) => !hh || member === undefined || !!memberOf(hh, member));
 }
 
 /**
@@ -1272,7 +1280,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       return send(res, 401, 'text/html; charset=utf-8', renderLoginLink(code, 'That link is used up, expired, or its token was revoked.'));
     }
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(spent.secret, undefined, { device: deviceOf(req.headers['user-agent']), label: spent.label, via: 'link', signedInAt: spent.signedInAt })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(spent.secret, undefined, { device: deviceOf(req.headers['user-agent']), label: spent.label, via: 'link', signedInAt: spent.signedInAt, agent: spent.agent }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1280,7 +1288,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
   // Passkeys work only on the page at LOOM_PUBLIC_URL (their origin): offer one there.
   const onRp = !!rp && req.headers.host === new URL(rp.origin).host;
   const sessionCookie = (secret: Buffer) =>
-    `${COOKIE}=${storeFor(opts).create(secret, undefined, { device: deviceOf(req.headers['user-agent']), via: 'passkey' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
+    `${COOKIE}=${storeFor(opts).create(secret, undefined, { device: deviceOf(req.headers['user-agent']), via: 'passkey' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`;
 
   // loom's own fonts (OFL, assets/fonts): the two the page uses, nothing else.
   const font = /^\/fonts\/(instrument-sans-latin-wght-normal|jetbrains-mono-latin-wght-normal)\.woff2$/.exec(pathname);
@@ -1364,7 +1372,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const match = token ? opts.auth.check(token) : null;
     if (!match) return send(res, 401, 'text/html; charset=utf-8', renderLogin('That token didn’t match.', { rp: rp?.origin, here: onRp }), onRp ? PASSKEY_CSP : {});
     return redirect(res, '/', {
-      'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' })}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      'set-cookie': `${COOKIE}=${storeFor(opts).create(match, undefined, { device: deviceOf(req.headers['user-agent']), via: 'token' }, (d) => opts.auth.live(d))}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_S}${secure ? '; Secure' : ''}`,
     });
   }
 
@@ -1470,9 +1478,11 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     if (!safeEq(typeof body._csrf === 'string' ? body._csrf : '', csrf)) return sendJson(res, 403, { error: 'this page is stale; reload and try again' });
     const sub = pushSub(body.sub);
     if (!sub) return sendJson(res, 400, { error: 'not a push subscription loom sends to' });
-    if (pathname === '/push/unsubscribe') storeFor(opts).removePushSub(sub.endpoint);
-    else storeFor(opts).addPushSub(who.cookie, sub, undefined, readerFor(opts, who));
-    return sendJson(res, 200, { ok: true });
+    if (pathname === '/push/unsubscribe') { storeFor(opts).removePushSub(sub.endpoint); return sendJson(res, 200, { ok: true }); }
+    // `again`: the device sending what it already holds, on each app load (t-1978): a device whose entry was lost gets
+    // it back by itself; one its person removed on Profile is told so, and turns itself off.
+    const got = storeFor(opts).addPushSub(who.cookie, sub, undefined, readerFor(opts, who), { again: body.again === true, device: deviceOf(req.headers['user-agent']) });
+    return got === 'added' ? sendJson(res, 200, { ok: true }) : sendJson(res, 409, { error: got === 'removed' ? 'This device was removed from notifications on Profile.' : 'Sign in again.', removed: got === 'removed' });
   }
   if ((pathname === '/passkeys/options' || pathname === '/passkeys') && req.method === 'POST') {
     if (!sameOrigin(req)) return sendJson(res, 403, { error: 'cross-site request' });
@@ -1646,7 +1656,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       // One agent's own actions (archive, ratify, reject), on its stack.
       source = agentSource(agentAct[1]);
       result = await coreAct(agentDir(hh!, agentAct[1]), action, fields);
-    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link' && action !== 'session-revoke') {
+    } else if (opts.ownerScope && sourceId === 'loom' && action !== 'passkey-remove' && action !== 'signin-link' && action !== 'session-revoke' && action !== 'push-test' && action !== 'push-remove') {
       // An agent owner's core actions are their agents' own (/a/<agent>/act/loom); the household's are refused.
       source = CORE;
       result = { ok: false, message: 'That\'s the household\'s to do: ask a household owner.' };
@@ -1678,6 +1688,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = mine && storeFor(opts).revoke(ref)
         ? { ok: true, message: 'Signed out. That browser has to sign in again; every other one stays signed in.', page: 'loom:passkeys' }
         : { ok: false, message: 'No such session: it may have ended already.', page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'push-test') {
+      // Profile's "Send a test notification" (t-1978): to one of this person's own devices, pressed by them.
+      source = CORE;
+      const target = storeFor(opts).pushDevice(fields.ref ?? '', readerFor(opts, who));
+      const r = target ? await sendTest(storeFor(opts), target, pushSubject(opts)) : 'gone';
+      result = r === 'sent' ? { ok: true, message: 'Sent. It should show on that device in a few seconds.', page: 'loom:passkeys' }
+        : r === 'gone' ? { ok: false, message: 'That device no longer takes notifications: turn them on there again.', page: 'loom:passkeys' }
+        : { ok: false, message: `Not sent: ${r}. Try again in a minute.`, page: 'loom:passkeys' };
+    } else if (sourceId === 'loom' && action === 'push-remove') {
+      source = CORE;
+      result = storeFor(opts).removePushDevice(fields.ref ?? '', readerFor(opts, who))
+        ? { ok: true, message: 'Removed. That device gets no more notifications until it\'s turned on there again.', page: 'loom:passkeys' }
+        : { ok: false, message: 'No such device: it may be gone already.', page: 'loom:passkeys' };
     } else if (sourceId === 'loom' && action === 'signin-link' && hh) {
       source = CORE;
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
@@ -1847,6 +1870,20 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         { type: 'text', text: 'Each browser signed in to this page. Signing one out ends only that one.', tone: 'muted' },
       ] : [{ type: 'text', text: 'Only a script with a token is signed in.', tone: 'muted' }] };
     };
+    // Which of this person's devices get notifications (t-1978), each with "Send a test notification", and a way to
+    // remove one (a lost phone): it's theirs and the device's, whatever happens to sessions.
+    const notificationsSection = (): Page['sections'][number] => {
+      const here = who?.kind === 'session' ? storeFor(opts).refOf(who.cookie) : undefined;
+      const devices = storeFor(opts).pushDevices(readerFor(opts, who));
+      const name = (d: (typeof devices)[number]) => `${d.device ?? 'A device'}${d.session === here ? ' (this device)' : ''}`;
+      return { id: 'notifications', title: 'Devices that get notifications', blocks: devices.length ? [
+        { type: 'list', items: devices.slice(0, 20).map((d) => ({ text: name(d),
+          meta: [`on since ${when(d.at)}`, d.seenAt ? `last checked in ${when(d.seenAt)}` : ''].filter(Boolean).join(' · '),
+          act: { action: 'push-test', label: 'Send a test notification', fields: { ref: d.ref } } })) },
+        { type: 'details', summary: 'Remove a device', blocks: [{ type: 'list', items: devices.slice(0, 20).map((d) => ({ text: name(d), meta: `on since ${when(d.at)}`,
+          act: { action: 'push-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device gets no more notifications until they\'re turned on there again.', fields: { ref: d.ref } } })) }] },
+      ] : [{ type: 'text', text: 'None yet: turn them on above, on each device you want them on.', tone: 'muted' }] };
+    };
     const page: Page = {
       // "Profile" wherever it's seen (t-1925); its address stays /account (and /passkeys, its old name).
       title: 'Profile',
@@ -1869,6 +1906,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
             }) }] }] : [])]
           : [{ type: 'text', text: 'None yet: add one from the device you want to sign in with.', tone: 'muted' }] },
         sessionsSection(),
+        notificationsSection(),
         ...(hh ? [{ id: 'another', title: 'Another device', blocks: [
           { type: 'buttons' as const, items: [{ action: 'signin-link', label: 'Make a one-time sign-in link' }] },
           { type: 'text' as const, text: 'One sign-in, within 10 minutes, as the household\'s page sign-in links token. Open it on the other device.', tone: 'muted' as const },

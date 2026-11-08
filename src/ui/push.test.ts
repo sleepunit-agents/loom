@@ -68,12 +68,12 @@ describe('push: the watch', () => {
     expect(w!.subs.map((s) => s.endpoint)).toEqual(['https://fcm.googleapis.com/fcm/send/abc']);   // the 410 one is gone
   });
 
-  it('a subscription goes with its session: sign-out, or a session that no longer exists', () => {
+  it('a subscription is taken only from a signed-in session, and stays when that session ends (t-1978)', () => {
     store.addPushSub(session, sub());
     store.addPushSub('not-a-session', sub('fcm.googleapis.com', '/other'));   // ignored: no such session
     expect(store.takePushWatch(0)!.subs).toHaveLength(1);
     store.delete(session);
-    expect(store.takePushWatch(0)!.subs).toHaveLength(0);
+    expect(store.takePushWatch(0)!.subs).toHaveLength(1);
   });
 
   it('an ask\'s key is stable, and differs by source, text and page', () => {

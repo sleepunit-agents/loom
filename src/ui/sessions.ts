@@ -31,19 +31,27 @@ import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, 
  * `signedInAt`: when the person last proved who they are, if earlier than `issuedAt`: a session opened with a sign-in
  * link that an older session made for itself carries that one's (t-1969), so making a link can't refresh a session.
  */
-export interface Session { issuedAt: number; secret: Buffer; signedInAt?: number }
+export interface Session { issuedAt: number; secret: Buffer; signedInAt?: number; agent?: true }
 /** When this session's person last signed in (a passkey is added only soon after: passkey-tokens.ts FRESH_SIGNIN_S). */
 export const signedInAt = (s: Session) => Math.min(s.issuedAt, s.signedInAt ?? s.issuedAt);
 
 /** How a session signed in: a token pasted, a one-time link, a passkey. */
 export type Via = 'token' | 'link' | 'passkey';
-interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string; via?: Via; signedInAt?: number }
-interface Link { expires: number; secret: string; label?: string; signedInAt?: number }
+/** `agent`: an agent's sign-in (a screenshot run's, t-1936): it goes first at the cap, and ends within hours. */
+interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string; via?: Via; signedInAt?: number; agent?: true }
+interface Link { expires: number; secret: string; label?: string; signedInAt?: number; agent?: true }
 
 /** A session as the owner sees it (the Account page, `loom sessions`): never its id, only its ref. */
-export interface SessionInfo { ref: string; issuedAt: number; seenAt?: number; device?: string; label?: string; via?: Via; secret: Buffer }
-/** How it was opened, beside its token: what the browser said it was, how it signed in, and the label its sign-in link carried. */
-interface SessionMeta { device?: string; label?: string; via?: Via; signedInAt?: number }
+export interface SessionInfo { ref: string; issuedAt: number; seenAt?: number; device?: string; label?: string; via?: Via; agent?: true; secret: Buffer }
+/** How it was opened, beside its token: what the browser said it was, how it signed in, the label its sign-in link carried, and whether an agent's. */
+interface SessionMeta { device?: string; label?: string; via?: Via; signedInAt?: number; agent?: boolean }
+/**
+ * An agent's session (t-1936): its sign-in link said so (`loom token link --agent`), or its browser is a headless one,
+ * which no person reads loom in. At the cap these go first, so an agent's screenshots never push a person's out.
+ */
+const isAgent = (s: Pick<Stored, 'agent' | 'device'>) => s.agent === true || /^HeadlessChrome\b/.test(s.device ?? '');
+/** An agent's session ends this long after it signed in, if the agent didn't end it (`loom sessions revoke`). */
+export const AGENT_SESSION_MAX_AGE_S = 6 * 3600;
 /** A session's ref: the start of its id's hash, enough to name one among MAX_SESSIONS, useless as a cookie. */
 export const REF = /^[0-9a-f]{16}$/;
 /** A session's last use is written at most this often (each write is a locked rewrite of the file). */
@@ -183,11 +191,25 @@ export interface Done {
 }
 
 export interface PushSub { endpoint: string; keys: { p256dh: string; auth: string } }
+/**
+ * A device that gets notifications (t-1978), by endpoint. It's its person's and the device's, never a session's: it
+ * stays while sessions come and go (the cap, a revoke, signing in again), and goes only when its person turns it off
+ * there, removes it on Profile, the push service says it's gone (404/410), or its person leaves the household.
+ * `member`: whose (docs/specs/owners.md); none is the first household owner's. `session`: the hash of the session it
+ * was last sent from, only to say "this device" on Profile. `at`: when it was turned on; `seenAt`: last sent again.
+ */
+interface PushDevice { session: string; sub: PushSub; at: number; seenAt?: number; member?: string; device?: string }
+/** A device that gets notifications, as its person sees it on Profile: a ref (never its endpoint), what it is, since when. */
+export interface PushDeviceInfo { ref: string; at: number; seenAt?: number; device?: string; session: string }
+/** A device's ref: the start of its endpoint's hash. */
+const pushRef = (endpoint: string) => hashId(endpoint).slice(0, 16);
+/** A device removed on Profile is remembered (by its endpoint's hash) so the device can't quietly send it again; this many. */
+const REMOVED_MAX = 100;
 interface PushState {
   vapid?: { publicKey: string; privateKey: string };
-  /** By endpoint; `session` is the session it was made in, and it goes with it. */
-  /** member: whose device it is (docs/specs/owners.md); none is the first household owner's. */
-  subs?: Record<string, { session: string; sub: PushSub; at: number; member?: string }>;
+  subs?: Record<string, PushDevice>;
+  /** Endpoint hashes removed on Profile: re-sent by the device alone, refused; turned on there again, taken. */
+  removed?: string[];
   /** Ask keys already announced, with when they were last seen; an ask is announced once. */
   pushed?: Record<string, number>;
   /** When a process last took the watch: three listeners, one of them checks each minute. */
@@ -282,37 +304,47 @@ export class SessionStore {
     }
   }
 
-  /** A new session for this token digest; returns the cookie's id. The oldest go past the cap. */
-  create(secret: Buffer, nowS = Math.floor(Date.now() / 1000), meta: SessionMeta = {}): string {
+  /**
+   * A new session for this token digest; returns the cookie's id. Past the cap some go, in this order (t-1936): those
+   * already ended (past their time, or, given `live`, whose token no longer works), then agents', then the rest; the
+   * oldest first within each. So an agent's screenshots never push a person's own session out while one of theirs is
+   * there to go. A device's notifications never go with a session (PushDevice).
+   */
+  create(secret: Buffer, nowS = Math.floor(Date.now() / 1000), meta: SessionMeta = {}, live?: (secret: Buffer) => boolean): string {
     const id = randomBytes(32).toString('hex');
     const device = cleanLabel(meta.device);
     const label = cleanLabel(meta.label);
     const via = meta.via && ['token', 'link', 'passkey'].includes(meta.via) ? meta.via : undefined;
     const at = typeof meta.signedInAt === 'number' && Number.isFinite(meta.signedInAt) && meta.signedInAt < nowS ? Math.floor(meta.signedInAt) : undefined;
     this.withLock((f) => {
-      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}), ...(via ? { via } : {}), ...(at !== undefined ? { signedInAt: at } : {}) };
-      const keys = Object.keys(f.sessions).sort((a, b) => f.sessions[a].issuedAt - f.sessions[b].issuedAt);
-      for (const k of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) delete f.sessions[k];
+      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}), ...(via ? { via } : {}),
+        ...(at !== undefined ? { signedInAt: at } : {}), ...(meta.agent === true ? { agent: true as const } : {}) };
+      const over = Object.keys(f.sessions).length - MAX_SESSIONS;
+      if (over <= 0) return;
+      const ended = (s: Stored) => sessionEnded(s, nowS) || (live ? !live(Buffer.from(s.secret, 'hex')) : false);
+      const rank = (s: Stored) => (ended(s) ? 0 : isAgent(s) ? 1 : 2);
+      const keys = Object.keys(f.sessions).sort((a, b) => rank(f.sessions[a]) - rank(f.sessions[b]) || f.sessions[a].issuedAt - f.sessions[b].issuedAt);
+      for (const k of keys.slice(0, over)) delete f.sessions[k];
     });
     return id;
   }
 
   get(id: string): Session | null {
     const s = this.read().sessions[hashId(id)];
-    return s ? { issuedAt: s.issuedAt, secret: Buffer.from(s.secret, 'hex'), ...(s.signedInAt !== undefined ? { signedInAt: s.signedInAt } : {}) } : null;
+    return s ? { issuedAt: s.issuedAt, secret: Buffer.from(s.secret, 'hex'), ...(s.signedInAt !== undefined ? { signedInAt: s.signedInAt } : {}), ...(isAgent(s) ? { agent: true as const } : {}) } : null;
   }
 
   /**
    * A one-time sign-in code for this token digest, good for `ttlS` seconds; `label` goes to the session it opens, and
-   * `signedInAt` too (a link a session made for its own person: Session).
+   * `signedInAt` too (a link a session made for its own person: Session), and `agent`: the session it opens is an agent's.
    */
-  createLink(secret: Buffer, ttlS: number, nowS = Math.floor(Date.now() / 1000), label?: string, signedInAt?: number): string {
+  createLink(secret: Buffer, ttlS: number, nowS = Math.floor(Date.now() / 1000), label?: string, signedInAt?: number, agent?: boolean): string {
     const code = randomBytes(32).toString('hex');
     const named = cleanLabel(label);
     this.withLock((f) => {
       f.links ??= {};
       for (const [k, l] of Object.entries(f.links)) if (l.expires <= nowS) delete f.links[k];
-      f.links[hashId(code)] = { expires: nowS + ttlS, secret: secret.toString('hex'), ...(named ? { label: named } : {}), ...(signedInAt !== undefined ? { signedInAt } : {}) };
+      f.links[hashId(code)] = { expires: nowS + ttlS, secret: secret.toString('hex'), ...(named ? { label: named } : {}), ...(signedInAt !== undefined ? { signedInAt } : {}), ...(agent ? { agent: true as const } : {}) };
     });
     return code;
   }
@@ -323,13 +355,13 @@ export class SessionStore {
   }
 
   /** useLink, with the label the link was made with. */
-  spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string; signedInAt?: number } | null {
+  spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string; signedInAt?: number; agent?: true } | null {
     if (!existsSync(this.file)) return null;
     return this.withLock((f) => {
       const l = f.links?.[hashId(code)];
       if (!l) return null;
       delete f.links![hashId(code)];
-      return l.expires > nowS ? { secret: Buffer.from(l.secret, 'hex'), ...(l.label ? { label: l.label } : {}), ...(l.signedInAt !== undefined ? { signedInAt: l.signedInAt } : {}) } : null;
+      return l.expires > nowS ? { secret: Buffer.from(l.secret, 'hex'), ...(l.label ? { label: l.label } : {}), ...(l.signedInAt !== undefined ? { signedInAt: l.signedInAt } : {}), ...(l.agent ? { agent: true as const } : {}) } : null;
     });
   }
 
@@ -338,7 +370,7 @@ export class SessionStore {
     if (!existsSync(this.file)) return [];
     return Object.entries(this.read().sessions)
       .map(([k, s]) => ({ ref: k.slice(0, 16), issuedAt: s.issuedAt, ...(s.seenAt ? { seenAt: s.seenAt } : {}), ...(s.device ? { device: s.device } : {}),
-        ...(s.label ? { label: s.label } : {}), ...(s.via ? { via: s.via } : {}), secret: Buffer.from(s.secret, 'hex') }))
+        ...(s.label ? { label: s.label } : {}), ...(s.via ? { via: s.via } : {}), ...(isAgent(s) ? { agent: true as const } : {}), secret: Buffer.from(s.secret, 'hex') }))
       .sort((a, b) => (b.seenAt ?? b.issuedAt) - (a.seenAt ?? a.issuedAt));
   }
 
@@ -363,16 +395,28 @@ export class SessionStore {
   }
 
   /**
-   * End one session by its ref (the Account page, `loom sessions revoke`): that browser is signed out at once, and its
-   * notifications stop; every other session, its token's too, goes on. False when no session, or more than one, has it.
+   * End one session by its ref (the Account page, `loom sessions revoke`): that browser is signed out at once; every
+   * other session, its token's too, goes on, and every device's notifications too (PushDevice). False when no session,
+   * or more than one, has it.
    */
   revoke(ref: string): boolean {
     if (!REF.test(ref) || !existsSync(this.file)) return false;
     return this.withLock((f) => {
       const keys = Object.keys(f.sessions).filter((k) => k.startsWith(ref));
       if (keys.length !== 1) return false;
-      drop(f, keys[0]);
+      delete f.sessions[keys[0]];
       return true;
+    });
+  }
+
+  /** An agent ends its own sessions by the label its sign-in link had (`loom sessions revoke --label`): agents' only. */
+  revokeAgent(label: string): number {
+    const l = cleanLabel(label);
+    if (!l || !existsSync(this.file)) return 0;
+    return this.withLock((f) => {
+      const keys = Object.keys(f.sessions).filter((k) => isAgent(f.sessions[k]) && f.sessions[k].label === l);
+      for (const k of keys) delete f.sessions[k];
+      return keys.length;
     });
   }
 
@@ -550,22 +594,67 @@ export class SessionStore {
     });
   }
 
-  /** This browser's subscription, for the session it's signed in with. */
-  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000), member?: string): void {
+  /**
+   * This device gets notifications, for this member (t-1978). Sent from a signed-in session (its person turning it on,
+   * or `again`: the device sending what it already holds, on each app load, so one whose entry was lost comes back
+   * by itself). One entry per endpoint: sent again, it keeps when it was turned on and moves to this session. `again`
+   * is refused for a device removed on Profile ('removed'); its person turning it on there takes it ('added').
+   */
+  addPushSub(session: string, sub: PushSub, nowS = Math.floor(Date.now() / 1000), member?: string, opts: { again?: boolean; device?: string } = {}): 'added' | 'removed' | 'no-session' {
     const key = hashId(session);
-    this.withLock((f) => {
-      if (!f.sessions[key]) return;
+    const device = cleanLabel(opts.device);
+    return this.withLock((f) => {
+      if (!f.sessions[key]) return 'no-session';
       f.push ??= {};
+      const gone = hashId(sub.endpoint);
+      if (f.push.removed?.includes(gone)) {
+        if (opts.again) return 'removed';
+        f.push.removed = f.push.removed.filter((h) => h !== gone);
+      }
       const subs = (f.push.subs ??= {});
-      subs[sub.endpoint] = { session: key, sub, at: nowS, ...(member ? { member } : {}) };
-      // A household has a handful of devices; past 20, the oldest go.
-      const all = Object.entries(subs).sort((a, b) => b[1].at - a[1].at);
+      const was = subs[sub.endpoint];
+      // Another member's device signed in as this one now: it's theirs from here (a shared tablet), turned on anew.
+      const same = was && (was.member ?? undefined) === (member ?? undefined);
+      subs[sub.endpoint] = { session: key, sub, at: same ? was.at : nowS, ...(same && opts.again ? { seenAt: nowS } : {}), ...(member ? { member } : {}),
+        ...(device ?? (same ? was.device : undefined) ? { device: device ?? was!.device } : {}) };
+      // A household has a handful of devices; past 20, the longest unseen go.
+      const all = Object.entries(subs).sort((a, b) => (b[1].seenAt ?? b[1].at) - (a[1].seenAt ?? a[1].at));
       for (const [ep] of all.slice(20)) delete subs[ep];
+      return 'added';
     });
   }
 
+  /** Turned off on the device itself (its switch, which also unsubscribes it there). */
   removePushSub(endpoint: string): void {
     this.withLock((f) => { if (f.push?.subs) delete f.push.subs[endpoint]; });
+  }
+
+  /** The devices that get this member's notifications (none: the first household owner's), most recently seen first. */
+  pushDevices(member: string | undefined): PushDeviceInfo[] {
+    if (!existsSync(this.file)) return [];
+    return Object.values(this.read().push?.subs ?? {})
+      .filter((d) => (d.member ?? undefined) === (member ?? undefined))
+      .map((d) => ({ ref: pushRef(d.sub.endpoint), at: d.at, ...(d.seenAt ? { seenAt: d.seenAt } : {}), ...(d.device ? { device: d.device } : {}), session: d.session.slice(0, 16) }))
+      .sort((a, b) => (b.seenAt ?? b.at) - (a.seenAt ?? a.at));
+  }
+
+  /** One of this member's devices, by its ref, to send to (Profile's "Send a test notification"). */
+  pushDevice(ref: string, member: string | undefined): PushSub | null {
+    if (!REF.test(ref) || !existsSync(this.file)) return null;
+    const d = Object.values(this.read().push?.subs ?? {}).find((x) => pushRef(x.sub.endpoint) === ref && (x.member ?? undefined) === (member ?? undefined));
+    return d ? d.sub : null;
+  }
+
+  /** Removed on Profile, by its person: it stops, and the device sending it again by itself doesn't bring it back. */
+  removePushDevice(ref: string, member: string | undefined): boolean {
+    if (!REF.test(ref) || !existsSync(this.file)) return false;
+    return this.withLock((f) => {
+      const hit = Object.entries(f.push?.subs ?? {}).find(([ep, d]) => pushRef(ep) === ref && (d.member ?? undefined) === (member ?? undefined));
+      if (!hit) return false;
+      delete f.push!.subs![hit[0]];
+      f.push!.removed = [...(f.push!.removed ?? []).filter((h) => h !== hashId(hit[0])), hashId(hit[0])].slice(-REMOVED_MAX);
+      return true;
+    });
   }
 
   /**
@@ -573,14 +662,15 @@ export class SessionStore {
    * listeners). Returns the live subscriptions and what's been announced, or
    * null when another process has the watch.
    */
-  takePushWatch(everyS: number, nowS = Math.floor(Date.now() / 1000)): { subs: Array<PushSub & { member?: string }>; pushed: Record<string, number> } | null {
+  takePushWatch(everyS: number, nowS = Math.floor(Date.now() / 1000), belongs?: (member: string | undefined) => boolean): { subs: Array<PushSub & { member?: string }>; pushed: Record<string, number> } | null {
     return this.withLock((f) => {
       f.push ??= {};
       if (f.push.tickAt && nowS - f.push.tickAt < everyS - 5) return null;
       f.push.tickAt = nowS;
-      // A subscription whose session ended goes with it.
+      // A device stays whatever happens to sessions (t-1978: they used to go with theirs, and the cap took them);
+      // one whose person is no longer in the household goes.
       const subs = f.push.subs ?? {};
-      for (const [ep, s] of Object.entries(subs)) if (!f.sessions[s.session]) delete subs[ep];
+      if (belongs) for (const [ep, s] of Object.entries(subs)) if (!belongs(s.member)) delete subs[ep];
       return { subs: Object.values(subs).map((s) => ({ ...s.sub, ...(s.member ? { member: s.member } : {}) })), pushed: { ...(f.push.pushed ?? {}) } };
     });
   }
@@ -598,14 +688,13 @@ export class SessionStore {
   delete(id: string): void {
     if (!existsSync(this.file)) return;
     const key = hashId(id);
-    this.withLock((f) => drop(f, key));
+    this.withLock((f) => { delete f.sessions[key]; });
   }
 }
 
-/** A session gone (signed out, or revoked by its ref), and with it this browser's notifications, and no one else's. */
-function drop(f: File, key: string): void {
-  delete f.sessions[key];
-  for (const [ep, s] of Object.entries(f.push?.subs ?? {})) if (s.session === key) delete f.push!.subs![ep];
+/** Past its time: a month from sign-in (SESSION_MAX_AGE_S), an agent's within hours (AGENT_SESSION_MAX_AGE_S). */
+export function sessionEnded(s: { issuedAt: number; agent?: true; device?: string }, nowS = Math.floor(Date.now() / 1000)): boolean {
+  return nowS - s.issuedAt > (isAgent(s) ? AGENT_SESSION_MAX_AGE_S : SESSION_MAX_AGE_S);
 }
 
 const stores = new Map<string, SessionStore>();
@@ -625,7 +714,7 @@ export const LINK_TOKEN = 'page sign-in links';
  * for a member (docs/specs/owners.md): its session is theirs. The first household owner's links
  * use the household's link token, as before; another member's, a link token of their own.
  */
-export function signinLink(h: Household, ttlS: number, member?: string, label?: string, signedInAt?: number): string {
+export function signinLink(h: Household, ttlS: number, member?: string, label?: string, signedInAt?: number, agent?: boolean): string {
   const m = member === undefined ? firstOwner(h) : memberOf(h, member);
   if (!m) throw new HouseholdError(`no member named ${member} in this household`);
   const tokens = loadTokens(h.home).filter((t) => isLive(t) && t.role === 'owner');
@@ -637,5 +726,5 @@ export function signinLink(h: Household, ttlS: number, member?: string, label?: 
     const label = !shared && m.person === firstOwner(h).person ? LINK_TOKEN : `${LINK_TOKEN} · ${m.person}`;
     record = createToken(h, { role: { kind: 'owner', ...(label === LINK_TOKEN ? {} : { member: m.person }) }, label }).record;
   }
-  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS, undefined, label, signedInAt);
+  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS, undefined, label, signedInAt, agent);
 }

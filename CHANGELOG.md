@@ -12,6 +12,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A device's notifications stopped without anyone turning them off** (t-1978). A subscription was kept under the
+  session it was turned on in, and dropped when that session went. Agents' screenshot sign-ins filled the 50-session cap
+  every two or three days, each evicting the oldest session, so a person's phone lost its notifications within days
+  while it still said On. A subscription is now its person's and the device's: it stays when sessions are evicted,
+  revoked or signed out, and when the device signs in again (the app sends it again on each load). It goes only when
+  turned off there, removed on Profile, gone at the push service (404/410), or its person leaves the household.
+  Profile lists the devices that get notifications, each with **Send a test notification**. Agent owners can turn
+  notifications on (`/push/*` was refused for them).
+- **Agents' screenshot sign-ins pushed people's own sessions out** (t-1936). `loom token link --agent --label <text>`
+  marks the session it opens as an agent's (a headless browser's counts too): listed as `(agent)`, ended six hours
+  after it signed in, and first to go at the cap, after sessions already ended. `loom sessions revoke --label <text>`
+  ends an agent's own sessions when it's done.
+
 ### Added
 
 - **A passkey signs its person in with a token of its own** (t-1969). Revoking the page sign-in links token (or any

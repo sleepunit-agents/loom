@@ -14,7 +14,7 @@ import { splitPeopleIntoCommons } from '../backends/people-household.js';
 import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
 import { extractGlobalFlags, parseVerb, type VerbOptions } from './args.js';
-import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
+import { AGENT_SESSION_MAX_AGE_S, REF, sessionEnded, sessionStore, signinLink } from '../ui/sessions.js';
 import { revokeTokenAndPasskeys, thePasskeys, ThePasskeys } from '../ui/passkey-tokens.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
@@ -59,11 +59,14 @@ const TOKEN_USAGE = `Usage: loom token <command>
                            Revoke the live token with that label (takes effect on the next request).
                            A passkey made from a browser signed in with it has its own token and keeps
                            working; --with-passkeys revokes those too, and removes the passkeys
-  link [--minutes 10] [--page-url <loom's page address>] [--label <text>]
+  link [--minutes 10] [--page-url <loom's page address>] [--label <text>] [--agent]
                            A one-time link that signs a browser in to the page (no token to paste).
-                           Its sessions are the owner token "page sign-in links": revoke that to end them
-                           all, or one alone with \`loom sessions revoke\`. --label names the session it
-                           opens (an agent's screenshots: --label "screenshots t-1871")
+                           Its sessions are the owner token "page sign-in links". --label names the session
+                           it opens. An agent signing in (screenshots) passes --agent --label "screenshots
+                           t-1871": its session goes first at the session cap, so it never signs a person
+                           out, ends within hours, and the agent ends it when done with
+                           \`loom sessions revoke --label "screenshots t-1871"\`. Never \`loom token revoke\`
+                           the links token to clean up: that signs out every browser a link opened
 
 Roles: agent:<name> is MCP and the CLI as that agent; owner sees everything and
 the page; peer:<name> reaches commons knowledge only; piece:<piece>/<subject> is
@@ -205,7 +208,7 @@ const TOKEN_OPTIONS: Record<string, VerbOptions> = {
   },
   list: {},
   revoke: { 'with-passkeys': { type: 'boolean' } },
-  link: { minutes: { type: 'string' }, 'page-url': { type: 'string' }, label: { type: 'string' } },
+  link: { minutes: { type: 'string' }, 'page-url': { type: 'string' }, label: { type: 'string' }, agent: { type: 'boolean' } },
 };
 
 export async function runToken(argv: string[], io: IOStreams): Promise<number> {
@@ -251,9 +254,12 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!h) return 1;
       const minutes = Number(v('minutes') ?? 10);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 24 * 60) { io.stderr('--minutes is 1 to 1440\n'); return 2; }
-      const code = signinLink(h, minutes * 60, undefined, v('label'));
+      const agent = p.values.agent === true;
+      if (agent && !v('label')) { io.stderr('--agent needs --label, to end it by when done: loom sessions revoke --label <text>\n'); return 2; }
+      const code = signinLink(h, minutes * 60, undefined, v('label'), undefined, agent);
       const base = (v('page-url') ?? io.env.LOOM_PUBLIC_URL ?? io.env.LOOM_BOX_PUBLIC_URL ?? '').replace(/\/+$/, '');
       io.stderr(`One sign-in, within ${minutes} minute${minutes === 1 ? '' : 's'}.${base ? '' : ' (Prefix loom\'s address: pass --page-url or set LOOM_PUBLIC_URL.)'}\n`);
+      if (agent) io.stderr(`An agent's session: it ends within ${AGENT_SESSION_MAX_AGE_S / 3600} hours; end it when done with loom sessions revoke --label ${JSON.stringify(v('label'))}.\n`);
       io.stdout(`${base}/login/${code}\n`);
       return 0;
     }
@@ -285,8 +291,9 @@ const SESSIONS_USAGE = `Usage: loom sessions <command>
   list                     Every browser session on file: its ref, what it is, the label its sign-in
                            link had, how it signed in, when it signed in and was last used (UTC), its
                            token, and "(ended)" for one past its 30 days or whose token is revoked
-  revoke <ref>             Sign that one browser out at once (and stop its notifications); every
-                           other session, its token's too, stays signed in
+  revoke <ref>             Sign that one browser out at once; every other session, its token's too,
+                           stays signed in. A device's notifications stay: they're its person's
+  revoke --label <text>    End every agent session (loom token link --agent) with that label
 
 A script that signed in for screenshots ends its own session with POST /logout from the same
 browser before it closes; \`loom sessions revoke\` is for one that didn't.
@@ -308,7 +315,7 @@ function sessionsCommand(argv: string[], io: IOStreams): number {
   const verb = verbOf(argv, ['list', 'revoke'], SESSIONS_USAGE, io);
   if (typeof verb === 'number') return verb;
   const { sub } = verb;
-  const p = parseVerb(verb.rest, {}, SESSIONS_USAGE, io);
+  const p = parseVerb(verb.rest, sub === 'revoke' ? { label: { type: 'string' } } : {}, SESSIONS_USAGE, io);
   if (typeof p === 'number') return p;
   const rest = p.positionals;
   if (sub === 'list' && rest.length) { io.stderr(SESSIONS_USAGE); return 2; }
@@ -325,14 +332,22 @@ function sessionsCommand(argv: string[], io: IOStreams): number {
       const token = !t ? 'no token on file' : `${t.label}${t.revoked ? ' (revoked)' : expired(t) ? ' (expired)' : ''}`;
       // Ended: past its 30 days, or its token revoked or expired. A session with no token on file (the owner's bearer
       // from loom-http's environment, LOOM_BEARER_TOKEN) is as live as the page says it is.
-      const ended = nowS - x.issuedAt > SESSION_MAX_AGE_S || (!!t && (!!t.revoked || expired(t)));
-      io.stdout(`${x.ref}  ${(x.device ?? 'a browser').padEnd(24)}  ${x.label ? `"${x.label}"  ` : ''}${x.via ? `by ${x.via}, ` : ''}signed in ${at(x.issuedAt)}${x.seenAt ? `, last used ${at(x.seenAt)}` : ''} UTC  (${token})${ended ? '  (ended)' : ''}\n`);
+      const ended = sessionEnded(x, nowS) || (!!t && (!!t.revoked || expired(t)));
+      io.stdout(`${x.ref}  ${(x.device ?? 'a browser').padEnd(24)}  ${x.agent ? '(agent)  ' : ''}${x.label ? `"${x.label}"  ` : ''}${x.via ? `by ${x.via}, ` : ''}signed in ${at(x.issuedAt)}${x.seenAt ? `, last used ${at(x.seenAt)}` : ''} UTC  (${token})${ended ? '  (ended)' : ''}\n`);
     }
     return 0;
   }
   if (sub === 'revoke') {
     const h = need(io);
     if (!h) return 1;
+    const label = typeof p.values.label === 'string' ? p.values.label : undefined;
+    if (label !== undefined) {
+      if (rest.length) { io.stderr(SESSIONS_USAGE); return 2; }
+      const n = sessionStore(h.home).revokeAgent(label);
+      if (!n) { io.stderr(`No agent session labelled ${JSON.stringify(label)} (see loom sessions list).\n`); return 1; }
+      io.stdout(`Signed out ${n} agent session${n === 1 ? '' : 's'} labelled ${JSON.stringify(label)}. Every other session stays signed in.\n`);
+      return 0;
+    }
     const ref = (rest[0] ?? '').trim();
     if (!REF.test(ref) || rest.length !== 1) { io.stderr(SESSIONS_USAGE); return 2; }
     if (!sessionStore(h.home).revoke(ref)) { io.stderr(`No session ${ref} (see loom sessions list).\n`); return 1; }

@@ -732,9 +732,10 @@ loom token create --agent art --label "Art · house on wunder"   # printed once
 loom token create --owner --label "Jonathan · page"
 loom token list
 loom token revoke "Art · house on wunder"
-loom token link --label "screenshots t-1871"   # a one-time page sign-in, its session named
+loom token link --agent --label "screenshots t-1871"   # an agent's one-time page sign-in, its session named
 loom sessions list                  # every browser signed in to the page, by ref
 loom sessions revoke 3f9a0c1d2e4b5a69   # sign that one browser out; every other stays
+loom sessions revoke --label "screenshots t-1871"   # an agent ends its own sessions when done
 ```
 
 Every token has a role. **`agent:<name>`** is MCP and `/cli` as that agent:

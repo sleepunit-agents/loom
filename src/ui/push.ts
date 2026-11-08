@@ -2,9 +2,11 @@
  * Push for Your call (HANDOFF "Push": only for Your call; a tap opens Home
  * with that ask focused, never a piece's tab).
  *
- * A browser subscribes from the Passkeys page (its session, its anti-forgery
- * token); the subscription lives with its session in ui-sessions.json and goes
- * when the session does. Each minute one of loom's listeners takes the watch
+ * A browser subscribes from Profile (its session, its anti-forgery token). The
+ * subscription is its person's and the device's (t-1978), kept in ui-sessions.json
+ * by endpoint: it outlives the session it was made in, and goes only when it's
+ * turned off there, removed on Profile, gone at the push service, or its person
+ * leaves the household (sessions.ts PushDevice). Each minute one of loom's listeners takes the watch
  * (sessions.ts takePushWatch: there are three processes), works out Your call,
  * and announces each ask it hasn't before. The first watch only records what's
  * there, so turning this on doesn't announce a backlog.
@@ -86,8 +88,10 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
   /** Whether a device's member may hear of an ask for this agent (none: the household's). Everyone, without it. */
   hears: (member: string | undefined, a: Announce) => boolean = () => true,
   /** Whose a device with no member is (the first household owner), for an announcement meant for one member. */
-  firstMember?: () => string | undefined): Promise<number> {
-  const w = store.takePushWatch(WATCH_S);
+  firstMember?: () => string | undefined,
+  /** Whether a device's member is still in the household; one who isn't loses their devices. */
+  belongs?: (member: string | undefined) => boolean): Promise<number> {
+  const w = store.takePushWatch(WATCH_S, undefined, belongs);
   if (!w) return 0;
   const now = await asks();
   // The first watch only records what's there (SEEDED marks that it has run).
@@ -114,4 +118,21 @@ export async function watch(store: SessionStore, asks: () => Promise<Announce[]>
     }
   }
   return sent;
+}
+
+/**
+ * One test notification to one device (Profile's "Send a test notification", pressed by its person): 'sent', 'gone'
+ * (the push service no longer has it: forgotten, like the watch does), or what went wrong.
+ */
+export async function sendTest(store: SessionStore, sub: PushSub, subject: string, send = webpush.sendNotification.bind(webpush)): Promise<'sent' | 'gone' | string> {
+  const vapid = store.pushKeys(() => webpush.generateVAPIDKeys());
+  const payload = JSON.stringify({ title: 'loom · test', body: 'Notifications reach this device.', tag: 'loom-test', url: '/account' });
+  try {
+    await send(sub, payload, { vapidDetails: { subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey }, TTL: 600, urgency: 'high' });
+    return 'sent';
+  } catch (e) {
+    const code = (e as { statusCode?: number }).statusCode;
+    if (code === 404 || code === 410) { store.removePushSub(sub.endpoint); return 'gone'; }
+    return code ? `the push service said ${code}` : 'the push service couldn\'t be reached';
+  }
 }

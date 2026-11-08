@@ -66,8 +66,8 @@ function KeyRow({ k, icon = 'fingerprint-pattern' }: { k: ListItem; icon?: strin
 }
 
 /** Your call on this device (passkeys.tsx usePush), as one of Profile's panels: what it is, whether it's on, the switch. */
-function Push({ csrf }: { csrf: string }) {
-  const { can, sub, msg, busy, flip } = usePush(csrf);
+function Push({ csrf, devices, reload }: { csrf: string; devices?: Section; reload: () => void }) {
+  const { can, sub, msg, busy, flip } = usePush(csrf, reload);
   return (
     <Pane label="Notifications" intro="Your call, on this device: a notification when something new needs you; a tap opens it on Home.">
       {!can ? <p className="loom-acct__row-meta">Needs loom over https; on an iPhone, loom added to the Home Screen first.</p> : (
@@ -77,6 +77,13 @@ function Push({ csrf }: { csrf: string }) {
         </div>
       )}
       {msg && <p role="status" className="loom-acct__row-meta mt-2">{msg}</p>}
+      {/* Every device of yours that gets them (t-1978), each with a test to send it; Remove for a lost one. */}
+      {devices && <div className="mt-3 grid gap-2" data-push-devices>
+        <span className="loom-acct__eyebrow">{devices.title}</span>
+        {devices.blocks.map((b, i) => (b.type === 'list'
+          ? <ul key={i} className="loom-acct__rows">{(b.items as ListItem[]).map((k) => <KeyRow key={k.act?.fields?.ref ?? k.text} k={k} icon="bell" />)}</ul>
+          : <BlockView key={i} b={b} />))}
+      </div>}
     </Pane>
   );
 }
@@ -88,7 +95,8 @@ export function AccountView({ me, csrf, add, reload, page }: {
   const [added, setAdded] = useState(false);
   const keys = page.sections.find((s) => s.id === 'passkeys');
   const sessions = page.sections.find((s) => s.id === 'sessions');
-  const rest = page.sections.filter((s) => s.id !== 'passkeys' && s.id !== 'sessions');
+  const devices = page.sections.find((s) => s.id === 'notifications');
+  const rest = page.sections.filter((s) => s.id !== 'passkeys' && s.id !== 'sessions' && s.id !== 'notifications');
   const listed: ListItem[] = keys?.blocks.flatMap((b) => (b.type === 'list' ? (b.items as ListItem[]) : [])) ?? [];
   const other = keys?.blocks.filter((b) => b.type !== 'list') ?? [];
   const canAdd = 'csrf' in add;
@@ -130,7 +138,7 @@ export function AccountView({ me, csrf, add, reload, page }: {
               </ul>
             </Pane>
           )}
-          <Push csrf={csrf} />
+          <Push csrf={csrf} devices={devices} reload={reload} />
           {sessions && (
             <Pane className="loom-acct__sessions" label={sessions.title ?? 'Signed in'}>
               {sessions.blocks.map((b, i) => (b.type === 'list'
