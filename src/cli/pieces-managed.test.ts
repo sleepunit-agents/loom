@@ -424,7 +424,7 @@ describe('managed pieces', () => {
     it('the table is box → runtime, and the catalog lists loom-box\'s repo as runtime at its pinned commit', () => {
       expect(PIECE_ALIASES).toEqual({ box: 'runtime' });
       const c = readCatalog();
-      expect(c[0]).toMatchObject({ name: 'runtime', repo: 'sleepunit-agents/loom-box', commit: '3dea957d8d8c20c89c01ec8fb56cd6be8ed380d4', label: 'Runtime', version: '0.1.0' });
+      expect(c[0]).toMatchObject({ name: 'runtime', repo: 'sleepunit-agents/loom-box', commit: 'cb5057007d428485cf751eef0f2a9106ad646d34', label: 'Runtime', version: '0.1.0' });
       expect(c.find((x) => x.name === 'box')).toBeUndefined();
     });
 
@@ -450,7 +450,7 @@ describe('managed pieces', () => {
       expect(await readFile(join(loomHome, 'pieces', 'box', 'piece.json'), 'utf-8')).toBe(before);
       // Following the advice: the runtime installs once box is gone, and box's settings are still there.
       await runCliCaptured(['pieces', 'set', 'box', 'LOOM_BOX_PUBLIC_URL=https://loom.example'], { env });
-      await fixture(repo, '3dea957d8d8c20c89c01ec8fb56cd6be8ed380d4', runtimePkg, both);
+      await fixture(repo, 'cb5057007d428485cf751eef0f2a9106ad646d34', runtimePkg, both);
       expect((await runCliCaptured(['pieces', 'remove', 'box'], { env })).code).toBe(0);
       const inst = await runCliCaptured(['pieces', 'install', 'runtime'], { env });
       expect(inst.stderr).toBe('');
