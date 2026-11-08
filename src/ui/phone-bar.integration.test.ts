@@ -194,7 +194,8 @@ describe.runIf(built && chrome)('Neon\'s phone bar, ticker and dock', () => {
     const kb = (await places.boundingBox())!;
     await p.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2); await p.mouse.down(); await p.waitForTimeout(700);
     const label = places.locator('[data-part="label"]');
-    expect(await label.evaluate((e) => getComputedStyle(e).opacity)).toBe('1');
+    // Its fade can still be finishing at 700 ms on a busy runner (0.955, 0.998 in CI): wait for it to land.
+    await expect.poll(() => label.evaluate((e) => getComputedStyle(e).opacity), { timeout: 3000 }).toBe('1');
     const lb = (await label.boundingBox())!, pill = (await p.locator('.loom-find-pill').boundingBox())!;
     await p.mouse.up();
     expect(pill.y + pill.height).toBeLessThanOrEqual(lb.y);
