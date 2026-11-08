@@ -58,7 +58,7 @@ import { answersOf, yesNoText } from '../backends/needs.js';
 import { deliverAsOwner } from '../delivery.js';
 import { commsRoute, pageRefused } from './comms-routes.js';
 import { pieceCheckers, pieceWithRole, resolveNeeds } from '../needs-resolve.js';
-import { grantsAuthority } from '../offers-registry.js';
+import { deliveryPiece, grantsAuthority } from '../offers-registry.js';
 import { venueLabel } from '../household-store.js';
 import { piecesAct, piecesAsks, piecesPage } from './pieces-page.js';
 import { aliasTarget, catalogKinds, readCatalog } from '../cli/pieces-managed.js';
@@ -373,43 +373,80 @@ function passkeyUser(m: Member | undefined, first: boolean, rpId: string): { id:
   return { id: Buffer.from(createHash('sha256').update(seed).digest().subarray(0, 16)).toString('base64url'), name: m?.person ?? 'owner', displayName: 'loom' };
 }
 
+/** The asking agent's own wakes (1 to 12, `w-` and 6 hex, ascending, each once: the approvals piece's grammar). */
+const ownWakes = (t: string, agent: string): boolean => {
+  const m = /^([a-z][a-z0-9-]{0,39}):((?:w-[0-9a-f]{6},){0,11}w-[0-9a-f]{6})$/.exec(t);
+  if (!m || m[1] !== agent) return false;
+  const ids = m[2].split(',');
+  return ids.every((x, i) => i === 0 || ids[i - 1] < x);
+};
+
 /**
- * The household-owner rule is checked here, by the approvals piece and by the runtime too: three programs, each refusing
- * on its own, so no one of them being wrong gives a piece away (a trade-off against one shared helper, t-1970 review).
- *
- * After the household owner's Allow on an approval (t-1970): if it's a `grant` (an agent's access to a piece, its target
- * `<piece>:<agent>[:<paths>]`), the grants authority applies it now, as the same owner: the runtime's `grant-approved`
- * spends the approval (allowed, for exactly that target) and only then adds the agent to that piece's grant. Read from
- * the approvals piece itself (its `state`), never from the form: the id is all the page says. Only the household's
- * owner (every agent's); a member who owns some agents can't give a household's piece away (approvals refuses their
- * Allow too, and the authority refuses their call). Any other approval, or one not allowed, leaves the answer as it was.
+ * The approvals the household owner's Allow applies (t-1970 grant; t-1975 vouch-wake and principal-reset: Jonathan,
+ * "It needs to have the site ask me"): each kind's piece and the action core posts it as the owner, the target it may
+ * have (never a confused deputy: a vouch or a reset names only the asking agent's own wakes or conversation, each id
+ * well formed; the clock and the runtime check the same on their side), and what to say when it isn't applied. The
+ * piece spends the approval (allowed, for exactly that target, once) and only then applies it.
  */
-export async function applyGrant(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: string, caller: ApiCaller | undefined, allowed: ActResult): Promise<ActResult> {
+const OWNER_APPLIED: Record<string, { action: string; piece: (env: NodeJS.ProcessEnv) => string | undefined; target: (t: string, agent: string) => boolean; who: string; none: string; after: string }> = {
+  grant: { action: 'grant-approved', piece: (env) => grantsAuthority(env).piece, target: () => true, who: 'access to a piece is the household owner\'s to give.',
+    none: 'no runtime is installed to apply it.', after: 'You can give it on Permissions.' },
+  'vouch-wake': { action: 'vouch-approved', piece: (env) => pieceWithRole(env, 'clock')?.name, target: ownWakes, who: 'only the household owner says whose work a wake is.',
+    none: 'no clock is installed to apply it.', after: '' },
+  'principal-reset': { action: 'reset-approved', piece: (env) => deliveryPiece(env).piece, target: (t, agent) => { const m = /^([a-z][a-z0-9-]{0,39}):(cv-[0-9a-f]{12})$/.exec(t); return !!m && m[1] === agent; },
+    who: 'only the household owner says whose work a conversation is.', none: 'no runtime is installed to apply it.', after: '' },
+};
+
+/**
+ * The household-owner rule is checked here, by the approvals piece and by the applying piece too: three programs, each
+ * refusing on its own, so no one of them being wrong gives a piece away or makes someone's work the owner's (a
+ * trade-off against one shared helper, t-1970 review).
+ *
+ * After the household owner's Allow on an approval: if it's one of OWNER_APPLIED (a `grant`, its target
+ * `<piece>:<agent>[:<paths>]`; a `vouch-wake`, `<agent>:<w-id>,…`; a `principal-reset`, `<agent>:<cv>`), the piece that
+ * owns it applies it now, as the same owner. Read from the approvals piece itself (its `state`), never from the form:
+ * the id is all the page says. Only the household's owner (every agent's); a member who owns some agents can't (approvals
+ * refuses their Allow too, and the applying piece refuses their call). Any other approval, or one not allowed, leaves
+ * the answer as it was.
+ */
+export async function applyOwnerApproval(env: NodeJS.ProcessEnv, pieces: PieceInfo[], id: string, caller: ApiCaller | undefined, allowed: ActResult, hh: Household): Promise<ActResult> {
   if (!/^a-[0-9a-f]{8}$/.test(id)) return allowed;
   const a = (await pieceCheckers(env).approvals([id]).catch(() => undefined))?.[id];
-  // Couldn't say what it was (the piece busy, slow, or answering for no such id): never a quiet "Allowed", which for a
-  // grant would read as done while nothing was granted.
+  // Couldn't say what it was (the piece busy, slow, or answering for no such id): never a quiet "Allowed", which for one
+  // of these would read as done while nothing was applied.
   if (!a) {
-    // Only for a grant's card (it leads: the approvals piece marks those), so a merge's or a relay's Allow isn't made a failure.
+    // Only for a card that leads (the approvals piece marks those it applies), so a merge's or a relay's Allow isn't made a failure.
     const src = pieceWithRole(env, 'approvals')?.name;
-    const grantCard = pieces.find((p) => p.piece === src)?.manifest.asks.some((x) => x.lead && x.actions?.some((b) => b.fields?.id === id));
+    const leadCard = pieces.find((p) => p.piece === src)?.manifest.asks.some((x) => x.lead && x.actions?.some((b) => b.fields?.id === id));
     // One past the cards loom was shown can't be told apart: never a bare "Allowed" for it either.
-    return grantCard ? { ok: false, message: `${allowed.message} It may not be applied: loom couldn't read that approval back. Check it on Permissions.` }
+    return leadCard ? { ok: false, message: `${allowed.message} It may not be applied: loom couldn't read that approval back. Check it on Approvals.` }
       : { ...allowed, message: `${allowed.message} (loom couldn't read it back: if it gives an agent a piece, check Permissions.)` };
   }
-  if (a.kind !== 'grant' || a.state !== 'allowed') return allowed;
+  const how = a.kind ? OWNER_APPLIED[a.kind] : undefined;
+  if (!how || !Object.hasOwn(OWNER_APPLIED, a.kind!) || a.state !== 'allowed') return allowed;
   const owner = caller?.kind === 'owner' && (caller.agents === undefined || caller.agents === '*');
   const target = typeof a.target === 'string' ? a.target : '';
-  // Every way it isn't applied says so, and where the owner can still give it himself (his Allow can't be pressed again).
-  const unapplied = (why: string): ActResult => ({ ok: false, message: `${allowed.message} It wasn't applied: ${why} You can give it on Permissions.` });
-  if (!owner) return unapplied('access to a piece is the household owner\'s to give.');
+  // Every way it isn't applied says so, and what happens next (his Allow can't be pressed again).
+  const unapplied = (why: string): ActResult => ({ ok: false, message: `${allowed.message} It wasn't applied: ${why}${how.after ? ` ${how.after}` : ''}` });
+  if (!owner) return unapplied(how.who);
   if (!target || !a.agent) return unapplied('loom couldn\'t read what that approval allows.');
-  const auth = grantsAuthority(env).piece;
-  const info = auth ? pieces.find((p) => p.piece === auth) : undefined;
-  if (!info) return unapplied('no runtime is installed to apply it.');
-  const r = await pieceAct(info, { action: 'grant-approved', path: '', fields: { id, agent: a.agent, target } }, env, caller);
+  if (!how.target(target, a.agent)) return unapplied('that approval names something that isn\'t the asking agent\'s own.');
+  // A reset is for a conversation core has on record as the asking agent's own (a conversation id is that agent's:
+  // its turns are in its store); one core has nowhere, or as another agent's, is never posted.
+  if (a.kind === 'principal-reset') {
+    const cv = target.slice(target.indexOf(':') + 1);
+    let mine: unknown;
+    try { mine = hh.agents.includes(a.agent) ? conversationOf(agentDir(hh, a.agent), cv) : undefined; } catch { mine = undefined; }
+    if (!mine) return unapplied('that conversation is another agent\'s, or loom has no record of it.');
+  }
+  const name = how.piece(env);
+  const info = name ? pieces.find((p) => p.piece === name) : undefined;
+  if (!info) return unapplied(how.none);
+  const r = await pieceAct(info, { action: how.action, path: '', fields: { id, agent: a.agent, target } }, env, caller);
   return r.ok ? { ...r, page: '' } : unapplied(r.message);
 }
+/** t-1970's name for it, kept for its callers. */
+export const applyGrant = applyOwnerApproval;
 
 /** The household's Permissions page: the grants authority's own (the runtime's `permissions`), when one is installed. */
 function permissionsOf(env: NodeJS.ProcessEnv): { permissions?: string } {
@@ -894,7 +931,7 @@ export function absorbApprovals(asks: HomeAsk[], env: NodeJS.ProcessEnv): HomeAs
     const card = asks.find((x) => x.source.id === src && !taken.has(x) && x.agent === a.agent && !!x.text.trim() && x.actions?.some((b) => b.fields?.id === a.waitsOnApproval));
     if (!card) return a;
     taken.add(card);
-    // A card that leads (a grant, t-1970): what Allow gives is the piece's words, never the agent's; its ask is the why.
+    // A card that leads (a grant, t-1970; a vouch or a reset, t-1975): what Allow gives is the piece's words, never the agent's; its ask is the why.
     const lead = card.lead ? { text: card.text, meta: a.text, ...(a.needs ? { needs: { ...a.needs, why: a.text,
       ...(card.if_yes ? { if_yes: card.if_yes } : {}), ...(card.if_no ? { if_no: card.if_no } : {}) } } : {}) } : {};
     return { ...a, ...lead, approval: { text: card.text, ...(card.meta ? { meta: card.meta } : {}), actions: card.actions!, source: card.source,
@@ -1644,7 +1681,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
       // The approvals piece answered from an agent's pages (should it ever have a tab there): its grant applied the same.
       if (result.ok && hh && action === 'allow' && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
-        result = await applyGrant(opts.env, pieces, fields.id ?? '', callerOf(who), result);
+        result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
       }
     } else if (agentAct && action.startsWith('needs-')) {
       // An agent's Needs you, answered from its sheet: replied to, done or dismissed. Who answers is the signed-in member.
@@ -1740,8 +1777,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const path = sp && !sp.core ? sp.path : '';
       result = await pieceAct(info, { action, path, fields }, scopedEnv, callerOf(who));
       if (result.ok && hh && pieceWithRole(opts.env, 'approvals')?.name === info.piece) {
-        // An Allow on a grant (access to a piece) applies it (t-1970): the owner's yes does it, nothing left for him to do.
-        if (action === 'allow') result = await applyGrant(opts.env, pieces, fields.id ?? '', callerOf(who), result);
+        // An Allow on a grant, a vouch or a reset applies it (t-1970, t-1975): the owner's yes does it, nothing left for him to do.
+        if (action === 'allow') result = await applyOwnerApproval(opts.env, pieces, fields.id ?? '', callerOf(who), result, hh);
         // An approval answered: the Needs you that waited on it clears now, not at the next minute's pass.
         await resolveNeeds(hh, pieceCheckers(opts.env)).catch(() => undefined);
       }

@@ -900,9 +900,11 @@ LOOM_IMPORT_IDENTITY=/path/owner.key loom-<piece> bundle import < part   # stdin
 | secrets | `loom secrets` | [loom-secrets](https://github.com/sleepunit-agents/loom-secrets) (sops + age) | `ac-sec-*` in its README |
 | shuttle | `loom shuttle` | [shuttle](https://github.com/sleepunit-agents/shuttle) (`tools/loom-shuttle`) | its README; today it's the Bridges page only |
 | runtime | `loom box` | [loom-box](https://github.com/sleepunit-agents/loom-box) (boxes and houses) | [specs/runtime.md](specs/runtime.md) and its README; the first piece on the piece API |
+| clock | `loom clock` | [loom-clock](https://github.com/sleepunit-agents/loom-clock) (`wake`) | its README; core posts it `vouch-approved` on the owner's Allow of a `vouch-wake` (specs/agent-runtime.md, t-1975) |
+| approvals | `loom approvals` | [loom-approvals](https://github.com/sleepunit-agents/loom-approvals) | its README; core reads `state` and applies owner-applied kinds (`grant`, `vouch-wake`, `principal-reset`) |
 
-Roles under consideration: `wake` (a clock that starts the agent) and an
-approval page. Each one gets its contract when it gets built.
+Roles are matched by exact name (`role: clock`, not `wake`): a piece that declares another name isn't found for its
+role's work. Each new role gets its contract when it gets built.
 
 ### Changes list and reader
 
