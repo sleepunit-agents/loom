@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import {
   addAgent, agentDir, moveKnowledgeToCommons, createToken, householdHome, HouseholdError, initHousehold, loadHousehold, loadTokens,
-  expired, parseRole, revokeToken, checkSpriteManifest, manifestFromPixelLab, setSprite, spriteOf, type Household,
+  expired, parseRole, checkSpriteManifest, manifestFromPixelLab, setSprite, spriteOf, type Household,
 } from '../household.js';
 import { iconSetName, iconSetOf, installedIconSets, installIconSet, setIcon, useIconSet } from '../icon-set.js';
 import { splitPeopleIntoCommons } from '../backends/people-household.js';

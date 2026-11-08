@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node
 import { join } from 'node:path';
 import BetterSqlite3 from 'better-sqlite3';
 import {
-  aboutOf, setAboutAsk, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, revokeToken, setAbout, setMark,
+  aboutOf, setAboutAsk, addAgent, AGENT_NAME, FACE_EYES, FACE_SHAPES, faceOf, setFace, agentDir, commonsKnowledgePath, createToken, HouseholdError, loadTokens, MARKS, parseRole, removeMember, setAbout, setMark,
   setMember, type Household, type Member,
   markIndexOf,
 } from '../household.js';

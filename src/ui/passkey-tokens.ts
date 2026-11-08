@@ -58,7 +58,7 @@ const isFor = (t: TokenRecord, person: string, credentialId: string) =>
  * end with the one token. Returns its digest and label.
  */
 export function passkeyToken(h: Household, person: string, credentialId: string, name: string, from: Origin,
-  /** Tests only: runs between looking for the token and minting it, as another listener would. */
+  /** Tests only (the two-listener race is otherwise untestable in one process): runs between looking and minting. */
   race?: () => void): { secret: string; tokenLabel: string } {
   if (!memberOf(h, person)) throw new HouseholdError(`no member named ${person} in this household`);
   const find = () => loadTokens(h.home).find((t) => isLive(t) && isFor(t, person, credentialId));
@@ -146,14 +146,26 @@ export function migratePasskeys(h: Household, envOwnerDigestHex?: string): { mov
   return out;
 }
 
+/** How many kept passkeys these tokens' line holds: the passkeys that sign in with one of them. */
+function keptAmong(made: TokenRecord[], kept: Passkey[]): number {
+  const digests = new Set(made.map((t) => t.sha256));
+  return kept.filter((k) => digests.has(k.secret)).length;
+}
+
 /**
- * How many passkeys were made from each token (by its sha256): what a token's row offers to take. Only passkeys that
- * are kept and whose token is live count; a token minted for one that was never added doesn't.
+ * How many passkeys revoking each live token with its passkeys (or removing the passkey that signs in with it, with
+ * the ones added from it) would take: every kept passkey down its line, exactly what that does. Tokens with none
+ * aren't in the map.
  */
 export function passkeysMadeFrom(h: Household): Map<string, number> {
-  const kept = new Set(sessionStore(h.home).passkeys().map((k) => k.secret));
+  const kept = sessionStore(h.home).passkeys();
+  const tokens = loadTokens(h.home);
   const n = new Map<string, number>();
-  for (const t of loadTokens(h.home)) if (isLive(t) && t.passkey !== undefined && t.from_sha256 && kept.has(t.sha256)) n.set(t.from_sha256, (n.get(t.from_sha256) ?? 0) + 1);
+  for (const t of tokens) {
+    if (!isLive(t)) continue;
+    const c = keptAmong(madeFromAll(tokens, [t.sha256]), kept);
+    if (c) n.set(t.sha256, c);
+  }
   return n;
 }
 
@@ -192,16 +204,15 @@ export function revokeTokenAndPasskeys(h: Household, label: string, withPasskeys
   const token = revokeToken(h, label);
   // Read after the revoke: no browser signed in with it can add another now.
   const made = madeFromAll(loadTokens(h.home), [token.sha256]);
-  if (!withPasskeys) {
-    const kept = new Set(sessionStore(h.home).passkeys().map((k) => k.secret));
-    return { token, passkeys: made.filter((t) => isLive(t) && t.from_sha256 === token.sha256 && kept.has(t.sha256)).length };
-  }
+  // No passkey made from it (an agent's token, say): the page's session store isn't touched.
+  if (!made.length) return { token, passkeys: 0 };
+  if (!withPasskeys) return { token, passkeys: keptAmong(made, sessionStore(h.home).passkeys()) };
   return { token, passkeys: takePasskeys(h, made) };
 }
 
 /** The passkey was removed, but a token it, or one made from it, signs in with couldn't be revoked. */
 export class PasskeyTokenLeft extends Error {
-  constructor(readonly label: string, cause: unknown) { super(`${(cause as Error).message}`); }
+  constructor(readonly label: string, cause: unknown) { super((cause as Error).message, { cause }); }
 }
 
 /**

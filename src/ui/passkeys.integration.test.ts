@@ -353,6 +353,12 @@ describe('passkeys in a household', () => {
     expect((await addPasskeyWith(call, relinked, new Device(), 'Relinked')).status).toBe(403);
     expect(sessionStore(h.home).passkeys()).toEqual([]);
     expect(loadTokens(h.home).filter((t) => t.passkey)).toEqual([]);
+    // Nor one it makes on Members for another member: no fresh session for anyone, to add a passkey through.
+    const forSam = await call('POST', '/act/loom', { cookie: old, fetch: true, form: { _csrf: csrf, _action: 'member-link', _path: 'members', person: 'sam' } });
+    const samCode = /\/login\/([0-9a-f]{64})/.exec(forSam.body)![1];
+    const asSam = cookieOf(await call('POST', `/login/${samCode}`));
+    expect(await signedIn(asSam, '/a/mark')).toBe(true);
+    expect((await addPasskeyWith(call, asSam, new Device(), 'Sam?')).status).toBe(403);
     // A link made on loom's machine (`loom token link`) is a fresh sign-in.
     expect((await addPasskeyWith(call, await linkSignIn(), new Device(), 'Fresh')).status).toBe(200);
   });
@@ -385,6 +391,18 @@ describe('passkeys in a household', () => {
     expect(tokenOf(pk.tokenLabel!)?.revoked).toBeTruthy();
     expect(await signedIn(viaKey)).toBe(false);
     expect(await signedIn(jon)).toBe(true);
+  });
+
+  it('a member is told to exclude only their own credentials', async () => {
+    const jonKey = new Device();
+    await addPasskey(await linkSignIn(), jonKey, 'Jonathan');
+    const sam = await linkSignIn('sam');
+    const csrf = (JSON.parse((await call('GET', '/passkeys', { cookie: sam, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
+    const o = JSON.parse((await call('POST', '/passkeys/options', { cookie: sam, json: { _csrf: csrf } })).body) as { excludeCredentials: Array<{ id: string }> };
+    expect(o.excludeCredentials).toEqual([]);
+    expect((await addPasskey(sam, new Device(), 'Sam')).status).toBe(200);
+    const again = JSON.parse((await call('POST', '/passkeys/options', { cookie: sam, json: { _csrf: csrf } })).body) as { excludeCredentials: Array<{ id: string }> };
+    expect(again.excludeCredentials.map((x) => x.id)).toEqual(sessionStore(h.home).passkeys().filter((k) => k.label === 'Sam').map((k) => k.id));
   });
 
   it('an agent owner sees, and can remove, their own passkey once it has stopped', async () => {
@@ -471,8 +489,11 @@ describe('passkeys in a household', () => {
     const view = JSON.parse((await call('GET', '/account', { cookie: admin, accept: 'application/json' })).body) as { ctx: { csrf: string }; page: { sections: Array<{ id: string; blocks: Array<{ type: string; summary?: string; items?: Item[]; blocks?: Array<{ items?: Item[] }> }> }> } };
     const blocks = view.page.sections.find((x) => x.id === 'passkeys')!.blocks;
     expect(blocks[0].items!.find((i) => i.text === 'Second')?.meta).toContain(`from "${keys.First.tokenLabel}"`);
-    const offer = blocks.find((b) => b.summary === 'Remove a passkey with the ones added from it')!.blocks![0].items!.find((i) => i.text === 'First')!;
+    const offer = blocks.find((b) => b.summary === 'Remove a passkey with the ones added from it')!.blocks![0].items!.find((i) => i.text === 'First')! as Item & { act: { confirm?: string } };
     expect(offer.act?.fields).toEqual({ id: keys.First.id, made: 'with' });
+    // It counts what it takes, down the line: the second and the third.
+    expect(offer.act.confirm).toMatch(/the 2 passkeys added from it are removed/);
+    expect(offer.meta).toMatch(/^2 passkeys/);
     expect((await call('POST', '/act/loom', { cookie: admin, form: { _csrf: view.ctx.csrf, _action: 'passkey-remove', _path: 'passkeys', ...offer.act!.fields! } })).status).toBe(303);
     expect(sessionStore(h.home).passkeys().map((k) => k.label)).toEqual(['Apart']);
     for (const d of [first, second, third]) expect((await passkeySignIn(d)).status).toBe(401);

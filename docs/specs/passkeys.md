@@ -41,6 +41,7 @@ under the same lock):
   passkey made from that token signed in goes too. Removing a passkey works the
   same way: plain Remove leaves the passkeys added from its sessions working;
   "Remove a passkey with the ones added from it" (Profile) takes them too.
+  Each offer counts every passkey it would take, down the line.
   What stops a passkey: removing it (its token is revoked with it, so the
   sessions it opened end too), removing its person from the household, or
   revoking its own token (it then shows as stopped, and can be removed, by an
@@ -98,9 +99,10 @@ challenge is 32 random bytes, kept by hash, used once, and good for 5 minutes.
 minutes (one left signed in on a desk can't quietly add a lasting way in;
 the page says to sign in again), and the form token for it. Signing in is a
 token, a passkey, or a link made on loom's machine (`loom token link`); a link
-the page makes for its own person ("Make a one-time sign-in link", or a
-Members link for yourself) opens a session that signed in when the one that
-made it did, so it can't freshen a stale one. This holds outside a household
+the page makes ("Make a one-time sign-in link", or a Members link, for
+anyone) opens a session that signed in when the one that made it did, so it
+can't freshen a stale one. Asked for options, a member is told only their
+own credentials to exclude. This holds outside a household
 too:
 
 ```

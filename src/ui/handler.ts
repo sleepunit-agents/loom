@@ -204,7 +204,7 @@ function passkeysOf(opts: UiOptions, m: Member) {
 /** Why a passkey no longer signs anyone in, in the words its row and a refused sign-in use. */
 function passkeyStopped(k: Passkey): string {
   return k.tokenLabel ? 'it stopped working: its person isn\'t a member any more, or its token was revoked. Add a new one'
-    : 'it stopped working: the token it was added with was revoked. Sign in with a link and add a new one';
+    : 'it stopped working: the token it was added with was revoked. Sign in again and add a new one';
 }
 
 /** The household as an agent owner sees it: their agents only (the default, theirs too). */
@@ -1444,7 +1444,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         user: passkeyUser(who.member, !!who.member && opts.household !== undefined && firstOwner(opts.household()).person === who.member.person, rp.rpId),
         pubKeyCredParams: ALGS.map((alg) => ({ type: 'public-key', alg })),
         authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'required' },
-        excludeCredentials: store.passkeys().map((p) => ({ id: p.id })),
+        // This member's own credentials only: another member's on a shared device mustn't block theirs, nor be shown.
+        excludeCredentials: (who.member && opts.household ? passkeysOf(opts, who.member) : store.passkeys()).map((p) => ({ id: p.id })),
         timeout: 300_000,
       });
     }
@@ -1457,6 +1458,8 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const label = (typeof body.label === 'string' ? body.label.trim() : '').slice(0, 60) || 'A passkey';
       const added = { id: r.id, publicKey: r.publicKey, alg: r.alg, counter: r.counter, label, created: Math.floor(Date.now() / 1000) };
       const hh = opts.household?.();
+      // In a household a session is always a member's; one that isn't (tokens.json unreadable) adds nothing.
+      if (hh && !who.member) return sendJson(res, 401, { error: 'this session isn\'t a member of the household; sign in again' });
       if (!hh || !who.member) {
         store.addPasskey({ ...added, secret: session.secret.toString('hex') });
         return sendJson(res, 200, { ok: true });
@@ -1634,7 +1637,9 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const base = (opts.env.LOOM_PUBLIC_URL ?? '').replace(/\/+$/, '');
       const m = memberOf(hh, fields.person);
       result = m
-        ? { ok: true, keep: true, page: 'loom:members', message: `For ${m.person}, one sign-in within 10 minutes: ${base}/login/${signinLink(hh, 600, m.person, undefined, m.person === who?.member?.person ? mintedAt() : undefined)}` }
+        // It signed in when this browser did (t-1969), whoever it's for: a stale session can't make a fresh one for
+        // anyone, to add a lasting passkey through.
+        ? { ok: true, keep: true, page: 'loom:members', message: `For ${m.person}, one sign-in within 10 minutes: ${base}/login/${signinLink(hh, 600, m.person, undefined, mintedAt())}` }
         : { ok: false, message: 'No such member.', page: 'loom:members' };
     } else if (sourceId === 'loom' && action.startsWith('piece-')) {
       // The Pieces page's: install, update, roll back, remove, settings.
