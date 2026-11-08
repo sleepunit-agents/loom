@@ -842,6 +842,9 @@ async function needsAct(opts: UiOptions, hh: Household, agent: string, action: s
       return { ok: false, message: 'That ask isn\'t open any more: the agent wrote since, or it was answered.', page };
     }
     if (yesNo && answersOf(open.digest.needs) !== 'yes-no') return { ok: false, message: `That ask isn't a yes or no: answer ${name} in words.`, page };
+    // One that waits on an approval is answered with its Allow or Deny (t-1970): a Yes here would tell the agent yes while
+    // nothing was allowed (a grant never applied). Words still go: a reply is not a yes.
+    if (yesNo && open.digest.needs.waits_on && 'approval' in open.digest.needs.waits_on) return { ok: false, message: 'That one is answered with Allow or Deny, on the ask.', page };
     // One reply, once: the same words to the same ask are the same delivery.
     const id = `needs:${fields.digest}:${createHash('sha256').update(text).digest('hex').slice(0, 16)}`;
     const r = await deliverAsOwner(opts.env, hh, { id, agent, venue: c.venue, place: c.place, label: c.label, person, text });

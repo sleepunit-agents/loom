@@ -204,6 +204,20 @@ describe('a Yes on a grant ask applies the grant (t-1970)', () => {
     expect(await press(cookie, await inbox(cookie), 'allow', { id: 'a-0000cafe' })).toMatchObject({ ok: true });
   });
 
+  it('a Yes in words\' place is refused on an ask that waits on an approval: only Allow allows', async () => {
+    const cookie = await login('jonathan');
+    const d = await inbox(cookie);
+    const a = askOf(d);
+    const r = await fetch(`${base}${a.source.act ?? '/a/art/act/loom'}`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'x-loom-fetch': '1' },
+      body: new URLSearchParams({ _csrf: d.ctx.csrf, _action: 'needs-answer', _path: 'loom:inbox', ...a.reply.fields, answer: 'yes' }).toString(),
+    });
+    const j = await r.json() as { ok: boolean; message: string };
+    expect(j).toMatchObject({ ok: false, message: 'That one is answered with Allow or Deny, on the ask.' });
+    expect(state('a-0000beef')).toBe('pending');
+    expect(runtimeActs()).toEqual([]);
+  });
+
   it('a form can\'t name another target: core reads it from the approval', async () => {
     const cookie = await login('jonathan');
     const d = await inbox(cookie);
