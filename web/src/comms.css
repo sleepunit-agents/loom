@@ -105,14 +105,14 @@
 /* The 000h agent chat composer (styles/cojeev/agent-chat.css), fitted: one line that grows, no resize grip, no
    chatter line, the agent's accent on Send. */
 .comms .comms-composer { padding: 10px 12px 8px; border-top: 1px solid var(--comms-line); background: var(--v-paper); }
-.comms .comms-composer .v-agent-chat__draft[data-slot] { flex-direction: row; flex-wrap: nowrap; height: auto; align-items: flex-end; gap: 6px; padding: 4px; border-radius: 14px; }
+.comms .comms-composer .v-agent-chat__draft[data-slot] { flex-direction: row; flex-wrap: nowrap; height: auto; align-items: flex-end; gap: 10px; padding: 8px; border-radius: 14px; }
 .comms .comms-composer .v-agent-chat__draft[data-slot]:focus-within { outline: none; }
 .comms .comms-composer .v-agent-chat__input[data-slot] { flex: 1 1 0; width: auto; min-width: 0; min-height: 44px; max-height: 180px; resize: none; field-sizing: content; padding: 10px 12px; border-radius: 10px;
   background: transparent; box-shadow: none; font-size: 16px; line-height: 1.4; }
 .comms .comms-composer .v-agent-chat__input[data-slot]:focus, .comms .comms-composer .v-agent-chat__input[data-slot]:focus-visible { background: transparent; box-shadow: none; outline: none; }
 .comms .comms-composer .v-agent-chat__draft .v-agent-chat__composer-bar[data-slot] { width: auto; flex: 0 0 auto; padding: 0 0 2px; }
 .comms .comms-composer .v-agent-chat__composer-note { display: none; }
-.comms .comms-composer .v-agent-chat__send[data-slot] { --v-brand: var(--c, var(--v-pink)); min-height: 40px; }
+.comms .comms-composer .v-agent-chat__send[data-slot] { --v-brand: var(--c, var(--v-pink)); min-height: 44px; padding: 10px 18px; box-shadow: none; }
 .comms .comms-composer .v-agent-chat__hint { margin-top: 4px; justify-content: flex-start; padding-left: 14px; }
 .comms[data-phone] .comms-composer .v-agent-chat__hint { display: none; }
 .comms[data-phone] .comms-composer { position: fixed; left: 0; right: 0; z-index: 25; bottom: max(calc(var(--dock-h) + env(safe-area-inset-bottom)), var(--comms-kb, 0px));
@@ -245,7 +245,7 @@
 .comms-band .comms-screen__glass { width: var(--comms-face); height: calc(var(--comms-face) * 84 / 96); aspect-ratio: auto; }
 /* The band's height: its padding (10 + 10), the frame's (8 + 8), the glass (168) and the label (7 + 14), with a hair. */
 .comms-band__side { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
-.comms-people__head { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .14em; font-weight: 500; color: var(--v-text-2); }
+.comms-people__head { margin: 0 0 14px; font-size: 10.5px; letter-spacing: .14em; font-weight: 500; color: var(--v-text-2); }
 .comms-people ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .comms-people li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
 .comms-people__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -266,3 +266,6 @@
 .comms-thread[data-wide][data-short]:has(.comms-band[data-noav]) { --comms-band-h: 76px; }
 .comms-band[data-noav] .comms-band__side { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr); gap: 12px; overflow: hidden; padding-right: 0; }
 .comms-band[data-noav] .comms-band__side > * { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+.comms-context-menu { --comms-line: color-mix(in srgb, var(--v-text) 14%, transparent); position: fixed; right: auto; z-index: 1000; max-height: calc(100dvh - 16px); overflow-y: auto; }
+.comms-context-menu button:focus-visible { outline: 2px solid var(--v-pink); outline-offset: -2px; }

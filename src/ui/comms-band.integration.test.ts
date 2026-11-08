@@ -151,6 +151,41 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     });
   }
 
+  it('thread right-click actions stay on screen, dismiss with Escape, and archive then unarchive without opening the row', async () => {
+    const t = thread('art', 1);
+    const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    try {
+      await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+      await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
+      const p = await ctx.newPage();
+      await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
+      const row = p.locator('.comms-row').filter({ has: p.locator(`[data-prefetch="/comms/${bare(t)}"]`) });
+      await row.waitFor();
+      if (SHOTS) {
+        await p.locator('.comms-composer textarea').fill('A little more room around Send.');
+        await p.screenshot({ path: `${SHOTS}/comms-send-active.png` });
+      }
+      await row.click({ button: 'right' });
+      const menu = p.getByRole('menu', { name: 'Thread actions' });
+      await menu.waitFor();
+      if (SHOTS) await p.screenshot({ path: `${SHOTS}/comms-thread-context.png` });
+      expect(await menu.getByRole('menuitem').allTextContents()).toEqual(['Rename', 'Pin', 'Archive', 'Project', 'Delete']);
+      const box = await menu.boundingBox();
+      expect(box!.x + box!.width).toBeLessThanOrEqual(1920);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(1080);
+      await p.keyboard.press('Escape');
+      expect(await menu.count()).toBe(0);
+      await row.click({ button: 'right' });
+      await menu.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+      await expect.poll(() => row.count()).toBe(0);
+      await p.getByRole('button', { name: 'Archived', exact: true }).click();
+      await row.waitFor();
+      await row.click({ button: 'right' });
+      await menu.getByRole('menuitem', { name: 'Unarchive', exact: true }).click();
+      await expect.poll(() => row.count()).toBe(0);
+    } finally { await ctx.close(); }
+  });
+
   /** The chat's room (Jonathan, 2026-11-07): scrolled to its end, how far the words stay from the scrollbar's rail and the
    *  scroller's right edge, and how far the last message and the rail end above the composer's divider. */
   const room = async (p: Page) => p.evaluate(() => {
