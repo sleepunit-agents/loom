@@ -10,6 +10,7 @@
 // narrower than two panes fit (ONE_PANE_BELOW). Each thread has its comm screen: the agent's pixel portrait in a
 // Neon OS frame, its face following the thread's real state (comms.md, "The comm screen").
 import { lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { RailContext } from './desk-rail';
 import './comms.css';
 import { WorkPanel } from './comms-work';
@@ -690,7 +691,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
     rail.onAir({ agent: thread.agent }, me.current);
     return () => rail.onAir(null, me.current);
   }, [rail, wide, thread.agent]);
-  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={wide ? short : compact} />;
+  // While the agents' rail is shown beside this tile, this agent's rail card is the comm screen: drawn there, at its own
+  // size, and the band drops it (the avatar appears once). Rail hidden, a narrow screen or a phone: the band keeps it.
+  const into = wide && rail?.screen?.agent === thread.agent ? rail.screen.el : null;
+  const screen = <CommScreen agent={thread.agent} mark={mark} channel={thread.channel} face={face} talk={talk} link={link} on={onOf(messages)} compact={wide && !into ? short : !wide && compact} />;
 
   return (
     <article ref={pane} className="comms-thread" data-wide={wide || undefined} data-short={wide && short ? '' : undefined}>
@@ -715,9 +719,10 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
         {/* A desktop's thread (Jonathan, 2026-11-07: "outlook-esque"): a band of fixed height over the chat, the comm screen
             at its own size on the left (never stretched), who's in the conversation and the thread's work on the right,
             scrolling inside the band so its height never changes; the chat takes the rest. */}
+        {into && createPortal(screen, into)}
         {wide && (
-          <div className="comms-band">
-            {screen}
+          <div className="comms-band" data-noav={into ? '' : undefined}>
+            {!into && screen}
             <div className="comms-band__side">
               <section className="comms-people" aria-labelledby={`people-${thread.id}`}>
                 <h2 id={`people-${thread.id}`} className="comms-people__head loom-data">IN THIS CONVERSATION</h2>
@@ -879,6 +884,8 @@ const SHORT_BELOW = 520;
 // and a people-and-work side of 420 or more, so a work item's title reads on a line or two: 985, and Comms' own frame
 // and a tile's padding around it make 1100. Narrower, one pane, the threads a drawer from its header.
 const ONE_PANE_BELOW = 1100;
+/** The same with the comm screen in the agents' rail, not the band (its 208 and the gap gone). */
+const ONE_PANE_BELOW_RAIL = 880;
 
 export function CommsView({ data }: { data: CommsData }) {
   const { go, wide } = useEnv();
@@ -903,16 +910,20 @@ export function CommsView({ data }: { data: CommsData }) {
   // the thread with a way back. Measured on the box, not the screen; before the first paint, so two never flash.
   const box = useRef<HTMLDivElement>(null);
   const [one, setOne] = useState(false);
+  // Beside a shown agents' rail the thread's comm screen is the rail's, so two panes fit narrower (ONE_PANE_BELOW_RAIL).
+  const shownRail = !!useContext(RailContext)?.shown;
+  const hosted = useRef(shownRail);
+  hosted.current = shownRail;
   useLayoutEffect(() => {
     const el = box.current;
     if (!wide || !el) return;
     // Its border box, both times: the first read and every resize after measure the same edge.
-    const fit = (w: number) => setOne(w > 0 && w < ONE_PANE_BELOW);
+    const fit = (w: number) => setOne(w > 0 && w < (hosted.current ? ONE_PANE_BELOW_RAIL : ONE_PANE_BELOW));
     fit(el.getBoundingClientRect().width);
     const ro = new ResizeObserver(([e]) => fit(e.borderBoxSize?.[0]?.inlineSize ?? el.getBoundingClientRect().width));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [wide]);
+  }, [wide, shownRail]);
   const asked = opening && opening.id !== (data.which === 'thread' ? data.thread?.id : undefined) ? opening : undefined;
   // One pane (t-1925 C): the threads are a drawer over it, from the menu button in its header; picking one closes it.
   const [drawerOpen, setDrawerOpen] = useState(false);

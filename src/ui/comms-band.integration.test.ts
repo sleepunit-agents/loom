@@ -88,7 +88,10 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     const stacked = getComputedStyle(document.querySelector('.comms-band__side')!).display !== 'grid';
     const side = document.querySelector(stacked ? '.comms-band__side' : '.comms-band .comms-work')!;
     const tile = document.querySelector('.loom-tile[data-tile="/comms"]')!.getBoundingClientRect();
-    const composer = r('.comms-composer'), chat = r('.comms-chat'), b = r('.comms-band'), glass = r('.comms-screen__glass');
+    // The comm screen: the band's, or (beside the agents' rail, docs/specs/agent-desk.md) the rail card's.
+    const inRail = !document.querySelector('.comms-band .comms-screen');
+    const scr = inRail ? '.loom-rscreen .comms-screen' : '.comms-band .comms-screen';
+    const composer = r('.comms-composer'), chat = r('.comms-chat'), b = r('.comms-band'), glass = r(`${scr} .comms-screen__glass`);
     // Nothing past the window: no element wider than the tile; the frames (the box, the band, the chat, the composer) inside
     // its bottom too (a message scrolled out of the chat's own view is inside its scroller, not past the window).
     const inside = [...document.querySelectorAll('.loom-tile[data-tile="/comms"] .comms *')].every((e) => { const x = e.getBoundingClientRect(); return !x.width || (x.left >= tile.left - 1 && x.right <= tile.right + 1); })
@@ -96,11 +99,11 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     // The side (or the work column) scrolls: overflow-y auto, and a scroll moves it (a clipped side, overflow hidden, would read 0).
     const before = side.scrollTop; side.scrollTop = 9999; const moved = side.scrollTop > before && getComputedStyle(side).overflowY === 'auto'; side.scrollTop = 0;
     // The face: a pixel canvas drawn at a whole scale, its CSS size its own pixels (never stretched by layout).
-    const cv = document.querySelector<HTMLCanvasElement>('.comms-band .comms-screen__glass canvas');
+    const cv = document.querySelector<HTMLCanvasElement>(`${scr} .comms-screen__glass canvas`);
     const face = cv ? { k: cv.getBoundingClientRect().width / cv.width, ky: cv.getBoundingClientRect().height / cv.height } : null;
     const list = document.querySelector('.comms > .comms-list')?.getBoundingClientRect();
     const thread = document.querySelector('.comms-thread')!.getBoundingClientRect();
-    return { band: Math.round(b.height), side: { scroll: side.scrollHeight, client: side.clientHeight }, glass: [glass.width, glass.height],
+    return { inRail, band: Math.round(b.height), side: { scroll: side.scrollHeight, client: side.clientHeight }, glass: [glass.width, glass.height],
       chatFills: Math.abs(chat.top - b.bottom) <= 2 && Math.abs(chat.bottom - composer.top) <= 2 && chat.height > 120, inside,
       one: document.querySelector('.comms')!.hasAttribute('data-one'), list: !!list, listW: list ? Math.round(list.width) : 0, beside: !!list && thread.left >= list.right - 1, moved, face };
   });
@@ -116,7 +119,7 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
         const p = await ctx.newPage();
         await p.route(`**/comms/${t.id}/work`, (r) => r.fulfill({ json: work(n) }));
         await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
-        await p.locator('.comms-band .comms-screen').waitFor();
+        await p.locator('.comms-band .comms-screen, .loom-rscreen .comms-screen').first().waitFor();
         await p.locator(n ? '.comms-band .comms-work__row' : '.comms-band .comms-work__empty').first().waitFor();
         await p.waitForTimeout(300);
         sizes[n] = await band(p);
@@ -129,18 +132,21 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
       expect(sizes[20].moved).toBe(true);
       // The face at its own 2x: the glass is 96 x 84 x 2, never stretched to the width.
       for (const s of [sizes[0], sizes[20]]) {
-        expect(s.glass).toEqual([192, 168]);
+        // From 1280 the comm screen is the agents' rail's (the band drops it); narrower, the band's at its own 2x.
+        expect(s.inRail).toBe(w >= 1280);
+        if (s.inRail) expect(s.glass[1]).toBe(184); else expect(s.glass).toEqual([192, 168]);
         expect(s.face).not.toBeNull();
         // Sheet pixels to screen pixels: a whole number, 2 or more, the same both ways (never stretched).
         expect(Number.isInteger(s.face!.k) && s.face!.k >= 2).toBe(true);
         expect(s.face!.ky).toBe(s.face!.k);
         expect(s.chatFills).toBe(true);
         expect(s.inside).toBe(true);
-        // Mid-size: one pane, the threads a drawer; wide: the list beside the thread.
-        expect(s.one).toBe(layout === 'mid');
-        expect(s.list).toBe(layout === 'wide');
+        // Mid-size (1024; 1280 beside the rail): one pane, the threads a drawer; wide: the list beside the thread.
+        const two = layout === 'wide';
+        expect(s.one).toBe(!two);
+        expect(s.list).toBe(two);
         // Wide: the list, 320 px, beside the thread.
-        if (layout === 'wide') expect([s.listW, s.beside]).toEqual([320, true]);
+        if (two) expect([s.listW, s.beside]).toEqual([320, true]);
       }
     });
   }
@@ -174,11 +180,14 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
   /** The band's columns: the comm screen, who's in the conversation, the work; side by side (three lefts) or stacked (two). */
   const columns = async (p: Page) => p.evaluate(() => {
     const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
-    const screen = r('.comms-band .comms-screen'), people = r('.comms-band .comms-people'), work = r('.comms-band .comms-work'), b = r('.comms-band');
+    const inRail = !document.querySelector('.comms-band .comms-screen');
+    const scr = inRail ? '.loom-rscreen .comms-screen' : '.comms-band .comms-screen';
+    const screen = r(scr), people = r('.comms-band .comms-people'), work = r('.comms-band .comms-work'), b = r('.comms-band');
     const scrolls = (s: string) => { const e = document.querySelector<HTMLElement>(s)!; const st = getComputedStyle(e).overflowY; return st === 'auto' || st === 'scroll'; };
-    return { n: new Set([screen.left, people.left, work.left].map(Math.round)).size, thread: Math.round(r('.comms-thread').width),
-      people: Math.round(people.width), work: Math.round(work.width), glass: [r('.comms-band .comms-screen__glass').width, r('.comms-band .comms-screen__glass').height],
-      inBand: [screen, people, work].every((x) => x.right <= b.right + 1 && x.left >= b.left - 1),
+    const inBand = inRail ? [people, work] : [screen, people, work];
+    return { inRail, n: new Set(inBand.map((x) => Math.round(x.left))).size, thread: Math.round(r('.comms-thread').width),
+      people: Math.round(people.width), work: Math.round(work.width), glass: [r(`${scr} .comms-screen__glass`).width, r(`${scr} .comms-screen__glass`).height],
+      inBand: inBand.every((x) => x.right <= b.right + 1 && x.left >= b.left - 1),
       workScrolls: scrolls('.comms-band .comms-work') || scrolls('.comms-band__side'), peopleScrolls: scrolls('.comms-band .comms-people') || scrolls('.comms-band__side') };
   });
 
@@ -215,11 +224,14 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
         expect(g.mine.toLeft).toBeGreaterThan(g.mine.toRight);
         expect(g.theirs.toLeft).toBeLessThan(60);
         // The band: three columns where they fit, the stack below; each column at least its least width, the face its own size.
-        expect(c.n).toBe(cols);
-        expect(c.glass).toEqual([192, 168]);
+        // From 1280 the screen is the rail's: the band is two columns, who's in it and the work.
+        expect(c.inRail).toBe(w >= 1280);
+        expect(c.n).toBe(c.inRail ? 2 : cols);
+        if (c.inRail) expect(c.glass[1]).toBe(184); else expect(c.glass).toEqual([192, 168]);
         expect(c.inBand).toBe(true);
         expect(c.workScrolls && c.peopleScrolls).toBe(true);
-        if (cols === 3) expect([c.people >= 180, c.work >= 300]).toEqual([true, true]);
+        if (cols === 3 && !c.inRail) expect([c.people >= 180, c.work >= 300]).toEqual([true, true]);
+        if (c.inRail) expect([c.people >= 160, c.work >= 300]).toEqual([true, true]);
       });
     }
   }

@@ -76,9 +76,12 @@ member's stream), when a Comms pane posts a read, when the tab comes back, and e
   with an ask, else one with something unread, else the first. A Comms pane in a tile says whose thread it shows
   (desk-rail.ts `RailContext`); a line opens its agent's thread. The rail measures before it paints, so a fold never
   flashes, and tries the cards at full size again whenever its height or what they hold changes.
-- **The comm screen moves to the rail** (phase 3): the avatar appears once. While Comms shows an agent's thread and
+- **The comm screen moves to the rail** (phase 3, built): the avatar appears once. While Comms shows an agent's thread and
   the rail is shown, that agent's rail card is the comm screen (static on a reply, talking, its channel line) and the
-  Comms band drops its avatar. With the rail hidden or auto-hiding, and on a phone, the band keeps it.
+  Comms band drops its avatar. With the rail hidden or auto-hiding, under 1280 px, and on a phone, the band keeps it.
+  The Comms pane draws the screen into the card (a portal, desk-rail.ts), so it plays the thread's own state; without
+  the screen the band is who's in the conversation and the work, 140 px tall, and two panes fit Comms from 880 px
+  (comms.tsx ONE_PANE_BELOW_RAIL) instead of 1100.
 
 ## Hiding the rail and the dock (phase 4)
 

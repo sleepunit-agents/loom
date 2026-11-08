@@ -149,3 +149,12 @@
   color:var(--v-on-accent);background:var(--c)}
 :root[data-look] .loom-rrow:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
 @media (hover:hover) and (pointer:fine){:root[data-look] .loom-rrow:hover{box-shadow:inset 0 0 0 1px var(--v-edge),inset 2px 0 0 var(--c);background:color-mix(in srgb,var(--v-beige-2) 92%,transparent)}}
+
+/* the comm screen's card: the screen (drawn by the Comms pane, comms.css) the card's width, its face at 2x */
+:root[data-look] .loom-rscreen{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 70%,var(--v-border)),inset 0 0 40px -20px var(--c)}
+:root[data-look] .loom-rscreen__slot{padding:12px 12px 4px;min-height:24px}
+:root[data-look] .loom-rscreen__slot .comms-screen{width:100%}
+:root[data-look] .loom-rscreen__slot .comms-screen__glass{width:100%;height:184px;aspect-ratio:auto}
+:root[data-look] .loom-rscreen__meta{display:flex;align-items:baseline;gap:8px;min-width:0;padding:6px 12px 2px}
+:root[data-look] .loom-rscreen__meta b{font-family:var(--font-display);font-weight:600;font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:root[data-look] .loom-rscreen__meta small{font-size:11px;color:var(--v-text-3);white-space:nowrap}
