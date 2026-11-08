@@ -63,7 +63,8 @@ class Device {
   }
 }
 
-type CallOpts = { cookie?: string; json?: unknown; form?: Record<string, string>; host?: string; accept?: string };
+/** `fetch`: as the page's own script posts an action, for its answer as JSON (x-loom-fetch). */
+type CallOpts = { cookie?: string; json?: unknown; form?: Record<string, string>; host?: string; accept?: string; fetch?: boolean };
 /** A request to the server on `port`, as a same-origin browser at HOST would send it. */
 function callAt(port: number, method: string, path: string, opts: CallOpts = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
@@ -72,6 +73,7 @@ function callAt(port: number, method: string, path: string, opts: CallOpts = {})
       host: opts.host ?? HOST, 'sec-fetch-site': 'same-origin',
       ...(opts.cookie ? { cookie: opts.cookie } : {}),
       ...(opts.accept ? { accept: opts.accept } : {}),
+      ...(opts.fetch ? { 'x-loom-fetch': '1' } : {}),
       ...(body !== undefined ? { 'content-type': opts.json !== undefined ? 'application/json' : 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } : {}),
     } }, (res) => {
       let data = '';
@@ -88,8 +90,10 @@ type Call = (method: string, path: string, opts?: CallOpts) => Promise<Reply>;
 /** Add a passkey from the browser with this cookie: the page's form token, the options, the registration. */
 async function addPasskeyWith(call: Call, cookie: string, device: Device, label: string): Promise<Reply> {
   const csrf = (JSON.parse((await call('GET', '/passkeys', { cookie, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
-  const o = JSON.parse((await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } })).body);
-  if (!o.challenge) return { status: 403, headers: {}, body: JSON.stringify(o) };
+  const opts = await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } });
+  const o = JSON.parse(opts.body);
+  // Refused at the options (a stale session, a stale form): that reply, as the server sent it.
+  if (opts.status !== 200) return opts;
   return call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label, ...device.register(o.challenge) } });
 }
 async function passkeySignInWith(call: Call, device: Device, o: Parameters<Device['assert']>[1] = {}): Promise<Reply> {
@@ -324,8 +328,21 @@ describe('passkeys in a household', () => {
     const r = await addPasskeyWith(call, old, new Device(), 'Old');
     expect(r.status).toBe(403);
     expect(JSON.parse(r.body).error).toMatch(/within 10 minutes of signing in/);
+    // The registration itself is refused too, before its challenge is even looked at.
+    const csrf = (JSON.parse((await call('GET', '/passkeys', { cookie: old, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
+    const posted = await call('POST', '/passkeys', { cookie: old, json: { _csrf: csrf, label: 'Old', ...new Device().register('bm90LWlzc3VlZA') } });
+    expect(posted.status).toBe(403);
+    expect(JSON.parse(posted.body).error).toMatch(/within 10 minutes of signing in/);
+    // A sign-in link the stale browser makes for itself opens a session no fresher than it: no way round.
+    const made = await call('POST', '/act/loom', { cookie: old, fetch: true, form: { _csrf: csrf, _action: 'signin-link', _path: 'passkeys' } });
+    const code = /\/login\/([0-9a-f]{64})/.exec(made.body)![1];
+    const relinked = cookieOf(await call('POST', `/login/${code}`));
+    expect(await signedIn(relinked)).toBe(true);
+    expect((await addPasskeyWith(call, relinked, new Device(), 'Relinked')).status).toBe(403);
     expect(sessionStore(h.home).passkeys()).toEqual([]);
     expect(loadTokens(h.home).filter((t) => t.passkey)).toEqual([]);
+    // A link made on loom's machine (`loom token link`) is a fresh sign-in.
+    expect((await addPasskeyWith(call, await linkSignIn(), new Device(), 'Fresh')).status).toBe(200);
   });
 
   it('removing the member stops their passkey, which never reaches past them; removing a passkey stops it and its token', async () => {
@@ -395,6 +412,59 @@ describe('passkeys in a household', () => {
     expect(tokenOf(cToken)?.revoked).toBeTruthy();
     expect((await passkeySignIn(c)).status).toBe(401);
     expect((await passkeySignIn(b)).status).toBe(200);
+  });
+
+  it('Setup offers to revoke a token with its passkeys, and plain Revoke keeps them', async () => {
+    const pasted = createToken(h, { role: { kind: 'owner' }, label: 'laptop' }).token;
+    const viaPaste = cookieOf(await call('POST', '/login', { form: { token: pasted } }));
+    const [a, b] = [new Device(), new Device()];
+    await addPasskey(viaPaste, a, 'A');
+    await addPasskey(viaPaste, b, 'B');
+    const admin = await linkSignIn();
+    type Item = { text: string; meta?: string; act?: { action: string; label: string; confirm?: string; fields?: Record<string, string> } };
+    type Block = { type: string; summary?: string; items?: Item[]; blocks?: Block[] };
+    const setup = JSON.parse((await call('GET', '/a/art/setup', { cookie: admin, accept: 'application/json' })).body) as { ctx: { csrf: string }; page: { sections: Array<{ id: string; blocks: Block[] }> } };
+    const tokens = setup.page.sections.find((x) => x.id === 'tokens')!.blocks;
+    // The passkeys' own tokens are rows saying what they were made from; the laptop's says two were made from it.
+    const rows = tokens.filter((x) => x.type === 'list').flatMap((x) => x.items!);
+    expect(rows.find((i) => i.text.startsWith('Passkey: A · jonathan'))?.meta).toContain('made from "laptop"');
+    expect(rows.find((i) => i.text === 'laptop')?.meta).toContain('2 passkeys made from it');
+    const fold = tokens.find((x) => x.type === 'details' && x.summary === 'Revoke a token with its passkeys')!;
+    const offer = fold.blocks![0].items!.find((i) => i.text === 'laptop')!;
+    expect(offer.act).toMatchObject({ action: 'revoke-token', fields: { label: 'laptop', passkeys: 'with' }, confirm: expect.stringMatching(/the 2 passkeys made from it are removed/) });
+    const r = await call('POST', '/act/loom', { cookie: admin, fetch: true, form: { _csrf: setup.ctx.csrf, _action: 'revoke-token', _path: 'a/art/setup', ...offer.act!.fields! } });
+    expect(JSON.parse(r.body).message).toMatch(/The 2 passkeys made from it are removed/);
+    expect(sessionStore(h.home).passkeys()).toEqual([]);
+    expect((await passkeySignIn(a)).status).toBe(401);
+    // Plain Revoke, on another: its passkey stays.
+    const other = createToken(h, { role: { kind: 'owner' }, label: 'desk' }).token;
+    const c = new Device();
+    await addPasskey(cookieOf(await call('POST', '/login', { form: { token: other } })), c, 'C');
+    const plain = await call('POST', '/act/loom', { cookie: admin, fetch: true, form: { _csrf: setup.ctx.csrf, _action: 'revoke-token', _path: 'a/art/setup', label: 'desk' } });
+    expect(JSON.parse(plain.body).message).toMatch(/The passkey made from it keeps working/);
+    expect((await passkeySignIn(c)).status).toBe(200);
+  });
+
+  it('removing a passkey can take the passkeys added from its sessions, down the line', async () => {
+    const [first, second, third, apart] = [new Device(), new Device(), new Device(), new Device()];
+    await addPasskey(await linkSignIn(), first, 'First');
+    // Signed in with the first, a browser adds the second; signed in with that, the third.
+    await addPasskey(cookieOf(await passkeySignIn(first)), second, 'Second');
+    await addPasskey(cookieOf(await passkeySignIn(second)), third, 'Third');
+    await addPasskey(await linkSignIn(), apart, 'Apart');
+    const keys = Object.fromEntries(sessionStore(h.home).passkeys().map((k) => [k.label, k]));
+    expect(tokenOf(keys.Second.tokenLabel!)?.from).toBe(keys.First.tokenLabel);
+    const admin = await linkSignIn();
+    type Item = { text: string; meta?: string; act?: { fields?: Record<string, string> } };
+    const view = JSON.parse((await call('GET', '/account', { cookie: admin, accept: 'application/json' })).body) as { ctx: { csrf: string }; page: { sections: Array<{ id: string; blocks: Array<{ type: string; summary?: string; items?: Item[]; blocks?: Array<{ items?: Item[] }> }> }> } };
+    const blocks = view.page.sections.find((x) => x.id === 'passkeys')!.blocks;
+    expect(blocks[0].items!.find((i) => i.text === 'Second')?.meta).toContain(`from "${keys.First.tokenLabel}"`);
+    const offer = blocks.find((b) => b.summary === 'Remove a passkey with the ones added from it')!.blocks![0].items!.find((i) => i.text === 'First')!;
+    expect(offer.act?.fields).toEqual({ id: keys.First.id, made: 'with' });
+    expect((await call('POST', '/act/loom', { cookie: admin, form: { _csrf: view.ctx.csrf, _action: 'passkey-remove', _path: 'passkeys', ...offer.act!.fields! } })).status).toBe(303);
+    expect(sessionStore(h.home).passkeys().map((k) => k.label)).toEqual(['Apart']);
+    for (const d of [first, second, third]) expect((await passkeySignIn(d)).status).toBe(401);
+    expect((await passkeySignIn(apart)).status).toBe(200);
   });
 
   it('a passkey made before moves onto its own token at start only if its token is live, once', async () => {

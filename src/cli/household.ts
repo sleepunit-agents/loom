@@ -15,7 +15,7 @@ import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
 import { extractGlobalFlags, parseVerb, type VerbOptions } from './args.js';
 import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
-import { revokeTokenAndPasskeys } from '../ui/passkey-tokens.js';
+import { revokeTokenAndPasskeys, thePasskeys, ThePasskeys } from '../ui/passkey-tokens.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -264,9 +264,10 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       const { token: t, passkeys } = revokeTokenAndPasskeys(h, label, p.values['with-passkeys'] === true);
       io.stdout(`Revoked ${t.role} token "${t.label}".\n`);
       if (passkeys) {
+        const them = thePasskeys(passkeys);
         io.stdout(p.values['with-passkeys'] === true
-          ? `Removed the ${passkeys === 1 ? 'passkey' : `${passkeys} passkeys`} made from it, and revoked ${passkeys === 1 ? 'its token' : 'their tokens'}.\n`
-          : `${passkeys === 1 ? 'The passkey' : `The ${passkeys} passkeys`} made from it keep${passkeys === 1 ? 's' : ''} working (${passkeys === 1 ? 'it has its own token' : 'each has its own token'}); --with-passkeys revokes those too.\n`);
+          ? `Removed ${them} made from it, and revoked ${passkeys === 1 ? 'its token' : 'their tokens'}.\n`
+          : `${ThePasskeys(passkeys)} made from it keep${passkeys === 1 ? 's' : ''} working (each has its own token); --with-passkeys revokes those too.\n`);
       }
       return 0;
     }

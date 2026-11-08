@@ -27,17 +27,23 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, r
 import { join } from 'node:path';
 import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, type Household } from '../household.js';
 
-export interface Session { issuedAt: number; secret: Buffer }
+/**
+ * `signedInAt`: when the person last proved who they are, if earlier than `issuedAt`: a session opened with a sign-in
+ * link that an older session made for itself carries that one's (t-1969), so making a link can't refresh a session.
+ */
+export interface Session { issuedAt: number; secret: Buffer; signedInAt?: number }
+/** When this session's person last signed in (a passkey is added only soon after: passkey-tokens.ts FRESH_SIGNIN_S). */
+export const signedInAt = (s: Session) => Math.min(s.issuedAt, s.signedInAt ?? s.issuedAt);
 
 /** How a session signed in: a token pasted, a one-time link, a passkey. */
 export type Via = 'token' | 'link' | 'passkey';
-interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string; via?: Via }
-interface Link { expires: number; secret: string; label?: string }
+interface Stored { issuedAt: number; secret: string; seenAt?: number; device?: string; label?: string; via?: Via; signedInAt?: number }
+interface Link { expires: number; secret: string; label?: string; signedInAt?: number }
 
 /** A session as the owner sees it (the Account page, `loom sessions`): never its id, only its ref. */
 export interface SessionInfo { ref: string; issuedAt: number; seenAt?: number; device?: string; label?: string; via?: Via; secret: Buffer }
 /** How it was opened, beside its token: what the browser said it was, how it signed in, and the label its sign-in link carried. */
-interface SessionMeta { device?: string; label?: string; via?: Via }
+interface SessionMeta { device?: string; label?: string; via?: Via; signedInAt?: number }
 /** A session's ref: the start of its id's hash, enough to name one among MAX_SESSIONS, useless as a cookie. */
 export const REF = /^[0-9a-f]{16}$/;
 /** A session's last use is written at most this often (each write is a locked rewrite of the file). */
@@ -282,8 +288,9 @@ export class SessionStore {
     const device = cleanLabel(meta.device);
     const label = cleanLabel(meta.label);
     const via = meta.via && ['token', 'link', 'passkey'].includes(meta.via) ? meta.via : undefined;
+    const at = typeof meta.signedInAt === 'number' && Number.isFinite(meta.signedInAt) && meta.signedInAt < nowS ? Math.floor(meta.signedInAt) : undefined;
     this.withLock((f) => {
-      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}), ...(via ? { via } : {}) };
+      f.sessions[hashId(id)] = { issuedAt: nowS, secret: secret.toString('hex'), ...(device ? { device } : {}), ...(label ? { label } : {}), ...(via ? { via } : {}), ...(at !== undefined ? { signedInAt: at } : {}) };
       const keys = Object.keys(f.sessions).sort((a, b) => f.sessions[a].issuedAt - f.sessions[b].issuedAt);
       for (const k of keys.slice(0, Math.max(0, keys.length - MAX_SESSIONS))) delete f.sessions[k];
     });
@@ -292,17 +299,20 @@ export class SessionStore {
 
   get(id: string): Session | null {
     const s = this.read().sessions[hashId(id)];
-    return s ? { issuedAt: s.issuedAt, secret: Buffer.from(s.secret, 'hex') } : null;
+    return s ? { issuedAt: s.issuedAt, secret: Buffer.from(s.secret, 'hex'), ...(s.signedInAt !== undefined ? { signedInAt: s.signedInAt } : {}) } : null;
   }
 
-  /** A one-time sign-in code for this token digest, good for `ttlS` seconds; `label` goes to the session it opens. */
-  createLink(secret: Buffer, ttlS: number, nowS = Math.floor(Date.now() / 1000), label?: string): string {
+  /**
+   * A one-time sign-in code for this token digest, good for `ttlS` seconds; `label` goes to the session it opens, and
+   * `signedInAt` too (a link a session made for its own person: Session).
+   */
+  createLink(secret: Buffer, ttlS: number, nowS = Math.floor(Date.now() / 1000), label?: string, signedInAt?: number): string {
     const code = randomBytes(32).toString('hex');
     const named = cleanLabel(label);
     this.withLock((f) => {
       f.links ??= {};
       for (const [k, l] of Object.entries(f.links)) if (l.expires <= nowS) delete f.links[k];
-      f.links[hashId(code)] = { expires: nowS + ttlS, secret: secret.toString('hex'), ...(named ? { label: named } : {}) };
+      f.links[hashId(code)] = { expires: nowS + ttlS, secret: secret.toString('hex'), ...(named ? { label: named } : {}), ...(signedInAt !== undefined ? { signedInAt } : {}) };
     });
     return code;
   }
@@ -313,13 +323,13 @@ export class SessionStore {
   }
 
   /** useLink, with the label the link was made with. */
-  spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string } | null {
+  spendLink(code: string, nowS = Math.floor(Date.now() / 1000)): { secret: Buffer; label?: string; signedInAt?: number } | null {
     if (!existsSync(this.file)) return null;
     return this.withLock((f) => {
       const l = f.links?.[hashId(code)];
       if (!l) return null;
       delete f.links![hashId(code)];
-      return l.expires > nowS ? { secret: Buffer.from(l.secret, 'hex'), ...(l.label ? { label: l.label } : {}) } : null;
+      return l.expires > nowS ? { secret: Buffer.from(l.secret, 'hex'), ...(l.label ? { label: l.label } : {}), ...(l.signedInAt !== undefined ? { signedInAt: l.signedInAt } : {}) } : null;
     });
   }
 
@@ -615,7 +625,7 @@ export const LINK_TOKEN = 'page sign-in links';
  * for a member (docs/specs/owners.md): its session is theirs. The first household owner's links
  * use the household's link token, as before; another member's, a link token of their own.
  */
-export function signinLink(h: Household, ttlS: number, member?: string, label?: string): string {
+export function signinLink(h: Household, ttlS: number, member?: string, label?: string, signedInAt?: number): string {
   const m = member === undefined ? firstOwner(h) : memberOf(h, member);
   if (!m) throw new HouseholdError(`no member named ${member} in this household`);
   const tokens = loadTokens(h.home).filter((t) => isLive(t) && t.role === 'owner');
@@ -627,5 +637,5 @@ export function signinLink(h: Household, ttlS: number, member?: string, label?: 
     const label = !shared && m.person === firstOwner(h).person ? LINK_TOKEN : `${LINK_TOKEN} · ${m.person}`;
     record = createToken(h, { role: { kind: 'owner', ...(label === LINK_TOKEN ? {} : { member: m.person }) }, label }).record;
   }
-  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS, undefined, label);
+  return sessionStore(h.home).createLink(Buffer.from(record.sha256, 'hex'), ttlS, undefined, label, signedInAt);
 }

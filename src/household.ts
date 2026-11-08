@@ -396,7 +396,7 @@ function validRecord(t: unknown): t is TokenRecord {
     && (r.expires === undefined || (typeof r.expires === 'string' && Number.isFinite(Date.parse(r.expires))))
     && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)))
     && (r.passkey === undefined || (typeof r.passkey === 'string' && SHA_HEX.test(r.passkey)))
-    && (r.from === undefined || typeof r.from === 'string')
+    && (r.from === undefined || (typeof r.from === 'string' && r.from.length <= 120 && !/[\x00-\x1f\x7f]/.test(r.from)))
     && (r.from_sha256 === undefined || (typeof r.from_sha256 === 'string' && SHA_HEX.test(r.from_sha256)));
 }
 

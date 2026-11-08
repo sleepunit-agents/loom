@@ -27,8 +27,9 @@ under the same lock):
   more. Its record says what it is: labeled `Passkey: <the passkey's name> ·
   <person> · <12 hex>`, with `passkey` (the sha256 of the credential id) and
   `from` / `from_sha256` (the token the adding browser was signed in with). The
-  token list (`loom token list`, an agent's Setup) and the signed-in list show
-  that label and what it was made from.
+  token list (`loom token list`, an agent's Setup) shows that label and what it
+  was made from; Profile's Passkeys row says what it was added from; a session
+  it opened shows in the signed-in list as that label.
 
   Revoking another token never stops a passkey on its own: revoking the page
   sign-in links on 2026-11-07 stopped Jonathan's only one, which is why this
@@ -36,9 +37,14 @@ under the same lock):
   (`loom token revoke <label> --with-passkeys`; on Setup, "Revoke a token with
   its passkeys"): each one's token is revoked and the passkey removed. Plain
   revoke leaves them working, so routine link cleanup never kills a passkey.
+  Taking them follows the line down: a passkey added from a browser that a
+  passkey made from that token signed in goes too. Removing a passkey works the
+  same way: plain Remove leaves the passkeys added from its sessions working;
+  "Remove a passkey with the ones added from it" (Profile) takes them too.
   What stops a passkey: removing it (its token is revoked with it, so the
   sessions it opened end too), removing its person from the household, or
-  revoking its own token (it then shows as stopped, and can be removed).
+  revoking its own token (it then shows as stopped, and can be removed, by an
+  agent owner too).
 
   Outside a household (a single bearer token), a passkey still signs in as the
   adding session's token, and only while that one is live.
@@ -87,7 +93,12 @@ challenge is 32 random bytes, kept by hash, used once, and good for 5 minutes.
 
 **Adding one** needs a signed-in session that signed in within the last 10
 minutes (one left signed in on a desk can't quietly add a lasting way in;
-the page says to sign in again), and the form token for it:
+the page says to sign in again), and the form token for it. Signing in is a
+token, a passkey, or a link made on loom's machine (`loom token link`); a link
+the page makes for its own person ("Make a one-time sign-in link", or a
+Members link for yourself) opens a session that signed in when the one that
+made it did, so it can't freshen a stale one. This holds outside a household
+too:
 
 ```
 GET  /passkeys                           the page (also /account, the Profile app): the passkeys, Remove, and "Add a passkey"
