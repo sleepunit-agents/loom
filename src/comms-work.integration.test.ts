@@ -285,7 +285,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
     it('draws the block per viewer: a link for the thread\'s member, words for anyone else, nothing of the thread', async () => {
       const t = await open('the frame');
       expect((await req(tok.jonathan, 'POST', `/comms/${t.id}/title`, { title: 'Comm screen frame' })).status).toBe(200);
-      writeFileSync(join(h.home, 'tasks-page.json'), JSON.stringify({ title: 'A task', sections: [
+      writeFileSync(join(h.home, 'tasks-page.json'), JSON.stringify({ title: 'A task', changes: { groups: [], rows: [], selected: '', reader: { title: 'A change', sections: [{ id: 'from', blocks: [{ type: 'from', conversation: t.conversation }] }] } }, sections: [
         { id: 'from', place: 'side', blocks: [{ type: 'from', conversation: t.conversation }] },
         { id: 'other', blocks: [{ type: 'from', conversation: 'cv-ffffffffffff' }] },
         { id: 'sheet', blocks: [{ type: 'panel', rows: [{ label: 'Where', value: 'see', sheet: { blocks: [{ type: 'from', conversation: t.conversation }] } }] }] },
@@ -294,20 +294,25 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       const blocks = async (who: string) => {
         const r = await req(tok[who], 'GET', '/p/tasks/task/t-1');
         expect(r.status, r.text).toBe(200);
-        return { json: r.text, blocks: ((r.body as { page: { sections: Array<{ blocks: Array<Record<string, unknown>> }> } }).page.sections).map((s) => s.blocks[0]) };
+        const nested = (r.body as { page: { changes: { reader: { sections: { blocks: unknown[] }[] } } } }).page.changes.reader.sections[0].blocks[0];
+        return { nested, json: r.text, blocks: ((r.body as { page: { sections: Array<{ blocks: Array<Record<string, unknown>> }> } }).page.sections).map((s) => s.blocks[0]) };
       };
       const j = await blocks('jonathan');
       expect(j.blocks[0]).toEqual({ type: 'link', text: 'From: Comm screen frame', page: `loom:comms/${t.id.replace(/^th:/, '')}` });
+      expect(j.nested).toEqual(j.blocks[0]);
       expect(j.blocks[1]).toMatchObject({ type: 'text', text: 'From a conversation' });
       const s = await blocks('sam');
       expect(s.blocks[0]).toMatchObject({ type: 'text', text: 'From a Comms thread' });
+      expect(s.nested).toEqual(s.blocks[0]);
       const l = await blocks('loren');
       expect(l.blocks[0]).toMatchObject({ type: 'text', text: 'From a conversation' });
+      expect(l.nested).toEqual(l.blocks[0]);
       expect(JSON.stringify(j.blocks[2])).toContain('From: Comm screen frame');
       expect(JSON.stringify(s.blocks[2])).toContain('From a Comms thread');
       for (const x of [s, l]) {
         expect(x.json).not.toContain('Comm screen frame');
         expect(x.json).not.toContain(t.id);
+        expect(x.json).not.toContain(t.conversation);
       }
       const html = await req(tok.sam, 'GET', '/p/tasks/task/t-1', undefined, 'text/html');
       expect(html.text).not.toContain('Comm screen frame');

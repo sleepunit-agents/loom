@@ -286,10 +286,10 @@ const isFrom = (v: unknown): v is { type: 'from'; conversation: string } =>
   typeof v === 'object' && v !== null && (v as { type?: unknown }).type === 'from' && typeof (v as { conversation?: unknown }).conversation === 'string';
 
 /**
- * A page with every `from` block drawn for `member`, wherever it sits (a section, a details, a panel row's sheet): no
+ * A page with every `from` block drawn for `member`, wherever it sits (a section, a details, a panel row's sheet, a Changes reader): no
  * piece ever learns a thread's title or member, and none reaches the app undrawn.
  */
-export function resolveFrom<P extends Pick<Page, 'sections'>>(page: P, home: string | undefined, member: Member | undefined): P {
+export function resolveFrom<P extends Pick<Page, 'sections' | 'changes'>>(page: P, home: string | undefined, member: Member | undefined): P {
   let found = false;
   const walk = (v: unknown): unknown => {
     if (Array.isArray(v)) return v.map(walk);
@@ -298,5 +298,6 @@ export function resolveFrom<P extends Pick<Page, 'sections'>>(page: P, home: str
     return v;
   };
   const sections = walk(page.sections) as P['sections'];
-  return found ? { ...page, sections } : page;
+  const changes = page.changes ? walk(page.changes) as P['changes'] : undefined;
+  return found ? { ...page, sections, ...(changes ? { changes } : {}) } : page;
 }
