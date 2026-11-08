@@ -15,6 +15,7 @@ import { runtimePieces } from './pieces-managed.js';
 import type { IOStreams } from './io.js';
 import { extractGlobalFlags, parseVerb, type VerbOptions } from './args.js';
 import { REF, SESSION_MAX_AGE_S, sessionStore, signinLink } from '../ui/sessions.js';
+import { revokeTokenAndPasskeys } from '../ui/passkey-tokens.js';
 
 const HOUSEHOLD_USAGE = `Usage: loom household <command>
 
@@ -53,7 +54,10 @@ const TOKEN_USAGE = `Usage: loom token <command>
                            Mint a token. It's printed once; only its sha256 is kept.
                            --service and --house name a house's (agent:<name>/<service>@<house>): a piece can tell it apart
   list                     Every token: label, role, created, last used, revoked
-  revoke <label>           Revoke the live token with that label (takes effect on the next request)
+  revoke <label> [--with-passkeys]
+                           Revoke the live token with that label (takes effect on the next request).
+                           A passkey made from a browser signed in with it has its own token and keeps
+                           working; --with-passkeys revokes those too, and removes the passkeys
   link [--minutes 10] [--page-url <loom's page address>] [--label <text>]
                            A one-time link that signs a browser in to the page (no token to paste).
                            Its sessions are the owner token "page sign-in links": revoke that to end them
@@ -199,7 +203,7 @@ const TOKEN_OPTIONS: Record<string, VerbOptions> = {
     peer: { type: 'string' }, piece: { type: 'string' }, runtime: { type: 'string' }, label: { type: 'string' },
   },
   list: {},
-  revoke: {},
+  revoke: { 'with-passkeys': { type: 'boolean' } },
   link: { minutes: { type: 'string' }, 'page-url': { type: 'string' }, label: { type: 'string' } },
 };
 
@@ -237,7 +241,7 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!tokens.length) { io.stdout('No tokens yet.\n'); return 0; }
       for (const t of tokens) {
         const state = t.revoked ? 'revoked' : expired(t) ? 'expired' : 'live   ';
-        io.stdout(`${state}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.expires && !t.revoked ? `, expire${expired(t) ? 'd' : 's'} ${t.expires.slice(0, 16).replace('T', ' ')}` : ''}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''})\n`);
+        io.stdout(`${state}  ${t.role.padEnd(16)}  ${t.label}  (created ${t.created.slice(0, 10)}${t.last_used ? `, last used ${t.last_used.slice(0, 16).replace('T', ' ')}` : ', never used'}${t.expires && !t.revoked ? `, expire${expired(t) ? 'd' : 's'} ${t.expires.slice(0, 16).replace('T', ' ')}` : ''}${t.revoked ? `, revoked ${t.revoked.slice(0, 10)}` : ''}${t.from !== undefined ? `, made from "${t.from}"` : ''})\n`);
       }
       return 0;
     }
@@ -257,8 +261,13 @@ export async function runToken(argv: string[], io: IOStreams): Promise<number> {
       if (!h) return 1;
       const label = rest.join(' ').trim();
       if (!label) { io.stderr(TOKEN_USAGE); return 2; }
-      const t = revokeToken(h, label);
+      const { token: t, passkeys } = revokeTokenAndPasskeys(h, label, p.values['with-passkeys'] === true);
       io.stdout(`Revoked ${t.role} token "${t.label}".\n`);
+      if (passkeys) {
+        io.stdout(p.values['with-passkeys'] === true
+          ? `Removed the ${passkeys === 1 ? 'passkey' : `${passkeys} passkeys`} made from it, and revoked ${passkeys === 1 ? 'its token' : 'their tokens'}.\n`
+          : `${passkeys === 1 ? 'The passkey' : `The ${passkeys} passkeys`} made from it keep${passkeys === 1 ? 's' : ''} working (${passkeys === 1 ? 'it has its own token' : 'each has its own token'}); --with-passkeys revokes those too.\n`);
+      }
       return 0;
     }
     io.stderr(TOKEN_USAGE);

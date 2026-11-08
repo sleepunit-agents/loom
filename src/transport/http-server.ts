@@ -43,7 +43,7 @@ import { callOfferedTool, offeredTools, type OfferedTool, type ToolCaller } from
 import { createBackend } from '../backends/index.js';
 import { handleCliBody } from './cli-endpoint.js';
 import { handleUi, isUiRequest, legacyUiAuth, pushWatch, type UiAuth } from '../ui/handler.js';
-import { migratePasskeys } from '../ui/sessions.js';
+import { migratePasskeys } from '../ui/passkey-tokens.js';
 import { WATCH_S } from '../ui/push.js';
 import { pieceCheckers, resolveNeeds } from '../needs-resolve.js';
 import { spawnBackupTick } from '../backup-tick.js';
@@ -276,8 +276,9 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
   // Passkeys made before t-1969 signed in as the adding session's token: each moves to a token of its own, once.
   if (live) {
     try {
-      const moved = migratePasskeys(live(), ownerDigest?.toString('hex'));
+      const { moved, failed } = migratePasskeys(live(), ownerDigest?.toString('hex'));
       if (moved.length) process.stderr.write(`loom: gave ${moved.length} passkey${moved.length === 1 ? '' : 's'} a sign-in token of its own (t-1969)\n`);
+      for (const f of failed) process.stderr.write(`loom: a passkey (added as ${f.id.slice(0, 8)}…) kept its old token: ${f.error}\n`);
     } catch (e) { process.stderr.write(`loom: the passkey migration didn't run: ${(e as Error).message}\n`); }
   }
   /** An owner's caller for a piece: who, and what they own (docs/specs/owners.md). */
@@ -922,6 +923,7 @@ export async function startHttpServer(opts: HttpServeOptions): Promise<HttpServe
           auth: uiAuth,
           env: process.env,
           household: live,
+          ...(ownerDigest ? { envOwnerDigest: ownerDigest.toString('hex') } : {}),
         });
       }
 

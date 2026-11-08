@@ -25,7 +25,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import { createToken, expired, firstOwner, HouseholdError, isLive, loadTokens, memberOf, revokeToken, type Household } from '../household.js';
+import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, type Household } from '../household.js';
 
 export interface Session { issuedAt: number; secret: Buffer }
 
@@ -64,9 +64,10 @@ export function deviceOf(ua: string | undefined): string | undefined {
 }
 /**
  * A WebAuthn credential (docs/specs/passkeys.md). `secret` is the digest of the owner token it signs in as. In a
- * household that's its own token, minted for its person when it's added (`tokenLabel`, t-1969), so revoking any
- * other token (the sign-in links', the one the adding browser used) never stops it; removing the passkey or the
- * person's membership does. Without `tokenLabel` (outside a household, or not yet migrated): the adding session's token.
+ * household that's its own token, minted for its person when it's added (`tokenLabel`, t-1969; passkey-tokens.ts), so
+ * revoking another token (the sign-in links', the one the adding browser used) doesn't stop it; removing the passkey
+ * or the person's membership does. Without `tokenLabel` (outside a household, or made before and not migrated): the
+ * adding session's token.
  */
 export interface Passkey {
   id: string;
@@ -608,70 +609,6 @@ export function sessionStore(dir: string): SessionStore {
 
 /** The owner token a page sign-in link's sessions belong to: revoking it ends them all. */
 export const LINK_TOKEN = 'page sign-in links';
-
-/** A page sign-in links token: the household's, or a member's own (signinLink). */
-export function isLinkToken(label: string): boolean {
-  return label === LINK_TOKEN || label.startsWith(`${LINK_TOKEN} · `);
-}
-
-/** The label of a passkey's own owner token: its person and a short hash of its credential id. */
-export function passkeyTokenLabel(person: string, credentialId: string): string {
-  return `passkey · ${person} · ${createHash('sha256').update(credentialId).digest('hex').slice(0, 12)}`;
-}
-
-/**
- * A passkey's own owner token for `person` (t-1969): the live one under its label, else a new one. Only its digest is
- * kept: nobody ever holds the token itself, so it can't be pasted or leaked; the passkey is the only way to use it.
- * Idempotent, so two listeners (or a start that died between minting and binding) end with the one token.
- */
-export function passkeyToken(h: Household, person: string, credentialId: string): { secret: string; tokenLabel: string; minted: boolean } {
-  if (!memberOf(h, person)) throw new HouseholdError(`no member named ${person} in this household`);
-  const label = passkeyTokenLabel(person, credentialId);
-  const find = () => loadTokens(h.home).find((t) => t.label === label && isLive(t));
-  let rec = find();
-  let minted = false;
-  if (!rec) {
-    try { rec = createToken(h, { role: { kind: 'owner', member: person }, label }).record; minted = true; } catch (e) { rec = find(); if (!rec) throw e; }
-  }
-  if (rec.role !== 'owner' || rec.member !== person) throw new HouseholdError(`the token labeled ${JSON.stringify(label)} isn't ${person}'s owner token`);
-  return { secret: rec.sha256, tokenLabel: label, minted };
-}
-
-/** Revoke a passkey's own token, if it has one and it's live (its passkey was removed, or never added). */
-export function revokePasskeyToken(h: Household, tokenLabel: string | undefined): void {
-  if (!tokenLabel || !tokenLabel.startsWith('passkey · ')) return;
-  try { revokeToken(h, tokenLabel); } catch { /* already revoked, or never written */ }
-}
-
-/**
- * Give each passkey made before t-1969 its own token (run at loom-http's start, idempotent): one that signs in as a
- * live owner token, or as the env owner token, moves to a token of its own for that token's person. One whose token
- * is a revoked page sign-in links token moves too: revoking the links (as on 2026-11-07) was never meant to stop a
- * passkey. Any other revoked token's passkeys stay stopped, as do those of a person who's no longer a member.
- * Returns the ids moved.
- */
-export function migratePasskeys(h: Household, envOwnerDigestHex?: string): string[] {
-  const store = sessionStore(h.home);
-  const todo = store.passkeys().filter((p) => !p.tokenLabel);
-  if (!todo.length) return [];
-  const tokens = loadTokens(h.home);
-  const moved: string[] = [];
-  for (const p of todo) {
-    let person: string | undefined;
-    if (envOwnerDigestHex !== undefined && p.secret === envOwnerDigestHex) person = firstOwner(h).person;
-    else {
-      const rec = tokens.find((t) => t.sha256 === p.secret);
-      if (!rec || rec.role !== 'owner' || expired(rec)) continue;
-      if (rec.revoked && !isLinkToken(rec.label)) continue;
-      person = rec.member ?? firstOwner(h).person;
-    }
-    if (!memberOf(h, person)) continue;
-    const own = passkeyToken(h, person, p.id);
-    if (store.bindPasskey(p.id, p.secret, own)) moved.push(p.id);
-    else if (own.minted && !store.passkeys().some((k) => k.tokenLabel === own.tokenLabel)) revokePasskeyToken(h, own.tokenLabel);
-  }
-  return moved;
-}
 
 /**
  * A one-time sign-in link's code (`loom token link`, and Passkeys' "Make a one-time sign-in link"),

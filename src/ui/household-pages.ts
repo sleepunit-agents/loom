@@ -21,6 +21,7 @@ import {
   setMember, type Household, type Member,
   markIndexOf,
 } from '../household.js';
+import { revokeTokenAndPasskeys } from './passkey-tokens.js';
 import { relayOf } from '../relay-pairs.js';
 import { commonsPeoplePath, kindOf } from '../backends/people-household.js';
 import { backupRow, readSettings, setSettings, targetString, validateSettings } from '../backup.js';
@@ -461,15 +462,26 @@ export function agentSetup(h: Household, agent: string, opts: CoreOptions & { ow
         // them. Folded to a line each way (Jonathan, 2026-10-30: plain words over ids); the rest are a row each.
         const HOUSE = /^(.+?) · house h-\d+ on (.+)$/;
         const isHouse = (t: { label: string }) => HOUSE.test(t.label);
-        const row = (t: typeof live[number]) => ({
-          text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
-          meta: `${t.role === 'owner' ? 'owner · ' : ''}used ${since(t.last_used, nowMs)}`,
-          act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
-        });
+        // A passkey's own token (t-1969) says what it was made from; a token passkeys were made from offers to take them too.
+        const madeFrom = (t: typeof live[number]) => live.filter((x) => x.passkey !== undefined && x.from_sha256 === t.sha256).length;
+        const row = (t: typeof live[number]) => {
+          const n = madeFrom(t);
+          return {
+            text: isHouse(t) ? `A house on ${HOUSE.exec(t.label)![2]}` : t.label,
+            meta: `${t.role === 'owner' ? 'owner · ' : ''}${t.from !== undefined ? `made from "${t.from}" · ` : ''}used ${since(t.last_used, nowMs)}${n ? ` · ${n} passkey${n === 1 ? '' : 's'} made from it` : ''}`,
+            act: { action: 'revoke-token', label: 'Revoke', tone: 'danger' as const, confirm: n ? `Anything still using it is signed out at once. The ${n === 1 ? 'passkey' : `${n} passkeys`} made from it keep working. You can make a new one.` : 'Anything still using it is signed out at once. You can make a new one.', fields: { label: t.label } },
+          };
+        };
         const own = live.filter((t) => !isHouse(t)), houses = live.filter(isHouse);
         const gone = tokens.filter((t) => t.revoked), goneHouses = gone.filter(isHouse).length, goneOwn = gone.filter((t) => !isHouse(t));
         return [
           own.length ? { type: 'list' as const, items: own.slice(0, 50).map(row) } : { type: 'text' as const, text: 'No tokens of its own yet.', tone: 'muted' as const },
+          // Revoke leaves a token's passkeys working; this takes them too.
+          ...(own.some((t) => madeFrom(t)) ? [{ type: 'details' as const, summary: 'Revoke a token with its passkeys', blocks: [{ type: 'list' as const, items: own.filter((t) => madeFrom(t)).slice(0, 50).map((t) => {
+            const n = madeFrom(t);
+            return { text: t.label, meta: `${n} passkey${n === 1 ? '' : 's'} made from it`,
+              act: { action: 'revoke-token', label: 'Revoke with its passkeys', tone: 'danger' as const, confirm: `Anything using it is signed out, and the ${n === 1 ? 'passkey' : `${n} passkeys`} made from it ${n === 1 ? 'is' : 'are'} removed.`, fields: { label: t.label, passkeys: 'with' } } };
+          }) }] }] : []),
           ...(houses.length ? [{ type: 'details' as const, summary: `${houses.length} house${houses.length === 1 ? '' : 's'} running`, meta: 'each holds its own token, revoked when it ends',
             blocks: [{ type: 'list' as const, items: houses.slice(0, 50).map(row) }] }] : []),
           ...(gone.length ? [{ type: 'details' as const, summary: `${gone.length} revoked`, blocks: [
@@ -734,10 +746,13 @@ export async function householdAct(h: Household, action: string, fields: Record<
       return { ok: true, message: `Token for ${agent}, shown this once: ${token}`, page: `loom:a/${agent}/setup`, keep: true };
     }
     if (action === 'revoke-token') {
-      const t = revokeToken(h, fields.label ?? '');
+      const withPasskeys = fields.passkeys === 'with';
+      const { token: t, passkeys } = revokeTokenAndPasskeys(h, fields.label ?? '', withPasskeys);
       const r = parseRole(t.role);
       const agent = r?.kind === 'agent' ? r.agent : h.default;
-      return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.`, page: `loom:a/${agent}/setup` };
+      const pk = !passkeys ? '' : withPasskeys ? ` The ${passkeys === 1 ? 'passkey' : `${passkeys} passkeys`} made from it ${passkeys === 1 ? 'is' : 'are'} removed.`
+        : ` The ${passkeys === 1 ? 'passkey' : `${passkeys} passkeys`} made from it keep${passkeys === 1 ? 's' : ''} working.`;
+      return { ok: true, message: `Revoked "${t.label}". It stops working on its next request.${pk}`, page: `loom:a/${agent}/setup` };
     }
     if (action === 'face-set') {
       const agent = fields.agent ?? '';

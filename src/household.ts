@@ -153,6 +153,13 @@ export interface TokenRecord {
   sha256: string;
   /** An owner token's member (a People slug), when it names one. */
   member?: string;
+  /**
+   * A passkey's own owner token (docs/specs/passkeys.md, t-1969): the sha256 of the credential id it's for, and the
+   * token it was made from (the adding browser's, by label and sha256), so revoking that one can take its passkeys too.
+   */
+  passkey?: string;
+  from?: string;
+  from_sha256?: string;
   created: string;
   /** ISO-8601. Past it the token is refused everywhere, and the next token write drops the record. */
   expires?: string;
@@ -387,7 +394,10 @@ function validRecord(t: unknown): t is TokenRecord {
   return typeof r.label === 'string' && typeof r.role === 'string' && typeof r.sha256 === 'string' && SHA_HEX.test(r.sha256)
     && typeof r.created === 'string' && (r.revoked === undefined || typeof r.revoked === 'string')
     && (r.expires === undefined || (typeof r.expires === 'string' && Number.isFinite(Date.parse(r.expires))))
-    && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)));
+    && (r.member === undefined || (typeof r.member === 'string' && PERSON_SLUG.test(r.member)))
+    && (r.passkey === undefined || (typeof r.passkey === 'string' && SHA_HEX.test(r.passkey)))
+    && (r.from === undefined || typeof r.from === 'string')
+    && (r.from_sha256 === undefined || (typeof r.from_sha256 === 'string' && SHA_HEX.test(r.from_sha256)));
 }
 
 /**
@@ -467,7 +477,10 @@ function checkRole(h: Household, role: Role, runtimePieces?: readonly string[]):
  * cli/pieces-managed.ts); a runtime token needs it. A review token isn't minted here:
  * mintReviewToken.
  */
-export function createToken(h: Household, input: { role: Role; label: string; runtimePieces?: readonly string[] }, now = new Date()): { token: string; record: TokenRecord } {
+export function createToken(h: Household, input: { role: Role; label: string; runtimePieces?: readonly string[]; passkey?: { credential: string; from: string; from_sha256?: string } }, now = new Date()): { token: string; record: TokenRecord } {
+  if (input.passkey && !(input.role.kind === 'owner' && input.role.member && SHA_HEX.test(input.passkey.credential) && (input.passkey.from_sha256 === undefined || SHA_HEX.test(input.passkey.from_sha256)))) {
+    throw new HouseholdError('a passkey\'s token is an owner token naming its member');
+  }
   checkRole(h, input.role, input.runtimePieces);
   const label = input.label.trim();
   if (!label || label.length > 120 || /[\x00-\x1f\x7f]/.test(label)) throw new HouseholdError('a token needs a label (120 printable characters at most)');
@@ -478,6 +491,7 @@ export function createToken(h: Household, input: { role: Role; label: string; ru
     const record: TokenRecord = {
       label, role: roleString(input.role), sha256: sha(token),
       ...(input.role.kind === 'owner' && input.role.member ? { member: input.role.member } : {}),
+      ...(input.passkey ? { passkey: input.passkey.credential, from: input.passkey.from, ...(input.passkey.from_sha256 ? { from_sha256: input.passkey.from_sha256 } : {}) } : {}),
       created: now.toISOString(),
     };
     saveTokens(h.home, [...tokens, record]);

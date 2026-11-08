@@ -20,22 +20,37 @@ under the same lock):
 - its signature counter;
 - a label, when it was added, and when it was last used;
 - **the digest of the owner token it signs in as.** In a household that's a
-  token of its own (t-1969, 2026-11-07), minted for the signed-in member when
-  the passkey is added, labeled `passkey · <person> · <12 hex of the credential
-  id's hash>`, and kept by digest alone, so nobody ever holds it. Revoking the
-  page sign-in links token, or whichever token the adding browser used, never
-  stops a passkey (revoking the links on 2026-11-07 stopped Jonathan's only
-  one, which is why). What stops it: removing the passkey (its token is revoked
-  with it, so the sessions it opened end too), removing the person from the
-  household, or revoking its own token. A passkey gets exactly what its person
-  has, never more. Outside a household (a single bearer token), a passkey still
-  signs in as the adding session's token, and only while that one is live.
+  token of its own (t-1969, 2026-11-07; `src/ui/passkey-tokens.ts`), minted for
+  the signed-in member when the passkey is added and kept by digest alone, so
+  nobody ever holds it and only the passkey can use it. It's an owner token
+  naming that member, so a passkey reaches exactly what its person does, never
+  more. Its record says what it is: labeled `Passkey: <the passkey's name> ·
+  <person> · <12 hex>`, with `passkey` (the sha256 of the credential id) and
+  `from` / `from_sha256` (the token the adding browser was signed in with). The
+  token list (`loom token list`, an agent's Setup) and the signed-in list show
+  that label and what it was made from.
 
-  Passkeys made before this signed in as the adding session's token. loom-http
-  moves each onto a token of its own when it starts (once; a second start does
-  nothing): one whose token is live, or is the env owner token, and one whose
-  token is a revoked page sign-in links token. A passkey whose token was any
-  other revoked one stays stopped, as does one whose person has left.
+  Revoking another token never stops a passkey on its own: revoking the page
+  sign-in links on 2026-11-07 stopped Jonathan's only one, which is why this
+  changed. Revoking a token offers to take the passkeys made from it too
+  (`loom token revoke <label> --with-passkeys`; on Setup, "Revoke a token with
+  its passkeys"): each one's token is revoked and the passkey removed. Plain
+  revoke leaves them working, so routine link cleanup never kills a passkey.
+  What stops a passkey: removing it (its token is revoked with it, so the
+  sessions it opened end too), removing its person from the household, or
+  revoking its own token (it then shows as stopped, and can be removed).
+
+  Outside a household (a single bearer token), a passkey still signs in as the
+  adding session's token, and only while that one is live.
+
+  Passkeys made before this signed in as the adding session's token. When
+  loom-http starts, each one whose token is still live, or is the env owner
+  token, moves onto a token of its own for that token's person, made from it
+  (once: a second start mints and moves nothing; one that fails is said on
+  stderr and doesn't stop the others). One whose token was revoked, expired or
+  is gone from `tokens.json`, or whose person has left, stays as it is: it
+  doesn't sign in, its row says it stopped working, and a new one is added in
+  its place. Nothing revives a stopped passkey.
 
 Up to 20 passkeys. Each one can be removed on the Passkeys page.
 
@@ -70,7 +85,9 @@ aren't set up, and the token and link sign-ins work as before.
 Every passkey route is same-origin only, the same as every other form. A
 challenge is 32 random bytes, kept by hash, used once, and good for 5 minutes.
 
-**Adding one** needs a signed-in session, and the form token for it:
+**Adding one** needs a signed-in session that signed in within the last 10
+minutes (one left signed in on a desk can't quietly add a lasting way in;
+the page says to sign in again), and the form token for it:
 
 ```
 GET  /passkeys                           the page (also /account, the Profile app): the passkeys, Remove, and "Add a passkey"

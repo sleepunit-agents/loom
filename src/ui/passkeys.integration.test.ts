@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -16,6 +16,8 @@ import BetterSqlite3 from 'better-sqlite3';
 import { createConversationTables } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { agentDir, createToken, loadHousehold, loadTokens, removeMember, revokeToken, type Household } from '../household.js';
+import { migratePasskeys, passkeyToken } from './passkey-tokens.js';
+import { runToken } from '../cli/household.js';
 
 const TOKEN = 'passkey-test-token';
 const HOST = 'loom.test';
@@ -61,30 +63,46 @@ class Device {
   }
 }
 
+type CallOpts = { cookie?: string; json?: unknown; form?: Record<string, string>; host?: string; accept?: string };
+/** A request to the server on `port`, as a same-origin browser at HOST would send it. */
+function callAt(port: number, method: string, path: string, opts: CallOpts = {}): Promise<Reply> {
+  return new Promise((resolve, reject) => {
+    const body = opts.json !== undefined ? JSON.stringify(opts.json) : opts.form ? new URLSearchParams(opts.form).toString() : undefined;
+    const req = request({ host: '127.0.0.1', port, method, path, headers: {
+      host: opts.host ?? HOST, 'sec-fetch-site': 'same-origin',
+      ...(opts.cookie ? { cookie: opts.cookie } : {}),
+      ...(opts.accept ? { accept: opts.accept } : {}),
+      ...(body !== undefined ? { 'content-type': opts.json !== undefined ? 'application/json' : 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } : {}),
+    } }, (res) => {
+      let data = '';
+      res.on('data', (d) => { data += d; });
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    req.end();
+  });
+}
+const cookieOf = (r: Reply) => String(r.headers['set-cookie'] ?? '').split(';')[0];
+type Call = (method: string, path: string, opts?: CallOpts) => Promise<Reply>;
+/** Add a passkey from the browser with this cookie: the page's form token, the options, the registration. */
+async function addPasskeyWith(call: Call, cookie: string, device: Device, label: string): Promise<Reply> {
+  const csrf = (JSON.parse((await call('GET', '/passkeys', { cookie, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
+  const o = JSON.parse((await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } })).body);
+  if (!o.challenge) return { status: 403, headers: {}, body: JSON.stringify(o) };
+  return call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label, ...device.register(o.challenge) } });
+}
+async function passkeySignInWith(call: Call, device: Device, o: Parameters<Device['assert']>[1] = {}): Promise<Reply> {
+  const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
+  return call('POST', '/login/passkey', { json: device.assert(challenge, o) });
+}
+
 describe('passkeys', () => {
   let stack: string;
   let handle: HttpServeHandle;
   let saved: string | undefined;
 
-  function call(method: string, path: string, opts: { cookie?: string; json?: unknown; form?: Record<string, string>; host?: string; accept?: string } = {}): Promise<Reply> {
-    return new Promise((resolve, reject) => {
-      const body = opts.json !== undefined ? JSON.stringify(opts.json) : opts.form ? new URLSearchParams(opts.form).toString() : undefined;
-      const req = request({ host: '127.0.0.1', port: handle.port, method, path, headers: {
-        host: opts.host ?? HOST, 'sec-fetch-site': 'same-origin',
-        ...(opts.cookie ? { cookie: opts.cookie } : {}),
-        ...(opts.accept ? { accept: opts.accept } : {}),
-        ...(body !== undefined ? { 'content-type': opts.json !== undefined ? 'application/json' : 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } : {}),
-      } }, (res) => {
-        let data = '';
-        res.on('data', (d) => { data += d; });
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: data }));
-      });
-      req.on('error', reject);
-      if (body !== undefined) req.write(body);
-      req.end();
-    });
-  }
-  const cookieOf = (r: Reply) => String(r.headers['set-cookie'] ?? '').split(';')[0];
+  const call: Call = (method, path, opts) => callAt(handle.port, method, path, opts);
   // The Passkeys page's data, as the app asks for it (docs/specs/ui-app.md): `add` is its form token where a passkey
   // can be added here, or the reason it can't.
   interface PasskeysView { view: string; page: { title: string; refresh?: number; sections: Array<{ id: string; blocks: Array<{ type: string; items?: Array<{ text: string; act?: { action: string; label: string; tone?: string; confirm?: string; fields?: Record<string, string> } }> }> }> }; ctx: { csrf: string }; add: { csrf: string } | { note: string } }
@@ -95,16 +113,8 @@ describe('passkeys', () => {
     return cookieOf(await call('POST', '/login', { form: { token: TOKEN } }));
   }
 
-  async function addPasskey(cookie: string, device: Device, label = 'Test phone'): Promise<Reply> {
-    const csrf = csrfOf(await passkeys(cookie));
-    const o = JSON.parse((await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } })).body);
-    return call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label, ...device.register(o.challenge) } });
-  }
-
-  async function passkeySignIn(device: Device, o: Parameters<Device['assert']>[1] = {}): Promise<Reply> {
-    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
-    return call('POST', '/login/passkey', { json: device.assert(challenge, o) });
-  }
+  const addPasskey = (cookie: string, device: Device, label = 'Test phone') => addPasskeyWith(call, cookie, device, label);
+  const passkeySignIn = (device: Device, o: Parameters<Device['assert']>[1] = {}) => passkeySignInWith(call, device, o);
 
   beforeEach(async () => {
     stack = await mkdtemp(join(tmpdir(), 'loom-passkeys-'));
@@ -199,7 +209,7 @@ describe('passkeys', () => {
     const raw = JSON.parse(await import('node:fs').then((fs) => fs.readFileSync(join(stack, 'ui-sessions.json'), 'utf-8')));
     raw.passkeys[pk.id].secret = '00'.repeat(32);
     await writeFile(join(stack, 'ui-sessions.json'), JSON.stringify(raw));
-    expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/token that added this passkey was revoked/);
+    expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/stopped working: the token it was added with was revoked/);
     // Removed from the page: gone.
     const csrf = csrfOf(await passkeys(cookie));
     expect((await passkeys(cookie)).page.sections[0].blocks[0].items![0].act?.fields).toEqual({ id: pk.id });
@@ -225,49 +235,32 @@ describe('passkeys', () => {
 });
 
 /**
- * In a household (t-1969): a passkey signs its person in with a token of its own, not the adding session's. Revoking
- * the page sign-in links (as on 2026-11-07) or any other token leaves it working; removing the person's membership,
- * or the passkey, stops it. A passkey made before this moves onto its own token when loom-http starts.
+ * In a household (t-1969): a passkey signs its person in with a token of its own, made from the adding browser's and
+ * saying so. Revoking the page sign-in links (as on 2026-11-07) or any other token leaves it working, unless asked to
+ * take its passkeys too; removing the person's membership, or the passkey, stops it. One is added only within 10
+ * minutes of signing in. A passkey made before moves onto its own token when loom-http starts, if its token is live.
  */
 describe('passkeys in a household', () => {
   let h: Household;
   let handle: HttpServeHandle;
   const saved: Record<string, string | undefined> = {};
-
-  function call(method: string, path: string, opts: { cookie?: string; json?: unknown; form?: Record<string, string>; accept?: string } = {}): Promise<Reply> {
-    return new Promise((resolve, reject) => {
-      const body = opts.json !== undefined ? JSON.stringify(opts.json) : opts.form ? new URLSearchParams(opts.form).toString() : undefined;
-      const req = request({ host: '127.0.0.1', port: handle.port, method, path, headers: {
-        host: HOST, 'sec-fetch-site': 'same-origin',
-        ...(opts.cookie ? { cookie: opts.cookie } : {}),
-        ...(opts.accept ? { accept: opts.accept } : {}),
-        ...(body !== undefined ? { 'content-type': opts.json !== undefined ? 'application/json' : 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } : {}),
-      } }, (res) => {
-        let data = '';
-        res.on('data', (d) => { data += d; });
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: data }));
-      });
-      req.on('error', reject);
-      if (body !== undefined) req.write(body);
-      req.end();
-    });
-  }
-  const cookieOf = (r: Reply) => String(r.headers['set-cookie'] ?? '').split(';')[0];
-  const csrfOf = async (cookie: string) => (JSON.parse((await call('GET', '/passkeys', { cookie, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
+  const call: Call = (method, path, opts) => callAt(handle.port, method, path, opts);
   /** Signed in the way Jonathan was: a one-time sign-in link, so the session is the page sign-in links token's. */
   const linkSignIn = async (member?: string) => cookieOf(await call('POST', `/login/${signinLink(h, 600, member)}`));
-  const signedIn = async (cookie: string) => (await call('GET', '/', { cookie, accept: 'application/json' })).status === 200;
-  async function addPasskey(cookie: string, device: Device, label = 'Phone'): Promise<Reply> {
-    const csrf = await csrfOf(cookie);
-    const o = JSON.parse((await call('POST', '/passkeys/options', { cookie, json: { _csrf: csrf } })).body);
-    return call('POST', '/passkeys', { cookie, json: { _csrf: csrf, label, ...device.register(o.challenge) } });
-  }
-  async function passkeySignIn(device: Device): Promise<Reply> {
-    const { challenge } = JSON.parse((await call('POST', '/login/passkey/options', { json: {} })).body);
-    return call('POST', '/login/passkey', { json: device.assert(challenge) });
-  }
-  const start = async () => { handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h }); };
+  const signedIn = async (cookie: string, path = '/') => (await call('GET', path, { cookie, accept: 'application/json' })).status === 200;
+  const addPasskey = (cookie: string, device: Device, label = 'Phone') => addPasskeyWith(call, cookie, device, label);
+  const passkeySignIn = (device: Device) => passkeySignInWith(call, device);
+  const start = async (token?: string) => { handle = await startHttpServer({ contextDir: agentDir(h, 'art'), host: '127.0.0.1', port: 0, household: h, ...(token ? { token } : {}) }); };
+  const restart = async (token?: string) => { await handle.close(); await start(token); };
   const digest = (t: string) => createHash('sha256').update(t).digest('hex');
+  const tokenOf = (label: string) => loadTokens(h.home).find((t) => t.label === label);
+  /** A passkey as code before t-1969 stored it: signing in as `secret`, the adding session's token digest. */
+  const legacy = (d: Device, label: string, secret: string) => {
+    const reg = d.register('x');
+    sessionStore(h.home).addPasskey({ id: reg.id, publicKey: reg.publicKey, alg: -7, counter: 0, label, created: 1, secret });
+    return reg.id;
+  };
+  const byId = () => Object.fromEntries(sessionStore(h.home).passkeys().map((k) => [k.id, k]));
 
   beforeEach(async () => {
     const home = await mkdtemp(join(tmpdir(), 'loom-passkeys-hh-'));
@@ -297,17 +290,21 @@ describe('passkeys in a household', () => {
     const device = new Device();
     expect((await addPasskey(cookie, device)).status).toBe(200);
     const [pk] = sessionStore(h.home).passkeys();
-    // Its own token, Jonathan's, not the links token the browser signed in with.
-    const linkDigest = loadTokens(h.home).find((t) => t.label === LINK_TOKEN)!.sha256;
-    expect(pk.tokenLabel).toMatch(/^passkey · jonathan · [0-9a-f]{12}$/);
-    expect(pk.secret).not.toBe(linkDigest);
-    expect(loadTokens(h.home).find((t) => t.label === pk.tokenLabel)).toMatchObject({ role: 'owner', member: 'jonathan', sha256: pk.secret });
+    const link = tokenOf(LINK_TOKEN)!;
+    // Its own token, Jonathan's, saying it's a passkey's and what it was made from; not the links token itself.
+    expect(pk.secret).not.toBe(link.sha256);
+    expect(pk.tokenLabel).toMatch(/^Passkey: Phone · jonathan · [0-9a-f]{12}$/);
+    expect(tokenOf(pk.tokenLabel!)).toMatchObject({ role: 'owner', member: 'jonathan', sha256: pk.secret, passkey: createHash('sha256').update(pk.id).digest('hex'), from: LINK_TOKEN, from_sha256: link.sha256 });
 
     revokeToken(h, LINK_TOKEN);
     expect(await signedIn(cookie)).toBe(false);
     const r = await passkeySignIn(device);
     expect([r.status, r.body]).toEqual([200, '{"ok":true,"to":"/"}']);
-    expect(await signedIn(cookieOf(r))).toBe(true);
+    const viaKey = cookieOf(r);
+    expect(await signedIn(viaKey)).toBe(true);
+    // Its session says what it signed in as: the passkey's token, by its plain label.
+    const profile = (await call('GET', '/account', { cookie: viaKey, accept: 'application/json' })).body;
+    expect(profile).toContain('as Passkey: Phone · jonathan');
     // Any other token too: the one a browser pasted.
     const pasted = createToken(h, { role: { kind: 'owner' }, label: 'laptop' }).token;
     const viaPaste = cookieOf(await call('POST', '/login', { form: { token: pasted } }));
@@ -317,70 +314,145 @@ describe('passkeys in a household', () => {
     expect((await passkeySignIn(other)).status).toBe(200);
   });
 
-  it('removing the member stops their passkey; removing a passkey stops it and its token', async () => {
+  it('adds one only within 10 minutes of signing in', async () => {
+    signinLink(h, 600);
+    const secret = Buffer.from(tokenOf(LINK_TOKEN)!.sha256, 'hex');
+    const old = `loom_ui=${sessionStore(h.home).create(secret, Math.floor(Date.now() / 1000) - 11 * 60, { via: 'link' })}`;
+    expect(await signedIn(old)).toBe(true);
+    const view = JSON.parse((await call('GET', '/passkeys', { cookie: old, accept: 'application/json' })).body) as { add: { note?: string } };
+    expect(view.add.note).toMatch(/within 10 minutes of signing in/);
+    const r = await addPasskeyWith(call, old, new Device(), 'Old');
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.body).error).toMatch(/within 10 minutes of signing in/);
+    expect(sessionStore(h.home).passkeys()).toEqual([]);
+    expect(loadTokens(h.home).filter((t) => t.passkey)).toEqual([]);
+  });
+
+  it('removing the member stops their passkey, which never reaches past them; removing a passkey stops it and its token', async () => {
     const sam = await linkSignIn('sam');
     const samKey = new Device();
     expect((await addPasskey(sam, samKey, 'Sam phone')).status).toBe(200);
-    expect(sessionStore(h.home).passkeys()[0].tokenLabel).toMatch(/^passkey · sam · /);
-    expect((await passkeySignIn(samKey)).status).toBe(200);
+    expect(sessionStore(h.home).passkeys()[0].tokenLabel).toMatch(/^Passkey: Sam phone · sam · /);
+    const samSession = cookieOf(await passkeySignIn(samKey));
+    // Sam's agent, not the household's pages: exactly what Sam reaches.
+    expect(await signedIn(samSession, '/a/mark')).toBe(true);
+    expect((await call('GET', '/members', { cookie: samSession })).status).toBe(403);
     removeMember(h, 'sam');
     const r = await passkeySignIn(samKey);
     expect(r.status).toBe(401);
     expect(JSON.parse(r.body).error).toMatch(/isn't a member/);
+    expect(await signedIn(samSession)).toBe(false);
 
     const jon = await linkSignIn();
     const device = new Device();
     await addPasskey(jon, device);
-    const pk = sessionStore(h.home).passkeys().find((k) => k.tokenLabel?.startsWith('passkey · jonathan'))!;
+    const pk = sessionStore(h.home).passkeys().find((k) => k.tokenLabel?.includes(' · jonathan · '))!;
     const viaKey = cookieOf(await passkeySignIn(device));
     expect(await signedIn(viaKey)).toBe(true);
-    const csrf = await csrfOf(jon);
+    const csrf = (JSON.parse((await call('GET', '/passkeys', { cookie: jon, accept: 'application/json' })).body) as { ctx: { csrf: string } }).ctx.csrf;
     expect((await call('POST', '/act/loom', { cookie: jon, form: { _csrf: csrf, _action: 'passkey-remove', _path: 'passkeys', id: pk.id } })).status).toBe(303);
     expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/doesn't know that passkey/);
     // Its token is revoked with it, so the session it opened ends too; the link's session stays.
-    expect(loadTokens(h.home).find((t) => t.label === pk.tokenLabel)?.revoked).toBeTruthy();
+    expect(tokenOf(pk.tokenLabel!)?.revoked).toBeTruthy();
     expect(await signedIn(viaKey)).toBe(false);
     expect(await signedIn(jon)).toBe(true);
   });
 
-  it('a passkey made before moves onto its own token at start, even with the links token revoked', async () => {
-    // Before t-1969: three passkeys signing in as the adding session's token. Jonathan's, the links token's (revoked,
-    // as on 2026-11-07); one whose pasted token was revoked (stays stopped); and Sam's, who has since left.
+  it('an agent owner sees, and can remove, their own passkey once it has stopped', async () => {
+    const sam = await linkSignIn('sam');
+    const samKey = new Device();
+    await addPasskey(sam, samKey, 'Sam phone');
+    const pk = sessionStore(h.home).passkeys()[0];
+    revokeToken(h, pk.tokenLabel!);
+    const view = JSON.parse((await call('GET', '/passkeys', { cookie: sam, accept: 'application/json' })).body) as { ctx: { csrf: string }; page: { sections: Array<{ id: string; blocks: Array<{ items?: Array<{ text: string; meta?: string }> }> }> } };
+    const row = view.page.sections.find((x) => x.id === 'passkeys')!.blocks[0].items![0];
+    expect(row).toMatchObject({ text: 'Sam phone', meta: expect.stringMatching(/stopped working/) });
+    expect((await call('POST', '/act/loom', { cookie: sam, form: { _csrf: view.ctx.csrf, _action: 'passkey-remove', _path: 'passkeys', id: pk.id } })).status).toBe(303);
+    expect(sessionStore(h.home).passkeys()).toEqual([]);
+  });
+
+  it('revoking a token leaves its passkeys alone, unless asked to take them too', async () => {
+    const cookie = await linkSignIn();
+    const [a, b] = [new Device(), new Device()];
+    await addPasskey(cookie, a, 'A');
+    await addPasskey(cookie, b, 'B');
+    const out: string[] = [];
+    const io = { stdout: (x: string) => out.push(x), stderr: (x: string) => out.push(x), env: process.env } as unknown as Parameters<typeof runToken>[1];
+    // `loom token revoke` keeps them, and says so.
+    expect(await runToken(['revoke', LINK_TOKEN], io)).toBe(0);
+    expect(out.join('')).toMatch(/2 passkeys made from it keep working/);
+    expect((await passkeySignIn(a)).status).toBe(200);
+    // A pasted token's passkeys, taken with it.
+    const pasted = createToken(h, { role: { kind: 'owner' }, label: 'laptop' }).token;
+    const viaPaste = cookieOf(await call('POST', '/login', { form: { token: pasted } }));
+    const c = new Device();
+    await addPasskey(viaPaste, c, 'C');
+    const cToken = sessionStore(h.home).passkeys().find((k) => k.label === 'C')!.tokenLabel!;
+    out.length = 0;
+    expect(await runToken(['revoke', 'laptop', '--with-passkeys'], io)).toBe(0);
+    expect(out.join('')).toMatch(/Removed the passkey made from it/);
+    expect(sessionStore(h.home).passkeys().map((k) => k.label).sort()).toEqual(['A', 'B']);
+    expect(tokenOf(cToken)?.revoked).toBeTruthy();
+    expect((await passkeySignIn(c)).status).toBe(401);
+    expect((await passkeySignIn(b)).status).toBe(200);
+  });
+
+  it('a passkey made before moves onto its own token at start only if its token is live, once', async () => {
+    // Before t-1969: passkeys signing in as the adding session's token. A live pasted token's (moves); the env owner
+    // token's (moves); the links token's, since revoked (stays stopped, shown so); a member's who has since left (stays).
     signinLink(h, 600);
-    const linkDigest = loadTokens(h.home).find((t) => t.label === LINK_TOKEN)!.sha256;
+    const link = tokenOf(LINK_TOKEN)!;
     const pasted = createToken(h, { role: { kind: 'owner' }, label: 'old laptop' }).token;
     const samToken = createToken(h, { role: { kind: 'owner', member: 'sam' }, label: 'sam' }).token;
-    const [jon, lost, sam] = [new Device(), new Device(), new Device()];
-    const store = sessionStore(h.home);
-    const legacy = (d: Device, label: string, secret: string) => {
-      const reg = d.register('x');
-      store.addPasskey({ id: reg.id, publicKey: reg.publicKey, alg: -7, counter: 0, label, created: 1, secret });
-      return reg.id;
-    };
-    const jonId = legacy(jon, 'Jonathan', linkDigest);
-    const lostId = legacy(lost, 'Lost', digest(pasted));
+    const ENV = 'env-owner-token-for-the-test';
+    const [laptop, env, jon, sam] = [new Device(), new Device(), new Device(), new Device()];
+    const laptopId = legacy(laptop, 'Laptop', digest(pasted));
+    const envId = legacy(env, 'Env', digest(ENV));
+    const jonId = legacy(jon, 'Jonathan', link.sha256);
     const samId = legacy(sam, 'Sam', digest(samToken));
     revokeToken(h, LINK_TOKEN);
-    revokeToken(h, 'old laptop');
     removeMember(h, 'sam');
-    expect(JSON.parse((await passkeySignIn(jon)).body).error).toMatch(/token that added this passkey was revoked/);
 
-    await handle.close();
-    await start();
-    const after = Object.fromEntries(sessionStore(h.home).passkeys().map((k) => [k.id, k]));
-    expect(after[jonId].tokenLabel).toMatch(/^passkey · jonathan · /);
-    expect(after[lostId].tokenLabel).toBeUndefined();
+    await restart(ENV);
+    const after = byId();
+    expect(after[laptopId].tokenLabel).toMatch(/^Passkey: Laptop · jonathan · /);
+    expect(tokenOf(after[laptopId].tokenLabel!)).toMatchObject({ member: 'jonathan', from: 'old laptop', from_sha256: digest(pasted) });
+    expect(after[envId].tokenLabel).toMatch(/^Passkey: Env · jonathan · /);
+    expect(tokenOf(after[envId].tokenLabel!)?.from).toMatch(/env owner token/);
+    expect(after[jonId]).toMatchObject({ secret: link.sha256 });
+    expect(after[jonId].tokenLabel).toBeUndefined();
     expect(after[samId].tokenLabel).toBeUndefined();
-    const r = await passkeySignIn(jon);
-    expect(r.status).toBe(200);
-    expect(await signedIn(cookieOf(r))).toBe(true);
-    expect((await passkeySignIn(lost)).status).toBe(401);
+    // The migrated one works, and no longer needs the token it was made with.
+    revokeToken(h, 'old laptop');
+    expect((await passkeySignIn(laptop)).status).toBe(200);
+    expect((await passkeySignIn(env)).status).toBe(200);
+    const stopped = await passkeySignIn(jon);
+    expect(stopped.status).toBe(401);
+    expect(JSON.parse(stopped.body).error).toMatch(/stopped working.*add a new one/);
     expect((await passkeySignIn(sam)).status).toBe(401);
-    // Once: another start mints nothing more.
+    // Once: another start mints nothing more and moves nothing.
     const count = loadTokens(h.home).length;
-    await handle.close();
-    await start();
+    await restart(ENV);
     expect(loadTokens(h.home).length).toBe(count);
-    expect(JSON.parse(readFileSync(join(h.home, 'ui-sessions.json'), 'utf-8')).passkeys[jonId].secret).toBe(after[jonId].secret);
+    expect(byId()[laptopId].secret).toBe(after[laptopId].secret);
+  });
+
+  it('the migration adopts a token minted by a start that died before binding, and binds at most once', async () => {
+    const pasted = createToken(h, { role: { kind: 'owner' }, label: 'old laptop' }).token;
+    const d = new Device();
+    const id = legacy(d, 'Laptop', digest(pasted));
+    // A start that minted the passkey's token, then died.
+    const minted = passkeyToken(h, 'jonathan', id, 'Laptop', { label: 'old laptop', sha256: digest(pasted) });
+    const count = loadTokens(h.home).length;
+    // Two listeners starting at once: one moves it, the other finds it moved and leaves the token be.
+    const first = migratePasskeys(h);
+    const second = migratePasskeys(h);
+    expect([first.moved, second.moved, first.failed, second.failed]).toEqual([[id], [], [], []]);
+    expect(loadTokens(h.home).length).toBe(count);
+    expect(byId()[id]).toMatchObject({ secret: minted.secret, tokenLabel: minted.tokenLabel });
+    // The compare-and-set: a second bind, from the old token or onto another, changes nothing.
+    expect(sessionStore(h.home).bindPasskey(id, digest(pasted), { secret: '11'.repeat(32), tokenLabel: 'x' })).toBe(false);
+    expect(tokenOf(minted.tokenLabel)?.revoked).toBeUndefined();
+    expect((await passkeySignIn(d)).status).toBe(200);
   });
 });
