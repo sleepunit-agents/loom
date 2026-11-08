@@ -275,5 +275,27 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     await ctx.close();
   });
 
+  // ---- a phone's Home (phase 6) ----
+  for (const look of LOOKS) {
+    it(`a phone (390×844, ${look}): Needs you, then a card per agent, alphabetical, with what's new and a composer`, async () => {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
+      await ctx.addInitScript(`localStorage.setItem('loom-look', '${look}'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+      await ctx.request.post(`${d.base}/login`, { form: { token: d.tok.jonathan }, maxRedirects: 0 });
+      const p = await ctx.newPage();
+      p.on('pageerror', (e) => errors.push(e.message));
+      await p.goto(`${d.base}/`);
+      await p.locator('.loom-phome .loom-bigcard').first().waitFor();
+      expect(await p.locator('.loom-phome > :first-child').getAttribute('class')).toContain('loom-needs-band');
+      expect(await p.$$eval('.loom-phome .loom-bigcard', (cs) => cs.map((c) => c.getAttribute('data-agent')))).toEqual(['art', 'nova', 'mark']);
+      await expect.poll(() => p.locator('.loom-bigcard[data-agent="art"] [data-row="now"] dd').textContent()).toBe('Making the field box installer survive power loss');
+      expect(await p.locator('.loom-bigcard input[aria-label^="Message"]').count()).toBe(3);
+      // No desktop on a phone: no tiles, no rail.
+      expect(await p.locator('.loom-tiles, .loom-arail').count()).toBe(0);
+      expect(await p.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+      if (SHOTS) await p.screenshot({ path: `${SHOTS}/phone-${look}-390.png`, fullPage: true });
+      await ctx.close();
+    });
+  }
+
   it('no page threw', () => { expect(errors).toEqual([]); });
 });

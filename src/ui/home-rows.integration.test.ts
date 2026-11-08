@@ -1,8 +1,8 @@
 /**
  * Home with many agents, on a phone (t-1869; Jonathan, 2026-11-05: "fine if you've got 1 of something and a nightmare
- * if you exceed that"): up to four agents keep their big cards; past four, a phone's Home is a row each (face, name,
- * how it is in words, its last line), worst first, each a link to that agent's page, and nothing wider than the phone.
- * A wide screen keeps its cards.
+ * if you exceed that"), as the agent desktop has it since t-1959: up to four agents keep their cards; past four, a line
+ * each (face, name, how it is in words), alphabetical, and the one that most wants you open as a card; nothing wider
+ * than the phone.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -80,63 +80,58 @@ describe.runIf(built && chrome)('Home with many agents', () => {
     return { page, close };
   }
 
-  it('two agents on a phone: a card each, no rows', async () => {
+  // The agent desktop's phone Home (docs/specs/agent-desk.md, "A phone"; t-1959): Needs you, then the agents
+  // alphabetical; up to four a card each, past four a line each and the one that most wants you open as a card.
+  const cards = (page: import('playwright-core').Page) => page.$$eval('.loom-phome .loom-bigcard', (cs) => cs.map((c) => c.getAttribute('data-agent')));
+  const rows = (page: import('playwright-core').Page) => page.$$eval('.loom-phome .loom-rrow', (cs) => cs.map((c) => c.getAttribute('data-agent')));
+
+  it('two agents on a phone: a card each, no rows, nothing wider than the phone', async () => {
     const { page, close } = await home(['art', 'mark'], 390);
-    await page.waitForSelector('.loom-identity');
-    expect(await page.locator('.loom-identity:visible').count()).toBe(2);
-    expect(await page.locator('ul[aria-label="Agents"]').count()).toBe(0);
+    await page.waitForSelector('.loom-phome .loom-bigcard');
+    expect(await cards(page)).toEqual(['art', 'mark']);
+    expect(await rows(page)).toEqual([]);
+    expect(await page.locator('.loom-phome .loom-needs-band').count()).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await close();
   }, 60_000);
 
-  it('six agents on a phone: a row each, worst first, each linking to its agent, nothing wider than 390 px', async () => {
+  it('six agents on a phone: a line each, alphabetical, the one in a conversation open as a card, nothing wider than 390 px', async () => {
     const { page, close } = await home(SIX, 390);
-    const list = page.locator('ul[aria-label="Agents"]');
-    await list.waitFor({ state: 'visible' });
-    // Before: six full cards. After: no card shows, and one row per agent.
-    expect(await page.locator('.loom-identity:visible').count()).toBe(0);
-    const rows = list.locator(':scope > li a');
-    expect(await rows.count()).toBe(6);
-    const hrefs = await rows.evaluateAll((as) => as.map((a) => a.getAttribute('href')));
-    // Broken zed first, then working flo, then the quiet ones as the household lists them.
-    expect(hrefs).toEqual(['/a/zed', '/a/flo', '/a/art', '/a/mark', '/a/gus', '/a/ida']);
-    // Each row: its face, its name, how it is in words, and its last line.
-    const said = await rows.evaluateAll((as) => as.map((a) => ({ face: !!a.querySelector('[aria-label]'), text: (a as HTMLElement).innerText.replace(/\s+/g, ' ') })));
-    expect(said.every((r) => r.face)).toBe(true);
-    expect(said[0].text).toContain('Zed');
-    expect(said[0].text).toContain('Something’s broken');
-    expect(said[0].text).toContain('Its Discord bridge is down');
-    expect(said[1].text).toMatch(/Flo Working Answering in #pond/);
-    for (const r of said.slice(2)) expect(r.text).toMatch(/Up · quiet Quiet for three days/);
-    // Nothing wider than the phone: the page, and every row's own box.
+    await page.waitForSelector('.loom-phome .loom-rrow');
+    // Flo is answering in #pond (a conversation now): its card; the rest a line each, by name.
+    expect(await cards(page)).toEqual(['flo']);
+    expect(await rows(page)).toEqual(['art', 'gus', 'ida', 'mark', 'zed']);
+    expect(await page.$$eval('.loom-phome [data-agent]', (cs) => cs.map((c) => c.getAttribute('data-agent')))).toEqual(['art', 'flo', 'gus', 'ida', 'mark', 'zed']);
+    // Each line: its face, its name, how it is in words.
+    const zed = page.locator('.loom-rrow[data-agent="zed"]');
+    expect(await zed.getAttribute('aria-label')).toContain('Something’s broken');
+    expect(await zed.locator('.loom-rrow__face [aria-label]').count()).toBeGreaterThan(0);
+    expect(await page.locator('.loom-bigcard[data-agent="flo"] [data-row="now"] dd').textContent()).toBe('Answering in #pond');
+    // Nothing wider than the phone: the page, and every box in it.
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     const boxes = await page.evaluate(() => [...document.querySelectorAll('main *')].map((e) => e.getBoundingClientRect()).filter((r) => r.width).map((r) => ({ left: r.left, right: r.right })));
     expect(boxes.length).toBeGreaterThan(0);
-    for (const b of boxes) { expect(b.right).toBeLessThanOrEqual(390); expect(b.left).toBeGreaterThanOrEqual(0); }
-    // A tap opens the agent.
-    await rows.nth(1).click();
-    await page.waitForURL(/\/a\/flo$/);
+    for (const b of boxes) { expect(b.right).toBeLessThanOrEqual(390.5); expect(b.left).toBeGreaterThanOrEqual(-0.5); }
     await close();
   }, 60_000);
 
-  it('the line is at four: four agents keep their cards, five get rows', async () => {
+  it('the line is at four: four agents keep their cards, five get lines', async () => {
     const four = await home(SIX.slice(0, 4), 390);
-    await four.page.waitForSelector('.loom-identity');
-    expect(await four.page.locator('.loom-identity:visible').count()).toBe(4);
-    expect(await four.page.locator('ul[aria-label="Agents"]').count()).toBe(0);
+    await four.page.waitForSelector('.loom-phome .loom-bigcard');
+    expect((await cards(four.page)).length).toBe(4);
+    expect(await rows(four.page)).toEqual([]);
     await four.close();
     const five = await home(SIX.slice(0, 5), 390);
-    await five.page.locator('ul[aria-label="Agents"]').waitFor({ state: 'visible' });
-    expect(await five.page.locator('ul[aria-label="Agents"] > li a').count()).toBe(5);
-    expect(await five.page.locator('.loom-identity:visible').count()).toBe(0);
+    await five.page.waitForSelector('.loom-phome .loom-rrow');
+    expect((await rows(five.page)).length).toBe(4);
+    expect((await cards(five.page)).length).toBe(1);
     await five.close();
   }, 60_000);
 
-  it('six agents on a wide screen keep their cards', async () => {
+  it('under 1024 a wider screen is the same Home', async () => {
     const { page, close } = await home(SIX, 900);
-    await page.waitForSelector('.loom-identity');
-    expect(await page.locator('.loom-identity:visible').count()).toBe(6);
-    expect(await page.locator('ul[aria-label="Agents"]:visible').count()).toBe(0);
+    await page.waitForSelector('.loom-phome .loom-rrow');
+    expect((await rows(page)).length).toBe(5);
     await close();
   }, 60_000);
 });

@@ -106,9 +106,13 @@ opens its app in a tile: the agents Home, an agent its window, a place (Tasks, B
 own page; the copy that follows a running ticker round is out of the tab order. Tasks, bridges and boxes say what they
 have there (they were widgets and Home's tiles).
 
-## A phone (phase 6)
+## A phone (phase 6, built)
 
-A phone's Home is the same: Needs you, then a card per agent (face, how it is, what it's on, unread), in one column.
+A phone's Home (and any screen under 1024 px) is the same: the Needs you band (its chips stacked), then a card per
+agent in one column (face, how it is, what it's on, its last thread, its next wake, what's new, a composer; fields at
+16 px so iOS doesn't zoom). Past four agents (t-1869: a screen of big cards is a nightmare past a few) a line each, and
+the one that most wants you open as a card, by the rail's accordion rule. Its own chunk (`desk-agents.tsx PhoneHome`),
+never the first page's.
 
 ## Build, in phases
 

@@ -177,3 +177,19 @@
   -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:inset 0 0 0 1px var(--v-edge),-20px 0 40px -10px rgba(0,0,0,.55)}
 @media (prefers-reduced-motion:no-preference){:root[data-look] .loom-tiles>.loom-arail.loom-arail--over{animation:loom-rail-in .22s ease-out}}
 @keyframes loom-rail-in{from{transform:translateX(calc(100% + 24px))}}
+
+/* ---- a phone's Home (PhoneHome): one column; the band's chips stacked, the cards as tall as they need ---- */
+:root[data-look] .loom-phome{display:flex;flex-direction:column;gap:12px;min-width:0}
+:root[data-look] .loom-phome .loom-needs-band{flex-direction:column;align-items:stretch;gap:8px;padding:10px 12px}
+:root[data-look] .loom-phome .loom-needs-band__items{flex-direction:column;width:100%}
+:root[data-look] .loom-phome .loom-nchip{flex-wrap:wrap}
+:root[data-look] .loom-phome .loom-nchip__tx{max-width:none;flex-basis:100%}
+:root[data-look] .loom-phome .loom-needs-band__all{margin-left:0}
+:root[data-look] .loom-phome .loom-bigcard{flex:none;container-type:inline-size}
+:root[data-look] .loom-phome .loom-bigcard__in{position:relative;inset:auto;grid-template-columns:auto minmax(0,1fr);justify-content:stretch;gap:10px 14px;padding:22px 14px 14px}
+:root[data-look] .loom-phome .loom-bigcard__name{font-size:22px}
+:root[data-look] .loom-phome .loom-rrow{min-height:48px}
+/* a field on a phone is 16 px at least, so iOS doesn't zoom in on it (immersion.ts) */
+:root[data-look] .loom-phome .loom-bigcard__compose input{font-size:16px}
+/* how it is, in words: chrome, not text to select (index.css's chrome list) */
+:root[data-look] :is(.loom-bigcard__eb,.loom-rcard__st,.loom-askb){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
