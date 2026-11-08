@@ -53,13 +53,9 @@ export type CommsData = { view: 'comms'; which: 'list' | 'thread'; chrome: Chrom
   /** household.json's github: a bare repo#N in a reply links under it. */
   github?: string };
 
-const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 /** A message's id: 16 characters of RFC 4648 base32, lowercased (comms.md, "The message id"). */
-export function newId(): string {
-  const b = new Uint8Array(16);
-  crypto.getRandomValues(b);
-  return [...b].map((x) => B32[x & 31]).join('');
-}
+export { newId } from './comms-id';
+import { newId } from './comms-id';
 
 async function post(path: string, csrf: string, body: Record<string, unknown> = {}): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   try {
@@ -611,7 +607,8 @@ function ThreadPane({ initial, marks, member, csrf, wide, back, onBack, onChange
   // Read: while the thread is on screen and the page visible, now and every 30 s (that's also "in front" for push).
   useEffect(() => {
     // And a look for asks every 30 s: an approval reaches loom's manifests on its own clock, not the thread's stream.
-    const read = () => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }); void pull(); } };
+    // The desktop's agent cards hear it (desk-agents.tsx useAgentComms): what's unread there moves at once.
+    const read = () => { if (document.visibilityState === 'visible') { void post(`/comms/${thread.id}/read`, csrf, { seq: last.current }).then(() => dispatchEvent(new Event('loom-comms-read'))); void pull(); } };
     read();
     const t = setInterval(read, 30_000);
     document.addEventListener('visibilitychange', read);

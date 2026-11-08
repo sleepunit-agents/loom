@@ -1,41 +1,30 @@
-// The tiling rule (docs/specs/desk-tiling.md, "The rule"): where every tile goes, as a pure function of the tiles in
+// The tiling rule (docs/specs/desk-tiling.md, "The rule"): where every app tile goes, as a pure function of the tiles in
 // their order, what each declares (fit.ts) and the room. It has no state of its own: the same tiles in the same order
 // at the same size give the same screen. Which app goes where in the order, and which goes back to the dock when they
-// don't all fit, are pure functions here too (place, admit).
+// don't all fit, are pure functions here too (place, admit). The agents' rail beside the apps (docs/specs/agent-desk.md)
+// isn't the rule's: the desktop takes its width off the area first (railWidth).
 //
 // No React here, so it's tested on its own (src/ui/desk-tiling-layout.test.ts).
-import { WIDGET_FIT, type Fit, type WidgetKind } from './fit';
+import type { Fit } from './fit';
 
 export const GUTTER = 10;
-/** The strip: one key per widget, this wide. */
-export const STRIP = 64;
 /** Wider than tall by more than this, a region splits side by side; otherwise it's stacked. */
 const WIDE = 1.15;
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type AppTile = { id: string; name: string; fit: Fit; /** made the big one (position 0) by the person */ pinned?: boolean };
-export type WidgetTile = { id: string; name: string; kind: WidgetKind; /** its height as drawn, when it's been measured */ h?: number };
-export type Mode = 'empty' | 'apps' | 'desk' | 'board' | 'rail' | 'strip';
+export type Mode = 'empty' | 'apps';
 export type Layout = {
   mode: Mode;
   apps: Record<string, Rect>;
-  /** Each widget's box: in the rail, the board's columns or the strip. The desktop (no apps) has none: it's Home's own
-   * grid (desk.css .loom-desk-home), drawn from `groups`, its cards filling the middle two or three across by CSS. */
-  widgets: Record<string, Rect & { compact?: boolean }>;
-  /** The desktop's grouping (no apps): Needs you, the agents, everything else, each a column. */
-  groups: string[][];
-  /** Widget columns beside the apps (the board's, or 1 for the rail). */
-  cols: number;
   appArea: Rect | null;
-  widgetArea: Rect | null;
-  /** The widgets are taller than the screen even compact: their column scrolls inside itself. */
-  scroll: boolean;
   /** Why each thing is the size it is, in plain words (the tiles' reasons). */
   why: string[];
 };
 
-/** The rail's width for a screen this wide. */
-export const columnWidth = (screen: number): number => (screen >= 1920 ? 340 : screen >= 1440 ? 300 : 280);
+/** The agents' rail beside the apps, a fixed width for a screen this wide (docs/specs/agent-desk.md, "Work"); none under
+ * 1280 px, where two apps need the room. */
+export const railWidth = (screen: number): number => (screen >= 1440 ? 320 : screen >= 1280 ? 296 : 0);
 /** The most apps on screen at once for a screen this wide. */
 export const capFor = (screen: number): number => (screen >= 2560 ? 6 : screen >= 1600 ? 4 : screen >= 1280 ? 3 : 2);
 
@@ -48,74 +37,13 @@ function need(ts: AppTile[], k: Edge, side = true): number {
   return side ? widthOf(ts[0], k) + GUTTER + need(ts.slice(1), k, false) : Math.max(widthOf(ts[0], k), need(ts.slice(1), k, true));
 }
 
-/** The desktop's groups: Needs you, then the agents, then everything else; each in the order added. */
-function groupsOf(ws: WidgetTile[]): WidgetTile[][] {
-  return [ws.filter((w) => w.kind === 'needs'), ws.filter((w) => w.kind === 'agent'), ws.filter((w) => w.kind !== 'needs' && w.kind !== 'agent')]
-    .filter((g) => g.length);
-}
-
-const heightOf = (w: WidgetTile) => w.h ?? WIDGET_FIT[w.kind].ideal[1];
-/** A card or Needs you drawn compact (a face, a name and its line; the first ask and "N more"); the rest as they are. */
-const compactOf = (w: WidgetTile) => (w.kind === 'agent' || w.kind === 'needs' ? Math.min(heightOf(w), WIDGET_FIT[w.kind].min[1]) : heightOf(w));
-
-/** Widgets stacked down a column: as tall as they are, compact when that's taller than the column, scrolling inside it
- * when even that is. */
-function stack(ws: WidgetTile[], col: Rect, out: Layout['widgets']): { compact: boolean; scroll: boolean } {
-  const total = (h: (w: WidgetTile) => number) => ws.reduce((s, w) => s + h(w), 0) + GUTTER * Math.max(0, ws.length - 1);
-  const compact = total(heightOf) > col.h;
-  const h = compact ? compactOf : heightOf;
-  let y = col.y;
-  for (const w of ws) {
-    out[w.id] = { x: col.x, y, w: col.w, h: h(w), ...(compact && h(w) !== heightOf(w) ? { compact: true } : {}) };
-    y += h(w) + GUTTER;
-  }
-  return { compact, scroll: total(h) > col.h };
-}
-
-/** The tiles' boxes: apps in `apps` order (position 0 is the big slot), widgets in the order added, in `area` on a
- * screen `screen` px wide. */
-export function layout(apps: AppTile[], widgets: WidgetTile[], area: Rect, screen: number): Layout {
-  const out: Layout = { mode: 'empty', apps: {}, widgets: {}, groups: [], cols: 0, appArea: null, widgetArea: null, scroll: false, why: [] };
-  const cw = columnWidth(screen);
-  let A = { ...area };
-  if (!apps.length && !widgets.length) return out;
-  if (!apps.length) {
-    out.mode = 'desk'; out.widgetArea = A; out.groups = groupsOf(widgets).map((g) => g.map((w) => w.id));
-    out.why.push('No apps open: the widgets are the desktop, Needs you, the agents, then the rest.');
-    return out;
-  }
-  if (widgets.length) {
-    const room = A.w - GUTTER, most = need(apps, 'max'), least = need(apps, 'min');
-    const groups = groupsOf(widgets);
-    if (room - most >= cw) {
-      out.cols = Math.min(3, groups.length, Math.max(1, Math.floor((room - most + GUTTER) / (cw + GUTTER))));
-      out.mode = out.cols > 1 ? 'board' : 'rail';
-      out.why.push(`The apps use at most ${most} px, so the widgets get ${out.cols} column${out.cols > 1 ? 's' : ''} beside them.`);
-    } else if (room - least >= cw) {
-      out.mode = 'rail'; out.cols = 1;
-      out.why.push(`The widgets stack in a ${cw} px rail on the right; the apps share the rest.`);
-    } else {
-      out.mode = 'strip'; out.cols = 1;
-      out.why.push(`No room for a rail beside these apps: the widgets fold to a ${STRIP} px strip of keys.`);
-    }
-    const ww = out.mode === 'strip' ? STRIP : out.cols * cw + (out.cols - 1) * GUTTER;
-    out.widgetArea = { x: A.x + A.w - ww, y: A.y, w: ww, h: A.h };
-    A = { x: A.x, y: A.y, w: A.w - ww - GUTTER, h: A.h };
-    if (out.mode === 'strip') {
-      widgets.forEach((w, i) => { out.widgets[w.id] = { x: out.widgetArea!.x, y: A.y + i * (STRIP + GUTTER), w: STRIP, h: STRIP }; });
-      out.scroll = widgets.length * (STRIP + GUTTER) - GUTTER > A.h;
-    } else if (out.mode === 'rail') {
-      out.scroll = stack(widgets, out.widgetArea, out.widgets).scroll;
-    } else {
-      // The board: the desktop's groups, a column each; past the columns there are, the last ones share the last.
-      const cols: WidgetTile[][] = groups.slice(0, out.cols - 1);
-      cols.push(groups.slice(out.cols - 1).flat());
-      cols.forEach((ws, i) => {
-        const s = stack(ws, { x: out.widgetArea!.x + i * (cw + GUTTER), y: A.y, w: cw, h: A.h }, out.widgets);
-        out.scroll ||= s.scroll;
-      });
-    }
-  } else out.mode = 'apps';
+/** The tiles' boxes: apps in `apps` order (position 0 is the big slot) in `area`, on a screen `screen` px wide. */
+export function layout(apps: AppTile[], area: Rect, screen: number): Layout {
+  void screen;
+  const out: Layout = { mode: 'empty', apps: {}, appArea: null, why: [] };
+  if (!apps.length) return out;
+  out.mode = 'apps';
+  const A = { ...area };
   out.appArea = A;
   const first = apps[0];
   out.why.push(apps.length === 1 ? `1 app: ${first.name} fills the app area.`
@@ -154,8 +82,8 @@ function split(ts: AppTile[], R: Rect, out: Layout): void {
 }
 
 /** The first app the layout puts under its minimum, and which way, if any does. */
-export function underMinimum(apps: AppTile[], widgets: WidgetTile[], area: Rect, screen: number): { app: AppTile; px: number; edge: 'width' | 'height' } | undefined {
-  const l = layout(apps, widgets, area, screen);
+export function underMinimum(apps: AppTile[], area: Rect, screen: number): { app: AppTile; px: number; edge: 'width' | 'height' } | undefined {
+  const l = layout(apps, area, screen);
   for (const a of apps) {
     const r = l.apps[a.id];
     if (r.w < a.fit.min[0] - 0.5) return { app: a, px: a.fit.min[0], edge: 'width' };
@@ -164,13 +92,13 @@ export function underMinimum(apps: AppTile[], widgets: WidgetTile[], area: Rect,
   return undefined;
 }
 
-/** Where a new app goes in the order. Opened from another app's tile: right after it. From a widget: last, next to the
- * rail. Wanting the big slot, while the app there doesn't and the person didn't make it the big one: first. Else
+/** Where a new app goes in the order. Opened from another app's tile: right after it. From the agents' rail or Home:
+ * last, next to the rail. Wanting the big slot, while the app there doesn't and the person didn't make it the big one: first. Else
  * last, so it subdivides the newest. */
-export function place(apps: AppTile[], add: AppTile, from?: { tile?: string; widget?: boolean }): AppTile[] {
+export function place(apps: AppTile[], add: AppTile, from?: { tile?: string; rail?: boolean }): AppTile[] {
   const at = from?.tile ? apps.findIndex((a) => a.id === from.tile) : -1;
   if (at >= 0) return [...apps.slice(0, at + 1), add, ...apps.slice(at + 1)];
-  if (!from?.widget && add.fit.big && apps[0] && !apps[0].fit.big && !apps[0].pinned) return [add, ...apps];
+  if (!from?.rail && add.fit.big && apps[0] && !apps[0].fit.big && !apps[0].pinned) return [add, ...apps];
   return [...apps, add];
 }
 
@@ -197,14 +125,14 @@ export type Docked = { app: AppTile; why: string };
  * never the one it was opened from, never a pinned one; a tie goes to the one earlier in the order) goes to the dock.
  * When no app may go, what's left stays, each at what the split gives it.
  */
-export function admit(apps: AppTile[], add: AppTile, widgets: WidgetTile[], area: Rect, screen: number,
-  o: { from?: { tile?: string; widget?: boolean }; usedAt?: Record<string, number> } = {}): { apps: AppTile[]; docked: Docked[] } {
+export function admit(apps: AppTile[], add: AppTile, area: Rect, screen: number,
+  o: { from?: { tile?: string; rail?: boolean }; usedAt?: Record<string, number> } = {}): { apps: AppTile[]; docked: Docked[] } {
   let order = place(apps.filter((a) => a.id !== add.id), add, o.from);
   const docked: Docked[] = [];
   const cap = capFor(screen);
   for (;;) {
     const over = order.length > cap;
-    const under = over ? undefined : underMinimum(order, widgets, area, screen);
+    const under = over ? undefined : underMinimum(order, area, screen);
     if (!over && !under) break;
     const may = order.filter((a) => a.id !== add.id && a.id !== o.from?.tile && !a.pinned);
     if (!may.length) break;

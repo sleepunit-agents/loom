@@ -4,7 +4,6 @@
    own (looks/looks.css), so Neon Noir, Low Light and Daylight each wear it. Loaded with the desk's own chunk. */
 :root[data-look] .loom-desk main.loom-tiles-main{padding-bottom:var(--desk-dock)}
 :root[data-look] .loom-tiles{position:relative;flex:1 1 auto;min-height:0;width:100%}
-:root[data-look] .loom-tiles>.loom-desk-home{height:100%}
 :root[data-look] .loom-tile{--cut:10px;--frame:1px;--tile-ring:var(--v-border);position:absolute;display:flex;flex-direction:column;min-width:0;overflow:hidden;
   background:color-mix(in srgb,var(--v-canvas) 88%,transparent);backdrop-filter:blur(8px);
   clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
@@ -53,47 +52,9 @@
 :root[data-look] .loom-tile__side a:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 2px 0 0 var(--t);background:color-mix(in srgb,var(--t) 6%,transparent)}
 :root[data-look] .loom-tile__btn[aria-pressed="true"]{color:var(--t)}
 
-/* ---- widgets as tiles (docs/specs/desk-tiling.md rule 1): on the desktop in Home's grid; beside the apps in the
-   board's columns or the rail, each where the rule puts it; or folded to the strip's 64 px keys. ---- */
-:root[data-look] .loom-tiles>.loom-desk-home--empty{display:grid;place-items:center;grid-template-columns:1fr;grid-template-rows:1fr}
-:root[data-look] .loom-wrail{position:absolute;overflow:hidden}
-:root[data-look] .loom-wrail[data-scroll]{overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
-:root[data-look] .loom-wtile{position:relative;min-width:0}
-:root[data-look] .loom-wrail .loom-wtile{overflow:hidden}
-:root[data-look] .loom-wtile__in>.loom-w{width:100%}
-/* its ×: top right, clear of the cut corner; what was there moves aside for it */
-:root[data-look] .loom-wtile__x{position:absolute;top:7px;right:18px;z-index:2;display:grid;place-items:center;width:26px;height:26px;color:var(--v-text-3)}
-:root[data-look] .loom-wtile__x:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--v-border)}
-:root[data-look] .loom-wtile .loom-w__more{margin-right:48px}
-:root[data-look] .loom-wtile .loom-agent__who{padding-right:48px}
-/* an agent's card as a tile: the whole card opens the agent, and Chat sits in its foot */
-:root[data-look] .loom-agent__open{position:absolute;inset:0;z-index:0}
-:root[data-look] .loom-w--agent:has(>.loom-agent__open:focus-visible){box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 70%,transparent)}
-:root[data-look] .loom-w--agent:has(>.loom-agent__open)>:not(.loom-agent__open,.loom-agent__chat){pointer-events:none}
-:root[data-look] .loom-w--agent>.loom-agent__chat{pointer-events:auto;position:absolute;right:12px;bottom:6px;z-index:1;display:flex;align-items:center;gap:6px;
-  height:30px;padding:0 12px;font-size:13px;font-weight:600;color:var(--v-text);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--t) 55%,var(--v-border));
-  background:color-mix(in srgb,var(--t) 10%,var(--v-paper))}
-:root[data-look] .loom-w--agent>.loom-agent__chat:is(:hover,:focus-visible){background:color-mix(in srgb,var(--t) 22%,var(--v-paper))}
-:root[data-look] .loom-w--agent:has(>.loom-agent__chat) .loom-agent__foot>span+span{display:none}
-/* compact (a rail taller than the screen): a card is its face, its name and its line */
-:root[data-look] .loom-w--agent[data-compact]{grid-template-columns:auto minmax(0,1fr);grid-template-areas:"face who" "face line";column-gap:12px}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__face{width:64px;height:64px;margin:12px 0 12px 12px}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__face>*{scale:.62}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__who{padding:12px 48px 0 0}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__eyebrow,:root[data-look] .loom-w--agent[data-compact] .loom-agent__foot,
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__where{display:none}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__name{font-size:17px}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__line{margin:2px 12px 10px 0;padding:4px 8px;font-size:12.5px}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__text{-webkit-line-clamp:1}
-:root[data-look] .loom-w--agent[data-compact]>.loom-agent__chat{top:7px;bottom:auto;right:46px;width:28px;height:26px;padding:0;justify-content:center}
-:root[data-look] .loom-w--agent[data-compact]>.loom-agent__chat>span:last-child{display:none}
-:root[data-look] .loom-w--agent[data-compact] .loom-agent__who{padding-right:80px}
-/* the strip: a key per widget, a face or an icon and a count; it opens the widget's app */
-:root[data-look] .loom-strip-key{--t:var(--v-pink);position:relative;display:grid;place-items:center;width:100%;height:100%;color:var(--v-text-2);
-  background:color-mix(in srgb,var(--v-paper) 86%,transparent);box-shadow:inset 0 0 0 1px var(--v-border);text-decoration:none}
-:root[data-look] .loom-strip-key:is(:hover,:focus-visible){color:var(--v-text);box-shadow:inset 0 0 0 1px var(--t)}
-:root[data-look] .loom-strip-key__n{position:absolute;right:4px;top:4px;min-width:18px;padding:0 4px;font-size:11px;line-height:18px;text-align:center;
-  color:var(--v-on-accent);background:var(--v-pink)}
+/* ---- the agents' rail beside the apps (desk-agents.tsx, docs/specs/agent-desk.md): a fixed width at the right edge;
+   the apps share what's left (tiles.tsx appArea). ---- */
+:root[data-look] .loom-tiles>.loom-arail{width:var(--rail-w,320px)}
 /* a context menu (menu.tsx): a small dark panel at the pointer, a lit edge in Neon's pink, its title in the data face;
    the item under focus or the pointer lit as a dock key is. Above the tiles and the dock, under Find. */
 :root[data-look] .loom-cmenu{position:fixed;z-index:60;min-width:200px;max-width:min(320px,calc(100vw - 16px));padding:6px;
@@ -106,12 +67,6 @@
 :root[data-look] .loom-cmenu [role="menuitem"]:is(:hover,:focus-visible,:focus){background:color-mix(in srgb,var(--v-pink) 12%,transparent);box-shadow:inset 2px 0 0 var(--v-pink)}
 :root[data-look] .loom-cmenu__hint{margin-left:auto;font-family:var(--loom-font-data);font-size:11px;color:var(--v-text-3)}
 @media (prefers-contrast:more){:root[data-look] .loom-cmenu{box-shadow:inset 0 0 0 2px var(--v-text)}}
-/* a card in a 280-340 px column: a smaller face, so its name has the room */
-:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]){column-gap:12px}
-:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__face{width:80px;height:80px;margin:14px 0 4px 14px}
-:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__face>*{scale:.75}
-:root[data-look] .loom-wrail .loom-w--agent:not([data-compact]) .loom-agent__who{padding:14px 44px 4px 0}
-:root[data-look] .loom-wrail .loom-agent__name{font-size:20px}
 /* Comms in a tile fills the tile's height (its own height is the window's, read from the screen: comms.css) */
 :root[data-look] .loom-tile__page>.comms[data-wide]{height:calc(100cqh - 44px);min-height:300px}
 
@@ -123,11 +78,11 @@
 :root[data-look] .loom-tile[data-blocked] .loom-tile__layer{pointer-events:auto;background:var(--v-scrim)}
 :root[data-look] .loom-tile__layer :is([role="dialog"],[role="alertdialog"]){max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto}
 
-/* ---- moves (docs/specs/desk-tiling.md, "Transitions"): every tile and every widget in the rail is named for itself,
-   so one View Transition morphs each from its old box to its new one. A page change in one tile names only that
+/* ---- moves (docs/specs/desk-tiling.md, "Transitions"): every tile is named for itself, so one View Transition
+   morphs each from its old box to its new one. A page change in one tile names only that
    tile's body, so the rest stand still. Reduced motion never starts one (tiles.tsx). ---- */
-:root[data-look] .loom-tile,:root[data-look] .loom-wrail .loom-wtile{view-transition-name:var(--vt,none)}
-:root[data-tile-move="page"] :is(.loom-tile,.loom-wrail .loom-wtile){view-transition-name:none}
+:root[data-look] .loom-tile{view-transition-name:var(--vt,none)}
+:root[data-tile-move="page"] .loom-tile{view-transition-name:none}
 :root[data-tile-move="page"] .loom-tile[data-moving] .loom-tile__body{view-transition-name:loom-tile-page}
 :root[data-tile-move]::view-transition-group(*){animation-duration:.22s;animation-timing-function:cubic-bezier(.2,.8,.2,1)}
 :root[data-tile-move="page"]::view-transition-old(root),:root[data-tile-move="page"]::view-transition-new(root){animation:none}
@@ -153,19 +108,10 @@
 @keyframes loom-fx-fade{to{opacity:0}}
 @keyframes loom-fx-glitch{0%{clip-path:inset(0 0 62% 0);transform:translateX(-6px)}15%{clip-path:inset(38% 0 22% 0);transform:translateX(5px)}
   30%{clip-path:inset(8% 0 70% 0);transform:translateX(-3px)}45%{clip-path:inset(55% 0 0 0);transform:translateX(2px)}60%,100%{clip-path:inset(0);transform:none}}
-/* a widget the keys moved to (Alt+Shift+arrows) shows where focus is */
-:root[data-look] .loom-wtile:focus-visible{outline:1px solid var(--v-blue);outline-offset:2px}
 /* a choice of many in a tile is the browser's own list (choice-select.tsx), dressed as the look's field */
 :root[data-look] .loom-tile .loom-native-select{width:100%;min-width:0;height:40px;padding:0 10px;border-radius:var(--r-field,10px);color:var(--v-text);
   background:var(--v-paper);box-shadow:inset 0 0 0 1px var(--v-border);font:inherit}
 /* a sheet from the bottom (drawer.tsx) sits on the tile's own bottom edge, not over the screen's dock */
 :root[data-look] .loom-tile__layer .v-drawer{left:12px;right:12px;bottom:12px;max-height:calc(100% - 24px);overflow:auto}
-/* Needs you drawn compact (rule 1): its first ask's question in two lines, not its why cut off mid-sentence */
-:root[data-look] .loom-wtile[data-compact] .loom-need__why,:root[data-look] .loom-wtile[data-compact] .loom-need__fine{display:none}
-:root[data-look] .loom-wtile[data-compact] .loom-need__title{-webkit-line-clamp:2}
-:root[data-look] .loom-wtile[data-compact] .loom-need{padding:10px 16px}
-:root[data-look] .loom-wtile[data-compact] .loom-need__body>:not(.loom-need__title){display:none}
 /* A page on its way while the one shown stays (page.ts pending): after 150 ms, a line along the tile's top (t-1925 F). */
 :root[data-look] .loom-tile__body:has(>.loom-tile__page[data-pending]){box-shadow:inset 0 2px 0 var(--t,var(--v-pink));transition:box-shadow 0s 150ms}
-/* An agent's card grows into its window (t-1925 D): Expand, beside Chat. */
-:root[data-look] .loom-w--agent>.loom-agent__grow[data-chat]{right:96px}

@@ -7,6 +7,13 @@ sense: what loom builds, and the acceptance criteria its suites must pin. The ow
 desktop prototype's Level 2, "Tiling") and said go on 2026-11-06: "tiling fucks, lets do that for sure" (t-1884). His
 answers to the open questions are under "Decided" at the end, and the text below already follows them.*
 
+
+> **Widgets superseded (2026-11-07, t-1959):** the desktop is agent-centric now ([agent-desk.md](agent-desk.md)). There
+> are no widgets: Home is Needs you and a big card per agent, and with apps open a fixed-width rail of Needs you and
+> compact cards stands beside the tiles. What this doc says about widgets (rule 1, "Widgets", "A fresh desktop",
+> "Needs you and the Inbox", the strip and the board, `w` in the address, Shrink to widget) is history; the rule for
+> apps, the dock, the keys, the tiles' pages and the address's `t` and `m` stand.
+
 ## Why
 
 > "I want to bring back the tiling idea. reason being, right now we have stuff like, the comms app that looks cool as

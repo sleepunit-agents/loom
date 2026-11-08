@@ -1,7 +1,8 @@
 /**
  * Neon on a big screen (Jonathan, 2026-11-05, the desktop OS prototype's Level 1, "Shell"): in a real browser at
- * 1280x800 and 1920x1080, over a household with two agents and things waiting. Home is a desktop: widgets on the
- * ground, no scrolling page and no page header past the bars; what needs you is answered where it stands; the dock sits
+ * 1280x800 and 1920x1080, over a household with two agents and things waiting. Home is a desktop: Needs you and the
+ * agents' big cards (docs/specs/agent-desk.md), no scrolling page and no page header past the bars; what needs you is
+ * answered where that's safe in a line, and opens in the Inbox where it isn't; the dock sits
  * at the bottom centre with no rail beside it; nothing scrolls sideways. Low Light and Daylight are the same desktop
  * in their own colours, and a screen under 1024 px keeps a phone's layout.
  *
@@ -94,21 +95,21 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     await p.evaluate(async ([c, l]) => { await fetch('/appearance/prefs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ _csrf: c, look: l }) }); }, [csrf, look]);
     return p;
   }
-  const home = async (p: Page) => { await p.goto(`${base}/`); await p.locator('.loom-desk-home').waitFor(); await p.waitForTimeout(300); };
+  const home = async (p: Page) => { await p.goto(`${base}/`); await p.locator('.loom-adesk').waitFor(); await p.waitForTimeout(300); };
 
   for (const [w, ht] of SIZES) {
-    it(`${w}x${ht}: Home is the desktop: widgets, no page header, no page scroll, the dock centred and no rail`, async () => {
+    it(`${w}x${ht}: Home is the desktop: Needs you and the agents, no page header, no page scroll, the dock centred and no rail`, async () => {
       const p = await screen('neon', w, ht);
       const errors: string[] = [];
       p.on('pageerror', (e) => errors.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
       await home(p);
-      // The widgets: what needs you, a card per agent with its face, nothing else pretending.
-      expect(await p.locator('.loom-w--needs').count()).toBe(1);
-      expect(await p.locator('.loom-w--agent').count()).toBe(2);
-      expect(await p.locator('.loom-agent__name').allInnerTexts()).toEqual(['Art E Fish', 'Visual Mark']);
-      for (const card of await p.locator('.loom-w--agent').all()) {
-        expect(await card.locator('.loom-agent__face [aria-label]').count()).toBeGreaterThan(0);   // its face (blocks.tsx AgentAvatar: the pixel face where it has one)
-        expect((await card.locator('.loom-agent__line').innerText()).trim().length).toBeGreaterThan(0);   // and how it is
+      // What needs you, a big card per agent with its face, alphabetical; nothing else pretending.
+      expect(await p.locator('.loom-needs-band').count()).toBe(1);
+      expect(await p.locator('.loom-bigcard').evaluateAll((cs) => cs.map((c) => c.getAttribute('aria-label')))).toEqual(['Art E Fish', 'Visual Mark']);
+      for (const card of await p.locator('.loom-bigcard').all()) {
+        expect(await card.locator('.loom-bigcard__face [aria-label]').count()).toBeGreaterThan(0);   // its face (blocks.tsx AgentAvatar: the pixel face where it has one)
+        expect((await card.locator('.loom-bigcard__eb').innerText()).trim().length).toBeGreaterThan(0);   // and how it is
+        expect((await card.locator('[data-row="now"] dd').innerText()).trim().length).toBeGreaterThan(0);
       }
       expect(errors).toEqual([]);
       // The bars are the only header: no big title, no app tile, no rail.
@@ -119,9 +120,9 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
       const m = await p.evaluate(() => ({ sw: document.documentElement.scrollWidth, sh: document.documentElement.scrollHeight, iw: innerWidth, ih: innerHeight }));
       expect(m.sw).toBeLessThanOrEqual(m.iw);
       expect(m.sh).toBeLessThanOrEqual(m.ih);
-      // Every widget column is on the screen, above the dock (a column with more than fits scrolls inside itself).
+      // Needs you and every card are on the screen, above the dock.
       const keys = await p.locator('.loom-dock-bar [data-part="item"]').evaluateAll((bs) => bs.map((b) => b.getBoundingClientRect()).map((r) => ({ l: r.left, r: r.right, t: r.top })));
-      for (const box of await p.locator('.loom-desk-col').evaluateAll((ws) => ws.map((x) => x.getBoundingClientRect()).map((r) => ({ l: r.left, r: r.right, b: r.bottom })))) {
+      for (const box of await p.locator('.loom-needs-band, .loom-bigcard').evaluateAll((ws) => ws.map((x) => x.getBoundingClientRect()).map((r) => ({ l: r.left, r: r.right, b: r.bottom })))) {
         expect(box.l).toBeGreaterThanOrEqual(0); expect(box.r).toBeLessThanOrEqual(w);
         expect(box.b).toBeLessThanOrEqual(Math.min(...keys.map((k) => k.t)));
       }
@@ -134,33 +135,30 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
   }
 
   for (const [w, ht] of SIZES) {
-    it(`${w}x${ht}: the three columns' first widgets share a top edge, no headline, and no Moving strip`, async () => {
+    it(`${w}x${ht}: the cards share a top edge and the desktop's width, no headline, and no Moving strip`, async () => {
       const p = await screen('neon', w, ht);
       await home(p);
-      // Each column's first widget: Needs you, the first agent, Vitals (Jonathan, 2026-11-05: the headline sat in the
-      // middle column and pushed the agents down).
-      const firsts = await p.locator('.loom-desk-col').evaluateAll((cols) => cols.map((c) => {
-        const f = c.querySelector('.loom-w');
-        return f ? { cls: f.className, top: f.getBoundingClientRect().top } : null;
-      }));
-      expect(firsts.length).toBe(3);
-      expect(firsts.every(Boolean), JSON.stringify(firsts)).toBe(true);
-      const tops = firsts.map((f) => f!.top);
-      expect(Math.max(...tops) - Math.min(...tops), JSON.stringify(firsts)).toBeLessThanOrEqual(1);
+      const boxes = await p.locator('.loom-bigcard').evaluateAll((cs) => cs.map((c) => c.getBoundingClientRect()).map((r) => ({ t: r.top, l: r.left, r: r.right })));
+      expect(boxes.length).toBe(2);
+      expect(Math.abs(boxes[0].t - boxes[1].t)).toBeLessThanOrEqual(1);
+      const band = await p.locator('.loom-needs-band').evaluate((e) => { const r = e.getBoundingClientRect(); return { l: r.left, r: r.right }; });
+      expect(Math.abs(boxes[0].l - band.l)).toBeLessThanOrEqual(1);
+      expect(Math.abs(boxes[1].r - band.r)).toBeLessThanOrEqual(1);
       // No headline or status line (Jonathan, 2026-11-06: "just cards, widgets and windows").
       expect(await p.locator('.loom-desk-headline').count()).toBe(0);
       expect(await p.getByText('Everyone\u2019s fine').count()).toBe(0);
       // What each agent is on is its card's: nothing repeats it in a strip.
-      expect(await p.locator('.loom-w--tape').count()).toBe(0);
+      expect(await p.locator('.loom-w--tape, [data-widget]').count()).toBe(0);
       expect(await p.getByText('Moving', { exact: true }).count()).toBe(0);
       await p.context().close();
     }, 90_000);
   }
 
-  it('what needs you is answered where it stands: Yes posts the ask\'s answer; Done answers it and it leaves the desktop', async () => {
+  it('what needs you is answered where it stands when a line can: Yes posts the ask\'s answer; one answered in words opens in the Inbox', async () => {
     const p = await screen('neon', 1280, 800);
     await home(p);
-    const sonarr = p.locator('.loom-need', { hasText: 'recycle bin on Sonarr' });
+    const chip = (t: string) => p.locator('.loom-needs-band .loom-nchip', { hasText: t });
+    const sonarr = chip('recycle bin on Sonarr');
     // Yes posts the answer, as the Inbox's sheet does (delivering it to the agent is the runtime's, which this
     // household hasn't got: the post itself is what's checked here; needs-answer.test.ts has the rest).
     const posted: string[] = [];
@@ -173,45 +171,33 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     expect(f.get('conversation')).toMatch(/^cv-/);
     expect(f.get('digest')).toMatch(/^dg-/);
     await p.unroute('**/act/**');
-    // An ask with its own buttons under it is read whole, never cut (what a button does is read beside it).
-    expect(await p.locator('.loom-need', { hasText: 'Gabe or Mark' }).locator('.loom-need__title').evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('none');
-    // An ask answered in words has no Yes or No: its sheet has the box. Its own Done answers it, right here.
-    const words = p.locator('.loom-need', { hasText: 'Gabe or Mark' });
-    expect(await words.getByRole('button', { name: 'Yes' }).count()).toBe(0);
-    expect(await words.getByRole('button', { name: /Reply/ }).count()).toBe(1);
-    await words.getByRole('button', { name: 'Done' }).click();
-    await expect.poll(() => p.locator('.loom-need', { hasText: 'Gabe or Mark' }).count(), { timeout: 10_000 }).toBe(0);
-    // Still the desktop, and the Inbox agrees.
-    expect(new URL(p.url()).pathname).toBe('/');
-    const inbox = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: { text: string; attention: boolean }[] }).items);
-    expect(inbox.find((i) => /Gabe or Mark/.test(i.text))?.attention ?? false).toBe(false);
+    // An ask answered in words has no Yes or No in a line: its Reply opens it in the Inbox, picked, beside the rail.
+    const all = await p.locator('.loom-needs-band .loom-nchip').count();
+    const words = chip('Gabe or Mark');
+    if (await words.count()) {
+      expect(await words.getByRole('button', { name: 'Yes' }).count()).toBe(0);
+      await words.getByRole('button', { name: /Reply/ }).click();
+      await p.locator('.loom-tile[data-tile="/inbox"] .loom-split__reader').waitFor();
+      await expect.poll(() => p.locator('.loom-split__reader h2').textContent()).toContain('Gabe or Mark');
+      expect(new URL(p.url()).searchParams.get('f')).toBe('needs');
+      expect(await p.locator('.loom-arail .loom-rneeds').count()).toBe(1);
+    } else expect(all).toBe(3);
     await p.context().close();
   }, 90_000);
 
-  it('a permission\'s Allow and Deny never show without its whole ask, each beside what it does', async () => {
-    const p = await screen('neon', 1280, 800);
+  it('a permission\'s Allow and Deny never show in the band: it opens in the Inbox\'s reader, read whole there', async () => {
+    const p = await screen('neon', 1920, 1080);
     await home(p);
-    const card = p.locator('.loom-need', { hasText: 'lane prompts on loom again' });
-    await card.waitFor();
-    const title = card.locator('.loom-need__title');
-    // Read whole: no clamp, and nothing of it hidden (its box holds all of its text).
-    expect(await title.evaluate((e) => getComputedStyle(e).webkitLineClamp)).toBe('none');
-    expect(await title.evaluate((e) => e.scrollHeight <= e.clientHeight + 1)).toBe(true);
-    expect(await title.textContent()).toContain('OK to start updating lane prompts on loom again?');
-    // Each button beside its line, in the same row.
-    for (const [name, line] of [['Allow once', 'If you allow: Lane prompt changes go live again.'], ['Deny', 'If you deny: Lane prompts stay as they are until you look.']] as const) {
-      const row = card.locator('.loom-answers > div', { has: p.getByRole('button', { name }) });
-      expect(await row.textContent()).toContain(line);
-    }
-    expect(await card.textContent()).toContain('Exactly what this allows: A GitHub write');
-    // The Inbox carries the same, laid out, for its sheet (and its row, which has no buttons, may be cut).
-    const items = await p.evaluate(async () => ((await (await fetch('/inbox', { headers: { accept: 'application/json' } })).json()) as { items: Array<Record<string, any>> }).items);
-    const it = items.find((x) => /lane prompts on loom again/.test(x.text))!;
-    expect(it).toMatchObject({ kind: 'permission', fine: expect.stringContaining('A GitHub write'),
-      needs: { why: expect.any(String), if_yes: 'Lane prompt changes go live again.', if_no: 'Lane prompts stay as they are until you look.' } });
-    // In the Inbox's reader (t-1925; it was a sheet): the whole ask as its title, "If you allow" and "If you deny",
-    // the small print, then the buttons once loom says it's still open.
-    await card.locator('.loom-need__title').click();
+    // The first three are in the band; the Inbox has them all. Each is answered in a line only as Yes and No.
+    const n = await p.locator('.loom-needs-band .loom-nchip').count();
+    expect(n).toBeGreaterThan(0);
+    expect(await p.locator('.loom-needs-band').getByRole('button', { name: /^(Allow|Deny)/ }).count()).toBe(0);
+    const card = p.locator('.loom-needs-band .loom-nchip', { hasText: 'lane prompts on loom again' });
+    if (!(await card.count())) await p.locator('.loom-needs-band__all').click();
+    else await card.getByRole('button', { name: /Read and answer|Open/ }).click();
+    const inbox = p.locator('.loom-tile[data-tile="/inbox"]');
+    await inbox.waitFor();
+    if (!(await card.count())) await inbox.getByText('OK to start updating lane prompts on loom again?').first().click();
     const sheet = p.locator('.loom-split__reader');
     await expect.poll(() => sheet.locator('h2').textContent()).toContain('OK to start updating lane prompts on loom again?');
     for (const t of ['If you allow', 'If you deny', 'Exactly what this allows']) expect(await sheet.textContent()).toContain(t);
@@ -248,7 +234,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     it(`${w}x${ht}: Ctrl+K opens Find as a command bar in the middle of the screen, over the desktop or a tile; its Esc closes only Find`, async () => {
       const p = await screen('neon', w, ht);
       for (const path of ['/', '/inbox']) {
-        await p.goto(`${base}${path}`); await p.locator(path === '/' ? '.loom-desk-home' : '.loom-tile').waitFor(); await p.waitForTimeout(300);
+        await p.goto(`${base}${path}`); await p.locator(path === '/' ? '.loom-adesk' : '.loom-tile').waitFor(); await p.waitForTimeout(300);
         await p.keyboard.press('Control+k');
         await p.locator('[role="dialog"] .loom-find-field').waitFor();
         const b = (await p.locator('[role="dialog"]').boundingBox())!;
@@ -375,9 +361,9 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     expect(order(await bootHad(p, ['out']))).toEqual(['in', 'key', 'leaving', 'out']);
     // Then the app's own arrival (its power-on) runs, and the desktop is there.
     await p.clock.resume();
-    await p.locator('.loom-desk-home').waitFor();
+    await p.locator('.loom-adesk').waitFor();
     // Once a session: not again on the next page, nor coming back.
-    await p.goto(`${base}/`); await p.locator('.loom-desk-home').waitFor(); await p.waitForTimeout(600);
+    await p.goto(`${base}/`); await p.locator('.loom-adesk').waitFor(); await p.waitForTimeout(600);
     expect(await boot.count()).toBe(0);
     expect(await p.evaluate(() => (window as unknown as { bootLog: BootNote[] }).bootLog.length)).toBe(0);
     await p.context().close();
@@ -432,12 +418,12 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }
   }, 90_000);
 
-  it('Low Light and Daylight at the same width are the same desktop: widgets, a tile, no rail, nothing sideways; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
+  it('Low Light and Daylight at the same width are the same desktop: the agents, a tile, no side rail, nothing sideways; under 1024 px Neon keeps a phone\'s dock and no desktop', async () => {
     for (const look of ['lowlight', 'daylight'] as const) {
       const o = await screen(look, 1280, 800);
       await home(o);
       expect(await o.evaluate(() => document.documentElement.dataset.look), look).toBe(look);
-      expect(await o.locator('.loom-desk .loom-w').count(), look).toBeGreaterThan(1);
+      expect(await o.locator('.loom-desk .loom-bigcard').count(), look).toBeGreaterThan(1);
       expect(await o.locator('.loom-side').count(), look).toBe(0);
       expect(await o.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), look).toBeLessThanOrEqual(0);
       await o.goto(`${base}/inbox`);
@@ -446,7 +432,7 @@ describe.runIf(built && chrome)('Neon on a big screen: the desktop', () => {
     }
     const n = await screen('neon', 1000, 800);
     await n.goto(`${base}/`); await n.locator('.loom-top h1').waitFor(); await n.waitForTimeout(300);
-    expect(await n.locator('.loom-desk, .loom-desk-home').count()).toBe(0);
+    expect(await n.locator('.loom-desk, .loom-adesk').count()).toBe(0);
     expect(await n.locator('.loom-dock-bar').count()).toBe(1);
     await n.context().close();
   }, 90_000);

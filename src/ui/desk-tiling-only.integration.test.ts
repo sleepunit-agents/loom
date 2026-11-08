@@ -1,6 +1,6 @@
 /**
  * Tiling, the only desktop (docs/specs/desk-tiling.md, criterion 18; "A fresh desktop", "One window at a time"). With
- * nothing chosen and nothing saved, a big screen is the tiled desktop, seeded; Appearance has no Desktop choice; the
+ * nothing chosen and nothing saved, a big screen is the tiled desktop, its agents on it; Appearance has no Desktop choice; the
  * old window is gone. One window at a time is Accessibility's: the same desktop, one app tile at most, opening another
  * sends the one there to the dock with a toast; turned on with two open, the focused one stays. A device that kept the
  * old choice as One window at a time (`loom-tiling` off) starts with it on. Real Chrome, Neon Noir.
@@ -76,7 +76,7 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
   }
   const query = (p: Page, k: string) => new URL(p.url()).searchParams.get(k);
   const labels = (p: Page) => p.$$eval('.loom-tile', (ts) => ts.map((t) => (t.getAttribute('aria-label') ?? '').replace(/^tile \d+ of \d+, /, '')));
-  const widgets = (p: Page) => p.$$eval('[data-widget]', (ws) => ws.map((w) => w.getAttribute('data-widget')));
+  const cards = (p: Page) => p.$$eval('.loom-bigcard', (ws) => ws.map((w) => w.getAttribute('data-agent')));
   /** An app with no dock key, from the launcher (t-1925 G). */
   const launch = async (p: Page, name: string) => {
     await p.click(KEY('All apps')); await p.locator('.loom-launcher').waitFor();
@@ -86,13 +86,13 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
   const toast = (p: Page, words: string) => p.getByText(words, { exact: false }).count();
 
   for (const [w, hgt] of [[1280, 800], [1920, 1080]]) {
-    it(`18. a fresh session lands on the seeded widgets with no setting chosen; Appearance has no Desktop choice, at ${w}×${hgt}`, async () => {
+    it(`18. a fresh session lands on Home, its agents' big cards, with no setting chosen; Appearance has no Desktop choice, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt, 'jonathan');
-      // The seed (widgets.ts SEED), the whole desktop: Needs you, each agent's card (its face), Vitals, Backup; no headline.
-      await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
-      expect(query(p, 'w')).toBe('needs,art,mark,vitals,backup');
-      expect(await p.locator('.loom-desk-home .loom-desk-headline').count()).toBe(0);
-      expect(await p.locator('[data-widget="art"] .loom-agent__face').count()).toBe(1);
+      // Home is Needs you and each agent, big (docs/specs/agent-desk.md): nothing seeded, nothing in the address.
+      await expect.poll(() => cards(p)).toEqual(['art', 'mark']);
+      expect(await p.locator('.loom-needs-band').count()).toBe(1);
+      expect(query(p, 'w')).toBeNull();
+      expect(await p.locator('.loom-bigcard[data-agent="art"] .loom-bigcard__face').count()).toBe(1);
       expect(await p.locator('.loom-tile').count()).toBe(0);
       // No old window, ever: an app is a tile.
       await launch(p, 'Appearance');
@@ -118,8 +118,8 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
       await choice.locator('[role="radio"]', { hasText: 'On' }).click();
       await expect.poll(() => labels(p)).toEqual(['Accessibility']);
       expect(query(p, 'm')).toBe('inbox');
-      // The widgets stay, beside the one app.
-      expect((await widgets(p)).length).toBeGreaterThan(0);
+      // The agents' rail stays, beside the one app.
+      expect(await p.locator('.loom-arail .loom-rcard').count()).toBeGreaterThan(0);
       // Opening another: the one there goes to the dock, kept where it was, said in a toast.
       await p.click(KEY('Comms'));
       await expect.poll(() => labels(p)).toEqual(['Comms']);
@@ -141,14 +141,12 @@ describe.runIf(built && chrome)('tiling is the only desktop', () => {
     }, 60_000);
   }
 
-  it('18. a saved layout is left alone: a bare / opens this device\'s own widgets, not the seed', async () => {
-    const p = await screen(1280, 800, 'jonathan', { init: `localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: ['mark', 'vitals'] }));` });
-    await expect.poll(() => widgets(p)).toEqual(['mark', 'vitals']);
-    expect(query(p, 'w')).toBe('mark,vitals');
-    // and one with every widget taken off stays empty
-    await p.evaluate(() => localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: [] })));
-    await p.goto(`${base}/`); await p.locator('.loom-tiles').waitFor(); await p.waitForTimeout(300);
-    expect(await widgets(p)).toEqual([]);
+  it('18. a layout kept from when there were widgets opens as it was, its widgets read past (2026-11-07)', async () => {
+    const p = await screen(1280, 800, 'jonathan', { init: `localStorage.setItem('loom-tiles', JSON.stringify({ t: [{ name: 'inbox', focused: true }], m: [], w: ['mark', 'vitals'] }));` });
+    await expect.poll(() => labels(p)).toEqual(['Inbox']);
+    expect(query(p, 'w')).toBeNull();
+    expect(await p.locator('[data-widget]').count()).toBe(0);
+    await expect.poll(() => p.evaluate(() => JSON.parse(localStorage.getItem('loom-tiles') ?? '{}').w)).toBeUndefined();
     await p.context().close();
   }, 60_000);
 

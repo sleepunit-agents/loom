@@ -89,7 +89,8 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
   async function open(phone: boolean): Promise<{ ctx: BrowserContext; page: Page; errors: string[] }> {
     const ctx = await browser.newContext(phone
       ? { viewport: { width: 430, height: 900 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, serviceWorkers: 'block' }
-      : { viewport: { width: 1440, height: 900 }, serviceWorkers: 'block' });
+      // 1600: Comms beside the agents' rail still has room for its list beside the thread (docs/specs/agent-desk.md).
+      : { viewport: { width: 1600, height: 900 }, serviceWorkers: 'block' });
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     // A desktop with no widgets beside Comms: room for the list beside the thread (comms.tsx ONE_PANE_BELOW).
     if (!phone) await ctx.addInitScript(() => { try { if (!localStorage.getItem('loom-tiles')) localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: [] })); } catch { /* private */ } });

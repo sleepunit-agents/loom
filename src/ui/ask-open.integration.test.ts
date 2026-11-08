@@ -73,11 +73,11 @@ describe.runIf(built && chrome)('Needs you answers only an ask loom says is open
       : open === 'cached' ? r.fulfill({ json: { open: true }, headers: { 'x-loom-saved-at': String(Date.now() - 3_600_000) } }) : r.fulfill({ json: { open: open === 'yes' } }); });
     let n = 0;
     await p.route('**/act/**', (r) => { n++; return r.fulfill({ json: { ok: true, message: 'Answered.' } }); });
-    await p.goto(`${base}/?w=needs`);
-    await p.locator('[data-widget="needs"] .loom-need').waitFor();
+    await p.goto(`${base}/`);
+    await p.locator('.loom-needs-band .loom-nchip').waitFor();
     return { p, asked, posted: () => n };
   }
-  const need = (p: Page) => p.locator('[data-widget="needs"] .loom-need').first();
+  const need = (p: Page) => p.locator('.loom-needs-band .loom-nchip').first();
 
   for (const how of ['no', 'offline', 'cached'] as const) {
     it(`${how === 'no' ? 'answered since (loom says it isn\'t open)' : how === 'offline' ? 'loom can\'t be reached' : 'the answer is this device\'s copy (x-loom-saved-at)'}: no Yes, no No, nothing sent`, async () => {

@@ -331,10 +331,11 @@ An Accessibility choice: the same tiled desktop with one app tile at most; openi
 dock. Kept per person (`oneWindow`).
 _Avoid_: plain mode, single-window mode
 
-**Widget**:
-A small tile: one of Home's cards (an agent's card, Needs you, Vitals, Backup). It is live, never gets a split of its
-own, and opens its app beside it.
-_Avoid_: gadget, applet
+**Agent card**:
+An agent on the desktop (docs/specs/agent-desk.md): big on Home (its face, how it is, what it's on, its last thread, its
+next wake, what's unread, its ask, a composer), compact in the rail. The viewer's own agents only, always there,
+alphabetical by name.
+_Avoid_: widget (Home's small tiles, removed 2026-11-07), status card
 
 **Fit**:
 What an app declares about the room it can use: a minimum, an ideal and a maximum width, a minimum height, and whether
@@ -344,9 +345,12 @@ _Avoid_: size hint, constraints
 **The big slot**:
 The first app tile, the large one on the left once there are three or more apps.
 
+**Home**:
+The desktop with no app open: the Needs you band, then a big card per agent.
+
 **The rail**:
-The column the widgets stack in, on the right, while apps are open. **The strip** is the rail folded to one 64 px key
-per widget.
+The fixed-width column on the right while apps are open: Needs you at the top, then a compact card per agent. Hidden
+to **the strip** (a thin bar that brings it back) or set to auto-hide, by a right-click on it.
 
 ## Relationships
 

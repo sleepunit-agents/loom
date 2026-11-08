@@ -650,7 +650,7 @@ export default function App() {
           {tiled && D && chrome?.shell ? (
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} outerGo={go}
-                shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} live={!savedAt} widgetEnv={(g) => pageEnv(mainPage, g)}
+                shell={chrome.shell} homeData={data?.view === 'house-home' ? data.home as never : null} deskEnv={(g) => pageEnv(mainPage, g)}
                 oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 // An agent's window wears its letter in the corner (t-1925 D): a cropped pixel head there read wrong.
@@ -702,7 +702,7 @@ export default function App() {
         look={LOOKS.find((l) => l.look === look)?.name} motion={motion === 'on' ? 'Less motion' : motion === 'off' ? 'Full motion' : 'As this device'}
         launch={(href) => { if (!(tiledNow.current && tilesApi.current?.open(href))) go(href); }} /></Suspense>}
 
-      {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} widgets={tiled ? tilesApi.current?.addable() : undefined} /></Suspense>}
+      {chrome && finding && <Suspense fallback={null}><FindOverlay open={finding} onOpenChange={setFinding} chrome={chrome} icon={icon} go={go} /></Suspense>}
 
       {notes.length > 0 && <Suspense fallback={null}><Toasts notes={notes} wide={wide} dismiss={(id) => setNotes((x) => x.filter((y) => y.id !== id))}
         undo={ctx && chrome ? (n) => void act({ ...ctx, path: n.undo!.path, query: {} }, chrome.csrf, n.undo!.action, n.undo!.fields ?? {}, n.undo!.act).then((r) => { say(r); void load(url, false); }) : undefined} /></Suspense>}

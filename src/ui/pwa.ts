@@ -63,6 +63,8 @@ const PAGES = '${VERSION}-pages', VIEWS = '${VERSION}-views', MEDIA = '${VERSION
 const SHELL = ['/app.js', '/fonts/instrument-sans-latin-wght-normal.woff2', '/fonts/jetbrains-mono-latin-wght-normal.woff2', '/icons/loom-32.png'];
 const AHEAD = '__BUILT__';
 const NEVER = /^\\/(login|logout)(\\/|$)/;
+// Views never kept on this device: the desktop's Comms summary carries the first line of a reply (docs/specs/agent-desk.md).
+const UNKEPT = /^\\/comms\\/agents$/;
 self.addEventListener('install', (e) => {
   self.skipWaiting();
   e.waitUntil(Promise.all([caches.open(STATIC).then((c) => c.addAll(SHELL)).catch(() => {}),
@@ -106,7 +108,7 @@ async function page(req) {
   const landed = new URL(res.url || req.url);
   if (NEVER.test(landed.pathname)) { await forget(); return res; }
   const html = (res.headers.get('content-type') || '').startsWith('text/html');
-  if (res.status === 200 && html && !NEVER.test(url.pathname) && !url.searchParams.has('_flash') && !res.redirected) {
+  if (res.status === 200 && html && !NEVER.test(url.pathname) && !UNKEPT.test(url.pathname) && !url.searchParams.has('_flash') && !res.redirected) {
     const body = await res.clone().arrayBuffer();
     const h = new Headers(res.headers);
     h.set('x-loom-saved-at', new Date().toISOString());
@@ -136,7 +138,7 @@ async function view(req) {
   }
   clearTimeout(slow);
   await whose(res);
-  if (res.status === 200 && res.type === 'basic' && (res.headers.get('content-type') || '').startsWith('application/json') && !NEVER.test(url.pathname) && !url.searchParams.has('_flash') && !res.redirected) {
+  if (res.status === 200 && res.type === 'basic' && (res.headers.get('content-type') || '').startsWith('application/json') && !NEVER.test(url.pathname) && !UNKEPT.test(url.pathname) && !url.searchParams.has('_flash') && !res.redirected) {
     const body = await res.clone().arrayBuffer();
     const h = new Headers(res.headers);
     h.set('x-loom-saved-at', new Date().toISOString());

@@ -209,7 +209,7 @@ describe.runIf(built && chrome)('the Tasks page', () => {
 
   it('in a narrow tile beside others: side folded on top, chips on single lines, rows opening in place', async () => {
     const { ctx, p } = await open(1920, 1080);
-    await p.goto(`${base}/inbox?t=*inbox&w=`);
+    await p.goto(`${base}/inbox?t=*inbox`);
     await p.locator('.loom-tile').first().waitFor();
     for (const l of ['Garden', 'Shed', 'Tasks']) {
       const n = await p.locator('.loom-tile').count();

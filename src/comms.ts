@@ -523,6 +523,71 @@ export function threadsOf(h: Household, member: Member, opts: { archived?: boole
   return listed.sort((a, b) => rank(a) - rank(b) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
 }
 
+/** The most of a first unread reply's words that a desktop card carries (one line of it, docs/specs/agent-desk.md). */
+export const FIRST_LINE_MAX = 160;
+
+/**
+ * What a member's threads with one of their agents say on the desktop's agent card (docs/specs/agent-desk.md, "Unread"):
+ * the thread they last talked in, how many of the agent's replies they haven't read across their open threads (each
+ * thread's own read_seq: read state is the member's, because a thread is), and the first of those replies' words, one
+ * line, in the newest thread that has any, so the card opens that thread there.
+ */
+export interface AgentComms {
+  agent: string;
+  unread: number;
+  /** The first unread reply: its thread, and its words cut to one line (null when swept or unreadable). */
+  first?: { thread: string; text: string | null };
+  /** The thread most recently moved: its title and when. */
+  last?: { thread: string; title: string | null; at: string };
+}
+
+/** One line of a reply's words, for a card: whitespace folded, cut at FIRST_LINE_MAX characters as a reader counts
+ * them (grapheme clusters: never half an emoji, a flag or an accented letter) with an ellipsis. */
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+export const firstLine = (s: string): string => {
+  const one = [...graphemes.segment(s.replace(/\s+/g, ' ').trim())].map((g) => g.segment);
+  return one.length > FIRST_LINE_MAX ? `${one.slice(0, FIRST_LINE_MAX - 1).join('').trimEnd()}…` : one.join('');
+};
+
+/**
+ * The desktop's per-agent Comms summary, for `member` only: each agent they own (owners.md), in the household's order,
+ * from their own unarchived threads (threadsOf). Another member's threads never count, and nothing here is for a
+ * token, a piece or another member (comms-routes.ts serves it to the signed-in member alone).
+ */
+export async function agentsComms(h: Household, env: NodeJS.ProcessEnv, member: Member | undefined): Promise<AgentComms[]> {
+  // Nobody but a member has threads to sum: refused here as well as by the route.
+  if (!member) return fail('forbidden: Comms is for an agent\'s owners', 403);
+  // (Each thread's seqs and each agent's count open comms.db briefly: a few dozen threads, read once a minute at most.)
+  const threads = threadsOf(h, member);
+  const haveMessages = existsSync(join(h.home, COMMS_DB));
+  let opener: Opener | null | undefined;
+  const open = () => { if (opener === undefined) { try { opener = openerFor(h.home, env); } catch { opener = null; } } return opener; };
+  const out: AgentComms[] = [];
+  for (const agent of h.agents.filter((a) => owns(member, a))) {
+    const mine = threads.filter((t) => t.agent === agent);
+    const newest = [...mine].sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
+    const counts = haveMessages ? withMessages(h.home, (db) => newest.map((t) => (t.unread
+      ? (db.prepare("SELECT COUNT(*) AS n FROM comms_messages WHERE thread = ? AND kind = 'reply' AND seq > ?").get(t.id, t.read_seq) as { n: number }).n : 0))) : [];
+    const unread = counts.reduce((n, c) => n + c, 0);
+    const a: AgentComms = { agent, unread };
+    const last = newest[0];
+    if (last) a.last = { thread: last.id, title: last.title, at: last.last };
+    // The newest thread with anything unread: the card opens there.
+    const i = newest.findIndex((_, k) => counts[k] > 0);
+    if (i >= 0) {
+      const t = newest[i];
+      const row = withMessages(h.home, (db) => db.prepare("SELECT * FROM comms_messages WHERE thread = ? AND kind = 'reply' AND seq > ? ORDER BY seq LIMIT 1").get(t.id, t.read_seq) as MsgRow | undefined);
+      if (row) {
+        let text: string | null = null;
+        try { text = (await messageOf(row.text ? open() : null, agent, t.id, row)).text; } catch { text = null; }
+        a.first = { thread: t.id, text: text === null ? null : firstLine(text) };
+      }
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 // ─── Writing ───────────────────────────────────────────────────────────────────
 
 const nowIso = (now: Date) => now.toISOString();

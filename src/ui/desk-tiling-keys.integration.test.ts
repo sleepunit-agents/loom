@@ -142,7 +142,7 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
   }
 
   it('15. the keys: focus by direction (and the live region says where), make it the big one, swap, minimize, Home and back, Back in one tile only; a field keeps its keys; Esc closes no tile', async () => {
-    const p = await screen(1920, 1080, '/inbox?t=*inbox,people,comms&w=');
+    const p = await screen(1920, 1080, '/inbox?t=*inbox,people,comms');
     await expect.poll(() => labels(p)).toEqual(['Inbox', 'People', 'Comms']);
     await p.locator('.loom-tile[data-tile="/inbox"] .loom-tile__bar h2').focus();
     // → from the big slot: position 1, the upper of the two on the right
@@ -208,22 +208,8 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
     await p.context().close();
   }, 60_000);
 
-  it('15. the arrows reach a widget too, a key in the strip included, and say which', async () => {
-    const p = await screen(1024, 768, '/people?t=*people,comms&w=needs,art');
-    await expect.poll(() => p.locator('.loom-tiles').getAttribute('data-widgets')).toBe('strip');
-    await p.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar h2').focus();
-    // the key whose centre is nearest Comms's (Art's, the lower of the two), then up to Needs you
-    await key(p, 'Alt+Shift+ArrowRight');
-    await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('art');
-    await expect.poll(() => said(p)).toMatch(/^art.*, widget$/i);
-    await key(p, 'Alt+Shift+ArrowUp');
-    await expect.poll(() => p.evaluate(() => document.activeElement?.closest('[data-widget]')?.getAttribute('data-widget'))).toBe('needs');
-    await expect.poll(() => said(p)).toMatch(/^Needs you.*, widget$/);
-    await p.context().close();
-  }, 60_000);
-
   it('16. a choice of many in a tile is the browser\'s own list, so nothing outside the tile is hidden while it\'s used', async () => {
-    const p = await screen(1280, 800, '/p/garden?t=*garden,inbox&w=');
+    const p = await screen(1280, 800, '/p/garden?t=*garden,inbox');
     const garden = p.locator('.loom-tile[data-tile="/p/garden"]');
     const select = garden.locator('select.loom-native-select');
     await garden.waitFor();
@@ -239,12 +225,12 @@ describe.runIf(built && chrome)('desk tiling: keys, a tile\'s own sheets, reduce
   }, 60_000);
 
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) it(`19. reduced motion starts no View Transition; with motion, opening a second app morphs every tile, and a page change in one names only that one, at ${w}×${hgt}`, async () => {
-    const still = await screen(w, hgt, '/inbox?t=*inbox&w=');
+    const still = await screen(w, hgt, '/inbox?t=*inbox');
     await still.click('.loom-dock-bar [data-part="item"][aria-label="People"]');
     await expect.poll(() => labels(still)).toEqual(['Inbox', 'People']);
     expect(await still.evaluate(() => (window as unknown as { __vt: number }).__vt)).toBe(0);
     await still.context().close();
-    const moving = await screen(w, hgt, '/inbox?t=*inbox&w=', { motion: true });
+    const moving = await screen(w, hgt, '/inbox?t=*inbox', { motion: true });
     await moving.click('.loom-dock-bar [data-part="item"][aria-label="People"]');
     await expect.poll(() => labels(moving)).toEqual(['Inbox', 'People']);
     expect(await moving.evaluate(() => (window as unknown as { __vt: number }).__vt)).toBeGreaterThanOrEqual(1);

@@ -72,6 +72,9 @@ function listen(h: { change: () => void; open: (on: boolean) => void }): () => v
   };
 }
 
+/** Hear the live stream's "something changed" (the desktop's agent cards ask their Comms summary again on it). */
+export const onLive = (change: () => void): (() => void) => listen({ change, open: () => {} });
+
 export interface PageState {
   url: string;
   data: View | null;

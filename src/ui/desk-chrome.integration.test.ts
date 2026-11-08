@@ -1,8 +1,9 @@
 /**
  * The desktop's chrome (t-1925; docs/specs/desk-tiling.md, "The bar", criterion 22): one bar across the top, as a
  * desktop OS has (the clock and the page's name on its left, LOOM//OS and the status glyphs on its right, the ticker
- * between); the ticker widget gone (the bar has it), and a layout saved with it loads without it and is written again
- * without it; no headline on the desktop. A phone keeps its own bar. Real Chrome, Neon Noir.
+ * between); no widgets (docs/specs/agent-desk.md: Home is Needs you and the agents), and a layout saved with them loads
+ * without them and is written again without them; no headline on the desktop. A phone keeps its own bar. Real Chrome,
+ * Neon Noir.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -82,7 +83,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.waitForTimeout(300);
     return p;
   }
-  const widgets = (p: Page) => p.$$eval('[data-widget]', (ws) => ws.map((w) => w.getAttribute('data-widget')));
+  const cards = (p: Page) => p.$$eval('.loom-bigcard', (ws) => ws.map((w) => w.getAttribute('data-agent')));
   const box = async (p: Page, sel: string) => (await p.locator(sel).first().boundingBox())!;
   const KEY = (label: string) => `.loom-dock-bar [data-part="item"][aria-label="${label}"]`;
   const labels = (p: Page) => p.$$eval('.loom-tile', (ts) => ts.map((t) => (t.getAttribute('aria-label') ?? '').replace(/^tile \d+ of \d+, /, '')));
@@ -201,28 +202,28 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.context().close();
   });
 
-  // ---- A. the ticker widget, gone ----
-  it('the seed has no ticker and the desktop no headline', async () => {
+  // ---- A. no widgets: Home is Needs you and the agents ----
+  it('Home is Needs you and the agents\' cards, with no widget and no headline', async () => {
     const p = await screen(1280, 800);
-    await expect.poll(() => widgets(p)).toEqual(['needs', 'art', 'mark', 'vitals', 'backup']);
-    expect(await p.locator('.loom-desk-headline, .loom-w--ticker').count()).toBe(0);
+    await expect.poll(() => cards(p)).toEqual(['art', 'mark']);
+    expect(await p.locator('.loom-needs-band').count()).toBe(1);
+    expect(await p.locator('[data-widget], .loom-desk-headline, .loom-w--ticker').count()).toBe(0);
     expect(await p.getByText('Everyone’s fine').count()).toBe(0);
     await p.context().close();
   });
 
-  it('a layout saved with the ticker loads without it, and is kept without it', async () => {
+  it('a layout saved with widgets (the ticker too) loads without them, and is kept without them; Find offers none', async () => {
     const init = `localStorage.setItem('loom-tiles', JSON.stringify({ t: [], m: [], w: ['needs', 'ticker', 'mark'] }));`;
     const p = await screen(1280, 800, { init });
-    await expect.poll(() => widgets(p)).toEqual(['needs', 'mark']);
-    expect(await p.evaluate(() => JSON.parse(localStorage.getItem('loom-tiles') ?? 'null')?.w)).toEqual(['needs', 'mark']);
-    expect(new URL(p.url()).searchParams.get('w')).toBe('needs,mark');
-    // and an address that names it
+    await expect.poll(() => cards(p)).toEqual(['art', 'mark']);
+    expect(await p.evaluate(() => JSON.parse(localStorage.getItem('loom-tiles') ?? 'null')?.w)).toBeUndefined();
+    expect(new URL(p.url()).searchParams.get('w')).toBeNull();
+    // and an address that names them
     await p.goto(`${base}/?w=ticker,vitals`);
-    await expect.poll(() => widgets(p)).toEqual(['vitals']);
-    expect(await p.evaluate(() => JSON.parse(localStorage.getItem('loom-tiles') ?? 'null')?.w)).toEqual(['vitals']);
-    // Find offers no ticker to add.
+    await expect.poll(() => cards(p)).toEqual(['art', 'mark']);
+    await expect.poll(() => new URL(p.url()).searchParams.get('w')).toBeNull();
     await p.keyboard.press('Control+k');
-    await p.locator('input[aria-label="Find anything"]').fill('ticker');
+    await p.locator('input[aria-label="Find anything"]').fill('widget');
     await p.waitForTimeout(300);
     expect(await p.locator('[role="option"]', { hasText: 'Add widget' }).count()).toBe(0);
     await p.context().close();
@@ -264,8 +265,8 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.context().close();
   });
 
-  it('Recent here: not beside the only app tile (it gets the room), widgets or not; still beside a wide one sharing the screen', async () => {
-    const p = await screen(1920, 1080, { path: '/people?t=*people&w=vitals' });
+  it('Recent here: not beside the only app tile (it gets the room); still beside a wide one sharing the screen', async () => {
+    const p = await screen(1920, 1080, { path: '/people?t=*people' });
     const t = p.locator('.loom-tile[data-tile="/people"]');
     await t.locator('a[href="/people/mark"]').first().click();
     await expect.poll(() => t.locator('.loom-tile__bar h2').textContent()).toMatch(/^mark$/i);
@@ -279,7 +280,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     expect(page.width).toBeGreaterThan(body.width - 40);
     await p.context().close();
     // 3000 px with two: the big tile is still wide, and shares the screen: Recent here is beside it
-    const q = await screen(3000, 1440, { path: '/people?t=*people&w=' });
+    const q = await screen(3000, 1440, { path: '/people?t=*people' });
     const u = q.locator('.loom-tile[data-tile="/people"]');
     await u.locator('a[href="/people/mark"]').first().click();
     await expect.poll(() => u.locator('.loom-tile__bar h2').textContent()).toMatch(/^mark$/i);
@@ -332,7 +333,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   }
 
   it('each tile move has its own effect: open, make big, minimize, bring back, close', async () => {
-    const p = await screen(1280, 800, { motion: 'no-preference', path: '/?w=needs' });
+    const p = await screen(1280, 800, { motion: 'no-preference', path: '/' });
     await watchFx(p);
     await tileMoves(p);
     const seen = await fxSeen(p);
@@ -347,7 +348,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   });
 
   it('under reduced motion none of them run, and the tiles still open, move and close', async () => {
-    const p = await screen(1280, 800, { motion: 'reduce', path: '/?w=needs' });
+    const p = await screen(1280, 800, { motion: 'reduce', path: '/' });
     await watchFx(p);
     await tileMoves(p);
     expect(await fxSeen(p)).toEqual({ fx: [], anims: [] });
@@ -359,19 +360,18 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   const items = (p: Page) => menu(p).locator('[role="menuitem"]').evaluateAll((es) => es.map((e) => e.querySelector('span')!.textContent));
   const focused = (p: Page) => p.evaluate(() => document.activeElement?.textContent ?? '');
 
-  it('the dock has no + key; a right-click on the desktop\'s ground adds a widget', async () => {
-    const p = await screen(1280, 800, { path: '/?w=needs' });
+  it('the dock has no + key, and the desktop\'s ground and its cards have no menu of ours: the browser\'s', async () => {
+    const p = await screen(1280, 800, { path: '/' });
     expect(await p.locator(KEY('Add a widget')).count()).toBe(0);
-    await p.locator('.loom-desk-col--right').click({ button: 'right', position: { x: 40, y: 200 } });
-    await menu(p).waitFor();
-    expect(await menu(p).getAttribute('aria-label')).toBe('Add a widget');
-    expect(await items(p)).toEqual(['Needs you', 'art’s card', 'mark’s card', 'Vitals', 'Backup']);
-    expect(await menu(p).locator('[role="menuitem"]', { hasText: 'Needs you' }).textContent()).toMatch(/on the desktop/);
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Vitals' }).click();
-    await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals']);
+    await p.locator('.loom-bigcard').first().waitFor();
+    await p.locator('.loom-adesk__cards').click({ button: 'right', position: { x: 5, y: 5 } });
+    await p.waitForTimeout(200);
+    expect(await menu(p).count()).toBe(0);
+    await p.locator('.loom-bigcard[data-agent="art"]').click({ button: 'right', position: { x: 40, y: 40 } });
+    await p.waitForTimeout(200);
     expect(await menu(p).count()).toBe(0);
     // on a tile's page, and on a link in it, the browser's own menu: none of ours, and nothing stops the browser's
-    await p.goto(`${base}/people?t=*people&w=needs,vitals`); await expect.poll(() => labels(p)).toEqual(['People']);
+    await p.goto(`${base}/people?t=*people`); await expect.poll(() => labels(p)).toEqual(['People']);
     await p.locator('.loom-tile__body').click({ button: 'right', position: { x: 300, y: 300 } });
     expect(await menu(p).count()).toBe(0);
     const native = (sel: string) => p.locator(sel).first().evaluate((el) => {
@@ -384,63 +384,58 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await p.locator('.loom-tile__page').evaluate((pg) => { const l = document.createElement('a'); l.href = '/people'; l.textContent = 'People'; l.id = 'a-link'; pg.prepend(l); });
     expect(await native('#a-link')).toBe(false);
     expect(await native('.loom-tile__page button')).toBe(false);
-    // and the desktop's ground is ours
+    // and the desktop's ground is the browser's too
     await p.click(KEY('Home'));
     await expect.poll(() => labels(p)).toEqual([]);
-    expect(await native('.loom-desk-col--right')).toBe(true);
-    await p.keyboard.press('Escape');
+    expect(await native('.loom-adesk')).toBe(false);
     await p.context().close();
   });
 
-  it('from the keyboard: Shift+F10 on the desktop opens it; arrows move, Enter chooses, Esc closes, Tab never stays', async () => {
-    const p = await screen(1280, 800, { path: '/?w=needs' });
-    await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  it('from the keyboard: the Menu key or Shift+F10 on a dock key opens its menu; arrows move, Enter chooses, Esc closes, Tab never stays', async () => {
+    const p = await screen(1280, 800, { path: '/' });
+    await p.click(KEY('Comms')); await expect.poll(() => labels(p)).toEqual(['Comms']);
+    const key = p.locator(KEY('Comms'));
+    await key.focus();
     await p.keyboard.press('Shift+F10');
     await menu(p).waitFor();
-    expect(await focused(p)).toMatch(/^Needs you/);
+    expect(await menu(p).getAttribute('aria-label')).toBe('Comms');
+    expect(await focused(p)).toMatch(/^Open/);
     await p.keyboard.press('ArrowDown');
-    expect(await focused(p)).toMatch(/^art/);
+    expect(await focused(p)).toMatch(/^Minimize/);
     await p.keyboard.press('End');
-    expect(await focused(p)).toMatch(/^Backup/);
+    expect(await focused(p)).toMatch(/^Close/);
     await p.keyboard.press('ArrowDown');   // round to the top
-    expect(await focused(p)).toMatch(/^Needs you/);
+    expect(await focused(p)).toMatch(/^Open/);
     await p.keyboard.press('ArrowUp');   // and round to the bottom
-    expect(await focused(p)).toMatch(/^Backup/);
+    expect(await focused(p)).toMatch(/^Close/);
     await p.keyboard.press('Home');
-    expect(await focused(p)).toMatch(/^Needs you/);
+    expect(await focused(p)).toMatch(/^Open/);
     await p.keyboard.press('Escape');
     expect(await menu(p).count()).toBe(0);
+    await expect.poll(() => p.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Comms');
     // Tab: the menu closes, focus moves on
-    await p.keyboard.press('Shift+F10');
+    await p.keyboard.press('ContextMenu');
     await menu(p).waitFor();
     await p.keyboard.press('Tab');
     expect(await menu(p).count()).toBe(0);
-    // Enter chooses
-    await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await p.keyboard.press('Shift+F10');
-    await menu(p).waitFor();
-    await p.keyboard.press('End'); await p.keyboard.press('ArrowUp');   // Vitals
-    await p.keyboard.press('Enter');
-    await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals']);
-    // Space chooses too
-    await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-    await p.keyboard.press('Shift+F10');
-    await menu(p).waitFor();
-    await p.keyboard.press('End');   // Backup
-    await p.keyboard.press(' ');
-    await expect.poll(() => widgets(p)).toEqual(['needs', 'vitals', 'backup']);
-    // the Menu key on a focused dock key: the dock key's menu, at it
-    await p.locator(KEY('Inbox')).focus();
+    // Enter chooses: Minimize
+    await key.focus();
     await p.keyboard.press('ContextMenu');
     await menu(p).waitFor();
-    expect(await menu(p).getAttribute('aria-label')).toBe('Inbox');
-    await p.keyboard.press('Escape');
-    await expect.poll(() => p.evaluate(() => document.activeElement?.getAttribute('aria-label'))).toBe('Inbox');
+    await p.keyboard.press('ArrowDown');
+    await p.keyboard.press('Enter');
+    await expect.poll(() => labels(p)).toEqual([]);
+    // Space chooses too: Open
+    await key.focus();
+    await p.keyboard.press('ContextMenu');
+    await menu(p).waitFor();
+    await p.keyboard.press(' ');
+    await expect.poll(() => labels(p)).toEqual(['Comms']);
     await p.context().close();
   });
 
   it('a tile\'s strip: Minimize, Make it the big one, Close', async () => {
-    const p = await screen(1280, 800, { path: '/inbox?t=*inbox,comms&w=' });
+    const p = await screen(1280, 800, { path: '/inbox?t=*inbox,comms' });
     await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
     await p.locator('.loom-tile[data-tile="/comms"] .loom-tile__bar h2').click({ button: 'right' });
     await menu(p).waitFor();
@@ -452,39 +447,18 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     await menu(p).locator('[role="menuitem"]', { hasText: 'Minimize' }).click();
     await expect.poll(() => labels(p)).toEqual(['Inbox']);
     expect(new URL(p.url()).searchParams.get('m')).toBe('comms');
-    // an agent's window: Shrink to widget folds it back into its card (t-1925 D)
+    // an agent's window: Minimize and Close, nothing to shrink into (no widgets, 2026-11-07)
     await p.click(KEY('Inbox')); await expect.poll(() => labels(p)).toEqual([]);
-    await p.goto(`${base}/a/art?t=*art&w=`);
+    await p.goto(`${base}/a/art?t=*art`);
     await expect.poll(() => labels(p)).toEqual(['art']);
-    const strip = p.locator('.loom-tile[data-tile="/a/art"] .loom-tile__bar h2');
-    await strip.click({ button: 'right' });
-    expect(await items(p)).toEqual(['Minimize', 'Shrink to widget', 'Close']);
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Shrink' }).click();
-    await expect.poll(() => widgets(p)).toEqual(['art']);
-    expect(await labels(p)).toEqual([]);
-    await p.context().close();
-  });
-
-  it('an agent\'s card: Chat, Expand, Unpin', async () => {
-    const p = await screen(1280, 800, { path: '/?w=art,needs' });
-    await p.locator('[data-widget="art"]').click({ button: 'right', position: { x: 60, y: 60 } });
-    await menu(p).waitFor();
-    expect(await items(p)).toEqual(['Chat', 'Expand', 'Unpin from the desktop']);
-    // Expand grows the card into its window (one app at two sizes): the card stands aside while it's open
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Expand' }).click();
-    await expect.poll(() => labels(p)).toEqual(['art']);
-    await expect.poll(() => widgets(p)).toEqual(['needs']);
-    await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label^="Shrink"]').click();
-    await expect.poll(async () => (await widgets(p)).sort()).toEqual(['art', 'needs']);
-    expect(new URL(p.url()).searchParams.get('w')).toBe('art,needs');
-    await p.locator('[data-widget="art"]').click({ button: 'right', position: { x: 40, y: 40 } });
-    await menu(p).locator('[role="menuitem"]', { hasText: 'Unpin' }).click();
-    await expect.poll(() => widgets(p)).toEqual(['needs']);
+    await p.locator('.loom-tile[data-tile="/a/art"] .loom-tile__bar h2').click({ button: 'right' });
+    expect(await items(p)).toEqual(['Minimize', 'Close']);
+    await p.keyboard.press('Escape');
     await p.context().close();
   });
 
   it('a dock key: Open, Minimize, Close', async () => {
-    const p = await screen(1280, 800, { path: '/?w=needs' });
+    const p = await screen(1280, 800, { path: '/' });
     await p.locator(KEY('Comms')).click({ button: 'right' });
     await menu(p).waitFor();
     expect(await items(p)).toEqual(['Open']);
@@ -512,7 +486,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     const art = agentDir(h, 'art');
     const conv = recordTurn(art, 'art', { venue: 'wake', place: 'lane:making', label: 't-739: drive', at: new Date().toISOString(), from: { kind: 'schedule' }, kind: 'wake' }, 'runtime:clock').conversation;
     writeDigest(art, { conversation: conv, run: 'r2' }, { summary: 'Checked.', needs_owner: { ask: 'Can you swap the Sonarr disk for the spare this week?', why: 'It is nearly full.', refs: ['t-739'] } } as never);
-    const p = await screen(1280, 800, { path: '/inbox?t=*inbox&w=' });
+    const p = await screen(1280, 800, { path: '/inbox?t=*inbox' });
     const row = p.locator('.loom-tile button[data-row-menu]', { hasText: 'swap the Sonarr disk' });
     // what the tile shows, should the row not come (said in the failure)
     await row.waitFor({ timeout: 20_000 }).catch(async (e: Error) => {

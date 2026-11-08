@@ -3,7 +3,7 @@
  * over the chat, the comm screen at its own size on the left (the pixel face at a whole scale, never stretched), who's
  * in the conversation and the thread's work on the right, scrolling inside the band; the chat takes the rest. The list
  * sits beside the thread from 1100 px; narrower it's a drawer. A short tile folds the band to a strip. At 1024, 1280
- * (beside the widgets) and 1920.
+ * (beside the agents' rail) and 1920.
  *
  * Runs where the app is built (npm run build), a Chrome is installed and age is (the thread's words are encrypted).
  */
@@ -106,7 +106,7 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
   });
 
   for (const [w, hgt, layout, ws] of [[1024, 768, 'mid', ''], [1280, 800, 'mid', 'needs'], [1920, 1080, 'wide', '']] as const) {
-    it(`the band: one fixed height with 0 and 20 work items, its side scrolling inside it; the face its own size; the chat the rest; nothing past the window, at ${w}×${hgt} (${layout}${ws ? ', beside the widgets' : ''})`, async () => {
+    it(`the band: one fixed height with 0 and 20 work items, its side scrolling inside it; the face its own size; the chat the rest; nothing past the window, at ${w}×${hgt} (${layout}${ws ? ', beside the agents\' rail' : ''})`, async () => {
       const t = thread('art', 3);
       const sizes: Record<number, Awaited<ReturnType<typeof band>>> = {};
       for (const n of [0, 20]) {
@@ -115,7 +115,7 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
         await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
         const p = await ctx.newPage();
         await p.route(`**/comms/${t.id}/work`, (r) => r.fulfill({ json: work(n) }));
-        await p.goto(`${base}/comms/${bare(t)}?t=*comms&w=${ws}`);
+        await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
         await p.locator('.comms-band .comms-screen').waitFor();
         await p.locator(n ? '.comms-band .comms-work__row' : '.comms-band .comms-work__empty').first().waitFor();
         await p.waitForTimeout(300);
@@ -183,15 +183,15 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
   });
 
   for (const look of ['neon', 'lowlight', 'daylight'] as const) {
-    for (const [w, hgt, ws, cols] of [[1100, 800, '', 3], [1440, 900, '', 3], [1920, 1080, '', 3], [1280, 800, 'needs', 3], [1024, 768, 'needs', 2]] as const) {
-      it(`the chat's room and the band's columns: the words clear of the scrollbar, the last message clear of the divider, ${cols} columns, at ${w}×${hgt}${ws ? ' beside the widgets' : ''} (${look})`, async () => {
+    for (const [w, hgt, ws, cols] of [[1100, 800, '', 3], [1440, 900, '', 3], [1920, 1080, '', 3], [1280, 800, 'needs', 3], [1024, 768, 'needs', 3]] as const) {
+      it(`the chat's room and the band's columns: the words clear of the scrollbar, the last message clear of the divider, ${cols} columns, at ${w}×${hgt}${ws ? ' beside the agents\' rail' : ''} (${look})`, async () => {
         const t = thread('art', 12, `My own long message. ${'It goes on long enough to wrap over several lines in any window. '.repeat(6)}`);
         const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, reducedMotion: 'reduce', serviceWorkers: 'block' });
         await ctx.addInitScript(`localStorage.setItem('loom-look', '${look}'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
         await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
         const p = await ctx.newPage();
         await p.route(`**/comms/${t.id}/work`, (r) => r.fulfill({ json: work(20) }));
-        await p.goto(`${base}/comms/${bare(t)}?t=*comms&w=${ws}`);
+        await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
         await p.locator('.comms-band .comms-work__row').first().waitFor();
         await p.locator('.comms-chat .v-agent-chat__message').nth(12).waitFor();
         await p.waitForTimeout(300);
@@ -255,7 +255,7 @@ describe.runIf(built && chrome && hasAge)('Comms: the band over the chat', () =>
     await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
     await ctx.request.post(`${base}/login`, { form: { token }, maxRedirects: 0 });
     const p = await ctx.newPage();
-    await p.goto(`${base}/comms/${bare(t)}?t=*comms&w=`);
+    await p.goto(`${base}/comms/${bare(t)}?t=*comms`);
     await p.locator('.comms-thread[data-short] .comms-band').waitFor();
     const r = await p.evaluate(() => ({ band: document.querySelector('.comms-band')!.getBoundingClientRect().height, chat: document.querySelector('.comms-chat')!.getBoundingClientRect().height }));
     expect(r.band).toBeLessThanOrEqual(80);

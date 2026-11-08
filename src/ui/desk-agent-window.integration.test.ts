@@ -1,9 +1,9 @@
 /**
  * An agent's window (t-1925 D; the app mockups, 2026-11-06): its pixel face in a Neon frame and no 000h shapes, its
  * name with a working pill, a plain description (never its creed) its owner edits in place, its sections as a sidebar
- * inside the window (an icon rail when the window is narrow), a letter in the window's corner, and its desk card and
- * its window one app at two sizes: Expand grows the card into the window, Shrink folds it back. A phone keeps the
- * dock's swap, with the same header. Real Chrome.
+ * inside the window (an icon rail when the window is narrow), a letter in the window's corner; the face on its Home
+ * card opens it in a tile beside the agents' rail (docs/specs/agent-desk.md). A phone keeps the dock's swap, with the
+ * same header. Real Chrome.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
  */
@@ -155,49 +155,18 @@ describe.runIf(built && chrome)('an agent\'s window', () => {
     await s.context().close();
   });
 
-  for (const motion of ['no-preference', 'reduce'] as const) {
-    it(`the card grows into the window and folds back (motion: ${motion})`, async () => {
-      const p = await screen(1920, 1080, '/?w=needs,art,mark', { motion });
-      await p.locator('[data-widget="art"]').waitFor();
-      if (process.env.DBG) await (await p.context().newCDPSession(p)).send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.DBG) });
-      // The trip: an outline in the agent's colour travels from the card to the window, with motion; none without.
-      await p.evaluate(() => { const w = window as unknown as { trip: boolean }; w.trip = false;
-        new MutationObserver((ms) => { if (ms.some((m) => [...m.addedNodes].some((n) => (n as Element).classList?.contains('loom-morph')))) w.trip = true; }).observe(document.body, { childList: true }); });
-      await p.locator('[data-widget="art"] button[aria-label="Expand Art E Fish into its window"]').click();
-      await win(p).waitFor();
-      const tripped = () => p.evaluate(() => (window as unknown as { trip: boolean }).trip);
-      if (motion === 'no-preference') await expect.poll(tripped, { timeout: 4000 }).toBe(true);
-      else { await p.waitForTimeout(800); expect(await tripped()).toBe(false); }
-      await win(p).waitFor();
-      expect(await labels(p)).toEqual(['Art E Fish']);
-      // The card stands aside while its window is open (one app at two sizes); Mark's stays.
-      await expect.poll(() => p.locator('[data-widget="art"]').count()).toBe(0);
-      expect(await p.locator('[data-widget="mark"]').count()).toBe(1);
-      await p.evaluate(() => { (window as unknown as { trip: boolean }).trip = false; });
-      await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Shrink Art E Fish to its card"]').click();
-      await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
-      await p.locator('[data-widget="art"]').waitFor();
-      expect(new URL(p.url()).searchParams.get('w')).toBe('needs,art,mark');
-      // The outline travels back to the card, and is gone when its trip ends. The trip is 280 ms of the page's
-      // animation clock, which moves at the page's frames: few on a loaded runner at 1920×1080, so 400 ms of the
-      // test's clock was sometimes still mid-trip (queue run 42400239486, "expected 1 to be +0"). So wait for the
-      // trip itself to end, then the outline must be gone; one left behind still fails.
-      if (motion === 'no-preference') {
-        await expect.poll(tripped, { timeout: 4000 }).toBe(true);
-        await p.evaluate(() => Promise.all(document.getAnimations()
-          .filter((a) => ((a.effect as KeyframeEffect | null)?.target as Element | null)?.classList.contains('loom-morph'))
-          .map((a) => a.finished.catch(() => undefined))));
-        await expect.poll(() => p.locator('.loom-morph').count(), { timeout: 1000 }).toBe(0);
-      } else { await p.waitForTimeout(400); expect(await tripped()).toBe(false); }
-      await p.context().close();
-    });
-  }
-
-  it('Shrink to widget with no card on the desktop puts one there', async () => {
-    const p = await screen(1280, 800, '/a/art?t=*art&w=needs');
-    await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Shrink Art E Fish to its card"]').click();
-    await expect.poll(() => p.locator('[data-widget="art"]').count()).toBe(1);
-    expect(new URL(p.url()).searchParams.get('w')).toBe('needs,art');
+  it('the face on its Home card opens the window in a tile; closing it is Home again, the card where it was', async () => {
+    const p = await screen(1920, 1080, '/');
+    await p.locator('.loom-bigcard[data-agent="art"]').waitFor();
+    await p.locator('.loom-bigcard[data-agent="art"] a[aria-label="Open Art E Fish’s window"]').click();
+    await win(p).waitFor();
+    expect(await labels(p)).toEqual(['Art E Fish']);
+    // The agents' rail beside it: both agents' cards, Art's too.
+    await expect.poll(() => p.$$eval('.loom-arail [data-agent]', (xs) => xs.map((x) => x.getAttribute('data-agent')))).toEqual(['art', 'mark']);
+    await p.locator('.loom-tile[data-tile="/a/art"] button[aria-label="Close Art E Fish"]').click();
+    await expect.poll(() => p.locator('.loom-tile').count()).toBe(0);
+    await p.locator('.loom-bigcard[data-agent="art"]').waitFor();
+    expect(await p.locator('.loom-morph, [data-widget]').count()).toBe(0);
     await p.context().close();
   });
 

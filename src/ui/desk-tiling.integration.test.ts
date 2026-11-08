@@ -94,7 +94,7 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     it(`10. open, focus, minimize and back, at ${w}×${hgt}`, async () => {
       const p = await screen(w, hgt);
-      expect(await p.locator('.loom-desk-home').count()).toBe(1);
+      expect(await p.locator('.loom-adesk').count()).toBe(1);
       await open(p, 'Inbox', 1);
       await open(p, 'Comms', 2);
       expect(query(p, 't')).toBe('inbox,*comms');
@@ -104,8 +104,7 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       expect([query(p, 't'), query(p, 'm')]).toEqual(['*inbox', 'comms']);
       // and back, on the page it was on
       await open(p, 'Comms', 2);
-      // (a fresh device's widgets, the seed, ride in the address too: desk-tiling-widgets.integration.test.ts)
-      expect(where(p)).toBe('/comms?t=inbox,*comms&w=needs,art,mark,vitals,backup');
+      expect(where(p)).toBe('/comms?t=inbox,*comms');
       // a page scrolled down comes back scrolled where it was: Appearance (the launcher's), in a short screen
       await launch(p, 'Appearance'); await expect.poll(() => p.locator('.loom-tile').count()).toBeGreaterThanOrEqual(2);
       const setup = tile(p, 'Appearance');
