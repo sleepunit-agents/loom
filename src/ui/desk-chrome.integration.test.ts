@@ -472,12 +472,17 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     expect(await items(p)).toEqual(['Open', 'Close']);
     await menu(p).locator('[role="menuitem"]', { hasText: 'Close' }).click();
     await expect.poll(() => new URL(p.url()).searchParams.get('m')).toBeNull();
-    // Home, All apps (the launcher) and your own key, where the dock has it, have none of ours
-    for (const sel of [KEY('Home'), KEY('All apps'), '.loom-dock-bar [data-part="item"][data-value="/account"]']) {
-      if (!(await p.locator(sel).count())) continue;
+    // Home and All apps (the launcher) aren't apps to close: theirs is how the dock is shown (docs/specs/agent-desk.md,
+    // "Hiding"); your own key, where the dock has it, has none of ours
+    for (const sel of [KEY('Home'), KEY('All apps')]) {
       await p.locator(sel).click({ button: 'right' });
-      expect(await menu(p).count(), sel).toBe(0);
+      await menu(p).waitFor();
+      expect(await menu(p).getAttribute('aria-label'), sel).toBe('Dock');
+      expect(await items(p)).toEqual(['Always show', 'Minimize to strip', 'Auto-hide']);
+      await p.keyboard.press('Escape');
     }
+    const me = '.loom-dock-bar [data-part="item"][data-value="/account"]';
+    if (await p.locator(me).count()) { await p.locator(me).click({ button: 'right' }); expect(await menu(p).count()).toBe(0); }
     await p.context().close();
   });
 
