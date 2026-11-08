@@ -53,7 +53,8 @@ const TOKEN_USAGE = `Usage: loom token <command>
   create (--agent <name> [--service <name>] [--house <h-N>] | --owner | --peer <name> | --piece <piece>/<subject> | --runtime <piece>) --label <text>
                            Mint a token. It's printed once; only its sha256 is kept.
                            --service and --house name a house's (agent:<name>/<service>@<house>): a piece can tell it apart
-  list                     Every token: label, role, created, last used, revoked
+  list                     Every token: label, role, created, last used, revoked, and for a passkey's
+                           own token, what it was made from
   revoke <label> [--with-passkeys]
                            Revoke the live token with that label (takes effect on the next request).
                            A passkey made from a browser signed in with it has its own token and keeps

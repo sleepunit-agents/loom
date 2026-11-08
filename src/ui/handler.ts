@@ -46,7 +46,7 @@ import { fileURLToPath } from 'node:url';
 import { extname, join, normalize, sep } from 'node:path';
 import { resolveRepoRoot } from '../config.js';
 import { deviceOf, prefsOf, REF, SESSION_MAX_AGE_S, sessionStore, signedInAt, signinLink, type Done, type Passkey, type SessionInfo } from './sessions.js';
-import { dropUnusedPasskeyToken, FRESH_SIGNIN_S, originOf, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, thePasskeys } from './passkey-tokens.js';
+import { dropUnusedPasskeyToken, originOf, PasskeyTokenLeft, passkeyPerson, passkeysMadeFrom, passkeyToken, removePasskey, STALE_FOR_PASSKEY, staleForPasskey, ThePasskeys, thePasskeys } from './passkey-tokens.js';
 import { APP_JS } from './app.js';
 import { askKey, needsAskText, publicKey, pushSub, pushTitle, watch, type Announce } from './push.js';
 import { MANIFEST, swJs } from './pwa.js';
@@ -81,8 +81,6 @@ const COOKIE = 'loom_ui';
 const NEW_FACT_LINK = { page: 'loom:new-fact', label: 'Add a fact' };
 const LOGIN_MAX_BYTES = 4096;
 const PASSKEY_MAX_BYTES = 16 * 1024;
-/** Why a browser signed in a while ago can't add a passkey (FRESH_SIGNIN_S). */
-const STALE_FOR_PASSKEY = 'A passkey is added within 10 minutes of signing in: sign out, sign in again, then add it.';
 /** The two pages that run loom's one script (/login/passkey.js): the sign-in page and Passkeys. */
 const PASSKEY_CSP = { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self'; img-src 'self'; manifest-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" };
 const ACT_MAX_BYTES = 64 * 1024;
@@ -1436,7 +1434,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const session = store.get(who.cookie);
     if (!session) return sendJson(res, 401, { error: 'signed out' });
     // Only soon after signing in (t-1969): a browser left signed in can't quietly add a lasting way in.
-    if (Math.floor(Date.now() / 1000) - signedInAt(session) > FRESH_SIGNIN_S) return sendJson(res, 403, { error: STALE_FOR_PASSKEY });
+    if (staleForPasskey(session)) return sendJson(res, 403, { error: STALE_FOR_PASSKEY });
     if (pathname === '/passkeys/options') {
       return sendJson(res, 200, {
         challenge: store.createChallenge('register', session.secret),
@@ -1601,17 +1599,19 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
       const hhr = opts.household?.();
       const mine = !own || own.some((k) => k.id === id);
       // Its own token goes with it, and so do the sessions it opened (t-1969); asked to, the passkeys they made too.
-      const gone = storeFor(opts).passkey(id);
       let out: { removed: boolean; made: number } = { removed: false, made: 0 };
-      let unrevoked: string | undefined;
-      if (mine && hhr) {
-        try { out = removePasskey(hhr, id, fields.made === 'with'); } catch (e) { out = { removed: !storeFor(opts).passkey(id), made: 0 }; unrevoked = (e as Error).message; }
-      } else if (mine) out = { removed: storeFor(opts).removePasskey(id), made: 0 };
-      const also = out.made ? ` So ${out.made === 1 ? 'is the passkey' : `are the ${out.made} passkeys`} made from it.` : '';
-      result = unrevoked
-        ? { ok: false, message: `Removed, so it can't sign in again, but a token it used, "${gone?.tokenLabel ?? 'its own'}", couldn't be revoked (${unrevoked}): revoke it on Setup, or the browsers it signed in stay signed in.`, page: 'loom:passkeys' }
-        : out.removed ? { ok: true, message: `Removed. That device can't sign in with it any more.${also}`, page: 'loom:passkeys' }
-        : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' };
+      let failed: ActResult | undefined;
+      try {
+        if (mine && hhr) out = removePasskey(hhr, id, fields.made === 'with');
+        else if (mine) out = { removed: storeFor(opts).removePasskey(id), made: 0 };
+      } catch (e) {
+        failed = e instanceof PasskeyTokenLeft
+          ? { ok: false, message: `Removed, so it can't sign in again, but the token "${e.label}" couldn't be revoked (${e.message}): revoke it on Setup, or the browsers it signed in stay signed in.`, page: 'loom:passkeys' }
+          : { ok: false, message: `Not removed: ${(e as Error).message}. It still signs in; try again.`, page: 'loom:passkeys' };
+      }
+      const also = out.made ? ` ${ThePasskeys(out.made)} added from it ${out.made === 1 ? 'is' : 'are'} removed too.` : '';
+      result = failed ?? (out.removed ? { ok: true, message: `Removed. That device can't sign in with it any more.${also}`, page: 'loom:passkeys' }
+        : { ok: false, message: 'No such passkey.', page: 'loom:passkeys' });
     } else if (sourceId === 'loom' && action === 'session-revoke') {
       // One session ended alone (t-1871): only one this person may see (sessionsOf), named by its ref.
       source = CORE;
@@ -1760,7 +1760,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     // An agent owner sees their own passkeys; a household owner, every one.
     const keys = opts.ownerScope && who?.member ? passkeysOf(opts, who.member) : storeFor(opts).passkeys();
     // Each passkey's own token (what it was made from), and how many passkeys its sessions added (passkey-tokens.ts).
-    const tokenOf = new Map(hh ? loadTokens(hh.home).map((t) => [t.sha256, t] as const) : []);
+    const tokenByDigest = new Map(hh ? loadTokens(hh.home).map((t) => [t.sha256, t] as const) : []);
     const made = hh ? passkeysMadeFrom(hh) : new Map<string, number>();
     // Where you're signed in (t-1871): each browser on its own row, this one first, each ended alone. A household owner
     // sees every session (an agent's screenshot session too); an agent owner, their own.
@@ -1793,7 +1793,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
         { id: 'passkeys', title: 'Passkeys', blocks: keys.length
           ? [{ type: 'list', items: keys.slice(0, 200).map((k) => {
               const works = opts.auth.live(Buffer.from(k.secret, 'hex'));
-              const from = tokenOf.get(k.secret)?.from;
+              const from = tokenByDigest.get(k.secret)?.from;
               return { text: k.label, meta: works ? `used ${k.lastUsed ? when(k.lastUsed) : 'never'} · added ${when(k.created)}${from ? ` from "${from}"` : ''}` : passkeyStopped(k),
                 ...(works ? {} : { tone: 'warn' as const }),
                 act: { action: 'passkey-remove', label: 'Remove', tone: 'danger' as const, confirm: 'That device can\'t sign in with it any more. A token or another passkey still can.', fields: { id: k.id } } };
@@ -1820,7 +1820,7 @@ export async function handleUi(req: IncomingMessage, res: ServerResponse, pathna
     const add = !rp ? { note: 'Passkeys need loom\'s public https address: set LOOM_PUBLIC_URL for loom-http.' }
       : !onRp ? { note: `Passkeys work at ${rp.origin}: open this page there to add one.` }
       : who.kind !== 'session' ? { note: 'A passkey is added from a signed-in browser.' }
-      : (() => { const s = storeFor(opts).get(who.cookie); return !s || Math.floor(Date.now() / 1000) - signedInAt(s) > FRESH_SIGNIN_S; })() ? { note: STALE_FOR_PASSKEY }
+      : staleForPasskey(storeFor(opts).get(who.cookie)) ? { note: STALE_FOR_PASSKEY }
       : { csrf };
     // The app draws the list, and adds loom's own "add a passkey" control (WebAuthn) and the push switch beside it.
     return view('passkeys', { page, ctx: { source: CORE, path: 'passkeys', query, csrf }, chrome: ch, add, me });

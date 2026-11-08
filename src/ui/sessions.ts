@@ -51,7 +51,7 @@ export const SEEN_EVERY_S = 5 * 60;
 /** A sign-in link's label: a few plain words, kept with the session it opens. */
 const LABEL_MAX = 60;
 /** A label or a device name, as kept: plain words, at most LABEL_MAX characters. */
-const cleanLabel = (l: string | undefined) => {
+export const cleanLabel = (l: string | undefined) => {
   // Printable words only: no control characters, so a label can't break a terminal's line or the file, and no invisible
   // or direction-changing ones (zero-width, bidi overrides), so it can't pass itself off as another row's words.
   const t = (l ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u061c\u180e]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX).trim();

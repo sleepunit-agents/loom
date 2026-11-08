@@ -56,7 +56,10 @@ under the same lock):
   stderr and doesn't stop the others). One whose token was revoked, expired or
   is gone from `tokens.json`, or whose person has left, stays as it is: it
   doesn't sign in, its row says it stopped working, and a new one is added in
-  its place. Nothing revives a stopped passkey.
+  its place. Nothing revives a passkey whose token was revoked. One whose
+  person left is like that person's tokens: removing a member revokes nothing,
+  so adding the same person back brings their tokens and passkeys back with
+  them (remove the passkey, or revoke its token, to end it for good).
 
 Up to 20 passkeys. Each one can be removed on the Passkeys page.
 

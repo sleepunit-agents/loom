@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -15,8 +15,8 @@ import { LINK_TOKEN, sessionStore, signinLink } from './sessions.js';
 import BetterSqlite3 from 'better-sqlite3';
 import { createConversationTables } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
-import { agentDir, createToken, loadHousehold, loadTokens, removeMember, revokeToken, type Household } from '../household.js';
-import { migratePasskeys, passkeyToken } from './passkey-tokens.js';
+import { agentDir, createToken, isLive as isLiveTok, loadHousehold, loadTokens, removeMember, revokeToken, type Household } from '../household.js';
+import { migratePasskeys, PasskeyTokenLeft, passkeyToken, removePasskey } from './passkey-tokens.js';
 import { runToken } from '../cli/household.js';
 
 const TOKEN = 'passkey-test-token';
@@ -220,6 +220,18 @@ describe('passkeys', () => {
     expect((await call('POST', '/act/loom', { cookie, form: { _csrf: csrf, _action: 'passkey-remove', _path: 'passkeys', id: pk.id } })).status).toBe(303);
     expect(store.passkeys()).toEqual([]);
     expect(JSON.parse((await passkeySignIn(device)).body).error).toMatch(/doesn't know that passkey/);
+  });
+
+  it('a browser that signed in more than 10 minutes ago can\'t add one, here too', async () => {
+    const old = `loom_ui=${sessionStore(stack).create(createHash('sha256').update(TOKEN).digest(), Math.floor(Date.now() / 1000) - 11 * 60)}`;
+    expect((await call('GET', '/', { cookie: old })).status).toBe(200);
+    expect((await passkeys(old)).add).toEqual({ note: expect.stringMatching(/within 10 minutes of signing in/) });
+    const r = await addPasskey(old, new Device());
+    expect(r.status).toBe(403);
+    const csrf = csrfOf(await passkeys(old));
+    const posted = await call('POST', '/passkeys', { cookie: old, json: { _csrf: csrf, label: 'x', ...new Device().register('bm90LWlzc3VlZA') } });
+    expect([posted.status, JSON.parse(posted.body).error]).toEqual([403, expect.stringMatching(/within 10 minutes/)]);
+    expect(sessionStore(stack).passkeys()).toEqual([]);
   });
 
   it('adding one needs the session\'s form token, a browser session, and loom\'s public address', async () => {
@@ -505,6 +517,44 @@ describe('passkeys in a household', () => {
     await restart(ENV);
     expect(loadTokens(h.home).length).toBe(count);
     expect(byId()[laptopId].secret).toBe(after[laptopId].secret);
+  });
+
+  it('two listeners minting the one passkey\'s token at once end with one token', async () => {
+    const pasted = createToken(h, { role: { kind: 'owner' }, label: 'old laptop' }).token;
+    const id = legacy(new Device(), 'Laptop', digest(pasted));
+    const from = { label: 'old laptop', sha256: digest(pasted) };
+    let theirs: { secret: string } | undefined;
+    // Between our look and our mint, the other listener mints it: ours is refused as a duplicate, and adopts theirs.
+    const ours = passkeyToken(h, 'jonathan', id, 'Laptop', from, () => { theirs = passkeyToken(h, 'jonathan', id, 'Laptop', from); });
+    expect(ours.secret).toBe(theirs!.secret);
+    expect(loadTokens(h.home).filter((t) => t.passkey && isLiveTok(t))).toHaveLength(1);
+  });
+
+  it('a passkey that can\'t be stored leaves no live token behind', async () => {
+    for (let i = 0; i < 20; i++) legacy(new Device(), `Old ${i}`, digest(createToken(h, { role: { kind: 'owner' }, label: `t${i}` }).token));
+    revokeToken(h, 't0');
+    // Past the cap of 20: refused after its token was minted, which is revoked again.
+    const r = await addPasskey(await linkSignIn(), new Device(), 'One too many');
+    expect(r.status).toBe(409);
+    expect(loadTokens(h.home).filter((t) => t.passkey && isLiveTok(t))).toEqual([]);
+  });
+
+  it('a Remove the store can\'t take is no removal: the passkey and its token stay, and it isn\'t passed off as one', async () => {
+    const cookie = await linkSignIn();
+    const d = new Device();
+    await addPasskey(cookie, d);
+    const pk = sessionStore(h.home).passkeys()[0];
+    // Another process holds the store's lock past its wait.
+    writeFileSync(join(h.home, 'ui-sessions.lock'), '1');
+    let err: unknown;
+    try { removePasskey(h, pk.id, false); } catch (e) { err = e; }
+    rmSync(join(h.home, 'ui-sessions.lock'), { force: true });
+    // Not PasskeyTokenLeft (the page's "Removed, but its token…"): the page says "Not removed".
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(PasskeyTokenLeft);
+    expect(sessionStore(h.home).passkey(pk.id)).not.toBeNull();
+    expect(tokenOf(pk.tokenLabel!)?.revoked).toBeUndefined();
+    expect((await passkeySignIn(d)).status).toBe(200);
   });
 
   it('the migration adopts a token minted by a start that died before binding, and binds at most once', async () => {

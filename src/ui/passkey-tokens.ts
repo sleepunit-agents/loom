@@ -17,10 +17,14 @@
  */
 import { createHash } from 'node:crypto';
 import { createToken, firstOwner, HouseholdError, isLive, loadTokens, memberOf, revokeToken, type Household, type TokenRecord } from '../household.js';
-import { sessionStore, type Passkey, type SessionStore } from './sessions.js';
+import { cleanLabel, sessionStore, signedInAt, type Passkey, type Session, type SessionStore } from './sessions.js';
 
 /** A passkey is added only this soon after its browser signed in (a session left open on a desk can't add one). */
 export const FRESH_SIGNIN_S = 10 * 60;
+/** Why a browser that signed in longer ago can't add a passkey: the page's note and the refusal both say this. */
+export const STALE_FOR_PASSKEY = `A passkey is added within ${FRESH_SIGNIN_S / 60} minutes of signing in: sign out, sign in again, then add it.`;
+/** Whether this session signed in too long ago to add a passkey (none: it can't). */
+export const staleForPasskey = (s: Session | null, nowS = Math.floor(Date.now() / 1000)) => !s || nowS - signedInAt(s) > FRESH_SIGNIN_S;
 
 /** The token a passkey was made from: a token's label and sha256 (the env owner token has no record: its name). */
 export interface Origin { label: string; sha256?: string }
@@ -38,8 +42,8 @@ export function originOf(h: Household, digestHex: string, envOwnerDigestHex?: st
 }
 
 function tokenLabel(name: string, person: string, credentialId: string): string {
-  // A label is 120 printable characters at most; a passkey's name is 60, cleaned of anything else.
-  const clean = name.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'A passkey';
+  // A label is 120 printable characters at most; a passkey's name is 60, cleaned as a session's label is.
+  const clean = cleanLabel(name)?.slice(0, 60).trim() || 'A passkey';
   // A person's slug has no length bound of its own; the label's 120 does.
   return `Passkey: ${clean} · ${person.slice(0, 30)} · ${credentialHash(credentialId).slice(0, 12)}`;
 }
@@ -53,11 +57,14 @@ const isFor = (t: TokenRecord, person: string, credentialId: string) =>
  * its `passkey` and `member`, never by its label, so two listeners (or a start that died between minting and binding)
  * end with the one token. Returns its digest and label.
  */
-export function passkeyToken(h: Household, person: string, credentialId: string, name: string, from: Origin): { secret: string; tokenLabel: string } {
+export function passkeyToken(h: Household, person: string, credentialId: string, name: string, from: Origin,
+  /** Tests only: runs between looking for the token and minting it, as another listener would. */
+  race?: () => void): { secret: string; tokenLabel: string } {
   if (!memberOf(h, person)) throw new HouseholdError(`no member named ${person} in this household`);
   const find = () => loadTokens(h.home).find((t) => isLive(t) && isFor(t, person, credentialId));
   let rec = find();
   if (!rec) {
+    race?.();
     try {
       rec = createToken(h, { role: { kind: 'owner', member: person }, label: tokenLabel(name, person, credentialId),
         passkey: { credential: credentialHash(credentialId), from: from.label, ...(from.sha256 ? { from_sha256: from.sha256 } : {}) } }).record;
@@ -139,10 +146,14 @@ export function migratePasskeys(h: Household, envOwnerDigestHex?: string): { mov
   return out;
 }
 
-/** How many live passkey tokens were made from each token (by its sha256): what a token's row offers to take. */
+/**
+ * How many passkeys were made from each token (by its sha256): what a token's row offers to take. Only passkeys that
+ * are kept and whose token is live count; a token minted for one that was never added doesn't.
+ */
 export function passkeysMadeFrom(h: Household): Map<string, number> {
+  const kept = new Set(sessionStore(h.home).passkeys().map((k) => k.secret));
   const n = new Map<string, number>();
-  for (const t of loadTokens(h.home)) if (isLive(t) && t.passkey !== undefined && t.from_sha256) n.set(t.from_sha256, (n.get(t.from_sha256) ?? 0) + 1);
+  for (const t of loadTokens(h.home)) if (isLive(t) && t.passkey !== undefined && t.from_sha256 && kept.has(t.sha256)) n.set(t.from_sha256, (n.get(t.from_sha256) ?? 0) + 1);
   return n;
 }
 
@@ -181,14 +192,22 @@ export function revokeTokenAndPasskeys(h: Household, label: string, withPasskeys
   const token = revokeToken(h, label);
   // Read after the revoke: no browser signed in with it can add another now.
   const made = madeFromAll(loadTokens(h.home), [token.sha256]);
-  if (!withPasskeys) return { token, passkeys: made.filter((t) => isLive(t) && t.from_sha256 === token.sha256).length };
+  if (!withPasskeys) {
+    const kept = new Set(sessionStore(h.home).passkeys().map((k) => k.secret));
+    return { token, passkeys: made.filter((t) => isLive(t) && t.from_sha256 === token.sha256 && kept.has(t.sha256)).length };
+  }
   return { token, passkeys: takePasskeys(h, made) };
+}
+
+/** The passkey was removed, but a token it, or one made from it, signs in with couldn't be revoked. */
+export class PasskeyTokenLeft extends Error {
+  constructor(readonly label: string, cause: unknown) { super(`${(cause as Error).message}`); }
 }
 
 /**
  * Remove a passkey: its own token is revoked with it (so the sessions it opened end), and, asked to, the passkeys
- * its sessions made, down the line. False if there's no such passkey. Throws if a token couldn't be revoked: the
- * passkey is gone by then, and the caller says which token is still live.
+ * its sessions made, down the line. `removed` false: no such passkey. A store that can't be written throws as it
+ * is (nothing was removed); a token that couldn't be revoked after the passkey went throws PasskeyTokenLeft.
  */
 export function removePasskey(h: Household, id: string, withMade: boolean): { removed: boolean; made: number } {
   const store = sessionStore(h.home);
@@ -196,11 +215,15 @@ export function removePasskey(h: Household, id: string, withMade: boolean): { re
   if (!k || !store.removePasskey(id)) return { removed: false, made: 0 };
   if (!k.tokenLabel) return { removed: true, made: 0 };
   const own = loadTokens(h.home).find((t) => t.sha256 === k.secret);
-  if (own && isLive(own)) revokePasskeyToken(h, own.label);
-  return { removed: true, made: withMade && own ? takePasskeys(h, madeFromAll(loadTokens(h.home), [own.sha256])) : 0 };
+  try {
+    if (own && isLive(own)) revokePasskeyToken(h, own.label);
+    return { removed: true, made: withMade && own ? takePasskeys(h, madeFromAll(loadTokens(h.home), [own.sha256])) : 0 };
+  } catch (e) {
+    throw new PasskeyTokenLeft(own?.label ?? k.tokenLabel, e);
+  }
 }
 
-/** "the passkey" / "the 3 passkeys", for what's said about passkeys made from something. */
+/** "the passkey" / "the 3 passkeys", for what's said about passkeys made from something (the CLI's and the page's words). */
 export const thePasskeys = (n: number) => (n === 1 ? 'the passkey' : `the ${n} passkeys`);
 /** The same, starting a sentence. */
 export const ThePasskeys = (n: number) => { const t = thePasskeys(n); return t.charAt(0).toUpperCase() + t.slice(1); };
