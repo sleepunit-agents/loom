@@ -368,6 +368,23 @@ export function RailCard({ a }: { a: DeskAgent }) {
   );
 }
 
+/**
+ * An agent's rail card while its thread is in Comms beside the rail: the comm screen itself (the avatar appears once).
+ * The Comms pane draws the screen into `slot`, so it plays the thread's own state (static as a reply lands, talking,
+ * its channel line); under it, who it is, what it's on and its ask.
+ */
+export function ScreenCard({ a, slot }: { a: DeskAgent; slot?: (el: HTMLElement | null) => void }) {
+  return (
+    <section className="loom-rcard loom-rscreen" data-tone={a.status.tone} data-agent={a.id} style={{ '--c': a.color } as React.CSSProperties} aria-label={`${a.label}, on the line in Comms`}>
+      <div ref={slot} className="loom-rscreen__slot" />
+      <div className="loom-rscreen__meta"><b>{a.label}</b><small className="loom-data">on the line</small></div>
+      <span className="loom-rcard__now" data-tone={a.now.tone}><i className="loom-data">NOW</i> {a.now.text}</span>
+      {a.asks > 0 && <span className="loom-askb loom-data">ASKS YOU</span>}
+      <span className="loom-rcard__ur" data-none="">Thread open in Comms</span>
+    </section>
+  );
+}
+
 /** An agent folded to one line (the accordion): its face, its name with how it is as a dot, ASK, and what's new. */
 export function RailRow({ a, onOpen }: { a: DeskAgent; onOpen: () => void }) {
   const what = [a.status.word, a.asks ? 'asks you' : '', a.unread ? `${a.unread} new` : ''].filter(Boolean).join(', ');
@@ -395,7 +412,9 @@ export function openInRail(agents: DeskAgent[], onAir: string | null): string | 
  * The rail beside the apps: Needs you at the top, then a compact card per agent. When they don't all fit at their own
  * size, the accordion: each a line, one open (openInRail). Measured before it's painted, so it never flashes.
  */
-export function AgentRail({ agents, d, onAir }: { agents: DeskAgent[]; d: DeskHomeData | null; onAir: string | null }) {
+export function AgentRail({ agents, d, onAir, screen, slot }: { agents: DeskAgent[]; d: DeskHomeData | null; onAir: string | null;
+  /** the agent whose card is the comm screen (its thread is in Comms beside the rail), and where the screen goes */
+  screen?: string | null; slot?: (el: HTMLElement | null) => void }) {
   const { go } = useEnv();
   const box = useRef<HTMLElement>(null);
   const [fold, setFold] = useState(false);
@@ -419,7 +438,8 @@ export function AgentRail({ agents, d, onAir }: { agents: DeskAgent[]; d: DeskHo
   return (
     <aside ref={box} className="loom-arail" aria-label="Agents" data-fold={fold || undefined}>
       <RailNeeds d={d} />
-      {agents.map((a) => (fold && a.id !== open ? <RailRow key={a.id} a={a} onOpen={() => go(a.open)} /> : <RailCard key={a.id} a={a} />))}
+      {agents.map((a) => (a.id === screen ? <ScreenCard key={a.id} a={a} slot={slot} />
+        : fold && a.id !== open ? <RailRow key={a.id} a={a} onOpen={() => go(a.open)} /> : <RailCard key={a.id} a={a} />))}
     </aside>
   );
 }

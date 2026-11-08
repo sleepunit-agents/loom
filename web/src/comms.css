@@ -223,3 +223,9 @@
   .comms-band__side > * { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
   .comms-band .comms-people { padding-right: var(--s-2); }
 }
+/* The comm screen in the agents' rail (desk-agents.tsx ScreenCard): the band is who's in it and the work, shorter. */
+.comms-thread[data-wide]:has(.comms-band[data-noav]) { --comms-band-h: 140px; }
+.comms-band[data-noav] { grid-template-columns: minmax(0, 1fr); }
+.comms-thread[data-wide][data-short]:has(.comms-band[data-noav]) { --comms-band-h: 76px; }
+.comms-band[data-noav] .comms-band__side { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr); gap: 12px; overflow: hidden; padding-right: 0; }
+.comms-band[data-noav] .comms-band__side > * { min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

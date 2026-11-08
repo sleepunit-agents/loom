@@ -162,11 +162,11 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     await expect.poll(() => labels(p)).toEqual(['Comms']);
     await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${plan.id.slice(3)}`);
     await p.locator('.loom-tile .comms-thread').waitFor();
-    // The thread is read while it's in front: the rail's card says so.
-    await expect.poll(() => rail(p, 'mark').locator('.loom-rcard__ur').textContent(), { timeout: 15_000 }).toBe('No new messages');
+    // Mark's rail card is the comm screen while the thread is in front, and the thread is read there.
+    await expect.poll(() => p.locator('.loom-arail .loom-rscreen[data-agent="mark"] .loom-rcard__ur').textContent(), { timeout: 15_000 }).toBe('Thread open in Comms');
     // Home again: the big card agrees.
     await p.click('.loom-dock-bar [data-part="item"][aria-label="Home"]');
-    await expect.poll(() => card(p, 'mark').locator('[data-kind="none"]').count()).toBe(1);
+    await expect.poll(() => card(p, 'mark').locator('[data-kind="none"]').count(), { timeout: 15_000 }).toBe(1);
     await p.context().close();
   });
 
@@ -223,6 +223,56 @@ describe.runIf(built && chrome && hasAge)('the agent-centric desktop', () => {
     await p.click('.loom-dock-bar [data-part="item"][aria-label="Home"]');
     await expect.poll(() => card(p, 'nova').locator('[data-row="last"] dd').textContent()).toMatch(/^New thread|^Can you sort/);
     await p.context().close();
+  });
+
+  // ---- the comm screen in the rail (phase 3): the avatar appears once ----
+  for (const look of LOOKS) for (const [w, h] of SIZES) {
+    it(`at ${w}×${h} (${look}), Comms on Mark's thread: Mark's rail card is the comm screen and the band has no avatar`, async () => {
+      const p = await screen(w, h, `/comms/${plan.id.slice(3)}?t=*comms`, { look });
+      const card = p.locator('.loom-arail .loom-rscreen[data-agent="mark"]');
+      await card.locator('.comms-screen').waitFor();
+      expect(await p.locator('.comms-screen').count()).toBe(1);
+      expect(await p.locator('.comms-band .comms-screen').count()).toBe(0);
+      expect(await p.locator('.comms-band[data-noav]').count()).toBe(1);
+      expect(await card.locator('.comms-screen__label').textContent()).toMatch(/^VISUAL MARK · /);
+      expect(await card.textContent()).toContain('Thread open in Comms');
+      // Comms keeps its list beside the thread: the screen's room is the rail's now.
+      if (w >= 1440) await p.locator('.loom-tile .comms:not([data-one]) .comms-list').waitFor();
+      expect(await tidy(p, '.loom-rscreen')).toEqual([]);
+      if (SHOTS) await p.screenshot({ path: `${SHOTS}/screen-${look}-${w}.png` });
+      await p.context().close();
+    });
+  }
+
+  it('a reply landing plays on the rail\'s screen: the signal, then talking', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'no-preference', serviceWorkers: 'block' });
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.request.post(`${d.base}/login`, { form: { token: d.tok.jonathan }, maxRedirects: 0 });
+    const p = await ctx.newPage();
+    await p.goto(`${d.base}/comms/${backup.id.slice(3)}?t=*comms`);
+    const scr = p.locator('.loom-rscreen[data-agent="art"] .comms-screen');
+    await scr.waitFor();
+    await p.evaluate(() => { const w = window as unknown as { seen: string[] }; w.seen = [];
+      new MutationObserver(() => { const e = document.querySelector('.loom-rscreen .comms-screen'); if (e) w.seen.push(`${e.getAttribute('data-signal') ?? ''}|${e.getAttribute('data-face')}`); })
+        .observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-signal', 'data-face'] }); });
+    d.reply(backup, 'Done: 42 snapshots, the newest from a minute ago.');
+    await expect.poll(() => p.evaluate(() => (window as unknown as { seen: string[] }).seen.join(',')), { timeout: 20_000 }).toMatch(/^on\|.*talking/);
+    await ctx.close();
+  });
+
+  it('under 1280 (no rail) the band keeps the comm screen, and a phone keeps its own', async () => {
+    const p = await screen(1100, 800, `/comms/${plan.id.slice(3)}?t=*comms`);
+    await p.locator('.comms-band .comms-screen').waitFor();
+    expect(await p.locator('.loom-arail, .loom-rscreen').count()).toBe(0);
+    await p.context().close();
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: 'reduce', serviceWorkers: 'block' });
+    await ctx.addInitScript(`localStorage.setItem('loom-look', 'neon'); sessionStorage.setItem('loom-arrived', '1'); sessionStorage.setItem('loom-booted', '1');`);
+    await ctx.request.post(`${d.base}/login`, { form: { token: d.tok.jonathan }, maxRedirects: 0 });
+    const q = await ctx.newPage();
+    await q.goto(`${d.base}/comms/${plan.id.slice(3)}`);
+    await q.locator('.comms-thread__strip .comms-screen').waitFor();
+    expect(await q.locator('.loom-arail').count()).toBe(0);
+    await ctx.close();
   });
 
   it('no page threw', () => { expect(errors).toEqual([]); });

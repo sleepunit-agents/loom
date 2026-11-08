@@ -12,7 +12,7 @@
 // The only desktop there is (App.tsx; Jonathan, 2026-11-06). Accessibility's One window at a time is this desktop with
 // one app tile at most: opening another sends the one there to the dock, as the rule sends one that doesn't fit. Loaded
 // with the desk's own chunk (desk.tsx), at 1024 px and wider only: a phone never fetches it.
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { PortalContainer } from '@/components/ui/portal-container';
 import { reducedMotion } from '../access';
@@ -652,9 +652,13 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
   const env = deskEnv(deskGo);
   // Whose thread a Comms tile shows (desk-rail.ts): its card is the one the rail's accordion keeps open.
   const [air, setAir] = useState<{ who: OnAir; from: object | null }>({ who: null, from: null });
-  const rail = useMemo<RailLink>(() => ({
-    onAir: (who, from) => setAir((was) => (who ? (was.who?.agent === who.agent && was.from === from ? was : { who, from }) : was.from === from ? { who: null, from: null } : was)),
-  }), []);
+  const onAir = useCallback<RailLink['onAir']>((who, from) => setAir((was) => (who ? (was.who?.agent === who.agent && was.from === from ? was : { who, from })
+    : was.from === from ? { who: null, from: null } : was)), []);
+  // That agent's card in the rail is its comm screen while the rail is shown (the slot the card gives).
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  const railShown = railW > 0 && s.apps.length > 0;
+  const screenOf = railShown && air.who ? air.who.agent : null;
+  const rail = useMemo<RailLink>(() => ({ onAir, shown: railShown, screen: screenOf && slot ? { agent: screenOf, el: slot } : null }), [onAir, railShown, screenOf, slot]);
   const f = s.apps.find((a) => a.key === s.focus) ?? null;
   const fp = f ? pages.current.get(f.key) : undefined;
   const focusedTitle = f ? titleOf(fp ?? ({ data: null } as PageState), f) : '';
@@ -676,7 +680,7 @@ export function TileDesk({ api, appOf: appOfRaw, byName: byNameRaw, render, home
           pages={pages} bodies={bodies} intents={intents} go={goFrom(o.key)} render={render} lead={lead(o)} tint={tint(o)} accent={accent(o)}
           landed={(url) => landed(o.key, url)} onFocus={() => focus(o.key)} steps={steps} minimize={() => minimize(o.key)} close={() => close(o.key)} makeBig={() => makeBig(o.key)} />
       ))}
-      {s.apps.length > 0 && railW > 0 && env && <EnvContext.Provider value={env}><AgentRail agents={agents} d={homeData} onAir={air.who?.agent ?? null} /></EnvContext.Provider>}
+      {s.apps.length > 0 && railW > 0 && env && <EnvContext.Provider value={env}><AgentRail agents={agents} d={homeData} onAir={air.who?.agent ?? null} screen={screenOf} slot={setSlot} /></EnvContext.Provider>}
       {menu && <ContextMenu at={menu} close={() => setMenu(null)} />}
       <p className="sr-only" aria-live="polite">{said}</p>
     </div>

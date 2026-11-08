@@ -268,18 +268,20 @@ describe.runIf(built && chrome && hasAge)('the Comms app', () => {
       await page.locator('.comms-list').waitFor();
       await hold(560);
       await page.locator('.comms[data-one] .comms-list').waitFor({ timeout: 8000 });
-      // The edge: 1099 px is one pane, 1100 two, side by side with no way back. A thread open across it stays mounted.
+      // The edge: 879 px is one pane, 880 two, side by side with no way back (beside the agents' rail the comm screen is
+      // the rail's, so the band needs less: comms.tsx ONE_PANE_BELOW_RAIL). A thread open across it stays mounted.
       await page.locator('.comms-row__btn').first().click();
-      await page.locator('.comms-thread:not(.comms-thread--opening) .comms-screen').waitFor();
+      await page.locator('.comms-thread:not(.comms-thread--opening) .comms-composer').waitFor();
+      await page.locator('.loom-rscreen .comms-screen').waitFor();
       await page.locator('.comms-composer textarea').fill('a draft kept across the width');
-      await hold(1099);
+      await hold(879);
       await page.waitForFunction(() => document.querySelector('.comms')?.hasAttribute('data-one'));
-      await hold(1100);
+      await hold(880);
       await page.locator('.comms:not([data-one]) .comms-list').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-thread').count()).toBe(1);
       expect(await back.count()).toBe(0);
       expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
-      await hold(1099);
+      await hold(879);
       await page.locator('.comms[data-one] .comms-thread').waitFor({ timeout: 8000 });
       expect(await page.locator('.comms-composer textarea').inputValue()).toBe('a draft kept across the width');
       await hold(null);
