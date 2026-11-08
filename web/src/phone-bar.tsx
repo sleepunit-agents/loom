@@ -8,7 +8,7 @@
 // The ticker (his rules): only its middle moves, the needs-you count never scrolls away; it moves only when its words
 // don't fit, slowly (TICK_PX_S); it stops while it's touched and while the tab is hidden; under reduced motion it stands
 // still, cut short with an ellipsis.
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { buzz, HapticLabel, useHaptics } from './haptic';
@@ -25,16 +25,20 @@ const TICK_GAP = 40;
 const isTime = (s: string) => /^\d{1,2}:\d{2}(\s?[AP]M)?$/i.test(s.trim());
 const TONE_FIRST: Record<string, number> = { bad: 0, warn: 1 };
 
+/** A ticker's item: its words, its tone, and the app it opens (docs/specs/agent-desk.md, "The ticker"). */
+export type TickPart = { text: string; tone?: string; href?: string };
+
 /** What the ticker says, from what the shell already has: how many agents, what each is up to, and each place's
- * tile (trouble first). Words, never colours alone. */
-export function tickerParts(shell: Shell): { text: string; tone?: string }[] {
+ * tile (trouble first: Tasks, Boxes, Bridges and the rest say what they have there). Words, never colours alone. Each
+ * opens its app: the agents Home, an agent its window, a place its own page. */
+export function tickerParts(shell: Shell): TickPart[] {
   const n = shell.agents.length;
   const places = shell.pieces.filter((p) => p.stat && !isTime(p.stat))
     .map((p, i) => ({ p, i })).sort((a, b) => (TONE_FIRST[a.p.tone ?? ''] ?? 2) - (TONE_FIRST[b.p.tone ?? ''] ?? 2) || a.i - b.i);
   return [
-    { text: `${n} agent${n === 1 ? '' : 's'}` },
-    ...shell.agents.map((a) => ({ text: a.sub ? `${a.label} ${a.sub}` : a.label })),
-    ...places.map(({ p }) => ({ text: placeWords(p.label, p.stat!), tone: p.tone === 'bad' || p.tone === 'warn' ? p.tone : undefined })),
+    { text: `${n} agent${n === 1 ? '' : 's'}`, href: '/' },
+    ...shell.agents.map((a) => ({ text: a.sub ? `${a.label} ${a.sub}` : a.label, href: `/a/${a.id}` })),
+    ...places.map(({ p }) => ({ text: placeWords(p.label, p.stat!), tone: p.tone === 'bad' || p.tone === 'warn' ? p.tone : undefined, href: p.href })),
   ];
 }
 
@@ -45,7 +49,7 @@ function useReduced() {
 }
 
 /** The ticker: still when its words fit (or motion is reduced), else a slow loop; held while touched or hidden. */
-export function Ticker({ live, parts }: { live: boolean; parts: { text: string; tone?: string }[] }) {
+export function Ticker({ live, parts, go }: { live: boolean; parts: TickPart[]; /** opens an item's app */ go?: (href: string) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const line = useRef<HTMLSpanElement>(null);
   const reduced = useReduced();
@@ -83,7 +87,11 @@ export function Ticker({ live, parts }: { live: boolean; parts: { text: string; 
   const words = (copy: boolean) => (
     <span ref={copy ? undefined : line} className="loom-tick__line" aria-hidden={copy || undefined}>
       <span className="loom-tick__live" data-off={live ? undefined : ''}>{live ? 'live' : 'offline'}</span>
-      {parts.map((p, i) => <span key={i} className="loom-tick__part" data-tone={p.tone}>{p.text}</span>)}
+      {parts.map((p, i) => (go && p.href
+        // The copy that follows it round is the same words again: out of the tab order, and not read twice.
+        ? <a key={i} href={p.href} className="loom-tick__part" data-tone={p.tone} tabIndex={copy ? -1 : undefined}
+            onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return; e.preventDefault(); go(p.href!); }}>{p.text}</a>
+        : <span key={i} className="loom-tick__part" data-tone={p.tone}>{p.text}</span>))}
     </span>
   );
   const release = () => setHeld(false);
@@ -146,8 +154,13 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
   clock?: React.ReactNode; status?: React.ReactNode;
 }) {
   const asks = shell.asks;
+  // A desktop's one line: its two sides as wide as each other, so the ticker stands in the middle of the screen
+  // (docs/specs/agent-desk.md, "The ticker"); a phone's, the name, the ticker and LOOM//OS in a row.
+  const one = !!(clock || status);
+  const Side = one ? 'div' : Fragment;
   return (
-    <div className={clock || status ? 'loom-pbar loom-pbar--one' : 'loom-pbar'}>
+    <div className={one ? 'loom-pbar loom-pbar--one' : 'loom-pbar'}>
+      <Side {...(one ? { className: 'loom-pbar__side loom-pbar__side--l' } : {})}>
       {clock}
       {clock && <span className="loom-pbar__sep loom-pbar__sep--clock" aria-hidden>·</span>}
       <div className="loom-pbar__name" style={{ color }}>
@@ -158,7 +171,9 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
         )}
         <PageName title={title} info={info} where={where} />
       </div>
-      <Ticker live={!offline} parts={tickerParts(shell)} />
+      </Side>
+      <Ticker live={!offline} parts={tickerParts(shell)} go={go} />
+      <Side {...(one ? { className: 'loom-pbar__side loom-pbar__side--r' } : {})}>
       <span className="loom-pbar__brand" aria-label="loom">LOOM<i aria-hidden>//</i>OS</span>
       {status && <span className="loom-pbar__sep loom-pbar__sep--status" aria-hidden>·</span>}
       {status}
@@ -166,6 +181,7 @@ export function PhoneBar({ title, color, crumb, onBack, go, shell, offline, info
         <a href="/inbox" className="loom-pbar__needs loom-data" aria-label={`${asks} need${asks === 1 ? 's' : ''} you`}
           onClick={(e) => { e.preventDefault(); go('/inbox'); }}>{asks}</a>
       )}
+      </Side>
     </div>
   );
 }

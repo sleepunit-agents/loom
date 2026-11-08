@@ -239,7 +239,11 @@ html.loom-ios-app:root[data-look] .loom-sys{display:none}
   box-shadow:inset 0 -1px 0 var(--v-border),0 1px 0 color-mix(in srgb,var(--v-pink) 26%,transparent)}
 :root[data-look] .loom-top--one .loom-pbar{height:34px;gap:14px;font-size:12px}
 :root[data-look] .loom-top--one .loom-sys__clock{flex:none;color:var(--v-text-2)}
-:root[data-look] .loom-top--one .loom-pbar__name{max-width:30%}
+:root[data-look] .loom-top--one .loom-pbar__name{min-width:0;max-width:100%}
+/* its two sides as wide as each other, so the ticker stands in the middle of the screen (docs/specs/agent-desk.md) */
+:root[data-look] .loom-top--one .loom-pbar--one{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,min(44vw,980px)) minmax(0,1fr)}
+:root[data-look] .loom-pbar__side{display:flex;align-items:center;gap:inherit;min-width:0}
+:root[data-look] .loom-pbar__side--r{justify-content:flex-end}
 :root[data-look] .loom-top--one .loom-pbar__name h1{line-height:34px;letter-spacing:.04em}
 :root[data-look] .loom-top--one .loom-sys__icons{flex:none;margin-right:-3px}
 :root[data-look] .loom-top--one .loom-sys__icon{height:34px;color:var(--v-text-2)}
@@ -256,6 +260,8 @@ html.loom-ios-app:root[data-look] .loom-top--one :is(.loom-sys__clock,.loom-sys_
 :root[data-look] .loom-tick__track{display:block;width:100%}
 :root[data-look] .loom-tick__line{display:block;overflow:hidden;text-overflow:ellipsis}
 :root[data-look] .loom-tick__part::before{content:"·";margin:0 .5em;color:var(--v-text-3)}
+:root[data-look] a.loom-tick__part{color:inherit;text-decoration:none;border-radius:4px}
+:root[data-look] a.loom-tick__part:is(:hover,:focus-visible){color:var(--v-text);text-decoration:underline;text-underline-offset:3px;outline:none}
 :root[data-look] .loom-tick__part[data-tone="warn"]{color:var(--loom-warn-ink)} :root[data-look] .loom-tick__part[data-tone="bad"]{color:var(--loom-bad-ink)}
 :root[data-look] .loom-tick[data-run]{-webkit-mask-image:linear-gradient(90deg,transparent,#000 10px,#000 calc(100% - 14px),transparent);mask-image:linear-gradient(90deg,transparent,#000 10px,#000 calc(100% - 14px),transparent)}
 :root[data-look] .loom-tick[data-run] .loom-tick__track{display:flex;width:max-content}

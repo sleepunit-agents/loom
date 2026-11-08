@@ -114,8 +114,9 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
   }
 
   // The bar's two dividers (Jonathan, 2026-11-06): a quiet dot between the clock and the name, and between LOOM//OS and
-  // the glyphs, the bar's gap on both sides; and the ticker in the room between the two groups, its words in the middle
-  // when they fit; when they don't, running across the whole room (or, under reduced motion, cut short from its left).
+  // the glyphs, the bar's gap on both sides; and the ticker centred on the screen (t-1959, docs/specs/agent-desk.md),
+  // clear of both groups, its words in its middle when they fit; when they don't, running across the whole of it (or,
+  // under reduced motion, cut short from its left).
   const bar = (p: Page) => p.evaluate(() => {
     const r = (s: string) => document.querySelector(s)!.getBoundingClientRect();
     const tick = document.querySelector('.loom-pbar--one .loom-tick')!;
@@ -123,7 +124,7 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
     const seps = [...document.querySelectorAll('.loom-pbar--one .loom-pbar__sep')];
     // the first glyph's own box (the icons' row starts with the icon's padding)
     const icon = document.querySelector('.loom-pbar--one .loom-sys__icons > *')!;
-    return { clock: r('.loom-pbar--one .loom-sys__clock'), name: r('.loom-pbar__name'), tick: r('.loom-pbar--one .loom-tick'), brand: r('.loom-pbar__brand'),
+    return { screen: innerWidth, clock: r('.loom-pbar--one .loom-sys__clock'), name: r('.loom-pbar__name'), tick: r('.loom-pbar--one .loom-tick'), brand: r('.loom-pbar__brand'),
       icon: icon.getBoundingClientRect(), gap: parseFloat(getComputedStyle(document.querySelector('.loom-pbar--one')!).columnGap),
       words: words.getBoundingClientRect(), run: tick.hasAttribute('data-run'), fits: tick.hasAttribute('data-fits'),
       seps: seps.map((e) => ({ box: e.getBoundingClientRect(), text: e.textContent, hidden: e.getAttribute('aria-hidden'), color: getComputedStyle(e).color })),
@@ -140,11 +141,12 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
       expect(Math.abs(dot.x - (before.x + before.width) - b.gap), why).toBeLessThanOrEqual(1);
       expect(Math.abs(after.x - (dot.x + dot.width) - b.gap), why).toBeLessThanOrEqual(1);
     }
-    // the ticker is the room between the name and LOOM//OS, the bar's gap from each
+    // the ticker stands in the middle of the screen, at least the bar's gap from the name and from LOOM//OS
     const left = b.name.x + b.name.width, right = b.brand.x;
-    expect(Math.abs(b.tick.x - left - b.gap), why).toBeLessThanOrEqual(1);
-    expect(Math.abs(right - (b.tick.x + b.tick.width) - b.gap), why).toBeLessThanOrEqual(1);
-    return { ...b, left, right };
+    expect(Math.abs(b.tick.x + b.tick.width / 2 - b.screen / 2), why).toBeLessThanOrEqual(1);
+    expect(b.tick.x - left, why).toBeGreaterThanOrEqual(b.gap - 1);
+    expect(right - (b.tick.x + b.tick.width), why).toBeGreaterThanOrEqual(b.gap - 1);
+    return { ...b, left: b.tick.x, right: b.tick.x + b.tick.width };
   };
   for (const [w, hgt] of [[1024, 768], [1280, 800], [1920, 1080]]) {
     for (const [what, path] of [['a short name', '/inbox?t=*inbox'], ['a long name', '/knowledge/long-name?t=*knowledge']]) {
@@ -153,9 +155,12 @@ describe.runIf(built && chrome)('the desktop\'s chrome', () => {
         await p.evaluate(() => document.fonts.ready);
         await p.waitForTimeout(300);
         const b = await checkBar(p, `${w} ${what}`);
-        // its words fit at every size here (2 agents): they stand in the middle of the room
-        expect(b.fits).toBe(true);
-        expect(Math.abs((b.words.x + b.words.width / 2) - (b.left + b.right) / 2)).toBeLessThanOrEqual(3);
+        // its words fit from 1280 here (2 agents): they stand in the middle of the room; at 1024 the centred room is
+        // narrower than they are, and they run
+        if (w >= 1280) {
+          expect(b.fits).toBe(true);
+          expect(Math.abs((b.words.x + b.words.width / 2) - (b.left + b.right) / 2)).toBeLessThanOrEqual(3);
+        }
         await p.context().close();
       });
     }
