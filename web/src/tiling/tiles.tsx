@@ -33,6 +33,7 @@ import { nameOf, readSet, writeSet, type TileSet } from './address';
 import { AGENT_FIT, fitFor, type Fit } from './fit';
 import { ContextMenu, type MenuAt, type MenuItem } from './menu';
 import './tiles.css';
+import './surface.css';
 
 /** An app as a tile knows it: its key (the dock key it's open under, as trail.ts keys it), its label and its fit. */
 export type AppRef = { key: string; label: string; fit: Fit };

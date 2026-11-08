@@ -20,7 +20,7 @@ export default function FoldCard({ s }: { s: Page['sections'][number] }) {
   const [open, setOpen] = useState(() => foldOpen(s));
   const toggle = (v: boolean) => { setOpen(v); try { localStorage.setItem(foldKey(s.id), v ? '1' : '0'); } catch { /* this visit only */ } };
   return (
-    <Card className={sectionRing(s)}>
+    <Card data-band className={sectionRing(s)}>
       <Collapsible open={open} onOpenChange={toggle}>
         {/* Folded, the title is all there is: no room kept below it for a body that isn't there. */}
         <CardHeader className={open ? undefined : 'mb-0'}>

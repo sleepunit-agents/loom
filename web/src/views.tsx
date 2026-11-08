@@ -280,9 +280,9 @@ export function InboxRow({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) =
 function Asks({ asks }: { asks: Ask[] }) {
   if (!asks.length) return null;
   return (
-    <div className="grid gap-3">{asks.map((a, n) => (
+    <div className="loom-asks grid gap-3">{asks.map((a, n) => (
       <As key={n} source={a.source}><Arrive k={`ask:${a.source.id}\0${a.text}`} className="rounded-3xl">
-        <Card className={a.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : 'ring-1 ring-[var(--loom-ring-warn-soft)]'}>
+        <Card data-band className={a.tone === 'bad' ? 'ring-1 ring-[var(--loom-ring-bad)]' : 'ring-1 ring-[var(--loom-ring-warn-soft)]'}>
           <CardContent className="grid gap-2 py-4">
             <p className="text-xs opacity-60">{a.sourceLabel ?? a.source.id}</p>
             <Link page={a.page} className="font-medium no-underline hover:underline">{a.text}</Link>
@@ -337,7 +337,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
 export function DashboardView({ d, now, bare }: { /** in the agent's window: its header is the window's, not a profile card */ bare?: boolean; d: { label: string; title?: string; agent?: import('./loom').AgentHead; asks: Ask[]; tiles: Tile[]; thread: ThreadRow[]; inbox?: { count: number; first?: string }; sinceMs?: number; sinceLabel?: string; filters?: { param: string; options: { value: string; label: string }[] } }; now: number }) {
   const { go } = useEnv();
   return (
-    <div className="grid gap-4">
+    <div className="loom-dash grid gap-4">
       {d.inbox && d.inbox.count > 0 && (
         <Button variant="secondary" className="justify-start" onClick={() => go('/inbox')}>{d.inbox.first ?? `${d.inbox.count} in the Inbox`}</Button>
       )}

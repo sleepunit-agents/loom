@@ -134,7 +134,7 @@ export default function Panel({ b }: { b: Extract<Block, { type: 'panel' }> }) {
   return (
     <div className="grid gap-2" data-slot="panel">
       {b.title && <h4 className="text-sm font-medium opacity-70">{b.title}</h4>}
-      <ul className="min-w-0 divide-y rounded-[var(--r-card-sm)] bg-[var(--card-2)] px-4">{rows.map(({ r, n }) => <Row key={`${r.label}\0${n}`} r={r} />)}</ul>
+      <ul className="loom-panel-rows min-w-0 divide-y rounded-[var(--r-card-sm)] bg-[var(--card-2)] px-4">{rows.map(({ r, n }) => <Row key={`${r.label}\0${n}`} r={r} />)}</ul>
       {pager}
       {b.action && <div className="pt-1"><ActButton b={b.action} size="default" full={!wide} /></div>}
     </div>

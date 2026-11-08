@@ -744,9 +744,9 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const side = page.sections.filter(isSide);
   const card = (s: Page['sections'][number]) => (s.fold ? (
     // Its title while its chunk loads, so the page doesn't jump.
-    <Suspense key={s.id} fallback={<Card className={sectionRing(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
+    <Suspense key={s.id} fallback={<Card data-band className={sectionRing(s)}><CardHeader className="pb-6"><CardTitle>{s.title}</CardTitle></CardHeader></Card>}><FoldCard s={s} /></Suspense>
   ) : (
-    <Card key={s.id} className={sectionRing(s)}>
+    <Card key={s.id} data-band className={sectionRing(s)}>
       {s.title && <CardHeader><CardTitle>{s.title}</CardTitle></CardHeader>}
       <CardContent className="grid min-w-0 gap-4">{s.blocks.map((b, n) => <BlockView key={n} b={b} />)}</CardContent>
     </Card>
@@ -755,8 +755,8 @@ function PageView({ page, unscoped }: { page: Page; unscoped?: string }) {
   const column = at === 'column' && side.length > 0;
   return (
     // A side column only when the page has something for it: an empty one made every piece page a third thinner than the Inbox.
-    <div className={`grid gap-4 ${column ? 'grid-cols-[minmax(0,1fr)_17.5rem]' : 'grid-cols-[minmax(0,1fr)]'}`}>
-      <div className="grid min-w-0 content-start gap-4">
+    <div className={`loom-pv grid gap-4 ${column ? 'grid-cols-[minmax(0,1fr)_17.5rem]' : 'grid-cols-[minmax(0,1fr)]'}`}>
+      <div className="loom-pv__main grid min-w-0 content-start gap-4">
         {/* Folded, a side chart is a line over the fold (t-1925: Tasks in a narrow window), the whole chart in it. */}
         {at === 'fold' && side.flatMap((s) => s.blocks.filter((b) => b.type === 'chart').map((b, n) => (
           <Suspense key={`${s.id}:${n}`} fallback={<div className="min-h-10" />}><ChartLine b={b as never} title={s.title} /></Suspense>)))}
